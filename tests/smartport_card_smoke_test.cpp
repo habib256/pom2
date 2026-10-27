@@ -35,6 +35,7 @@
 //      reached Disk35Image and survived the disk-image internals (dirty
 //      tracking, write commit on block-boundary).
 
+#include "Block512Backing.h"
 #include "Disk35Image.h"
 #include "FloppySoundSink.h"
 #include "SmartPort35Unit.h"
@@ -455,6 +456,34 @@ bool testShrinkHidesSelectedUnit()
 
 } // anon namespace
 
+// A two-phase mount of a 3.5" unit: the file read happens in phase 1, off
+// the machine lock (Block512Backing::readImageFile), and phase 2 only parses.
+// SmartPort35Unit used to answer "unsupported" and the caller fell back to
+// loadImage — 800 KB read with stateMutex held.
+bool testUnitAdoptsPreparedImage()
+{
+    const std::string p = writeSyntheticPo("adopt", 0x5A);
+    pom2::Block512Backing::PreparedImage prepared;
+    std::string err;
+    assert(pom2::Block512Backing::readImageFile(p, prepared, err));
+    pom2::SmartPort35Unit unit;
+    assert(unit.adoptImage(std::move(prepared)) && "a 3.5-inch unit adopts phase 1's bytes");
+    assert(unit.isLoaded() && unit.blockCount() == 1600 && unit.path() == p);
+    uint8_t block[512]{};
+    assert(unit.readBlock(0, block) && block[0] == 0x5A);
+    // A bad payload is an ERROR (non-empty), never the "unsupported" answer
+    // that would send the caller back to the locked inline read.
+    pom2::Block512Backing::PreparedImage junk;
+    junk.bytes.assign(1000, 0);
+    junk.path = p;
+    junk.valid = true;
+    assert(!unit.adoptImage(std::move(junk)) && !unit.lastError().empty());
+    assert(unit.isLoaded() && "a refused image leaves the mounted disk alone");
+    fs::remove(p);
+    std::printf("  ok: SmartPort35Unit adopts a phase-1 image (no locked read)\n");
+    return true;
+}
+
 int main() {
     bool ok = true;
     ok &= testRomSignature();
@@ -465,5 +494,6 @@ int main() {
     ok &= testAccessLed();
     ok &= testIoErrorSoundsOnce();
     ok &= testShrinkHidesSelectedUnit();
+    ok &= testUnitAdoptsPreparedImage();
     return ok ? 0 : 1;
 }

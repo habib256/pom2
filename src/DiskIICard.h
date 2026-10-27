@@ -71,6 +71,7 @@
 
 #include "DiskImage.h"
 #include "MediaWritePolicy.h"
+#include "SlotBusClock.h"
 #include "SlotPeripheral.h"
 
 #include <array>
@@ -423,6 +424,11 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
     void    advanceCycles(int cycles) override;
+    /// The motor-off delay is the controller's 556 timer, real time: under
+    /// a Zip or TransWarp it ran out ~4x early in accelerated CPU cycles.
+    /// `motorOffDelay` counts STOCK bus cycles, converted here.
+    void    setCpuClock(double hz) override { motorClock_.setCpuClock(hz); }
+    void    setStandardClock(double hz) override { motorClock_.setBusClock(hz); }
     void    onReset() override;
 
     // Rewind/snapshot: serialize the mechanical + LSS runtime state (head
@@ -468,7 +474,8 @@ private:
     // motor-on ($C0E9) during the delay cancels it (back to MODE_ACTIVE).
     enum ActiveMode { MODE_IDLE = 0, MODE_ACTIVE, MODE_DELAY };
     ActiveMode active = MODE_IDLE;
-    int  motorOffDelay = 0;
+    int  motorOffDelay = 0;     // STOCK bus cycles (see setCpuClock)
+    pom2::SlotBusClock motorClock_;   // CPU cycles -> stock: LSS, delay, stepper
     bool writeMode = false;     // Q7 latch: false=read, true=write
     bool loadMode  = false;     // Q6 latch: false=shift, true=load
 
@@ -599,8 +606,10 @@ private:
     // calls `lss_sync()` whose loop runs from `cycles` up to a `cycles_limit`
     // computed from `time_to_cycles(machine().time())`. POM2 doesn't have
     // a global emu time; we recover the equivalent via `cpuCycleTotal` —
-    // a running CPU cycle counter that `advanceCycles(n)` bumps before
-    // calling `lss_sync(0)`. The LSS limit is `cpuCycleTotal*2 + extra`.
+    // a running STOCK bus-cycle counter (the 6502's cycles converted through
+    // `motorClock_`, so an accelerator does not spin the disk faster) that
+    // `advanceCycles(n)` bumps before calling `lss_sync(0)`. The LSS limit
+    // is `cpuCycleTotal*2 + extra`.
     //
     // This is a verbatim port of MAME's algorithm; only the time-base
     // substrate changes (LSS cycles directly, instead of attotime

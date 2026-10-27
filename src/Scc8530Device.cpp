@@ -240,9 +240,12 @@ void Scc8530Device::channelReset(int index)
 
     c.wr0  = 0x00;
     c.wr1 &= 0x24;
-    c.wr3 &= 0x01;
-    c.wr4  = 0x04;
-    c.wr5  = 0x00;
+    // Zilog reset-value table (manual p. 35): WR3 keeps D7-D1 and clears Rx
+    // Enable; WR4 only forces D2; WR5 keeps D6, D5 and D0 (MAME's masks, which
+    // POM2 had copied, are the inverses).
+    c.wr3 &= 0xfe;
+    c.wr4 |= 0x04;
+    c.wr5 &= 0x61;
     // MAME sets WR7' = 0x20 for 85C30/ESCC only — not this part.
     wr9_ &= 0xdf;
     c.wr10 &= 0x60;
@@ -286,7 +289,10 @@ void Scc8530Device::reset()
     channelReset(CHAN_A);
     channelReset(CHAN_B);
 
-    wr9_ &= 0x3c;
+    // Hardware reset: WR9 = 110000xx — clears D5-D2 (IACK, SH/SL, MIE, DLC)
+    // and keeps NV/VIS (D1/D0). MAME's `&= 0x3c` keeps exactly the wrong half:
+    // a WR9 $C9 (reset + MIE + VIS) lost VIS, and MIE survived a /RESET.
+    wr9_ &= 0x03;
     wr9_ |= 0xc0;
     ch_[CHAN_A].wr10 = 0x00;
     ch_[CHAN_B].wr10 = 0x00;
@@ -308,10 +314,17 @@ void Scc8530Device::reset()
 // ─────────────────────────────────────────────────────────────────────────
 
 /// MAME `z80scc_device::z80daisy_irq_state` (master z80scc.cpp:560-592).
+// The Zilog interrupt priority (SCC/ESCC User Manual, p. 36): Rx A > Tx A >
+// Ext/Status A > Rx B > Tx B > Ext/Status B. intState_ is indexed by the
+// *_PRIO values (Ext 0, Tx 1, Rx 2; +3 for channel B), so walking it in index
+// order served Ext/Status before Rx — MAME master's INT_PRIORITY is this order.
+static constexpr int kSccPriority[6] = { 2, 1, 0, 5, 4, 3 };
+
 int Scc8530Device::daisyIrqState() const
 {
     int state = 0;
-    for (uint8_t elem : intState_) {
+    for (int k : kSccPriority) {
+        const uint8_t elem = intState_[k];
         // if we're servicing a request, don't indicate more interrupts
         if (elem & kDaisyIeo) { state |= kDaisyIeo; break; }
         state |= elem;
@@ -449,7 +462,8 @@ int Scc8530Device::updateExtInt(int index)
 int Scc8530Device::intAck()
 {
     int ret = -1;   // "use the CPU's default vector"
-    for (uint8_t& elem : intState_) {
+    for (int k : kSccPriority) {
+        uint8_t& elem = intState_[k];
         // "No IUS bit is set after the MIE bit is cleared to zero" - MAME
         // master z80scc.cpp:605-606.
         if ((elem & kDaisyInt) && (wr9_ & WR9_BIT_MIE)) {
@@ -552,7 +566,7 @@ uint8_t Scc8530Device::registerRead(int index, uint8_t reg)
 
     switch (reg) {
     case REG_RR0_STATUS:         return doRr0(index);
-    case REG_RR1_SPEC_RCV_COND:  return c.rr1;
+    case REG_RR1_SPEC_RCV_COND:  return rr1View(index);
     case REG_RR2_INTERRUPT_VECT: return doRr2(index);
     case REG_RR3_INTERUPPT_PEND: return doRr3(index);
     case REG_RR8_RECEIVE_DATA:   return dataRead(index);
@@ -588,18 +602,23 @@ uint8_t Scc8530Device::doRr2(int index)
 
     // Channel B always returns the modified vector, VIS or not.
     if (index == CHAN_B) {
-        int i = 0;
-        for (uint8_t& elem : intState_) {
-            if (elem & kDaisyInt) {
+        // With nothing pending the status is still modified: V3-V1 = 011
+        // ("If no interrupts are pending, the status is V3,V2,V1 -011",
+        // manual p. 180; MAME master modify_vector(..., CHAN_B, SPECIAL)).
+        bool any = false;
+        for (int i : kSccPriority) {
+            if (intState_[i] & kDaisyInt) {
                 ch_[index].rr2 = modifyVector(ch_[index].rr2,
                                               i < 3 ? CHAN_A : CHAN_B,
                                               static_cast<uint8_t>(intSource_[i] & 3));
                 // MAME acks here only for ESCC/CMOS parts with WR9 IACK
                 // set; the NMOS 8530 does not.
+                any = true;
                 break;
             }
-            i++;
         }
+        if (!any)
+            ch_[index].rr2 = modifyVector(ch_[index].rr2, CHAN_B, INT_SPECIAL);
     }
     return ch_[index].rr2;
 }
@@ -667,7 +686,8 @@ void Scc8530Device::doWr0(int index, uint8_t data)
         break;
 
     case WR0_RESET_HIGHEST_IUS:
-        for (uint8_t& elem : intState_) {
+        for (int k : kSccPriority) {
+            uint8_t& elem = intState_[k];
             if (elem & kDaisyIeo) {
                 elem = 0;
                 checkInterrupts();
@@ -684,11 +704,26 @@ void Scc8530Device::doWr0(int index, uint8_t data)
         // SDLC (datasheet, not MAME): End Of Frame is a special receive
         // condition, so this is also what clears RR1 D7 and releases the
         // FIFO lock the frame's last byte took.
-        c.rr1 &= static_cast<uint8_t>(~(RR1_END_OF_FRAME | RR1_RESIDUE_CODE_MASK));
-        c.rr1 |= 0x06;      // the reset residue value (z80scc.cpp:1152)
-        if (c.rxFifoWp != c.rxFifoRp) {
-            c.rxEof[c.rxFifoRp] = false;
-            rxFifoRpStep(index);
+        // "Resets the error bits in RR1" — End Of Frame, CRC/framing,
+        // overrun and parity (Zilog manual, WR0 Error Reset).
+        {
+            const uint8_t mode = c.wr1 & WR1_RX_INT_MODE_MASK;
+            const bool held = (mode == WR1_RX_INT_FIRST || mode == WR1_RX_INT_PARITY) &&
+                c.rxFifoWp != c.rxFifoRp &&
+                (c.rxEof[c.rxFifoRp] ||
+                 (c.rxError[c.rxFifoRp] & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
+                     ((c.wr1 & WR1_PARITY_IS_SPEC_COND) ? RR1_PARITY_ERROR : 0))));
+            c.rr1 &= static_cast<uint8_t>(~(RR1_END_OF_FRAME | RR1_RESIDUE_CODE_MASK |
+                RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR | RR1_PARITY_ERROR));
+            c.rr1 |= 0x06;      // the reset residue value (z80scc.cpp:1152)
+            // Only the HELD character is released (it was already read).
+            // Stepping whenever the FIFO was non-empty threw away a good,
+            // unread character in every mode that does not hold.
+            if (held) {
+                c.rxEof[c.rxFifoRp] = false;
+                c.rxError[c.rxFifoRp] = 0;
+                rxFifoRpStep(index);
+            }
         }
         // Error Reset is what clears the Special Receive Condition's IP. The
         // locked byte's read never stepped the FIFO, so the IP outlived it:
@@ -942,14 +977,23 @@ uint8_t Scc8530Device::dataRead(int channel)
         // A special condition locks the FIFO to preserve the status; the
         // Error Reset command in WR0 is what unlocks it. End Of Frame is one
         // of them (SDLC, datasheet).
-        if (eof || (c.rr1 & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
-                     ((c.wr1 & WR1_PARITY_IS_SPEC_COND) ? RR1_PARITY_ERROR : 0)))) {
-            // The FIFO still locks, but the Special Receive Condition only
-            // interrupts when WR1 enables receive interrupts at all (every
-            // non-zero mode includes "or Special Condition"). MAME master
-            // z80scc.cpp:2424-2428.
-            if ((c.wr1 & WR1_RX_INT_MODE_MASK) != WR1_RX_INT_DISABLE)
-                triggerInterrupt(index, INT_SPECIAL);
+        const uint8_t mode = c.wr1 & WR1_RX_INT_MODE_MASK;
+        const bool special = eof || (c.rr1 & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
+                     ((c.wr1 & WR1_PARITY_IS_SPEC_COND) ? RR1_PARITY_ERROR : 0)));
+        // The Special Receive Condition interrupts when WR1 enables receive
+        // interrupts at all (every non-zero mode includes "or Special
+        // Condition"; MAME master z80scc.cpp:2424-2428)...
+        if (special && mode != WR1_RX_INT_DISABLE)
+            triggerInterrupt(index, INT_SPECIAL);
+        // ...but the FIFO is HELD only in "Rx Int on First Character" and
+        // "Special Condition only" (01 / 11): "Data characters with special
+        // receive conditions are not held in the Receive FIFO" in mode 10,
+        // and mode 00 is polled (Zilog SCC/ESCC User Manual, WR1 D4-D3 and
+        // Error Reset; MAME master `rx_holds_special_condition`). Locking in
+        // every mode re-read the same byte for ever in a driver that, like
+        // Zilog's own LocalTalk note AN0064, never issues Error Reset.
+        if (special && (mode == WR1_RX_INT_FIRST || mode == WR1_RX_INT_PARITY)) {
+            // held until Error Reset
         } else {
             rxFifoRpStep(index);
 
@@ -1044,11 +1088,16 @@ void Scc8530Device::receiveData(int index, uint8_t data)
 
     if (c.rxFifoWp + 1 == c.rxFifoRp ||
         ((c.rxFifoWp + 1 == Channel::kRxFifoSz) && (c.rxFifoRp == 0))) {
-        // Overrun: store the character but do not step the FIFO.
-        c.rxError[c.rxFifoWp] =
-            static_cast<uint8_t>((c.rxError[c.rxFifoWp] & ~RR1_CRC_FRAMING_ERROR) |
+        // Overrun: the new character overwrites the NEWEST entry, which then
+        // carries the flag ("only the character that has been written over
+        // is flagged", RR1 D5; MAME master `(wp ? wp : sz) - 1`). It was
+        // written to the unused sentinel slot, which the next write cleared,
+        // so an async overrun was never reported at all.
+        const int newest = (c.rxFifoWp ? c.rxFifoWp : Channel::kRxFifoSz) - 1;
+        c.rxError[newest] =
+            static_cast<uint8_t>((c.rxError[newest] & ~RR1_CRC_FRAMING_ERROR) |
                                  RR1_RX_OVERRUN_ERROR);
-        c.rxData[c.rxFifoWp] = data;
+        c.rxData[newest] = data;
     } else {
         // CRC/framing goes out with OVERRUN, and for the same reason: the
         // slot's error byte describes the character now IN it. MAME rewrites
@@ -1531,7 +1580,24 @@ void Scc8530Device::receiveFrame(int channel, const uint8_t* data,
         }
     }
 
+    // The two FCS bytes go into the FIFO too, End Of Frame and the CRC
+    // verdict on the SECOND ("care must be exercised so that the processor
+    // does not attempt to use the CRC bytes that are transferred as data",
+    // Zilog manual pp. 123-124; Zilog's LocalTalk note AN0064 reads both and
+    // backs its pointer up by two). Delivered without them, a driver doing
+    // what the manual says lost two real bytes from every frame. CRC-CCITT
+    // as the line sends it: reflected 0x8408, preset $FFFF, complemented,
+    // low byte first.
+    uint16_t crc = 0xFFFF;
+    for (std::size_t i = 0; i < len; ++i) {
+        crc ^= data[i];
+        for (int b = 0; b < 8; ++b)
+            crc = static_cast<uint16_t>((crc >> 1) ^ ((crc & 1) ? 0x8408 : 0));
+    }
+    crc = static_cast<uint16_t>(~crc);
     c.rxPending.assign(data, data + len);
+    c.rxPending.push_back(static_cast<uint8_t>(crc & 0xFF));
+    c.rxPending.push_back(static_cast<uint8_t>(crc >> 8));
     c.rxPendingCrc = crcError;
     pumpRxPending(index);
 }
@@ -1589,12 +1655,29 @@ uint8_t Scc8530Device::peekWr(int channel, int reg) const
     }
 }
 
+uint8_t Scc8530Device::rr1View(int index) const
+{
+    const Channel& c = ch_[index & 1];
+    if (c.rxFifoWp == c.rxFifoRp) return c.rr1;     // empty: what the last read left
+    // Parity and overrun stay latched once their character has been read;
+    // CRC/framing and End Of Frame describe the exit character.
+    uint8_t v = static_cast<uint8_t>(c.rr1 &
+        ~(RR1_CRC_FRAMING_ERROR | RR1_END_OF_FRAME));
+    v |= static_cast<uint8_t>(c.rxError[c.rxFifoRp] &
+        (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR | RR1_PARITY_ERROR));
+    if (c.rxEof[c.rxFifoRp]) {
+        v |= RR1_END_OF_FRAME;
+        v = static_cast<uint8_t>((v & ~RR1_RESIDUE_CODE_MASK) | 0x06);
+    }
+    return v;
+}
+
 uint8_t Scc8530Device::peekRr(int channel, int reg) const
 {
     const Channel& c = ch_[channel & 1];
     switch (reg) {
     case 0:  return doRr0(channel & 1);
-    case 1:  return c.rr1;
+    case 1:  return rr1View(channel & 1);
     case 2:  return c.rr2;
     case 3:  return doRr3(channel & 1);
     case 10: return c.rr10;

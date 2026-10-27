@@ -52,10 +52,20 @@ The separate Phasor PSG pass corrected native GAL selection/latch/read
 routing, full-page VIA decode, Echo+ single-VIA/stereo operation and host
 mute continuity, with AppleWin hardware notes and timeline regressions.
 
+**2026-10-27:** the A/!R period follows the SSI 263A data sheet —
+4096 × (16 − R) × (4 − D) XCK periods, XCK = the slot bus's phase 0
+(1.0227 MHz NTSC, 1.0156 MHz PAL) — instead of the PCM sample length, so
+the rate nibble now changes the guest's IRQ cadence (`ssi263_smoke`,
+`ssi263_phoneme_map`). MAME has no SSI263 to port: its `ssi263hle.cpp` is
+a placeholder driving a Votrax SC-01 ("completely wrong", its own header),
+used only by Thayer's Quest, and it ignores inflection, rate, articulation,
+amplitude and filter frequency.
+
 Remaining:
 
-- SSI RATEINF/inflection, articulation and analog waveform synthesis are
-  not modelled by the fixed PCM table. Phasor now uses the SSI263AP reset
+- SSI inflection, articulation and analog waveform synthesis are not
+  modelled by the fixed PCM table (the audio is still cut or looped to the
+  A/!R period, at the table's pitch). Phasor now uses the SSI263AP reset
   contract from AppleWin; the older SSI263P reset quirk and Cricket reset
   behavior still need a hardware/firmware comparison.
 - Phasor now implements both SSI263APs, address aliases, native direct
@@ -117,6 +127,19 @@ The comparison is against MAME's published signal model and routes, not a
 captured MAME WAV: the local MAME installation lacks the Apple IIe ROM set.
 Keep the broader item open for a same-program recording and a listening or
 hardware check before changing bass response or speech balance.
+
+**2026-10-27 MAME recording.** MAME 0.288 ran `apple2ee -sl4 mockingboard`
+from the repo's own dumps (system halves of `apple2e.rom`, the 4 KB
+`342-0265-a.chr`) plus zero-filled placeholders for the keyboard ROM and
+`sc01a.bin`, which it accepts with a checksum warning and which this
+measurement does not use. A Lua autoboot script ran a 50 % speaker square
+from a 6502 loop, then a full-scale AY tone written straight to the VIA,
+and `-wavwrite` captured both. MAME 0.288 writes a five-channel output
+mix: the mono speaker landed on channel 0 (RMS 0.0955), the AY tone on
+channels 0/1 (0.0331 / 0.0991). Those per-channel gains come from MAME's
+output mapping, not from the cards, so the raw ratio (≈1.0-1.1) is not
+comparable with the model's 0.30 yet. Next step: fix the output layout
+(or tap the two devices' streams) so both sources go through the same gain.
 
 <a id="audio-005"></a>
 

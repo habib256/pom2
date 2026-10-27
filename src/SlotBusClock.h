@@ -69,6 +69,14 @@ public:
         return n;
     }
 
+    /// `busTicks` without consuming: where a span that is still running
+    /// (an access inside an instruction) lands, from the carried remainder.
+    uint64_t peekBusTicks(uint64_t cpuCycles) const
+    {
+        if (ratio_ == 1.0) return cpuCycles;
+        return static_cast<uint64_t>(static_cast<double>(cpuCycles) * ratio_ + frac_);
+    }
+
     /// Bus ticks per CPU cycle (<= 1 under an accelerator).
     double ratio() const { return ratio_; }
     /// The bus clock in Hz (the CPU clock while no bus clock was given).

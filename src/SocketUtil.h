@@ -88,9 +88,19 @@ inline PollAccept pollAcceptOnce(socket_t listenFd, int timeoutMs,
     case WaitResult::Ready:    break;
     }
 
+    // The listener must not block here. On BSD stacks (macOS) a queued
+    // connection reset between poll() and accept() is dropped from the
+    // queue, and a blocking accept() then waits for the NEXT client (UNP
+    // § 16.6) — and shutdown() does not wake it there, so the owner's stop()
+    // joined for ever, under stateMutex for the FujiNet card. Non-blocking,
+    // that case is EWOULDBLOCK → Retry. An accepted socket inherits
+    // O_NONBLOCK on BSD and Winsock, so it is put back to blocking: callers
+    // that want non-blocking set it themselves.
+    (void)setNonBlocking(listenFd);
     socklen_c peerLen = sizeof(peer);
     const socket_t fd = ::accept(listenFd,
                                  reinterpret_cast<sockaddr*>(&peer), &peerLen);
+    if (isValidSocket(fd)) (void)setBlocking(fd);
     if (!isValidSocket(fd)) {
         const int e = lastSocketError();
         if (errInterrupted(e) || errWouldBlock(e)) return PollAccept::Retry;

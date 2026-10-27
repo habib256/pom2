@@ -59,6 +59,11 @@ public:
     // The printer on a parallel card's cable (CentronicsPrinter.h): its
     // lines for PrinterPortControl, its paper for the host ImageWriter.
     virtual pom2::CentronicsPrinter* centronicsPrinter() { return nullptr; }
+    /// A printer spool reached without a cast (the AI server's /printer/spool
+    /// must not link-depend on every card): true when this card has one, with
+    /// `next` set as by PrinterCard::drainSpoolFrom. The FujiNet printer unit.
+    virtual bool drainPrinterSpool(std::size_t /*from*/, std::vector<uint8_t>& /*out*/,
+                                   std::size_t& /*next*/) const { return false; }
     virtual ~SlotPeripheral() = default;
 
     /// Short human-readable name (e.g. "Disk II", "Language Card", "80col").
@@ -328,6 +333,8 @@ protected:
     /// it (standalone test harnesses). Read the pointer once at plug/reset;
     /// dereferencing it per instruction is one load, no call.
     const uint64_t* busCycleCounter() const;
+    /// SlotBus::nextVblCpuCycle for this card's bus; 0 when unplugged.
+    uint64_t busNextVblCycle(uint64_t cpuNow) const;
 
     /// The //e's auxiliary 64 KB as the CPU currently sees it — the bank
     /// RAMWRT / 80STORE write, i.e. the selected RamWorks bank

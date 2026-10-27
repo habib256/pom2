@@ -15,12 +15,31 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
+| [STORAGE-014](#storage-014) | 🟢 | Mitigated | ProDOS host folder: guest writes racing four eject commits are decoded under the lock |
 | [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
-| [STORAGE-010](#storage-010) | 🟢 | Known limit | `.nib` bytes get flat 8-cell timing |
+| [STORAGE-010](#storage-010) | 🟢 | Known limit | A `.nib` track is not normalised to one 200 ms revolution |
 | [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
+
+<a id="storage-014"></a>
+
+## STORAGE-014 — ProDOS host folder write-back
+
+**Priority:** 🟢 · **State:** Confirmed by reading (bug hunt 2026-10-27, round 5).
+Items 1-6 were fixed on 2026-10-27 (CHANGELOG, "Open bugs, fixed against
+the hardware"). One residue:
+
+- An eject's phase 3 (`ejectBay` → `saveDirty`) decodes, inline and under
+  `stateMutex`, the guest writes that landed while phase 2 committed
+  unlocked. `ejectMediaBay` now repeats phases 1-2 up to four times while
+  the bay is still dirty, so phase 3 sees only what a guest writing through
+  four commits in a row leaves behind. No test drives that race yet.
+
+By design, not a defect: a file the host deleted while mounted and the guest
+CHANGED is written back (the guest's data wins over a delete it never saw);
+an unchanged one stays deleted. A deleted host directory comes back empty.
 
 <a id="storage-002"></a>
 
@@ -56,23 +75,20 @@ an explicit request before scheduling.
 
 <a id="storage-010"></a>
 
-## STORAGE-010 — `.nib` bytes get flat 8-cell timing
+## STORAGE-010 — `.nib` track length
 
 **Priority:** 🟢 · **State:** Known limit.
 
-**Acceptance criterion:** a protection that depends on self-sync slip
-inside a `.nib` boots, or the limit stays documented (WOZ carries the
-timing; `.nib` cannot).
+Fixed 2026-10-27: `.nib` sync bytes follow MAME's rule (`ap2_dsk.cpp`
+`a2_nib_format::generate_levels_from_nibbles`) — only "FF … FF D5" is a
+sync pattern, 10 cells per $FF; other $FF stay 8; a bit-7-clear byte is
+transparent (`disk_cnib2_smoke`).
 
-`.nib` bytes expand to 8 cells each, with no 10-cell self-sync runs, so a
-loader that counts sync slip on a `.nib` sees none. The sector formats do
-expand sync runs to 10 cells (MAME `ap2_dsk.cpp`).
-
-**Closed 2026-10-24 from the original residue:** off-track positions on
-non-WOZ images now follow AppleWin's `PhaseToTrack` (STORAGE-013, 4k+3 →
-track k+1); a WOZ CRC32 mismatch is refused, as MAME does
-(`as_dsk.cpp:275-277`, CRC 0 meaning "not computed"), where AppleWin and
-Applesauce warn and load — POM2 follows MAME.
+Left: MAME then rescales the whole track to one 200 ms revolution
+(`flopimg.cpp` `generate_track_from_levels`, `200000000 * time / total`).
+POM2 keeps 4 µs cells, so a `.nib` revolution is 6656 × 8 cells plus the
+syncs' 2 each — about 213 ms. Rescaling re-bases the LSS timeline
+(`DiskImage.cpp`'s period comment) and every golden hash with it.
 
 <a id="storage-011"></a>
 

@@ -107,6 +107,11 @@ public:
         // Path to eject (only the card(s)/drive(s) currently holding this path
         // are ejected). Empty = no eject.
         std::string request525EjectPath;
+        // Set by a header row, which names ONE drive: only that slot/drive is
+        // ejected. Every detached session disk has the same placeholder path,
+        // so a path match ejected all of them (-1 = match by path).
+        int         request525EjectSlot  = -1;
+        int         request525EjectDrive = -1;
         // 3.5" Sony disk.
         std::string request35MountAndBoot;
         int         request35BootDrive   = 0;

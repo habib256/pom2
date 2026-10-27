@@ -542,6 +542,63 @@ int main()
         }
     }
 
+    // ─── 8b. TXT16 in the MIXED text window under HGR ────────────────────
+    // MAME renders mixed rows through text_update, whose RGB colour branch
+    // ignores what the upper part shows; the window used to come out white
+    // on black whatever the aux attributes said.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        Apple2Display display;
+        display.setAuxMemory(mem.auxData());
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Eve);
+        LeChatMauveCard* raw = card.get();
+        mem.slotBus().plug(7, std::move(card));
+        display.setChatMauveCard(raw);
+        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        (void)mem.memRead(0xC050);        // GRAPHICS
+        (void)mem.memRead(0xC057);        // HIRES
+        (void)mem.memRead(0xC053);        // MIXED
+        mem.memWrite(0xC00C, 0);          // 80COL off
+        const uint16_t r20 = loresAddr(20);
+        mem.memWrite(r20, 0xA0);          // normal space: every dot = background
+        mem.auxDataMutable()[r20] = 0x93; // F = 9 (orange)
+        const uint32_t orange = pack(0xFF, 0x72, 0x47);
+        mem.memWrite(0xC0B9, 0x93);       // TXT16 on
+        display.render(mem);
+        assert(display.width() == 560);
+        for (int x = 0; x < 14; ++x) assert(*pixelAt(display, x, 160) == orange);
+    }
+
+    // ─── 8c. The same window under GR + MIXED ─────────────────────────────
+    // The lo-res painter writes the 280-wide frame, so the mixed rows went
+    // through the motherboard's text painter: white on black again.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        Apple2Display display;
+        display.setAuxMemory(mem.auxData());
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Eve);
+        LeChatMauveCard* raw = card.get();
+        mem.slotBus().plug(7, std::move(card));
+        display.setChatMauveCard(raw);
+        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        (void)mem.memRead(0xC050);        // GRAPHICS
+        (void)mem.memRead(0xC056);        // LORES
+        (void)mem.memRead(0xC053);        // MIXED
+        mem.memWrite(0xC00C, 0);          // 80COL off
+        mem.memWrite(loresAddr(0), 0x11); // a lo-res block above the window
+        const uint16_t r20 = loresAddr(20);
+        mem.memWrite(r20, 0xA0);
+        mem.auxDataMutable()[r20] = 0x93; // F = 9 (orange)
+        const uint32_t orange = pack(0xFF, 0x72, 0x47);
+        mem.memWrite(0xC0B9, 0x93);       // TXT16 on
+        display.render(mem);
+        assert(display.width() == 560);
+        for (int x = 0; x < 14; ++x) assert(*pixelAt(display, x, 160) == orange);
+        assert(*pixelAt(display, 0, 0) != kBlack);   // the GR rows still painted
+    }
+
     // ─── 9. Eve TXTGREEN — white → green, 40 and 80 columns ─────────────
     {
         Memory mem;

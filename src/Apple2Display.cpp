@@ -36,8 +36,6 @@ using namespace pom2::a2disp;   // Apple2Display_Internal.h helpers
 Apple2Display::Apple2Display()
     : frame(kWidth * kHeight, 0xFF000000)
     , frame80(kWidth80 * kHeight, 0xFF000000)
-    , appleWinPrev  (kWidth   * kHeight, 0xFF000000)
-    , appleWinPrev80(kWidth80 * kHeight, 0xFF000000)
     , persistenceL80(kWidth80 * kHeight, 0)
     , signalBuf    (kSignalWidth * kSignalHeight, 0)
 {
@@ -55,26 +53,12 @@ void Apple2Display::setHiResMode(HiResMode m)
     // just entered it, the first frame's render() will repopulate.
     std::fill(signalBuf.begin(), signalBuf.end(), 0);
     signalProducedFlag = false;
-    // Also clear the AppleWin Tv sub-mode's "previous frame" buffer so
-    // we don't blend leftover content from another mode — and say so, or
-    // the first frame blends against the black we just wrote.
-    std::fill(appleWinPrev  .begin(), appleWinPrev  .end(), 0xFF000000u);
-    std::fill(appleWinPrev80.begin(), appleWinPrev80.end(), 0xFF000000u);
-    appleWinPrevValid_ = false;
-    appleWinPainted_   = false;
 }
 
 void Apple2Display::setAppleWinSubMode(AppleWinSubMode m)
 {
     if (m == appleWinSubMode) return;
     appleWinSubMode = m;
-    // Tv blur references the previous frame's buffer — reset it on
-    // sub-mode switch so Monitor → Tv doesn't ghost the last Monitor
-    // frame in.
-    std::fill(appleWinPrev  .begin(), appleWinPrev  .end(), 0xFF000000u);
-    std::fill(appleWinPrev80.begin(), appleWinPrev80.end(), 0xFF000000u);
-    appleWinPrevValid_ = false;
-    appleWinPainted_   = false;
 }
 
 uint16_t Apple2Display::textRowAddress(int y, bool page2)
@@ -208,26 +192,7 @@ void Apple2Display::renderInternalBand(Memory& mem, const Memory::DisplayState& 
 {
     if (scanY0 >= scanY1) return;
     renderInternalBandImpl(mem, state, scanY0, scanY1);
-    // Eve TXTGREEN and the RVB Graph's text colour are a post-pass over
-    // whatever painted the text rows: the decision tree below has a dozen
-    // exits and the text painters are shared with every other pipeline, so
-    // the tint is applied once, here.
-    if (chatMauveActive()) {
-        const auto tm = chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr);
-        if (tm == LeChatMauveCard::TextMode::Green)
-            tintText(state, scanY0, scanY1,
-                     0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u);
-        else if (tm == LeChatMauveCard::TextMode::Tinted)
-            tintText(state, scanY0, scanY1,
-                     kChatMauveLoResPalette[chatMauve->rvbGraph().textColour]);
-    }
-    // A VidHD's IIgs text colours ($C022) on the Apple's own text, when the
-    // card is not showing its Super Hi-Res picture and the monitor is not a
-    // monochrome one (its lit dot is not white, so there is nothing to map).
-    uint32_t fg = 0, bg = 0;
-    if (cardVideo_ && !cardVideo_->ownsScreen(state.textMode, state.an0) &&
-        !isMonochrome() && cardVideo_->textColours(fg, bg))
-        tintText(state, scanY0, scanY1, fg, bg);
+    textTintPass(state, scanY0, scanY1);   // Apple2Display_ChatMauve.cpp
 }
 
 void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplayState& state,
@@ -274,7 +239,7 @@ void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplaySta
             else
                 renderHiResChatMauve80(mem, state, gLo, gHi, hm);
         }
-        if (state.mixedMode && bandScanlines(scanY0, scanY1, 160, 192, &gLo, &gHi)) {
+        if (state.mixedMode && !renderChatMauveMixedColourText(mem, state, scanY0, scanY1) && bandScanlines(scanY0, scanY1, 160, 192, &gLo, &gHi)) {
             if (iie80) {
                 if (bandRows(scanY0, scanY1, 20, 24, &tLo, &tHi))
                     renderText80(mem, state, tLo, tHi, scanY0, scanY1);
@@ -341,6 +306,7 @@ void Apple2Display::renderInternalBandImpl(Memory& mem, const Memory::DisplaySta
         }
     }
 
+    if (cm && renderChatMauveGrMixed(mem, state, scanY0, scanY1)) return;   // _ChatMauve.cpp
     // ── Legacy 280-wide path (frame) ────────────────────────────────────
     setUseFrame80(false);
     if (state.textMode) {
@@ -473,6 +439,8 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
         renderText(mem, state, 20, 24);
         upscaleFrameToFrame80(kMixedTextFirstScanline, kHeight);
     }
+    setUseFrame80(true);   // the rows just painted, as renderInternalBand's tints them
+    textTintPass(state, kMixedTextFirstScanline, kHeight);
 }
 
 // See the member comment in the header. Only the fields that moved since the
@@ -532,7 +500,7 @@ void Apple2Display::render(Memory& mem)
     // frameCounter = emulated frame index reproduces exactly that.
     {
         const auto& vt = pom2VideoTiming(mem.videoStandard());
-        const uint64_t emuFrame = mem.getCycleCounter() /
+        const uint64_t emuFrame = mem.videoNow() /
             (65ull * static_cast<uint64_t>(vt.scanlinesPerFrame));
         // Delta feeds decay/blur pacing; clamp stalls, and treat a
         // backwards jump (rewind / snapshot load) as "no time passed".
@@ -713,6 +681,14 @@ void Apple2Display::render(Memory& mem)
         scheduleCpuDemodInto80(kMixedTextFirstScanline);
         mixedCompositeUsesFb_ = true;
     }
+    // The shader has one phase uniform: a frame whose bands differ is
+    // demodulated on the CPU, row by row, like the mixed band above.
+    if (hiResMode == HiResMode::ColorCompositeOE && signalProducedFlag &&
+        !signalPhaseUniform_ && !mixedCompositeUsesFb_ &&
+        !(state.textMode && oeDemod_.textSharp)) {
+        scheduleCpuDemodInto80(kSignalHeight);
+        mixedCompositeUsesFb_ = true;
+    }
 
     if (appleWin && signalProducedFlag && !state.textMode) {
         // Map our public sub-mode enum onto the pom2::AppleWinNtsc::SubMode
@@ -727,32 +703,10 @@ void Apple2Display::render(Memory& mem)
         }
         const int w = kSignalWidth;   // 560
         const int h = kSignalHeight;  // 192
-        // Tv blur references the previous EMULATED frame. Refresh the stash
-        // only when the machine actually advanced a frame — stashing every
-        // render call made the blur reference the previous *UI* frame, so on
-        // a 144 Hz monitor the 50 % blend collapsed toward nothing (and
-        // repeated renders of one paused frame blended it into itself).
-        // frame80 still holds the previous frame's final output here — but
-        // only if THIS path is what put it there. On the first frame after a
-        // boot or a mode / sub-mode switch it holds another mode's picture,
-        // or nothing at all, and blending against it dimmed the whole frame
-        // by half (the black clear the switch does) or ghosted the outgoing
-        // mode into it. So the stash is taken only once an AppleWin frame
-        // exists to stash, and the blend is skipped — prevFrame = nullptr,
-        // the "very first frame" case the API documents — until it does.
-        if (emuFrameDelta_ > 0 && appleWinPainted_) {
-            std::memcpy(appleWinPrev80.data(), frame80.data(),
-                        static_cast<size_t>(w) * h * sizeof(uint32_t));
-            appleWinPrevValid_ = true;
-        }
-        pom2::AppleWinNtsc::renderFrame(signalBuf.data(),
-                                  frame80.data(),
-                                  w, h,
-                                  sub,
-                                  appleWinPrevValid_ ? appleWinPrev80.data()
-                                                     : nullptr,
-                                  signalPhaseOffset_);
-        appleWinPainted_ = true;
+        // Tv is AppleWin's in-between line, a blend with the previous Apple
+        // scanline of THIS frame (AppleWinNtsc::renderFrame) — no history.
+        pom2::AppleWinNtsc::renderFrame(signalBuf.data(), frame80.data(), w, h, sub,
+                                        signalPhaseOffset_, signalPhaseRow_.data());
         // The output IS native 560-wide regardless of the Apple II's
         // soft-switch state, so route the UI to frame80.
         setUseFrame80(true);
@@ -868,13 +822,14 @@ void Apple2Display::renderCompositeOeCpu(int rows)
         // by ±1 per line; the sign is constant across a row, so applying it
         // to the accumulated V below is identical.
         const float vSign = (oeDemod_.palMode && (y & 1)) ? -1.0f : 1.0f;
+        const int rowPhase = signalPhaseRow_[static_cast<std::size_t>(y)];
         for (int x = 0; x < sw; ++x) {
             float Y = 0.0f, U = 0.0f, V = 0.0f;
             for (int i = -N; i <= N; ++i) {
                 const int xi = x + i;
                 if (xi < 0 || xi >= sw) continue;
                 const float s = row[xi] ? 1.0f : 0.0f;
-                const int   k = (xi + signalPhaseOffset_) & 3;
+                const int   k = (xi + rowPhase) & 3;
                 const int   a = i < 0 ? -i : i;
                 Y += s * lumaK[a];                // FIR luma (sum=1, notches fs/4)
                 U += s * sinP[k] * chromaK[a];    // FIR chroma (sum=2 → ×2 gain)
@@ -1059,8 +1014,8 @@ static void resolveGlyph(uint8_t screenByte, uint8_t out[8],
     uint8_t ascii;
     flash = false;
     if (screenByte & 0x80) {
-        invert = false;
-        ascii  = screenByte & 0x7F;
+        invert = false;   // $80-$9F are @A-Z[\]^_ (the $C0 glyphs), not a box
+        ascii  = static_cast<uint8_t>((screenByte & 0x60) == 0 ? (screenByte & 0x1F) + 0x40 : screenByte & 0x7F);
     } else {
         invert = true;
         flash  = (screenByte & 0x40) != 0;   // bit 6 set → FLASH attribute
@@ -1156,9 +1111,9 @@ static GlyphLookup lookupCsbitsGlyph(uint8_t screenByte,
             extraInvert = true;
         }
     } else if (mapped >= 0x40 && mapped <= 0x7F) {
-        // Flashing — remap to inverse range so the LOOKUP hits the
-        // inverse glyph; flash flag drives the per-row XOR at render.
-        code = static_cast<std::size_t>(mapped & 0x3F);
+        // Flashing; flash drives the per-row XOR. The //e (4 KB ROM) masks to
+        // $00-$3F as MAME does; a ][/][+ ROM's own $40-$7F glyphs (MAME masks there only on the J-Plus).
+        code = static_cast<std::size_t>(charRomSize >= 4096 ? (mapped & 0x3F) : mapped);
         g.flash = true;
     }
 
@@ -2240,6 +2195,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     // snapshot — same rule (and the same helper) as render()'s routing state.
     applyIdleSwitchOverride(state, mem);
     signalPhaseOffset_ = 0;
+    signalPhaseRow_.fill(0);
     // Zero first so bands a given mode leaves unpainted (mixed-mode text band,
     // a text→graphics split's empty rows) read as black instead of stale.
     std::fill(signalBuf.begin(), signalBuf.end(), 0);
@@ -2452,9 +2408,9 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     auto paintSignalBand = [&](int scanY0, int scanY1, int col0, int col1) {
         int lo = 0, hi = 0;
         if (state.textMode) {
+            setSignalPhase((mem.isIIE() && state.eightyCol) ? 1 : 0, scanY0, scanY1);  // MAME text_update is_80_column
             if (bandRows(scanY0, scanY1, 0, 24, &lo, &hi)) {
-                if (mem.isIIE() && state.eightyCol)
-                    paintText80(lo, hi, col0, col1, scanY0, scanY1);
+                if (signalPhaseOffset_) paintText80(lo, hi, col0, col1, scanY0, scanY1);
                 else
                     paintText40(lo, hi, col0, col1, scanY0, scanY1);
             }
@@ -2473,7 +2429,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             // It used to be left at 0 here, which cancelled the pre-rotated
             // aux nibble paintLoResDouble emitted and hid both errors; with
             // the stream corrected to MAME's, the term has to be real.
-            signalPhaseOffset_ = isDlgr ? 1 : 0;
+            setSignalPhase(isDlgr ? 1 : 0, scanY0, scanY1);
             const int  blockEnd = state.mixedMode ? 40 : 48;  // block-rows
             if (bandScanlines(scanY0, scanY1, 0, blockEnd * 4, &lo, &hi)) {
                 const int brLo = lo / 4;
@@ -2490,11 +2446,10 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             return;
         }
         // Hi-res — DHGR variant when on IIe with 80COL + DHIRES, else HGR.
-        // signalPhaseOffset_ is a single per-frame demod constant; the last
-        // graphics band painted wins (matches the uniform-frame fast path —
-        // a mid-frame HGR↔DHGR phase split is a documented approximation).
+        // The phase is recorded per scanline (setSignalPhase); a mid-frame
+        // HGR↔DHGR split demodulates each band with its own (DISPLAY-004).
         const bool isDhgr = mem.isIIE() && state.eightyCol && state.dhgr && state.hiRes;
-        signalPhaseOffset_ = isDhgr ? 1 : 0;
+        setSignalPhase(isDhgr ? 1 : 0, scanY0, scanY1);
         const int hiResEnd = state.mixedMode ? 160 : 192;
         if (bandScanlines(scanY0, scanY1, 0, hiResEnd, &lo, &hi)) {
             if (isDhgr) paintDhgr(lo, hi, col0, col1); else paintHgr(lo, hi, col0, col1);
@@ -2513,6 +2468,8 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
         }
         if (bandHook_) bandHook_(y0);
         paintSignalBand(y0, kSignalHeight, 0, 40);
+        signalPhaseUniform_ = std::all_of(signalPhaseRow_.begin(), signalPhaseRow_.end(),
+            [&](std::uint8_t p) { return p == signalPhaseRow_[0]; });
         return true;
     }
 
@@ -2529,6 +2486,8 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             state = st;
             paintSignalBand(y0, y1, col0, col1);
         }, bandHook());
+    signalPhaseUniform_ = std::all_of(signalPhaseRow_.begin(), signalPhaseRow_.end(),
+        [&](std::uint8_t p) { return p == signalPhaseRow_[0]; });
     return true;
 }
 

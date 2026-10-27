@@ -901,10 +901,15 @@ int main()
 
     // PLAY arms a program tape. The first $C060 read starts transport, then
     // Memory::advanceCycles moves the comparator at the recorded cycle stamp.
-    assert((cassetteCore.read(0xC060) & 0x80) == 0x00);
-    assert(cassetteCore.run(1200) >= 1200);
+    // Polarity: a positive input reads bit 7 = 0, a low one 1 (MAME
+    // apple2e.cpp:2180, AppleWin Tape.cpp after Sather 7-5/7-6).
     assert((cassetteCore.read(0xC060) & 0x80) == 0x80);
+    assert(cassetteCore.run(1200) >= 1200);
+    assert((cassetteCore.read(0xC060) & 0x80) == 0x00);
 
+    // The monitor starts once 40 ms of tape is queued (CassetteDevice
+    // kMonitorLeadSecs); 1200 cycles is about 52 samples.
+    cassetteCore.run(60000);
     cassetteStereo.assign(512 * 2, 0.0f);
     assert(cassetteCore.pullAudio(cassetteStereo.data(), 512, 44100) == 512);
     bool cassetteAudible = false;

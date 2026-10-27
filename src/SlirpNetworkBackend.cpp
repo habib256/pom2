@@ -303,6 +303,16 @@ private:
         }
         const auto* p = static_cast<const uint8_t*>(buf);
         self->rxQueue_.emplace_back(p, p + len);
+        // On a wire every frame is padded to the 60-byte minimum, and the
+        // CS8900A filters anything shorter as a runt unless RxCTL.RuntA is
+        // set — no ip65/Contiki driver sets it. A libslirp that hands over
+        // unpadded frames (a pure ACK is 54 bytes, a SYN-ACK 58) would stop
+        // TCP at the handshake through an Uthernet I. 4.9.3 pads already;
+        // older builds may not, and QEMU pads here for the same reason
+        // (net/slirp.c eth_pad_short_frame).
+        constexpr size_t kMinWireFrame = 60;
+        if (self->rxQueue_.back().size() < kMinWireFrame)
+            self->rxQueue_.back().resize(kMinWireFrame, 0);
         return static_cast<ssize_t>(len);
     }
 

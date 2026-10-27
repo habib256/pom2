@@ -52,6 +52,7 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <vector>
 
 namespace pom2 {
 
@@ -254,23 +255,22 @@ void AppleWinNtsc::renderLine(const uint8_t* src,
         dst[x] = lut[(x + phase) & 3][hist];
     }
 
-    // Tv sub-mode: 50% blend with the previous frame's same scanline, layered
-    // on top of the authentic comb-luma table to approximate phosphor
-    // persistence. Done in-place.
+    // Tv sub-mode: AppleWin draws every Apple scanline twice and makes the
+    // in-between output line 50 % this line + 50 % the previous Apple line
+    // (NTSC.cpp updateFramebufferTVDoubleScanline, GH#650) — a VERTICAL
+    // blend inside one frame, not phosphor persistence. POM2 shows one row
+    // per Apple line and leaves scanlines to the CRT pass, so the row is
+    // the mean of AppleWin's pair for it: 3/4 this line + 1/4 the previous.
+    // `prevLine` holds the previous line's UNBLENDED colours.
     if (mode == SubMode::Tv && prevLine != nullptr && prevValid) {
         for (int x = 0; x < w; ++x) {
-            const uint32_t cur = dst[x];
-            const uint32_t prev = prevLine[x];
-            const uint32_t cr = (cur  >>  0) & 0xFFu;
-            const uint32_t cg = (cur  >>  8) & 0xFFu;
-            const uint32_t cb = (cur  >> 16) & 0xFFu;
-            const uint32_t pr = (prev >>  0) & 0xFFu;
-            const uint32_t pg = (prev >>  8) & 0xFFu;
-            const uint32_t pb = (prev >> 16) & 0xFFu;
-            const uint32_t br = (cr + pr) >> 1;
-            const uint32_t bg = (cg + pg) >> 1;
-            const uint32_t bb = (cb + pb) >> 1;
-            dst[x] = 0xFF000000u | (bb << 16) | (bg << 8) | br;
+            const uint32_t cur = dst[x], prev = prevLine[x];
+            uint32_t out = 0xFF000000u;
+            for (int sh = 0; sh < 24; sh += 8) {
+                const uint32_t c = (cur >> sh) & 0xFFu, p = (prev >> sh) & 0xFFu;
+                out |= ((3u * c + p + 2u) >> 2) << sh;
+            }
+            dst[x] = out;
         }
     }
 }
@@ -279,16 +279,27 @@ void AppleWinNtsc::renderFrame(const uint8_t* src,
                                uint32_t*      dst,
                                int            w, int h,
                                SubMode        mode,
-                               const uint32_t* prevFrame,
-                               int            phaseOffset)
+                               int            phaseOffset,
+                               const uint8_t* rowPhase)
 {
-    const bool tv = (mode == SubMode::Tv) && (prevFrame != nullptr);
+    auto phaseOf = [&](int y) { return rowPhase ? int(rowPhase[y]) : phaseOffset; };
+    if (mode != SubMode::Tv) {
+        for (int y = 0; y < h; ++y)
+            renderLine(src + static_cast<size_t>(y) * w,
+                       dst + static_cast<size_t>(y) * w, w, mode, nullptr, false, phaseOf(y));
+        return;
+    }
+    // The line above the picture is the black border (AppleWin's row above
+    // VIDEO_SCANNER_Y_DISPLAY 0), so line 0 blends with black too.
+    std::vector<uint32_t> prev(static_cast<size_t>(w), 0xFF000000u);
+    std::vector<uint32_t> raw(static_cast<size_t>(w));
     for (int y = 0; y < h; ++y) {
         const uint8_t* sl = src + static_cast<size_t>(y) * w;
         uint32_t*      dl = dst + static_cast<size_t>(y) * w;
-        const uint32_t* pl = tv ? prevFrame + static_cast<size_t>(y) * w
-                                : nullptr;
-        renderLine(sl, dl, w, mode, pl, tv, phaseOffset);
+        renderLine(sl, raw.data(), w, mode, nullptr, false, phaseOf(y));
+        std::copy(raw.begin(), raw.end(), dl);
+        renderLine(sl, dl, w, mode, prev.data(), true, phaseOf(y));
+        prev.swap(raw);
     }
 }
 

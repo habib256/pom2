@@ -453,6 +453,23 @@ void testMemoryRoundtrip(EmulationController& ctrl, pom2::AiControlServer& /*srv
         "POST /mem?addr=0x0300 HTTP/1.1\r\nHost: 127.0.0.1\r\n"
         "Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
     assert(r.status != 200 && "a chunked body is refused, not read as empty");
+    // Methods the endpoints do not implement are a 405: HEAD used to get a
+    // full body and DELETE a 200.
+    r = oneShot(kTestPort, "HEAD /status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 405 && r.body.empty());
+    r = oneShot(kTestPort, "DELETE /screen.ppm HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 405);
+    // RFC 7230 § 3.2.4 / § 3.3.3: whitespace before the colon, and repeated
+    // framing headers, are 400s — `Transfer-Encoding : chunked` used to
+    // slip past the refusal above and read the body as empty.
+    r = oneShot(kTestPort,
+        "POST /reset HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "Transfer-Encoding : chunked\r\n\r\n10\r\n{\"kind\":\"soft\"}\r\n0\r\n\r\n");
+    assert(r.status == 400 && "space before the colon hid Transfer-Encoding");
+    r = oneShot(kTestPort,
+        "POST /mem?addr=0x0300 HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        "Content-Length: 13\r\nContent-Length: 2\r\n\r\n{\"data\":\"00\"}");
+    assert(r.status != 200 && "duplicate Content-Length is refused");
     {
         std::lock_guard<std::mutex> lk(ctrl.stateMutex());
         assert(ctrl.memory().data()[0x0300] == 0xAB && "…and wrote nothing");
@@ -1136,6 +1153,14 @@ void testAuthHardening(EmulationController& /*ctrl*/, pom2::AiControlServer& srv
         "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
         "X-POM2-Token: correct-horse-battery\r\n\r\n");
     assert(r.status == 200 && "a web page's refused requests armed the brake");
+
+    // ...and a browser-marked request cannot SUCCEED either. It is not
+    // counted (above), so if the right token still got a 200 a native caller
+    // adding `Sec-Fetch-Site: none` had an unbraked guessing oracle.
+    r = oneShot(kTestPort,
+        "GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\nSec-Fetch-Site: none\r\n"
+        "X-POM2-Token: correct-horse-battery\r\n\r\n");
+    assert(r.status == 401 && "a browser-marked request with the token got in");
 
     // The generator the panel's button calls: long enough to be worth having.
     const std::string gen = pom2::AiControlServer::generateToken();

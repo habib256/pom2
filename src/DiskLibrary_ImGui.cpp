@@ -404,8 +404,17 @@ void DiskLibrary_ImGui::renderMountedHeader(const CurrentlyMounted& mounted,
         if (path.empty()) return;
         any = true;
         ImGui::PushID(id);
+        // A detached session disk has no file to write back to: ejecting it
+        // throws its writes away, which is why the drive panels grey Eject
+        // out for it. Same rule here.
+        const bool sessionDisk = path == "(session disk)";
+        ImGui::BeginDisabled(sessionDisk);
         if (ImGui::SmallButton(ICON_FA_EJECT)) onEject();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eject");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", sessionDisk
+                ? "A session disk has no file: ejecting it would discard its writes"
+                : "Eject");
         ImGui::SameLine(0.0f, 4.0f);
         if (ImGui::SmallButton(protectedNow ? ICON_FA_LOCK : ICON_FA_LOCK_OPEN)) {
             r.toggleNotchPath    = path;
@@ -425,11 +434,13 @@ void DiskLibrary_ImGui::renderMountedHeader(const CurrentlyMounted& mounted,
         std::snprintf(id, sizeof id, "d%d1", card.slot);
         std::snprintf(label, sizeof label, "S%d D1", card.slot);
         row(id, card.drive1, card.drive1Protected, label,
-            [&] { r.request525EjectPath = card.drive1; });
+            [&] { r.request525EjectPath = card.drive1;
+                  r.request525EjectSlot = card.slot; r.request525EjectDrive = 0; });
         std::snprintf(id, sizeof id, "d%d2", card.slot);
         std::snprintf(label, sizeof label, "S%d D2", card.slot);
         row(id, card.drive2, card.drive2Protected, label,
-            [&] { r.request525EjectPath = card.drive2; });
+            [&] { r.request525EjectPath = card.drive2;
+                  r.request525EjectSlot = card.slot; r.request525EjectDrive = 1; });
     }
     row("d351", mounted.disk35Internal, mounted.disk35InternalProtected,
         mounted.sony35[0] ? "Sony internal" : "UniDisk intelligent U1", [&] { r.request35EjectDrive = 0; });

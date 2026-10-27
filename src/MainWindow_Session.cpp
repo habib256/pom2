@@ -33,6 +33,7 @@
 // the in-memory store, which `Settings::save()` commits only when it differs
 // from what is already on disk.
 
+#include "MediaWritePolicy.h"
 #include "MainWindow.h"
 
 #include "AiControlServer.h"
@@ -186,7 +187,7 @@ void MainWindow::persistSession(bool flushMedia)
         const std::string suffix = std::to_string(i + 1);
         settings->setString("disk35_path_" + suffix,
                             onboard35[i].loaded ? onboard35[i].path : std::string());
-        settings->setBool("disk35_writeback_" + suffix, onboard35[i].writeBack);
+        settings->setBool("disk35_writeback_" + suffix, pom2::persistedWriteBack(onboard35[i].writeBack));
         if (i > 0)   // the internal drive is always connected
             settings->setBool("disk35_connected_" + suffix, sonyConnected[i]);
     }
@@ -202,7 +203,7 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setString(key + "_path",
                             cffa->isImageLoaded() ? cffa->getImagePath()
                                                   : std::string());
-        settings->setBool(key + "_writeback", cffa->isWriteBackEnabled());
+        settings->setBool(key + "_writeback", pom2::persistedWriteBack(cffa->isWriteBackEnabled()));
     }
 
     // Per-slot persistence so the //c's two SSC ports (printer sl1 +
@@ -299,10 +300,8 @@ void MainWindow::persistSession(bool flushMedia)
             // choice the user never made — and the card was gone on the next
             // launch, with nothing to undo it. Leave the key alone; the
             // warning in resolve() already said the slot was ignored.
-            if (slotCards[s].empty() && !saved.empty() &&
-                saved == slotConfigCoordinator_->dedupCleared(s))
-                continue;
-            if (!pom2::slotKeyIsUserChoice(cfg, s, slotCards[s], saved))
+            if (!pom2::slotKeyShouldPersist(cfg, s, slotCards[s], saved,
+                                            slotConfigCoordinator_->dedupCleared(s)))
                 continue;
             settings->setString(key, slotCards[s]);
         }

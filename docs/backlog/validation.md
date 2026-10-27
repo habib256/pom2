@@ -38,6 +38,18 @@ internal head. A real //c with the internal motor still coasting would show
 whether its head moves there; if it does, the cancel is the divergence to
 remove (`DiskIICard::seekPhaseW`, `kStepperResponseCycles`).
 
+**2026-10-27 research.** MAME moves the head at once on PH1 and leaves it
+there when PH3 joins (`floppy.cpp` `seek_phase_w`: an opposing pair is
+`default: return`), so in MAME the //c's SmartPort addressing does step the
+coasting internal head — MAME has no mechanical inertia. AppleWin defers
+every step 10 cycles and then evaluates the magnets as they stand
+(`Disk.cpp` `ControlStepper` / `ControlStepperDeferred`, GH#1110 citing
+Sather UTAIIe pp. 9-12/13), so PH1 then PH3 four cycles later moves
+nothing, as POM2's cancel does. BMOW confirms the phase lines are shared by
+every drive on the port and that SmartPort enable is PH1+PH3 with PH2 low.
+No source gives a measured minimum on-time; the cancel stays, pending a
+real //c.
+
 <a id="validation-003"></a>
 
 ## VALIDATION-003 — Spiradisc / RWTS18
@@ -63,6 +75,8 @@ half-track positions; the selected PoP capture has whole tracks only, so its
 boot does not validate quarter-track behavior. Later levels/PoP side B,
 completion, other captures and physical-hardware comparison remain unverified.
 These are dated manual observations, not automated protection goldens.
+Rerun on 2026-10-27 after the Disk II stock-time change: the same
+milestones reproduced (audit, "Rerun 2026-10-27").
 
 <a id="validation-004"></a>
 

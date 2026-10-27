@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [MEMORY-002](#memory-002) | 🟡 | To verify | `Memory::memRead` hot path |
-| [MEMORY-003](#memory-003) | 🟢 | To verify | Dedicated Pascal LC |
+| [MEMORY-003](#memory-003) | 🟢 | Needs a primary source | Language Card power-on bank; the Apple card's own F8 ROM |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
 <a id="memory-002"></a>
@@ -43,16 +43,22 @@ an explicit request before scheduling.
 
 <a id="memory-003"></a>
 
-## MEMORY-003 — Dedicated Pascal LC
+## MEMORY-003 — The Apple II Language Card
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Researched 2026-10-27; needs a primary source.
 
-**Acceptance criterion (after revalidation):** Model the Pascal LC write-protect behavior and test its banking against the selected hardware reference.
+No write-protect DIP or jumper on the Apple Language Card was found in any
+source (the old entry's premise). POM2's `$C080-$C08F` decode, prewrite
+rule and RAM/ROM/bank selection match MAME's `ramcard16k.cpp` exactly; a
+65C02 RMW write-enables and an NMOS one does not, through the bus cycles,
+as AppleWin issue #700 measured on hardware. Two points remain:
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1067). Original dates and estimates are retained below.
-
-- 🟢 **Dedicated Pascal LC** — 16 KB variant shipped with Apple Pascal,
-  minor differences vs IIe LC (write-protect DIP). *1 d.*
+- **Power-on bank:** MAME's card comes up in bank 1 (`device_reset`),
+  AppleWin's and POM2's in bank 2. No schematic or manual text settles it.
+- **The card's own Autostart F8 ROM**, which replaces the motherboard's
+  `$F800-$FFFF` on a ][ (Apple's card asserts /INH). MAME does not model
+  it, and POM2 always fits the card, so modelling it would make every
+  ][ Original an Autostart machine. It needs an "LC fitted" option first.
 
 <a id="memory-001"></a>
 

@@ -432,9 +432,12 @@ struct Via6522
             t1Counter = static_cast<int32_t>(t1Latch) + 2;
             t1FireArmed = true;
             ifr &= ~IFR_T1;
-            // MAME `6522via.cpp:934` — a T1CH write drives PB7 low, which
-            // is what makes the ACR.7 square wave start from a known phase.
-            t1Pb7 = false;
+            // A T1CH write clears the PB7 flip-flop — but only when ACR.7
+            // gives it the pin; while ACR.7 = 0 the flip-flop is held SET
+            // (6522 die analysis, 6502.org "MOS 6522 dissection"; VICE
+            // testprogs VIC20/via_pb7, checked on a real VIC-20; MAME master
+            // `m_t1_pb7 = T1_SET_PB7(acr) ? 0 : 1`).
+            t1Pb7 = (acr & 0x80) == 0;
             break;
         case VIA_T1LH:
             // Latch high only: NO counter transfer, NO restart — but the
@@ -464,37 +467,35 @@ struct Via6522
             // real hardware. This is what lets a Timer-2-synced beam-racer
             // (French Touch DIX: `T2 = 7512 - latency`) land its effect on the
             // intended scanline instead of two bytes early.
-            t2Counter  = static_cast<int32_t>(t2Latch) + 2;
+            // In PB6 pulse-counting mode (ACR.5) the counter does not run on
+            // phi2 at all, so the load is visible at once: a read gives N, not
+            // N+1 (die analysis; VICE; MAME master returns m_t2cl|m_t2ch).
+            t2Counter  = static_cast<int32_t>(t2Latch) + ((acr & 0x20) ? 1 : 2);
             ifr       &= ~IFR_T2;
             t2Active   = true;
             break;
         case VIA_SR:    sr  = v; break;
         case VIA_ACR: {
-            // MAME `6522via.cpp` VIA_ACR write: switching T1 into
-            // continuous mode RE-ARMS the timer from the current counter
-            // (`m_t1_active = 1; m_t1->adjust(counter1 + IFR_DELAY)`).
-            // POM2 only stored the byte, so a T1 that had fired one-shot
-            // and disarmed stayed dead after the guest flipped to
-            // continuous — no more IRQs until the next T1CH write. Same
-            // +2 pre-bias protocol as the T1CH/T2CH cases: the fire then
-            // lands at counter1 + IFR_DELAY(3).
-            //
-            // Only a STOPPED T1 is re-armed. For a RUNNING one the round trip
-            // through MAME's uint16 `get_counter1_value()` (`counter -
-            // IFR_DELAY`, then `+ IFR_DELAY` again) is the identity everywhere
-            // EXCEPT the two cycles before an underflow, where `0`/`1` wrap to
-            // `0xFFFE`/`0xFFFF` and shove the pending interrupt 65536 cycles
-            // (64 ms) into the future — a dropped music tick or a lost raster
-            // frame, once per ~period/2 ACR writes (bug hunt #8). Leaving a
-            // live counter alone is also what the silicon does: an ACR write
-            // does not reload T1 (W65C22 datasheet), and AppleWin's SY6522
-            // stores the byte and nothing else. MAME shares the wrap; hardware
-            // does not.
+            // An ACR write arms nothing: T1 is armed ONLY by a T1CH write
+            // (6522 die analysis — the "RS" flip-flop is set by that write
+            // alone; VICE viacore; MAME master dropped the ACR re-arm POM2
+            // had copied from it, and mb-audit T6522_1 on real Mockingboards
+            // agrees). A one-shot that already fired stays quiet in
+            // continuous mode until the next T1CH write.
+            const uint8_t old = acr;
+            // PA latching: enabling it while IFR.CA1 is already set freezes
+            // the pins as they are NOW (die analysis; MOS/Synertek: "as long
+            // as the CA1 interrupt flag is set, the data on the pins can
+            // change without affecting the latches"; VICE).
+            if (!(old & 0x01) && (v & 0x01) && (ifr & IFR_CA1)) latchA = readPortA();
+            // T2 pulse counting (PB6): entering it, the counter takes one
+            // more phi2 tick and freezes; leaving it, counting resumes one
+            // cycle after the write (VICE testprogs viavarious/via9, captured
+            // on a real VIC-20).
+            if (!(old & 0x20) && (v & 0x20)) t2Counter -= 1;
+            else if ((old & 0x20) && !(v & 0x20)) t2Counter += 1;
             acr = v;
-            if (t1Continuous() && !t1FireArmed) {
-                t1Counter   = (t1Counter & 0xFFFF) + 2;
-                t1FireArmed = true;
-            }
+            if (!(acr & 0x80)) t1Pb7 = true;   // ACR.7 = 0 holds the flip-flop set
             break;
         }
         case VIA_PCR:   pcr = v; break;
@@ -555,68 +556,45 @@ struct Via6522
         bool fired = false;
         t1Counter -= cycles;
         while (t1Counter < 0) {
-            if (t1FireArmed) {
+            const bool armed = t1FireArmed;
+            if (armed) {
                 ifr |= IFR_T1;
                 fired = true;
-                if (!t1Continuous()) {
-                    t1FireArmed = false;
-                }
+                if (!t1Continuous()) t1FireArmed = false;
             }
-            if (!t1Continuous()) {
-                // MAME `t1_tick` one-shot branch (`6522via.cpp:544-549`):
-                // PB7 goes high and the timer stops.
-                t1Pb7 = true;
-            }
-            if (t1Continuous()) {
-                // Period is latch + 2 — the 6522 free-run contract. Was +3,
-                // which is MAME's `TIMER1_VALUE + IFR_DELAY`; but IFR_DELAY
-                // models the one-off underflow→IFR latency, NOT part of the
-                // recurring period. Folding it into the period stretched
-                // every frame by one cycle, so anything using T1 continuous
-                // as a frame clock DRIFTED one cycle per frame — invisible
-                // to a music tick, fatal to a beam-raced effect.
-                //
-                // French Touch "MAD EFFECT" states the contract while
-                // computing its own latch (`Sources/main.a`, shipped in
-                // disks_5.4/demo/madef/):
-                //   ; PAL delay = 65*(192+70+50) = 20280
-                //   ; -2 (6522 takes 2 cycles to generate INT)
-                //   ; = 20278 = $4F36
-                // i.e. period == latch + 2. With +3 its 192-line drawing
-                // loop slid a cycle per frame until whole scanlines of the
-                // picture fell into VBL and were dropped. Pinned by
-                // `via_t1_continuous_period`.
-                //
-                // Collapse the reload
-                // arithmetically: a degenerate tiny latch (e.g. 0 → period 2)
-                // under a large `cycles` (clamped to ~2.1e9 on a sync desync)
-                // would otherwise spin this loop hundreds of millions of
-                // times. IFR_T1 has already latched (idempotent above), so
-                // jump t1Counter forward in one int64 step to ≥ 0. MAME
-                // instead guards its reschedule with `if (TIMER1_VALUE > 0)`
-                // (`6522via.cpp` t1_tick); no equivalent guard is needed
-                // here because `period` is never 0 and the int64 step below
-                // terminates for any latch value.
-                const int64_t period  = static_cast<int64_t>(t1Latch) + 2;
-                const int64_t deficit = -static_cast<int64_t>(t1Counter);   // > 0
-                // CEILING, not floor+1. When the slice ends exactly ON an
-                // underflow (`deficit % period == 0`) floor+1 counted one
-                // period too many: it swallowed a whole period (the next T1
-                // interrupt landed one period late) and flipped the PB7
-                // square wave's phase, so `advance(n)` stopped agreeing with
-                // n x `advance(1)` — the invariant the lazy sync and the
-                // batched disk-turbo path both depend on (bug hunt #8).
-                const int64_t periods = (deficit + period - 1) / period;
-                t1Counter = static_cast<int32_t>(
-                    static_cast<int64_t>(t1Counter) + periods * period);
-                // MAME toggles PB7 once per underflow, but only
-                // `if (TIMER1_VALUE > 0)` (`6522via.cpp:539-541`) — a zero
-                // latch leaves the wave frozen. The collapse above swallows
-                // `periods` underflows in one step, so apply their parity
-                // rather than a single flip.
-                if (t1Latch != 0 && (periods & 1)) t1Pb7 = !t1Pb7;
-            } else {
-                t1Counter += 0x10000;
+            // The counter reloads from the latch on EVERY underflow, one-shot
+            // or continuous — one-shot only stops the interrupt (and PB7):
+            // "Timer 1 still will be reloaded from the Timer 1 latches after
+            // there was a Timer 1 underflow" (6522 die analysis, 6502.org);
+            // mb-audit T6522_9 checks it on real Mockingboards (WDC 65C22,
+            // Phasor, SMS); VICE ("contrary to the datasheet"), AppleWin and
+            // MAME master agree. POM2 free-ran from $FFFF instead, so a
+            // one-shot driver reading T1C after the IRQ saw $FFxx, not the
+            // latch countdown.
+            //
+            // Period is latch + 2 — the 6522 free-run contract. Was +3,
+            // which is MAME's `TIMER1_VALUE + IFR_DELAY`; but IFR_DELAY
+            // models the one-off underflow→IFR latency, NOT part of the
+            // recurring period. French Touch "MAD EFFECT" computes its latch
+            // as `20280 - 2` (`Sources/main.a`); with +3 its drawing loop
+            // slid a cycle per frame. Pinned by `via_t1_continuous_period`.
+            //
+            // Collapsed arithmetically (a tiny latch under a huge `cycles`
+            // would spin), with a CEILING: a slice ending exactly ON an
+            // underflow must not swallow a whole extra period (bug hunt #8).
+            const int64_t period  = static_cast<int64_t>(t1Latch) + 2;
+            const int64_t deficit = -static_cast<int64_t>(t1Counter);   // > 0
+            const int64_t periods = (deficit + period - 1) / period;
+            t1Counter = static_cast<int32_t>(
+                static_cast<int64_t>(t1Counter) + periods * period);
+            // PB7 toggles on an underflow only while ACR.7 drives it AND the
+            // timer is armed: every underflow in continuous mode (parity of
+            // the collapsed ones; a zero latch freezes it, MAME `if
+            // (TIMER1_VALUE > 0)`), only the first — armed — one in one-shot.
+            // It TOGGLES; it is not forced high (die analysis; VICE via_pb7).
+            if ((acr & 0x80) && armed) {
+                if (!t1Continuous())                      t1Pb7 = !t1Pb7;
+                else if (t1Latch != 0 && (periods & 1))   t1Pb7 = !t1Pb7;
             }
         }
         // T2 advance — phase-2 mode only.

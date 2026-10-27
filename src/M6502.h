@@ -136,6 +136,15 @@ public:
     /// machine's own mode. `setCpuMode` keeps the substitute in force.
     void    setCmosSubstitute(bool on);
     bool    cmosSubstitute() const { return cmosSubstitute_; }
+    /// The 65C02 Apple documents: the NCR65C02 (IIe and IIc Technical
+    /// Reference, Appendix A, the NCR data sheet). It has neither the
+    /// Rockwell bit instructions ($x7 RMB/SMB, $xF BBR/BBS) nor WDC's WAI /
+    /// STP ($CB/$DB): "X3, X7, XB, XF: 1 byte, 1 cycle" — NOPs. MAME (a plain
+    /// W65C02 on every Apple config) and AppleWin agree. Set on the Apple's
+    /// own CPU; card coprocessors keep the superset. A stray $DB used to
+    /// halt the machine, and a $07 executed as data ate two bytes.
+    void    setNcr65C02(bool on) { ncr_ = on; applyDispatch(cmosSubstitute_ ? CpuMode::CMOS : ownCpuMode); }
+    bool    ncr65C02() const { return ncr_; }
     /// The core the program runs on right now — what a disassembler wants.
     CpuMode effectiveCpuMode() const { return cpuMode; }
 
@@ -211,6 +220,9 @@ public:
     /// Zero the in-flight count while another bus master (the SoftCard's
     /// Z80) owns the bus; executeOpcode sets it back to 1 at the next fetch.
     void clearInFlightCycles() { cycles = 0; }
+    /// A bus master standing in for the parked 6502 (the SoftCard Z80) puts
+    /// its own access position here, so devices stamp the Z80's cycle.
+    void setInFlightCycles(int c) { cycles = c; }
 
     /// Absolute CPU cycle count right now, including in-flight sub-
     /// instruction cycles. Equivalent to `memory->getCycleCounter() +
@@ -435,6 +447,7 @@ private :
     CpuMode     cpuMode = CpuMode::CMOS;      // the core `opcodeTable` holds
     CpuMode     ownCpuMode = CpuMode::CMOS;   // the machine's own chip
     bool        cmosSubstitute_ = false;
+    bool        ncr_ = false;   // see setNcr65C02
     void        applyDispatch(CpuMode mode);
 
     /// Set by `STP` ($DB on 65C02 / W65C02). When true, `step()` skips

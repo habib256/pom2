@@ -98,9 +98,10 @@ void Apple2Display::renderInternalSegment(Memory& mem, const Memory::DisplayStat
     // composes correctly across several 560-wide segments on one line (each
     // restores what it does not own; final value of a column is whatever its
     // owning segment painted). One byte column = 14 frame80 dots.
-    // Assumption: the whole scanline is 560-domain — a split that MIXES a
-    // 40-col (280, `frame`) and an 80-col (560, `frame80`) segment is
-    // undefined (different target buffers) and stays a v1 scope-out.
+    // A line that MIXES a 40-col (280) and an 80-col (560) segment is pinned
+    // to frame80 by renderBeamRacing (force560_): usesLegacyPath() then
+    // sends the 280 segments here too, renderInternalBand doubles them
+    // across, and the restore keeps their neighbours (horizontal_split_560 § 3).
     if (!usesLegacyPath(mem, state)) {
         const int px0 = col0 * 14;
         const int px1 = col1 * 14;

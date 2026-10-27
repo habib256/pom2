@@ -408,6 +408,40 @@ int main()
         mediaStorage.persistRebuildSettings(settings, mediaSnapshot);
         assert(settings.getString("hdv_path") == hdvPath);
 
+        // A process protected by DEFAULT (ctest runs this one so) has every
+        // live write-back flag off without the user opting out of anything.
+        // Persisting those `false`s wrote the legacy opt-out keys, which the
+        // next normal launch migrated into a chmod of every mounted image.
+        {
+            assert(!pom2::mediaWritableByDefault());
+            auto protectedSnap = mediaSnapshot;
+            for (auto& d : protectedSnap.diskII) d.writeBackEnabled = false;
+            protectedSnap.primaryHdv->writeBackEnabled = false;
+            for (auto& c : protectedSnap.cffa) c.writeBackEnabled = false;
+            pom2::Settings fresh;
+            mediaStorage.persistRebuildSettings(fresh, protectedSnap);
+            assert(fresh.getBool("disk_writeback_slot4"));
+            assert(fresh.getBool("disk_writeback_slot6"));
+            assert(fresh.getBool("hdv_writeback"));
+            assert(fresh.getBool("cffa_slot7_writeback"));
+        }
+
+        // `--prodos-folder` borrows an HDV drive for a host folder. The
+        // rebuild / quit writer cleared hdv_path for it, so the configured
+        // image was gone at the next launch; it must leave both keys alone,
+        // as the per-mount writer always did.
+        {
+            auto folderSnap = mediaSnapshot;
+            folderSnap.primaryHdv->path = "[host folder] /tmp/pom2_host";
+            folderSnap.primaryHdvDrive2 = *folderSnap.primaryHdv;
+            pom2::Settings kept;
+            kept.setString("hdv_path", "configured.hdv");
+            kept.setString("hdv_path_drive2", "configured2.hdv");
+            mediaStorage.persistRebuildSettings(kept, folderSnap);
+            assert(kept.getString("hdv_path") == "configured.hdv");
+            assert(kept.getString("hdv_path_drive2") == "configured2.hdv");
+        }
+
         // Shutdown persistence adds legacy primary aliases to the same
         // per-slot/two-drive values, under the SAME HDV rule as the rebuild:
         // an auto-provisioned card is skipped, so the configured image and

@@ -61,16 +61,6 @@ int playbackDuration(uint8_t durPhon, Ssi263::SsiMode mode)
         ? 3 : (durPhon >> Ssi263::DURATION_MODE_SHIFT);
 }
 
-uint32_t nativeFrameCount(uint32_t sourceSamples, int dur)
-{
-    // Update():645-649 skips one source sample after every fourth READ
-    // whose mod4 counter is 3. The skip itself does not increment mod4:
-    // source offsets 3, 8, 13, ... are omitted (5 source samples / 4 frames).
-    if (dur == 1) return sourceSamples - (sourceSamples + 1) / 5;
-    const unsigned group = dur < 2 ? 1 : dur == 2 ? 2 : 4;
-    return (sourceSamples + group - 1) / group;
-}
-
 } // namespace
 
 void Ssi263::reset(bool powerCycle)
@@ -127,16 +117,18 @@ uint8_t Ssi263::read(uint8_t /*reg*/) const
 
 int Ssi263::computePhonemeDurationCycles() const
 {
-    // Use exactly the native output-frame count the audio path consumes,
-    // not SSI_Output()'s debug formula or UpdateAccurateLength()'s fallback.
-    // AppleWin Play(): the silent PA uses entry 0's length too.
-    const int index = std::max(0, phonemePcmIndex(currentPhoneme()));
-    const auto samples = ssi263_data::kPhonemeInfo[index].length;
-    const auto frames = nativeFrameCount(samples, playbackDuration(durPhon_, mode_));
-    const int64_t rate = ssi263_data::kPhonemeSampleRateHz;
-    if (cpuClockHz_ > static_cast<int64_t>(std::numeric_limits<int>::max()) * rate / frames)
-        return std::numeric_limits<int>::max();
-    const int64_t cycles = (static_cast<int64_t>(frames) * cpuClockHz_ + rate - 1) / rate;
+    // The chip's own timing (SSI 263A data sheet, "Rate"): a frame lasts
+    // 4096 x (16 - R) XCK periods and a phoneme (4 - D) frames; frame mode
+    // requests every frame (D = 3 here). The Apple cards clock XCK from the
+    // bus's phase 0 (setXckHz), as AppleWin's SSI263 log formula assumes. The PCM
+    // phonemes stay what is heard — cut at the transition when the chip is
+    // faster, looped when slower — but the A/!R cadence the guest's IRQ
+    // handler sees follows R and D, as on the chip. It used to follow the
+    // PCM length, so the rate nibble changed nothing (AUDIO-011).
+    const int dur   = playbackDuration(durPhon_, mode_);
+    const int64_t xck = xckHz_;
+    const int64_t periods = int64_t{4096} * (16 - rate()) * (4 - dur);
+    const int64_t cycles = (periods * cpuClockHz_ + xck - 1) / xck;
     return static_cast<int>(std::clamp<int64_t>(cycles, 1, std::numeric_limits<int>::max()));
 }
 

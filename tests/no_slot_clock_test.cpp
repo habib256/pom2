@@ -406,9 +406,42 @@ void testSnapshotHostileAndTolerant()
 
 }  // namespace
 
+// Setting the clock (DS1216 data sheet): after the key, 64 A2=0 accesses
+// write A0 into the register; the next readout returns what was written.
+// AppleWin drops those bits, and POM2 did too — a SET-TIME utility's clock
+// came straight back as host time.
+std::tm fixedHostTime()
+{
+    std::tm t{};
+    t.tm_year = 2026 - 1900; t.tm_mon = 9; t.tm_mday = 27;
+    t.tm_hour = 12; t.tm_min = 0; t.tm_sec = 0; t.tm_isdst = -1;
+    return t;
+}
+
+void testSetTime()
+{
+    pom2::NoSlotClock nsc(&fixedHostTime);
+    walkMagicKey(nsc);
+    auto bcd = [](int v) { return static_cast<uint64_t>(((v / 10) << 4) | (v % 10)); };
+    const uint64_t reg = (bcd(5) << 8) | (bcd(4) << 16) | (bcd(3) << 24) | (bcd(6) << 32) |
+                         (bcd(2) << 40) | (bcd(1) << 48) | (bcd(26) << 56);  // 2026-01-02 03:04:05
+    for (int i = 0; i < 64; ++i)
+        (void)nsc.interceptRead(static_cast<uint16_t>(0xF800 | ((reg >> i) & 1)), 0xEA);
+    walkMagicKey(nsc);
+    const uint64_t back = readClockRegister(nsc);
+    auto field = [&](int n) { return static_cast<int>((back >> (8 * n)) & 0xFF); };
+    if (field(1) != 0x05 || field(2) != 0x04 || field(3) != 0x03 ||
+        field(5) != 0x02 || field(6) != 0x01 || field(7) != 0x26) {
+        std::fprintf(stderr, "set time read back %016llx\n", static_cast<unsigned long long>(back));
+        std::abort();
+    }
+    std::printf("  set-time round-trips through the chip: OK\n");
+}
+
 int main()
 {
     std::printf("NoSlotClock smoke test\n");
+    testSetTime();
     testPassThrough();
     testDisabled();
     testKeyWalkThenReadout();

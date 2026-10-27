@@ -1506,6 +1506,7 @@ bool SmartPortCard::prepareFlushBay(int bay, PendingBayFlush& out,
     out.lineage = pending.lineage;
     out.path  = std::move(pending.path);
     out.bytes = std::move(pending.bytes);
+    out.bitstream = std::move(pending.bitstream);
     return true;
 }
 

@@ -324,6 +324,31 @@ void Apple2Display::renderDhgrCol280(Memory& mem, const Memory::DisplayState& st
     }
 }
 
+// Eve TXTGREEN and the RVB Graph's text colour are a post-pass over
+// whatever painted the text rows: the decision tree has a dozen exits and
+// the text painters are shared with every other pipeline, so the tint is
+// applied once per band (renderInternalBand) — and once over the composite
+// mixed-text patch, which paints rows 160-191 outside that tree.
+void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1)
+{
+    if (chatMauveActive()) {
+        const auto tm = chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr);
+        if (tm == LeChatMauveCard::TextMode::Green)
+            tintText(state, scanY0, scanY1,
+                     0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u);
+        else if (tm == LeChatMauveCard::TextMode::Tinted)
+            tintText(state, scanY0, scanY1,
+                     kChatMauveLoResPalette[chatMauve->rvbGraph().textColour]);
+    }
+    // A VidHD's IIgs text colours ($C022) on the Apple's own text, when the
+    // card is not showing its Super Hi-Res picture and the monitor is not a
+    // monochrome one (its lit dot is not white, so there is nothing to map).
+    uint32_t fg = 0, bg = 0;
+    if (cardVideo_ && !cardVideo_->ownsScreen(state.textMode, state.an0) &&
+        !isMonochrome() && cardVideo_->textColours(fg, bg))
+        tintText(state, scanY0, scanY1, fg, bg);
+}
+
 // Text in one colour: Eve TXTGREEN ("blanc → vert", 40 and 80 columns, the
 // P31 tint the MonoGreen pipeline uses) and the RVB Graph's CT. The text
 // painters put pure white on pure black, so remapping white in the text
@@ -350,4 +375,42 @@ void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int 
             else if (background && row[x] == 0xFF000000u) row[x] = background;
         }
     }
+}
+
+// GR + MIXED with the card's colour text (Video-7 F/B, Eve TXT16 — 80COL
+// off): the lo-res rows as usual, bridged to 560, and rows 20-23 through
+// the fg/bg painter, as MAME's text_update does for the mixed rows
+// (render_line_color_array). The 280-wide legacy path painted them white
+// on black.
+bool Apple2Display::renderChatMauveGrMixed(Memory& mem, const Memory::DisplayState& state,
+                                           int scanY0, int scanY1)
+{
+    if (state.textMode || state.hiRes || !state.mixedMode || state.eightyCol ||
+        !mem.isIIE() || auxRam == nullptr ||
+        chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr)
+            != LeChatMauveCard::TextMode::Color)
+        return false;
+    int gLo = 0, gHi = 0;
+    if (bandScanlines(scanY0, scanY1, 0, kMixedTextFirstScanline, &gLo, &gHi)) {
+        renderLoRes(mem, state, gLo / 4, (gHi + 3) / 4, 0, 40, gLo, gHi);
+        upscaleFrameToFrame80(gLo, gHi);
+    }
+    renderChatMauveMixedColourText(mem, state, scanY0, scanY1);
+    setUseFrame80(true);
+    return true;
+}
+
+bool Apple2Display::renderChatMauveMixedColourText(Memory& mem,
+                                                   const Memory::DisplayState& state,
+                                                   int scanY0, int scanY1)
+{
+    if (!chatMauve || !mem.isIIE() || auxRam == nullptr ||
+        chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr)
+            != LeChatMauveCard::TextMode::Color)
+        return false;
+    int tLo = 0, tHi = 0;
+    if (bandRows(scanY0, scanY1, 20, 24, &tLo, &tHi))
+        renderTextChatMauveFgBg(mem, state, tLo, tHi, scanY0, scanY1,
+                                chatMauve->auxHiNibbleIsForeground());
+    return true;
 }

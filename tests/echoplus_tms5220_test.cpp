@@ -112,4 +112,18 @@ int main() {
         assert(std::all_of(l.begin(), l.end(), [](float v) { return v == 0; }) &&
                "the turbo backlog must be trimmed to 50 ms, not kept");
     }
+    // Ctrl-Reset reaches the VIA and the AYs, not the TMS5220C — it has no
+    // RESET pin (MAME pinout; a2mockingboard.cpp reset_from_bus). An
+    // utterance keeps talking; only a power cycle silences it.
+    {
+        EchoPlusTMS5220Card talker;
+        const std::array<uint8_t, 16> voice = {69,9,33,34,34,146,84,165,42,85,169,74,85,170,82,149};
+        talker.deviceSelectWrite(0, 0x60);
+        for (auto byte : voice) talker.deviceSelectWrite(0, byte);
+        assert(talker.deviceSelectRead(0) & 0x80);          // TS: talking
+        talker.onReset();
+        assert((talker.deviceSelectRead(0) & 0x80) && "Ctrl-Reset cut the speech");
+        talker.onPowerCycle();
+        assert(!(talker.deviceSelectRead(0) & 0x80));
+    }
 }

@@ -70,6 +70,12 @@ bool coreConfiguration(const SessionArchive& s, Blob& environment, M6502::CpuMod
         bool(environment[2]) != (cfg.videoStandard == VideoStandard::PAL)) {
         error = "session environment disagrees with its machine profile"; return false;
     }
+    // The profile switch never puts an NMOS core under a soldered 65C02
+    // (resolveCpuModeSetting), so no capture carries one: a file that does
+    // would boot the //c / enhanced //e ROM into KIL opcodes and freeze.
+    if (cfg.defaultCpu == M6502::CpuMode::CMOS && mode == M6502::CpuMode::NMOS) {
+        error = "session CPU mode is NMOS on a 65C02-only machine"; return false;
+    }
     return true;
 }
 std::unique_ptr<SlotPeripheral> makeCard(const SessionArchive::Slot& r, int slot, SystemProfile profile, std::string& error)

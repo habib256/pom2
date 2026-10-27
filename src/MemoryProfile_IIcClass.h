@@ -42,7 +42,7 @@ public:
                     bool iwmAuthoritative);
 
     bool forcesIntCxRom() const override { return true; }
-    void onResetSoftSwitches() override;
+    void onResetSoftSwitches(bool warm) override;
     bool romBankToggle() override;
 
     bool ioReadIWM (uint16_t addr, uint64_t cyc, uint8_t& out) override;

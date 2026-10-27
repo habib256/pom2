@@ -240,6 +240,12 @@ public:
 
     uint8_t peekWr(int channel, int reg) const;
     uint8_t peekRr(int channel, int reg) const;
+    /// RR1 as the bus reads it: the status of the character at the FIFO
+    /// EXIT — the next one to be read — over the latched bits (Zilog SCC/ESCC
+    /// User Manual p. 47: "the status in RR1 should be checked and then the
+    /// data should be read … because the act of reading the data pops both
+    /// the data and error FIFOs"). It used to show the PREVIOUS character's.
+    uint8_t rr1View(int index) const;
     /// Programmed bit rates in bits/second, 0 when no clock is selected.
     uint32_t txRate(int channel) const;
     uint32_t rxRate(int channel) const;

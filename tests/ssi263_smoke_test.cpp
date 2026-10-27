@@ -430,27 +430,38 @@ void testAudioRenderNonSilent()
 
 void testDurationFollowsPcmLength()
 {
+    // SSI 263A data sheet: a frame is 4096 x (16 - R) XCK periods, a
+    // phoneme (4 - D) frames; XCK = 1.023 MHz on the Apple cards. The A/!R
+    // cadence used to follow the PCM sample length, so R changed nothing.
     Ssi263 chip;
     chip.reset();
     chip.write(Ssi263::REG_CTTRAMP, 0x0F);
 
-    // Pause uses entry 0's PCM length, even though it renders silence.
-    // DUR=3 consumes groups of four; RATEINF does not drive PCM speed.
-    chip.write(Ssi263::REG_RATEINF, 0xF0);
-    chip.write(Ssi263::REG_DURPHON, 0xC0);     // mode=11
+    chip.write(Ssi263::REG_RATEINF, 0xF0);     // R = 15: one 4096-period frame
+    chip.write(Ssi263::REG_DURPHON, 0xC0);     // mode=11, D = 3
     const int fastest = chip.phonemeRemainingCycles();
-    assert(fastest > 30000 && fastest < 32000);
+    assert(fastest == 4096);
 
-    // DUR=0 consumes one source sample per native output frame.
-    chip.write(Ssi263::REG_RATEINF, 0x00);
-    // The IRQ mode is still latched as 3; this changes duration only.
-    chip.write(Ssi263::REG_DURPHON, 0x00);
+    chip.write(Ssi263::REG_RATEINF, 0x00);     // R = 0: 16 x 4096
+    chip.write(Ssi263::REG_DURPHON, 0x00);     // D = 0: four frames
     const int slowest = chip.phonemeRemainingCycles();
-    assert(slowest > 120000 && slowest < 125000);
+    assert(slowest == 4096 * 16 * 4);
 
-    assert(std::abs(slowest - fastest * 4) <= 3); // cycle-rounding bound
+    chip.write(Ssi263::REG_RATEINF, 0xA0);     // the typical R = $A, D = 0
+    chip.write(Ssi263::REG_DURPHON, 0x00);
+    assert(chip.phonemeRemainingCycles() == 4096 * 6 * 4);   // ~96 ms
 
-    std::printf("  ok: PCM duration (%d cyc DUR=3, %d cyc DUR=0)\n",
+    // On a PAL machine XCK is the PAL phase 0: the same R and D take the same
+    // number of XCK periods, i.e. the same CPU cycles at the PAL clock.
+    chip.setCpuClockHz(1015625.0);
+    chip.setXckHz(1015625.0);
+    chip.write(Ssi263::REG_DURPHON, 0x00);
+    assert(chip.phonemeRemainingCycles() == 4096 * 6 * 4);
+    chip.setXckHz(1022727.0);                  // an NTSC XCK seen from a PAL CPU
+    chip.write(Ssi263::REG_DURPHON, 0x00);
+    assert(chip.phonemeRemainingCycles() < 4096 * 6 * 4);
+
+    std::printf("  ok: datasheet A/R period (%d cyc R=F D=3, %d cyc R=0 D=0)\n",
                 fastest, slowest);
 }
 

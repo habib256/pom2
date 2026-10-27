@@ -130,6 +130,48 @@ int main()
         assert(mem.memRead(0xC0EC) == 0xFF);   // the frozen value is $FF
     }
 
+    // 5. Under a 4x accelerator the coast is still ~1 s of REAL time — the
+    //    556 on the controller does not see the CPU's clock. Counted in
+    //    accelerated cycles it ended after ~0.25 s (bug hunt 2026-10-27).
+    {
+        raw->setStandardClock(1022727.0);
+        raw->setCpuClock(4.0 * 1022727.0);
+        (void)mem.memRead(0xC0E9);
+        raw->advanceCycles(50'000);
+        (void)mem.memRead(0xC0E8);
+        raw->advanceCycles(2'000'000);                  // ~0.5 s at 4x
+        assert(raw->isMotorOn() && "under 4x the coast ended in CPU time");
+        raw->advanceCycles(2'300'000);                  // past 1 s of real time
+        assert(!raw->isMotorOn() && "…and it must still end");
+        raw->setCpuClock(1022727.0);
+    }
+
+    // 6. The disk itself turns in real time too: over the same span of CPU
+    //    cycles a 4x machine sees a quarter of the stream. The LSS used to
+    //    run on CPU cycles, so an accelerated read saw the disk spin 4x fast.
+    {
+        auto changesOver = [&](double cpuHz) {
+            raw->setCpuClock(cpuHz);
+            (void)mem.memRead(0xC0E9);
+            raw->advanceCycles(50'000);
+            int changes = 0;
+            uint8_t last = mem.memRead(0xC0EC);
+            for (int i = 0; i < 8000; ++i) {                // 64 k CPU cycles
+                raw->advanceCycles(8);
+                const uint8_t v = mem.memRead(0xC0EC);
+                if (v != last) ++changes;
+                last = v;
+            }
+            return changes;
+        };
+        const int at1x = changesOver(1022727.0);
+        const int at4x = changesOver(4.0 * 1022727.0);
+        std::printf("  latch changes over 64k CPU cycles: 1x %d, 4x %d\n", at1x, at4x);
+        assert(at1x > 100);
+        assert(at4x * 3 < at1x && "an accelerator spun the disk faster");
+        raw->setCpuClock(1022727.0);
+    }
+
     // ── The coast across a READ-GATE switch ─────────────────────────────
     // With no roms/diskii_p6.rom the card runs the legacy gate and switches
     // to the bit-level LSS only while a WOZ is mounted. Both gates share ONE
@@ -152,6 +194,32 @@ int main()
                 while (n > 0) { const int k = n > 4096 ? 4096 : static_cast<int>(n); c.advanceCycles(k); n -= k; }
             };
             constexpr long kSecond = 1'022'727;
+            {   // The bit-level LSS turns in real time too (see 6).
+                auto changesOver = [&](double cpuHz) {
+                    DiskIICard c;
+                    c.setIwmHost(false);
+                    c.setWriteBackEnabled(false);
+                    assert(c.insertDisk(0, scratchWoz.string()) && c.usingBitLss());
+                    c.setStandardClock(1022727.0);
+                    c.setCpuClock(cpuHz);
+                    c.deviceSelectRead(0x9); adv(c, 100000);
+                    // Completed nibbles: rising edges of the latch's bit 7.
+                    int nibbles = 0;
+                    uint8_t last = c.deviceSelectRead(0xC);
+                    for (int i = 0; i < 16000; ++i) {
+                        c.advanceCycles(4);
+                        const uint8_t v = c.deviceSelectRead(0xC);
+                        if ((v & 0x80) && !(last & 0x80)) ++nibbles;
+                        last = v;
+                    }
+                    return nibbles;
+                };
+                const int at1x = changesOver(1022727.0);
+                const int at4x = changesOver(4.0 * 1022727.0);
+                std::printf("  LSS nibbles over 64k CPU cycles: 1x %d, 4x %d\n", at1x, at4x);
+                assert(at1x > 100);
+                assert(at4x * 3 < at1x && "an accelerator spun the WOZ faster");
+            }
             {   // A
                 DiskIICard c;
                 c.setIwmHost(false);

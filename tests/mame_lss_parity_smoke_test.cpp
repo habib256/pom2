@@ -72,6 +72,11 @@ std::string makeSyntheticNib() {
     constexpr int kBytesPerTrack = DiskImage::kNibblesPerTrack;
     std::vector<uint8_t> img(static_cast<size_t>(kTracks) * kBytesPerTrack, 0xFF);
     constexpr int kProloguePos = 64;
+    // A data byte before the prologue: since STORAGE-010 a .nib's
+    // "FF … FF D5" run is self-sync (MAME a2_nib_format, 10 cells per $FF),
+    // and this carrier's geometry is the 8-cell-per-byte one the positions
+    // below are computed on.
+    img[kProloguePos - 1] = 0x96;
     img[kProloguePos + 0] = 0xD5;
     img[kProloguePos + 1] = 0xAA;
     img[kProloguePos + 2] = 0x96;

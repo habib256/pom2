@@ -118,7 +118,12 @@ public:
     // Stream-only hosts retain their existing one-shot AKD approximation.
     uint8_t readStrobe(bool iie) {
         std::lock_guard<std::mutex> lk(mtx_);
-        const bool down = hostKeysTracked_ ? heldKeys_.any() : keyReady_;
+        // A key injected with no host key held (gamepad, kiosk band, AI
+        // server) keeps the one-shot approximation even after a host key has
+        // been tracked once — it used to lose AKD for good from then on.
+        const bool down = hostKeysTracked_
+            ? (heldKeys_.any() || (keyReady_ && injectedKey_)) : keyReady_;
+        injectedKey_ = false;
         const uint8_t value = (lastKey_ & 0x7F) | (iie && down ? 0x80 : 0);
         keyReady_ = false;
         publish();
@@ -211,6 +216,7 @@ private:
     uint8_t              lastKey_  = 0;
     bool                 keyReady_ = false;
     bool                 hostKeysTracked_ = false;
+    bool                 injectedKey_ = false;   // latched key queued with no host key held
     std::bitset<512>     heldKeys_;
     // The last key pressed and the character it typed (setKeyHeld, then
     // queueKey), for `powerOn`.

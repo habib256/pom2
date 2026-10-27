@@ -17,6 +17,7 @@
 // PrinterCard — see header for ROM layout + protocol notes.
 
 #include "PrinterCard.h"
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 #include "PascalPrinterRom.h"
 #include "SlotRomAsm.h"
 
@@ -66,6 +67,7 @@ void PrinterCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     }
     spool_.push_back(v);
     ++spoolTotal_;
+    pom2::noteMediaWrite();   // printed output is irreversible: bump at the leaf (see PrinterCoordinator::notePrinted)
 }
 
 std::vector<uint8_t> PrinterCard::spoolBytes() const

@@ -188,9 +188,10 @@ void testPurePreflight()
     // Two IWMs exceed MSVC's default 1 MiB stack before the fixture's RAM.
     auto storage = std::make_unique<Rig>();
     Rig& rig = *storage;
+    rig.memory.setVideoClockRatio(0.25);   // an accelerated beam: its section is not empty
     const Blob valid = mex(rig.memory);
     Parts parts(valid);
-    assert(parts.devices.size() == 9);
+    assert(parts.devices.size() == 10);
     for (const Blob& b : parts.devices) assert(!b.empty());
     // Valid preflight is as inert as refusal, including the detached port
     // decoder's callbacks. Repeat to catch a hidden reset-on-validate.
@@ -211,6 +212,7 @@ void testPurePreflight()
     for (size_t k = 0; k < parts.devices.size(); ++k) {
         Parts bad = parts;
         if (k == 2) bad.devices[k].resize(3); // paging/IOU section minimum
+        else if (k == 9) bad.devices[k][23] ^= 0xFF;   // beam clock: the ratio's sign
         else bad.devices[k][0] ^= 0xFF;
         rig.refuse(bad.bytes());
     }

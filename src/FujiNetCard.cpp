@@ -695,6 +695,7 @@ void FujiNetCard::tapPrinterWrite(uint8_t unit, const uint8_t* p, std::size_t n)
         printerSpool_.insert(printerSpool_.end(), p, p + n);
     }
     printerSpoolTotal_ += n;
+    if (n) pom2::noteMediaWrite();   // printed output is irreversible: bump at the leaf
 }
 
 size_t FujiNetCard::bytesWritten() const

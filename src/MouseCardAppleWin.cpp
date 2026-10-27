@@ -216,7 +216,9 @@ void MouseCardAppleWin::advanceCycles(int cycles)
     // restore, rewind, setCycleCounter) and the kVblUnphased sentinel.
     if (ownsClock_) ownClock_ += static_cast<uint64_t>(cycles);
     const uint64_t now = *clock_;
-    if (now >= nextVblCycle_ || nextVblCycle_ - now > vblPeriod())
+    // An edge on the beam can lie a stretched frame away under an
+    // accelerator (serviceVbl); farther than that, the clock went back.
+    if (now >= nextVblCycle_ || nextVblCycle_ - now > vblPeriod() * vblStretch_)
         serviceVbl(now);
 }
 
@@ -245,7 +247,16 @@ void MouseCardAppleWin::setCpuClock(double hz)
     if (hz <= 0) return;
     const double old = cpuHz_;
     cpuHz_ = hz;
-    if (vblOnBeam() || nextVblCycle_ == kVblUnphased || old <= 0) return;
+    restretch();
+    if (nextVblCycle_ == kVblUnphased || old <= 0) return;
+    if (vblOnBeam()) {
+        // The speed changed under the pending edge: same beam position,
+        // a different number of CPU cycles away (Memory re-anchored first).
+        const uint64_t now = *clock_;
+        if (!ownsClock_ && nextVblCycle_ > now)
+            if (const uint64_t e = busNextVblCycle(now)) nextVblCycle_ = e;
+        return;
+    }
     // Own timer: what is left of the current period, in real time, is the
     // same; only its length in CPU cycles changes.
     const uint64_t now = *clock_;
@@ -277,6 +288,12 @@ void MouseCardAppleWin::serviceVbl(uint64_t now)
     // Next edge strictly after `now`, on the same grid Memory's VBL uses
     // (`advanceCyclesVideo`: frame base = counter - counter % frameCycles,
     // VBL begins at scanline 192).
+    // Asked of Memory when the card rides its counter: the beam runs on
+    // the crystal, so under an accelerator the edge is further away in CPU
+    // cycles than `frame` (Memory::nextVblCpuCycle).
+    if (!ownsClock_) {
+        if (const uint64_t e = busNextVblCycle(now)) { nextVblCycle_ = e; return; }
+    }
     const uint64_t edgeOffset = (frame > kVisibleScanlines * kCyclesPerScanline)
                                     ? kVisibleScanlines * kCyclesPerScanline : 0;
     uint64_t edge = now - (now % frame) + edgeOffset;

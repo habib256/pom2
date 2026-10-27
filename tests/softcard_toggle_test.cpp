@@ -35,11 +35,13 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "SlotPeripheral.h"
 #include "SoftCardZ80.h"
 
 #include <cassert>
 #include <cstdio>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -73,6 +75,33 @@ void testXlate()
         else                  ref = uint16_t(a & 0x0FFF);
         assert(SoftCardZ80::xlate(uint16_t(a)) == ref);
     }
+}
+
+// The Z80 is clocked from the Apple bus, not by a 6502 accelerator: under a
+// 4x Zip its 33 T-states (16.5 bus cycles) cost ~66 cycles of the
+// accelerated budget. It used to cost 16 — the Z80 ran 4x fast.
+void testAcceleratorDoesNotSpeedTheZ80()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    auto owned = std::make_unique<SoftCardZ80>();
+    SoftCardZ80* card = owned.get();
+    card->setMemory(&mem);
+    card->setCpu(&cpu);
+    mem.slotBus().plug(4, std::move(owned));
+    card->setStandardClock(1022727.0);
+    card->setCpuClock(4.0 * 1022727.0);
+    const uint8_t z80Seg1[] = { 0x3E, 0x5A, 0x32, 0x00, 0x70, 0x32, 0x00, 0xE4 };
+    uint16_t a = 0x1000;
+    for (uint8_t b : z80Seg1) mem.memWrite(a++, b);
+    mem.memWrite(0x0300, 0xA9); mem.memWrite(0x0301, 0x00);
+    mem.memWrite(0x0302, 0x8D); mem.memWrite(0x0303, 0x00); mem.memWrite(0x0304, 0xC4);
+    cpu.setProgramCounter(0x0300);
+    (void)cpu.run(4096);
+    assert(card->dmaActive());
+    const int z1 = card->dmaRun(4096);
+    std::printf("  4x accelerator: 33 T-states cost %d CPU cycles\n", z1);
+    assert(z1 >= 64 && z1 <= 68);
 }
 
 void testToggleAndResume()
@@ -211,8 +240,64 @@ void testControllerArbitration()
 
 } // namespace
 
+// Every device stamps an access with Memory's counter + the 6502's in-flight
+// cycles. During the Z80's tenure the counter stands at the start of the Z80
+// instruction, so the in-flight part must be where the access falls in it
+// (Zilog M-cycles, 2 T-states to a 6502 cycle). It was 0: every access of an
+// instruction landed on its first cycle.
+struct StampRecorder : SlotPeripheral {
+    M6502* cpu = nullptr;
+    std::vector<int> stamps;
+    std::string_view name() const override { return "recorder"; }
+    uint8_t deviceSelectRead(uint8_t) override
+    { stamps.push_back(cpu->getCurrentInstructionCycles()); return 0x00; }
+    void deviceSelectWrite(uint8_t, uint8_t) override
+    { stamps.push_back(cpu->getCurrentInstructionCycles()); }
+};
+
+void testZ80AccessStamps()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    auto owned = std::make_unique<SoftCardZ80>();
+    SoftCardZ80* card = owned.get();
+    card->setMemory(&mem);
+    card->setCpu(&cpu);
+    mem.slotBus().plug(4, std::move(owned));
+    auto rec = std::make_unique<StampRecorder>();
+    rec->cpu = &cpu;
+    StampRecorder* r = rec.get();
+    mem.slotBus().plug(5, std::move(rec));            // $C0D0 = Z80 $E0D0
+    //   LD A,($E0D0)      M1 4, n 3, n 3, read @T10        → cycle 5
+    //   LD ($E0D0),A      +1 T carried: write @T10+1       → cycle 5
+    //   LD HL,$E0D0       (10 T)
+    //   INC (HL)          M1 4, read @T4 (+1 carry → 2), write @T8 (+1 → 4)
+    //   LD ($E0D0),HL     M1 4, n 3, n 3, low @T10, high @T13 (+1 → 5, 7)
+    //   LD ($E400),A      release
+    const uint8_t prog[] = { 0x3A, 0xD0, 0xE0, 0x32, 0xD0, 0xE0,
+                             0x21, 0xD0, 0xE0, 0x34, 0x22, 0xD0, 0xE0,
+                             0x32, 0x00, 0xE4 };
+    uint16_t a = 0x1000;
+    for (uint8_t b : prog) mem.memWrite(a++, b);
+    mem.memWrite(0x0300, 0xA9); mem.memWrite(0x0301, 0x00);
+    mem.memWrite(0x0302, 0x8D); mem.memWrite(0x0303, 0x00); mem.memWrite(0x0304, 0xC4);
+    cpu.setProgramCounter(0x0300);
+    (void)cpu.run(4096);
+    assert(card->dmaActive());
+    (void)card->dmaRun(4096);
+    std::printf("  Z80 access stamps:");
+    for (int c : r->stamps) std::printf(" %d", c);
+    std::printf("\n");
+    // LD A,(nn) 13 T → carry 1; LD (nn),A 13 T → carry 0; LD HL,nn 10 T → 0;
+    // INC (HL) 11 T → carry 1.
+    const std::vector<int> want = { 5, 5, 2, 4, 5, 7 };
+    assert(r->stamps == want);
+}
+
 int main()
 {
+    testZ80AccessStamps();
+    testAcceleratorDoesNotSpeedTheZ80();
     testXlate();
     testToggleAndResume();
     testControllerArbitration();

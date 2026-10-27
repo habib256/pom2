@@ -225,6 +225,19 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
+    {   // The beam's clock (Memory.h videoCycleAt): under an accelerator it
+        // is not the CPU counter, and re-deriving it from that counter on a
+        // restore moved the beam to another line. Empty on a stock machine.
+        std::vector<uint8_t> sect;
+        if (vRatio_ != 1.0 || vAnchorCpu_ != vAnchorVideo_) {
+            uint64_t bits = 0;
+            std::memcpy(&bits, &vRatio_, sizeof bits);
+            for (uint64_t v : { vAnchorCpu_, vAnchorVideo_, bits })
+                for (int i = 0; i < 8; ++i) sect.push_back(static_cast<uint8_t>(v >> (8 * i)));
+        }
+        putU32(static_cast<uint32_t>(sect.size()));
+        putBytes(sect.data(), sect.size());
+    }
 }
 
 bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
@@ -277,6 +290,7 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
     ds.hiRes       = getU8() != 0; ds.eightyCol = getU8() != 0; ds.an3   = getU8() != 0;
     ds.altChar     = getU8() != 0; ds.dhgr      = getU8() != 0; ds.eightyStore = getU8() != 0;
     cycleCounter     = getU64();
+    vAnchorCpu_ = vAnchorVideo_ = cycleCounter;   // the beam re-anchors (Memory.h)
     vblNextEventCycle_ = 0;     // re-derive the VBL/frame gate from the new counter
     paddles_.setLatchCycle(getU64());
     {
@@ -449,5 +463,16 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             if (accel_ && k == 0) { accel_->onReset(cycleCounter); return true; }
             return !accel_ || accel_->loadSnapshotState(p, k);
         }, /*wantsEmpty=*/true)) return false;
+    if (!readSection([&](const uint8_t* p, size_t k) {
+            if (k != 24) return k == 0;      // none: the identity setCycleCounter left
+            uint64_t v[3] = {};
+            for (int j = 0; j < 3; ++j)
+                for (int i = 0; i < 8; ++i) v[j] |= static_cast<uint64_t>(p[8 * j + i]) << (8 * i);
+            double r = 1.0;
+            std::memcpy(&r, &v[2], sizeof r);
+            vAnchorCpu_ = v[0]; vAnchorVideo_ = v[1]; vRatio_ = r;
+            vblNextEventCycle_ = 0;
+            return true;
+        })) return false;
     return true;
 }

@@ -294,7 +294,6 @@ private:
     // ─── Flag helpers ─────────────────────────────────────────────────
     void clr_nz()   { reg.CC &= ~(NFLAG | ZFLAG); }
     void clr_nzc()  { reg.CC &= ~(NFLAG | ZFLAG | CFLAG); }
-    void clr_hc()   { reg.CC &= ~(HFLAG | CFLAG); }
     void clr_hnzc() { reg.CC &= ~(HFLAG | NFLAG | ZFLAG | CFLAG); }
     void set_z8(uint8_t a)            { if (!a) reg.CC |= ZFLAG; }
     void set_n8(uint8_t a)            { reg.CC |= (a & 0x80) >> 5; }

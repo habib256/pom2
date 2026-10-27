@@ -273,7 +273,7 @@ void LeChatMauveCard::clockFifo(bool dataBit)
     // it a second time. Without a Memory there is no clock to stamp with —
     // the ring stays empty and latchBefore() degrades to the current value.
     if (mem_) {
-        latchRing_[latchRingHead_] = { mem_->accessCycle(), before, fifo };
+        latchRing_[latchRingHead_] = { mem_->videoAccessCycle(), before, fifo };
         latchRingHead_ = (latchRingHead_ + 1) % kLatchRing;
         if (latchRingSize_ < kLatchRing) ++latchRingSize_;
     }

@@ -164,6 +164,7 @@ public:
     /// the CPU clock rescales the distance to the next edge instead of
     /// re-phasing it: the interrupts stay 1/60 s apart in real time.
     void setCpuClock(double hz) override;
+    void setStandardClock(double hz) override { if (hz > 0) { stdHz_ = hz; restretch(); } }
     /// The VBL interrupt rate TIMEDATA put in force at the last INIT: 50 or
     /// 60, or 0 when no program asked — then the card runs at its default
     /// 60 Hz: on the beam under NTSC, on its own timer under PAL.
@@ -299,6 +300,13 @@ private:
     int8_t          timeDataPending_ = -1;
     int8_t          vblRate_         = -1;
     double          cpuHz_           = 1022727.0;
+    double          stdHz_           = 0.0;   // 0 = not given: no accelerator
+    uint64_t        vblStretch_      = 1;     // ceil(cpuHz_ / stdHz_), >= 1
+    void            restretch()
+    {
+        const double r = stdHz_ > 0.0 ? cpuHz_ / stdHz_ : 1.0;
+        vblStretch_ = r > 1.0 ? static_cast<uint64_t>(r) + 1 : 1;
+    }
     uint64_t        vblPeriod() const;
     bool            vblOnBeam() const;   // the rate is the video standard's
     uint64_t        nextVblCycle_ = kVblUnphased;   // absolute cycle of the next edge

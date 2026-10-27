@@ -294,7 +294,10 @@ void test_pending_irq_survives_snapshot()
     std::remove(mcuPath.c_str());
 }
 
-void test_mcu_pacing_ratio()
+// `accel` > 1 seats an accelerator: the CPU clock rises, the bus clock does
+// not. The 68705 has its own crystal, so per CPU cycle it must run 1/accel as
+// much — under a 4x Zip it used to run 4x fast, and its VBL interrupt too.
+void test_mcu_pacing_ratio(double accel = 1.0)
 {
     // Prefer the real 341-0269 firmware: its idle loop is all 10-cycle
     // BRCLRs, the worst case against the 4-14 MCU-cycle budgets
@@ -313,6 +316,10 @@ void test_mcu_pacing_ratio()
     MouseCard card(4);
     assert(card.loadRoms(slotPath, mcuPath));
     card.onReset();
+    const double stockHz = 1022727.0;
+    card.setCpuClock(stockHz * accel);
+    card.setStandardClock(stockHz);
+    const double target = 0.5 / accel;
 
     // A realistic 6502 instruction-cycle mix — advanceCycles is driven per
     // instruction, so every budget is this small.
@@ -327,15 +334,15 @@ void test_mcu_pacing_ratio()
     const double ratio = static_cast<double>(card.mcuCyclesRun()) /
                          static_cast<double>(budget);
     std::printf("  mouse MCU pacing: %llu MCU cycles / %llu CPU cycles"
-                " = %.6f (target 0.500000)\n",
+                " = %.6f (target %.6f)\n",
                 static_cast<unsigned long long>(card.mcuCyclesRun()),
-                static_cast<unsigned long long>(budget), ratio);
+                static_cast<unsigned long long>(budget), ratio, target);
     std::fflush(stdout);     // the assert below abort()s without flushing
-    if (std::fabs(ratio - 0.5) > 0.001) {
+    if (std::fabs(ratio - target) > 0.001) {
         std::fprintf(stderr,
-            "MCU clocked at %.4fx the bus instead of 0.5x\n", ratio);
+            "MCU clocked at %.4fx the CPU instead of %.4fx\n", ratio, target);
     }
-    assert(std::fabs(ratio - 0.5) <= 0.001);
+    assert(std::fabs(ratio - target) <= 0.001);
 
     if (!tmpSlot.empty()) std::remove(tmpSlot.c_str());
     if (!tmpMcu.empty())  std::remove(tmpMcu.c_str());
@@ -407,6 +414,7 @@ int main()
     test_signature_passes_through_to_slot_rom();
     test_pending_irq_survives_snapshot();
     test_mcu_pacing_ratio();
+    test_mcu_pacing_ratio(4.0);   // Zip Chip / //c+ CGGA
     test_vbl_interrupt_rate();
 
     std::printf("OK mouse_card_smoke\n");

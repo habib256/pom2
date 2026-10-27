@@ -71,6 +71,7 @@ Memory::Memory()
     // `memReadSlow`'s $Cxxx dispatch, never the fast bus (PERFORMANCE §§ 8.2/8.5).
     slots.setFloatingBusSource([this]() { return floatingBus(); });
     slots.setCycleSource([this]() { return getCycleCounter(); });
+    slots.setVblEdgeSource([this](uint64_t now) { return nextVblCpuCycle(now); });
     slots.setCycleCounterRef(&cycleCounter);
     slots.setAuxRamRef(aux.data());   // VidHD's SHR source; stable (RamWorks memcpys INTO aux)
 
@@ -434,6 +435,7 @@ void Memory::cassetteAdvanceCycles(int cycles)
 
 void Memory::advanceCyclesVideo()
 {
+    const uint64_t vnow = videoNow();   // the beam's clock, not the CPU's
     // Scanline-accurate VBL transition detection. Apple II video timing:
     // 65 CPU cycles/line; 262 lines NTSC / 312 PAL. Visible: 0..191. VBL is
     // 192..261 (NTSC) / 192..311 (PAL) → the VBL/frame period must follow the
@@ -486,15 +488,15 @@ void Memory::advanceCyclesVideo()
     const uint64_t frameCycles = kCyclesPerScanline * kScanlinesPerFrame;
     if (frameCycles != vblFrameCycles_) {
         vblFrameCycles_ = frameCycles;
-        vblFrameBase_   = cycleCounter - (cycleCounter % frameCycles);
+        vblFrameBase_   = vnow - (vnow % frameCycles);
     }
-    const uint64_t sinceBase   = cycleCounter - vblFrameBase_;   // wraps if behind
+    const uint64_t sinceBase   = vnow - vblFrameBase_;   // wraps if behind
     if (sinceBase >= frameCycles) {
         vblFrameBase_ = (sinceBase < 2 * frameCycles)
                             ? vblFrameBase_ + frameCycles          // ordinary rollover
-                            : cycleCounter - (cycleCounter % frameCycles);  // resync
+                            : vnow - (vnow % frameCycles);  // resync
     }
-    const uint64_t scanline = (cycleCounter - vblFrameBase_) / kCyclesPerScanline;
+    const uint64_t scanline = (vnow - vblFrameBase_) / kCyclesPerScanline;
     const bool nowActive = scanline < kVisibleScanlines;
 
     // Line-boundary edge, same as the $C019 read path (see the long note
@@ -576,7 +578,7 @@ void Memory::advanceCyclesVideo()
     // it is still ahead) or, failing that, the frame boundary — so that is
     // the next cycle the inline gate lets this function run.
     const uint64_t edge = vblFrameBase_ + kVisibleScanlines * kCyclesPerScanline;
-    vblNextEventCycle_ = (cycleCounter < edge) ? edge : vblFrameBase_ + frameCycles;
+    vblNextEventCycle_ = cpuCycleForVideo((vnow < edge) ? edge : vblFrameBase_ + frameCycles);
 }
 
 void Memory::beginVideoEventFrame()
@@ -620,8 +622,7 @@ void Memory::pushVideoEventLocked(VideoEventKind kind, bool value)
     const uint64_t kCyclesPerScanline = static_cast<uint64_t>(t.cyclesPerScanline);
     const uint64_t kScanlinesPerFrame = static_cast<uint64_t>(t.scanlinesPerFrame);
     const uint64_t kVisibleScanlines  = static_cast<uint64_t>(t.visibleScanlines);
-    const uint64_t now = cycleCounter +
-        (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);
+    const uint64_t now = videoAccessCycle();
     const uint64_t rawLine = (now / kCyclesPerScanline) % kScanlinesPerFrame;
     // A switch thrown during VBL (rawLine >= 192) must NOT be replayed
     // inside the visible frame: the beam already finished the picture in
@@ -695,7 +696,7 @@ void Memory::resetSoftSwitches(bool warm)
     vblIrqMask    = false;
     vblIrqPending = false;
     if (cpu) cpu->setIrqLine(M6502::IRQ_SRC_VBL, false);
-    if (iicProfile_) iicProfile_->onResetSoftSwitches();  // ROMBANK → bank 0
+    if (iicProfile_) iicProfile_->onResetSoftSwitches(warm);  // ROMBANK: kept warm
     if (accel_) accel_->onReset(cycleCounter);  // Zip: MAME reset_w → accel_reset
     // //c boots with INTCXROM forced on (MAME `apple2e.cpp:1273`,
     // `apple2e.cpp:1467-1475`). Gate on `isIIcClass` so BOTH 16 KB
@@ -947,10 +948,10 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // Keyboard writes above retain their strobe-clear side effect.
     if (iicProfile_ && (low == 0x15 || low == 0x17 || (low >= 0x40 && low <= 0x6F))) {
         if (auto* mouse = slots.peripheral(4)) {
-            uint8_t value;
-            const uint8_t bus = low < 0x20 ? (kbLatch & 0x7F) : floatingBus();
+            uint8_t value; const uint8_t bus = low < 0x20 ? (kbLatch & 0x7F) : floatingBus();
             if (mouse->iicMouseAccess(low, isWrite, ioudis, bus, value)) return value;
-        }
+        }   // No IOU mouse claimed it: X0/Y0 IRQ flags clear (MAME c000_iic_r), not RDCXROM/RDC3ROM.
+        if (low == 0x15 || low == 0x17) return kbLatch & 0x7F;
     }
     // IIe Language Card status reads RDBNK2/RDLCRAM (only reachable in
     // iieMode: II+ $C01x is the strobe mirror handled above). Low 7 bits
@@ -1025,8 +1026,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // already add the in-flight instruction progress — this is the
         // same stamp, and it matters for beam-racing code that polls
         // $C019 to find the VBL edge.
-        const uint64_t now = cycleCounter +
-            (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0);
+        const uint64_t now = videoAccessCycle();
         // NO intra-line phase shift is applied here, and that is a
         // measured conclusion rather than an omission.
         //
@@ -1307,7 +1307,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // switch used to consume an armed PLAY and start the tape.
         const uint8_t bit7 = iicProfile_ ? (iic40ColSwitch_ ? uint8_t{0x80} : uint8_t{0})
             : cassette ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
-                       : uint8_t{0};
+                       : uint8_t{0x80};   // nothing connected reads high
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
     }
 
@@ -1328,7 +1328,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                 case 0x63: return paddles_.button2(iieMode && !iicProfile_) ? 0x80 : 0x00;
                 case 0x64: case 0x65: case 0x66: case 0x67: {
                     const int idx = mirrored - 0x64;
-                    return paddles_.discharging(idx, cycleCounter) ? 0x80 : 0x00;
+                    return paddles_.discharging(idx, stockSincePaddleStrobe()) ? 0x80 : 0x00;
                 }
                 case 0x60:
                     // $C068 mirrors $C060 (cassette comparator) per the
@@ -1343,7 +1343,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                     // door into a deck the machine does not have.
                     return (cassette && !iicProfile_)
                         ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
-                        : uint8_t{0};
+                        : static_cast<uint8_t>(iicProfile_ ? 0x00 : 0x80);
                 default: return 0;  // unreachable: mirrored ∈ $60-$67
             }
         }();
@@ -1636,8 +1636,7 @@ uint8_t Memory::floatingBus() const
     // CPU read path: the data fetch happens at the in-flight instruction's
     // access cycle (last cycle for LDA/CMP/BIT $C0xx), so sample the scanner
     // there — consistent with pushVideoEventLocked's timestamp.
-    return floatingBus(cycleCounter +
-        (cpu ? static_cast<uint64_t>(cpu->getCurrentInstructionCycles()) : 0));
+    return floatingBus(videoAccessCycle());
 }
 
 uint8_t Memory::floatingBus(uint64_t absCycle) const

@@ -73,3 +73,15 @@ Still unvalidated: PoP side B and later levels, anti-copy consequences
 late in gameplay, completion of either game, other editions/captures,
 and comparison against physical hardware. Synthetic flux/cadence tests
 remain the automated regression gates.
+
+## Rerun 2026-10-27
+
+The same four images (SHA-256 identical to the table above, fetched again
+from the WOZ-a-day mirror into a scratch directory) and the same two probe
+command lines, on a tree that had just moved the Disk II's LSS, spindle and
+stepper to stock bus time and given `.nib` images MAME's sync rule. Every
+milestone above reproduced: Captain side A's head range 0–84 and the side-B
+`CAPTAIN GOODNIGHT HAS ARRIVED!` scene at 60 s, HGR page flips through
+90 s ending on quarter track 20; Prince of Persia's title at 30 s and the
+first dungeon room with the prince at 60 s.
+

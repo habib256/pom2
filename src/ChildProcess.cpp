@@ -24,6 +24,8 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
+#include <cwctype>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -669,6 +671,31 @@ std::wstring quoteWindowsArg(const std::wstring& a)
     return q;
 }
 
+/// The POSIX branch's environmentVarIsUnsafe, for Windows: the Ghostscript
+/// family is an instruction to the child (`GS_OPTIONS=-dNOSAFER` overrides
+/// the `-dSAFER` PostScriptRender passes), and CreateProcessW with a null
+/// environment handed it to gswin64c whole. Names are case-insensitive here.
+/// Empty result = could not read the environment; the caller inherits.
+std::vector<wchar_t> helperEnvironmentBlock()
+{
+    std::vector<wchar_t> block;
+    LPWCH env = GetEnvironmentStringsW();
+    if (!env) return block;
+    static const wchar_t* kUnsafe[] = {
+        L"GS_OPTIONS=", L"GS_LIB=", L"GS_FONTPATH=", L"GS_DEVICE=",
+    };
+    for (const wchar_t* e = env; *e; e += std::wcslen(e) + 1) {
+        bool unsafe = false;
+        for (const wchar_t* u : kUnsafe)
+            if (_wcsnicmp(e, u, std::wcslen(u)) == 0) { unsafe = true; break; }
+        if (!unsafe) block.insert(block.end(), e, e + std::wcslen(e) + 1);
+    }
+    FreeEnvironmentStringsW(env);
+    block.push_back(L'\0');
+    if (block.size() == 1) block.push_back(L'\0');   // an empty block is two NULs
+    return block;
+}
+
 // GenerateConsoleCtrlEvent can only target the caller's console. Launch this
 // executable in a tiny broker mode so the long-lived POM2 process never calls
 // FreeConsole(), never replaces its console, and never invalidates CRT stdio.
@@ -813,10 +840,12 @@ bool ChildProcess::start(const std::string& exePath,
     // CREATE_NEW_PROCESS_GROUP with this: Windows disables Ctrl+C for the root
     // of a newly-created process group.  The Job Object below remains the hard
     // process-tree containment/fallback mechanism.
+    std::vector<wchar_t> envBlock = helperEnvironmentBlock();
     if (!CreateProcessW(wideExe.c_str(), mutableCmd.data(), nullptr, nullptr,
                         FALSE,
-                        CREATE_NEW_CONSOLE | CREATE_SUSPENDED,
-                        nullptr,
+                        CREATE_NEW_CONSOLE | CREATE_SUSPENDED |
+                            (envBlock.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT),
+                        envBlock.empty() ? nullptr : envBlock.data(),
                         workingDir.empty() ? nullptr : wideDir.c_str(),
                         &si, &pi)) {
         const DWORD e = GetLastError();
@@ -949,12 +978,43 @@ std::string ChildProcess::findOnPath(const std::string& name)
                                 ? name : name + ".exe";
     const std::wstring wideExe = utf8ToWide(exe);
     if (wideExe.empty()) return {};
-    const DWORD needed = SearchPathW(nullptr, wideExe.c_str(), nullptr,
+    // An explicit search path, as the POSIX branch does: System32 first, then
+    // the ABSOLUTE PATH entries. SearchPathW(nullptr, …) searched the
+    // application directory and then the CURRENT directory before System32,
+    // so a curl.exe / gswin64c.exe sitting in the folder POM2 was launched
+    // from (a double-clicked disk image in an extracted archive) shadowed the
+    // real one.
+    std::wstring searchPath;
+    wchar_t sys[MAX_PATH];
+    const UINT sysLen = GetSystemDirectoryW(sys, MAX_PATH);
+    if (sysLen > 0 && sysLen < MAX_PATH) searchPath.assign(sys, sysLen);
+    const DWORD pathLen = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    if (pathLen > 0) {
+        std::wstring path(pathLen, L'\0');
+        path.resize(GetEnvironmentVariableW(L"PATH", &path[0], pathLen));
+        std::size_t start = 0;
+        while (start <= path.size()) {
+            std::size_t end = path.find(L';', start);
+            if (end == std::wstring::npos) end = path.size();
+            const std::wstring e = path.substr(start, end - start);
+            const bool absolute =
+                (e.size() >= 3 && std::iswalpha(e[0]) && e[1] == L':' &&
+                 (e[2] == L'\\' || e[2] == L'/')) ||
+                (e.size() >= 2 && e[0] == L'\\' && e[1] == L'\\');
+            if (absolute) {
+                if (!searchPath.empty()) searchPath += L';';
+                searchPath += e;
+            }
+            start = end + 1;
+        }
+    }
+    if (searchPath.empty()) return {};
+    const DWORD needed = SearchPathW(searchPath.c_str(), wideExe.c_str(), nullptr,
                                      0, nullptr, nullptr);
     if (needed == 0) return {};
     std::vector<wchar_t> buf(static_cast<size_t>(needed) + 1, L'\0');
     wchar_t* filePart = nullptr;
-    const DWORD n = SearchPathW(nullptr, wideExe.c_str(), nullptr,
+    const DWORD n = SearchPathW(searchPath.c_str(), wideExe.c_str(), nullptr,
                                 static_cast<DWORD>(buf.size()), buf.data(),
                                 &filePart);
     if (n > 0 && n < buf.size()) return wideToUtf8(std::wstring(buf.data(), n));

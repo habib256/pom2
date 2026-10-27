@@ -97,6 +97,7 @@ uint8_t SoftCardZ80::z80MemRead(uint16_t addr)
     // line stops the clock first. Returning open-bus matches MAME.
     if (!enabled_ || !mem_)
         return 0xFF;
+    stampAccess();
     return mem_->memRead(xlate(addr));
 }
 
@@ -104,7 +105,22 @@ void SoftCardZ80::z80MemWrite(uint16_t addr, uint8_t v)
 {
     if (!enabled_ || !mem_)
         return;
+    stampAccess();
     mem_->memWrite(xlate(addr), v);
+}
+
+// The Z80 runs on the 6502's bus, two T-states to a 6502 cycle (MAME
+// a2softcard: 2.041 MHz). Every device stamps an access with Memory's
+// counter + the 6502's in-flight cycles; the counter stands at the start
+// of this Z80 instruction, so the in-flight part is where the access falls
+// inside it (Z80::busT, plus the odd half-cycle carried in), scaled like
+// dmaRun's advance. It used to be 0: every access of an instruction at its
+// first cycle — a DEC (IX+d) on a 6522 counter read 9 cycles early.
+void SoftCardZ80::stampAccess()
+{
+    if (!cpu_) return;
+    const double c = (z80_.busT() + tCarry_) * 0.5 * busRatio_;
+    cpu_->setInFlightCycles(static_cast<int>(c));
 }
 
 // Run the Z80 for (up to) a 6502-cycle budget slice. 2 Z80 T-states =
@@ -124,11 +140,23 @@ int SoftCardZ80::dmaRun(int cycles6502)
     // was stamped up to 7 cycles off the Z80's own position. MAME's
     // dma_r/dma_w run on the Z80 timeline (a2softcard.cpp:111-176).
     if (cpu_) cpu_->clearInFlightCycles();
+    // Bus cycles → the CPU-cycle timebase every stamp uses. Identity with no
+    // accelerator; under a 4x Zip the Z80 used to run 4x fast, CP/M's timing
+    // loops with it.
+    const double ratio = (cpuHz_ > 0.0 && stockHz_ > 0.0 && cpuHz_ > stockHz_)
+        ? cpuHz_ / stockHz_ : 1.0;
+    busRatio_ = ratio;
     int spent = 0;
     while (spent < cycles6502 && enabled_) {
         int t = z80_.step() + tCarry_;
         tCarry_ = t & 1;
-        const int c = t >> 1;
+        int c = t >> 1;
+        if (ratio != 1.0) {
+            const double a = c * ratio + busCarry_;
+            c = static_cast<int>(a);
+            busCarry_ = a - c;
+        }
+        if (cpu_) cpu_->clearInFlightCycles();   // the counter now covers it
         if (c > 0) {
             if (mem_)
                 mem_->advanceCycles(c);

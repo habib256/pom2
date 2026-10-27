@@ -85,11 +85,17 @@ DriveRackResult renderDriveRack(bool& open, const std::vector<DrivePicture>& dri
                     ImGui::GetColorU32(ImGuiCol_ButtonHovered), 4.0f, 2.0f);
             } else ImGui::SetTooltip("Eject this disk before inserting another");
         }
-        ImGui::BeginDisabled(!drive.loaded || drive.path.empty());
+        // A detached session disk: ejecting discards its writes (the drive
+        // panels grey Eject out for it too).
+        const bool sessionDisk = drive.path == "(session disk)";
+        ImGui::BeginDisabled(!drive.loaded || drive.path.empty() || sessionDisk);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, ImGui::GetStyle().FramePadding.y));
         if (ImGui::SmallButton(ICON_FA_EJECT))
             result.actions.push_back({DriveRackAction::Type::Eject, index, {}});
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eject disk");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", sessionDisk
+                ? "A session disk has no file: ejecting it would discard its writes"
+                : "Eject disk");
         ImGui::SameLine(0.0f, 3.0f);
         if (ImGui::SmallButton(drive.writeProtected ? ICON_FA_LOCK : ICON_FA_LOCK_OPEN))
             result.actions.push_back({DriveRackAction::Type::ToggleWrite, index, {}});

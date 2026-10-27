@@ -107,8 +107,12 @@ void buildScreenDumpImageWriter(const uint32_t* pixels, int w, int h,
     // 72 dpi bit image: `ESC n` sets 9 cpi, whose graphics density is 72 dpi
     // horizontally, so one screen pixel becomes one dot and the aspect ratio
     // survives (the band feed below is the vertical half of that).
+    // One screen pixel per dot, at the narrowest pitch whose 8" line holds
+    // the picture (ImageWriter II Tech. Ref. table 8-2): ESC n 72 dpi = 576
+    // dots, ESC E 96 = 768, ESC p 144 = 1152, ESC P 160 = 1280. ESC n alone
+    // ran a 720-dot Videx picture 2" off the line, where the head drops it.
     out.push_back(kEsc);
-    out.push_back('n');
+    out.push_back(w <= 576 ? 'n' : w <= 768 ? 'E' : w <= 1152 ? 'p' : 'P');
 
     // 16/144 in = 8 dots at 72 dpi — exactly one band, so consecutive bands
     // abut with no white seam and no overlap.
@@ -143,6 +147,10 @@ void buildScreenDumpImageWriter(const uint32_t* pixels, int w, int h,
         out.push_back('\n');
     }
 
+    // ESC T persists until ESC A/B/T, a reset or power-off: put the 6 lpi
+    // default back, or the next text job printed at 1/9" lines.
+    out.push_back(kEsc);
+    out.push_back('A');
     if (opt.formFeed) out.push_back(0x0C);
 }
 
@@ -171,7 +179,9 @@ void buildScreenDumpEpson(const uint32_t* pixels, int w, int h, int stride,
             out.push_back('K');
         } else {
             out.push_back('*');
-            out.push_back(kMode72Dpi);
+            // 72 dpi holds 576 dots on the FX's 8" line; 90 dpi (mode 6) 720,
+            // 120 dpi (mode 1) 960 (FX vol. 2 App. B).
+            out.push_back(w <= 576 ? kMode72Dpi : w <= 720 ? uint8_t(6) : uint8_t(1));
         }
         // TWO BINARY BYTES, low first — not four ASCII digits.
         out.push_back(static_cast<uint8_t>(w & 0xFF));
@@ -200,6 +210,9 @@ void buildScreenDumpEpson(const uint32_t* pixels, int w, int h, int stride,
         out.push_back('\n');
     }
 
+    // ESC 3 persists: restore the 1/6" default (ESC 2) for the next text.
+    out.push_back(kEsc);
+    out.push_back('2');
     if (opt.formFeed) out.push_back(0x0C);
 }
 

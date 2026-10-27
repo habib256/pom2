@@ -136,7 +136,7 @@ Pom2HgrPaintHost::Pom2HgrPaintHost(EmulationController* emu)
       auxWriter_([this](const PaintCardBatcher::Writes& w) {
           if (!emu_) return;
           auto st = emu_->lockState();
-          uint8_t* aux = st.memory().auxDataMutable();
+          uint8_t* aux = st.memory().videoAuxDataMutable();  // the bank on screen, not the CPU's RamWorks bank
           for (const auto& [addr, val] : w)
               if (addr < 0xC000) aux[addr] = val;
       })
@@ -391,7 +391,7 @@ bool Pom2HgrPaintHost::saveDlgrImage(const std::string& path, uint16_t baseAddr,
     {
         auto st = emu_->lockState();
         const Memory& mem = st.memory();
-        std::memcpy(bytes.data(),         mem.auxData() + baseAddr, 0x400);
+        std::memcpy(bytes.data(),         mem.videoAuxData() + baseAddr, 0x400);
         std::memcpy(bytes.data() + 0x400, mem.data()    + baseAddr, 0x400);
     }
     return publishBytes(path, bytes.data(), bytes.size(), err);
@@ -455,7 +455,7 @@ bool Pom2HgrPaintHost::loadDhgrImage(const std::string& path, uint16_t baseAddr,
     }
     auto st = emu_->lockState();
     Memory& mem = st.memory();
-    std::memcpy(mem.auxDataMutable() + baseAddr, bytes.data(), hgrpaint::kHiresSize);
+    std::memcpy(mem.videoAuxDataMutable() + baseAddr, bytes.data(), hgrpaint::kHiresSize);
     for (int i = 0; i < hgrpaint::kHiresSize; ++i)
         mem.writeRamUnchecked(static_cast<uint16_t>(baseAddr + i),
                               static_cast<uint8_t>(bytes[hgrpaint::kHiresSize + i]));
@@ -473,7 +473,7 @@ bool Pom2HgrPaintHost::saveDhgrImage(const std::string& path, uint16_t baseAddr,
     {
         auto st = emu_->lockState();
         const Memory& mem = st.memory();
-        std::memcpy(bytes.data(), mem.auxData() + baseAddr, hgrpaint::kHiresSize);
+        std::memcpy(bytes.data(), mem.videoAuxData() + baseAddr, hgrpaint::kHiresSize);
         std::memcpy(bytes.data() + hgrpaint::kHiresSize, mem.data() + baseAddr,
                     hgrpaint::kHiresSize);
     }

@@ -554,26 +554,26 @@ void testCommandBoundsAndTabs()
         ImageWriter iw(144, ImageWriter::PaperSize::Letter);
         feed(iw, "\x1B" "E");                  // elite, 12 cpi
         feed(iw, "\x1B" "L013");               // margin at column 13
-        assert(std::abs(iw.status().headX - 13 * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + 13 * kChar)) < 1e-9);
         feed(iw, "\x1B(005,020.");             // tab columns 5 and 20
         feed(iw, "\t");
         // margin + (5-1) cells — a stop "before" the margin's own number is
         // still to the RIGHT of it, because the two scales differ by one.
-        assert(std::abs(iw.status().headX - (13 + 4) * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + (13 + 4) * kChar)) < 1e-9);
         feed(iw, "\t");
-        assert(std::abs(iw.status().headX - (13 + 19) * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + (13 + 19) * kChar)) < 1e-9);
 
         // ESC u adds one stop on the same scale, and ESC ) deletes by the
         // same number — all three sites have to agree or a stop can be set
         // and never deleted.
         feed(iw, "\x1B" "u010");
         feed(iw, "\r\t");
-        assert(std::abs(iw.status().headX - (13 + 4) * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + (13 + 4) * kChar)) < 1e-9);
         feed(iw, "\t");
-        assert(std::abs(iw.status().headX - (13 + 9) * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + (13 + 9) * kChar)) < 1e-9);
         feed(iw, "\x1B)010.");
         feed(iw, "\r\t\t");
-        assert(std::abs(iw.status().headX - (13 + 19) * kChar) < 1e-9);
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + (13 + 19) * kChar)) < 1e-9);
     }
 
     // 2. Proportional character spacing — TWO commands with two different
@@ -715,17 +715,19 @@ void testCommandBoundsAndTabs()
     {
         ImageWriter iw(144, ImageWriter::PaperSize::Letter);
         feed(iw, "\x1B" "L010");
-        assert(std::abs(iw.status().headX - 10 * kChar) < 1e-9);   // not 9
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + 10 * kChar)) < 1e-9);   // not 9
         // The manual's own example, at the manual's own pitch.
         feed(iw, "\x1B" "L035");
-        assert(std::abs(iw.status().headX - 35 * kChar) < 1e-9);
-        // …and 000 is position 0 exactly, the power-on far-left travel.
+        assert(std::abs(iw.status().headX - (ImageWriter::kHomeX + 35 * kChar)) < 1e-9);
+        // …and 000 is position 0 exactly, the power-on far-left travel —
+        // where the head sits at power-on (kHomeX), not the paper edge: the
+        // margin used to land 1/4" LEFT of the power-on position (2026-10-27).
         // Setting the margin does not RETRACT a head that is already past it
         // — the manual's model is that a new margin takes effect from the
         // next line — so ask the carriage to return and check where it lands.
         feed(iw, "\x1B" "L000");
         feed(iw, "\r");
-        assert(iw.status().headX == 0.0);
+        assert(std::abs(iw.status().headX - ImageWriter::kHomeX) < 1e-9);
 
         ImageWriter wide(144, ImageWriter::PaperSize::Letter);
         feed(wide, "\x1B" "L999");

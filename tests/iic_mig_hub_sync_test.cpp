@@ -148,7 +148,7 @@ void testResetClearsProfileCopies()
     r.prof.internalRomWrite(0xCE40, 0x00);        // MIG: external 3.5" select
     expect(r.hub.mig35Sel(), "MIG $CE40 did not set the hub's 3.5\" select");
     r.hub.reset();                                // what a machine reset does
-    r.prof.onResetSoftSwitches();
+    r.prof.onResetSoftSwitches(/*warm=*/false);   // a cold reset (the RESET key keeps them)
     expect(r.blobIntDrive() == 0, "a reset left migIntDrive_ set");
     std::vector<uint8_t> b;
     r.prof.appendSnapshotState(b);

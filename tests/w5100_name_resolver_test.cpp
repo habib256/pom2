@@ -76,6 +76,36 @@ void testFailureIsCachedToo()
     std::printf("  a failed lookup is cached as a failure: OK\n");
 }
 
+// ── ...but not for the whole session ─────────────────────────────────────
+//
+// A name that failed while the host network was still coming up stayed
+// unresolvable until a cold boot. Once the failure is older than its
+// lifetime, the next OPEN asks again; a positive answer never expires.
+void testFailureExpires()
+{
+    std::atomic<int> calls{ 0 };
+    std::atomic<uint32_t> answer{ 0 };
+    W5100NameResolver resolver([&](const std::string&) {
+        ++calls;
+        return answer.load();
+    });
+    resolver.setFailureTtl(std::chrono::milliseconds(20));
+
+    assert(resolver.resolve("late.test", 1000).status == Status::Failed);
+    assert(resolver.resolve("late.test", 1000).status == Status::Failed);
+    assert(calls == 1);                       // still inside the lifetime
+    answer = 0x0100000Au;
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    const auto r = resolver.resolve("late.test", 1000);
+    assert(r.status == Status::Resolved && r.address == 0x0100000Au);
+    assert(calls == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    assert(resolver.resolve("late.test", 1000).status == Status::Resolved);
+    assert(calls == 2);                       // success is not re-queried
+
+    std::printf("  a failed lookup expires and is asked again: OK\n");
+}
+
 // ── A slow lookup times out, then lands via poll() ───────────────────────
 //
 // This is the rule the whole class exists for: resolve() is called on the CPU
@@ -221,6 +251,7 @@ int main()
     std::printf("W5100 virtual-DNS resolver\n");
     testCacheAvoidsSecondLookup();
     testFailureIsCachedToo();
+    testFailureExpires();
     testSlowLookupTimesOutThenArrives();
     testInFlightLookupsAreCapped();
     testNewLookupsAreRateLimited();

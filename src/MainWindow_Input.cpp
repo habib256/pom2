@@ -92,6 +92,14 @@ static_assert(pom2::keychord::kKeyRightAlt == GLFW_KEY_RIGHT_ALT);
 static_assert(pom2::keychord::kModShift    == GLFW_MOD_SHIFT);
 static_assert(pom2::keychord::kModControl  == GLFW_MOD_CONTROL);
 static_assert(pom2::keychord::kModAlt      == GLFW_MOD_ALT);
+static_assert(pom2::keychord::kKey2        == GLFW_KEY_2);
+static_assert(pom2::keychord::kKey6        == GLFW_KEY_6);
+static_assert(pom2::keychord::kKeyMinus    == GLFW_KEY_MINUS);
+static_assert(pom2::keychord::kKeyLBracket == GLFW_KEY_LEFT_BRACKET);
+static_assert(pom2::keychord::kKeyBackslash== GLFW_KEY_BACKSLASH);
+static_assert(pom2::keychord::kKeyRBracket == GLFW_KEY_RIGHT_BRACKET);
+static_assert(pom2::keychord::kKeyFirstModifier == GLFW_KEY_LEFT_SHIFT);
+static_assert(pom2::keychord::kKeyLastModifier  == GLFW_KEY_MENU);
 
 void MainWindow::injectAscii(uint8_t apple2Code)
 {
@@ -210,16 +218,32 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
             (action != GLFW_RELEASE);
         controller->memory().setShiftKey(leftShiftDown_ || rightShiftDown_);
     }
-    if (key == GLFW_KEY_RIGHT_ALT) rightAltDown_ = (action != GLFW_RELEASE);
+    if (key == GLFW_KEY_RIGHT_ALT) {
+        rightAltDown_ = (action != GLFW_RELEASE);
+        if (action == GLFW_RELEASE) rightAltLevel3_ = false;
+    }
     if (key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT) {
+        // A Right Alt already proven to be Linux AltGr (below) stays off the
+        // Apple keys until it is released — its auto-repeat must not re-press
+        // Solid-Apple.
         const bool drive = pom2::keychord::altDrivesAppleKeys(
-            mods, altAppleKeysSetting(), pom2::keychord::kHostIsWindows,
-            key == GLFW_KEY_RIGHT_ALT);
+            mods, altAppleKeysSetting(), pom2::keychord::hostIsWindows(),
+            key == GLFW_KEY_RIGHT_ALT) &&
+            !(key == GLFW_KEY_RIGHT_ALT && rightAltLevel3_);
         const bool down = drive && (action != GLFW_RELEASE);
         if (key == GLFW_KEY_LEFT_ALT) appleKeys_.hostOpen  = down;
         else                          appleKeys_.hostSolid = down;
         pushAppleKeys();
         return;
+    }
+    // Linux AltGr (KeyChord.h rightAltIsLevel3): the Right Alt is a text
+    // modifier, not Solid-Apple — release PB1 and let the composed character
+    // through onChar.
+    if (action == GLFW_PRESS &&
+        pom2::keychord::rightAltIsLevel3(key, mods, rightAltDown_,
+                                         pom2::keychord::hostIsWindows())) {
+        rightAltLevel3_ = true;
+        if (appleKeys_.hostSolid) { appleKeys_.hostSolid = false; pushAppleKeys(); }
     }
 
     // Ctrl+Alt+G toggles the Mouse Card pointer capture. Placed above every
@@ -236,7 +260,7 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // to type a character on several layouts) grabbed the pointer — from
     // inside an ImGui text field, since this chord is routed unconditionally.
     const bool chordOk = pom2::keychord::chordMayFire(
-        mods, rightAltDown_, pom2::keychord::kHostIsWindows);
+        mods, rightAltDown_, pom2::keychord::hostIsWindows());
     if (chordOk && pom2::mousegrab::isFullscreenChord(key, mods)) {
         if (action == GLFW_PRESS) {
             if (!kiosk_) {
@@ -295,10 +319,11 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
     // Apple II program can type. See MainWindow_Kiosk.cpp.)
 
     if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
-    // Alt disqualifies Ctrl here: every Ctrl+Alt chord POM2 owns is matched
-    // above and has returned, while on Windows Ctrl+Alt IS AltGr — AltGr+E
-    // on a QWERTZ layout used to type $05 at the guest instead of "€".
-    const bool ctrl = pom2::keychord::isCtrlLetter(mods);
+    // Windows AltGr disqualifies Ctrl here (AltGr+E on QWERTZ typed $05
+    // instead of "€"); an Open-/Solid-Apple Alt does not. Every Ctrl+Alt
+    // chord POM2 owns is matched above and has returned.
+    const bool ctrl = pom2::keychord::isCtrlLetter(
+        mods, rightAltDown_, pom2::keychord::hostIsWindows());
 
     // Both host shortcuts below match on the LAYOUT's letter, like the
     // Ctrl-letter path at the bottom of this function: the user presses the
@@ -384,8 +409,19 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
             // The letter comes from the LAYOUT, not the key position: see
             // layoutLetter() above.
             if (ctrl) {
-                if (const char c = layoutLetter(key, scancode))
+                if (const char c = layoutLetter(key, scancode)) {
                     injectAscii(static_cast<uint8_t>(c - 'A' + 1));
+                } else {
+                    // Ctrl+@ [ \ ] ^ _ → $00 $1B $1C $1D $1E $1F (IIe Tech
+                    // Ref table 2-3): GLFW sends no character below $20.
+#ifdef __EMSCRIPTEN__
+                    const char* name = nullptr;
+#else
+                    const char* name = glfwGetKeyName(key, scancode);
+#endif
+                    const int code = pom2::keychord::ctrlPunctCode(name, key);
+                    if (code >= 0) injectAscii(static_cast<uint8_t>(code));
+                }
             } else if (appleKeys_.hostOpen || appleKeys_.hostSolid) {
                 // Open/Solid-Apple + key: no char callback comes for it (see
                 // appleChordChar), so the key is typed here, from the layout.

@@ -48,6 +48,14 @@ namespace pom2 {
 
 namespace {
 
+// A failed eject commit leaves the medium mounted: a host-folder volume
+// adopts the stamp its partial decode published (STORAGE-014 #2).
+void adoptFolderStamp(SlotPeripheral* card, const std::string& folder,
+                      std::filesystem::file_time_type stamp)
+{
+    if (card && !folder.empty())
+        for (Block512Backing* b : card->blockBackings()) if (b) b->adoptFolderStamp(folder, stamp);
+}
 
 SmartPortCard* smartPortAt(SlotBus& bus, int requestedSlot = -1)
 {
@@ -100,13 +108,13 @@ void appendDiskIIDriveSettingUpdates(
         updates, diskIIPathSettingKey(card.getSlot(), drive), path);
     appendBoolSetting(
         updates, "disk_writeback_slot" + std::to_string(card.getSlot()),
-        card.isWriteBackEnabled());
+        pom2::persistedWriteBack(card.isWriteBackEnabled()));
 
     const auto cards = StorageCoordinator{}.topology(bus);
     if (drive == 0 && cards.primaryDiskII == &card) {
         appendStringSetting(updates, "disk_path", path);
         appendBoolSetting(updates, "disk_writeback",
-                          card.isWriteBackEnabled());
+                          pom2::persistedWriteBack(card.isWriteBackEnabled()));
     }
 }
 
@@ -147,14 +155,14 @@ bool appendMediaBaySettingUpdates(
             updates, base + "_path", unit ? unit->path() : std::string());
         appendBoolSetting(
             updates, base + "_writeback",
-            unit ? unit->isWriteBackEnabled() : false);
+            pom2::persistedWriteBack(unit ? unit->isWriteBackEnabled() : false));
         return true;
     }
     if (auto* card = dynamic_cast<CffaCard*>(&peripheral)) {
         const std::string base = "cffa_slot" + std::to_string(slot);
         appendStringSetting(updates, base + "_path", card->getImagePath());
         appendBoolSetting(
-            updates, base + "_writeback", card->isWriteBackEnabled());
+            updates, base + "_writeback", pom2::persistedWriteBack(card->isWriteBackEnabled()));
         return true;
     }
     if (auto* card = dynamic_cast<ProDOSHardDiskCard*>(&peripheral)) {
@@ -168,7 +176,7 @@ bool appendMediaBaySettingUpdates(
                             backing.isLoaded() ? backing.path() : std::string());
         appendBoolSetting(
             updates, StorageCoordinator::hdvDriveKey("hdv_writeback", bay),
-            backing.isWriteBackEnabled());
+            pom2::persistedWriteBack(backing.isWriteBackEnabled()));
         return true;
     }
     if (auto* media = genericMediaCard(&peripheral)) {
@@ -177,7 +185,7 @@ bool appendMediaBaySettingUpdates(
         const std::string base = genericBayKey(slot, bay);
         appendStringSetting(updates, base + "_path",
                             info.loaded ? info.path : std::string());
-        appendBoolSetting(updates, base + "_writeback", info.writeBackEnabled);
+        appendBoolSetting(updates, base + "_writeback", pom2::persistedWriteBack(info.writeBackEnabled));
         return true;
     }
     return false;
@@ -289,7 +297,7 @@ void appendOnboardDisk35SettingUpdates(std::vector<SettingUpdate>& updates,
 /// A bay's whole-file flush as the image's commit payload, capture order kept.
 Disk35Image::PendingWriteBack imagePayload(MountableMediaCard::PendingBayFlush&& f)
 {
-    return {true, std::move(f.path), std::move(f.bytes), f.seq, f.lineage, {}};
+    return {true, std::move(f.path), std::move(f.bytes), f.seq, f.lineage, {}, std::move(f.bitstream)};
 }
 
 void copyDisk35ImageState(
@@ -463,16 +471,19 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
     if (!pending.valid) return true;
 
     const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+    const std::string folder = pending.synth ? pending.hostFolder : std::string();
+    auto stamp = std::filesystem::file_time_type::min();
     std::string commitError;
-    if (Block512Backing::commitWriteBack(std::move(pending), commitError, nullptr, notice))
+    if (Block512Backing::commitWriteBack(std::move(pending), commitError, &stamp, notice))
         return true;
     // Put the captured dirty set back so the still-mounted medium is dirty
     // again and a retry re-captures it, then refuse the mount.
     {
         auto state = controller.lockState();
-        if (auto* media = dynamic_cast<MountableMediaCard*>(
-                state.memory().slotBus().peripheral(slot)))
+        auto* card = state.memory().slotBus().peripheral(slot);
+        if (auto* media = dynamic_cast<MountableMediaCard*>(card))
             media->restoreBayDirty(bay, captured);
+        adoptFolderStamp(card, folder, stamp);
     }
     error = "unsaved changes in slot " + std::to_string(slot) + " bay " +
             std::to_string(bay + 1) + " could not be written: " +
@@ -788,11 +799,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
                 pending.synth && !hostFolder.empty() &&
                 Block512Backing::sameFile(pending.hostFolder, hostFolder);
             std::string error;
-            if (!Block512Backing::commitWriteBack(std::move(pending), error, nullptr, &result.notice)) {
+            const std::string folder = pending.synth ? pending.hostFolder : std::string();
+            auto stamp = std::filesystem::file_time_type::min();
+            if (!Block512Backing::commitWriteBack(std::move(pending), error, &stamp, &result.notice)) {
                 auto state = controller.lockState();
-                if (auto* media = dynamic_cast<MountableMediaCard*>(
-                        state.memory().slotBus().peripheral(slot)))
+                auto* card = state.memory().slotBus().peripheral(slot);
+                if (auto* media = dynamic_cast<MountableMediaCard*>(card))
                     media->restoreBayDirty(bay, captured);
+                adoptFolderStamp(card, folder, stamp);
                 return commandError(
                     "unsaved changes on the mounted volume could not be "
                     "written: " +
@@ -862,16 +876,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     //                 medium left MOUNTED
     //   2. unlocked — commit it (restore the captured dirty set on failure)
     //   3. locked   — drop the medium
-    // The medium survives phase 1 on purpose: a commit can fail (disk full,
-    // read-only parent) and the one-phase code kept it mounted so the user
-    // could retry — the failure path re-marks the captured blocks so the
-    // retry re-captures them. The CPU worker keeps RUNNING through phase 2,
-    // so the guest can dirty more blocks against the still-mounted medium:
-    // phase 1 having cleared only what it captured, those stragglers keep
-    // their flags and phase 3's `ejectBay` flushes them inline (normally
-    // nothing). The pre-fix blanket clear in phase 3 wiped them instead —
-    // guest writes racing the commit were silently dropped from the user's
-    // only host copy, the exact hazard DEV.md ranks above latency.
+    // The medium survives phase 1 so a failed commit (disk full) can be
+    // retried: the failure path re-marks the captured blocks. The guest keeps
+    // running through phase 2 and may dirty more; phase 1 cleared only what
+    // it captured, so those keep their flags (a blanket clear once dropped
+    // them from the user's only host copy).
+    // Phases 1-2 repeat (bounded) while the guest writes during the unlocked
+    // commit: phase 3 is then left nothing to decode under the lock.
+    for (int round = 0; round < 4; ++round) {
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
@@ -928,8 +940,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
 
     if (twoPhase && pending.valid) {
         const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+        const std::string folder = pending.synth ? pending.hostFolder : std::string();
+        auto stamp = std::filesystem::file_time_type::min();
         std::string error;
-        if (!Block512Backing::commitWriteBack(std::move(pending), error, nullptr, &result.notice)) {
+        if (!Block512Backing::commitWriteBack(std::move(pending), error, &stamp, &result.notice)) {
             // Put the captured dirty set back so the still-mounted medium is
             // dirty again and a retry re-captures it (pre-split behaviour: a
             // failed save loses nothing). Re-resolved: the bus can be
@@ -939,9 +953,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
             if (auto* media =
                     dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
                 media->restoreBayDirty(bay, captured);
+            adoptFolderStamp(bus.peripheral(slot), folder, stamp);
             return commandError(error.empty()
                 ? "the image could not be saved" : error);
         }
+    }
+    auto st = controller.lockState();
+    auto* m = dynamic_cast<MountableMediaCard*>(st.memory().slotBus().peripheral(slot));
+    if (!m || bay >= m->bayCount() || !m->bayInfo(bay).hasUnsavedChanges) break;
     }
 
     {
@@ -956,10 +975,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         if (bay < 0 || bay >= media->bayCount())
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
-        // No phase-3 dirty bookkeeping: phase 1 retired the flags it
-        // captured, and any block the guest dirtied while phase 2 ran
-        // unlocked kept its flag — this ejectBay flushes that (normally
-        // empty) remainder inline before dropping the medium.
+        // Phase 1 retired what it captured; a straggler past the rounds
+        // above kept its flag and this ejectBay flushes it inline.
         click35 = bayHolds35(media->bayInfo(bay));
         if (!media->ejectBay(bay)) {
             const auto info = media->bayInfo(bay);
@@ -1093,13 +1110,16 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
 
     if (twoPhase && pending.valid) {
         const std::vector<std::uint32_t> captured = pending.dirtyIndices;
+        const std::string folder = pending.synth ? pending.hostFolder : std::string();
+        auto stamp = std::filesystem::file_time_type::min();
         std::string error;
-        if (!Block512Backing::commitWriteBack(std::move(pending), error)) {
+        if (!Block512Backing::commitWriteBack(std::move(pending), error, &stamp)) {
             auto state = controller.lockState();
             auto& bus = state.memory().slotBus();
             if (auto* media =
                     dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
                 media->restoreBayDirty(bay, captured);
+            adoptFolderStamp(bus.peripheral(slot), folder, stamp);
             return commandError(
                 "unsaved changes in slot " + std::to_string(slot) + " bay " +
                 std::to_string(bay + 1) +
@@ -1675,15 +1695,18 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         }
         if (!entry.pending.valid) continue;
         const std::vector<std::uint32_t> captured = entry.pending.dirtyIndices;
+        const std::string folder = entry.pending.synth ? entry.pending.hostFolder : "";
+        auto stamp = std::filesystem::file_time_type::min();
         std::string error;
-        if (Block512Backing::commitWriteBack(std::move(entry.pending), error))
+        if (Block512Backing::commitWriteBack(std::move(entry.pending), error, &stamp))
             continue;
         entry.failed = true;
         {
             auto state = controller.lockState();
-            if (auto* media = dynamic_cast<MountableMediaCard*>(
-                    state.memory().slotBus().peripheral(entry.slot)))
+            auto* card = state.memory().slotBus().peripheral(entry.slot);
+            if (auto* media = dynamic_cast<MountableMediaCard*>(card))
                 media->restoreBayDirty(entry.bay, captured);
+            adoptFolderStamp(card, folder, stamp);
         }
         result.failures.push_back(
             entry.label + ": " +
@@ -2287,7 +2310,7 @@ StorageCoordinator::applySmartPortPanel(
                     mediaChanged = true;
                     rememberString(base + "_type", "");
                     rememberString(base + "_path", "");
-                    rememberBool(base + "_writeback", pom2::mediaWritableByDefault());    // writable by default
+                    rememberBool(base + "_writeback", pom2::persistedWriteBack(pom2::mediaWritableByDefault()));    // writable by default
                     status.message = "SmartPort unit " +
                         std::to_string(unitIndex) + ": cleared";
                 } else {
@@ -2297,7 +2320,7 @@ StorageCoordinator::applySmartPortPanel(
                         mediaChanged = true;
                         rememberString(base + "_type", action.setType);
                         rememberString(base + "_path", "");
-                        rememberBool(base + "_writeback", pom2::mediaWritableByDefault());    // writable by default
+                        rememberBool(base + "_writeback", pom2::persistedWriteBack(pom2::mediaWritableByDefault()));    // writable by default
                         status.message = "SmartPort unit " +
                             std::to_string(unitIndex) + ": type = " +
                             action.setType;
@@ -2316,7 +2339,7 @@ StorageCoordinator::applySmartPortPanel(
 
             if (action.writeBackChanged) {
                 unit->setWriteBackEnabled(action.writeBackOn);
-                rememberBool(base + "_writeback", action.writeBackOn);
+                rememberBool(base + "_writeback", pom2::persistedWriteBack(action.writeBackOn));
                 status.message = "SmartPort unit " +
                     std::to_string(unitIndex) + ": write-back " +
                     (action.writeBackOn ? "ON" : "OFF");

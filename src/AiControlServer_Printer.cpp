@@ -207,6 +207,8 @@ void AiControlServer::handlePrinterSpool(socket_t fd, const Request& req)
         } else if (auto* cp = p ? p->centronicsPrinter() : nullptr) {
             card = "parallel";
             next = cp->drainSpoolFrom(f, bytes);
+        } else if (p && p->drainPrinterSpool(f, bytes, next)) {
+            card = "fujinet";           // its printer unit: it used to be a 404
         }
     }
     if (card.empty()) {

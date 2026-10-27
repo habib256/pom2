@@ -52,6 +52,7 @@ public:
     explicit Impl(const CoreConfig& requested)
         : cpu(&memory)
     {
+        cpu.setNcr65C02(true);   // the Apple's 65C02 is NCR's (M6502.h)
         const CoreConfig config = resolve(requested);
         machine = config.machine;
         iieMemory = config.iieMemory;

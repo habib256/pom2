@@ -130,6 +130,15 @@ bool MainWindow::setSlotCardFromCli(int slot, const std::string& key,
                 "machine has none";
         return false;
     }
+    // A single-instance card already in another slot: resolve() would keep
+    // the LOWEST slot and empty this one, while the call reported success and
+    // left a key in state.cfg doing nothing (`--slot 5=grappler` with the
+    // default Grappler+ in slot 1). Refuse it up front instead.
+    if (slotConfigCoordinator_->wouldDuplicate(key, slot)) {
+        error = "'" + key + "' is already plugged into another slot and only "
+                "one may be fitted";
+        return false;
+    }
     const std::string settingKey = pom2::slotCardSettingKey(cfg, slot);
     const bool hadKey = settings->has(settingKey);
     const std::string previous = settings->getString(settingKey, "");

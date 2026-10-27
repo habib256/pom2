@@ -30,6 +30,11 @@ public:
 
 private:
     std::array<std::FILE*, 2> files_{};
+    /// The handle for `drive`, re-opened first if the path no longer names
+    /// the file it holds — another mount of the same image (an HDV card's
+    /// autosave) commits by atomic replace, and every later write here went
+    /// to the unlinked old inode and was lost.
+    std::FILE* liveFile(std::size_t drive);
     std::array<uint32_t, 2> blocks_{};
     std::array<bool, 2> writable_{};
     std::array<bool, 2> readOnly_{};

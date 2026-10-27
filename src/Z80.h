@@ -31,9 +31,12 @@
 // both are modelled, not approximated.
 //
 // Scope notes:
-//  - Documented T-state totals per instruction (returned by step()/run()).
-//    No intra-instruction bus-cycle timing (not needed: the SoftCard is a
-//    bus-master design — only one CPU runs at a time).
+//  - Documented T-state totals per instruction (returned by step()/run()),
+//    and `busT()`: the T-state at which the memory access in progress
+//    starts, from the Zilog M-cycle shapes (M1 4 T, read/write 3 T, the 5
+//    internal T of (IX+d), the 2 of a DDCB/FDCB op, the 1 before a stack
+//    push). The SoftCard stamps its Apple bus accesses with it. Other
+//    internal T-states come after the last access and move no stamp.
 //  - IM0 assumes the interrupting device places an RST opcode on the bus
 //    (the only IM0 use ever seen on Apple II SoftCard software: none —
 //    CP/M runs with interrupts disabled).
@@ -116,6 +119,9 @@ public:
     void triggerNmi();
 
     bool isHalted() const { return st.halted; }
+    /// T-states from the start of the current step() to the access in
+    /// progress — valid inside a Z80Bus callback (see the header note).
+    int  busT() const { return busT_; }
 
     const State& getState() const { return st; }
     void         setState(const State& s) { st = s; }
@@ -141,6 +147,7 @@ private:
     Z80Bus& bus;
     State   st;
     int     cyc = 0;   // T-states consumed by the in-flight step()
+    int     busT_ = 0; // T-state of the next bus access in this step()
 
     static uint8_t szpTable[256];   // S,Z,X,Y,parity lookup
     static bool    tablesReady;
@@ -152,13 +159,14 @@ private:
     void blockIoInterruptedFlags(uint8_t ioByte);
 
     // ── bus helpers ──────────────────────────────────────────────────
-    uint8_t  rd (uint16_t a) { return bus.z80MemRead(a); }
-    void     wr (uint16_t a, uint8_t v) { bus.z80MemWrite(a, v); }
+    uint8_t  rd (uint16_t a) { const uint8_t v = bus.z80MemRead(a); busT_ += 3; return v; }
+    void     wr (uint16_t a, uint8_t v) { bus.z80MemWrite(a, v); busT_ += 3; }
+    uint8_t  fetchOp() { const uint8_t v = rd(st.pc++); ++busT_; return v; }   // M1: 4 T
     uint16_t rd16(uint16_t a) { return rd(a) | (rd(uint16_t(a + 1)) << 8); }
     void     wr16(uint16_t a, uint16_t v) { wr(a, uint8_t(v)); wr(uint16_t(a + 1), uint8_t(v >> 8)); }
     uint8_t  fetch8()  { return rd(st.pc++); }
     uint16_t fetch16() { uint16_t v = rd16(st.pc); st.pc += 2; return v; }
-    void     push16(uint16_t v) { st.sp -= 2; wr16(st.sp, v); }
+    void     push16(uint16_t v) { ++busT_; st.sp -= 2; wr16(st.sp, v); }   // 5-T M1/internal first
     uint16_t pop16() { uint16_t v = rd16(st.sp); st.sp += 2; return v; }
     void     bumpR() { st.r = uint8_t((st.r & 0x80) | ((st.r + 1) & 0x7F)); }
 

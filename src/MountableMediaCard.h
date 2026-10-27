@@ -40,11 +40,14 @@
 
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace pom2 {
+
+struct Disk35Bitstream;
 
 /// Read-only view of one media bay, built by the card for the GUI snapshot.
 struct MediaBayInfo
@@ -228,6 +231,9 @@ public:
         std::vector<uint8_t> bytes;
         uint64_t             seq = 0;         ///< capture order (MediaAutosave.h)
         uint64_t             lineage = 0;     ///< …within this mount
+        /// WOZ/MOOF 3.5": the track capture phase 2 serialises into `bytes`
+        /// (Disk35Image::PendingWriteBack::bitstream).
+        std::shared_ptr<const Disk35Bitstream> bitstream;
     };
 
     /// Phase 1 of a two-phase FLUSH (no eject), with `stateMutex` held: lift

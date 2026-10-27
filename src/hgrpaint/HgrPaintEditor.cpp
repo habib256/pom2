@@ -605,6 +605,7 @@ void hgrpaint::HgrPaintEditor::applyOps(const std::vector<ByteEdit>& ops, bool f
 
 void hgrpaint::HgrPaintEditor::doUndo()
 {
+    flushOpenStroke();  // an open drag commits first (as Copy/Cut/Paste do)
     if (undo.empty()) return;
     auto ops = std::move(undo.back());
     undo.pop_back();
@@ -615,7 +616,7 @@ void hgrpaint::HgrPaintEditor::doUndo()
 
 void hgrpaint::HgrPaintEditor::doRedo()
 {
-    if (redo.empty()) return;
+    flushOpenStroke(); if (redo.empty()) return;
     auto ops = std::move(redo.back());
     redo.pop_back();
     applyOps(ops, true);

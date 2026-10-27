@@ -169,6 +169,11 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
         effectivePlan_[slot] = settings.getString(
             key, browserIicHeader ? std::string("mockingboard") :
                  ownKey ? std::string() : std::string(kDefaultCards[slot]));
+        // One-time carry-over for the //c adapter's own key: a state.cfg from
+        // before the split kept a //c's adapter in the shared slot_7_card.
+        if (profileCfg.noPhysicalSlots && slot == 7 && !settings.has(key) &&
+            settings.getString("slot_7_card", "") == "chatmauve")
+            effectivePlan_[slot] = "chatmauve";
     }
 
     // Compatibility with the old clock checkbox. An explicit per-slot value

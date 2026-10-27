@@ -589,8 +589,11 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
     case FileAction::ExportAsm: {
         // DHGR target: two tables per sprite — the aux-plane bytes then the
         // main-plane bytes of the rasterised shape (colour baked in), rows ×
-        // ceil(byteCols/2) bytes each. The blitter must place them at a
-        // 7-dot-aligned byte-column pair (the rasterisation is at pixel 0).
+        // ceil(byteCols/2) bytes each. Rasterised at dot 0, and DHGR colour
+        // follows the dot's phase mod 4 while a byte-column pair is 14 dots
+        // (14 mod 4 = 2): the tables are right only at an EVEN plane-byte
+        // column (every 28 dots). At an odd one every colour cell straddles
+        // two shape pixels and the hue changes.
         if (dhgrTarget_) {
             std::vector<uint8_t> pair;
             buildDhgrPair(pair, 0);
@@ -612,7 +615,8 @@ bool HgrSpriteEditor::performFileAction(FileAction a, const std::string& fullPat
             const bool clipped = wpx() > hgrpaint::kDhgrWidth;
             const std::string note =
                 "DHGR pair; colour " + std::to_string(dhgrColor_) +
-                "; blit aux+main at an aligned byte-column pair" +
+                "; blit aux+main at an EVEN plane byte column (28-dot steps; "
+                "odd columns shift the colour phase)" +
                 (clipped ? "; CLIPPED to the " +
                            std::to_string(hgrpaint::kDhgrWidth) +
                            "-pixel DHGR line width"
@@ -1201,8 +1205,9 @@ void HgrSpriteEditor::renderColorCanvas()
     ImGui::BeginGroup();
 
     // DHGR target: preview the shape as fat 16-colour pixels through the real
-    // DHGR pipeline. Rasterised at pixel 0 (DHGR pixels are nibble-aligned, so
-    // unlike ×2 HGR there is no placement parity to be honest about).
+    // DHGR pipeline. Rasterised at pixel 0 — and it has a placement parity
+    // too: colour is the dot phase mod 4, a byte-column pair is 14 dots, so
+    // the exported tables are right only at an even plane byte column.
     if (dhgrTarget_ && host) {
         ImGui::TextUnformatted("Colour (DHGR)");
         std::vector<uint8_t> pair;

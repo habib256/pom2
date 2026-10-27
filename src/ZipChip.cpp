@@ -34,8 +34,12 @@ constexpr std::size_t kSnapBytes = 4 + 2 + 7 + 8;
 void ZipChip::tempDelay(int ms, bool condition, uint64_t now)
 {
     if (disableDelay_ || !condition) return;
-    const uint64_t until = now + static_cast<uint64_t>(ms * stockHz_ / 1000.0);
-    if (until > slowUntil_) slowUntil_ = until;
+    // RE-ARMED from now, as MAME's `m_acceltimer->adjust(from_msec(ms))`
+    // does: the last event wins, so a 5 ms speaker click inside a 52 ms slot
+    // window shortens it. POM2 kept the max — the comment above cited the very
+    // line that re-arms. (No Zip documentation settles it; MAME is the
+    // project's reference.)
+    slowUntil_ = now + static_cast<uint64_t>(ms * stockHz_ / 1000.0);
 }
 
 // accel_update_speed (:1515-1525).

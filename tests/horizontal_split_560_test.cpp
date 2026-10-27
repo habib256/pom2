@@ -32,6 +32,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -164,6 +165,49 @@ int main()
         makeDhgr(dh); makeText(tx); makeBeam(bm);
         checkSplit(signalOf(dh), signalOf(tx), signalOf(bm),
                    "composite signal 560-wide split (DHGR left / 80-col text right)");
+    }
+
+    // ── 3. DISPLAY-005: 40-column text left, 80-column text right on the
+    //       SAME line. The frame lives in frame80; the 40-column cells were
+    //       painted into the 280-wide buffer and never doubled across, so
+    //       they showed the previous frame (black on a fresh display).
+    {
+        auto any = [](Memory& mem, int& w) {
+            Apple2Display d;
+            d.setAuxMemory(mem.auxDataMutable());
+            d.render(mem);
+            w = d.width();
+            const uint32_t* p = d.pixels();
+            return std::vector<uint32_t>(p, p + static_cast<size_t>(w) * d.height());
+        };
+        auto base = [](Memory& m) {
+            m.setIIEMode(true); populate(m); m.memRead(SET_TEXT);
+            m.memWrite(0xC00C, 0);                       // 40 columns
+        };
+        Memory t40, t80, mix;
+        base(t40);
+        base(t80); t80.memWrite(IIE_80COL_ON, 0);
+        base(mix);
+        mix.setCycleCounter(0);
+        mix.beginVideoEventFrame();
+        for (int y = kBandTop; y < 192; ++y) {
+            mix.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);
+            mix.memWrite(0xC00C, 0);                     // 40 columns from column 0
+            mix.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);
+            mix.memWrite(IIE_80COL_ON, 0);               // 80 columns from column 21
+        }
+        int w40 = 0, w80 = 0, wm = 0;
+        const auto a40 = any(t40, w40), a80 = any(t80, w80), am = any(mix, wm);
+        assert(w40 == 280 && w80 == W && wm == W);
+        for (int y = kBandTop; y < 192; ++y) {
+            for (int x = 0; x < kSplitDot; ++x)
+                if (am[static_cast<size_t>(y) * W + x] != a40[static_cast<size_t>(y) * 280 + x / 2]) {
+                    std::fprintf(stderr, "40/80 mix: 40-col cell wrong at y=%d x=%d\n", y, x);
+                    std::abort();
+                }
+            assert(spanEqual(am, a80, y, kSplitDot, W));
+        }
+        std::printf("  ok: 40- and 80-column cells share a line\n");
     }
 
     std::printf("horizontal_split_560 OK\n");

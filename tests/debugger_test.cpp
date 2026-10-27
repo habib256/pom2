@@ -46,10 +46,12 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "SlotPeripheral.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -342,6 +344,35 @@ void testTransientDoesNotEatARealBreakpoint()
     assert(dbg.armed());
 
     std::printf("[ OK ] a transient does not consume a real breakpoint\n");
+}
+
+// ── 6b. An NMOS read-modify-write reports the value that stays ──────────
+// The NMOS RMW writes the original byte back before the result (the dummy
+// cycle). With "first stop wins" the hit said `INC $10` wrote $05 while
+// memory held $06.
+void testRmwWriteWatchReportsTheFinalValue()
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    cpu.setCpuMode(M6502::CpuMode::NMOS);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0010, 0x05);
+    mem.memWrite(0x0300, 0xE6);   // INC $10
+    mem.memWrite(0x0301, 0x10);
+    mem.memWrite(0x0302, 0xEA);   // NOP
+    armWriteWatch(mem, dbg, 0x0010);
+    cpu.setDebugHook(&dbg);
+    cpu.setProgramCounter(0x0300);
+    (void)cpu.run(20);
+    assert(dbg.stopRequested());
+    const pom2::Debugger::Hit hit = dbg.lastHit();
+    assert(hit.reason == pom2::Debugger::Reason::WatchWrite && hit.addr == 0x0010);
+    assert(hit.pc == 0x0300);
+    assert(mem.memRead(0x0010) == 0x06);
+    assert(hit.value == 0x06 && "the hit reported the RMW's dummy write");
+    cpu.setDebugHook(nullptr);
+    disarmWriteWatch(mem, dbg, 0x0010);
+    std::printf("[ OK ] an NMOS RMW write watch reports the value that stays\n");
 }
 
 // ── 7. THE watchpoint case ───────────────────────────────────────────────
@@ -806,6 +837,44 @@ void testBootFromSlotResetsTheCassetteCpuSide()
            "bootFromSlot skipped the cassette CPU-side reset coldBoot does");
 
     std::printf("[ OK ] bootFromSlot resets the cassette CPU side like coldBoot\n");
+}
+
+// ── 15b. bootFromSlot's own zero-page writes are not a watch hit ─────────
+// bootFromSlot cleared the debugger, THEN primed text page 1 and the F8
+// zero page ($20-$39, CSWL/KSWL) through memWrite. A write watch on CSWL —
+// the obvious way to find who hooks COUT — latched POM2's own $F0 as a hit
+// "by the instruction at $0000" and the machine stopped at $Cn00 at once.
+namespace {
+struct BootableStub : SlotPeripheral {
+    std::string_view name() const override { return "bootable stub"; }
+    uint8_t slotRomRead(uint8_t low8) override
+    {   // the JSR-dispatch trio bootFromSlot validates, then NOPs
+        switch (low8) { case 1: return 0x20; case 3: return 0x00; case 5: return 0x03; }
+        return 0xEA;
+    }
+};
+} // namespace
+
+void testBootFromSlotIsNotAWatchHit()
+{
+    EmulationController ctrl;
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        ctrl.memory().slotBus().plug(5, std::make_unique<BootableStub>());
+        ctrl.debugger().setWatchpoint(0x0036, pom2::Debugger::Write);
+        ctrl.debugger().setWatchpoint(0x0400, pom2::Debugger::Write);
+        ctrl.syncDebugHook();
+    }
+    assert(ctrl.bootFromSlot(5) && "the stub must pass the dispatch check");
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        assert(!ctrl.debugger().lastHit().valid() &&
+               "bootFromSlot's own priming writes latched a watchpoint hit");
+        ctrl.debugger().setWatchpoint(0x0036, pom2::Debugger::None);
+        ctrl.debugger().setWatchpoint(0x0400, pom2::Debugger::None);
+        ctrl.syncDebugHook();
+    }
+    std::printf("[ OK ] bootFromSlot's priming writes do not trip a watchpoint\n");
 }
 
 // ── 16. An idle hook is detached at the next run slice (R3) ─────────────
@@ -1542,6 +1611,7 @@ int main()
     testUnarmedIsDetached();
     testTransientFiresOnce();
     testTransientDoesNotEatARealBreakpoint();
+    testRmwWriteWatchReportsTheFinalValue();
     testWriteWatchStopsAndTheWriteLands();
     testWatchDoesNotUnprotectRom();
     testRestoreIgnoresTheDiversion();
@@ -1554,6 +1624,7 @@ int main()
     testTimeJumpClearsDebuggerTransients();
     testLatchedHitDoesNotWedgeAResume();
     testBootFromSlotResetsTheCassetteCpuSide();
+    testBootFromSlotIsNotAWatchHit();
     testResetClearsTheLatchedStop();
     testStepOverDecodesTheCpuView();
     testStepOverInlineParameters();

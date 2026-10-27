@@ -1679,6 +1679,53 @@ static void testWriteBackRoundTripsHostStructure()
     std::printf("prodos_volume_smoke: write-back keeps the host structure OK\n");
 }
 
+// ── STORAGE-014 #1: the write-back follows the names the folder was SERVED
+//    under (takeFolderNameMap), not a replay of the folder at eject. Two host
+//    names colliding on HELLO.WORLD: delete the first on the host while
+//    mounted, and the replay gave its ProDOS name — and its bytes — to the
+//    survivor. And a file deleted on the host came back on every eject.
+static void testMountNamesSurviveHostDeletes()
+{
+    const fs::path dir = makeTempDir("mountnames");
+    writeFile(dir / "Hello World.txt", {'A'});
+    writeFile(dir / "hello-world.txt", {'B'});
+    writeFile(dir / "gone.txt",        {'G'});
+    writeFile(dir / "edited.txt",      {'E'});
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    const auto names = pom2::takeFolderNameMap(dir.string());
+    assert(names && "the build records what it served");
+    assert(!pom2::takeFolderNameMap(dir.string()) && "taken once");
+
+    // The guest edits EDITED; the host deletes three files meanwhile.
+    for (int blk = 2; blk <= 5; ++blk)
+        for (int e = 0; e < 13; ++e) {
+            std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+            if ((ent[0] & 0x0F) == 6 && std::memcmp(ent + 1, "EDITED", 6) == 0)
+                img[rd16(ent + 0x11) * kBlockBytes] = 'e';
+        }
+    fs::remove(dir / "Hello World.txt");
+    fs::remove(dir / "gone.txt");
+    fs::remove(dir / "edited.txt");
+
+    const auto dr = pom2::decodeVolumeToFolder(img, dir.string(), nullptr, nullptr,
+                                               false, names.get());
+    assert(dr.ok);
+    auto readOne = [&](const char* leaf) {
+        std::ifstream in(dir / leaf, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    };
+    assert(readOne("hello-world.txt") == "B" && "the survivor kept its own bytes");
+    assert(!fs::exists(dir / "Hello World.txt") && "an untouched deleted file stays deleted");
+    assert(!fs::exists(dir / "gone.txt"));
+    assert(readOne("edited.txt") == "e" && "a deleted file the guest changed is written back");
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: mount-time names survive host deletes OK\n");
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
@@ -1708,6 +1755,7 @@ int main()
     testKnownExtensionSiblingsDoNotAccrete();
     testWriteBackCarriesFileMode();
     testLossyHostNamesRoundTripInPlace();
+    testMountNamesSurviveHostDeletes();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

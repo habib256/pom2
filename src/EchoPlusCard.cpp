@@ -133,7 +133,10 @@ uint8_t EchoPlusCard::slotRomRead(uint8_t low8)
     // — is not settled by anything POM2 has: no card schematic, no driver
     // in the corpus that writes there. Left as it was, deliberately.
     if (low8 > pom2::Ssi263::REG_FILFREQ) return openBus();
-    return ssi_.read(low8);
+    // The chip drives bit 7 (A/!R) only; the rest is the floating bus, as
+    // PhasorCard already merges it (AppleWin SSI263::Read → MemReadFloatingBus).
+    // This returned the chip byte raw, a constant $00/$80.
+    return static_cast<uint8_t>((openBus() & 0x7F) | ssi_.read(low8));
 }
 
 void EchoPlusCard::slotRomWrite(uint8_t low8, uint8_t v)
@@ -151,6 +154,12 @@ void EchoPlusCard::setCpuClock(double hz)
 {
     std::lock_guard<std::mutex> lk(mtx_);
     ssi_.setCpuClockHz(hz);
+}
+
+void EchoPlusCard::setStandardClock(double hz)
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    ssi_.setXckHz(hz);   // the SSI263's XCK is the slot bus's phase 0
 }
 
 void EchoPlusCard::advanceCycles(int cycles)

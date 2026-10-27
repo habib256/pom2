@@ -37,6 +37,7 @@ uint16_t m_RNG;
 int16_t m_excitation_data;
     } s_{};
     void update_fifo_status_and_ints();
+    void zeroNewFrame();
     int read_bits(int count);
     void parse_frame();
     int16_t clip_analog(int16_t value) const;

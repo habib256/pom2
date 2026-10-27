@@ -157,6 +157,86 @@ int main()
     }
     std::printf("OK cassette ACI count rejected before allocation\n");
 
+    // Two $C020 accesses in ONE instruction (NMOS `STA $C020,X`: dummy read,
+    // then the write) are two edges. The second used to flip the level
+    // without recording a segment, so the alternation broke and the rest
+    // of the capture played inverted. Each toggle after the baseline is one
+    // transition.
+    {
+        CassetteDevice twice;
+        twice.advanceCycles(1);
+        twice.toggleOutput();               // baseline
+        twice.advanceCycles(500);
+        twice.toggleOutput();
+        twice.toggleOutput();               // same cycle
+        twice.advanceCycles(500);
+        twice.toggleOutput();
+        if (twice.getRecordedTransitionCount() != 3) {
+            std::printf("FAIL: a same-cycle toggle recorded %zu transitions, want 3\n",
+                        twice.getRecordedTransitionCount());
+            return 1;
+        }
+        std::printf("OK same-cycle double toggle keeps the alternation\n");
+    }
+
+    // A time jump that does not move time (the debugger's in-place
+    // assembler) or a rewind about to restore its own mark must not force
+    // the output low mid-SAVE: the half-cycle keeps its length and level.
+    // A hard reset does force it low — and records that edge.
+    {
+        CassetteDevice tj;
+        tj.advanceCycles(1);
+        tj.toggleOutput();                  // baseline
+        tj.advanceCycles(300);
+        tj.toggleOutput();                  // 300 recorded
+        tj.advanceCycles(300);
+        tj.resetForTimeJump();
+        tj.advanceCycles(200);
+        tj.toggleOutput();                  // that half-cycle: 500, not 200
+        const auto r = tj.copyRecording();
+        if (r.durations.size() != 2 || r.durations[1] != 500) {
+            std::printf("FAIL: a time jump cut the half-cycle (%zu, %u)\n",
+                        r.durations.size(), r.durations.empty() ? 0u : r.durations.back());
+            return 1;
+        }
+        tj.advanceCycles(100);
+        tj.toggleOutput();                  // 3 recorded, line low
+        tj.advanceCycles(50);
+        tj.toggleOutput();                  // 4 recorded, line high
+        tj.advanceCycles(40);
+        tj.resetCpuSide();                  // forces it low: a fifth edge
+        if (tj.copyRecording().durations.size() != 5) {
+            std::printf("FAIL: a reset's forced edge was not recorded\n");
+            return 1;
+        }
+        std::printf("OK time jumps and resets keep the capture's alternation\n");
+    }
+
+    // A recording past the transition cap dropped toggles, so its save is
+    // refused. A rewind that stays past the cap must not clear that: it
+    // used to, and the save wrote a silently truncated tape.
+    {
+        CassetteDevice full;
+        full.advanceCycles(1);
+        full.toggleOutput();
+        for (size_t i = 0; i < (size_t(1) << 20) + 4; ++i) {   // kMaxRecordedTransitions + 4
+            full.advanceCycles(10);
+            full.toggleOutput();
+        }
+        const std::string capPath = path + ".cap.aci";
+        if (full.saveTape(capPath)) {
+            std::printf("FAIL: an overflowed recording saved\n");
+            return 1;
+        }
+        full.rewindRecordingTo(full.recordMark());   // a scrub that cuts nothing
+        if (full.saveTape(capPath)) {
+            std::printf("FAIL: a rewind past the cap cleared the overflow\n");
+            return 1;
+        }
+        std::filesystem::remove(capPath);
+        std::printf("OK overflow survives a rewind that stays past the cap\n");
+    }
+
     // Both output formats publish through a sibling temp and only report
     // success after flush/close/rename.
     CassetteDevice recorded;
@@ -178,5 +258,54 @@ int main()
         return 1;
     }
     std::printf("OK cassette ACI/WAV atomic save round-trip\n");
+
+    // The monitor (hearing the tape play) waits for a 40 ms lead before it
+    // starts draining: the CPU queues pulses a chunk at a time, and draining
+    // from the first one left every gap between chunks as silence.
+    {
+        std::vector<int16_t> tone;
+        for (int k = 0; k < 4000; ++k)
+            for (int i = 0; i < 10; ++i) tone.push_back((k & 1) ? HI : LO);
+        const std::string tonePath = writeWav(tone);
+        CassetteDevice mon;
+        mon.setAudioAvailable(true);
+        mon.setSampleRate(44100);
+        if (!mon.loadTape(tonePath)) { std::printf("FAIL: tone tape\n"); return 1; }
+        mon.playTape();
+        (void)mon.readTapeInput();                 // the READ routine starts the deck
+        std::vector<float> drain(44100);           // the deck's mechanical clunk
+        mon.fillAudioBuffer(drain.data(), static_cast<int>(drain.size()));
+        mon.advanceCycles(2000);                   // ~86 samples: under the lead
+        std::vector<float> out(64, 1.0f);
+        mon.fillAudioBuffer(out.data(), 64);
+        for (float v : out)
+            if (v != 0.0f) { std::printf("FAIL: monitor played before its lead\n"); return 1; }
+        mon.advanceCycles(100000);                 // ~4300 samples queued
+        mon.fillAudioBuffer(out.data(), 64);
+        bool sound = false;
+        for (float v : out) sound |= (v != 0.0f);
+        if (!sound) { std::printf("FAIL: primed monitor stayed silent\n"); return 1; }
+        std::printf("OK cassette monitor waits for its lead\n");
+
+        // A tape shorter than the lead is heard once the deck stops at its end.
+        std::vector<int16_t> blip;
+        for (int k = 0; k < 20; ++k)
+            for (int i = 0; i < 10; ++i) blip.push_back((k & 1) ? HI : LO);
+        const std::string blipPath = writeWav(blip);
+        CassetteDevice shortTape;
+        shortTape.setAudioAvailable(true);
+        shortTape.setSampleRate(44100);
+        if (!shortTape.loadTape(blipPath)) { std::printf("FAIL: blip tape\n"); return 1; }
+        shortTape.playTape();
+        (void)shortTape.readTapeInput();
+        shortTape.fillAudioBuffer(drain.data(), static_cast<int>(drain.size()));
+        shortTape.advanceCycles(100000);            // past its ~4.5 ms end
+        if (shortTape.isPlaybackActive()) { std::printf("FAIL: blip still playing\n"); return 1; }
+        shortTape.fillAudioBuffer(out.data(), 64);
+        bool heard = false;
+        for (float v : out) heard |= (v != 0.0f);
+        if (!heard) { std::printf("FAIL: a tape shorter than the lead was never heard\n"); return 1; }
+        std::printf("OK cassette monitor plays a short tape at its end\n");
+    }
     return 0;
 }

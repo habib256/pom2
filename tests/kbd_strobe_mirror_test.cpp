@@ -75,6 +75,12 @@ int main()
         assert(mem.memRead(0xC010) & 0x80);
         mem.releaseHeldKeys();
         assert(!(mem.memRead(0xC010) & 0x80));
+        // A key injected with no host key held (gamepad, kiosk band, AI
+        // server) still raises AKD once, as before any host key existed —
+        // after the first host key it used to lose AKD for good.
+        mem.queueKey('J');
+        assert(mem.memRead(0xC010) & 0x80);
+        assert(!(mem.memRead(0xC010) & 0x80) && "one-shot");
         mem.setIIEMode(false);
         mem.setKeyHeld('L', true);
         mem.queueKey('L');

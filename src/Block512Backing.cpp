@@ -337,8 +337,13 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     // Stamp the snapshot: the write-back decode preserves host files whose
     // mtime is later than this (edited on the host while mounted).
     hasMountTime_ = synth_;
+    // From when the build STARTED its scan of this folder, if it recorded one
+    // (takeFolderScanStart): an edit made during the scan is then newer.
     mountTime_    = std::filesystem::file_time_type::clock::now();
+    if (synth_)
+        if (const auto t = pom2::takeFolderScanStart(hostFolder)) mountTime_ = *t;
     preserved_    = synth_ ? std::make_shared<PreservedHostFiles>() : nullptr;
+    nameMap_      = synth_ ? pom2::takeFolderNameMap(hostFolder) : nullptr;
     supportsWriteBack_ = synth_;
     wpHeader_   = false;
     hostReadOnly_ = false;
@@ -491,6 +496,7 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         out.mountTime    = mountTime_;
         out.textConversion = hostTextConversion_;
         out.preserved    = preserved_;
+        out.nameMap      = nameMap_;
     } else {
         // The file case only needs the blocks that actually changed, which
         // is normally a handful even on a 32 MiB image.
@@ -521,6 +527,17 @@ void Block512Backing::restoreDirty(const std::vector<uint32_t>& indices)
     }
 }
 
+void Block512Backing::adoptFolderStamp(const std::string& folder,
+                                       std::filesystem::file_time_type stamp)
+{
+    if (!synth_ || !loaded_ || folder.empty() ||
+        stamp == std::filesystem::file_time_type::min() ||
+        !sameFile(hostFolder_, folder))
+        return;
+    mountTime_    = stamp;
+    hasMountTime_ = true;
+}
+
 bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
                                       std::string& error,
                                       std::filesystem::file_time_type* newMountTime,
@@ -545,7 +562,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         pom2::ProDOSDecodeResult r = pom2::decodeVolumeToFolder(
             pending.synthImage, pending.hostFolder,
             pending.hasMountTime ? &pending.mountTime : nullptr, sticky,
-            pending.textConversion);
+            pending.textConversion, pending.nameMap.get());
         // Published BEFORE the failure return: a failed pass has usually
         // still written part of the tree, and those files carry the decode's
         // stamp. Returning early left the caller with nothing to adopt.

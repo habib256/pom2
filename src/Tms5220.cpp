@@ -34,6 +34,10 @@ void Tms5220::update_fifo_status_and_ints()
     if (s_.m_previous_talk_status && !talk_status()) {
         s_.m_irq_pin = true;
         s_.m_DDIS = false;
+        if ((s_.m_command_register & 0x70) == 0x10) {   // a held Read Byte
+            s_.m_command_register = 0xFF;
+            s_.m_read_byte_register = 0xFF; s_.m_RDB_flag = true;
+        }
     }
     s_.m_previous_talk_status = talk_status();
 }
@@ -60,6 +64,15 @@ int Tms5220::read_bits(int count)
     }
     return value;
 }
+// zpar/uv_zpar + OLDE/OLDP and the "new frame" indices of silence: what both
+// speech starts (SPEAK at :1430-1448, the FIFO's SPEN edge at :688-712) set.
+void Tms5220::zeroNewFrame()
+{
+    s_.m_zpar = s_.m_uv_zpar = s_.m_OLDE = s_.m_OLDP = true;
+    s_.m_new_frame_energy_idx = s_.m_new_frame_pitch_idx = 0;
+    for (int i = 0; i < 10; ++i) s_.m_new_frame_k_idx[i] = i < 4 ? 0 : i < 7 ? 15 : 7;
+}
+
 void Tms5220::write(uint8_t value)
 {
     // MAME tms5220.cpp:672-730,1393-1546: SPEAK EXTERNAL's ninth byte
@@ -71,12 +84,23 @@ void Tms5220::write(uint8_t value)
         s_.m_fifo_tail = (s_.m_fifo_tail + 1) & 15;
         ++s_.m_fifo_count;
         update_fifo_status_and_ints();
-        if (!s_.m_SPEN && wasLow && !s_.m_buffer_low) s_.m_SPEN = true;
+        // MAME :688-712 — the edge that raises SPEN also zeroes the frame
+        // it will interpolate from. A late refill used to resume from the
+        // half-parsed frame of the phrase that ran dry.
+        if (!s_.m_SPEN && wasLow && !s_.m_buffer_low) {
+            zeroNewFrame();
+            s_.m_SPEN = true;
+        }
         return;
     }
     switch (value & 0x70) {
     case 0x00: case 0x20: s_.m_c_variant_rate = value & 15; break;
-    case 0x10: s_.m_read_byte_register = 0xFF; s_.m_RDB_flag = true; break;
+    case 0x10:
+        // Read Byte while talking is HELD in the command register and run when
+        // talk status falls (MAME tms5220.cpp:1395-1415, :794-807). Executed at
+        // once, it made the next status read return $FF mid-utterance.
+        if (talk_status()) { s_.m_command_register = value; break; }
+        s_.m_read_byte_register = 0xFF; s_.m_RDB_flag = true; break;
     case 0x30: case 0x40: break; // No VSM fitted on Echo+.
     case 0x50: case 0x60:
         s_.m_DDIS = (value & 0x70) == 0x60;
@@ -85,9 +109,7 @@ void Tms5220::write(uint8_t value)
             std::fill(std::begin(s_.m_fifo), std::end(s_.m_fifo), 0);
             s_.m_fifo_head = s_.m_fifo_tail = s_.m_fifo_count = s_.m_fifo_bits_taken = 0;
         }
-        s_.m_zpar = s_.m_uv_zpar = s_.m_OLDE = s_.m_OLDP = true;
-        s_.m_new_frame_energy_idx = s_.m_new_frame_pitch_idx = 0;
-        for (int i = 0; i < 10; ++i) s_.m_new_frame_k_idx[i] = i < 4 ? 0 : i < 7 ? 15 : 7;
+        zeroNewFrame();
         s_.m_RDB_flag = false;
         break;
     case 0x70: reset(); break;

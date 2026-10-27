@@ -79,6 +79,7 @@
 
 #include "M68705P3.h"
 #include "MC6821.h"
+#include "SlotBusClock.h"
 #include "SlotPeripheral.h"
 
 #include <array>
@@ -152,6 +153,12 @@ public:
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
     void    onUnplug() override;
+    /// The 68705 has its own crystal (MAME mouse.cpp:148, 2043600 Hz), so it
+    /// is paced on the bus clock, never the accelerated CPU clock: under a
+    /// TransWarp or a Zip it ran 3.6-4x fast and its 60 Hz VBL interrupt
+    /// with it. Same split as MockingboardCard (SlotBusClock.h).
+    void    setCpuClock(double hz) override { busClock_.setCpuClock(hz); }
+    void    setStandardClock(double hz) override { busClock_.setBusClock(hz); }
 
 private:
     int slot_;
@@ -197,6 +204,7 @@ private:
     // the next tick instead of being run for free. Goes negative while a
     // long instruction is being amortised.
     int mcuCycleAccum = 0;
+    pom2::SlotBusClock busClock_;   // CPU cycles -> unaccelerated bus ticks
 
     // Telemetry only (see mcuCyclesRun()); not part of the snapshot blob.
     uint64_t mcuCyclesRun_ = 0;

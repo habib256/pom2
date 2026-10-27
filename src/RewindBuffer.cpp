@@ -23,6 +23,8 @@
 #include "Memory.h"
 #include "SnapshotIO.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 
 namespace pom2 {
@@ -83,12 +85,24 @@ uint32_t readU32(const std::vector<uint8_t>& in, size_t at)
          | (static_cast<uint32_t>(in[at + 3]) << 24);
 }
 
+constexpr uint32_t kResizeRecord = 0xFFFFFFFFu;   // no blob is 4 GiB
+
 void encodeXorDelta(const std::vector<uint8_t>& a,
                     const std::vector<uint8_t>& b,
                     std::vector<uint8_t>& out)
 {
     out.clear();
-    const size_t n = a.size();   // caller guarantees a.size() == b.size()
+    // A length change (the Disk II's in-flight write burst, a SmartPort bus
+    // reply) is one RESIZE record first — offset kResizeRecord, length = the
+    // new size, no payload — then the spans over the common prefix, then the
+    // new tail as a span against the zeros the resize leaves. It used to
+    // force a full keyframe: through a DOS INIT or a long SAVE nearly every
+    // frame, 10.5 MB each with RamWorks, and the 256 MiB ring held 0.4 s.
+    if (a.size() != b.size()) {
+        appendU32(out, kResizeRecord);
+        appendU32(out, static_cast<uint32_t>(b.size()));
+    }
+    const size_t n = std::min(a.size(), b.size());
     const uint8_t* pa = a.data();
     const uint8_t* pb = b.data();
     size_t i = 0;
@@ -122,6 +136,11 @@ void encodeXorDelta(const std::vector<uint8_t>& a,
             out[hdr + k] = static_cast<uint8_t>(a[off + k] ^ b[off + k]);
         i = spanEnd;
     }
+    if (b.size() > n) {                      // grown: the tail, raw
+        appendU32(out, static_cast<uint32_t>(n));
+        appendU32(out, static_cast<uint32_t>(b.size() - n));
+        out.insert(out.end(), b.begin() + static_cast<std::ptrdiff_t>(n), b.end());
+    }
 }
 
 // Apply `delta` to `blob` in place. Returns false on a malformed/oversized
@@ -133,6 +152,11 @@ bool applyXorDelta(std::vector<uint8_t>& blob, const std::vector<uint8_t>& delta
     while (p + 8 <= dn) {
         const uint32_t off = readU32(delta, p); p += 4;
         const uint32_t len = readU32(delta, p); p += 4;
+        if (off == kResizeRecord) {          // only ever first (see the encoder)
+            if (p != 8) return false;
+            blob.resize(len, 0);
+            continue;
+        }
         if (p + len > dn) return false;
         if (static_cast<size_t>(off) + len > blob.size()) return false;
         for (uint32_t k = 0; k < len; ++k)
@@ -221,11 +245,9 @@ void RewindBuffer::capture(M6502& cpu, Memory& mem, uint64_t sideMark)
     // `sinceKeyframe_` is the previous frame's distance from its keyframe
     // (keyframe itself = 0). The frame we're about to store sits one further;
     // make it a keyframe once that distance reaches the interval, so
-    // keyframes land at indices 0, interval, 2·interval, … A size change
-    // (e.g. RamWorks bank count) also forces one — deltas need equal-length
-    // neighbours.
-    const bool sizeChanged = captureScratch_.size() != prevBlob_.size();
-    if (frames_.empty() || sinceKeyframe_ + 1 >= keyframeInterval_ || sizeChanged) {
+    // keyframes land at indices 0, interval, 2·interval, … A size change is
+    // a delta like any other (encodeXorDelta's resize record).
+    if (frames_.empty() || sinceKeyframe_ + 1 >= keyframeInterval_) {
         f.isKeyframe = true;
         f.data = captureScratch_;
         sinceKeyframe_ = 0;

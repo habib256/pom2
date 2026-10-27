@@ -33,6 +33,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -139,6 +140,53 @@ int main()
         // (rest of VBL) + 1 → scanline 1 of next frame = active video.
         advance(mem, (70 + 1) * kCyclesPerScanline);
         assert((readVbl(mem) & 0x80) != 0);  // active video again
+    }
+
+    // ── Case 3: an accelerator does not shorten the frame. The video
+    //    counters run off the crystal; at 4x the 6502 spends 4 x 17030
+    //    cycles in one frame. $C019 and the frame publication used to run
+    //    on CPU cycles, so a TransWarp / Zip / //c+ saw 240 VBLs a second.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        advance(mem, 10);                         // scanline 0: active
+        assert((readVbl(mem) & 0x80) != 0);
+        mem.setVideoClockRatio(0.25);
+        // 192 visible lines at 4 CPU cycles per beam cycle.
+        advance(mem, 4 * (191 * kCyclesPerScanline));
+        assert((readVbl(mem) & 0x80) != 0 && "the beam ran at the CPU's 4x speed");
+        advance(mem, 4 * (2 * kCyclesPerScanline));   // line 193: VBL
+        assert((readVbl(mem) & 0x80) == 0);
+        // The rest of the frame, then back to the stock clock: the beam is
+        // continuous across the change (no jump to the CPU's frame phase).
+        advance(mem, 4 * (kFrameCycles - 193 * kCyclesPerScanline) + 4 * 30);
+        assert((readVbl(mem) & 0x80) != 0);       // next frame, line 0
+        mem.setVideoClockRatio(1.0);
+        advance(mem, 100 * kCyclesPerScanline);
+        assert((readVbl(mem) & 0x80) != 0);       // line ~100
+        advance(mem, 100 * kCyclesPerScanline);
+        assert((readVbl(mem) & 0x80) == 0);       // line ~200
+    }
+
+    // ── Case 4: the beam's clock survives a snapshot. Re-derived from the
+    //    CPU counter on restore, an accelerated machine came back on another
+    //    scanline.
+    {
+        Memory a;
+        a.setIIEMode(true);
+        advance(a, 12345);
+        a.setVideoClockRatio(0.25);
+        advance(a, 4 * 777);
+        std::vector<uint8_t> blob;
+        a.appendSnapshotState(blob);
+        Memory b;
+        b.setIIEMode(true);
+        assert(b.loadSnapshotState(blob.data(), blob.size()));
+        assert(b.getCycleCounter() == a.getCycleCounter());
+        assert(b.videoNow() == a.videoNow() && "the beam moved on restore");
+        advance(a, 4 * 5000);
+        advance(b, 4 * 5000);
+        assert(b.videoNow() == a.videoNow() && "the restored beam runs at the saved speed");
     }
 
     std::printf("vbl_smoke OK\n");

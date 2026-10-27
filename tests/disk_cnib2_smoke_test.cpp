@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -214,9 +215,41 @@ bool runWriteBackRoundTrip()
 
 }  // namespace
 
+// STORAGE-010: a .nib's self-sync bytes are inferred by MAME's rule
+// (ap2_dsk.cpp a2_nib_format): only "FF … FF D5" is sync, 10 cells per $FF;
+// other $FF stay 8; a bit-7-clear byte neither ends nor joins a run. Every
+// .nib byte used to be 8 cells.
+bool runNibSyncWidths()
+{
+    std::vector<uint8_t> nib(static_cast<size_t>(DiskImage::kTracks) * DiskImage::kNibblesPerTrack, 0x96);
+    auto put = [&](int at, std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) nib[static_cast<size_t>(at++)] = b;
+    };
+    put(100, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xD5});   // 5 syncs
+    put(200, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x96});   // not D5: data
+    put(300, {0xFF, 0xFF, 0x00, 0xFF, 0xD5});          // 3 syncs, $00 transparent
+    put(DiskImage::kNibblesPerTrack - 2, {0xFF, 0xFF}); // wraps the seam…
+    put(0, {0xFF, 0xD5});                               // …into 3 syncs
+    const std::string path = "pom2_nib_sync.nib";
+    { std::ofstream f(path, std::ios::binary);
+      f.write(reinterpret_cast<const char*>(nib.data()), static_cast<std::streamsize>(nib.size())); }
+    DiskImage img;
+    if (!img.loadFile(path)) { std::fprintf(stderr, "nib sync: load failed\n"); return false; }
+    std::remove(path.c_str());
+    const int want = DiskImage::kNibblesPerTrack * 8 + 2 * (5 + 3 + 3);
+    if (img.trackBitLength(0) != want) {
+        std::fprintf(stderr, "nib sync: track 0 is %d cells, want %d\n",
+                     img.trackBitLength(0), want);
+        return false;
+    }
+    std::printf("  ok: .nib FF…FF D5 runs are 10-cell sync (MAME a2_nib_format)\n");
+    return true;
+}
+
 int main()
 {
     bool ok = true;
+    ok &= runNibSyncWidths();
     ok &= runSyntheticLoad();
     ok &= runSizeOnlyDetection();
     ok &= runWriteBackRoundTrip();

@@ -49,6 +49,11 @@ dropping its cards and disks.
   IDENTIFY transfers, including whether completing the buffer advances the
   ATA taskfile. S.A.M. retains its existing audio-only snapshot contract:
   its next CPU write supplies the DAC level.
+- The machine snapshot's Memory trailer ends with an optional beam-clock
+  section (24 bytes: CPU anchor, video anchor, video cycles per CPU cycle as
+  an IEEE double). Under an accelerator the beam no longer follows the CPU
+  counter, so a restore without it lands on another scanline. Older blobs end
+  before it and restore with the beam on the CPU counter, as they always did.
 - A ProDOS host-folder volume is captured as its current block image. It
   resumes as a detached disk, without the directory path or host syncing.
 - Program tapes embed their pulse source, cursor, comparator/output state,

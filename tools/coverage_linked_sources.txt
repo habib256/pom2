@@ -81,6 +81,7 @@ src/PrinterHistory.cpp
 src/PrinterScreenDump.cpp
 src/PrinterSoundDevice.cpp
 src/ProDOSHardDiskCard.cpp
+src/ProDOSHostNameMap.cpp
 src/ProDOSVolume.cpp
 src/ProfileSwitch.cpp
 src/ResourcePaths.cpp

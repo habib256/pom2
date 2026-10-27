@@ -120,10 +120,12 @@ void testReadAcknowledgement()
     card.advanceCycles(s.phonemeRemainingCycles + 100);
     assert(card.isIrqAsserted());
 
-    // Reads return $80 (A/!R bit 7 set). Reads do NOT clear A/!R —
-    // only writes to $00-$02 do (per AppleWin SSI263.cpp).
-    assert(card.slotRomRead(0x0) == 0x80);
-    assert(card.slotRomRead(0x3) == 0x80);
+    // Reads drive A/!R on bit 7 and leave bits 0-6 to the floating bus
+    // (AppleWin SSI263::Read; PhasorCard merges the same way) — $FF here,
+    // the open bus of a standalone card. They used to be the chip byte raw,
+    // a constant $80. Reads do NOT clear A/!R — only writes to $00-$02 do.
+    assert(card.slotRomRead(0x0) == 0xFF);
+    assert(card.slotRomRead(0x3) == 0xFF);
     assert(card.isIrqAsserted());
 
     // Reset state: chip in power-down, IRQ released.
@@ -192,7 +194,7 @@ void testLatchedIrqAndRepeat()
     snap = card.snapshotChip();
     assert(snap.mode == 2 && !snap.irqEnabled);
     card.advanceCycles(snap.phonemeRemainingCycles);
-    assert(card.slotRomRead(0) == 0x80); // status remains pollable
+    assert(card.slotRomRead(0) & 0x80);  // status remains pollable
     assert(!card.isIrqAsserted());
     std::puts("  ok: latched IRQ mode and repeated requests reach the slot line");
 }

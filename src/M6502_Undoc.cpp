@@ -19,9 +19,13 @@
 //     replaced by that value.
 //
 // Cycle totals are the ones the placeholders already carried (Tom Harte);
-// `cycles` is seeded with 1 for the opcode fetch, and is advanced before the
-// data access, as the documented handlers do, so a device reading the
-// in-flight cycle sees the same instant for both.
+// `cycles` is seeded with 1 for the opcode fetch. Each handler advances it to
+// the data access's bus cycle, exactly as the documented addressing mode
+// does (Abs → 3, ZeroX → 3, IndZeroX → 5, …), and adds the rest after, so a
+// device reading the in-flight cycle sees `LAX $C404` at the instant
+// `LDA $C404` would be (an RMW, like ASL, puts its read, write-back and write
+// on three successive cycles). Adding the whole cost first used to put every undocumented access
+// one cycle late, and the RMW ones three (bug hunt 2026-10-27).
 
 #include "M6502.h"
 #include "Memory.h"
@@ -44,7 +48,9 @@ void M6502::undocAt(int kind, uint16_t ea, uint16_t base, bool crossed)
     const uint8_t C = statusRegister & Status::C;
     if (isRmw(kind)) {
         const uint8_t v = memory->memRead(ea);
+        ++cycles;                             // read k, write-back k+1, write k+2
         rmwSecondBusCycle(ea, v);             // NMOS: the original byte, written back
+        ++cycles;
         uint8_t r = v;
         switch (kind) {
         case kSLO: statusRegister = (statusRegister & ~Status::C) | (v >> 7);
@@ -99,24 +105,27 @@ void M6502::undocAt(int kind, uint16_t ea, uint16_t base, bool crossed)
 template <int Kind> void M6502::UndocZp()
 {
     const uint16_t ea = memory->memRead(programCounter++);
-    cycles += isRmw(Kind) ? 4 : 2;
+    cycles += 1;                              // access at 2, as LDA/ASL zp
     undocAt(Kind, ea, ea, false);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind, bool Y> void M6502::UndocZpI()
 {
     const uint8_t zp = memory->memRead(programCounter++);
     const uint16_t ea = static_cast<uint8_t>(zp + (Y ? yRegister : xRegister));
-    cycles += isRmw(Kind) ? 5 : 3;
+    cycles += 2;                              // access at 3, as ZeroX
     undocAt(Kind, ea, ea, false);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind> void M6502::UndocAbs()
 {
     uint16_t ea = memory->memRead(programCounter++);
     ea |= static_cast<uint16_t>(memory->memRead(programCounter++)) << 8;
-    cycles += isRmw(Kind) ? 5 : 3;
+    cycles += 2;                              // access at 3, as Abs
     undocAt(Kind, ea, ea, false);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind, bool Y> void M6502::UndocAbsI()
@@ -126,9 +135,12 @@ template <int Kind, bool Y> void M6502::UndocAbsI()
     const uint16_t ea = static_cast<uint16_t>(base + (Y ? yRegister : xRegister));
     const bool crossed = (base & 0xFF00) != (ea & 0xFF00);
     const bool reads = !isRmw(Kind) && !isStore(Kind);
-    cycles += isRmw(Kind) ? 6 : isStore(Kind) ? 4 : 3 + (crossed ? 1 : 0);
+    // Access at 3 (+1 crossed) for a read, 4 for a store or an RMW, as
+    // AbsX / WAbsX / RmwAbsX.
+    cycles += reads ? 2 + (crossed ? 1 : 0) : 3;
     nmosIndexDummyRead(base, ea, /*always=*/!reads);
     undocAt(Kind, ea, base, crossed);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind> void M6502::UndocIndX()
@@ -136,8 +148,9 @@ template <int Kind> void M6502::UndocIndX()
     const uint8_t zp = static_cast<uint8_t>(memory->memRead(programCounter++) + xRegister);
     uint16_t ea = memory->memRead(zp);
     ea |= static_cast<uint16_t>(memory->memRead(static_cast<uint8_t>(zp + 1))) << 8;
-    cycles += isRmw(Kind) ? 7 : 5;
+    cycles += 4;                              // access at 5, as IndZeroX
     undocAt(Kind, ea, ea, false);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind> void M6502::UndocIndY()
@@ -148,9 +161,11 @@ template <int Kind> void M6502::UndocIndY()
     const uint16_t ea = static_cast<uint16_t>(base + yRegister);
     const bool crossed = (base & 0xFF00) != (ea & 0xFF00);
     const bool reads = !isRmw(Kind) && !isStore(Kind);
-    cycles += isRmw(Kind) ? 7 : isStore(Kind) ? 5 : 4 + (crossed ? 1 : 0);
+    // Access at 4 (+1 crossed) for a read, 5 for a store or an RMW.
+    cycles += reads ? 3 + (crossed ? 1 : 0) : 4;
     nmosIndexDummyRead(base, ea, /*always=*/!reads);
     undocAt(Kind, ea, base, crossed);
+    cycles += 1;                              // (an RMW spent two inside undocAt)
 }
 
 template <int Kind> void M6502::UndocImm()

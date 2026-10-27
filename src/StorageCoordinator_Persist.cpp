@@ -22,6 +22,7 @@
 // lock (or own a bus nobody else reaches); the commands that take the lock
 // themselves stay in StorageCoordinator.cpp.
 
+#include "MediaWritePolicy.h"
 #include "StorageCoordinator.h"
 
 #include <filesystem>
@@ -153,7 +154,7 @@ void StorageCoordinator::persistRebuildSettings(
                                medium.loaded ? medium.path : std::string());
         }
         settings.setBool("disk_writeback_slot" + std::to_string(disk.slot),
-                         disk.writeBackEnabled);
+                         pom2::persistedWriteBack(disk.writeBackEnabled));
     }
 
     // Same shape as the Disk II and CFFA branches above, and for the same
@@ -173,16 +174,16 @@ void StorageCoordinator::persistRebuildSettings(
     // the key when there is no HDV card at all — persistSessionSettings does
     // (a one-shot auto-plug must not survive a quit), but a rebuild that
     // merely has no card yet must not wipe a path one is about to be given.
-    if (snapshot.primaryHdv && snapshot.primaryHdv->slot != autoHdvSlot_) {
-        const bool persistable =
-            snapshot.primaryHdv->loaded &&
-            snapshot.primaryHdv->path.rfind("[host folder] ", 0) ==
-                std::string::npos;
+    // A host folder leaves the key ALONE (as appendMediaBaySettingUpdates
+    // does): writing "" for it wiped the configured image at the next quit or
+    // Apply after `--prodos-folder` borrowed the drive.
+    if (snapshot.primaryHdv && snapshot.primaryHdv->slot != autoHdvSlot_ &&
+        snapshot.primaryHdv->path.rfind("[host folder] ", 0) != 0) {
         settings.setString("hdv_path",
-                           persistable ? snapshot.primaryHdv->path
-                                       : std::string());
+                           snapshot.primaryHdv->loaded ? snapshot.primaryHdv->path
+                                                       : std::string());
         settings.setBool("hdv_writeback",
-                         snapshot.primaryHdv->writeBackEnabled);
+                         pom2::persistedWriteBack(snapshot.primaryHdv->writeBackEnabled));
     }
     persistHdvDrive2(settings, snapshot);
 
@@ -191,7 +192,7 @@ void StorageCoordinator::persistRebuildSettings(
             "cffa_slot" + std::to_string(medium.slot);
         settings.setString(key + "_path",
                            medium.loaded ? medium.path : std::string());
-        settings.setBool(key + "_writeback", medium.writeBackEnabled);
+        settings.setBool(key + "_writeback", pom2::persistedWriteBack(medium.writeBackEnabled));
     }
 }
 
@@ -211,7 +212,7 @@ void StorageCoordinator::persistSessionSettings(
         const auto& drive1 = primaryDisk->drives[0];
         settings.setString("disk_path",
                            drive1.loaded ? drive1.path : std::string());
-        settings.setBool("disk_writeback", primaryDisk->writeBackEnabled);
+        settings.setBool("disk_writeback", pom2::persistedWriteBack(primaryDisk->writeBackEnabled));
     }
 
     // The HDV keys were written by persistRebuildSettings above, under the
@@ -239,11 +240,11 @@ bool StorageCoordinator::persistDiskIIDrive(
     settings.setString(
         diskIIPathSettingKey(slot, static_cast<std::size_t>(drive)), path);
     settings.setBool("disk_writeback_slot" + std::to_string(slot),
-                     card->isWriteBackEnabled());
+                     pom2::persistedWriteBack(card->isWriteBackEnabled()));
 
     if (drive == 0 && topology(bus).primaryDiskII == card) {
         settings.setString("disk_path", path);
-        settings.setBool("disk_writeback", card->isWriteBackEnabled());
+        settings.setBool("disk_writeback", pom2::persistedWriteBack(card->isWriteBackEnabled()));
     }
     return true;
 }
@@ -273,14 +274,13 @@ void StorageCoordinator::persistHdvDrive2(Settings& settings,
     // Same exclusions as drive 1: the session-only auto-provisioned slot,
     // and a synthesised "[host folder] " volume.
     if (!snapshot.primaryHdvDrive2 ||
-        snapshot.primaryHdvDrive2->slot == autoHdvSlot_)
+        snapshot.primaryHdvDrive2->slot == autoHdvSlot_ ||
+        snapshot.primaryHdvDrive2->path.rfind("[host folder] ", 0) == 0)
         return;
     const auto& medium = *snapshot.primaryHdvDrive2;
-    const bool persistable = medium.loaded &&
-        medium.path.rfind("[host folder] ", 0) == std::string::npos;
     settings.setString(hdvDriveKey("hdv_path", 1),
-                       persistable ? medium.path : std::string());
-    settings.setBool(hdvDriveKey("hdv_writeback", 1), medium.writeBackEnabled);
+                       medium.loaded ? medium.path : std::string());
+    settings.setBool(hdvDriveKey("hdv_writeback", 1), pom2::persistedWriteBack(medium.writeBackEnabled));
 }
 
 std::string StorageCoordinator::resolvePersistedMediaPath(const std::string& path)

@@ -194,6 +194,9 @@ public:
     /// Locked: written on the CPU thread, read on the UI thread.
     size_t bytesWritten() const;
     size_t drainSpoolFrom(size_t from, std::vector<uint8_t>& out) const;
+    bool   drainPrinterSpool(std::size_t from, std::vector<uint8_t>& out,
+                             std::size_t& next) const override
+    { if (!hasPrinterUnit()) return false; next = drainSpoolFrom(from, out); return true; }
     void   clearPrinterSpool();
     /// Whether a printer unit was found in the peer's enumeration. Drives the
     /// panel's hint and lets MainWindow skip the card as a printer source.

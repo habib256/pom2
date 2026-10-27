@@ -25,7 +25,15 @@ public:
         A = 256, X = 512, L = 1024, R = 2048
     };
     void setButtons(int player, uint16_t pressed);
-    uint8_t deviceSelectRead(uint8_t) override { return data_; }
+    /// The card drives bits 7-6 of $C0n0 only (pad 1 / pad 2); the rest of
+    /// that byte and every other offset are the floating bus — AppleWin
+    /// SNESMAX.cpp, written by the card's designer (Lukazi), against MAME's
+    /// `0x3f | bits` on every offset.
+    uint8_t deviceSelectRead(uint8_t low4) override
+    {
+        const uint8_t bus = openBus();
+        return (low4 & 0x0F) == 0 ? static_cast<uint8_t>((bus & 0x3F) | (data_ & 0xC0)) : bus;
+    }
     void deviceSelectWrite(uint8_t offset, uint8_t) override;
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override;

@@ -77,11 +77,24 @@ void UthernetIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
 
 void UthernetIICard::onReset()
 {
-    // Ctrl-Reset pulls the slot RESET line, which the W5100 honours as a
-    // full power-on reset: sockets close, buffers clear. The MAC is
-    // re-seeded because SHAR is part of what gets cleared and a card with
+    // Ctrl-Reset pulls the slot RESET line: sockets close, buffers clear —
+    // but it is not a power cycle. The indirect data address and the ARP /
+    // virtual-DNS caches survive it (Uthernet II manual p.10; AppleWin's
+    // CtrlReset → Uthernet2::Reset(false)); this used to power-cycle the
+    // chip, and $C0n5/6 read back 0 after a Ctrl-Reset. The MAC is re-seeded
+    // because SHAR is part of what gets cleared either way, and a card with
     // an all-zero source address is useless.
-    chip_.reset(true);
+    resetChip(false);
+}
+
+void UthernetIICard::onPowerCycle()
+{
+    resetChip(true);
+}
+
+void UthernetIICard::resetChip(bool powerCycle)
+{
+    chip_.reset(powerCycle);
     setMacAddress(kDefaultMac);
     cyclesSincePoll_ = 0;
 }

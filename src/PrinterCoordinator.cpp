@@ -181,8 +181,13 @@ PrinterCoordinator::captureHost(EmulationController& controller) const
 // appending the same bytes a second time; only refusing to rewind across the
 // print does, and that is what this is.
 //
-// The coordinator is the right site: it is the single funnel where bytes stop
-// being a card's buffer and start being paper.
+// The coordinator is the single funnel where bytes stop being a card's buffer
+// and start being paper. It is no longer the only bump, though: the spool
+// appends bump too (CentronicsPrinter, GrapplerCard, PrinterCard, the SSC tap,
+// FujiNet), because between the guest's write and the next UI-frame drain a
+// held F6 began its scrub with the epoch unchanged, rewound past the bytes,
+// and the drain then printed them while the guest sent them again (bug hunt
+// 2026-10-27). This one stays as the belt to those braces.
 void PrinterCoordinator::notePrinted(const FeedBatch& batch)
 {
     if (!batch.bytes.empty()) pom2::noteMediaWrite();

@@ -127,22 +127,29 @@ int main()
     }
     assert(anyMid && "Idealized $01 should produce non-black artifact");
 
-    // ── 5. Tv sub-mode converges with steady input ───────────────────────
-    std::fill(signal.begin(), signal.end(), 0xFF);
-    std::vector<uint32_t> mon(kW), tv1(kW), tv2(kW);
-    AppleWinNtsc::renderLine(signal.data(), mon.data(), kW,
-                             AppleWinNtsc::SubMode::Monitor);
-    // First Tv frame: prev is black → tv1 = (mon + 0)/2 ≈ mon/2.
-    AppleWinNtsc::renderLine(signal.data(), tv1.data(), kW,
-                             AppleWinNtsc::SubMode::Tv, mon.data(), true);
-    // Second Tv frame: prev = tv1 → tv2 should sit between tv1 and mon.
-    AppleWinNtsc::renderLine(signal.data(), tv2.data(), kW,
-                             AppleWinNtsc::SubMode::Tv, tv1.data(), true);
-    for (int x = 50; x < kW - 50; ++x) {
-        // tv2 must be closer to mon than tv1 was — convergence.
-        const int d1 = std::abs(int(r8(tv1[x])) - int(r8(mon[x])));
-        const int d2 = std::abs(int(r8(tv2[x])) - int(r8(mon[x])));
-        assert(d2 <= d1 + 1);
+    // ── 5. Tv sub-mode: AppleWin's in-between line, inside one frame ────
+    //    NTSC.cpp updateFramebufferTVDoubleScanline: the line between two
+    //    Apple scanlines is 50 % each. Folded into one row per line, a row
+    //    is 3/4 itself + 1/4 the line above — the frame before plays no part
+    //    (POM2 used to blend 50 % with the previous FRAME).
+    {
+        std::vector<uint8_t> sig(static_cast<size_t>(kW) * 3, 0x00);
+        std::fill(sig.begin(), sig.begin() + kW, uint8_t{0xFF});   // line 0 white, 1-2 black
+        std::vector<uint32_t> mon(static_cast<size_t>(kW) * 3), tv(static_cast<size_t>(kW) * 3);
+        AppleWinNtsc::renderFrame(sig.data(), mon.data(), kW, 3, AppleWinNtsc::SubMode::Monitor);
+        AppleWinNtsc::renderFrame(sig.data(), tv.data(), kW, 3, AppleWinNtsc::SubMode::Tv);
+        std::vector<uint32_t> raw(kW);
+        AppleWinNtsc::renderLine(sig.data(), raw.data(), kW, AppleWinNtsc::SubMode::Tv);
+        for (int x = 100; x < kW - 100; ++x) {
+            const int w0 = r8(raw[x]);
+            assert(std::abs(int(r8(tv[x])) - (3 * w0 + 2) / 4) <= 1);           // above it: border black
+            assert(std::abs(int(r8(tv[kW + x])) - (w0 + 2) / 4) <= 1);          // 1/4 of line 0
+            assert(r8(tv[2 * kW + x]) == r8(mon[2 * kW + x]));                  // black under black
+        }
+        // Same input twice, same output: no history.
+        std::vector<uint32_t> again(tv.size());
+        AppleWinNtsc::renderFrame(sig.data(), again.data(), kW, 3, AppleWinNtsc::SubMode::Tv);
+        assert(again == tv);
     }
 
     // ── 6. renderFrame wraps renderLine across h scanlines ───────────────

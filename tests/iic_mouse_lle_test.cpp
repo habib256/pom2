@@ -172,6 +172,24 @@ static void exercise(pom2::SystemProfile profile, const std::string& rom)
     std::printf("PASS mouse firmware: %s, profile %d\n", rom.c_str(), int(profile));
 }
 
+// No IOU mouse in slot 4 (an AppleWin-HLE `mouseaw`, or an empty slot): the
+// //c's IOU still answers $C015 / $C017 with its X0/Y0 interrupt flags, clear
+// (MAME c000_iic_r). They used to fall through to the //e's RDCXROM /
+// RDC3ROM — and INTCXROM is forced on a //c, so $C015 read a phantom mouse
+// X interrupt on every poll.
+static void noIouMouseReadsClearFlags(const std::string& rom)
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.setIIEMode(true);
+    assert(mem.loadAppleIIRom(rom.c_str(), true));
+    assert(mem.isIIcClass());
+    mem.resetSoftSwitches();
+    assert(!(mem.memRead(0xC015) & 0x80) && "phantom X0 interrupt without an IOU mouse");
+    assert(!(mem.memRead(0xC017) & 0x80) && "phantom Y0 interrupt without an IOU mouse");
+}
+
 int main()
 {
     using P = pom2::SystemProfile;
@@ -186,6 +204,7 @@ int main()
         const auto rom = locate(c.rom);
         if (rom.empty()) continue;
         exercise(c.profile, rom);
+        noIouMouseReadsClearFlags(rom);
         ++tested;
     }
     return tested ? 0 : 77;

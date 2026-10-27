@@ -386,9 +386,11 @@ void testIicInternalRomAlwaysMapped()
     assert(mem.memRead(0xC8AB) == 0x88);  // $C800-$CFFF on //c too
 
     // INTCXROM softswitch is forced on at //c load (MAME apple2e.cpp:1273
-    // does the same in machine_reset). $C015 (RDCXROM) returns bit 7
-    // when INTCXROM is set.
-    assert((mem.memRead(0xC015) & 0x80) != 0);
+    // does the same in machine_reset) — observed through the mapping above.
+    // NOT through $C015: on a //c that is the IOU's mouse X0 interrupt flag
+    // (MAME c000_iic_r), clear with no mouse — this used to assert the //e's
+    // RDCXROM there, a phantom interrupt on every poll (bug hunt 2026-10-27).
+    assert((mem.memRead(0xC015) & 0x80) == 0);
 
     // Sanity: after explicitly clearing INTCXROM via $C006 (which
     // doesn't actually exist on the IIe but matches the softswitch
@@ -397,7 +399,7 @@ void testIicInternalRomAlwaysMapped()
     // and re-checking — the resetSoftSwitches hook re-asserts INTCXROM
     // for //c.
     mem.resetSoftSwitches();
-    assert((mem.memRead(0xC015) & 0x80) != 0);
+    assert(mem.memRead(0xCE4D) == 0x4D && "INTCXROM must survive the reset on a //c");
     assert(mem.memRead(0xCE4D) == 0x4D);
 
     // ROMBANK toggle still works: flip $C028, the bank-1 markers
@@ -703,12 +705,23 @@ void testSlotKeyIsUserChoice()
     assert(!pom2::slotKeyIsUserChoice(iic, 7, "", "mockingboard"));
     assert(!pom2::slotKeyIsUserChoice(iic, 7, "", ""));
     assert(!pom2::slotKeyIsUserChoice(iic, 2, "", "mockingboard"));
+    // slotKeyShouldPersist: a slot the resolve emptied keeps its key (the
+    // Apply button erased a ][+ Videoterm from a //e); a real removal of
+    // something else still writes "".
+    assert(!pom2::slotKeyShouldPersist(iie, 3, "", "videoterm", "videoterm"));
+    assert(pom2::slotKeyShouldPersist(iie, 3, "", "videoterm", ""));
+    assert(pom2::slotKeyShouldPersist(iie, 4, "mockingboard", "", ""));
+    assert(!pom2::slotKeyShouldPersist(iic, 7, "", "mockingboard", ""));
     // The //c internal expansion connector (virtual slot 3) has its OWN key,
     // so it persists both ways and never touches the //e's slot_3_card —
     // that shared key is how a //e Mockingboard landed inside every //c.
     assert(pom2::slotCardSettingKey(iic, 3) == "iic_expansion_card");
     assert(pom2::slotCardSettingKey(iie, 3) == "slot_3_card");
-    assert(pom2::slotCardSettingKey(iic, 7) == "slot_7_card");
+    // The rear DB-15 adapter has its own key too: on the shared slot_7_card
+    // a //c adapter overwrote the //e's slot 7 (and removing it, the //e's
+    // Chat Mauve).
+    assert(pom2::slotCardSettingKey(iic, 7) == "iic_rgb_adapter");
+    assert(pom2::slotCardSettingKey(iie, 7) == "slot_7_card");
     const auto& iicp = pom2::profileConfig(pom2::SystemProfile::AppleIIcPlus);
     assert(pom2::slotCardSettingKey(iicp, 3) == "iic_expansion_card");
     assert(pom2::slotKeyIsUserChoice(iic, 3, "mockingboard", ""));

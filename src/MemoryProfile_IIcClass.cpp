@@ -77,8 +77,18 @@ bool IIcClassProfile::romBankToggle()
     return true;
 }
 
-void IIcClassProfile::onResetSoftSwitches()
+void IIcClassProfile::onResetSoftSwitches(bool warm)
 {
+    // A warm reset (the RESET key) does NOT switch the ROM bank or drop the
+    // MIG drive selects — MAME's reset_w leaves m_romswitch / m_intdrive /
+    // m_35sel alone, and the ROM proves it: bank 1's RESET vector is a
+    // `STA $C028 / JMP $FA62` stub at $C788 (apple2c-32Kv0.rom,
+    // apple2cp.rom) that is only reachable if bank 1 is still mapped. That
+    // stub's bank-0 toggle then clears the selects (romBankToggle).
+    if (warm) {
+        if (extPort_) extPort_->reset();
+        return;
+    }
     romBank_ = false;
     // The hub's copies of the MIG drive selects are cleared by
     // SmartPortHub::reset(); these private ones must follow, as they do on a

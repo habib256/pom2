@@ -19,11 +19,7 @@ an explicit request before scheduling.
 | [DISPLAY-011](#display-011) | 🟡 | To verify | Le Chat Mauve — what is left after P0-P2 |
 | [DISPLAY-012](#display-012) | 🧊 | Frozen: needs a colour oracle | 80-column text colour phase under the CPU demodulators |
 | [DISPLAY-002](#display-002) | 🟢 | To verify | Golden coverage gaps |
-| [DISPLAY-004](#display-004) | 🟢 | To verify | Beam-racing residuals |
-| [DISPLAY-005](#display-005) | 🟢 | To verify | Mid-scanline split residuals |
-| [DISPLAY-006](#display-006) | 🟢 | To verify | PAL residuals |
 | [DISPLAY-008](#display-008) | 🟢 | To verify | "Smooth" interpolated sub-pixel mode |
-| [DISPLAY-009](#display-009) | 🟢 | To verify | DHGR mono 1-px alignment + floating-TTL `empty_words` + per-scanline mode switch |
 | [DISPLAY-010](#display-010) | 🟢 | To verify | CRT parity refinements vs OpenEmulator |
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
 
@@ -135,63 +131,6 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
   splits (stay behavioural). Also: OE-GPU uploads the unused ~430 KB
   fallback framebuffer every frame (minor perf).
 
-<a id="display-004"></a>
-
-## DISPLAY-004 — Beam-racing residuals
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Validate HGR/DHGR phase changes and lo-res splits against a beam-timed reference.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1090). Original dates and estimates are retained below.
-
-- 🟢 **Beam-racing residuals** — `signalPhaseOffset_` stays a per-frame
-  constant, so a mid-frame HGR↔DHGR split is approximated; lo-res clips at
-  block-row (4 lines), like the RGBA path.
-
-<a id="display-005"></a>
-
-## DISPLAY-005 — Mid-scanline split residuals
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Define the mixed-width scanline limit and record the separately gated POM1 back-port result.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1093). Original dates and estimates are retained below.
-
-- 🟢 **Mid-scanline split residuals** — 40-col (280) + 80-col (560) mixed on
-  the same line is undefined (separate `frame`/`frame80` buffers, scoped
-  out). The exact transition cycle at character-clock is no longer a "later
-  refinement": DIX showed it as a one-cell error each side. That symptom is
-  closed — it was the 6522 T1 read-back bias plus a per-kind column offset,
-  both fixed 2026-09-02 (`CHANGELOG.md` of that day; the offset was narrowed
-  to AN3/DHGR the same day after it slid MAD EFFECT left). **Back-port to POM1** next (gated: LORES+TEXT rendering on
-  GEN2 — HGR-only today — + HBLANK flag Phase 2 per Bernie's spec).
-
-<a id="display-006"></a>
-
-## DISPLAY-006 — PAL residuals
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Validate any remaining clock/toggle discrepancy independently of the implemented browser wall-time pacing.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1101). Original dates and estimates are retained below.
-
-**Current clock behavior:** Mockingboard/Phasor AY and VIA timing follows
-the unaccelerated PAL/NTSC slot-bus clock (`setStandardClock`), while SSI263
-phoneme lengths follow the CPU clock. The IWM retains its own 7.16 MHz crystal
-by design. Speaker/cassette replay receives the active CPU clock. The old
-claim that AY/SSI timing remains fixed at NTSC nominal is superseded.
-
-**Code reconciliation 2026-10-19:** `EmulationController::tickFrame`
-scales the browser CPU budget by elapsed wall time and the profile's frame
-interval, capped at four frames. Rendering still follows the browser's RAF;
-a 60 Hz display does not make the PAL guest run at 60 Hz. The historical
-request to switch RAF to 50 Hz is therefore not a missing implementation.
-Manual standard selection/automatic Chat Mauve selection remains a separate
-proposal; PAL machine profiles already select the standard.
-
 <a id="display-008"></a>
 
 ## DISPLAY-008 — "Smooth" interpolated sub-pixel mode
@@ -204,19 +143,6 @@ proposal; PAL machine profiles already select the standard.
 
 - 🟢 **"Smooth" interpolated sub-pixel mode** — bilinear/Lanczos on
   HGR/DHGR, UI toggle. Inspired by microM8. *2 d.*
-
-<a id="display-009"></a>
-
-## DISPLAY-009 — DHGR mono 1-px alignment + floating-TTL `empty_words` + per-scanline mode switch
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Reproduce each cited mono-alignment, floating-TTL and scanline issue independently; retain only failures on current main.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1112). Original dates and estimates are retained below.
-
-- 🟢 **DHGR mono 1-px alignment + floating-TTL `empty_words` +
-  per-scanline mode switch** — cosmetic / out-of-bounds.
 
 <a id="display-010"></a>
 

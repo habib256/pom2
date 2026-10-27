@@ -17,6 +17,7 @@
 // GrapplerCard — see header for ROM layout + protocol notes.
 
 #include "GrapplerCard.h"
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 #include "PascalPrinterRom.h"
 #include "SlotRomAsm.h"
 
@@ -126,6 +127,7 @@ void GrapplerCard::spoolByte(uint8_t latched)
     }
     spool_.push_back(latched);
     ++spoolTotal_;
+    pom2::noteMediaWrite();   // printed output is irreversible: bump at the leaf (see PrinterCoordinator::notePrinted)
 }
 
 void GrapplerCard::releasePending()

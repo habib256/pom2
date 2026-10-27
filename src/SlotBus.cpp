@@ -60,6 +60,11 @@ const uint64_t* SlotPeripheral::busCycleCounter() const
     return bus_ ? bus_->cycleCounterRef() : nullptr;
 }
 
+uint64_t SlotPeripheral::busNextVblCycle(uint64_t cpuNow) const
+{
+    return bus_ ? bus_->nextVblCpuCycle(cpuNow) : 0;
+}
+
 const uint8_t* SlotPeripheral::busAuxRam() const
 {
     return bus_ ? bus_->auxRamRef() : nullptr;

@@ -65,6 +65,18 @@ bool SmartPort35Unit::loadImage(const std::string& path)
     return true;
 }
 
+bool SmartPort35Unit::adoptImage(Block512Backing::PreparedImage&& p)
+{
+    if (!p.valid) { lastError_ = "no image to adopt"; return false; }
+    if (!img_.loadPrepared(std::move(p.bytes), p.path, !p.hostWritable)) {
+        lastError_ = img_.lastError();
+        if (lastError_.empty()) lastError_ = "3.5-inch mount failed";   // never "unsupported"
+        return false;
+    }
+    lastError_.clear();
+    return true;
+}
+
 bool SmartPort35Unit::eject()
 {
     // Save-on-eject, same policy as SmartPortHdvUnit::eject():

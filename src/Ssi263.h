@@ -34,7 +34,7 @@
 //   $00 DURPHON  bits 7:6 = mode (see SsiMode below)
 //                bits 5:0 = phoneme code (0..63; 62 are defined)
 //   $01 INFLECT  bits 7:0 = inflection value (high byte of pitch tweak)
-//   $02 RATEINF  bits 7:4 = rate (playback speed)
+//   $02 RATEINF  bits 7:4 = rate (frame length: 4096 x (16-R) XCK periods)
 //                bits 3:0 = inflection (low byte)
 //   $03 CTTRAMP  bit 7    = CTL (1 = power-down / silence; 0 = run)
 //                bits 6:4 = articulation
@@ -77,6 +77,7 @@
 #include "CpuClock.h"
 
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -196,6 +197,10 @@ public:
     /// it therefore lasts 3.5x / 4x as many CPU cycles. Set by the owning
     /// card's `setCpuClock`; the power-on value is the NTSC nominal. Not
     /// serialised: it is a property of the machine, not of the chip.
+    /// XCK, the chip's own clock: the slot bus's phase 0 (1.0227 MHz NTSC,
+    /// 1.0156 MHz PAL), which no accelerator raises. Sets the A/!R period
+    /// (computePhonemeDurationCycles).
+    void    setXckHz(double hz) { if (hz > 0.0 && std::isfinite(hz)) xckHz_ = static_cast<int64_t>(hz + 0.5); }
     void    setCpuClockHz(double hz);
 
     /// Direct peek into a register (no A/!R overlay) — for the UI panel.
@@ -369,12 +374,12 @@ private:
     bool   timedPlayback_   = false;
     /// See setCpuClockHz. Integer so the duration math stays deterministic.
     int64_t cpuClockHz_     = static_cast<int64_t>(POM2_CPU_CLOCK_HZ);
+    int64_t xckHz_          = static_cast<int64_t>(POM2_CPU_CLOCK_HZ);   // see setXckHz
 
-    /// Compute the phoneme duration in CPU cycles based on the current
-    /// phoneme's PCM length and DUR consumption, with frame mode forcing
-    /// DUR=3, converted from native output frames to the live CPU clock.
-    /// Uses AppleWin Update()'s primary audio path for both sound and IRQ;
-    /// RATEINF/inflection synthesis remains outside this PCM model.
+    /// The phoneme (or frame) period in CPU cycles, from the data sheet:
+    /// 4096 x (16 - R) x (4 - D) XCK periods, XCK = the bus's 1.023 MHz,
+    /// frame mode forcing D = 3. Inflection and articulation synthesis
+    /// remain outside the PCM model; the A/!R cadence does not.
     int computePhonemeDurationCycles() const;
 };
 

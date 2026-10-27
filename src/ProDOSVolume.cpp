@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "ProDOSVolume.h"
+#include "ProDOSHostNameMap.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
 
@@ -240,6 +241,25 @@ bool stripMetadataTag(std::string& name, std::uint8_t& type, std::uint16_t& aux)
     return true;
 }
 
+// Host extensions the build strips off a name (the type comes from them).
+const char* const kStripExts[] = {
+    ".bas", ".bin", ".sys", ".txt", ".int",
+    ".dsk", ".po",  ".do",  ".hdv", ".2mg"
+};
+
+// Length of the stripped extension `name` ends in, 0 when none.
+std::size_t strippedExtLength(const std::string& name)
+{
+    for (const char* xe : kStripExts) {
+        const std::size_t xn = std::strlen(xe);
+        if (name.size() <= xn) continue;
+        std::string tail = name.substr(name.size() - xn);
+        for (auto& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (tail == xe) return xn;
+    }
+    return 0;
+}
+
 std::string sanitiseProDOSName(const std::string& hostName,
                                bool stripKnownExt = true)
 {
@@ -249,21 +269,7 @@ std::string sanitiseProDOSName(const std::string& hostName,
     // Strip well-known extensions so they don't eat into the 15-char ProDOS
     // name budget (e.g. "HELLO.BAS" → "HELLO" with file_type=BAS). Other
     // extensions stay; the dot is allowed in ProDOS names.
-    static const char* kStripExts[] = {
-        ".bas", ".bin", ".sys", ".txt", ".int",
-        ".dsk", ".po",  ".do",  ".hdv", ".2mg"
-    };
-    for (const char* xe : kStripExts) {
-        if (!stripKnownExt) break;
-        const std::size_t xn = std::strlen(xe);
-        if (raw.size() <= xn) continue;
-        std::string tail = raw.substr(raw.size() - xn);
-        for (auto& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (tail == xe) {
-            raw.resize(raw.size() - xn);
-            break;
-        }
-    }
+    if (stripKnownExt) raw.resize(raw.size() - strippedExtLength(raw));
 
     // Restrict to A-Z 0-9 . — replace anything else with '.'.
     std::string out;
@@ -489,7 +495,10 @@ struct HostEntry {
     std::uint16_t   auxType    = 0;
     std::uintmax_t  size       = 0;
     const char*     skipReason = nullptr;   // non-null → never enters the volume
+    bool            mountHashed = false;    // from a HostNameMap: the bytes served
+    std::uint64_t   mountHash   = 0;
 };
+
 
 // The naming pass, shared by the build and the decode: list `hostPath`
 // (dotfiles hidden, symlinks out of `root` refused), sort, and give every
@@ -576,10 +585,13 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
         // to rename the host file to `HELLO#FC0801` to carry it. $0801 is
         // what ProDOS itself would have put there.
         he.auxType  = (he.fileType == 0xFC) ? 0x0801 : 0;
-        if (stripMetadataTag(hostName, he.fileType, he.auxType) &&
-            hostName.empty())
+        // A tagged name keeps any extension it has: the tag carries the type,
+        // and `HELLO.BAS#FC0801` is how a guest's own `HELLO.BAS` comes back
+        // (hostNameFor) — stripping it renamed the file to HELLO on remount.
+        const bool tagged = stripMetadataTag(hostName, he.fileType, he.auxType);
+        if (tagged && hostName.empty())
             hostName = "FILE";
-        he.prodosName = uniqueName(sanitiseProDOSName(hostName), usedNames,
+        he.prodosName = uniqueName(sanitiseProDOSName(hostName, !tagged), usedNames,
                                    sanitiseProDOSName(hostName, false));
         out.push_back(std::move(he));
     }
@@ -602,7 +614,8 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
                     std::size_t depth, ProDOSBuildResult& result,
                     const fs::path& root,
                     std::unordered_set<std::string>& visited,
-                    std::size_t& stagedBytes, bool convertText)
+                    std::size_t& stagedBytes, bool convertText,
+                    HostNameMap* names)
 {
     if (depth > kMaxRecursionDepth) {
         pom2::log().warn("ProDOSVol",
@@ -629,8 +642,16 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
     const std::vector<HostEntry> entries =
         nameHostDir(hostPath, root, symlinksSkipped);
     result.filesSkipped += symlinksSkipped;
+    std::vector<HostNameMap::Entry>* rec = names ? &names->dirs[hostNameMapKey(hostPath)] : nullptr;
+    if (rec) {
+        rec->clear();
+        for (const HostEntry& he : entries)
+            rec->push_back({he.path.filename().string(), he.prodosName, he.isDir,
+                            he.skipReason != nullptr, false, he.fileType, he.auxType, 0});
+    }
 
-    for (const HostEntry& he : entries) {
+    for (std::size_t ei = 0; ei < entries.size(); ++ei) {
+        const HostEntry& he = entries[ei];
         const std::string leaf = he.path.filename().string();
         if (he.skipReason) {
             pom2::log().warn("ProDOSVol",
@@ -650,7 +671,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             auto sub = std::make_unique<PreparedDir>();
             sub->prodosName = he.prodosName;
             scanHostFolder(he.path, *sub, depth + 1, result, root, visited,
-                           stagedBytes, convertText);
+                           stagedBytes, convertText, names);
             if (!result.error.empty()) return;
             sub->numDirBlocks = numDirBlocksFor(sub->order.size());
             dir.order.push_back({true, dir.subdirs.size()});
@@ -694,6 +715,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             pf.access = 0x01;
         if (convertText && pf.fileType == 0x04)
             convertTextNewlines(pf.data, true);
+        if (rec) { (*rec)[ei].hashed = true; (*rec)[ei].hash = hostNameMapHash(pf.data); }
         const std::size_t payloadSize = pf.data.size();
         if (payloadSize <= kBlockBytes) {
             pf.storageType = kStorageSeedling;
@@ -930,6 +952,7 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
                                         bool convertText)
 {
     ProDOSBuildResult result;
+    recordFolderScanStart(hostFolder);
 
     // Sanitise the volume name once.
     std::string vname = sanitiseProDOSName(volumeName);
@@ -943,8 +966,10 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
         if (cec) served = fs::path(hostFolder);
         std::unordered_set<std::string> visited;
         std::size_t stagedBytes = 0;
+        auto names = std::make_shared<HostNameMap>();
         scanHostFolder(hostFolder, root, /*depth=*/0, result, served, visited,
-                       stagedBytes, convertText);
+                       stagedBytes, convertText, names.get());
+        if (result.error.empty()) recordFolderNameMap(hostFolder, std::move(names));
     }
     if (!result.error.empty()) return result;
     root.firstDirBlock = 2;
@@ -1066,6 +1091,14 @@ std::string hostNameFor(const std::string& name, std::uint8_t type,
                         std::uint16_t aux)
 {
     const bool auxPlain = (aux == 0) || (type == 0xFC && aux == 0x0801);
+    // A guest name ending in an extension the build strips (`HELLO.BAS`,
+    // `NOTES.TXT`) goes out TAGGED, so the next mount keeps the whole name;
+    // written plain it came back as HELLO and `RUN HELLO.BAS` failed.
+    if (strippedExtLength(name) != 0) {
+        char keep[8];
+        std::snprintf(keep, sizeof keep, "#%02X%04X", type, aux);
+        return name + keep;
+    }
     if (name.find('.') != std::string::npos) {
         if (auxPlain &&
             fileTypeFromExtension(fs::path(name).extension().string()) == type)
@@ -1241,6 +1274,8 @@ struct DecodeWalk {
     /// walk. Every path this decode is about to create or write is checked
     /// back against it — see `destStaysInsideRoot`.
     fs::path                          rootReal;
+    /// The build's names (takeFolderNameMap); null = replay the folder.
+    const HostNameMap*                mountNames = nullptr;
 };
 
 /// Record one entry the guest wrote and the host cannot take. Bounded: a
@@ -1357,9 +1392,25 @@ void decodeOneDir(DecodeWalk& w,
     if (w.ioFailed) return;
 
     if (depth > kMaxRecursionDepth) {
-        pom2::log().warn("ProDOSVol",
-            "decode: recursion depth exceeded under " + hostFolder);
-        r.aborted = true;
+        // The build serves a host directory this deep as an EMPTY one, so an
+        // empty directory here is that stand-in and loses nothing. One with
+        // entries holds files the guest wrote that no host path will take: a
+        // FAILED save, named — not an `ok` with the files gone (STORAGE-014 #4).
+        bool live = false;
+        std::uint16_t b = firstBlock;
+        for (std::size_t g = 0; b != 0 && b < totalBlocks && g < kMaxDirBlockChain && !live; ++g) {
+            const std::uint8_t* blk = w.image.data() + std::size_t(b) * kBlockBytes;
+            for (std::size_t off = 4; off + kEntryLength <= kBlockBytes && !live; off += kEntryLength) {
+                const std::uint8_t st = blk[off] >> 4;
+                live = st != 0 && (blk[off] & 0x0F) != 0 && st != kStorageVolDir &&
+                       st != kStorageSubdirHeader;
+            }
+            b = rd16(blk + 2);
+        }
+        if (live) {
+            pom2::log().warn("ProDOSVol", "decode: too deep to save under " + hostFolder);
+            noteUnsaved(r, fs::path(hostFolder).filename().string() + "/... (too deep)");
+        }
         return;
     }
 
@@ -1404,8 +1455,25 @@ void decodeOneDir(DecodeWalk& w,
     // file is newer than the mount stamp and the preserve rule below refuses
     // to touch it.
     std::size_t symlinksIgnored = 0;
-    const std::vector<HostEntry> named =
-        nameHostDir(hostFolder, w.rootReal, symlinksIgnored);
+    std::vector<HostEntry> named;
+    const auto mapped = w.mountNames ? w.mountNames->dirs.find(hostNameMapKey(hostFolder))
+                                     : decltype(w.mountNames->dirs.end()){};
+    if (w.mountNames && mapped != w.mountNames->dirs.end()) {
+        // The names this directory was SERVED under, not a replay of what is
+        // here now: a host file deleted or added since the mount must not
+        // shift a collision suffix onto a neighbour (STORAGE-014 #1).
+        for (const auto& e : mapped->second) {
+            HostEntry he;
+            he.path = fs::path(hostFolder) / e.leaf;
+            he.isDir = e.isDir; he.prodosName = e.prodosName;
+            he.fileType = e.fileType; he.auxType = e.auxType;
+            he.skipReason = e.skipped ? "skipped at mount" : nullptr;
+            he.mountHashed = e.hashed; he.mountHash = e.hash;
+            named.push_back(std::move(he));
+        }
+    } else {
+        named = nameHostDir(hostFolder, w.rootReal, symlinksIgnored);
+    }
     std::unordered_map<std::string, const HostEntry*> sources;
     // The same for the served SUBDIRECTORIES. Only files used to be matched,
     // so a subfolder whose name the build sanitised (`My Stuff` served as
@@ -1685,6 +1753,7 @@ void decodeOneDir(DecodeWalk& w,
                         "tree file truncated on decode: " + name);
                 }
             }
+            const std::uint64_t guestHash = hostNameMapHash(data);   // what the guest has, as served
             if (w.convertText && fileType == 0x04)
                 convertTextNewlines(data, false);
 
@@ -1725,6 +1794,14 @@ void decodeOneDir(DecodeWalk& w,
             // already exists on disk (then that file is the destination).
             fs::path renameFrom;
             bool ownSource = false;
+            // Deleted on the host since the mount, and the guest never changed
+            // it: the deletion stands. Rewriting it brought every deleted file
+            // back on every eject. A copy the guest DID change is written back.
+            if (const auto src = sources.find(rawName); src != sources.end() &&
+                src->second->mountHashed && src->second->mountHash == guestHash) {
+                std::error_code xec;
+                if (!fs::exists(src->second->path, xec) && !xec) continue;
+            }
             if (const auto src = sources.find(rawName); src != sources.end()) {
                 const std::string srcName = src->second->path.filename().string();
                 if (usedHostNames.count(srcName) == 0) {
@@ -1981,7 +2058,8 @@ ProDOSDecodeResult decodeVolumeToFolder(
     const std::string& hostFolder,
     const std::filesystem::file_time_type* preserveNewerThan,
     std::set<std::string>* stickyPreserved,
-    bool convertText)
+    bool convertText,
+    const HostNameMap* mountNames)
 {
     ProDOSDecodeResult r;
 
@@ -2003,12 +2081,17 @@ ProDOSDecodeResult decodeVolumeToFolder(
         return r;
     }
 
-    DecodeWalk walk{ image, totalBlocks, {}, kMaxDecodeDirs, kMaxLogicalBytes, r, false,
+    // Every directory owns at least one block the walk expands once, so the
+    // volume's size bounds the directories a decode can create; a smaller
+    // budget (2048) silently dropped the guest's files past it (STORAGE-014 #4).
+    DecodeWalk walk{ image, totalBlocks, {}, std::max(kMaxDecodeDirs, totalBlocks),
+                     kMaxLogicalBytes, r, false,
                      preserveNewerThan, stickyPreserved, convertText, {},
                      fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked
     // back against this. `create_directories` above has just made sure the
     // root exists, so this canonicalises a real directory.
+    walk.mountNames = mountNames;
     walk.rootReal = fs::weakly_canonical(hostFolder, ec);
     if (ec || walk.rootReal.empty()) {
         r.error = "cannot resolve host folder '" + hostFolder + "'";

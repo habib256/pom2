@@ -307,6 +307,13 @@ void testIndirectWindowDecode()
     (void)card.deviceSelectRead(kData);
     assert(card.chip().dataAddress() == pom2::kW5100Rtr0);
 
+    // Ctrl-Reset is not a power cycle: the indirect address survives it
+    // (manual p.10); only a power cycle clears it. Both re-seed the MAC.
+    card.onReset();
+    assert(card.chip().dataAddress() == pom2::kW5100Rtr0);
+    card.onPowerCycle();
+    assert(card.chip().dataAddress() == 0);
+
     std::printf("  indirect window decode OK\n");
 }
 

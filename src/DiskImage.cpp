@@ -1637,8 +1637,8 @@ void DiskImage::loadMediaSnapshot(const uint8_t* data, std::size_t len)
 void DiskImage::computeCellWidths(int track, uint8_t* widths) const
 {
     std::fill_n(widths, kNibblesPerTrack, uint8_t{8});
-    if (nibFormat) return;          // .nib: raw nibbles, no sync semantics
     const auto& buf = tracks[track];
+    if (nibFormat) { computeNibSyncWidths(buf.data(), widths); return; }
 
     // Circular maximal-run scan: walk once from just past a non-$FF
     // anchor; every maximal $FF run is then seen contiguously (including

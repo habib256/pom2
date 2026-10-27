@@ -126,13 +126,13 @@ void EmulationController::applyAcceleratorClock(double mul)
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     const double hz = stockHz * mul;
     if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
-    cpuClockHz_.store(hz);
+    cpuClockHz_.store(hz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
     // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
     // its backlog then plays at the speed it was made at. The cards' AY
     // replays do the same through their bus clock (busNow_).
     if (spk)       spk->setCpuClockAt(mem.getCycleCounter(), hz, stockHz);
     if (tape)      tape->setCpuClock(hz);
-    if (floppy525) floppy525->setCpuClock(hz);
+    if (floppy525) floppy525->setCpuClock(stockHz);   // the Disk II stamps stock time
     if (floppy35)  floppy35->setCpuClock(hz);
     for (int slot = 1; slot <= 7; ++slot)
         if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
@@ -144,7 +144,7 @@ EmulationController::EmulationController() : EmulationController(AudioDevice::Ou
 EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     : processor(&mem), writeBackQueue_(*this)
 {
-    cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
+    cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ); processor.setNcr65C02(true);   // Apple's 65C02 is NCR's (M6502.h)
     baseCyclesPerFrame_.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
 
     // Audio device first — we want its negotiated sample rate before the
@@ -377,11 +377,11 @@ bool EmulationController::loadTape(const std::string& path)
 }
 bool EmulationController::saveTape(const std::string& path)
 {
-    // Same shape: the write serialises the recorded transition list, which
-    // the CPU worker appends to on every $C020 toggle — off the bus it
-    // cannot, so the snapshot the writer walks is stable without the lock.
-    TapeOffBus offBus(stateMtx, mem, tape.get());
-    return tape->saveTape(path);
+    // Copy under the lock, write without, deck left ON the bus (a running SAVE keeps toggling).
+    CassetteDevice::RecordingCopy rec;
+    { std::lock_guard<std::mutex> lk(stateMtx); rec = tape->copyRecording(); }
+    std::string error; const bool ok = CassetteDevice::saveRecording(rec, path, error);
+    std::lock_guard<std::mutex> lk(stateMtx); tape->setLastError(error); return ok;
 }
 void EmulationController::playTape()         { std::lock_guard<std::mutex> lk(stateMtx); tape->playTape(); }
 void EmulationController::stopTape()         { std::lock_guard<std::mutex> lk(stateMtx); tape->stopTape(); }
@@ -1172,6 +1172,7 @@ bool EmulationController::bootFromSlot(int slot)
     mem.memWrite(0x0037, 0xFD);   // CSWH ┘
     mem.memWrite(0x0038, 0x1B);   // KSWL ┐ input hook  → KEYIN ($FD1B)
     mem.memWrite(0x0039, 0xFD);   // KSWH ┘
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }  // POM2's writes, not a watch hit
     processor.hardReset();
     processor.setProgramCounter(cnxx);
     workerParked_.store(false);  // same setter-thread invariant as setMode()
