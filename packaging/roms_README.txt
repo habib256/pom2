@@ -87,3 +87,9 @@ Notes
   above describes common filenames, not every accepted alias.
 * A .pom2session may carry its own supported firmware. Loading one does not
   install or replace files in this directory.
+
+Virtual II sounds (optional, macOS): POM2 also detects original recordings
+in /Applications/Virtual ][.app/Contents/Resources and the same path under
+~/Applications. The configured sound folder and roms/virtual_ii_sons take
+priority. AIFF and original mono 16-bit little-endian 44100 Hz RAW files
+are read directly; no conversion or copying is required.

@@ -365,22 +365,18 @@ MainWindow::MainWindow(bool forceIIPlus)
     // Virtual ][ Disk II / printer / power-switch recordings. Commercial,
     // local only (gitignored, denied from packages). Missing directory
     // leaves the MAME bank as the only one the mixer can select.
-    const std::string virtualIIDirs[] = {
-        settings->getString("mechanical_sound_path", ""),
-        "roms/virtual_ii_sons",
-        "../roms/virtual_ii_sons",
-        "../../roms/virtual_ii_sons",
-    };
+    const auto virtualIIDirs = pom2::virtualIISoundDirectories(
+        settings->getString("mechanical_sound_path", ""));
     for (const auto& d : virtualIIDirs) {
         if (d.empty()) continue;
         const std::string dir = pom2::findResource(d);
         if (dir.empty() || !fs::is_directory(dir)) continue;
         const bool drives = controller->floppySound525().loadVirtualII(dir);
         (void)controller->floppySound35().loadVirtualII(dir);
-        const std::string printerWav =
-            (fs::path(dir) / pom2::kVirtualIIPrinterSound).string();
-        if (fs::is_regular_file(printerWav))
-            (void)printerSound->loadSample(printerWav);
+        for (const auto& file : pom2::virtualIISoundFiles(pom2::kVirtualIIPrinterSound)) {
+            const auto path = (fs::path(dir) / file).string();
+            if (fs::is_regular_file(path) && printerSound->loadSample(path)) break;
+        }
         if (drives) break;
     }
     // One call for the whole host-side audio block — levels, mutes, pans,

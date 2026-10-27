@@ -355,7 +355,10 @@ void MainWindow::renderAudioMixerWindow()
     if (ImGui::BeginPopupModal("Import Virtual II sounds", nullptr,
                               ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Choose your local Virtual II sound folder.");
-        ImGui::TextUnformatted("It should contain lecteur/ and optionally interface/ and imprimante/.");
+        ImGui::TextUnformatted("Choose a folder containing lecteur/, or Virtual ][ Contents/Resources.");
+#ifdef __APPLE__
+        ImGui::TextUnformatted("Virtual ][ in /Applications or ~/Applications is detected automatically.");
+#endif
         ImGui::SetNextItemWidth(32.0f * ImGui::GetFontSize());
         ImGui::InputText("Folder", soundFolder, sizeof(soundFolder));
         if (ImGui::Button("Validate and use")) {

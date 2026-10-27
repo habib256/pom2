@@ -535,6 +535,7 @@ set(POM2_DEVICES_HEADERS
     src/SlotBusClock.h
     src/FujiNetTransport.h
     src/VirtualIISoundCatalog.h
+    src/VirtualIISoundLoader.h
     src/MountableMediaCard.h
     src/PascalPrinterRom.h
     src/ProDOSBlockCard.h
@@ -987,6 +988,7 @@ set(HEADERS
     src/MediaAutosave.h
     src/FloppySoundDevice.h
     src/VirtualIISoundCatalog.h
+    src/VirtualIISoundLoader.h
     src/FloppySoundSink.h
     src/HdvController_ImGui.h
     src/JoystickInput.h
@@ -1415,7 +1417,7 @@ else()
     if(APPLE)
         target_link_libraries(${PROJECT_NAME}
             "-framework CoreAudio"
-            "-framework AudioToolbox"
+            "-framework AudioToolbox" "-framework CoreFoundation"
             "-framework AudioUnit"
         )
     endif()
@@ -1661,7 +1663,7 @@ if(UNIX AND NOT APPLE)
 endif()
 if(APPLE)
     target_link_libraries(pom2_core PUBLIC
-        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation" "-framework AudioUnit")
 endif()
 if(WIN32)
     target_link_libraries(pom2_core PUBLIC winmm ws2_32)
@@ -1741,7 +1743,7 @@ if(UNIX AND NOT APPLE)
 endif()
 if(APPLE)
     target_link_libraries(pom2_core_test PUBLIC
-        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation" "-framework AudioUnit")
 endif()
 if(WIN32)
     target_link_libraries(pom2_core_test PUBLIC winmm ws2_32)
@@ -1839,7 +1841,7 @@ endif()
 if(APPLE)
     target_link_libraries(pom2_headless PRIVATE
         "-framework CoreAudio"
-        "-framework AudioToolbox"
+        "-framework AudioToolbox" "-framework CoreFoundation"
         "-framework AudioUnit"
     )
 endif()
@@ -1920,7 +1922,7 @@ endif()
 if(APPLE)
     target_link_libraries(pom2_bench PRIVATE
         "-framework CoreAudio"
-        "-framework AudioToolbox"
+        "-framework AudioToolbox" "-framework CoreFoundation"
         "-framework AudioUnit"
     )
 endif()
