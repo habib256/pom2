@@ -77,20 +77,11 @@ std::string humanSize(std::uint64_t n)
     return buf;
 }
 
-std::string wavAlternative(const std::string& path)
-{
-    constexpr const char* suffix = ".aiff";
-    if (path.size() < 5 || path.compare(path.size() - 5, 5, suffix) != 0)
-        return {};
-    return path.substr(0, path.size() - 5) + ".wav";
-}
-
 bool virtualIIFileDecodes(const fs::path& root, const std::string& path)
 {
-    if (FloppySoundDevice::canDecodeSample((root / path).string())) return true;
-    const std::string alternative = wavAlternative(path);
-    return !alternative.empty() &&
-           FloppySoundDevice::canDecodeSample((root / alternative).string());
+    for (const auto& file : virtualIISoundFiles(path))
+        if (FloppySoundDevice::canDecodeSample((root / file).string())) return true;
+    return false;
 }
 
 }  // namespace
@@ -325,9 +316,7 @@ void RomStatus_ImGui::rescan()
     // alternatives with .wav are as valid as the original .aiff files.
     std::string firstExisting;
     std::vector<std::string> inspectedVirtualDirs;
-    const std::array<std::string, 4> virtualDirs{
-        virtualIIPath_, "roms/virtual_ii_sons",
-        "../roms/virtual_ii_sons", "../../roms/virtual_ii_sons"};
+    const auto virtualDirs = virtualIISoundDirectories(virtualIIPath_);
     for (const auto& candidate : virtualDirs) {
         if (candidate.empty()) continue;
         const std::string resolved = pom2::findResource(candidate);
@@ -356,9 +345,8 @@ void RomStatus_ImGui::rescan()
         p.missingEffect = asset.required ? Probe::Missing::Degraded
                                          : Probe::Missing::Optional;
         p.baseDir = virtualIIRoot_;
-        p.files.emplace_back(asset.path);
-        const std::string alternative = wavAlternative(asset.path);
-        if (!alternative.empty()) p.files.emplace_back(alternative);
+        for (const auto& file : virtualIISoundFiles(asset.path))
+            p.files.emplace_back(file);
         scanProbe(p, true);
         p.fallback = false; // .wav is an accepted format, not a degraded ROM.
         virtualII_.push_back(std::move(p));
@@ -373,7 +361,8 @@ void RomStatus_ImGui::rescan()
     // folders in reverse to show the last usable candidate.
     for (auto it = inspectedVirtualDirs.rbegin();
          it != inspectedVirtualDirs.rend(); ++it)
-        printer.files.emplace_back((fs::path(*it) / kVirtualIIPrinterSound).string());
+        for (const auto& file : virtualIISoundFiles(kVirtualIIPrinterSound))
+            printer.files.emplace_back((fs::path(*it) / file).string());
     if (printer.files.empty())
         printer.files.emplace_back(
             (fs::path(virtualIIRoot_) / kVirtualIIPrinterSound).string());

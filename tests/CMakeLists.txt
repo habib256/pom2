@@ -23,6 +23,11 @@
 # test would print "OK" regardless of whether its checks actually held.
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
 
+# Native Virtual II AIFF decoding uses CoreFoundation file URLs.
+if(APPLE)
+    link_libraries("-framework CoreFoundation")
+endif()
+
 # Check test and probe sources at the same warning level as the core. Apply
 # per source so vendored implementations compiled by UI tests keep their own
 # warning baseline. This also covers the portable subset's early return.

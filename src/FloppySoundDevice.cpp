@@ -16,6 +16,7 @@
 
 #include "FloppySoundDevice.h"
 #include "VirtualIISoundCatalog.h"
+#include "VirtualIISoundLoader.h"
 #include "CpuClock.h"
 #include "Logger.h"
 
@@ -135,7 +136,8 @@ bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
 {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
     ma_decoder dec;
-    if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS) return false;
+    if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS)
+        return pom2::decodeVirtualIIOriginal(path, out.data, out.sourceRate, 10ull * 192000ull);
 
     out.sourceRate = dec.outputSampleRate;
     ma_uint64 totalFrames = 0;
@@ -174,18 +176,11 @@ bool FloppySoundDevice::loadViiFile(const std::string& dir, const char* rel,
                                     Sample& out, bool loop)
 {
     namespace fs = std::filesystem;
-    const fs::path primary = fs::path(dir) / rel;
-    bool ok = loadOneWav(primary.string(), out);
-    if (!ok) {
-        // The bundle's lid / arm / power takes are AIFF. A `.wav` sibling
-        // is what a test writes, and what the USB copy already has next
-        // to the headerless `.raw` files.
-        std::string alt(rel);
-        constexpr const char* kAiff = ".aiff";
-        const size_t n = std::strlen(kAiff);
-        if (alt.size() >= n && alt.compare(alt.size() - n, n, kAiff) == 0) {
-            alt.replace(alt.size() - n, n, ".wav");
-            ok = loadOneWav((fs::path(dir) / alt).string(), out);
+    bool ok = false;
+    for (const auto& candidate : pom2::virtualIISoundFiles(rel)) {
+        if (loadOneWav((fs::path(dir) / candidate).string(), out)) {
+            ok = true;
+            break;
         }
     }
     if (!ok) return false;

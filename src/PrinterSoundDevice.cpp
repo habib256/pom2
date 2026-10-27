@@ -23,6 +23,7 @@
 
 #include "PrinterSoundDevice.h"
 #include "Logger.h"
+#include "VirtualIISoundLoader.h"
 
 #include "third_party/miniaudio.h"
 
@@ -82,7 +83,7 @@ bool decodePrinterSample(const std::string& path, std::vector<float>& data,
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
     ma_decoder dec;
     if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS)
-        return false;
+        return decodeVirtualIIOriginal(path, data, rate, 20ull * 192000ull) && data.size() >= 8;
     rate = dec.outputSampleRate;
     ma_uint64 total = 0;
     if (ma_decoder_get_length_in_pcm_frames(&dec, &total) != MA_SUCCESS ||

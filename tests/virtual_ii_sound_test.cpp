@@ -26,6 +26,8 @@
 
 #include "FloppySoundDevice.h"
 #include "PrinterSoundDevice.h"
+#include "VirtualIISoundLoader.h"
+#include "VirtualIISoundCatalog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -333,6 +335,61 @@ int main()
     grains.strike(9);
     if (grains.activeGrains() < 1)
         return fail("grain printer went silent when the recording exists elsewhere");
+
+    // Native flat layout and signed, bounded RAW decoding.
+    const auto flat = root / "native";
+    fs::create_directories(flat);
+    const auto raw = flat / "Disk Rotation.raw";
+    {
+        std::ofstream f(raw, std::ios::binary);
+        const unsigned char pcm[]{0, 0, 255, 127, 0, 128, 255, 255,
+                                  0, 0, 255, 127, 0, 128, 255, 255};
+        f.write(reinterpret_cast<const char*>(pcm), sizeof(pcm));
+    }
+    std::vector<float> decoded;
+    uint32_t rate = 0;
+    if (!pom2::decodeVirtualIIOriginal(raw.string(), decoded, rate, 8) ||
+        rate != 44100 || decoded.size() != 8 || decoded[0] != 0 ||
+        decoded[1] != 32767.0f / 32768 || decoded[2] != -1 ||
+        decoded[3] != -1.0f / 32768)
+        return fail("RAW signed little-endian decoding");
+    if (pom2::decodeVirtualIIOriginal(raw.string(), decoded, rate, 7))
+        return fail("RAW size limit was ignored");
+    {
+        std::ofstream f(flat / "odd.raw", std::ios::binary);
+        f.put('x');
+    }
+    if (FloppySoundDevice::canDecodeSample((flat / "odd.raw").string()))
+        return fail("truncated RAW accepted");
+    for (const char* name : {"Move arm.wav", "Disk Insertion.wav", "Disk Removal.wav"})
+        writeWav(flat / name, tone(400, 8000));
+    FloppySoundDevice native;
+    if (!native.loadVirtualII(flat.string()))
+        return fail("flat Virtual II sound directory did not load");
+    fs::copy_file(raw, flat / "Matrix Printer.raw");
+    pom2::PrinterSoundDevice nativePrinter;
+    if (!nativePrinter.loadSample((flat / "Matrix Printer.raw").string()))
+        return fail("RAW printer did not load");
+#ifdef __APPLE__
+    // Exercise original AIFF and RAW recordings when Virtual ][ is installed.
+    for (const auto& dir : pom2::virtualIISoundDirectories("")) {
+        if (dir.find(".app/Contents/Resources") == std::string::npos ||
+            !fs::is_directory(dir)) continue;
+        FloppySoundDevice installed;
+        if (!installed.loadVirtualII(dir))
+            return fail("installed Virtual II originals did not load");
+        for (const auto& asset : pom2::kVirtualIISoundAssets) {
+            bool valid = false;
+            for (const auto& file : pom2::virtualIISoundFiles(asset.path))
+                valid |= FloppySoundDevice::canDecodeSample((fs::path(dir) / file).string());
+            if (!valid) return fail("installed Virtual II recording did not decode");
+        }
+        pom2::PrinterSoundDevice installedPrinter;
+        if (!installedPrinter.loadSample((fs::path(dir) / "Matrix Printer.raw").string()))
+            return fail("installed RAW printer did not load");
+        std::printf("OK : installed Virtual ][ originals in %s\n", dir.c_str());
+    }
+#endif
 
     // The real bundle, when this machine has it. CI does not.
     if (fs::is_regular_file("roms/virtual_ii_sons/lecteur/Disk Rotation.wav")) {
