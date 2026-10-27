@@ -134,6 +134,7 @@ bool FloppySoundDevice::loadSamples(const std::string& dir, FormFactor ff)
 
 bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
 {
+    if (!pom2::virtualIIContainerComplete(path)) return false;
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
     ma_decoder dec;
     if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS)

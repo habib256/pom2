@@ -12,6 +12,25 @@
 
 namespace pom2 {
 
+// Both miniaudio and AudioToolbox can accept the available prefix of a
+// truncated AIFF. Validate its declared container before either decoder.
+inline bool virtualIIContainerComplete(const std::string& path)
+{
+    if (std::filesystem::path(path).extension() != ".aiff") return true;
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) return false;
+    const auto bytes = input.tellg();
+    if (bytes < 12) return false;
+    input.seekg(0);
+    unsigned char header[12];
+    if (!input.read(reinterpret_cast<char*>(header), sizeof(header)) ||
+        std::string(reinterpret_cast<const char*>(header), 4) != "FORM") return false;
+    const uint64_t declared = (uint64_t(header[4]) << 24) |
+        (uint64_t(header[5]) << 16) | (uint64_t(header[6]) << 8) | header[7];
+    if (declared < 4 || declared + 8 > static_cast<uint64_t>(bytes)) return false;
+    return true;
+}
+
 // Virtual ][ RAW recordings: mono signed 16-bit little-endian, 44.1 kHz.
 // Bound allocations like the WAV loaders; never rewrite the source files.
 inline bool decodeVirtualIIOriginal(const std::string& path,
@@ -38,6 +57,7 @@ inline bool decodeVirtualIIOriginal(const std::string& path,
     }
 #ifdef __APPLE__
     if (extension != ".aiff") return false;
+    if (!virtualIIContainerComplete(path)) return false;
     const auto url = CFURLCreateFromFileSystemRepresentation(nullptr,
         reinterpret_cast<const UInt8*>(path.data()), path.size(), false);
     if (!url) return false;
@@ -72,7 +92,10 @@ inline bool decodeVirtualIIOriginal(const std::string& path,
     buffer.mBuffers[0].mDataByteSize = static_cast<UInt32>(data.size() * sizeof(float));
     buffer.mBuffers[0].mData = data.data();
     UInt32 read = static_cast<UInt32>(frames);
-    if (ExtAudioFileRead(file, &read, &buffer) != noErr || !read) return false;
+    // A short read means the file ended before its advertised frame count.
+    // Do not mark a truncated required recording as a usable sound bank.
+    if (ExtAudioFileRead(file, &read, &buffer) != noErr ||
+        read != static_cast<UInt32>(frames)) return false;
     data.resize(read);
     rate = static_cast<uint32_t>(source.mSampleRate);
     return true;

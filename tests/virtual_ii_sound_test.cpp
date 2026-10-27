@@ -72,6 +72,23 @@ void writeWav(const fs::path& path, const std::vector<int16_t>& pcm)
             static_cast<std::streamsize>(dataBytes));
 }
 
+#ifdef __APPLE__
+// 44.1 kHz mono PCM AIFF; actualFrames can simulate an interrupted copy.
+void writeAiff(const fs::path& path, uint32_t declaredFrames, uint32_t actualFrames)
+{
+    std::ofstream f(path, std::ios::binary);
+    auto be = [&](uint32_t value, unsigned bytes) {
+        while (bytes) f.put(static_cast<char>((value >> (--bytes * 8)) & 255));
+    };
+    f.write("FORM", 4); be(46 + declaredFrames * 2, 4); f.write("AIFF", 4);
+    f.write("COMM", 4); be(18, 4); be(1, 2); be(declaredFrames, 4); be(16, 2);
+    const unsigned char rate[]{0x40, 0x0e, 0xac, 0x44, 0, 0, 0, 0, 0, 0};
+    f.write(reinterpret_cast<const char*>(rate), sizeof(rate));
+    f.write("SSND", 4); be(8 + declaredFrames * 2, 4); be(0, 4); be(0, 4);
+    for (uint32_t i = 0; i < actualFrames; ++i) be(1234, 2);
+}
+#endif
+
 std::vector<int16_t> tone(int n, int16_t amp, int quietHead = 0)
 {
     std::vector<int16_t> p(static_cast<size_t>(n), amp);
@@ -371,6 +388,25 @@ int main()
     if (!nativePrinter.loadSample((flat / "Matrix Printer.raw").string()))
         return fail("RAW printer did not load");
 #ifdef __APPLE__
+    const auto aiff = flat / "Move arm.aiff";
+    writeAiff(aiff, 100, 100);
+    if (!pom2::decodeVirtualIIOriginal(aiff.string(), decoded, rate, 100) ||
+        rate != 44100 || decoded.size() != 100 ||
+        decoded[0] != 1234.0f / 32768)
+        return fail("valid AIFF PCM decoding");
+    if (pom2::decodeVirtualIIOriginal(aiff.string(), decoded, rate, 99))
+        return fail("AIFF frame limit ignored");
+    writeAiff(aiff, 100, 12);
+    if (FloppySoundDevice::canDecodeSample(aiff.string()) ||
+        pom2::PrinterSoundDevice::canDecodeSample(aiff.string()))
+        return fail("truncated AIFF accepted as a valid recording");
+    fs::remove(flat / "Move arm.wav");
+    if (native.loadVirtualII(flat.string()))
+        return fail("truncated required AIFF accepted as a complete bank");
+    writeWav(flat / "Move arm.wav", tone(400, 8000));
+    if (!native.loadVirtualII(flat.string()))
+        return fail("truncated AIFF did not fall back to valid WAV sibling");
+
     // Exercise original AIFF and RAW recordings when Virtual ][ is installed.
     for (const auto& dir : pom2::virtualIISoundDirectories("")) {
         if (dir.find(".app/Contents/Resources") == std::string::npos ||

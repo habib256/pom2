@@ -80,6 +80,7 @@ constexpr double kEnvFloor = 0.0001;
 bool decodePrinterSample(const std::string& path, std::vector<float>& data,
                          uint32_t& rate)
 {
+    if (!pom2::virtualIIContainerComplete(path)) return false;
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
     ma_decoder dec;
     if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS)
