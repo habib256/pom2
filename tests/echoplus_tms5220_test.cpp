@@ -117,9 +117,9 @@ int main() {
     // utterance keeps talking; only a power cycle silences it.
     {
         EchoPlusTMS5220Card talker;
-        const std::array<uint8_t, 16> voice = {69,9,33,34,34,146,84,165,42,85,169,74,85,170,82,149};
+        const std::array<uint8_t, 16> lpc = {69,9,33,34,34,146,84,165,42,85,169,74,85,170,82,149};
         talker.deviceSelectWrite(0, 0x60);
-        for (auto byte : voice) talker.deviceSelectWrite(0, byte);
+        for (auto lpcByte : lpc) talker.deviceSelectWrite(0, lpcByte);
         assert(talker.deviceSelectRead(0) & 0x80);          // TS: talking
         talker.onReset();
         assert((talker.deviceSelectRead(0) & 0x80) && "Ctrl-Reset cut the speech");
