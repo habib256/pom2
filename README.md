@@ -35,7 +35,7 @@ tagged packages follow their release notes.
 It opens a PAL Apple //c with the DIX-fix demo disk. The browser build follows
 `main`, so it may differ from a tagged release.
 Drop a disk image from your computer onto the browser canvas to boot it,
-or onto an empty drive to insert without rebooting. In the current checkout,
+or onto an empty drive to insert without rebooting.
 **File → Import disk and boot...** also opens a local file selector.
 Save a session or enable Automatic resume to keep supported disks and changes;
 see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for limits.
@@ -74,7 +74,12 @@ and press Return.
 - **Machines and memory.** Nine profiles span the Apple ][, ][+, unenhanced
   and enhanced //e, //c, //c Plus and three PAL variants. POM2 emulates the
   6502/65C02, Language Card, //e auxiliary memory and RamWorks III. Expansion
-  options include the SoftCard Z80, Slinky RAM, TransWarp and Zip Chip.
+  options include Slinky RAM, TransWarp and Zip Chip.
+- **CP/M.** Two Z80 cards run CP/M on the Apple: the Microsoft SoftCard
+  (CP/M 2.2) and the ALS CP/M Card (CP/M Plus 3.01C, 6 MHz, its own 64 KB,
+  booting from a floppy or from ProDOS on a hard disk, with a RAM disk).
+  The `pom2_cpm` tool lists, extracts, adds and deletes files on CP/M disk
+  images without cpmtools.
 - **Video.** Text 40/80, lo-res, hi-res and their double-resolution modes
   follow mode changes during a scanline. Choose composite NTSC, AppleWin,
   monochrome or CRT rendering; Le Chat Mauve/Video-7 RGB, Videx Videoterm,
@@ -86,16 +91,17 @@ and press Return.
 - **Storage.** Disk II, Sony 3½-inch, SmartPort/Liron, HDV, CFFA 2.0,
   CFFA3000 SmartPort, SuperDrive and Floppy Emu handle `.dsk`, `.do`, `.d13`,
   `.po`, `.nib`, `.2mg`, `.woz`, `.moof` and `.hdv`. Writable 5¼-inch WOZ 2.1
-  includes FLUX tracks; 3½-inch GCR WOZ/MOOF captures support native IWM flux writes. SuperDrive block
-  writes splice CRC-valid sectors in MFM MOOF captures; GCR block services
-  require export to a raw image.
-  SuperDrive exposes 400/800K GCR and 1.44 MB MFM images as ProDOS blocks.
+  includes FLUX tracks; 3½-inch GCR WOZ/MOOF captures support native IWM
+  flux writes. SuperDrive exposes 400/800K GCR and 1.44 MB MFM images as
+  ProDOS blocks; its block writes splice CRC-valid sectors in MFM MOOF
+  captures, while GCR block services require export to a raw image.
 - **Files and tools.** The shared ProDOS host folder preserves type/aux type
   in portable `NAME#TTAAAA` names, offers opt-in TXT line-ending conversion
   and saves concurrent edits in `.pom2-conflicts/`. Disk Library search,
   rewind, snapshots, a memory viewer, bank-aware debugger, conditional
-  breakpoints, symbols and source correspondence, an interactive 6502/65C02 assembler, Disk II flux inspection
-  and CPU profiling support both play and development.
+  breakpoints, symbols and source correspondence, an interactive 6502/65C02
+  assembler, Disk II flux inspection and CPU profiling support both play and
+  development.
 - **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
   relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
   IndexedDB and offers direct disk-image import (File → Import disk and boot...),
@@ -153,6 +159,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 3
 ./build/POM2
 ```
+
+The same build makes `build/pom2_headless`, the machine without a window: it
+boots a disk and serves the Super Serial Card over telnet, and can capture
+the screen, type at given moments and plug a SoftCard or ALS card
+(`--softcard`, `--als`) to test CP/M programs. `--help` lists the options.
 
 [Windows, Raspberry Pi and WebAssembly instructions](docs/USER-GUIDE.md#build-from-source) ·
 [Tests and contributing](CONTRIBUTING.md) ·
