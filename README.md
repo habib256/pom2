@@ -69,6 +69,23 @@ one of the included disks.
 New to the Apple II? At the BASIC prompt, type `PRINT "HELLO, APPLE II!"`
 and press Return.
 
+### Missing ROMs and the RetroBIOS download
+
+If a ROM is missing or damaged, **Help → ROM Status** says which one, and
+**Download missing from RetroBIOS** fetches it from the
+[RetroBIOS](https://github.com/Abdess/retrobios) collection. POM2 checks
+every downloaded file's size and SHA-256 before installing it.
+
+> **Known problem in v1.0.0:** on 20–22 October 2026 RetroBIOS reorganised
+> its collection and removed many of the files POM2 points to. From a
+> folder with no ROM, the v1.0.0 button now installs only 19 of 45 dumps:
+> enough for the //e and the ][, but not for the //c, the //c Plus, the
+> mouse, the Super Serial Card, the Liron or the international character
+> sets. This does not affect the regular packages, which ship every ROM.
+> If you deleted `roms/` or use a ROM-free build, copy your own dumps into
+> the folder ROM Status shows. The next release reads RetroBIOS at a fixed
+> revision instead, and downloads all 49 dumps POM2 uses.
+
 ## Technical overview
 
 - **Machines and memory.** Nine profiles span the Apple ][, ][+, unenhanced
