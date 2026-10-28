@@ -144,6 +144,12 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
           "overlaid on $F000-$FFFF until it writes $C072 itself. Without it "
           "the machine boots straight into the Apple ROM, untested.",
           RomMissingEffect::Degraded },
+        { "Other cards", "Memory Expansion Card \"Slinky\" firmware (Apple 341-0344A)",
+          { "roms/slinky_341-0344a.bin" }, 4096, 0x1E994E17u, "MAME a2memexp",
+          "The card does not plug: the slot stays empty. Its firmware is the "
+          "ProDOS block driver that serves the RAM disk, and POM2 has no "
+          "synthetic stand-in for it.",
+          RomMissingEffect::Unavailable },
         { "Other cards", "Super Serial Card EPROM (Apple 341-0065-A)",
           { "roms/ssc_341-0065-a.bin", "roms/341-0065-a.bin", "roms/SSC.rom" },
           2048, 0xB7539D4Cu, "MAME a2ssc (CRC b7539d4c)",

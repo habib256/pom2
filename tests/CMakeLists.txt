@@ -8961,6 +8961,24 @@ add_test(NAME rom_fetch
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(rom_fetch PROPERTIES TIMEOUT 10)
 
+# The same catalogue, downloaded for real from the pinned RetroBIOS commit
+# into an empty scratch tree. Network-bound, so a probe and not a test: run
+# it before moving POM2_RETROBIOS_COMMIT (RomFetch.h).
+add_executable(rom_fetch_live_probe EXCLUDE_FROM_ALL
+    rom_fetch_live_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/RomFetch.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+    ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
+    ${CMAKE_SOURCE_DIR}/src/CharRomCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+    ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
+)
+target_include_directories(rom_fetch_live_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(rom_fetch_live_probe PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads)
+endif()
+
 
 add_executable(test_slot_rom_asm slot_rom_asm_test.cpp)
 target_include_directories(test_slot_rom_asm PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9769,6 +9787,7 @@ set(POM2_PROBE_TARGETS
     render_total_replay_modes
     rom_basic
     rom_boot
+    rom_fetch_live_probe
     test_choplifter_iie_trace
     test_iic_dual_boot_trace
     test_iicplus_boot_trace

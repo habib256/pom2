@@ -105,8 +105,21 @@ struct RomFetchEntry {
 constexpr const char* kRetroBiosSourceUrl =
     "https://github.com/Abdess/retrobios/tree/main/bios";
 
-constexpr const char* kRetroBiosRawPrefix =
-    "https://raw.githubusercontent.com/Abdess/retrobios/main/";
+/// Every catalog URL is read at ONE pinned RetroBIOS commit, never `main`.
+/// On 2026-10-20/22 RetroBIOS dropped the loose copies POM2's PR #75 had
+/// added ("drop copies only an install provides") and moved several card
+/// romsets, and 26 of the 45 URLs answered 404 — so the Download button of
+/// the v1.0.0 release fetched 19 dumps out of 45. A commit is immutable:
+/// what it served the day the catalog was checked, it serves for good. The
+/// SHA-256 gate below still checks every byte. Moving the pin is a
+/// deliberate act: point it at a commit where every URL resolves, then run
+/// the `rom_fetch_live` probe (it downloads the whole catalog).
+#define POM2_RETROBIOS_COMMIT "f71b00615d30daccb394e3e917d5ee5c3e21fd73"
+#define POM2_RETROBIOS_RAW \
+    "https://raw.githubusercontent.com/Abdess/retrobios/" POM2_RETROBIOS_COMMIT "/"
+
+constexpr const char* kRetroBiosCommit    = POM2_RETROBIOS_COMMIT;
+constexpr const char* kRetroBiosRawPrefix = POM2_RETROBIOS_RAW;
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
 

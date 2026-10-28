@@ -49,6 +49,7 @@
 #include <fstream>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -319,13 +320,63 @@ int main()
             // but these are the names the char-ROM picker and the //e
             // Unenhanced profile actually probe.
             "roms/apple2e_char_us.rom", "roms/apple2e_char_2k.rom",
+            // Never catalogued before 2026-10-28.
+            "roms/apple2e_char_frca_unenh.rom", "roms/apple2e_char_us_mt_iigs.rom",
+            "roms/apple2e_char_reactive.rom", "roms/slinky_341-0344a.bin",
         };
         for (const char* d : added)
             expect(dests.count(d) == 1,
                    std::string(d) + " is served by the RetroBIOS catalogue");
     }
 
-    // Only NINE entries still need a host unzip/tar: RetroBIOS publishes a
+    // The catalogue reads ONE pinned RetroBIOS commit, never a branch. On
+    // 2026-10-20/22 RetroBIOS's `main` dropped the loose copies and 26 of
+    // the 45 URLs answered 404: the v1.0.0 Download button fetched 19 dumps.
+    // A 40-hex commit cannot move under the catalogue again.
+    {
+        const std::string commit(pom2::kRetroBiosCommit);
+        bool hex = commit.size() == 40;
+        for (char c : commit)
+            hex = hex && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+        expect(hex, "the RetroBIOS pin is a full 40-hex commit, not a branch: " + commit);
+        expect(std::string(pom2::kRetroBiosRawPrefix).find("/" + commit + "/")
+                   != std::string::npos,
+               "the raw prefix reads the pinned commit");
+        expect(std::string(pom2::kRetroBiosRawPrefix).find("/main/")
+                   == std::string::npos,
+               "the raw prefix does not read main");
+    }
+
+    // A package can ship without roms/ and rely on this button, so every
+    // dump roms/ ships under a name POM2 probes must have an entry here,
+    // and the entry's digest must describe that very file. Unprobed extras
+    // (a2c.128, the fr_8k alias) are not reachable from any profile or card.
+    {
+        namespace fs = std::filesystem;
+        std::map<std::string, const pom2::RomFetchEntry*> byDest;
+        for (const auto& e : cat) byDest[e.destRel] = &e;
+        int checked = 0;
+        std::error_code dec;
+        for (const auto& f : fs::directory_iterator("roms", dec)) {
+            if (!f.is_regular_file()) continue;
+            const std::string rel = "roms/" + f.path().filename().string();
+            if (known.count(rel) == 0) continue;
+            ++checked;
+            const auto it = byDest.find(rel);
+            expect(it != byDest.end(),
+                   rel + " ships in roms/ and must be downloadable");
+            if (it == byDest.end() || !it->second->expectedSha256) continue;
+            std::ifstream in(f.path(), std::ios::binary);
+            const std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(in)),
+                                              std::istreambuf_iterator<char>());
+            expect(pom2::localDumpAcceptable(*it->second, b),
+                   rel + " is the dump its catalogue entry fetches");
+        }
+        expect(checked >= 45, "the shipped roms/ tree was found and walked (" +
+                                  std::to_string(checked) + " probed dumps)");
+    }
+
+    // Only TEN entries still need a host unzip/tar: RetroBIOS publishes a
     // loose copy of everything else, so a machine without those tools can
     // still complete almost all of its romset. Name them — an entry that
     // quietly goes back to a zip costs every such machine that dump.
@@ -343,13 +394,14 @@ int main()
                    d == "roms/videx_videoterm_v24_60hz.bin" ||
                    d == "roms/videx_videoterm_v24_50hz.bin" ||
                    d == "roms/videx_videoterm_char_normal.bin" ||
-                   d == "roms/videx_videoterm_char_inverse.bin",
+                   d == "roms/videx_videoterm_char_inverse.bin" ||
+                   d == "roms/slinky_341-0344a.bin",
                    std::string("zip-sourced entries are the mouse slot eprom, "
                                "the SSC, Grappler and PIC ROMs, the "
-                               "unenhanced //e pair and the four Videx "
-                               "Videoterm dumps, not ") + d);
+                               "unenhanced //e pair, the four Videx "
+                               "Videoterm dumps and the Slinky, not ") + d);
         }
-        expect(zipped == 9, "exactly nine entries unpack a zip");
+        expect(zipped == 10, "exactly ten entries unpack a zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +

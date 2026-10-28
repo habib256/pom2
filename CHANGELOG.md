@@ -10,6 +10,32 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-28 — "Download missing ROMs" fetched 19 dumps of 45; now all 49
+
+The v1.0.0 Download button (ROM Status → *Download missing from RetroBIOS*)
+read every URL from RetroBIOS's `main`. On 2026-10-20/22 RetroBIOS dropped
+the loose copies POM2's PR #75 had added ("drop copies only an install
+provides") and moved several card romsets, so 26 URLs answered 404: run
+from a tree with no ROM, the button installed 19 dumps — enough for the
+//e and the ][, not for the //c, the //c Plus, the mouse, the SSC, the
+Liron or the European character sets. Nothing noticed, because `rom_fetch`
+never touches the network.
+
+- **Pinned.** Every URL now reads one RetroBIOS commit,
+  `POM2_RETROBIOS_COMMIT` (`RomFetch.h`), taken just before that change. A
+  commit cannot move, and the size / CRC32 / SHA-256 gates still check every
+  byte. `rom_fetch` fails if the prefix is a branch again.
+- **Four dumps POM2 probes had no entry:** the Slinky firmware (from MAME's
+  `a2memexp.zip`; also added to ROM Status, which did not list it), the
+  ReActive and MouseText-IIgs character sets, and the FR-Canadian
+  unenhanced set (byte-identical to RetroBIOS's `apple2e_char_fr.rom`).
+  `rom_fetch` now walks `roms/` and fails on any shipped dump POM2 probes
+  that the catalogue cannot fetch, or whose digest it does not match.
+- **Checked for real** by the new `rom_fetch_live_probe` (probes target):
+  from an empty tree it downloaded all 49 entries, each byte-identical to
+  `roms/`. Run it before moving the pin. The two shipped files it leaves out,
+  `a2c.128` and `apple2e_char_fr_8k.rom`, are read by no profile or card.
+
 ## 2026-10-28 — ALS card: timing, ProDOS hard disk and RAM disk, all three disks
 
 - **Speed.** An access to the Apple is now a DMA cycle on the Apple's bus:
