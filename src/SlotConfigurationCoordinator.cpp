@@ -46,6 +46,7 @@
 #include "SlinkyCard.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
+#include "AlsCpmCard.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
 #include "UthernetCard.h"
@@ -92,6 +93,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const VidHDCard*>(&peripheral)) return "vidhd";
     if (dynamic_cast<const ClockCard*>(&peripheral)) return "clock";
     if (dynamic_cast<const SoftCardZ80*>(&peripheral)) return "softcard";
+    if (dynamic_cast<const AlsCpmCard*>(&peripheral)) return "alscpm";
     if (dynamic_cast<const LeChatMauveCard*>(&peripheral)) return "chatmauve";
     if (dynamic_cast<const MouseCard*>(&peripheral)) return "mouse";
     if (dynamic_cast<const IIcMouse*>(&peripheral)) return "iicmouse";

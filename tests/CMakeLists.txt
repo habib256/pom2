@@ -7091,6 +7091,47 @@ add_test(NAME softcard_ssc_bterm COMMAND test_softcard_ssc_bterm
 set_tests_properties(softcard_ssc_bterm PROPERTIES TIMEOUT 120)
 
 
+# ─── ALS CP/M Card: CP/M Plus boot + BTERM through the BIOS IOBYTE ─────────
+add_executable(test_als_cpm_card
+    als_cpm_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AlsCpmCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/CpmDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_als_cpm_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_als_cpm_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_als_cpm_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_als_cpm_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME als_cpm_card COMMAND test_als_cpm_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(als_cpm_card PROPERTIES TIMEOUT 120)
+
 # ─── ALS CP/M Card boot probe (manual, EXCLUDE_FROM_ALL) ──────────────────
 # Boots an ALS disk against a logging stub card: how the card's register map
 # is read off the software. Needs untracked media; asserts nothing.

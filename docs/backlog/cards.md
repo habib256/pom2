@@ -24,7 +24,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
-| [CARDS-011](#cards-011) | 🟡 | Reverse engineering | ALS "The CP/M Card" (6 MHz Z80B, own 2×64 KB, CP/M Plus) |
+| [CARDS-011](#cards-011) | 🟢 | Done 2026-10-28 | ALS "The CP/M Card" (6 MHz Z80B, own 64 KB, CP/M Plus) |
 
 <a id="cards-001"></a>
 
@@ -251,64 +251,56 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 
 ## CARDS-011 — ALS "The CP/M Card"
 
-**Priority:** 🟡 · **State:** Reverse engineering, started 2026-10-28.
+**Priority:** 🟢 · **State:** Done 2026-10-28 — catalog key `alscpm`,
+`AlsCpmCard.h/.cpp`, pinned by `als_cpm_card` (CP/M Plus 3.01C boots from
+`disks_5.4/dsk/als_cpm3_disk1.dsk`; BTERM finds and drives an SSC through
+the BIOS IOBYTE). Archive this entry with the next CHANGELOG sweep.
 
 **Asked for by:** a letter about a Z80 card run in "ALS CP/M Card" mode with
-an SSC-compatible serial card. No emulator has this card: not MAME (its
-`a2bus/cards.cpp` has `softcard` and `applicard` only), not AppleWin
-(`CT_Z80` = SoftCard). Its register map is documented nowhere, so it has to
-be read off ALS's own boot code. Manual tool:
-`cmake --build build --target als_boot_probe`
-(`tests/als_boot_probe.cpp`: boots a disk against a logging stub card,
-prints every access to its slot with the 6502 PC, dumps RAM).
+an SSC-compatible serial card. No emulator had this card (MAME's
+`a2bus/cards.cpp`: `softcard`, `applicard`; AppleWin: `CT_Z80` = SoftCard),
+and its register map is in no manual: it was read off ALS's software.
+`als_boot_probe` (probes target) boots a disk against a logging stub card.
 
-**Sources (opened, not in the tree):**
+**Sources (opened, not in the tree except Disk 1):**
 - *The CP/M CARD User's Guide*, ALS 1982 —
   <https://www.callapple.org/wp-content/uploads/2024/07/ALS-CPM-Card.pdf>
-  (§ 5: hardware).
-- CP/M 3.01C disks + notes, VintageWare via Asimov —
-  `images/cpm/os/Advanced Logic Systems (ALS)-CPM Card Installation Software.zip`
-  (`CPM.Disk1.do` … `Disk3.do`, `.shk` of /BOOT, /CPMBOOT, full install),
-  and `images/cpm/os/ALS CPM Card.zip` (ProDOS `.po` installs).
+  (§ 5: 6 MHz Z80B, 2 MHz while it touches the Apple; "an additional
+  64K"; banks by an OUT of 0/1; a write to the slot toggles the Z80; an
+  on-card clock interrupting with RST 30).
+- CP/M 3.01C, VintageWare via Asimov `images/cpm/os/` — the 5.25" disks
+  and the ProDOS `/BOOT` (`CPM3.SYSTEM`, `ZBOOT`, `CPMLDR`, `RWTS`, `APPLE`).
 
-**Established:**
-- Hardware (manual § 5): 6 MHz Z80B, slowed to 2 MHz only while it touches
-  the Apple; 2 × 64 KB on the card, bank chosen by `OUT (0F0H)` 0/1; a
-  common area at the top (about $E000/$F900 up) seen from both banks; an
-  on-card real-time clock interrupting the Z80 (RST 30); slot IRQs are
-  passed to the 6502. Slot 4 or 7. Ships **CP/M Plus** (3.0, 3.01C in
-  Nov. 1984): there is no IOBYTE; devices are assigned with `DEVICE`.
-- **On/off = one toggle**, as on the SoftCard: any write by either CPU to
-  the card's `$Cn00` page. Disk 1's boot (T0S0 → $0800, then $0900)
-  writes `$00` to `$C700`, `$C600` … `$C100` (self-modified `STA $Cn00` at
-  $092C) and calls the card found when `$08FE` is non-zero afterwards;
-  otherwise `** NO CP/M CARD IN SYSTEM **`. POM2's SoftCard in slot 4 is
-  *not* found by it.
-- **Bank-0 window = the SoftCard map with Z80 A15 inverted** (inference,
-  consistent with every address seen): Apple $0000-$0FFF at Z80 $7000,
-  Apple $C000-$CFFF at Z80 $6000. Evidence: the dual 6502/Z80 jump page
-  the boot copies to Apple $0300 (`C3 12 73` = `JP $7312` beside `4C 5C 03`
-  = `JMP $035C`) reads `$6082` ($C082), `$6FFF` ($CFFF) and `$77F8`
-  (MSLOT) and adds $A0 to $Cn to reach $6n00; and the boot carries two
-  8-byte Z80 stubs side by side, one per map — at $0AB1
-  `LD A,($F8FF) / ADD $20 / LD H,A / LD (HL),A` (SoftCard: $08FF via
-  $F8FF, toggle via $En00) and at $0AA9
-  `LD A,($78FF) / SUB $60 / LD H,A / LD (HL),A` (the same through $78FF and
-  $6n00).
+**How the card works, and where each fact comes from:**
+- **Detection.** CPM3.SYSTEM ($237D) / Disk 1 boot ($0900) clear $08FE,
+  copy an 8-byte SoftCard stub to Apple $1000 and `STA $Cn00` for n = 7…1.
+  A SoftCard runs the stub at Z80 $0000, which toggles straight back. The
+  ALS starts at Z80 $0000 = Apple **$9000**, where ZBOOT is loaded
+  (CPM3.SYSTEM's load table: rwts $8800, apple $0300, zboot $9000, cpmldr
+  $9100); ZBOOT finds no RAM at Z80 $5000, stores $FF to Z80 $78FE (Apple
+  $08FE) and its toggle address $6n00 at $73C9.
+- **Bank 0 = the Apple, SoftCard map with Z80 A15 inverted**, below $E000;
+  Apple $7000-$8FFF unreachable. Every address above fits it: ZBOOT/CPMLDR
+  at $0000/$0100, the call page at $7300 (Apple $0300), Apple $C000 at
+  $6000, CPM3.SYS's banked BDOS/BIOS at $2B00-$5FFF = Apple $BB00-$BFFF and
+  the language card.
+- **Bank 1 = card RAM $0000-$DFFF; $E000-$FFFF common** (resident BDOS/BIOS
+  at $F200). 56 + 8 KB = the card's 64 KB.
+- **Bank select** = BIOS SELMEM $F944: `OUT ($00)` of $F0 (bank 0) or $FF
+  (bank 1). Data bit 0; the port is not decoded in the model.
+- **6502 ↔ Z80 calls** go through Apple page 3 (the `apple` file): the
+  6502 loops at $035C saving A/X/Y/P/S in $45-$49, `STA $Cn00`, then
+  `JSR ($03C7)`; the Z80 side ($7312/$7335) stores the target and toggles
+  through $6n00. $7388/$7392 read and write any Apple byte via the 6502.
+- **Clock.** 60 Hz: the BIOS handler at $FB94 counts $3C ticks to a second;
+  vectors at $0030 and $0038 of bank 1; interrupts only enabled in bank 1;
+  no port read to acknowledge.
+- **Console.** The ALS BIOS keeps an IOBYTE: each character entry copies
+  $0003 from the TPA bank and dispatches on the field (banked BIOS $5B6F):
+  slot per value at Apple $08F5-$08F8, driver per card type. CONST follows
+  CON:, AUXIST follows RDR:.
 
-**Open:**
-- What sets `$08FE`. Neither stub writes it, and only the SoftCard one is
-  copied (to $1000 = Z80 $0000 on a SoftCard). The Z80's state at the
-  first toggle after power-on (PC, which bank, which map) decides it.
-- The rest of bank 0 (Apple $1000-$BFFF and the language card), the RTC's
-  ports and rate, and whether the 6502 is halted while the Z80 runs (the
-  manual says "DMA device", one CPU at a time).
-- The CP/M 3 BIOS (files `APPLE`, `RWTS`, `CPMLDR` on /BOOT) is the next
-  thing to disassemble; a real card, or the Z80 card the letter mentions
-  in its ALS mode, would settle the power-on state in one test.
-
-**Note for BTERM:** CP/M Plus has no IOBYTE, but has BDOS 7 (AUXIST) and 8
-(AUXOST): an AUX:-input-status call is the poll BTERM looks for, and the
-SoftCard's 2.20 BIOS cannot offer it (its CONST ignores the IOBYTE —
-`softcard_ssc_bterm`).
-
+**Left:** the 2 MHz slow-down is approximated (one Apple cycle per access);
+the RTC's rate on a PAL machine is assumed 60 Hz; the ProDOS-hosted hard
+disk and RAM-disk paths of 3.01C are untested; Disks 2 and 3 use another
+CP/M format than Disk 1 (pom2_cpm does not read them).

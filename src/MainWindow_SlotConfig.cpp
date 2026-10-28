@@ -83,6 +83,7 @@
 #include "SmartPortCard.h"
 #include "SmartPortHdvUnit.h"
 #include "SoftCardZ80.h"
+#include "AlsCpmCard.h"
 #include "SuperSerialCard.h"
 #include "SuperSerialTcpTransport.h"
 #include "SuperSerialTransport.h"
@@ -399,6 +400,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // side effects, LC paging) and the 6502 so its $CnXX toggle can
         // halt the in-flight run() chunk at an instruction boundary.
         auto card = std::make_unique<SoftCardZ80>();
+        card->setMemory(&st.memory());
+        card->setCpu(&st.cpu());
+        st.memory().slotBus().plug(s, std::move(card));
+    };
+
+    auto plugAlsCpm = [&](int s) {
+        // ALS CP/M Card: a bus master like the SoftCard, same wiring.
+        auto card = std::make_unique<AlsCpmCard>();
         card->setMemory(&st.memory());
         card->setCpu(&st.cpu());
         st.memory().slotBus().plug(s, std::move(card));
@@ -779,6 +788,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "printer")     plugPrinter(s);
         else if (kind == "clock")       plugClock(s);
         else if (kind == "softcard")    plugSoftCard(s);
+        else if (kind == "alscpm")      plugAlsCpm(s);
         else if (kind == "chatmauve")   plugChatMauve(s);
         else if (kind == "mouse")       plugMouse(s);
         else if (kind == "mouseaw" || kind == "iicmouse") {

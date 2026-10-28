@@ -29,12 +29,14 @@
 // Designed for headless self-test: launch in the background, telnet in,
 // type DOS 3.3 commands, observe behaviour. Exits cleanly on SIGINT.
 //
-// CP/M: `--softcard <slot>` plugs the Microsoft SoftCard (Z80) and drops the
+// CP/M: `--softcard <slot>` plugs the Microsoft SoftCard (Z80) — or `--als
+// <slot>` the ALS CP/M Card (CP/M Plus) — and drops the
 // BASIC setup paste; the SSC then stays a serial line (no keyboard sink), so
 // a CP/M program's RDR:/PUN: traffic is what the telnet client sees. The
 // console is typed with `--type <sec>:<text>`, at an emulated second, in
 // both modes; `--text-dump` prints the text page after a capture run.
 
+#include "AlsCpmCard.h"
 #include "Apple2Display.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
@@ -116,6 +118,8 @@ void usage(const char* prog)
         "  --type <sec>:<text>   Type <text> on the keyboard at emulated second\n"
         "                        <sec>. Repeatable; same escapes as --setup.\n"
         "                        Example: --type 12:'DIR\\r'\n"
+        "  --als <slot>          Plug an ALS CP/M Card (Z80B, CP/M Plus) instead;\n"
+        "                        slot 4 or 7 as ALS says. Same rules as --softcard.\n"
         "\n"
         "Capture mode (no telnet listener, no threads, deterministic):\n"
         "  --frames <N>          N > 0: run N emulated frames, then exit.\n"
@@ -208,6 +212,7 @@ int main(int argc, char** argv)
     bool setupGiven  = false;
     bool textDump    = false;
     int  softcardSlot = 0;   // 0 = none
+    int  alsSlot      = 0;   // 0 = none
     // --type: text to type at an emulated second, in the order given.
     struct TypedKeys { int atSecond; std::string text; bool sent; };
     std::vector<TypedKeys> typed;
@@ -239,7 +244,7 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
-            a == "--screenshot" || a == "--softcard" || a == "--type") {
+            a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als") {
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
         }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
@@ -257,6 +262,14 @@ int main(int argc, char** argv)
             if (softcardSlot == 2 || softcardSlot == 6) {
                 std::fprintf(stderr, "--softcard: slot %d holds the %s\n", softcardSlot,
                              softcardSlot == 2 ? "Super Serial Card" : "Disk II");
+                return 1;
+            }
+        }
+        else if (a == "--als" && i+1 < argc) {
+            if (!parseInt("--als", argv[++i], 1, 7, alsSlot)) return 1;
+            if (alsSlot == 2 || alsSlot == 6) {
+                std::fprintf(stderr, "--als: slot %d holds the %s\n", alsSlot,
+                             alsSlot == 2 ? "Super Serial Card" : "Disk II");
                 return 1;
             }
         }
@@ -294,7 +307,12 @@ int main(int argc, char** argv)
     // binary found its bundled roms/, executed 6502 code and drew a frame,
     // which `--help` cannot. Deterministic by construction: no worker thread
     // (tickFrame drives the CPU inline), no sleeps, no TCP listener.
-    if (softcardSlot && !setupGiven) doSetup = false;
+    if (softcardSlot && alsSlot) {
+        std::fprintf(stderr, "--softcard and --als: one Z80 card at a time\n");
+        return 1;
+    }
+    const int z80Slot = softcardSlot ? softcardSlot : alsSlot;
+    if (z80Slot && !setupGiven) doSetup = false;
     const bool captureMode = frames > 0 || !shotPath.empty() || textDump;
     if (captureMode && frames <= 0) frames = 300;   // ~5 s: past the boot beep
 
@@ -402,7 +420,7 @@ int main(int argc, char** argv)
         // control bytes a terminal has to be able to send (see
         // MainWindow_SlotConfig.cpp's copy of this sink).
         // Under CP/M the SSC is the RDR:/PUN: line, not a second keyboard.
-        if (!softcardSlot) {
+        if (!z80Slot) {
             ssc->setKeyboardSink(
                 [&mem = controller.memory()](uint8_t b) {
                     const char buf[1] = { static_cast<char>(b) };
@@ -420,7 +438,7 @@ int main(int argc, char** argv)
 
     // ThunderClock+-compatible RTC in slot 4 — uPD1990AC bit-bang chip
     // emulation; ProDOS auto-detects and links its driver to it.
-    if (softcardSlot != ClockCard::kDefaultSlot)
+    if (z80Slot != ClockCard::kDefaultSlot)
         controller.memory().slotBus().plug(ClockCard::kDefaultSlot,
             std::make_unique<ClockCard>(ClockCard::kDefaultSlot));
 
@@ -431,6 +449,12 @@ int main(int argc, char** argv)
         z80->setMemory(&controller.memory());
         z80->setCpu(&controller.cpu());
         controller.memory().slotBus().plug(softcardSlot, std::move(z80));
+    }
+    if (alsSlot) {
+        auto als = std::make_unique<AlsCpmCard>();
+        als->setMemory(&controller.memory());
+        als->setCpu(&controller.cpu());
+        controller.memory().slotBus().plug(alsSlot, std::move(als));
     }
 
     // Hard reset loads the motherboard reset vector; reset the slot bus

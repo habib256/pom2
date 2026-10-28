@@ -62,6 +62,7 @@
 #include "ProDOSHardDiskCard.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
+#include "AlsCpmCard.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
 #include "SlinkyCard.h"
@@ -374,6 +375,7 @@ int main()
         { "LeChatMauveFeline", [] { return std::unique_ptr<SlotPeripheral>(new LeChatMauveCard(7)); } },
         { "LeChatMauveEve",    [] { return std::unique_ptr<SlotPeripheral>(new LeChatMauveCard(7, LeChatMauveCard::Variant::Eve)); } },
         { "SoftCardZ80",       [] { return std::unique_ptr<SlotPeripheral>(new SoftCardZ80()); } },
+        { "AlsCpmCard",        [] { return std::unique_ptr<SlotPeripheral>(new AlsCpmCard()); } },
         { "WorkstationCard",   [] { return std::unique_ptr<SlotPeripheral>(new WorkstationCard(7)); } },
     };
     // The ROM-gated cards once more, as the machine builds them: through the
@@ -417,7 +419,7 @@ int main()
         {"grappler", "GrapplerCard"}, {"clock", "ClockCard"},
         {"uthernet", "UthernetCard"}, {"uthernet2", "UthernetIICard"},
         {"fujinet", "(FujiNetCard: its link is a live socket; snapshot pinned in fujinet_card_smoke)"},
-        {"softcard", "SoftCardZ80"}, {"chatmauve", "LeChatMauveFeline"},
+        {"softcard", "SoftCardZ80"}, {"alscpm", "AlsCpmCard"}, {"chatmauve", "LeChatMauveFeline"},
         {"mouse", "MouseCard"}, {"mouseaw", "MouseCardAppleWin"},
         {"mockingboard", "MockingboardAC"}, {"mockingboard_c", "MockingboardSndII"},
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},

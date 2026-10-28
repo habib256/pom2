@@ -277,6 +277,7 @@ set(SOURCES
     src/M6502.cpp
     src/M6502_Undoc.cpp
     src/Z80.cpp
+    src/AlsCpmCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -595,6 +596,7 @@ set(POM2_DEVICES_SOURCES
     src/SmartPortCard.cpp
     src/SmartPortHdvUnit.cpp
     src/SmartPortUnit.cpp
+    src/AlsCpmCard.cpp
     src/SoftCardZ80.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
@@ -951,6 +953,7 @@ set(HEADERS
     src/SessionIO.h
     src/M6502.h
     src/Z80.h
+    src/AlsCpmCard.h
     src/SoftCardZ80.h
     src/ByteIO.h
     src/Memory.h
@@ -1484,6 +1487,7 @@ set(POM2_CORE_SOURCES
     src/M6502.cpp
     src/M6502_Undoc.cpp
     src/Z80.cpp
+    src/AlsCpmCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -1833,6 +1837,7 @@ add_executable(pom2_headless
     src/SpeakerDevice.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
+    src/AlsCpmCard.cpp
     src/SoftCardZ80.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp

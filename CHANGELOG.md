@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-28 — ALS "The CP/M Card" (catalog `alscpm`)
+
+The 6 MHz Z80B card with its own 64 KB that ran ALS's CP/M Plus. No
+emulator had it and no manual gives its registers, so the model is read off
+ALS's software (CARDS-011 has every address and where it came from):
+toggle on a `$Cn00` write as on the SoftCard; bank 0 is the Apple through
+the SoftCard's map with Z80 A15 inverted, bank 1 card RAM, `$E000-$FFFF`
+common; `OUT` data bit 0 picks the bank; a 60 Hz RST 30 clock. ALS's
+CP/M 3.01C boots to `A>` from `disks_5.4/dsk/als_cpm3_disk1.dsk`.
+
+**Why BTERM works here and not on a SoftCard:** ALS's CP/M Plus keeps an
+IOBYTE and its CONST follows the CON: field, so pointing CON: at BAT: polls
+the SSC. `als_cpm_card` runs BTERM P (the BAT: column flips on a received
+byte) and BTERM 2 (receive, send through PUNCH, ^A Q). Two harness traps
+met on the way: ALS prints through the 6502's COUT, which ANDs INVFLG, so a
+test must let the Autostart ROM boot rather than poke `$C600`; and an SSC
+with no cable reports DCD/DSR off, which holds PUNCH forever.
+`pom2_headless --als <slot>` mirrors `--softcard`.
+
 ## 2026-10-28 — CP/M: files in images, SoftCard headless, IOBYTE pinned
 
 From a letter asking for a Z80 card + SSC CP/M setup (BTERM, a terminal that
