@@ -15,21 +15,20 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [UI-002](#ui-002) | 🟡 | Partial: native chooser added | Native picker integration and platform verification |
-| [UI-003](#ui-003) | 🟡 | Partial: debugger and CPU validation corrected | HTTP screen-method and status-inventory review |
-| [UI-004](#ui-004) | 🟢 | To verify | Deeper guided tutorials |
-| [UI-006](#ui-006) | 🟢 | To verify | Airier default layout |
-| [UI-007](#ui-007) | 🟢 | Code policy shared; interactive confirmation remains | Duplicate-card validation in Slot Configuration |
+| [UI-002](#ui-002) | 🟡 | Partial: panels still use typed paths | Native picker integration and platform verification |
+| [UI-003](#ui-003) | 🟡 | Partial: `/screen` method check | HTTP screen-method and status-inventory review |
+| [UI-004](#ui-004) | 🧊 | Frozen — triage 2026-10-28 | Deeper guided tutorials |
+| [UI-006](#ui-006) | 🧊 | Frozen — triage 2026-10-28 | Airier default layout |
 | [UI-005](#ui-005) | 🧊 | Frozen | MicroM8-style 3D voxel view ("Voxel Cube") |
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
-| [UI-009](#ui-009) | 🟢 | Ready for design | Disk Library miniatures |
-| [UI-010](#ui-010) | 🟢 | Partial: macOS/Linux declarations and open handling exist | OS file associations for disk images |
+| [UI-009](#ui-009) | 🟢 | Needs decision: cover art vs captured screen | Disk Library miniatures |
+| [UI-010](#ui-010) | 🟢 | Partial: Windows + macOS rank | OS file associations for disk images |
 
 <a id="ui-002"></a>
 
 ## UI-002 — Remaining native file picker integration and platform checks
 
-**Priority:** 🟡 · **State:** Partial, 2026-10-17.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cassette, SmartPort, Disk/HDV/3.5 and printer panels still take typed paths; Windows unchecked.
 
 **Acceptance criterion (after revalidation):** Use the native open/save dialog and verify cancellation, chosen paths and fallback behavior on supported hosts.
 
@@ -52,7 +51,7 @@ and the expanded `debugger` regression suite.
 
 ## UI-003 — Bug hunt #16's debugger residue
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `/cpu` and debugger items fixed; `/screen` still answers POST.
 
 **Acceptance criterion (after revalidation):** Define and verify the screenshot endpoint's method contract and the intended media-status inventory; retain existing CPU-validation and debugger regressions.
 
@@ -86,7 +85,7 @@ choice. No new endpoint execution is claimed by this source reconciliation.
 
 ## UI-004 — Deeper guided tutorials
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Reopen when one or two tutorials are named with an acceptance walk-through.
 
 **Acceptance criterion (after revalidation):** Provide and walk through the chosen tutorials from a fresh profile.
 
@@ -99,7 +98,7 @@ choice. No new endpoint execution is claimed by this source reconciliation.
 
 ## UI-006 — Airier default layout
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). "Airier" has no measurable criterion. Reopen with a concrete window size and the panel that misbehaves there.
 
 **Acceptance criterion (after revalidation):** Check the proposed default layout at supported window sizes while preserving user-saved layouts.
 
@@ -109,25 +108,6 @@ ImGui docking and Emulation, Debug, Audio and Reset layout presets are
 implemented by `MainWindow::applyDockLayout`. The remaining proposal is to
 review their default spacing and behavior at supported window sizes while
 preserving saved layouts. It is not a request to introduce docking.
-
-<a id="ui-007"></a>
-
-## UI-007 — Duplicate-card validation in Slot Configuration
-
-**Priority:** 🟢 · **State:** Shared code policy implemented; interactive confirmation remains.
-
-`isDuplicate` in `MainWindow_Slots.cpp` returns false for keys accepted by
-`SlotConfigurationCoordinator::isMultiInstance`. The current predicate permits
-Disk II, CFFA 2.0/3000, SmartPort, SuperDrive, Liron, Mockingboard A/C and
-Sound II, Phasor and SSI263 Echo cards. Multiple CFFA or SmartPort cards are
-therefore allowed by the UI's code path, contrary to the original report.
-Confirm the displayed validation in Slot Configuration before closing the
-remaining interactive check; do not schedule a second duplicate-policy fix.
-
-**Acceptance criterion (after revalidation):** Verify duplicate detection against each card's actual multiple-instance policy; archive claims contradicted by current support.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-2103). Original dates and estimates are retained below.
-
 
 <a id="ui-005"></a>
 
@@ -178,7 +158,7 @@ remaining interactive check; do not schedule a second duplicate-policy fix.
 
 ## UI-009 — Disk Library miniatures
 
-**Priority:** 🟢 · **State:** Ready for design (after the shared catalogue/search view).
+**Priority:** 🟢 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cover art or captured screen. The prerequisite (search/sort, "All media") exists. User-requested order: this, then UI-010.
 
 **Acceptance criterion:** Decide whether a thumbnail is user-supplied cover art
 or a captured guest screen, then display it without loading every disk or
@@ -188,7 +168,7 @@ blocking the library's scan. Missing art must leave a readable text row.
 
 ## UI-010 — OS file associations for disk images
 
-**Priority:** 🟢 · **State:** Partial implementation; registration coverage and platform validation remain.
+**Priority:** 🟢 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `.moof` declared; macOS uses `LSHandlerRank` Owner (should be Alternate for `.po`/`.dsk`); Windows has no association.
 
 **Acceptance criterion:** Register supported image extensions in each desktop
 package, open a disk from the host file manager into the correct drive, and

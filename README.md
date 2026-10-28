@@ -9,8 +9,8 @@
 ### A floppy disk. A glowing screen. One more game.
 
 Play, explore and create on the Apple II — on your desktop or in your browser.
-POM2 is written in modern C++ with a Dear ImGui interface and cycle-accurate
-6502/65C02 cores.
+POM2 is written in modern C++ with a Dear ImGui interface and 6502/65C02
+cores whose per-instruction cycle counts match the Tom Harte test vectors.
 
 [![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
 

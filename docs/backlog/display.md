@@ -15,19 +15,19 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [DISPLAY-001](#display-001) | 🟡 | Landed (2026-10-16), hardware check owed | VidHD on Apple IIe — SHR display support. |
-| [DISPLAY-011](#display-011) | 🟡 | To verify | Le Chat Mauve — what is left after P0-P2 |
+| [DISPLAY-001](#display-001) | 🟡 | Partial; needs hardware oracle | VidHD on Apple IIe — SHR display support. |
+| [DISPLAY-011](#display-011) | 🟡 | Partial: Eve Leonard golden; rest needs oracle | Le Chat Mauve — what is left after P0-P2 |
 | [DISPLAY-012](#display-012) | 🧊 | Frozen: needs a colour oracle | 80-column text colour phase under the CPU demodulators |
-| [DISPLAY-002](#display-002) | 🟢 | To verify | Golden coverage gaps |
-| [DISPLAY-008](#display-008) | 🟢 | To verify | "Smooth" interpolated sub-pixel mode |
-| [DISPLAY-010](#display-010) | 🟢 | To verify | CRT parity refinements vs OpenEmulator |
+| [DISPLAY-002](#display-002) | 🟢 | Confirmed open | Golden coverage gaps |
+| [DISPLAY-008](#display-008) | 🧊 | Frozen — triage 2026-10-28 | "Smooth" interpolated sub-pixel mode |
+| [DISPLAY-010](#display-010) | 🟢 | Partial: F6 only | CRT parity refinements vs OpenEmulator |
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
 
 <a id="display-001"></a>
 
 ## DISPLAY-001 — VidHD on Apple IIe — SHR display support.
 
-**Priority:** 🟡 · **State:** Landed 2026-10-16 (`VidHDCard`, catalog `vidhd`); a reference image from real hardware is still owed.
+**Priority:** 🟡 · **State:** Partial, needs a hardware oracle ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): IIgs text/border colours landed 2026-10-21; a real VidHD capture is the remaining evidence.
 
 **Acceptance criterion (after revalidation):** Render VidHD SHR on the IIe with documented register behavior and a reference image or hardware-derived test.
 
@@ -59,37 +59,34 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
 
 ## DISPLAY-011 — Le Chat Mauve — what is left after P0-P2
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): one actionable golden left; the other residuals are frozen until an oracle exists.
 
-**Acceptance criterion (after revalidation):** Verify the remaining supported Feline/Eve behavior with their goldens; keep RVB and adapter work subject to the frozen scope.
+**Acceptance criterion:** A third Eve golden from Eve Leonard joins `purplesoft_eve_screens` / `chatmauve_feline_screens`; the Féline and Eve suites stay green unchanged.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1126). Original dates and estimates are retained below.
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1126); [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md).
 
-- 🟡 **Le Chat Mauve — what is left after P0-P2** (landed 2026-09-01; the
-  model as built is `docs/chatmauve_plan.md` § 2.1). **Féline and Eve are
-  core** — dot-exact against AppleWin's hardware-validated oracles, two golden
-  suites (`purplesoft_eve_screens`, `chatmauve_dot_rules`), the Eve's sixteen
-  switches + CPREG auto-write + table IX-1 corrected four times by Purplesoft's
-  own code. `rvb` and the //c-adapter quirk are 🧊 **frozen**, both gated on
-  sources that have never surfaced (P4's manual; P5's silicium.org thread
-  behind a proof-of-work wall `WebFetch` cannot pass). **P3 is closed as
-  bounded** (2026-09-02): the PLA is a dot-stream router / cell assembler, NOT
-  the colour decoder — reopen only on a schematic or a board trace.
-  Remaining and not frozen: **P6's residuals** (the Eve's `$C0Bx` as loggable
-  events, the exact in-cell dot position, the TTL-RGBI palette option, DIX /
-  PoP golden screens — the first rung, a beam-racing mode latch, landed as
-  `chatmauve_latch_split`); **Eve Leonard** for a third Eve golden (the
-  Arlequin and Extasie Féline goldens landed 2026-10-24 as
-  `chatmauve_feline_screens`; an Extasie *editor* screen needs the mouse
-  driven and is not pinned yet); the **three Féline trim pots** (R/G/B
-  gain, manual p. 13), which belong with the `NtscParams::rgbBandwidthMHz`
-  pre-pass that gave the card its second connector on 2026-09-04; and **P7's
-  last doc step** — fold § 3.4's corrected table back into § 3 prose, and
-  rewrite the README's Chat Mauve paragraph.
-  Still parked alongside: **Video-7
-  AppleColor RGB** (its 160×192 chunky mode and F/B text are the only things
-  the plan's Féline decoder does not cover), **Color killer Rev 1**,
-  **Strapping RAM 4K→48K**.
+**Féline and Eve are core** — dot-exact against AppleWin's hardware-validated
+oracles, with golden suites (`purplesoft_eve_screens`, `chatmauve_dot_rules`,
+`chatmauve_feline_screens`, `chatmauve_latch_split`). Done since the original
+entry, confirmed on `aad2fee5`:
+
+- **Video-7 AppleColor RGB** — 160×192 chunky mode, F/B HGR, colour text
+  (`LeChatMauveCard.h:109,128,148`).
+- **RVB Graph** — modelled from its manual on 2026-10-20 (`3c091891`):
+  control register at `$C0F0+S+U+K`, eight colour registers at
+  `$C70F/$C71F/$C72F/$C73F − Bn`. Unverified on hardware.
+- **P7** — the doc step is recorded done in `docs/chatmauve_plan.md`.
+
+**Actionable:** fetch **Eve Leonard** and pin a third Eve golden. It is not
+in `disks_5.4/chatmauve/` today.
+
+**Frozen until an oracle** (a board, a scope trace or a schematic): the Eve's
+`$C0Bx` switches as beam-time events (applied directly today, `eveDecode`,
+`LeChatMauveCard.cpp:213-222`), the exact in-cell dot position, the TTL-RGBI
+palette, the three Féline trim pots (R/G/B gain, manual p. 13), the
+//c-adapter quirk (P5), Color killer Rev 1 and the 4K→48K strapping RAM.
+**P3 stays closed as bounded**: the PLA is a dot-stream router, not the
+colour decoder.
 
 <a id="display-012"></a>
 
@@ -116,7 +113,7 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 ## DISPLAY-002 — Golden coverage gaps
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); the user-ROM blocker is gone (`roms/apple2e_char*.rom` are tracked).
 
 **Acceptance criterion (after revalidation):** Add the missing glyph and PAL split coverage; separately measure whether the fallback-framebuffer upload remains unnecessary.
 
@@ -135,7 +132,7 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 ## DISPLAY-008 — "Smooth" interpolated sub-pixel mode
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Cosmetic, no oracle, no named need. Reopen on a user request naming the scaling it should fix.
 
 **Acceptance criterion (after revalidation):** Provide an interpolation toggle and compare HGR/DHGR output at representative scales.
 
@@ -148,7 +145,7 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 ## DISPLAY-010 — CRT parity refinements vs OpenEmulator
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): F4 is deliberate and F2 a phase-only difference; F6 (luminance-neutral row dim) is fix-on-report.
 
 **Acceptance criterion (after revalidation):** Compare CRT defaults and mono rendering with the documented OpenEmulator reference; document deliberate visual choices.
 

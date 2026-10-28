@@ -1,64 +1,114 @@
 # POM2 — TODO
 
-Action queue updated 2026-10-20 · **v0.9.7 → 1.0**.
+Action queue updated 2026-10-28 · **post-1.0 (v1.0.0 released)**.
 This page answers what to do next. Detailed tasks and acceptance criteria live
 in `docs/backlog/`; dated reports and decisions have their own documents.
 
-The requested non-IIgs emulator comparison work is tracked in
-[the implementation report](docs/audits/non-iigs-parity-2026-10-17.md),
-including implemented changes and the remaining hardware/product projects.
 Current sessions reconstruct supported machines and embed writable media,
 firmware and program tapes; see the [v7 contract](docs/session-format.md).
 The debugger supports bank-qualified stops, profiling and source correspondence;
-see the [debugger guide](docs/debugger-banks.md). These are implemented,
-with the remaining limits documented in those guides.
+see the [debugger guide](docs/debugger-banks.md).
+
+## Triage of 2026-10-28
+
+Every open backlog entry was rechecked against `aad2fee5`
+([evidence](docs/audits/backlog-triage-2026-10-28.md)): 4 closed (ARCH-001,
+NETWORK-002, NETWORK-003, UI-007 — see CHANGELOG), 8 frozen with a reopen
+condition, 3 added (CPU-001, VALIDATION-006, ARCH-016), and the RVB Graph
+drift corrected in the parity dashboard and the scope ruling. No entry is left
+in the bare *To verify* state.
+
+The queue below sorts what remains by **scope tier** (the
+[scope ruling](docs/decisions/project-scope.md#the-scope-ruling): core is
+worked proactively, supported is fixed on report) and by **what unblocks it**.
+**Admission rule:** no new card or peripheral without a named piece of
+software that needs it.
 
 ## Action queue
 
-This is a short ordering of the next actions, not a second task record. The
-linked domain entry owns the task's state, evidence and acceptance criterion.
-Recheck dated claims against current main before implementing a reported gap.
-Move an item when its next action or dependency changes.
+The linked domain entry owns the task's state, evidence and acceptance
+criterion. Move an item when its next action or dependency changes.
 
-### Now — unblock the 1.0 candidate
+### Core — in progress (at most 5)
 
 | Task | Next action |
 |---|---|
-| [RELEASE-001](docs/backlog/release-1.0.md#release-001) | Record the decision on commercial media still present in Git history, then align repository and release distribution with it. |
-| [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Obtain the origin and redistribution terms of all three shipped photographs; record them in `THIRD-PARTY.md`. |
+| [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | Design the per-cycle microsequences from MAME's `.lst` tables as a separate core; Harte per-cycle bus ordering is the gate. |
+| [VALIDATION-006](docs/backlog/validation.md#validation-006) | Build the headless corpus runner, DIX first; record the first pass rate. |
+| [DISPLAY-002](docs/backlog/display.md#display-002) | Add ALTCHAR / MouseText hash pins from the tracked `apple2e_char*.rom`. |
+| [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Re-profile a ][+ banner, then prototype the page-dispatch table against `bus_fastpath`. |
+| [STORAGE-014](docs/backlog/storage.md#storage-014) | Test a host-folder bay dirtied during each phase-2 commit, or record the residue as an accepted limit. |
 
-### Next — complete the remaining evidence
+### Core — ready
+
+| Task | Next action |
+|---|---|
+| [STORAGE-003](docs/backlog/storage.md#storage-003) | Best-of-9 `pom2_bench` with `DiskImage::tracks` on the heap. |
+| [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
+| [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Write the doc-reference checker with negative controls; wire it into the CI Linux job. |
+| [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`ImageWriter.cpp`, `Apple2Display.cpp`); split the DiskImage WOZ save half. |
+| [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only pass on `M6502`, verified by unchanged Harte/Klaus. |
+
+### Needs a hardware oracle
+
+Group these into one session with the machines (or a MAME with Apple II
+romsets, where noted).
+
+| Task | What to measure |
+|---|---|
+| [VALIDATION-001](docs/backlog/validation.md#validation-001) | Real //c: PH1→PH3 gaps of 4…512 cycles while the motor coasts; did the head move? |
+| [VALIDATION-004](docs/backlog/validation.md#validation-004) | DOS 3.1 / 3.1.1 masters on a ][+ with 13-sector PROMs (or MAME `apple2p`). |
+| [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Language Card power-on bank: distinct bytes in banks 1/2, power-cycle, read `$D000`. |
+| [DISPLAY-001](docs/backlog/display.md#display-001) | A real VidHD capture: SHR 320/640/fill and a `$C022`/`$C034` colour screen. |
+| [DISPLAY-011](docs/backlog/display.md#display-011) | Fetch Eve Leonard for a third Eve golden; the other residuals need a board. |
+| [AUDIO-011](docs/backlog/audio.md#audio-011) | Recordings of a real SSI263 sweeping INFLECT / RATE / ARTIC. |
+
+### Needs a decision
+
+| Task | Question |
+|---|---|
+| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Miniatures from cover art or a captured screen? (Requested order: this, then [UI-010](docs/backlog/ui-debugger.md#ui-010).) |
+| [ARCH-011](docs/backlog/architecture-tooling.md#arch-011) | Close as "worker stopped during Apply, by design", or wait for ARCH-003? |
+| [STORAGE-002](docs/backlog/storage.md#storage-002) | Add a slot+bay `/media` mount/boot endpoint, or narrow the entry to the API gap? |
+| [NETWORK-001](docs/backlog/network.md#network-001) | Freeze native FujiNet phases 2-4 until a named need? |
+| [NETWORK-007](docs/backlog/network.md#network-007) | Schedule FujiNet on //c-class profiles, or freeze? |
+| [NETWORK-004](docs/backlog/network.md#network-004) | One live delayed-TNFS run against a named peer, or close? |
+
+### Supported — fixed on report, or quick wins
+
+| Task | Next action |
+|---|---|
+| [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen` answers POST: GET-only check (405) with a smoke assertion. |
+| [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
+| [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
+| [CARDS-001](docs/backlog/cards.md#cards-001) | Add the ten missing `AbsEntry` rows from `docs/lle_vs_hle.md`. |
+| [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | Add `frontend_device_panel_concurrency` and `drive_rack_interaction` to the TSan leg. |
+| [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | One more card-pointer panel under replug, or close. |
+| [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | An env-var table in `printUsage()`. |
+| [ARCH-012](docs/backlog/architecture-tooling.md#arch-012) | Namespace migration, one directory at a time. |
+| [ARCH-014](docs/backlog/architecture-tooling.md#arch-014) | Clock getter for speaker, cassette and floppy sound. |
+| [ARCH-015](docs/backlog/architecture-tooling.md#arch-015) | Cover `plugSlotsFromSettings` headless or move its policy into the coordinator. |
+| [ARCH-008](docs/backlog/architecture-tooling.md#arch-008) | Paint-editor seam on a report only (editors are frozen). |
+| [NETWORK-005](docs/backlog/network.md#network-005) | Atomic in-flight flag shown in the UI and `/status`. |
+| [NETWORK-010](docs/backlog/network.md#network-010) | LAN mapping, when someone names a need. |
+| [AUDIO-006](docs/backlog/audio.md#audio-006) | Measure lock wait after ARCH-003; change only on a measured wait. |
+| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Record WOZ SHA-256s and probe commands (feeds VALIDATION-006). |
+| [VALIDATION-005](docs/backlog/validation.md#validation-005) | Six GUI runs on a copy of A2 File Cmd 1.0; close as stale if quiet. |
+| [DISPLAY-010](docs/backlog/display.md#display-010) | F6 luminance-neutral row dim, on report. |
+
+### Release
+
+Remaining 1.0 release gates and the candidate checklist:
+[release-1.0.md](docs/backlog/release-1.0.md).
 
 | Task | Next action |
 |---|---|
 | [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
 | [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
 
-### Later — sign off the candidate
-
-Once the gates above are resolved, run the
-[candidate release checklist](docs/backlog/release-1.0.md#candidate-release-checklist)
-against the actual 1.0 build, including packages, first launch and data
-durability. Other domain work stays post-1.0 unless a release gate or a
-current core defect brings it forward.
-
-## Release 1.0
-
-1. Describe shipped behavior accurately.
-2. State the supported scope and deliberate limits.
-3. Produce a repeatable, distributable release.
-4. Preserve user data: media, settings and snapshots.
-
-[Release plan and gates](docs/backlog/release-1.0.md) ·
-[Scope and standing decisions](docs/decisions/project-scope.md).
-G2–G4 implementation work is recorded as closed in the prior report;
-candidate verification still has to run.
-
 For the Disk Library follow-up, the requested order is
 [miniatures](docs/backlog/ui-debugger.md#ui-009), then
 [desktop file associations](docs/backlog/ui-debugger.md#ui-010).
-The latter already has macOS/Linux declarations and host-open handling;
-Windows registration, extension coverage and installed-package checks remain.
 
 <a id="backlog"></a>
 
@@ -99,6 +149,7 @@ A ruled-out feature belongs in the scope decisions.
 
 ## Evidence and decisions
 
+- [Backlog triage of 2026-10-28](docs/audits/backlog-triage-2026-10-28.md) — the verdicts behind this queue.
 - [Emulation parity dashboard](docs/audits/emulation-parity.md) — fidelity references; revalidate the affected row after an implementation change.
 - [Risk measurements from 2026-09-05](docs/audits/todo-risk-2026-09-05.md) — historical measurements, not today's coverage.
 - [Original TODO snapshot](docs/archive/todo-2026-10-05.md) — full reports, completed tasks and their proof, preserved during this migration.

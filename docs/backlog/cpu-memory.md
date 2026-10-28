@@ -15,15 +15,45 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [MEMORY-002](#memory-002) | 🟡 | To verify | `Memory::memRead` hot path |
-| [MEMORY-003](#memory-003) | 🟢 | Needs a primary source | Language Card power-on bank; the Apple card's own F8 ROM |
+| [CPU-001](#cpu-001) | 🟡 | To design | Optional cycle-stepped 6502 core |
+| [MEMORY-002](#memory-002) | 🟡 | Confirmed open | `Memory::memRead` hot path |
+| [MEMORY-003](#memory-003) | 🟢 | Needs hardware oracle (bank) | Language Card power-on bank; the Apple card's own F8 ROM |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
+
+<a id="cpu-001"></a>
+
+## CPU-001 — Optional cycle-stepped 6502 core
+
+**Priority:** 🟡 · **State:** To design ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+
+**Acceptance criterion:** A second core, selected per profile or by a setting,
+issues one bus access per cycle in silicon order and samples IRQ/NMI in the
+penultimate cycle. It passes the Tom Harte 65x02 corpus on **per-cycle bus
+ordering** (address, data, direction — not only final state and cycle count),
+both Klaus suites, and `display_golden_hash`; the existing fast core keeps
+`bench_identity` and `pom2_bench` unchanged; and at least one device sync shim
+is retired under the new core with a mutation control (first candidate: the
+Mockingboard's `syncToCpuCycle()+1`).
+
+**Evidence:** DEV.md § CPU: `step()` charges an instruction's cycles in one
+lump, so the penultimate-cycle IRQ sample cannot be modelled and the Harte
+gate checks final state only. The gap is papered over per device —
+`getCurrentInstructionCycles()` for the Disk II, `syncToCpuCycle()+1` for the
+Mockingboard T1 IRQ phase, the 6522 T1 read-back bias tuned on TRIBU.
+
+- Derive the per-cycle microsequences from MAME's `om6502.lst` /
+  `ow65c02.lst` (the cores already follow them instruction-wise).
+- **A separate core, never a flag on the bus path**: `docs/PERFORMANCE.md`
+  §§ 8.2/8.5 measured a branch there at 13-16 % and a flag test at 7.2 %.
+  Select it at the frame or worker level.
+- Default it on the PAL / DIX profiles only after VALIDATION-006 shows no
+  corpus regression.
 
 <a id="memory-002"></a>
 
 ## MEMORY-002 — `Memory::memRead` hot path
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); re-measure the share before prototyping.
 
 **Acceptance criterion (after revalidation):** Show a measured memRead improvement with bus_fastpath differential checks and bench_identity unchanged.
 
@@ -45,7 +75,7 @@ an explicit request before scheduling.
 
 ## MEMORY-003 — The Apple II Language Card
 
-**Priority:** 🟢 · **State:** Researched 2026-10-27; needs a primary source.
+**Priority:** 🟢 · **State:** Needs a hardware oracle for the power-on bank ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); the card's F8 ROM is frozen with the ][ Original profile.
 
 No write-protect DIP or jumper on the Apple Language Card was found in any
 source (the old entry's premise). POM2's `$C080-$C08F` decode, prewrite

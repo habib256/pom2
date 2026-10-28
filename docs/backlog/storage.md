@@ -15,11 +15,11 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [STORAGE-014](#storage-014) | 🟢 | Mitigated | ProDOS host folder: guest writes racing four eject commits are decoded under the lock |
-| [STORAGE-002](#storage-002) | 🟡 | To verify | Secondary-bay boot selection and control API |
-| [STORAGE-005](#storage-005) | 🟡 | To verify | SmartPort ProDOS multi-partition |
-| [STORAGE-010](#storage-010) | 🟢 | Known limit | A `.nib` track is not normalised to one 200 ms revolution |
-| [STORAGE-003](#storage-003) | 🟢 | To verify | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
+| [STORAGE-014](#storage-014) | 🟢 | Confirmed: mitigated residue | ProDOS host folder: guest writes racing four eject commits are decoded under the lock |
+| [STORAGE-002](#storage-002) | 🟡 | Partial: API gap; needs decision | Secondary-bay boot selection and control API |
+| [STORAGE-005](#storage-005) | 🧊 | Frozen — triage 2026-10-28 | SmartPort ProDOS multi-partition |
+| [STORAGE-010](#storage-010) | 🧊 | Frozen — deliberate limit | A `.nib` track is not normalised to one 200 ms revolution |
+| [STORAGE-003](#storage-003) | 🟢 | Confirmed open: measure first | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
 
@@ -27,7 +27,7 @@ an explicit request before scheduling.
 
 ## STORAGE-014 — ProDOS host folder write-back
 
-**Priority:** 🟢 · **State:** Confirmed by reading (bug hunt 2026-10-27, round 5).
+**Priority:** 🟢 · **State:** Confirmed: mitigated residue ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); no test writes during phase 2.
 Items 1-6 were fixed on 2026-10-27 (CHANGELOG, "Open bugs, fixed against
 the hardware"). One residue:
 
@@ -45,7 +45,7 @@ an unchanged one stays deleted. A deleted host directory comes back empty.
 
 ## STORAGE-002 — Secondary-bay boot selection and control API
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `bootMountedMedia` refuses secondary bays, so the wrong-medium risk is gone; a slot+bay `/media` endpoint needs a decision.
 
 **Acceptance criterion (after revalidation):** Select and boot a secondary bay through both the UI and control API, with consistent bay numbering.
 
@@ -64,7 +64,7 @@ an unchanged one stays deleted. A deleted host directory comes back empty.
 
 ## STORAGE-005 — SmartPort ProDOS multi-partition
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). One image is one volume (`kMaxBlocks = 0x10000`). Reopen when a named multi-partition image is needed.
 
 **Acceptance criterion (after revalidation):** Enumerate and read multiple ProDOS partitions from one image using an explicit guest-visible unit mapping.
 
@@ -77,7 +77,7 @@ an unchanged one stays deleted. A deleted host directory comes back empty.
 
 ## STORAGE-010 — `.nib` track length
 
-**Priority:** 🟢 · **State:** Known limit.
+**Priority:** 🧊 · **State:** Frozen — deliberate limit ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)). A rescale would re-base the LSS timeline and every golden, and no software needs it. Reopen if a title is shown to depend on the 200 ms revolution.
 
 Fixed 2026-10-27: `.nib` sync bytes follow MAME's rule (`ap2_dsk.cpp`
 `a2_nib_format::generate_levels_from_nibbles`) — only "FF … FF D5" is a
@@ -123,7 +123,7 @@ the format-documentation criterion; it does not claim a new test execution.
 
 ## STORAGE-003 — `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed.
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): best-of-9 `pom2_bench` with `tracks` on the heap before adopting.
 
 **Acceptance criterion (after revalidation):** Remove large DiskImage stack temporaries at the remaining sites and run constrained-stack media tests.
 

@@ -338,7 +338,8 @@ persistence buffer (`persistenceL80` 560×192), shared by HGR, GR, DHGR and DLGR
 
 **Source**: **AppleWin** `source/NTSC.cpp::initChromaPhaseTables`
 (Sheldon Simms, Tom Charlesworth, Michael Pohoreski — GPL v2+).
-Original algorithm described by Bill Buck. POM2 does a **faithful port**:
+(The file's header reads "William S Simms" and cites a kreativekorp.com page
+and *Understanding the Apple II* pp. 3-11 as references.) POM2 does a **faithful port**:
 the algorithm, the IIR filter coefficients (`NTSC.cpp:115-132`), the
 YIQ→RGB matrix and the white/black/gray special cases are ported
 line-by-line and cited in comments (AppleWin = source of truth for these modes).

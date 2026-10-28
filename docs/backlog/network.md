@@ -15,22 +15,20 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [NETWORK-001](#network-001) | 🟡 | To verify | [FujiNet] built-in FujiNet, native in POM2 — DECIDED 2026-08-21. |
-| [NETWORK-002](#network-002) | 🟡 | To verify | [FujiNet] a `CONTROL` to the peer's PRINTER unit kills it |
-| [NETWORK-003](#network-003) | 🟡 | To verify | [FujiNet] the desktop firmware's `N:` device never opens a socket |
-| [NETWORK-004](#network-004) | 🟡 | Policy/UI implemented; remote-media validation remains | [FujiNet] delayed network-media calls |
-| [NETWORK-005](#network-005) | 🟡 | To verify | [FujiNet] a network-backed SmartPort call freezes the emulator |
-| [NETWORK-007](#network-007) | 🟡 | To verify | [FujiNet] //c-class support |
-| [NETWORK-008](#network-008) | 🟢 | To verify | [FujiNet] embedded firmware |
+| [NETWORK-001](#network-001) | 🟡 | Needs decision: phases 2-4 | [FujiNet] built-in FujiNet, native in POM2 — DECIDED 2026-08-21. |
+| [NETWORK-004](#network-004) | 🟡 | Partial: needs a live peer, or close | [FujiNet] delayed network-media calls |
+| [NETWORK-005](#network-005) | 🟡 | Confirmed open | [FujiNet] a network-backed SmartPort call freezes the emulator |
+| [NETWORK-007](#network-007) | 🟡 | Needs decision | [FujiNet] //c-class support |
+| [NETWORK-008](#network-008) | 🧊 | Frozen — triage 2026-10-28 | [FujiNet] embedded firmware |
 | [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
-| [NETWORK-010](#network-010) | 🟡 | Partial: local TCP implemented | Uthernet II inbound (`LISTEN`) |
+| [NETWORK-010](#network-010) | 🟡 | Confirmed open: LAN mapping only | Uthernet II inbound (`LISTEN`) |
 | [NETWORK-012](#network-012) | 🧊 | Frozen | Uthernet I on WASM |
 
 <a id="network-001"></a>
 
 ## NETWORK-001 — [FujiNet] built-in FujiNet, native in POM2 — DECIDED 2026-08-21.
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): phase 1 (`N:`, TNFS client) shipped; phases 2-4 are not started and have no named need.
 
 **Acceptance criterion (after revalidation):** Define the next native FujiNet phase with CONFIG/slot-state acceptance tests while keeping the external relay functional.
 
@@ -60,49 +58,11 @@ an explicit request before scheduling.
   (2) the Fuji control device (host/drive slots) so CONFIG sees real state;
   (3) block serving of a mounted image; (4) the panel's source selector.
 
-<a id="network-002"></a>
-
-## NETWORK-002 — [FujiNet] a `CONTROL` to the peer's PRINTER unit kills it
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Reproduce PRINTER CONTROL against the peer; record the peer version and place the fix in the component that fails.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1859). Original dates and estimates are retained below.
-
-- 🟡 **[FujiNet] a `CONTROL` to the peer's PRINTER unit kills it** — measured
-  2026-08-21, reproducible three runs out of three. The packet is
-  byte-identical in shape to the ones units 10-12 answer normally
-  (`04 03 0D 00 00 00 …`, an empty control list), yet the peer throws
-  `std::length_error` out of `Request::from_packet` and aborts. Upstream bug
-  in the printer device — the same unit whose DIB already advertises the
-  modem's type byte. POM2 relays faithfully and now REPORTS the death
-  (`peer LOST after N s — M call(s) served`), which is what localised it in a
-  single run. Worth reporting upstream; POM2 has nothing to fix.
-
-<a id="network-003"></a>
-
-## NETWORK-003 — [FujiNet] the desktop firmware's `N:` device never opens a socket
-
-**Priority:** 🟡 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Trace an N: open request through the peer and record whether failure belongs to firmware or the POM2 relay.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1868). Original dates and estimates are retained below.
-
-- 🟡 **[FujiNet] the desktop firmware's `N:` device never opens a socket** —
-  it answers the guest's open with success (`CONNECTED to
-  N:HTTP://THEOLDNET.COM/` appears on the Apple II) and then no outbound TCP
-  is ever created, watched live on the peer's own descriptors. NOT POM2: the
-  same firmware, same machine, opens real TCP for TNFS. Its WiFi is a
-  `DummyWiFiManager` and giving it an SSID does not help. A real FujiNet
-  board over USB is the path for `N:`; the relay is unchanged for it.
-
 <a id="network-004"></a>
 
 ## NETWORK-004 — FujiNet delayed network-media calls
 
-**Priority:** 🟡 · **State:** Timeout policy and UI implemented; remote-media evidence remains.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): policy, UI and fake-peer tests are in; one live delayed-TNFS run against a named peer version remains, or close under the Supported rule.
 
 **Acceptance criterion:** Run a delayed TNFS-backed mount/read/write against
 an identified peer version, record successful completion and bounded failure,
@@ -129,7 +89,7 @@ within five seconds. Keep the remaining validation task scoped to that evidence.
 
 ## NETWORK-005 — [FujiNet] a network-backed SmartPort call freezes the emulator
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `transact()` still blocks under `stateMutex` up to 5 s with no in-flight indicator.
 
 **Acceptance criterion (after revalidation):** Run a delayed SmartPort network operation while checking UI responsiveness and safe guest completion.
 
@@ -148,7 +108,7 @@ within five seconds. Keep the remaining validation task scoped to that evidence.
 
 ## NETWORK-007 — [FujiNet] //c-class support
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): confirmed absent on //c-class profiles; schedule or freeze.
 
 **Acceptance criterion (after revalidation):** Boot a //c-class profile with the proposed FujiNet path without displacing required motherboard firmware.
 
@@ -171,7 +131,7 @@ FujiNet would hang off.
 
 ## NETWORK-008 — [FujiNet] embedded firmware
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Already rejected in `docs/fujinet_plan.md` § 8. Reopen if installing a second program is shown to be the real blocker.
 
 **Acceptance criterion (after revalidation):** Validate any approved embedded firmware build against CONFIG and relay compatibility; follow the existing architecture decision first.
 
@@ -208,7 +168,7 @@ FujiNet would hang off.
 
 ## NETWORK-010 — Uthernet II inbound (`LISTEN`)
 
-**Priority:** 🟡 · **State:** Local TCP implemented 2026-10-17; LAN mapping remains open.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): local TCP `LISTEN` shipped; LAN mapping unscheduled until a named need.
 
 The user explicitly requested the remaining non-IIgs parity work. Desktop
 W5100 sockets now accept `LISTEN` on `127.0.0.1:Sn_PORT` when

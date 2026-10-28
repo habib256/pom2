@@ -28,6 +28,8 @@ of use; these are the projects, not the individual files.
 | [IconFontCppHeaders](https://github.com/juliettef/IconFontCppHeaders) | zlib | `src/IconsFontAwesome6.h`, the icon code-point header. |
 | [miniaudio](https://miniaud.io/) 0.11.25 | MIT-0 / public domain (dual) | `src/third_party/miniaudio.h` — the audio output device. |
 | [stb_image_write](https://github.com/nothings/stb) 1.16 | MIT / public domain (dual) | `src/stb_image_write.h` — PNG export. |
+| [stb_image](https://github.com/nothings/stb) 2.30 | MIT / public domain (dual) | `src/stb_image.h` — PNG/JPEG loading (artwork, photos, Paint import, print history). |
+| [stb_vorbis](https://github.com/nothings/stb) 1.22 | MIT / public domain (dual) | `src/third_party/stb_vorbis.c` — Ogg Vorbis decoding, compiled into `AudioDevice.cpp` as miniaudio's Vorbis backend. |
 | [GLFW](https://www.glfw.org/) 3.3+ | zlib | System package or vcpkg; linked into the desktop binaries, bundled in the AppImages. |
 | [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | BSD-3-Clause | Optional user-mode NAT for the Uthernet I and the Uthernet II raw modes; built into the aarch64, Raspberry Pi and Pi 400 AppImages only (see README § *Ethernet, per platform*). |
 | [Emscripten](https://emscripten.org/) 6.0.9 runtime | MIT / Expat | The JavaScript glue and the `.wasm` of the browser build. |

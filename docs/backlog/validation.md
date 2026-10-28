@@ -15,16 +15,43 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [VALIDATION-001](#validation-001) | 🟡 | To verify | Disk II opposing-magnet response on a real //c |
-| [VALIDATION-003](#validation-003) | 🟡 | Partial: gameplay observed; broader protection evidence remains | Spiradisc / RWTS18 |
-| [VALIDATION-004](#validation-004) | 🟢 | Blocked (oracle) | DOS 3.1 / 3.1.1 `]` anomaly |
-| [VALIDATION-005](#validation-005) | 🟢 | To verify | A2 File Cmd one-in-three GUI-only DHGR failure |
+| [VALIDATION-006](#validation-006) | 🟡 | Ready | Headless compatibility corpus with a published pass rate |
+| [VALIDATION-001](#validation-001) | 🟡 | Needs hardware oracle | Disk II opposing-magnet response on a real //c |
+| [VALIDATION-003](#validation-003) | 🟡 | Partial: make repeatable | Spiradisc / RWTS18 |
+| [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
+| [VALIDATION-005](#validation-005) | 🟢 | Unknown: GUI-only, retest on 1.0 | A2 File Cmd one-in-three GUI-only DHGR failure |
+
+<a id="validation-006"></a>
+
+## VALIDATION-006 — Headless compatibility corpus with a published pass rate
+
+**Priority:** 🟡 · **State:** Ready ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+
+**Acceptance criterion:** One command boots every title of a declared
+manifest headless on its profile, records a screen hash after a fixed number
+of frames (plus optional scripted keys), compares with the stored expectation
+and prints a pass percentage. It runs from CI or by hand on a release
+candidate, and the result for each version is recorded in `docs/audits/`.
+Titles whose media are not tracked are skipped with a reason, not failed.
+
+**Evidence:** today compatibility is shown title by title (`docs/test_corpus.md`,
+`docs/audits/protected-disks-2026-10-12.md`, the DIX probes); there is no
+number to compare between versions, and VALIDATION-003's captures live in a
+scratch directory.
+
+- Start with **DIX** (Core), then `docs/test_corpus.md`, then the
+  protected-disks set once VALIDATION-003 records its WOZ SHA-256s.
+- Reuse what exists: `pom2_headless`, `hdv_boot_dump` and the DIX probes
+  (`cmake --build build --target probes`), the AI control server's
+  `/screen` hash.
+- Copy any tracked image before booting it with writes enabled (CLAUDE.md,
+  media write default).
 
 <a id="validation-001"></a>
 
 ## VALIDATION-001 — Disk II opposing-magnet response on a real //c
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Needs a hardware oracle ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): a real //c, PH1→PH3 gaps of 4…512 cycles while the motor coasts.
 
 **Acceptance criterion (after revalidation):** Record whether a real //c head moves under the cited opposing-magnet sequence while the internal motor coasts.
 
@@ -54,7 +81,7 @@ real //c.
 
 ## VALIDATION-003 — Spiradisc / RWTS18
 
-**Priority:** 🟡 · **State:** Partial integration evidence recorded 2026-10-12; candidate rerun and broader coverage remain.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): milestones reached on 2026-10-27; record WOZ SHA-256s and probe commands so VALIDATION-006 can replay them.
 
 **Acceptance criterion (after revalidation):** Run the named protected titles on real WOZ images and record weak-bit/spiral behavior against their expected boot result.
 
@@ -82,7 +109,7 @@ milestones reproduced (audit, "Rerun 2026-10-27").
 
 ## VALIDATION-004 — DOS 3.1 / 3.1.1 `]` anomaly
 
-**Priority:** 🟢 · **State:** Blocked — needs MAME or real hardware to arbitrate.
+**Priority:** 🟢 · **State:** Needs an oracle ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): real ][+ hardware, or MAME once `apple2p` romsets are installed locally.
 
 **Acceptance criterion:** Boot both masters on an oracle; record whether the `]` loop with the head swept to half-track 66 is the disk (an Integer-BASIC HELLO on an Applesoft ][+) or POM2.
 
@@ -92,7 +119,7 @@ milestones reproduced (audit, "Rerun 2026-10-27").
 
 ## VALIDATION-005 — A2 File Cmd: one-in-three GUI-only DHGR failure
 
-**Priority:** 🟢 · **State:** To verify on current main.
+**Priority:** 🟢 · **State:** Unknown ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): six GUI runs on a copy of the A2 File Cmd 1.0 image; close as stale if it does not reproduce.
 
 **Acceptance criterion:** Reproduce or refute `DHGR.RAW: not an image` followed by a corrupt HGR in the GUI with A2 File Cmd 0.9.5 (`hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-0.9.5.2mg`).
 

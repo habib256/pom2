@@ -15,22 +15,43 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [ARCH-004](#arch-004) | 🟠 | To verify | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
-| [ARCH-009](#arch-009) | 🟠 | Partial: Ethernet concurrency and selected UI interactions covered | Remaining ImGui panel concurrency coverage |
-| [ARCH-003](#arch-003) | 🟡 | To verify | ThreadSanitizer: the GUI half is still open. |
-| [ARCH-008](#arch-008) | 🟡 | To verify | `hgrpaint/` has no headless harness |
-| [ARCH-010](#arch-010) | 🟡 | To verify | Scattered config |
-| [ARCH-011](#arch-011) | 🟡 | To verify | `stateMutex` shared CPU+UI |
-| [ARCH-001](#arch-001) | 🟢 | To verify | Blocking work under `stateMutex` — what is LEFT. |
-| [ARCH-007](#arch-007) | 🟢 | To verify | Z80/SoftCard cleanup backlog |
-| [ARCH-012](#arch-012) | 🟢 | To verify | Inconsistent `pom2::` namespace |
-| [ARCH-013](#arch-013) | 🟢 | To verify | Legacy M6502 style |
+| [ARCH-016](#arch-016) | 🟡 | Ready | Documentation drift checker |
+| [ARCH-004](#arch-004) | 🟠 | Partial | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
+| [ARCH-009](#arch-009) | 🟠 | Partial: Uthernet panel only | Remaining ImGui panel concurrency coverage |
+| [ARCH-003](#arch-003) | 🟡 | Confirmed open | ThreadSanitizer: the GUI half is still open. |
+| [ARCH-008](#arch-008) | 🟡 | Partial: sprite seam landed; paint seam frozen | `hgrpaint/` has no headless harness |
+| [ARCH-010](#arch-010) | 🟡 | Confirmed open (post-1.0) | Scattered config |
+| [ARCH-011](#arch-011) | 🟡 | Needs decision | `stateMutex` shared CPU+UI |
+| [ARCH-007](#arch-007) | 🧊 | Frozen — triage 2026-10-28 (won't do) | Z80/SoftCard cleanup backlog |
+| [ARCH-012](#arch-012) | 🟢 | Confirmed open (post-1.0) | Inconsistent `pom2::` namespace |
+| [ARCH-013](#arch-013) | 🟢 | Confirmed open | Legacy M6502 style |
+
+<a id="arch-016"></a>
+
+## ARCH-016 — Documentation drift checker
+
+**Priority:** 🟡 · **State:** Ready ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+
+**Acceptance criterion:** A `tools/check_doc_refs.sh` (shape of
+`check_version_strings.sh`, run in the CI Linux job, with a `--self-test`
+holding negative controls) fails when a Markdown file under the repo root,
+`docs/backlog/`, `docs/decisions/` or `docs/audits/` (not `docs/archive/`)
+cites a backlog ID with no entry, a `docs/backlog/*.md#anchor` that does not
+exist, a ctest name that is not registered, or a catalog key absent from
+`SlotCardCatalog`; and when one backlog ID is defined twice across
+`docs/backlog/` and `CHANGELOG.md`.
+
+**Evidence:** the 2026-10-28 triage found `CARDS-011` used for two items
+(`cards.md` and `CHANGELOG.md:945`), the RVB Graph described three ways in
+three documents, and two index/body state disagreements (UI-003,
+STORAGE-014). About 30 000 lines of prose (DEV, CHANGELOG, docs/) drift
+faster than review can catch.
 
 <a id="arch-004"></a>
 
 ## ARCH-004 — Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed
 
-**Priority:** 🟠 · **State:** To verify.
+**Priority:** 🟠 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): Memory and ImageWriter splits landed; the DiskImage WOZ save half and Apple2Display are owed, and two ceilings have slack.
 
 **Acceptance criterion (after revalidation):** Split the identified responsibilities without increasing file-size ceilings; preserve the affected printer, media and snapshot tests.
 
@@ -95,7 +116,7 @@ that the older architectural debt has been resolved.
 
 ## ARCH-009 — Remaining ImGui panel concurrency coverage
 
-**Priority:** 🟠 · **State:** Ethernet panel seam verified in CI; other routes remain.
+**Priority:** 🟠 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): only `Uthernet_ImGui` runs under the replug harness.
 
 **Acceptance criterion (after revalidation):** Run headless ImGui frames during card replug and coordinator capture, detecting recursive-lock deadlocks without timeouts.
 
@@ -130,7 +151,7 @@ The blanket claim that no test drives ImGui is obsolete.
 
 ## ARCH-003 — ThreadSanitizer: the GUI half is still open.
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): no GUI test in the nightly TSan filter.
 
 **Acceptance criterion (after revalidation):** Drive ImGui panels, screenshots, slot replug and rewind under TSan without races or deadlocks.
 
@@ -179,7 +200,7 @@ The blanket claim that no test drives ImGui is obsolete.
 
 ## ARCH-008 — `hgrpaint/` has no headless harness
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): the sprite seam landed (`HgrSpriteEditorTestAccess`, `135051ff`); the paint-editor seam waits for a report (editors are frozen).
 
 **Acceptance criterion (after revalidation):** Drive editor tools through a headless host stub; share an additive test seam with the sprite editor and POM1.
 
@@ -208,7 +229,7 @@ The blanket claim that no test drives ImGui is obsolete.
 
 ## ARCH-010 — Scattered config
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); post-1.0.
 
 **Acceptance criterion (after revalidation):** Resolve env, CLI, settings and defaults through one documented precedence chain with equivalent behavior on each entry path.
 
@@ -222,7 +243,7 @@ The blanket claim that no test drives ImGui is obsolete.
 
 ## ARCH-011 — `stateMutex` shared CPU+UI
 
-**Priority:** 🟡 · **State:** To verify.
+**Priority:** 🟡 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): the lock is held across Apply, but the CPU worker is stopped there — close as by-design, or wait for ARCH-003.
 
 **Acceptance criterion (after revalidation):** Demonstrate reduced CPU/UI lock contention under GUI TSan while preserving slot-rebuild and audio synchronization.
 
@@ -236,51 +257,11 @@ The blanket claim that no test drives ImGui is obsolete.
 `MainWindow_SlotConfig.cpp` (`MainWindow::plugSlotsFromSettings`, which takes a
 `const pom2::StateAccess&`); the lock is still held across plug/unplug.
 
-<a id="arch-001"></a>
-
-## ARCH-001 — Blocking work under `stateMutex` — what is LEFT.
-
-**Priority:** 🟢 · **State:** To verify.
-
-**Acceptance criterion (after revalidation):** Measure the remaining lock-held operations before changing them; show that any approved extraction preserves lock ordering and media state.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-851). Original dates and estimates are retained below.
-
-- 🟢 **Blocking work under `stateMutex` — what is LEFT.** The 2026-08-22 audit
-  found ~20 sites and fixed the structural cause (`MediaMount.h`: read + decode
-  unlocked, swap under the lock). What remains was examined on 2026-08-23 and
-  left on purpose:
-  * `slotBus().clear()` on a profile switch is not a machine freeze —
-    `applyProfile` has already stopped the CPU worker, so only the UI blocks,
-    during a modal full cold reset.
-  * ~~The FujiNet **Stop / Drop-peer** buttons genuinely need the lock~~ —
-    **done 2026-09-06** (bug hunt, `958d86e`): the exclusion moved onto the
-    link's own `callMtx_` as described here, `NetworkCoordinator` resolves the
-    card under `lockState()` and drives the link off it, `enumerateDevices`
-    re-reads its stop flag per unit. `~FujiNetCard` no longer waits the 2 s
-    helper grace under `SlotBus::plug` either (`ChildProcess::stopDetached`).
-  * ✅ **Closed 2026-09-07**: `ejectAllMedia` was the last inline holdout and
-    now takes the same three-phase shape as every single-medium eject
-    (capture locked → commit unlocked → re-resolve and retire, or put the
-    medium back on failure). `flushAll`'s Liron bays and the host-folder mount
-    followed. The firmware 3.5" eject waits on the `WriteBackQueue` sink
-    (`Sony35Drive::ejectPending_`) instead of ejecting on the spot, so a failed
-    commit leaves the disk loaded and dirty rather than gone.
-  * Deliberate and staying: the profile-switch remount in `MainWindow_Slots.cpp`
-    (atomicity against the AI server outranks latency, and the worker is stopped)
-    and the outgoing medium's write-back inside `installDisk` (swapping before
-    knowing the old medium could be written loses the user's changes).
-  * Bounded and documented: the Uthernet II guest DNS wait (`kDnsWaitMs` = 120 ms).
-
-**Revalidation note 2026-10-06:** the profile-switch remount now lives in
-`pom2::switchProfile` (`src/ProfileSwitch.cpp`, the documented exception at
-line 108), not `MainWindow_Slots.cpp`.
-
 <a id="arch-007"></a>
 
 ## ARCH-007 — Z80/SoftCard cleanup backlog
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Closed as won't-do: `project-scope.md` classes this list as quality, not correctness, "do not schedule it". Reopen only when someone edits those files for another reason.
 
 **Acceptance criterion (after revalidation):** Choose one cleanup seam at a time and preserve Z80 differential, CP/M boot and snapshot behavior.
 
@@ -304,7 +285,7 @@ line 108), not `MainWindow_Slots.cpp`.
 
 ## ARCH-012 — Inconsistent `pom2::` namespace
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): 375 of 484 `src/` files and 23 of 424 tests use `namespace pom2`; post-1.0.
 
 **Acceptance criterion (after revalidation):** Migrate the selected namespace scope without changing exported API or test behavior.
 
@@ -318,7 +299,7 @@ line 108), not `MainWindow_Slots.cpp`.
 
 ## ARCH-013 — Legacy M6502 style
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); a comment/declaration-only pass, verified by unchanged Harte/Klaus and `display_golden_hash`.
 
 **Acceptance criterion (after revalidation):** Apply targeted style modernization with no CPU timing or semantic changes.
 

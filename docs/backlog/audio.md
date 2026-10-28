@@ -15,10 +15,10 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [AUDIO-011](#audio-011) | 🟠 | Partly resolved; analog/inflection limits remain | Bug hunt #16's speech residue |
-| [AUDIO-003](#audio-003) | 🟡 | Partial: nominal single-tone balance calibrated | Compare Mockingboard output level with MAME |
-| [AUDIO-005](#audio-005) | 🟢 | To verify | Analog output stage. |
-| [AUDIO-006](#audio-006) | 🟢 | To verify | Mutex contention. |
+| [AUDIO-011](#audio-011) | 🟠 | Needs hardware oracle | Bug hunt #16's speech residue |
+| [AUDIO-003](#audio-003) | 🟡 | Confirmed open: reference recording | Compare Mockingboard output level with MAME |
+| [AUDIO-005](#audio-005) | 🧊 | Frozen — triage 2026-10-28 | Analog output stage. |
+| [AUDIO-006](#audio-006) | 🟢 | Confirmed (design); not measured | Mutex contention. |
 | [AUDIO-004](#audio-004) | 🧊 | Frozen | ayumi-grade resampling |
 | [AUDIO-008](#audio-008) | 🧊 | Frozen | 8-bit DAC (Marczewski) |
 | [AUDIO-009](#audio-009) | 🧊 | Frozen | Passport MIDI Music Card |
@@ -27,7 +27,7 @@ an explicit request before scheduling.
 
 ## AUDIO-011 — Bug hunt #16's speech residue
 
-**Priority:** 🟠 · **State:** Partly resolved (2026-10-17); remaining features below.
+**Priority:** 🟠 · **State:** Needs a hardware oracle ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): recordings of a real SSI263 are required for inflection, articulation and output levels.
 
 **Acceptance criterion:** Verify the remaining SSI waveform/reset and
 Phasor speech behavior against a stated oracle. Echo+ TMS5220C synthesis is
@@ -89,7 +89,7 @@ and `ssi263_speech_timeline` for the audible-reference regression.
 
 ## AUDIO-003 — Compare Mockingboard output level with MAME
 
-**Priority:** 🟡 · **State:** Partial (2026-10-18); reference recording still needed.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): re-record MAME with each source isolated through one output mapping.
 
 **Acceptance criterion (after revalidation):** Measure the same AY register stream through both output chains and record gain and bass response relative to the speaker.
 
@@ -145,7 +145,7 @@ comparable with the model's 0.30 yet. Next step: fix the output layout
 
 ## AUDIO-005 — Analog output stage.
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🧊 · **State:** Frozen — [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). No model in MAME or POM2 and no calibrated reference. Reopen with a scope capture of a Sweet Micro board's output for a known AY square, frequency and level.
 
 **Acceptance criterion (after revalidation):** Require a hardware waveform reference before choosing an analog-stage model; compare the approved model with that reference.
 
@@ -162,7 +162,7 @@ comparable with the model's 0.30 yet. Next step: fix the output layout
 
 ## AUDIO-006 — Mutex contention.
 
-**Priority:** 🟢 · **State:** To verify.
+**Priority:** 🟢 · **State:** Confirmed by reading ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); contention not measured — measure after ARCH-003, change only on a measured wait.
 
 **Acceptance criterion (after revalidation):** Profile contention under independent CPU/audio clocks and show any approved handoff avoids underruns while preserving event order.
 

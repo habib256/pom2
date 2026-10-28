@@ -36,6 +36,36 @@ never touches the network.
   `roms/`. Run it before moving the pin. The two shipped files it leaves out,
   `a2c.128` and `apple2e_char_fr_8k.rom`, are read by no profile or card.
 
+## 2026-10-28 — Backlog triage: four entries closed, eight frozen, three added
+
+Every open entry of `docs/backlog/` (except `release-1.0.md`) was checked
+against `aad2fee5` by code reading and the existing test binaries; the
+verdicts and evidence are in
+[`docs/audits/backlog-triage-2026-10-28.md`](docs/audits/backlog-triage-2026-10-28.md),
+and `TODO.md` now orders the work by scope tier and by what unblocks it.
+
+- **Closed.** ARCH-001 (blocking work under `stateMutex`): every item is done
+  or a documented exception — the profile-switch remount, the Disk II
+  outgoing flush in `installDisk`, the W5100's 120 ms DNS wait;
+  `storage_lock_budget` passes. NETWORK-002 (a `CONTROL` to the FujiNet
+  printer unit killed the peer): `FujiNetCard` answers it locally. NETWORK-003
+  (the desktop firmware's `N:` opened no socket): POM2 serves `N:` itself, on
+  by default. Both upstream bugs remain FujiNet's. UI-007 (duplicate-card
+  validation): the picker and the plan share one predicate,
+  `SlotConfigurationCoordinator::isMultiInstance`.
+- **Frozen, reversible, each with its reopen condition.** DISPLAY-008,
+  AUDIO-005, STORAGE-005, STORAGE-010 (a deliberate limit), NETWORK-008,
+  UI-004, UI-006, and ARCH-007, which `project-scope.md` already said not to
+  schedule.
+- **Added.** CPU-001 (an optional cycle-stepped 6502 core, a separate core
+  rather than a flag on the bus path), VALIDATION-006 (a headless corpus with
+  a pass rate per version, DIX first), ARCH-016 (a checker for the drift this
+  pass found).
+- **Drift corrected.** The RVB Graph was described as "four strobes" in the
+  parity dashboard and as unmodelled in the scope ruling, while the code has
+  followed its manual since 2026-10-20. DISPLAY-011 still listed Video-7 and
+  P7 as owed; both are done.
+
 ## 2026-10-28 — ALS card: timing, ProDOS hard disk and RAM disk, all three disks
 
 - **Speed.** An access to the Apple is now a DMA cycle on the Apple's bus:
