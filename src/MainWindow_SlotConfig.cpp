@@ -935,6 +935,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                                                       *settings);
     for (const std::string& warning : restored.warnings)
         pom2::log().warn("Storage", warning);
+    for (const std::string& key : restored.unresolvedPathKeys)
+        settings->holdUnresolvedPath(key);
 
     // ── Emulated CPU clock, to every card that takes one ─────────────────
     // `SlotPeripheral::setCpuClock` is a virtual with a no-op default, and

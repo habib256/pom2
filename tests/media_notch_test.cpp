@@ -287,6 +287,41 @@ void testLegacyKeyOnEmptyBayIsMigrated()
 
 }  // namespace
 
+// A configured disk whose file is not there at launch (an external drive not
+// plugged in yet) leaves its bay empty; the quit-time writer used to record
+// that empty bay as "", so the configured disk was gone for good. The restore
+// reports the key, the caller holds it, and the writers keep the path.
+void testUnresolvedPathSurvivesQuit()
+{
+    const std::string gone = "/nonexistent-pom2-volume/game.dsk";
+    const std::string goneHdv = "/nonexistent-pom2-volume/big.hdv";
+    pom2::StorageCoordinator coord;
+    pom2::Settings settings;
+    settings.setReadOnly(true);
+    const std::string key = pom2::diskIIPathSettingKey(6, 0);
+    settings.setString(key, gone);
+    settings.setString("disk_path", gone);
+    settings.setString("hdv_path", goneHdv);
+    SlotBus bus;
+    bus.plug(6, std::make_unique<DiskIICard>(6));
+    bus.plug(5, std::make_unique<ProDOSHardDiskCard>(5));
+    const auto restored = coord.restoreMediaFromSettings(bus, settings);
+    assert(restored.unresolvedPathKeys.size() == 3);
+    for (const auto& k : restored.unresolvedPathKeys)
+        settings.holdUnresolvedPath(k);
+    coord.persistSessionSettings(settings, coord.captureRebuildSnapshot(bus));
+    assert(settings.getString(key, "") == gone &&
+           "an unreachable Disk II path survives the quit writer");
+    assert(settings.getString("disk_path", "") == gone);
+    assert(settings.getString("hdv_path", "") == goneHdv &&
+           "an unreachable HDV path survives the quit writer");
+    // A real mount releases the hold; a later eject may then clear it.
+    settings.setString(key, "/elsewhere/new.dsk");
+    settings.setString(key, "");
+    assert(settings.getString(key, "x").empty());
+    std::puts("  ok: a path not found at launch is kept at quit");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -295,6 +330,7 @@ int main()
     unsetenv("POM2_MEDIA_WRITE_DEFAULT");
 #endif
     testHelperAndLoader();
+    testUnresolvedPathSurvivesQuit();
     testPerDiskNotPerDrive();
     testLiveToggleThroughTheCoordinator();
     testLegacyCardKeyBecomesTheNotch();

@@ -20,6 +20,8 @@
 
 #include "CliDispatcher.h"
 
+#include <filesystem>
+
 #include "CpuClock.h"
 #include "Logger.h"
 #include "Version.h"
@@ -227,6 +229,43 @@ std::string resolveSaveTapePath(const std::string& path, CliSaveTapeFormat hint)
     }
 }
 
+void absolutizeCliPaths(CliPlan& plan)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);
+    if (ec || cwd.empty()) return;
+    // An output may not exist yet; an input is only anchored when it exists
+    // here, so a name the resource search resolves later is left alone.
+    auto anchor = [&](std::string& p, bool output) {
+        if (p.empty() || p.find("://") != std::string::npos) return;
+        const fs::path rel(p);
+        if (rel.is_absolute()) return;
+        std::error_code e;
+        if (!output && !fs::exists(cwd / rel, e)) return;
+        p = (cwd / rel).lexically_normal().string();
+    };
+    anchor(plan.bootDiskPath, false);
+    anchor(plan.prodosFolderPath, false);
+    anchor(plan.initialTapePath, false);
+    anchor(plan.saveTapePath, true);
+    anchor(plan.disk35Internal, false);
+    anchor(plan.disk35External, false);
+    anchor(plan.disk35ExternalSecond, false);
+    anchor(plan.blankDiskPath, true);
+    for (CliAction& a : plan.deferredActions) {
+        switch (a.kind) {
+        case CliAction::Kind::Load:
+        case CliAction::Kind::Paste:
+        case CliAction::Kind::SnapshotLoad:
+        case CliAction::Kind::SessionLoad:  anchor(a.pathS, false); break;
+        case CliAction::Kind::SnapshotSave:
+        case CliAction::Kind::SessionSave:  anchor(a.pathS, true);  break;
+        default: break;
+        }
+    }
+}
+
 std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
 {
     helpRequestedOut = false;
@@ -291,6 +330,14 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
+
+        // LaunchServices still hands `-psn_0_NNNN` to an app it opens from
+        // Finder on some macOS releases (a quarantined first launch, which is
+        // exactly how an unnotarised POM2.app is first opened). Rejected as an
+        // unknown flag, it made that first launch quit with no window.
+        // (Spelt without a quoted dash: the usage/parser symmetry test reads
+        // every "-x literal here as a flag the usage text must document.)
+        if (a.size() > 5 && a[0] == '-' && a.compare(1, 4, "psn_") == 0) continue;
 
         if (a == "-h" || a == "--help") {
             printUsage();

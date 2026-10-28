@@ -33,7 +33,25 @@ void BrowserSessionStore::initialize(EmulationController& ctrl)
         return;
     }
     active_ = text[text.size() - 2] - '0';
-    if (!loadSessionFile(ctrl, sessionPaths_[active_], error_)) { suspended_ = true; return; }
+    if (!loadSessionFile(ctrl, sessionPaths_[active_], error_)) {
+        // The marked generation is unreadable (damaged, or refused after a
+        // firmware or format change): fall back to the other one, which is
+        // the previous good checkpoint. Either way the next checkpoint must
+        // overwrite the generation that FAILED — "Retry" used to write
+        // 1 - active_, i.e. replace the one generation never tried.
+        const int other = active_ == 0 ? 1 : 0;
+        std::string olderError;
+        std::error_code oec;
+        if (std::filesystem::exists(sessionPaths_[other], oec) &&
+            loadSessionFile(ctrl, sessionPaths_[other], olderError)) {
+            active_ = other;
+            error_.clear();
+        } else {
+            active_ = other;
+            suspended_ = true;
+            return;
+        }
+    }
     ctrl.setMode(text[0] == 'r' ? EmulationController::Mode::Running : EmulationController::Mode::Stopped);
 }
 bool BrowserSessionStore::setEnabled(EmulationController& ctrl, bool enabled)
@@ -63,6 +81,13 @@ void BrowserSessionStore::checkpoint(EmulationController& ctrl, bool running)
     // Write the inactive generation, then atomically publish its mode and
     // index. A failed marker write cannot replace the last committed session.
     const int next = active_ == 0 ? 1 : 0;
+    // Collect a floppy/block autosave the executor has already finished. The
+    // browser's executor completes inline, but the medium stays "write-back
+    // pending" until the next poll, and the capture refuses a pending medium:
+    // a heartbeat or pagehide landing in that one-frame window suspended
+    // automatic resume for good. Twice: a poll may start a capture as well.
+    ctrl.pollMediaWriteBacks();
+    ctrl.pollMediaWriteBacks();
     if (!saveSessionFile(ctrl, sessionPaths_[next], error_)) { suspended_ = true; return; }
     const std::string mode = std::string(running ? "running\n" : "stopped\n") + char('0' + next) + '\n';
     std::error_code ec;

@@ -1328,7 +1328,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                 case 0x63: return paddles_.button2(iieMode && !iicProfile_) ? 0x80 : 0x00;
                 case 0x64: case 0x65: case 0x66: case 0x67: {
                     const int idx = mirrored - 0x64;
-                    return paddles_.discharging(idx, stockSincePaddleStrobe()) ? 0x80 : 0x00;
+                    return paddles_.discharging(idx, stockSincePaddleStrobe(idx)) ? 0x80 : 0x00;
                 }
                 case 0x60:
                     // $C068 mirrors $C060 (cassette comparator) per the
@@ -1352,10 +1352,9 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
 
     // Paddle-trigger reset ($C070-$C07F mirrored). MAME `apple2.cpp:555`
     // `.mirror(0xf)`; the read returns floating bus (used as a poor
-    // RNG seed by many games). Real silicon also implements a 558
-    // monostable one-shot semantic (re-strobing during the count
-    // doesn't restart the timer); POM2 reloads unconditionally — the
-    // simpler model passes every game we've tested.
+    // RNG seed by many games). The 558's one-shots are not retriggered
+    // while they run — re-strobing during a count leaves that axis alone
+    // (PaddleInputs::rearm, MAME apple2e.cpp:2053-2056).
     //
     // RamWorks III (IIe aux-slot card) sniffs writes to $C071/3/5/7
     // on the same address window. MAME `a2eramworks3.cpp:108-115`
@@ -1375,7 +1374,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
             if (snoop->busSnoop(addr, isWrite, isWrite ? writeVal : 0))
                 return isWrite ? 0 : floatingBus();
         }
-        paddles_.rearm(cycleCounter);
+        paddles_.rearm(cycleCounter, [this](uint64_t l) { return stockSinceCycle(l); });
         // //c-class: ANY $C070-$C07F access acknowledges the VBL
         // interrupt — MAME `apple2e.cpp` c000_iic_r/w case 0x70-0x7F:
         // `if (m_isiic ...) lower_irq(IRQ_VBL);` (~:2014-2017). Pairs

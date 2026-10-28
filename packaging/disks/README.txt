@@ -1,7 +1,7 @@
 POM2 — bundled disks
 
-A2FILECMD-PRODOS-XL-0.9.8.2mg — A2FC XL v0.9.8 (6502 edition).
-Source: https://github.com/habib256/a2filecmd/releases/tag/v0.9.8
+A2FILECMD-PRODOS-XL-1.0.2mg — A2FC XL v1.0 (6502 edition).
+Source: https://github.com/habib256/a2filecmd/releases/tag/v1.0
 Mount in a ProDOS hard-disk bay (HDV / SmartPort), then boot that slot.
 Requires 128 KB and 80 columns; runs on unenhanced and enhanced IIe profiles.
 

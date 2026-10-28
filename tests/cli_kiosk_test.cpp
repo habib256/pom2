@@ -623,8 +623,41 @@ void testRemainingFlagsTable()
     }
 }
 
+// Relative CLI paths are anchored to the launch directory before glfwInit,
+// which chdirs into Contents/Resources inside a macOS .app; and the
+// LaunchServices `-psn_` argument is ignored instead of quitting.
+void testRelativePathsAnchoredAndPsnIgnored()
+{
+    const fs::path dir = fs::temp_directory_path() / "pom2_cli_anchor";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path before = fs::current_path();
+    fs::current_path(dir);
+    { std::ofstream(dir / "game.dsk") << 'x'; }
+    bool help = false;
+    auto plan = parse({"POM2", "-psn_0_12345", "--snapshot-save", "out.snap",
+                       "--tape", "missing.wav", "game.dsk"}, help);
+    assert(plan && !help && "-psn_ must not reject the command line");
+    pom2::absolutizeCliPaths(*plan);
+    const fs::path here = fs::current_path();
+    assert(fs::path(plan->bootDiskPath) == here / "game.dsk");
+    assert(plan->deferredActions.size() == 1);
+    assert(fs::path(plan->deferredActions[0].pathS) == here / "out.snap" &&
+           "an output path is anchored even before it exists");
+    assert(plan->initialTapePath == "missing.wav" &&
+           "an input that is not here is left for the resource search");
+    auto url = parse({"POM2", "tnfs://host/x.po"}, help);
+    assert(url);
+    pom2::absolutizeCliPaths(*url);
+    assert(url->bootDiskPath == "tnfs://host/x.po");
+    fs::current_path(before);
+    fs::remove_all(dir);
+}
+
 int main()
 {
+    testRelativePathsAnchoredAndPsnIgnored();
+    std::printf("parseCli -psn_ ignored, relative paths anchored: OK\n");
     testRemainingFlagsTable();
     std::printf("parseCli: every remaining flag lands in the plan: OK\n");
     checkUsageParserSymmetry("src/CliDispatcher.cpp", "void printUsage()");

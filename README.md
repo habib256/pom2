@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v0.9.9 — Apple II Family Emulator
+# 🍏 POM2 v1.0.0 — Apple II Family Emulator
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 
@@ -23,7 +23,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 **[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
 [Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
 
-> **v0.9.9:** [What's new](docs/releases/v0.9.9.md) ·
+> **v1.0.0:** [What's new](docs/releases/v1.0.0.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
@@ -57,8 +57,8 @@ executable and its accompanying folders together.
 On Linux, make the AppImage executable before opening it:
 
 ```bash
-chmod +x POM2-v0.9.9-x86_64.AppImage
-./POM2-v0.9.9-x86_64.AppImage
+chmod +x POM2-v1.0.0-x86_64.AppImage
+./POM2-v1.0.0-x86_64.AppImage
 ```
 
 Then pick a machine in **Machine → Profile**, drop a disk image onto the
@@ -118,7 +118,7 @@ Five disks are ready in **File → Disk Library**:
 
 | Disk | Try it for |
 |---|---|
-| [A2 File Cmd XL v0.9.8](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) | A ProDOS file manager on a 32 MB hard-disk image; mount in an HDV/SmartPort bay. |
+| [A2 File Cmd XL v1.0](https://github.com/habib256/a2filecmd/releases/tag/v1.0) | A ProDOS file manager on a 32 MB hard-disk image; mount in an HDV/SmartPort bay. |
 | [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch demos; use a PAL machine with 128 KB and Mockingboard. The recorded //e setup uses slots 4 (sound) and 5 (SmartPort); the browser uses a //c with Mockingboard 4c. |
 | [Dirtbike 1.1](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) | A motocross time trial across 30 tracks; use II+ or later with 48 KB. |
 | [ChromaBreak 1.1](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) | A colourful brick-breaking game. |

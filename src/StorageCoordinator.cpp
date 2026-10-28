@@ -1821,15 +1821,21 @@ StorageCoordinator::restoreMediaFromSettings(
                     ? settings.getString("disk_path", "") : std::string());
             const std::string found = resolvePersistedMediaPath(saved);
             // A persisted path that no longer names a file is NOT a silent
-            // non-event: the mount vanishes here and persistSessionSettings
-            // writes "" over the key at quit, so the disk is gone for good —
-            // and the commonest cause is a RELATIVE path saved from one
+            // non-event: the mount vanishes here. The key is reported in
+            // unresolvedPathKeys so the caller holds it (an unplugged drive
+            // must not have its configured disk written over with "" at
+            // quit), and the warning says why the drive is empty — the
+            // commonest cause is a RELATIVE path saved from one
             // working directory and reloaded from another (`POM2
             // disks_5.4/x.dsk` launched from the repo, relaunched from the
             // desktop). The SmartPort and generic-bay loops below have always
             // said so; these three did not, which is the difference between a
             // user who moves the file back and a user who reports nothing.
             if (!saved.empty() && found.empty()) {
+                result.unresolvedPathKeys.push_back(
+                    diskIIPathSettingKey(card->getSlot(), drive));
+                if (drive == 0 && isPrimary)
+                    result.unresolvedPathKeys.push_back("disk_path");
                 result.warnings.push_back(
                     "Disk II slot " + std::to_string(card->getSlot()) +
                     " drive " + std::to_string(drive + 1) +
@@ -1860,6 +1866,7 @@ StorageCoordinator::restoreMediaFromSettings(
         const std::string saved = settings.getString("hdv_path", "");
         const std::string path = resolvePersistedMediaPath(saved);
         if (!saved.empty() && path.empty()) {
+            result.unresolvedPathKeys.push_back("hdv_path");
             result.warnings.push_back(
                 "HDV slot " + std::to_string(cards.primaryHdv->getSlot()) +
                 ": persisted path not found: " + saved);
@@ -1875,7 +1882,7 @@ StorageCoordinator::restoreMediaFromSettings(
         if (cards.primaryHdv->isImageLoaded())
             cards.primaryHdv->setHostWriteProtected(
                 pom2::mediaFileIsReadOnly(cards.primaryHdv->getImagePath()));
-        restoreHdvDrive2(*cards.primaryHdv, settings, result.warnings);
+        restoreHdvDrive2(*cards.primaryHdv, settings, result);
     }
 
     for (auto* block : cards.blockCards) {
@@ -1886,6 +1893,7 @@ StorageCoordinator::restoreMediaFromSettings(
         const std::string saved = settings.getString(key + "_path", "");
         const std::string path = resolvePersistedMediaPath(saved);
         if (!saved.empty() && path.empty()) {
+            result.unresolvedPathKeys.push_back(key + "_path");
             result.warnings.push_back(
                 "CFFA slot " + std::to_string(card->getSlot()) +
                 ": persisted path not found: " + saved);
@@ -1935,6 +1943,7 @@ StorageCoordinator::restoreMediaFromSettings(
                     " bay " + std::to_string(bay + 1) + ": " +
                     unit->lastError());
             } else if (resolved.empty() && !path.empty()) {
+                result.unresolvedPathKeys.push_back(base + "_path");
                 result.warnings.push_back(
                     "SmartPort slot " + std::to_string(card->getSlot()) +
                     " bay " + std::to_string(bay + 1) +
@@ -1974,6 +1983,7 @@ StorageCoordinator::restoreMediaFromSettings(
             const std::string resolved = resolvePersistedMediaPath(path);
             std::string err;
             if (resolved.empty()) {
+                result.unresolvedPathKeys.push_back(base + "_path");
                 result.warnings.push_back(
                     "slot " + std::to_string(slot) + " bay " +
                     std::to_string(bay + 1) + ": persisted path not found: " + path);

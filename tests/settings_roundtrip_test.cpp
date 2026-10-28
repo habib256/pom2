@@ -267,6 +267,24 @@ int main()
         huge.close();
         pom2::Settings rejected;
         assert(!rejected.load());
+        // ...and the defaults this session then runs on are not renamed over
+        // it: the first save moves the refused file aside, byte for byte.
+        const fs::path file(rejected.getStorePath());
+        rejected.setString("after_refusal", "1");
+        assert(rejected.save());
+        int kept = 0;
+        for (const auto& e : fs::directory_iterator(file.parent_path())) {
+            const std::string nm = e.path().filename().string();
+            if (nm.rfind("state.cfg.unreadable-", 0) == 0 ||
+                nm.rfind(".pom2_state.unreadable-", 0) == 0) {
+                assert(fs::file_size(e.path()) == 4u * 1024u * 1024u + 1u);
+                fs::remove(e.path());
+                ++kept;
+            }
+        }
+        assert(kept == 1 && "a refused settings file is kept aside");
+        pom2::Settings reread;
+        assert(reread.load() && reread.getString("after_refusal") == "1");
     }
 
     // ── Where the file goes is ONE decision ──────────────────────────────

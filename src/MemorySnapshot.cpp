@@ -179,6 +179,14 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         }
         // 2026-09-17: the //c Mockingboard 4c wake latch.
         sect.push_back(iicExpansionAwake_ ? 1 : 0);
+        // 2026-10-28: the four 558 timers (the blob head carries axis 0's
+        // latch only): latches 1-3, then each axis's armed count.
+        for (int i = 1; i < 4; ++i)
+            for (int b = 0; b < 8; ++b)
+                sect.push_back(static_cast<uint8_t>(paddles_.latchCycle(i) >> (8 * b)));
+        for (int i = 0; i < 4; ++i)
+            for (int b = 0; b < 2; ++b)
+                sect.push_back(static_cast<uint8_t>(paddles_.armedCount(i) >> (8 * b)));
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
@@ -432,6 +440,17 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             if (k >= 10) slots.restoreExpansionOwner(static_cast<int>(p[9]));
             iicExpansionAwake_ = k >= 11 ? (iicProfile_ && p[10] != 0)  // older: 4c always awake
                 : (iicProfile_ && slots.peripheralForIicRomPage(4) != nullptr);
+            if (k >= 11 + 3 * 8 + 4 * 2) {
+                auto le = [&](size_t at, int bytes) {
+                    uint64_t x = 0;
+                    for (int b = bytes - 1; b >= 0; --b) x = (x << 8) | p[at + b];
+                    return x;
+                };
+                for (int i = 0; i < 4; ++i)
+                    paddles_.setAxis(i, i == 0 ? paddles_.latchCycle(0)
+                                               : le(11 + (i - 1) * 8, 8),
+                                     static_cast<uint32_t>(le(35 + i * 2, 2)));
+            }
             return true;
         })) return false;
     // No-Slot Clock (see appendSnapshotState). A blob written by a build

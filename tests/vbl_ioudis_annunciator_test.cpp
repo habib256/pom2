@@ -86,7 +86,7 @@ void advance(Memory& mem, uint64_t cycles)
 // 2026-09-27, the Zip Chip added on 2026-10-16, the beam clock added on
 // 2026-10-27), each empty on a bare
 // Memory.
-constexpr size_t kIouSectionLen  = 11;   // the 4c wake latch joined on 2026-09-17
+constexpr size_t kIouSectionLen  = 43;   // the 4c wake latch joined on 2026-09-17, the 558 timers 2026-10-28
 constexpr size_t kEmptyTailCount = 7;   // + the beam clock (2026-10-27)
 
 uint8_t iouByte(Memory& mem, size_t index)

@@ -80,20 +80,45 @@ public:
     // ── Paddle read ($C064-$C067 bit 7) ───────────────────────────────────
     // The RC network is still charging — bit 7 high — while fewer than
     // `value * 11` STOCK cycles (~10.8 us a count, MAME apple2e.cpp:1007)
-    // have elapsed since the last $C070 strobe. The 558 is an RC timer: real
-    // time, not CPU cycles — the caller converts (Memory::stockCyclesBetween),
-    // or under a Zip with its paddle slow-down off the paddles read 3-4x low.
+    // have elapsed since that axis's timer was last triggered. The 558 is an
+    // RC timer: real time, not CPU cycles — the caller converts
+    // (Memory::stockCyclesBetween), or under a Zip with its paddle slow-down
+    // off the paddles read 3-4x low. The count is the value AT the trigger,
+    // as MAME stores an expiry time.
     bool discharging(int idx, uint64_t stockElapsed) const {
-        const uint64_t threshold = static_cast<uint64_t>(value_[idx]) * 11;
-        return stockElapsed < threshold;
+        return stockElapsed < armed_[idx];
     }
 
-    // $C070 (mirrored $C070-$C07F): re-arm the discharge timer.
-    void rearm(uint64_t cycleCounter) { latchCycle_ = cycleCounter; }
+    // $C070 (mirrored $C070-$C07F). The 558 is four monostables, and a
+    // running one cannot be retriggered: only an axis whose count has run out
+    // restarts (MAME apple2e.cpp:2053-2056, apple2.cpp controller_strobe_w).
+    // So PDL(1) read straight after PDL(0) still sees the first strobe's
+    // count — the "add a delay between PDL reads" artifact of the hardware.
+    // `stockSince(latch)` converts a latch cycle to stock cycles elapsed.
+    template <class StockSince>
+    void rearm(uint64_t cycleCounter, StockSince stockSince) {
+        for (int i = 0; i < 4; ++i) {
+            if (discharging(i, stockSince(latch_[i]))) continue;
+            latch_[i] = cycleCounter;
+            armed_[i] = static_cast<uint32_t>(value_[i]) * 11;
+        }
+    }
 
-    // ── Snapshot (only the latch cycle is serialised, as before) ──────────
-    uint64_t latchCycle() const         { return latchCycle_; }
-    void     setLatchCycle(uint64_t c)  { latchCycle_ = c; }
+    // ── Snapshot ───────────────────────────────────────────────────────────
+    uint64_t latchCycle(int idx = 0) const { return latch_[idx]; }
+    uint32_t armedCount(int idx) const     { return armed_[idx]; }
+    /// An older snapshot carries one latch: every axis triggered then, with
+    /// the live values.
+    void setLatchCycle(uint64_t c) {
+        for (int i = 0; i < 4; ++i) {
+            latch_[i] = c;
+            armed_[i] = static_cast<uint32_t>(value_[i]) * 11;
+        }
+    }
+    void setAxis(int idx, uint64_t latch, uint32_t armed) {
+        latch_[idx] = latch;
+        armed_[idx] = armed;
+    }
 
 private:
     std::array<uint8_t, 4> value_ { 128, 128, 128, 128 };
@@ -102,12 +127,14 @@ private:
     std::atomic<bool> solidApple_{ false };
     std::atomic<bool> shift_     { false };
     std::atomic<bool> shiftMod_  { false };
-    // Boot-time value: cycleCounter - latchCycle_ must exceed every paddle
+    // Boot-time value: cycleCounter - latch_ must exceed every paddle
     // threshold (max 255*11 = 2805) at power-on so an un-strobed $C064-$C067
     // reads low — else the //e "no paddle connected" self-test is confused.
     // `0 - (~0 - 0xFFFF)` = 0x10000 > 2805. (Copied verbatim from the old
     // Memory member's rationale.)
-    uint64_t latchCycle_ = ~uint64_t(0) - 0xFFFFu;
+    std::array<uint64_t, 4> latch_{ ~uint64_t(0) - 0xFFFFu, ~uint64_t(0) - 0xFFFFu,
+                                    ~uint64_t(0) - 0xFFFFu, ~uint64_t(0) - 0xFFFFu };
+    std::array<uint32_t, 4> armed_{ 0, 0, 0, 0 };   // value * 11 at the trigger
 };
 
 } // namespace pom2

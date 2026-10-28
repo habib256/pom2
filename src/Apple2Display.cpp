@@ -124,7 +124,7 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     k.valid       = true;
     k.state       = state;
     k.iie         = mem.isIIE();
-    k.flashPhase  = ((frameCounter / kFlashHalfPeriodFrames) & 1u) != 0;
+    k.flashPhase  = flashPhase_;
     k.textSharp   = oeDemod_.textSharp;
     k.hiResModeId = static_cast<int>(hiResMode);
     // The char ROM goes in by VALUE, not by pointer: reloading a different
@@ -509,6 +509,13 @@ void Apple2Display::render(Memory& mem)
             : 0;
         lastEmuFrame_ = emuFrame;
         frameCounter  = static_cast<uint32_t>(emuFrame);
+        // The //e's flash is the frame count (`frame_number() & 0x10`); the
+        // ][ and ][+ have a 555 astable for it instead, 2 Hz whatever the
+        // video standard — MAME apple2video.cpp:1170-1178,
+        // `(machine().time() * 4).seconds() & 1`.
+        flashPhase_ = mem.isIIE()
+            ? ((frameCounter / kFlashHalfPeriodFrames) & 1u) != 0
+            : ((mem.videoNow() / static_cast<uint64_t>(vt.cpuClockHz / 4)) & 1u) != 0;
     }
     // Is the machine actually running? (see the cpuIdle_ member comment)
     {
@@ -1257,7 +1264,7 @@ void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
     // every kFlashHalfPeriodFrames (16) frames → 32-frame cycle ≈ 1.875 Hz,
     // matching MAME IIe's `frame_number() & 0x10` and AppleWin's
     // `(++counter & 0xF)==0`.
-    const bool flashPhase = (frameCounter / kFlashHalfPeriodFrames) & 1u;
+    const bool flashPhase = flashPhase_;
 
     // Char ROM path: when a real character ROM is loaded, render each
     // cell as 7 actual pixels from the ROM (bit 0 = leftmost). 2 KB ROM
@@ -1304,7 +1311,7 @@ void Apple2Display::renderTextChatMauveFgBg(Memory& mem,
 {
     const uint8_t* ram = mem.data();
     const uint8_t* aux = auxRam ? auxRam : ram;
-    const bool flashPhase = (frameCounter / kFlashHalfPeriodFrames) & 1u;
+    const bool flashPhase = flashPhase_;
 
     const bool  useCharRom = mem.charRomActiveSize() >= 2048;
     const bool  altCharSet = state.altChar;
@@ -1826,7 +1833,7 @@ void Apple2Display::renderText80(Memory& mem, const Memory::DisplayState& state,
     const bool altCharSet = state.altChar;
     const uint8_t* main_ = mem.data();
     const uint8_t* aux_  = auxRam ? auxRam : mem.data();
-    const bool flashPhase = (frameCounter / kFlashHalfPeriodFrames) & 1u;
+    const bool flashPhase = flashPhase_;
 
     const bool useCharRom = mem.charRomActiveSize() >= 2048;
     const uint32_t litColor = textLitColor(hiResMode);
@@ -2201,7 +2208,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     std::fill(signalBuf.begin(), signalBuf.end(), 0);
     const uint8_t* ram = mem.data();
     const uint8_t* aux = auxRam ? auxRam : ram;
-    const bool flashPhase = (frameCounter / kFlashHalfPeriodFrames) & 1u;
+    const bool flashPhase = flashPhase_;
     const bool  useCharRom = mem.charRomActiveSize() >= 2048;
     // NOTE: ALTCHAR is read as `state.altChar` inside each paint helper, not
     // hoisted here — `state` is reassigned per beam-race segment below, so a

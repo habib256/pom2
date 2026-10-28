@@ -132,6 +132,9 @@ public:
 
     struct RestoreSettingsResult {
         std::vector<std::string> warnings;
+        /// Path keys whose file was not found: the caller holds them
+        /// (Settings::holdUnresolvedPath) so the empty bay is not saved as "".
+        std::vector<std::string> unresolvedPathKeys;
         bool ok() const noexcept { return warnings.empty(); }
     };
 
@@ -421,7 +424,7 @@ private:
                                 const Settings& settings);
     static void restoreHdvDrive2(ProDOSHardDiskCard& hdv,
                                  const Settings& settings,
-                                 std::vector<std::string>& warnings);
+                                 RestoreSettingsResult& result);
     static void captureHdvDrive2(const ProDOSHardDiskCard& hdv,
                                  RebuildSnapshot& snapshot);
     void persistHdvDrive2(Settings& settings,

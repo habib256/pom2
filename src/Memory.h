@@ -1200,7 +1200,7 @@ private:
     // Game port — paddles, buttons and the Open/Solid-Apple + Shift mods,
     // plus the $C070 RC-discharge latch. All of it lives in PaddleInputs now
     // (one concern per file); the $C061-$C067 read path and $C070 forward to
-    // `paddles_`, and the snapshot serialises `paddles_.latchCycle()`.
+    // `paddles_`, and the snapshot serialises its four 558 timers.
     pom2::PaddleInputs paddles_;
     // Cycle at which the current video frame started. Derived state, kept
     // incrementally by advanceCycles() so the per-instruction VBL check needs
@@ -1253,12 +1253,15 @@ private:
     /// accelerator's answer, one for one without it.
     /// Stock cycles since the last $C070: the socket accelerator's exact
     /// span, then a slot accelerator's (TransWarp) multiplier on top.
-    uint64_t stockSincePaddleStrobe() const
+    uint64_t stockSincePaddleStrobe(int idx) const
+    {
+        return stockSinceCycle(paddles_.latchCycle(idx));
+    }
+    uint64_t stockSinceCycle(uint64_t latch) const
     {
         // The power-on sentinel sits "after" the counter on purpose and
         // relies on the unsigned wrap (PaddleInputs.h); stockCyclesBetween
         // reads a reversed span as 0, which made every paddle discharge.
-        const uint64_t latch = paddles_.latchCycle();
         const uint64_t s = latch <= cycleCounter
             ? stockCyclesBetween(latch, cycleCounter) : cycleCounter - latch;
         const double m = slots.cpuSpeedMultiplier();

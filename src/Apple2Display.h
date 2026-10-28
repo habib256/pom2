@@ -591,6 +591,9 @@ private:
     // (toggles every 16 frames) and AppleWin's `(++counter & 0xF)==0`. (Was 15
     // — ~6.7% too fast and inconsistent with the cited & 0x10 model.)
     static constexpr uint32_t kFlashHalfPeriodFrames = 16;
+    /// Set each render(): the //e from frameCounter, the ][/][+ from its
+    /// 555 timer (2 Hz in emulated time).
+    bool flashPhase_ = false;
 
     // `col0`/`col1` bound rendering to the 40-byte column window [col0, col1)
     // for the beam-racing horizontal (mid-scanline) split; default (0, 40) is

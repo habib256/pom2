@@ -98,4 +98,34 @@ int main()
     assert(malformed.suspended());
     verify(0x5678, 0x12);
     std::filesystem::remove_all(root);
+
+    // A damaged marked generation falls back to the other one — the previous
+    // good checkpoint — and the next checkpoint overwrites the damaged file,
+    // never the one that restored.
+    const auto root2 = pom2test::tempPath("pom2-browser-session-fallback");
+    std::filesystem::create_directories(root2);
+    const auto gen0 = root2 + "/browser-resume.pom2session";
+    const auto gen1 = root2 + "/browser-resume-next.pom2session";
+    {
+        pom2::BrowserSessionStore s(root2);
+        s.initialize(*ctrl);
+        change(0x1111, 0x11);
+        assert(s.setEnabled(*ctrl, true));      // gen0 = 1111/11
+        change(0x2222, 0x22);
+        s.checkpoint(*ctrl, false);             // gen1 = 2222/22, marked
+        assert(!s.suspended());
+    }
+    const auto good = read(gen0);
+    { std::ofstream file(gen1, std::ios::binary | std::ios::trunc); file << "broken"; }
+    change(0x3333, 0x33);
+    pom2::BrowserSessionStore fallback(root2);
+    fallback.initialize(*ctrl);
+    assert(!fallback.suspended() && "the older generation restores");
+    verify(0x1111, 0x11);
+    change(0x4444, 0x44);
+    fallback.checkpoint(*ctrl, false);
+    assert(!fallback.suspended());
+    assert(read(gen0) == good && "the generation that restored is kept");
+    assert(read(gen1) != "broken" && "the damaged generation is rewritten");
+    std::filesystem::remove_all(root2);
 }

@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -152,19 +153,28 @@ bool Settings::load()
     std::error_code sizeEc;
     constexpr std::uintmax_t kMaxSettingsBytes = 4u * 1024u * 1024u;
     const auto bytes = fs::file_size(path, sizeEc);
-    if (!sizeEc && bytes > kMaxSettingsBytes) {
-        pom2::log().warn("Settings", "Refusing oversized settings file: " +
-                                     path.string());
+    // A file that is there but could not be read is NOT a first run: the
+    // session starts on defaults, and the first save would rename those
+    // defaults over every setting the user had (the AI token with them).
+    // save() moves it aside instead — see setAsideUnreadable().
+    auto refuse = [&](const std::string& why) {
+        pom2::log().warn("Settings", why + path.string() +
+                         " — it will be kept aside, not overwritten");
+        unreadableOnDisk_ = true;
         return false;
-    }
+    };
+    if (!sizeEc && bytes > kMaxSettingsBytes)
+        return refuse("Refusing oversized settings file: ");
     std::error_code existsEc;
-    if (sizeEc && fs::exists(path, existsEc) && !existsEc) {
-        pom2::log().warn("Settings", "Refusing non-regular settings file: " +
-                                     path.string());
-        return false;
-    }
+    if (sizeEc && fs::exists(path, existsEc) && !existsEc)
+        return refuse("Refusing non-regular settings file: ");
     std::ifstream f(path);
-    if (!f) return false;     // missing → use defaults; not an error
+    if (!f) {
+        std::error_code ec;
+        if (fs::exists(path, ec) || ec)
+            return refuse("Cannot read settings file: ");
+        return false;         // missing → use defaults; not an error
+    }
 
     std::string line;
     bool first = true;
@@ -198,6 +208,24 @@ bool Settings::load()
     return true;
 }
 
+bool Settings::setAsideUnreadable(const fs::path& path) const
+{
+    fs::path aside = path;
+    aside += ".unreadable-" + std::to_string(static_cast<long long>(std::time(nullptr)));
+    std::error_code ec;
+    fs::rename(path, aside, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory) {
+        pom2::log().warn("Settings", "Not saving: cannot move the unreadable " +
+                         path.string() + " aside (" + ec.message() + ")");
+        return false;
+    }
+    if (!ec)
+        pom2::log().warn("Settings", "Kept the unreadable settings file as " +
+                         aside.string());
+    unreadableOnDisk_ = false;
+    return true;
+}
+
 bool Settings::save() const
 {
     // Central read-only gate. Kiosk must never write state.cfg, and the
@@ -215,6 +243,7 @@ bool Settings::save() const
     // when every save wrote unconditionally.
     if (hasWritten_ && store == lastWritten_) return true;
     const fs::path path = resolveStorePath();
+    if (unreadableOnDisk_ && !setAsideUnreadable(path)) return false;
     // Unique per process AND per call: two POM2 instances sharing one $HOME
     // both used to open `state.cfg.tmp` with trunc and interleave their
     // writes. See tempSiblingPath().
@@ -348,7 +377,15 @@ float Settings::getFloat(const std::string& key, float def) const
     } catch (...) { return def; }
 }
 
-void Settings::setString(const std::string& key, std::string value) { store[key] = std::move(value); }
+void Settings::setString(const std::string& key, std::string value)
+{
+    if (value.empty()) {
+        if (heldPaths_.count(key)) return;   // see holdUnresolvedPath()
+    } else {
+        heldPaths_.erase(key);
+    }
+    store[key] = std::move(value);
+}
 void Settings::setBool  (const std::string& key, bool  v) { store[key] = v ? "true" : "false"; }
 void Settings::setInt   (const std::string& key, int   v) { store[key] = std::to_string(v); }
 void Settings::setFloat (const std::string& key, float v)

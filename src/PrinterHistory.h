@@ -166,7 +166,12 @@ private:
     };
 
     bool writeIndex(std::string& err) const;
-    IndexState readIndex();
+    /// `keepMissing`: also keep rows whose PNG is not on disk yet — another
+    /// POM2 indexes a page before its writer thread lands the file.
+    IndexState readIndex(bool keepMissing = false);
+    /// Adopt the rows another POM2 sharing this directory has added since
+    /// we last read the index, and move the counters past its pages.
+    void mergeForeignPages();
     /// Largest N over the `pNNNNNN.png` files actually present in `dir_`.
     uint64_t highestPageFileNumber() const;
     /// Set `nextFile_`/`nextJob_` past every page file on disk. Used on the
@@ -213,6 +218,9 @@ private:
 
     std::string              dir_;
     std::vector<HistoryPage> pages_;      ///< newest first
+    /// nextFile_ as of the last mergeForeignPages(): rows below it that are
+    /// missing from pages_ and from disk were deleted here, not foreign.
+    uint64_t nextFileAtLastMerge_ = 0;
     uint64_t                 nextJob_  = 1;
     uint64_t                 nextFile_ = 1;
     /// Wall-clock seconds since the last stored page, used to decide whether

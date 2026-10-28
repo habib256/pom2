@@ -305,6 +305,9 @@ int main(int argc, char* argv[])
     auto plan = pom2::parseCli(argc, argv, helpRequested);
     if (helpRequested) return 0;
     if (!plan)         return 1;
+#ifndef __EMSCRIPTEN__
+    pom2::absolutizeCliPaths(*plan);
+#endif
 
 #ifdef __EMSCRIPTEN__
     // Match shell.html when a host supplies no arguments: PAL Apple //c
@@ -1338,9 +1341,12 @@ int main(int argc, char* argv[])
     // and in the README, and then consumed by nobody: resolveSaveTapePath()
     // had zero callers, so a session recorded with --rec and --save-tape
     // exited with the recording still only in RAM. This is the clean-shutdown
-    // point — the worker has stopped, MainWindow is still alive, and the
-    // commit goes through the same atomic write-back the deck's Save uses.
+    // point — MainWindow is still alive, and the commit goes through the same
+    // atomic write-back the deck's Save uses. The worker is still running
+    // here (~MainWindow stops it), so stop it first: cycles recorded after
+    // the copy were dropped from the saved tape.
     if (plan && !plan->saveTapePath.empty()) {
+        mainWindow.emul().stop();
         const std::string out =
             pom2::resolveSaveTapePath(plan->saveTapePath, plan->saveTapeFormat);
         if (mainWindow.emul().saveTape(out))
