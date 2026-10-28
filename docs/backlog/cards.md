@@ -24,6 +24,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
+| [CARDS-011](#cards-011) | 🟡 | Reverse engineering | ALS "The CP/M Card" (6 MHz Z80B, own 2×64 KB, CP/M Plus) |
 
 <a id="cards-001"></a>
 
@@ -245,3 +246,69 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 
 - 🧊 **Apple 3.5" Controller IWM-level** — refactor IWMDevice attached
   to a slot card (rare).
+
+<a id="cards-011"></a>
+
+## CARDS-011 — ALS "The CP/M Card"
+
+**Priority:** 🟡 · **State:** Reverse engineering, started 2026-10-28.
+
+**Asked for by:** a letter about a Z80 card run in "ALS CP/M Card" mode with
+an SSC-compatible serial card. No emulator has this card: not MAME (its
+`a2bus/cards.cpp` has `softcard` and `applicard` only), not AppleWin
+(`CT_Z80` = SoftCard). Its register map is documented nowhere, so it has to
+be read off ALS's own boot code. Manual tool:
+`cmake --build build --target als_boot_probe`
+(`tests/als_boot_probe.cpp`: boots a disk against a logging stub card,
+prints every access to its slot with the 6502 PC, dumps RAM).
+
+**Sources (opened, not in the tree):**
+- *The CP/M CARD User's Guide*, ALS 1982 —
+  <https://www.callapple.org/wp-content/uploads/2024/07/ALS-CPM-Card.pdf>
+  (§ 5: hardware).
+- CP/M 3.01C disks + notes, VintageWare via Asimov —
+  `images/cpm/os/Advanced Logic Systems (ALS)-CPM Card Installation Software.zip`
+  (`CPM.Disk1.do` … `Disk3.do`, `.shk` of /BOOT, /CPMBOOT, full install),
+  and `images/cpm/os/ALS CPM Card.zip` (ProDOS `.po` installs).
+
+**Established:**
+- Hardware (manual § 5): 6 MHz Z80B, slowed to 2 MHz only while it touches
+  the Apple; 2 × 64 KB on the card, bank chosen by `OUT (0F0H)` 0/1; a
+  common area at the top (about $E000/$F900 up) seen from both banks; an
+  on-card real-time clock interrupting the Z80 (RST 30); slot IRQs are
+  passed to the 6502. Slot 4 or 7. Ships **CP/M Plus** (3.0, 3.01C in
+  Nov. 1984): there is no IOBYTE; devices are assigned with `DEVICE`.
+- **On/off = one toggle**, as on the SoftCard: any write by either CPU to
+  the card's `$Cn00` page. Disk 1's boot (T0S0 → $0800, then $0900)
+  writes `$00` to `$C700`, `$C600` … `$C100` (self-modified `STA $Cn00` at
+  $092C) and calls the card found when `$08FE` is non-zero afterwards;
+  otherwise `** NO CP/M CARD IN SYSTEM **`. POM2's SoftCard in slot 4 is
+  *not* found by it.
+- **Bank-0 window = the SoftCard map with Z80 A15 inverted** (inference,
+  consistent with every address seen): Apple $0000-$0FFF at Z80 $7000,
+  Apple $C000-$CFFF at Z80 $6000. Evidence: the dual 6502/Z80 jump page
+  the boot copies to Apple $0300 (`C3 12 73` = `JP $7312` beside `4C 5C 03`
+  = `JMP $035C`) reads `$6082` ($C082), `$6FFF` ($CFFF) and `$77F8`
+  (MSLOT) and adds $A0 to $Cn to reach $6n00; and the boot carries two
+  8-byte Z80 stubs side by side, one per map — at $0AB1
+  `LD A,($F8FF) / ADD $20 / LD H,A / LD (HL),A` (SoftCard: $08FF via
+  $F8FF, toggle via $En00) and at $0AA9
+  `LD A,($78FF) / SUB $60 / LD H,A / LD (HL),A` (the same through $78FF and
+  $6n00).
+
+**Open:**
+- What sets `$08FE`. Neither stub writes it, and only the SoftCard one is
+  copied (to $1000 = Z80 $0000 on a SoftCard). The Z80's state at the
+  first toggle after power-on (PC, which bank, which map) decides it.
+- The rest of bank 0 (Apple $1000-$BFFF and the language card), the RTC's
+  ports and rate, and whether the 6502 is halted while the Z80 runs (the
+  manual says "DMA device", one CPU at a time).
+- The CP/M 3 BIOS (files `APPLE`, `RWTS`, `CPMLDR` on /BOOT) is the next
+  thing to disassemble; a real card, or the Z80 card the letter mentions
+  in its ALS mode, would settle the power-on state in one test.
+
+**Note for BTERM:** CP/M Plus has no IOBYTE, but has BDOS 7 (AUXIST) and 8
+(AUXOST): an AUX:-input-status call is the poll BTERM looks for, and the
+SoftCard's 2.20 BIOS cannot offer it (its CONST ignores the IOBYTE —
+`softcard_ssc_bterm`).
+

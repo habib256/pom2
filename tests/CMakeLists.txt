@@ -7091,6 +7091,28 @@ add_test(NAME softcard_ssc_bterm COMMAND test_softcard_ssc_bterm
 set_tests_properties(softcard_ssc_bterm PROPERTIES TIMEOUT 120)
 
 
+# ─── ALS CP/M Card boot probe (manual, EXCLUDE_FROM_ALL) ──────────────────
+# Boots an ALS disk against a logging stub card: how the card's register map
+# is read off the software. Needs untracked media; asserts nothing.
+add_executable(als_boot_probe EXCLUDE_FROM_ALL
+    als_boot_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(als_boot_probe PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(als_boot_probe PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(als_boot_probe PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(als_boot_probe PRIVATE winmm)
+endif()
+
 # ─── Diagnostic dumps (build-only, EXCLUDE_FROM_ALL) ──────────────────────
 # Five eyeball tools from the project's early days: they print a screen, a
 # disassembly or a status byte and assert nothing, so they are deliberately
@@ -9687,6 +9709,7 @@ set(POM2_PROBE_TARGETS
     dix_menu_raster_probe
     dix_return_crash_probe
     iic_a2fc_printer_port_probe
+    als_boot_probe
     hdv_boot_dump
     hero_probe
     iic_dump
