@@ -111,7 +111,10 @@
   // It wins over ?disk= and ?nodisk=. The download starts now, alongside
   // POM2.data; preRun below holds main() until it lands in MEMFS.
   const _qs = new URLSearchParams(window.location.search);
-  const _preset = _qs.get('preset') || 'iic-pal';
+  // A '+' typed unencoded (?preset=ii+, iic+) decodes to a space, and the
+  // CLI rejects "ii " — main() returned before the first frame and the page
+  // sat on its loading message. No preset name contains a space.
+  const _preset = (_qs.get('preset') || 'iic-pal').replace(/ /g, '+');
   const _url    = _qs.get('url');
   const _disk   = (_url || _qs.get('nodisk') === '1') ? null
                  : (_qs.get('disk') || 'bundled_disks/DIX-fix.po');
@@ -343,9 +346,18 @@
       // that never answers must cost the visitor their stored settings, not
       // the emulator. Five seconds is far past a healthy IndexedDB open
       // (milliseconds) and far short of a visitor giving up on the page.
+      //
+      // And from then on this page must never PUSH. The populate is still in
+      // flight, MEMFS is empty, and a syncfs(false) reconciles IndexedDB to
+      // MEMFS — deleting every stored entry MEMFS lacks: both session
+      // generations, the resume marker, state.cfg. A slow open (two large
+      // sessions) would have cost the visitor everything they had stored,
+      // for good. PersistentFs.h's pump and flush both honour this flag.
       const watchdog = setTimeout(function() {
+        Module.pom2PersistDisabled = true;
         release('IndexedDB did not answer in 5 s — starting without stored ' +
-                'settings. Anything you change now may not be remembered.');
+                'settings. Nothing you change in this visit will be ' +
+                'remembered; what was stored before is left untouched.');
       }, 5000);
       fs.syncfs(true, function (err) {
         clearTimeout(watchdog);

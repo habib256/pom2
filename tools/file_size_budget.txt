@@ -461,5 +461,9 @@ src/Memory.cpp                           2354
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.
 #   src/StorageCoordinator.cpp: 2344 -> 2415 (+71)
-src/StorageCoordinator.cpp               2415
+# 2026-10-28: a media path not found at launch is reported in
+# RestoreSettingsResult::unresolvedPathKeys at each of the restore's six
+# "persisted path not found" sites, so the quit writer cannot erase it.
+#   src/StorageCoordinator.cpp: 2415 -> 2425 (+10)
+src/StorageCoordinator.cpp               2425
 src/hgrpaint/HgrPaintEditor.cpp          2656

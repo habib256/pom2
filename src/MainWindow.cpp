@@ -474,8 +474,19 @@ MainWindow::MainWindow(bool forceIIPlus)
                     if (fs::is_directory(c, ec)) { sd = c; break; }
                 }
                 if (sd.empty()) {
+#ifdef __EMSCRIPTEN__
                     fs::create_directories("floppyemu", ec);
                     sd = "floppyemu";
+#else
+                    // Never the working directory: that is $HOME from a
+                    // Linux menu, and Contents/Resources inside a macOS .app
+                    // (GLFW chdirs there), where a new folder breaks the
+                    // bundle's signature. The per-user data dir, absolute,
+                    // so the next launch finds the same card.
+                    const fs::path own = pom2::userDataDir() / "floppyemu";
+                    fs::create_directories(own, ec);
+                    sd = own.string();
+#endif
                 }
             }
             floppyEmu->setSdRoot(sd);
@@ -793,7 +804,12 @@ MainWindow::MainWindow(bool forceIIPlus)
             auto& image = controller->disk35(drive);
             image.setWriteBackEnabled(wb);
             const auto path = settings->getString("disk35_path_" + suffix, "");
-            const bool mounted = !path.empty() && fs::is_regular_file(path, ec) &&
+            const bool present = !path.empty() && fs::is_regular_file(path, ec);
+            // Not found (a drive not plugged in yet): keep the key, or the
+            // quit-time writer records the empty drive as "" for good.
+            if (!path.empty() && !present)
+                settings->holdUnresolvedPath("disk35_path_" + suffix);
+            const bool mounted = present &&
                                  controller->mount35(drive, path, /*click=*/false);
             // Migrate on EVERY path, the empty / missing / failed ones too:
             // skipping it left a legacy `false` on the drive for good, and

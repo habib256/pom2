@@ -400,11 +400,14 @@ the historical completions.
 
 ### Version
 
-- [ ] CMakeLists.txt project(... VERSION 1.0 ...)
-- [ ] docs/releases/v1.0.md written — the filename MUST equal PROJECT_VERSION
-- [ ] All version locations listed in CLAUDE.md and vcpkg.json agree with the release;
-      tools/check_version_strings.sh passes
-- [ ] grep -c 'v0\.9' README.md == 0
+- [x] CMakeLists.txt project(... VERSION 1.0.0 ...) *(2026-10-28)*
+- [x] docs/releases/v1.0.0.md written — the filename equals PROJECT_VERSION
+      (the publish job also accepts v1.0.md) *(2026-10-28)*
+- [x] All version locations listed in CLAUDE.md and vcpkg.json agree with the release;
+      tools/check_version_strings.sh passes, and now also checks README's
+      "What's new" link *(2026-10-28)*
+- [x] grep -c 'v0\.9' README.md == 0 — the last match was the bundled A2 File
+      Cmd XL v0.9.8, now v1.0 *(2026-10-28)*
 
 ### Build repeatability
 

@@ -40,7 +40,9 @@
 #ifndef POM2_SETTINGS_H
 #define POM2_SETTINGS_H
 
+#include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 
 namespace pom2 {
@@ -86,6 +88,13 @@ public:
     /// Absent and empty are different (a missing `slot_N_card` means the
     /// default map), so an undo has to know which one it is restoring.
     bool has  (const std::string& key) const { return store.count(key) != 0; }
+
+    /// A media path key whose file could not be found at launch (an external
+    /// drive not plugged in yet, a share not mounted). The bay comes up empty,
+    /// and every quit-time writer records an empty bay as "" — which erased
+    /// the configured disk for good. While a key is held, setString(key, "")
+    /// keeps the configured path; any non-empty value releases the hold.
+    void holdUnresolvedPath(const std::string& key) { heldPaths_.insert(key); }
     void erase(const std::string& key)       { store.erase(key); }
 
     /// True when the store holds no keys — i.e. `load()` found no file, or
@@ -100,11 +109,18 @@ public:
 private:
     std::map<std::string, std::string> store;
     bool readOnly_ = false;   // see setReadOnly()
+    std::set<std::string> heldPaths_;   // see holdUnresolvedPath()
     /// Snapshot of `store` as of the last successful write, and whether there
     /// has been one. Mutable because save() is const — it does not change what
     /// the store holds, only what is known about the file.
     mutable std::map<std::string, std::string> lastWritten_;
     mutable bool hasWritten_ = false;
+    /// load() found a file it could not read (permissions, I/O error,
+    /// oversized, not a regular file). The first save renames it to
+    /// `state.cfg.unreadable-<time>` instead of replacing it, and refuses to
+    /// write at all if that rename fails.
+    mutable bool unreadableOnDisk_ = false;
+    bool setAsideUnreadable(const std::filesystem::path& path) const;
 };
 
 } // namespace pom2

@@ -35,8 +35,8 @@ self_test() {
         printf 'project(pom2_imgui VERSION %s LANGUAGES CXX)\n' "$1" > "$tmp/t/CMakeLists.txt"
         printf '{\n  "version-string": "%s"\n}\n' "$1" > "$tmp/t/vcpkg.json"
         printf 'Current release: **v%s**. Single source\n' "$1" > "$tmp/t/CLAUDE.md"
-        printf '<div align="center">\n\n# \xf0\x9f\x8d\x8f POM2 v%s \xe2\x80\x94 Apple II Emulator\n| `POM2-v%s-x86_64.AppImage` |\n| `POM2-macOS-v%s.dmg` |\ngit tag v%s && git push\nships since v9.9.9\n' \
-            "$1" "$1" "$1" "$1" > "$tmp/t/README.md"
+        printf '<div align="center">\n\n# \xf0\x9f\x8d\x8f POM2 v%s \xe2\x80\x94 Apple II Emulator\n| `POM2-v%s-x86_64.AppImage` |\n| `POM2-macOS-v%s.dmg` |\ngit tag v%s && git push\nships since v9.9.9\n> **v%s:** [What'"'"'s new](docs/releases/v%s.md)\n' \
+            "$1" "$1" "$1" "$1" "$1" "$1" > "$tmp/t/README.md"
         : > "$tmp/t/docs/releases/v$1.md"
     }
     expect() {  # expect <0|1> <label>
@@ -53,6 +53,7 @@ self_test() {
     mk 1.2.3; sed -i.bak '/^# /s/v1.2.3/v1.2.2/' "$tmp/t/README.md"; expect 1 "stale README title"
     mk 1.2.3; sed -i.bak 's/POM2-macOS-v1.2.3/POM2-macOS-v1.2.2/' "$tmp/t/README.md"; expect 1 "one stale package filename"
     mk 1.2.3; sed -i.bak 's/git tag v1.2.3/git tag v1.2.2/' "$tmp/t/README.md"; expect 1 "stale tag example"
+    mk 1.2.3; sed -i.bak 's|docs/releases/v1.2.3.md|docs/releases/v1.2.2.md|' "$tmp/t/README.md"; expect 1 "stale What's new link"
     mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "missing release notes"
     mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; : > "$tmp/t/docs/releases/v1.2.md"
     expect 0 "vMAJOR.MINOR.md release notes are accepted"
@@ -95,6 +96,15 @@ done < <(grep -oE 'POM2-([A-Za-z]+-)?v[0-9]+(\.[0-9]+)+|git tag v[0-9]+(\.[0-9]+
          | sed 's/\.$//' || true)
 
 MM=$(printf '%s' "$V" | cut -d. -f1-2)
+# The "What's new" banner under the title: its label and its link both name
+# the current release (a bump that missed it kept linking the old notes).
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    ver=$(printf '%s' "$hit" | sed -n 's/.*docs\/releases\/v\([0-9.]*[0-9]\)\.md.*/\1/p')
+    lab=$(printf '%s' "$hit" | sed -n 's/^> \*\*v\([0-9.]*[0-9]\):.*/\1/p')
+    { [ "$ver" = "$V" ] || [ "$ver" = "$MM" ]; } || mismatch "README.md What's new link" "${ver:-nothing}"
+    [ "$lab" = "$V" ] || mismatch "README.md What's new label" "${lab:-nothing}"
+done < <(grep -E "^> \*\*v[0-9.]+:\*\* \[What's new\]" README.md || true)
 if [ ! -f "docs/releases/v$V.md" ] && [ ! -f "docs/releases/v$MM.md" ]; then
     echo "MISSING docs/releases/v$V.md (or v$MM.md) — the Release body would be a generated commit list"
     bad=1

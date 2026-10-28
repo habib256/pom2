@@ -234,6 +234,13 @@ struct CliPlan {
 /// usage was printed and the caller should exit 0 without continuing.
 std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut);
 
+/// Anchor the plan's relative file paths to the launch directory. Called
+/// before glfwInit: inside a macOS .app bundle GLFW chdirs to
+/// Contents/Resources (the resource search relies on it), after which
+/// `POM2.app/Contents/MacOS/POM2 game.dsk` was "not found" and
+/// `--snapshot-save x.snap` wrote into the bundle.
+void absolutizeCliPaths(CliPlan& plan);
+
 /// Run every Phase-C action in `plan.deferredActions`, in order. Errors
 /// are logged; the first fatal error short-circuits the rest.
 void runDeferredActions(const std::vector<CliAction>& actions,

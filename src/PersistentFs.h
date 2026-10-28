@@ -79,6 +79,10 @@ inline void pumpPersistentState()
     // C++ every frame just to decide would cost a call per frame for a
     // decision JS can make in three comparisons.
     EM_ASM({
+        // pom2PersistDisabled: the startup populate timed out (shell.html's
+        // watchdog). A push now would reconcile IndexedDB to an empty MEMFS
+        // and delete everything stored, so this visit never pushes.
+        if (Module.pom2PersistDisabled) return;
         if (!Module.pom2StateDirty || Module.pom2FlushInFlight) return;
         var now = Date.now();
         if (Module.pom2LastFlush &&
@@ -139,6 +143,7 @@ inline void flushPersistentStateNow()
 {
 #ifdef __EMSCRIPTEN__
     EM_ASM({
+        if (Module.pom2PersistDisabled) return;   // see pumpPersistentState()
         if (Module.pom2FlushInFlight) {
             // Ask the in-flight flush's callback to run another one. Setting
             // only `pom2StateDirty` was not enough: the pump ignores it for

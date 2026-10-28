@@ -39,6 +39,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -208,6 +209,8 @@ void testPaddleTiming()
            "$C070 must restart the discharge timer");
 
     // A larger value discharges later — the reading is monotone in value.
+    // (Let the running count expire first: see the lockout below.)
+    mem.advanceCycles(1200);
     mem.setPaddle(0, 255);
     (void)mem.memRead(kPdlRst);
     mem.advanceCycles(1200);             // past a 100-paddle, not a 255 one
@@ -215,6 +218,45 @@ void testPaddleTiming()
            "a 255 paddle must still read high at 1200 cycles");
 
     std::printf("[ OK ] paddle RC discharge timing + $C070 re-arm\n");
+}
+
+// ── 4. The 558 one-shots are not retriggered while they run ──────────────
+// MAME apple2e.cpp:2053-2056: each axis reloads on $C070 only if its count
+// has run out. PDL(0) then PDL(1) at once: the second strobe lands while
+// paddle 1 is still counting from the first, so paddle 1 times out against
+// the FIRST strobe — the hardware's "PDL(1) after PDL(0) reads low".
+void testPaddleNoRetrigger()
+{
+    Memory mem;
+    mem.advanceCycles(5000);
+    mem.setPaddle(0, 10);                // 110 cycles
+    mem.setPaddle(1, 200);               // 2200 cycles
+    (void)mem.memRead(kPdlRst);          // both triggered at T
+    mem.advanceCycles(150);              // paddle 0 done, paddle 1 running
+    (void)mem.memRead(kPdlRst);          // re-triggers paddle 0 only
+    assert((mem.memRead(kPdl0) & 0x80) != 0 &&
+           "an expired axis restarts on the strobe");
+    mem.advanceCycles(2200 - 150 + 10);  // T + 2210
+    assert((mem.memRead(kPdl0 + 1) & 0x80) == 0 &&
+           "paddle 1 times out against the first strobe, not the second");
+
+    // A snapshot round-trip carries every axis's timer.
+    mem.setPaddle(2, 255);
+    (void)mem.memRead(kPdlRst);          // all four expired: all restart
+    mem.advanceCycles(100);
+    (void)mem.memRead(kPdlRst);          // a no-op: everything still runs
+    std::vector<uint8_t> blob;
+    mem.appendSnapshotState(blob);
+    Memory back;
+    back.setPaddle(2, 0);
+    back.setCycleCounter(mem.getCycleCounter());
+    assert(back.loadSnapshotState(blob.data(), blob.size()));
+    back.advanceCycles(2700);            // 2800 after the restart
+    assert((back.memRead(kPdl0 + 2) & 0x80) != 0 &&
+           "the armed count (255) travels with the snapshot");
+    back.advanceCycles(100);
+    assert((back.memRead(kPdl0 + 2) & 0x80) == 0);
+    std::printf("[ OK ] 558 one-shots are not retriggered while counting\n");
 }
 
 }  // namespace
@@ -226,6 +268,7 @@ int main()
     testShiftKeyMod();
     testPaddleMouse();
     testPaddleTiming();
+    testPaddleNoRetrigger();
     std::printf("input_io_smoke_test: OK\n");
     return 0;
 }

@@ -22,5 +22,6 @@
     <glob pattern="*.d13"/>
     <glob pattern="*.hdv"/>
     <glob pattern="*.2mg"/>
+    <glob pattern="*.moof"/>
   </mime-type>
 </mime-info>

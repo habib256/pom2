@@ -150,14 +150,15 @@ void testMemoryTrailerCarriesIwm()
     // half of an 8 KB international char ROM), then vblWasActive (the VBL
     // edge detector), iicCardWindow_ (the //c $C800 window latch) and the
     // $C800 expansion-window owner (bug hunt #13). 11 since 2026-09-17: the
-    // //c Mockingboard 4c wake latch.
+    // //c Mockingboard 4c wake latch. 43 since 2026-10-28: the four 558
+    // paddle timers (latches 1-3, then each axis's armed count).
     //
     // A fixed "-8" bit-rotted the moment a third section was added: it
     // only removed the newest section and the "old blob" kept restoring
     // the IWM. Keep this sum in step with Memory::appendSnapshotState.
     std::vector<uint8_t> iwmBlob;
     iwm.appendSnapshotState(iwmBlob);
-    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 11)
+    const size_t trailerLen = (4 + iwmBlob.size()) + (4 + 0) + (4 + 43)
                             + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0) + (4 + 0)
                             + (4 + 0)    // the Zip Chip section (2026-10-16)
                             + (4 + 0);   // the beam clock (2026-10-27), empty at 1x

@@ -10,6 +10,106 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.0.0 marker** — 2026-10-28. Release notes: [v1.0.0](docs/releases/v1.0.0.md).
+
+## 2026-10-28 — Bundle A2 File Cmd 1.0
+
+A2 File Cmd XL v1.0 (6502 edition) replaces v0.9.8 in the bundled disks. The
+image matches the SHA-256 in the release's `SHA256SUMS-1.0.txt` and boots to
+its two-panel screen from a SmartPort bay (`hdv_boot_dump`). Dirtbike 1.1,
+ChromaBreak 1.1 and Micro-Sokoban 1.3 are still the latest pom2games
+releases, and the bundled copies are byte-identical to their release assets.
+The manifest, README, THIRD-PARTY.md and the disk checksums follow.
+
+## 2026-10-28 — Bug hunts before 1.0: durability, release path, core, browser
+
+Four hunts aimed at the 1.0 gates: data durability, the release and
+first-launch path, the //e core, and the frontend and browser build.
+
+**Durability:**
+- **An unreadable `state.cfg` was replaced by defaults.** `Settings::load`
+  treated a file it could not read (permissions, I/O error, oversized, not a
+  regular file) as missing. The first save then renamed a defaults-only store
+  over every setting, the AI token included. The file is now moved aside as
+  `state.cfg.unreadable-<time>` before the first write, and nothing is
+  written if that rename fails (`settings_roundtrip`).
+- **A disk on a drive not plugged in at launch was erased from the
+  configuration.** The bay came up empty, and every quit-time writer saved
+  the empty bay as "". The restore now reports the keys it could not
+  resolve, and `Settings::holdUnresolvedPath` keeps them until a real mount
+  replaces them. This covers Disk II, HDV (both drives), CFFA, SmartPort
+  units, chain bays and the //c Plus 3.5" drives (`storage_coordinator`).
+- **Two POM2 windows deleted each other's printouts.** The per-user print
+  history was rewritten from each process's own view, and both picked the
+  same next file name. The next launch swept every PNG the surviving index
+  did not name. Each add and erase now merges the index on disk first, and
+  the file counter moves past every page present (`printer_history`).
+- **Browser: a slow IndexedDB could wipe the stored sessions.** After the
+  5 s watchdog the page ran on an empty MEMFS while the populate was still in
+  flight. The first `syncfs(false)` then reconciled IndexedDB to it, deleting
+  both session generations, the resume marker and `state.cfg`. A page whose
+  populate timed out now never pushes (`Module.pom2PersistDisabled`). This
+  needs a browser to show; it was checked by reading.
+- **Browser automatic resume:**
+  - A damaged checkpoint now falls back to the previous generation. "Retry"
+    overwrites the generation that failed, not the one never tried
+    (`browser_session_store`).
+  - A checkpoint landing in the frame between a floppy autosave and its
+    collection no longer suspends resume for good: the store collects
+    finished write-backs first.
+- **`--save-tape`** stops the CPU worker before copying the tape, so the
+  last cycles recorded are no longer dropped.
+
+**Release path:**
+- **macOS: relative paths on the command line pointed inside the bundle.**
+  GLFW `chdir`s to `Contents/Resources` in a `.app`, and the resource search
+  relies on that, so the hint stays. Instead, `absolutizeCliPaths` anchors
+  the plan's paths to the launch directory before `glfwInit`. Outputs are
+  always anchored; inputs only when they exist there.
+- **The first Floppy Emu SD folder** is created under the per-user data
+  directory, not the working directory. That was `$HOME` from a Linux menu,
+  and inside the signed bundle on macOS.
+- **`-psn_…` from LaunchServices** is ignored instead of rejected as an
+  unknown flag (`cli_kiosk`).
+- **Browser `?preset=ii+`** (the `+` not encoded) decoded to `"ii "`, and
+  the page stayed on its loading message.
+- `.moof` is in the macOS document types and the Linux MIME globs. The
+  user guide now counts five bundled disks, and the release workflow comment
+  names the right demo disk. `check_version_strings.sh` also checks the
+  README's "What's new" link.
+
+**Core:**
+- **The 558 paddle timers are not retriggered while they count** (MAME
+  `apple2e.cpp:2053-2056`). Each axis keeps its own trigger cycle and count;
+  a `$C070` restarts only the axes that have run out. The four timers travel
+  at the end of Memory's third snapshot section, and older blobs load as
+  before (`input_io_smoke`).
+- **The ][ and ][+ cursor blinks from its 555 timer**, 2 Hz in emulated
+  time on NTSC and PAL alike (MAME `apple2video.cpp:1170-1178`). The //e
+  keeps `frame_number() & 0x10` (`display_dirty_skip`).
+
+The snapshot-layout tests that count the IOU section's bytes now expect 43
+(`snapshot_state_roundtrip`, `iwm_mig_snapshot`, `vbl_ioudis_annunciator`).
+Each new pin was checked red against its reverted fix.
+
+Left open:
+- Quitting has no gate for unsaved media: a failed final flush is only
+  logged, a recorded tape without `--save-tape` is discarded, and the sheet
+  still on the platen is not archived. SIGHUP is not trapped.
+- `--preset` and `--display` persist as the saved profile and display. In
+  the browser, the shell's `--preset iic-pal` overrides a profile chosen in
+  the menu on every reload without automatic resume.
+- Bundled disks are mounted in place: protected on read-only installs
+  (Dirtbike's scores), and written inside a writable `.app`.
+- The browser heartbeat re-encodes the whole session every 10 s, even when
+  nothing changed.
+- A browser drop onto the Drives rack takes the last cursor position seen
+  by GLFW (unchecked against Emscripten's `library_glfw.js`).
+- The Disk II panel `stat`s the image and copies the flux vectors every
+  frame.
+- ][/][+ push-buttons read "not pressed" with no joystick; MAME reads them
+  high when nothing is connected.
+
 ## 2026-10-27 — The backlog's hardware entries, reproduced first
 
 The eleven backlog entries about machine behaviour, each reproduced on main

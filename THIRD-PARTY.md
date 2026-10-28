@@ -86,7 +86,7 @@ geometry. Their reference photographs are not distributed in this directory.
 
 | Disk | Licence | Source |
 |---|---|---|
-| A2FC XL v0.9.8 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v0.9.8) |
+| A2FC XL v1.0 (6502 edition) | GPL-3.0 | [A2FileCommander](https://github.com/habib256/a2filecmd/releases/tag/v1.0) |
 | DIX-fix | GPL-3.0 | [French Touch DIX](https://github.com/Fr3nchT0uch/DIX/); reproduced with `tools/make_dix_fix.py`. Browser default disk. |
 | Dirtbike 1.1 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) |
 | ChromaBreak 1.1 | GPL-3.0 | [POM2 games](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) |

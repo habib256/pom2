@@ -252,7 +252,7 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
     return true;
 }
 
-PrinterHistory::IndexState PrinterHistory::readIndex()
+PrinterHistory::IndexState PrinterHistory::readIndex(bool keepMissing)
 {
     const fs::path path = fs::path(dir_) / kIndexName;
     std::error_code ec;
@@ -312,7 +312,7 @@ PrinterHistory::IndexState PrinterHistory::readIndex()
         // Drop entries whose PNG has gone — a user who deleted files by hand
         // should not get a history full of dead rows.
         std::error_code pageEc;
-        if (!fs::exists(fs::path(dir_) / p.file, pageEc)) continue;
+        if (!keepMissing && !fs::exists(fs::path(dir_) / p.file, pageEc)) continue;
 
         nextJob_ = std::max(nextJob_, p.job + 1);
         // File names are pNNNNNN.png; recover the counter so a new page never
@@ -335,6 +335,46 @@ PrinterHistory::IndexState PrinterHistory::readIndex()
     // Stored oldest-first; presented newest-first.
     std::reverse(pages_.begin(), pages_.end());
     return IndexState::Parsed;
+}
+
+void PrinterHistory::mergeForeignPages()
+{
+    // The history directory is per user, so two POM2 windows share it. Each
+    // used to write ITS pages_ as the whole index — dropping the other's rows
+    // — and both picked the same next pNNNNNN.png. The next launch's sweep
+    // then deleted every PNG the surviving index did not name.
+    std::vector<HistoryPage> own = std::move(pages_);
+    pages_.clear();
+    const IndexState state = readIndex(/*keepMissing=*/true);
+    std::vector<HistoryPage> disk = std::move(pages_);
+    pages_ = std::move(own);
+    resumeCountersFromDirectory();
+    if (state != IndexState::Parsed) return;
+    auto number = [](const HistoryPage& p) -> uint64_t {
+        try { return std::stoull(p.file.substr(1, p.file.size() - 5)); }
+        catch (...) { return 0; }
+    };
+    bool added = false;
+    for (auto& d : disk) {
+        const bool known = std::any_of(pages_.begin(), pages_.end(),
+            [&](const HistoryPage& p) { return p.file == d.file; });
+        if (known) continue;
+        // A row we no longer hold because WE deleted it has no file left.
+        // (A foreign row still being written does — or will, and is kept.)
+        if (number(d) < nextFileAtLastMerge_) {
+            std::error_code ec;
+            if (!fs::exists(fs::path(dir_) / d.file, ec)) continue;
+        }
+        pages_.push_back(std::move(d));
+        added = true;
+    }
+    nextFileAtLastMerge_ = nextFile_;
+    if (!added) return;
+    std::stable_sort(pages_.begin(), pages_.end(),
+        [&](const HistoryPage& a, const HistoryPage& b) {
+            return number(a) > number(b);              // newest first
+        });
+    while (pages_.size() > kMaxPages) pages_.pop_back();
 }
 
 bool PrinterHistory::writeIndex(std::string& err) const
@@ -573,12 +613,14 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
         return false;
     }
 
+    const auto previousPages = pages_;
+    mergeForeignPages();
+
     char name[32];
     std::snprintf(name, sizeof(name), "p%06llu.png",
                   static_cast<unsigned long long>(nextFile_));
 
     const int64_t now = nowEpoch();
-    const auto previousPages = pages_;
     const uint64_t previousNextJob = nextJob_;
     const uint64_t previousNextFile = nextFile_;
     const int64_t previousLastPage = lastPageEpoch_;
@@ -798,6 +840,7 @@ bool PrinterHistory::erase(const HistoryPage& p, std::string& err)
     flushPending();
     const std::string file = p.file;         // `p` may point into pages_
     const auto previousPages = pages_;
+    mergeForeignPages();                     // see addPage()
     pages_.erase(std::remove_if(pages_.begin(), pages_.end(),
                                 [&](const HistoryPage& q) { return q.file == file; }),
                  pages_.end());

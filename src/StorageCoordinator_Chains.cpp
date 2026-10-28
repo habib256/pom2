@@ -167,13 +167,16 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayCount(
 
 void StorageCoordinator::restoreHdvDrive2(ProDOSHardDiskCard& hdv,
                                           const Settings& settings,
-                                          std::vector<std::string>& warnings)
+                                          RestoreSettingsResult& result)
 {
+    auto& warnings = result.warnings;
     const std::string saved = settings.getString(hdvDriveKey("hdv_path", 1), "");
     const std::string path = resolvePersistedMediaPath(saved);
     const std::string where = "HDV slot " + std::to_string(hdv.getSlot()) + " drive 2";
-    if (!saved.empty() && path.empty())
+    if (!saved.empty() && path.empty()) {
         warnings.push_back(where + ": persisted path not found: " + saved);
+        result.unresolvedPathKeys.push_back(hdvDriveKey("hdv_path", 1));
+    }
     else if (!path.empty() && !hdv.loadDrive(1, path))
         warnings.push_back(where + ": " + hdv.getLastError());
     const bool legacy = settings.getBool(hdvDriveKey("hdv_writeback", 1),

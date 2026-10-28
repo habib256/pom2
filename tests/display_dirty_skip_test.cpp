@@ -419,9 +419,44 @@ void runSkipStillEngages()
 
 }  // namespace
 
+// The ][ and ][+ flash from a 555 at 2 Hz in real time, the //e from the
+// frame count (MAME apple2video.cpp:1170-1178). On PAL the two part at once:
+// a quarter second is 12.5 frames, so the ][+ text first changes at frame
+// 13, the //e's at frame 16.
+int firstFlashFrame(bool iie)
+{
+    Memory mem;
+    mem.setIIEMode(iie);
+    mem.setVideoStandard(VideoStandard::PAL);
+    Apple2Display disp;
+    disp.setAuxMemory(mem.auxData());
+    for (uint16_t a = 0x0400; a < 0x0800; ++a)
+        mem.writeRamUnchecked(a, static_cast<uint8_t>(0x40 + (a & 0x1F)));
+    const int frameCycles = 65 * pom2VideoTiming(VideoStandard::PAL).scanlinesPerFrame;
+    disp.render(mem);
+    const auto first = grab(disp);
+    for (int f = 1; f < 40; ++f) {
+        mem.advanceCycles(frameCycles);
+        disp.render(mem);
+        if (grab(disp) != first) return f;
+    }
+    return -1;
+}
+
+void runFlashTimers()
+{
+    const int plus = firstFlashFrame(false), iie = firstFlashFrame(true);
+    if (plus != 13 || iie != 16) {
+        std::printf("FAIL flash timers on PAL: ][+ first flips at frame %d "
+                    "(want 13, the 555), //e at %d (want 16)\n", plus, iie);
+        ++failures;
+    }
+}
+
 int main()
 {
     std::puts("=== display static-text frame-skip equivalence ===");
+    runFlashTimers();
     runScript(VideoStandard::NTSC, "NTSC");
     runScript(VideoStandard::PAL,  "PAL");
     runCapturePath(false);

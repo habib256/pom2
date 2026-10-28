@@ -846,10 +846,9 @@ jobs:
   # from any static host (or offline) rather than only from the project's own
   # Pages deployment.
   #
-  # Payload note: the WASM bundle is the one package that carries floppyemu/ —
-  # `wasm/shell.html` boots `floppyemu/Total Replay v6.1.hdv` by default, so it
-  # IS the demo's boot disk. Desktop packages skip it (packaging/bundle.manifest
-  # marks it `wasm`), which is why they weigh ~6 MB and this weighs ~35 MB.
+  # Payload note: the WASM bundle is the one package that carries floppyemu/
+  # (packaging/bundle.manifest marks it `wasm`); desktop packages skip it. The
+  # demo itself boots `bundled_disks/DIX-fix.po` (wasm/shell.html, main.cpp).
   wasm:
     needs: version
     runs-on: ubuntu-latest

@@ -466,7 +466,7 @@ their in-memory copy while write-back is disabled. Use the disk's
 You can organise your own collection with these folders:
 
 ```text
-bundled_disks/  The four disks selected for release packages
+bundled_disks/  The five disks selected for release packages
 disks_5.4/     Your 5¼-inch images
 disks_3.5/     Your 3½-inch images
 hdv/          Your hard-disk images

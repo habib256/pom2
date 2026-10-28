@@ -654,8 +654,36 @@ void testCounterResumesWithoutAnIndex()
 
 } // namespace
 
+// Two POM2 windows share the per-user history. Each wrote its own view as the
+// whole index and picked the same next file name, and the next launch's
+// sweep deleted every PNG the surviving index did not name.
+void testTwoInstancesShareTheHistory()
+{
+    const fs::path dir = scratch("two_instances");
+    std::string err;
+    PrinterHistory a, b;
+    assert(a.open(dir.string(), err));
+    assert(b.open(dir.string(), err));
+    assert(a.addPage(makePage(32, 24, 1), 0, 0, 8.5, 11.0, err));
+    a.flushPending();
+    assert(b.addPage(makePage(32, 24, 2), 0, 0, 8.5, 11.0, err));
+    b.flushPending();
+    assert(a.addPage(makePage(32, 24, 3), 0, 0, 8.5, 11.0, err));
+    a.flushPending();
+    std::vector<std::string> names;
+    for (const auto& p : a.pages()) names.push_back(p.file);
+    assert(names.size() == 3 && "A adopted B's page");
+    assert(names[0] != names[1] && names[1] != names[2] && names[0] != names[2]);
+    PrinterHistory reopened;
+    assert(reopened.open(dir.string(), err));
+    assert(reopened.size() == 3 && "no instance's printouts are swept");
+    for (const auto& n : names) assert(fs::exists(dir / n));
+    std::printf("  ok: two instances keep each other's printouts\n");
+}
+
 int main()
 {
+    testTwoInstancesShareTheHistory();
     testPersistsAcrossSessions();
     testTractorFormReopens();
     testPagesGroupIntoJobs();
