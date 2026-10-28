@@ -694,6 +694,7 @@ set(POM2_FRONTEND_SOURCES
     # and a headless runner are composition roots too, and classifying them
     # anywhere lower would just be a lie the guard then enforces.
     src/pom2_bench.cpp
+    src/pom2_cpm.cpp
     src/pom2_headless.cpp
     src/DebugCoordinator.cpp
     src/DevicePanelCoordinator.cpp
@@ -827,6 +828,7 @@ set(POM2_MEDIA_HEADERS
 )
 
 set(POM2_MEDIA_SOURCES
+    src/CpmDiskFs.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
     src/AtaBlockDevice.cpp
@@ -1831,9 +1833,11 @@ add_executable(pom2_headless
     src/SpeakerDevice.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
+    src/SoftCardZ80.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
     src/SystemProfile.cpp
+    src/Z80.cpp
 )
 target_include_directories(pom2_headless PRIVATE
     ${POM2_SRC_DIR}
@@ -1863,6 +1867,17 @@ if(WIN32)
     target_link_libraries(pom2_headless PRIVATE winmm ws2_32)
 endif()
 endif() # NOT EMSCRIPTEN (pom2_headless)
+
+# ─── pom2_cpm ─────────────────────────────────────────────────────────────
+# Host tool: list / get / put / rm files on an Apple II CP/M disk image
+# (SoftCard / ALS 16-sector format, src/CpmDiskFs.h) without cpmtools.
+if(NOT EMSCRIPTEN)
+add_executable(pom2_cpm
+    src/pom2_cpm.cpp
+    src/CpmDiskFs.cpp
+)
+target_include_directories(pom2_cpm PRIVATE ${POM2_SRC_DIR})
+endif()
 
 # ─── pom2_bench ───────────────────────────────────────────────────────────
 # Deterministic headless run of N frames — no threads, no audio device, no
@@ -2028,6 +2043,10 @@ install(TARGETS ${PROJECT_NAME}
 # package whose ROMs did not land looks perfectly healthy to it.
 if(TARGET pom2_headless)
     install(TARGETS pom2_headless
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+if(TARGET pom2_cpm)
+    install(TARGETS pom2_cpm
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
 

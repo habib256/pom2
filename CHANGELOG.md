@@ -10,6 +10,30 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-28 — CP/M: files in images, SoftCard headless, IOBYTE pinned
+
+From a letter asking for a Z80 card + SSC CP/M setup (BTERM, a terminal that
+uses only BIOS calls).
+
+- **`pom2_cpm`** lists, extracts, adds and deletes files on a 140 KB CP/M
+  image (`.dsk`/`.do`, `.po`) — `src/CpmDiskFs.*`, cpmtools' `apple-do`
+  geometry read back off `cpm22.dsk`. The 56K/60K sysgens keep their system
+  as a user-31 `cp/m.sys` entry on blocks 128-139, which wrap onto tracks
+  0-2: reads follow the wrap, writes never allocate past block 127. Writes
+  are all-or-nothing and go through the atomic media commit. Test
+  `cpm_disk_fs`.
+- **`pom2_headless --softcard <slot>`, `--type <sec>:<text>`, `--text-dump`.**
+  The SSC there now loads Apple's EPROM when present, as the GUI does: the
+  CP/M BIOS drives it through the Pascal entries in its `$C800` half, and
+  `PIP PUN:` sent nothing over the hand-assembled page. Test
+  `headless_softcard_capture`.
+- **The Microsoft 2.20 BIOS's CONST ignores the IOBYTE.** `$AB08` is
+  `LD HL,($F380) / JP (HL)`: keyboard, or the slot-3 80-column card. CONIN
+  and READER do follow it (CON:=BAT: reads the SSC). So BTERM's poll — CON:
+  pointed at the serial device around a CONST — can only see the keyboard on
+  a SoftCard, on the real machine as in POM2. `softcard_ssc_bterm` pins all
+  four routes with BTERM on the disk.
+
 **v1.0.0 marker** — 2026-10-28. Release notes: [v1.0.0](docs/releases/v1.0.0.md).
 
 ## 2026-10-28 — Bundle A2 File Cmd 1.0
