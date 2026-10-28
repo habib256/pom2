@@ -140,6 +140,9 @@ inline constexpr CardType kCardTypes[] = {
     // needed (the card has none; the CP/M boot disk finds it by toggling
     // slot ROM windows). MAME a2bus/a2softcard.cpp port.
     { "softcard",     "SoftCard Z80 (CP/M)" },
+    // Advanced Logic Systems "The CP/M Card" — 6 MHz Z80B, 64 KB of its
+    // own, CP/M Plus. No ROM either; slot 4 or 7 as ALS's software says.
+    { "alscpm",       "ALS CP/M Card (CP/M Plus)" },
     { "chatmauve",    "Le Chat Mauve",     CardScope::Core },
     { "mouse",        "Mouse Interface"   },
     // AppleWin-style HLE variant — only needs the slot EPROM (no MCU mask

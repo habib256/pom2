@@ -28,13 +28,22 @@
 //
 // Designed for headless self-test: launch in the background, telnet in,
 // type DOS 3.3 commands, observe behaviour. Exits cleanly on SIGINT.
+//
+// CP/M: `--softcard <slot>` plugs the Microsoft SoftCard (Z80) — or `--als
+// <slot>` the ALS CP/M Card (CP/M Plus) — and drops the
+// BASIC setup paste; the SSC then stays a serial line (no keyboard sink), so
+// a CP/M program's RDR:/PUN: traffic is what the telnet client sees. The
+// console is typed with `--type <sec>:<text>`, at an emulated second, in
+// both modes; `--text-dump` prints the text page after a capture run.
 
+#include "AlsCpmCard.h"
 #include "Apple2Display.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
+#include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
 #include "SuperSerialTcpTransport.h"
 #include "SuperSerialTransport.h"
@@ -102,6 +111,15 @@ void usage(const char* prog)
         "                        keyboard sees; see the comment at the default).\n"
         "                        \\r \\n \\t \\\\ are unescaped.\n"
         "  --no-setup            Don't autopaste anything.\n"
+        "  --softcard <slot>     Plug a Microsoft SoftCard (Z80) in that slot\n"
+        "                        (1, 3, 4, 5 or 7; 4 replaces the clock card).\n"
+        "                        Implies --no-setup unless --setup is given, and\n"
+        "                        keeps the SSC a serial line, not a keyboard.\n"
+        "  --type <sec>:<text>   Type <text> on the keyboard at emulated second\n"
+        "                        <sec>. Repeatable; same escapes as --setup.\n"
+        "                        Example: --type 12:'DIR\\r'\n"
+        "  --als <slot>          Plug an ALS CP/M Card (Z80B, CP/M Plus) instead;\n"
+        "                        slot 4 or 7 as ALS says. Same rules as --softcard.\n"
         "\n"
         "Capture mode (no telnet listener, no threads, deterministic):\n"
         "  --frames <N>          N > 0: run N emulated frames, then exit.\n"
@@ -110,6 +128,8 @@ void usage(const char* prog)
         "                        those frames. Exits non-zero if the capture is\n"
         "                        a single flat colour (exit 3). Defaults to 300\n"
         "                        frames when --frames is absent or zero.\n"
+        "  --text-dump           After the frames, print the 40-column text page\n"
+        "                        to stdout (24 lines, inverse/flash shown as is).\n"
         "  --version             Print the version and exit.\n"
         "  -h, --help            Show this and exit.\n"
         "\n"
@@ -189,6 +209,13 @@ int main(int argc, char** argv)
     int  pasteAfter  = 6;     // emulated seconds before pasting setup
     int  frames      = 0;     // >0 = capture mode (see below)
     bool doSetup     = true;
+    bool setupGiven  = false;
+    bool textDump    = false;
+    int  softcardSlot = 0;   // 0 = none
+    int  alsSlot      = 0;   // 0 = none
+    // --type: text to type at an emulated second, in the order given.
+    struct TypedKeys { int atSecond; std::string text; bool sent; };
+    std::vector<TypedKeys> typed;
     // A flag written last, with its value missing, used to fall through every
     // `&& i+1 < argc` arm to the final else and be reported as an "unknown
     // arg" — a misdiagnosis that sends the reader looking for a typo in a
@@ -217,7 +244,7 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
-            a == "--screenshot") {
+            a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als") {
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
         }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
@@ -229,7 +256,35 @@ int main(int argc, char** argv)
         else if (a == "--paste-after" && i+1 < argc) {
             if (!parseInt("--paste-after", argv[++i], 0, 100000, pasteAfter)) return 1;
         }
-        else if (a == "--setup" && i+1 < argc) setupOverride = argv[++i];
+        else if (a == "--setup" && i+1 < argc) { setupOverride = argv[++i]; setupGiven = true; }
+        else if (a == "--softcard" && i+1 < argc) {
+            if (!parseInt("--softcard", argv[++i], 1, 7, softcardSlot)) return 1;
+            if (softcardSlot == 2 || softcardSlot == 6) {
+                std::fprintf(stderr, "--softcard: slot %d holds the %s\n", softcardSlot,
+                             softcardSlot == 2 ? "Super Serial Card" : "Disk II");
+                return 1;
+            }
+        }
+        else if (a == "--als" && i+1 < argc) {
+            if (!parseInt("--als", argv[++i], 1, 7, alsSlot)) return 1;
+            if (alsSlot == 2 || alsSlot == 6) {
+                std::fprintf(stderr, "--als: slot %d holds the %s\n", alsSlot,
+                             alsSlot == 2 ? "Super Serial Card" : "Disk II");
+                return 1;
+            }
+        }
+        else if (a == "--type" && i+1 < argc) {
+            const std::string v = argv[++i];
+            const auto colon = v.find(':');
+            int at = 0;
+            if (colon == std::string::npos
+                || !parseInt("--type", v.substr(0, colon).c_str(), 0, 100000, at)) {
+                std::fprintf(stderr, "--type expects <seconds>:<text>, got: %s\n", v.c_str());
+                return 1;
+            }
+            typed.push_back({ at, unescape(v.substr(colon + 1)), false });
+        }
+        else if (a == "--text-dump") textDump = true;
         else if (a == "--frames" && i+1 < argc) {
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
@@ -252,7 +307,13 @@ int main(int argc, char** argv)
     // binary found its bundled roms/, executed 6502 code and drew a frame,
     // which `--help` cannot. Deterministic by construction: no worker thread
     // (tickFrame drives the CPU inline), no sleeps, no TCP listener.
-    const bool captureMode = frames > 0 || !shotPath.empty();
+    if (softcardSlot && alsSlot) {
+        std::fprintf(stderr, "--softcard and --als: one Z80 card at a time\n");
+        return 1;
+    }
+    const int z80Slot = softcardSlot ? softcardSlot : alsSlot;
+    if (z80Slot && !setupGiven) doSetup = false;
+    const bool captureMode = frames > 0 || !shotPath.empty() || textDump;
     if (captureMode && frames <= 0) frames = 300;   // ~5 s: past the boot beep
 
     const std::string romPath = !romArg.empty() ? romArg : findAsset(
@@ -341,14 +402,31 @@ int main(int argc, char** argv)
     // port on a shared CI runner), and nothing in capture mode talks to it.
     if (!captureMode) {
         auto ssc = std::make_unique<SuperSerialCard>(SuperSerialCard::kDefaultSlot);
+        // Apple's EPROM when it is there, as SlotCardFactory does for the GUI.
+        // CP/M's BIOS drives the card through its Pascal entries in the $C800
+        // half, which the hand-assembled fallback page does not have.
+        for (const char* rel : { "roms/ssc_341-0065-a.bin", "roms/341-0065-a.bin",
+                                 "roms/SSC.rom" }) {
+            const std::string rom = findAsset(rel);
+            if (rom.empty()) continue;
+            std::ifstream f(rom, std::ios::binary);
+            std::vector<uint8_t> bytes(SuperSerialCard::kFirmwareBytes + 1);
+            f.read(reinterpret_cast<char*>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+            bytes.resize(static_cast<std::size_t>(f.gcount()));
+            if (ssc->loadFirmware(bytes)) break;
+        }
         // pasteKeyStream, not pasteText — the clipboard filter drops the
         // control bytes a terminal has to be able to send (see
         // MainWindow_SlotConfig.cpp's copy of this sink).
-        ssc->setKeyboardSink(
-            [&mem = controller.memory()](uint8_t b) {
-                const char buf[1] = { static_cast<char>(b) };
-                mem.pasteKeyStream(buf, 1);
-            });
+        // Under CP/M the SSC is the RDR:/PUN: line, not a second keyboard.
+        if (!z80Slot) {
+            ssc->setKeyboardSink(
+                [&mem = controller.memory()](uint8_t b) {
+                    const char buf[1] = { static_cast<char>(b) };
+                    mem.pasteKeyStream(buf, 1);
+                });
+        }
         // The card cannot build its own transport — see SuperSerialCard.
         ssc->setTransport(pom2::makeSuperSerialTcpTransport(
             *ssc, SuperSerialCard::kDefaultSlot));
@@ -360,8 +438,24 @@ int main(int argc, char** argv)
 
     // ThunderClock+-compatible RTC in slot 4 — uPD1990AC bit-bang chip
     // emulation; ProDOS auto-detects and links its driver to it.
-    controller.memory().slotBus().plug(ClockCard::kDefaultSlot,
-        std::make_unique<ClockCard>(ClockCard::kDefaultSlot));
+    if (z80Slot != ClockCard::kDefaultSlot)
+        controller.memory().slotBus().plug(ClockCard::kDefaultSlot,
+            std::make_unique<ClockCard>(ClockCard::kDefaultSlot));
+
+    // The SoftCard is a bus master: EmulationController::runCpuSlice hands
+    // it the slice while it owns the bus (SlotBus::dmaClaimant).
+    if (softcardSlot) {
+        auto z80 = std::make_unique<SoftCardZ80>();
+        z80->setMemory(&controller.memory());
+        z80->setCpu(&controller.cpu());
+        controller.memory().slotBus().plug(softcardSlot, std::move(z80));
+    }
+    if (alsSlot) {
+        auto als = std::make_unique<AlsCpmCard>();
+        als->setMemory(&controller.memory());
+        als->setCpu(&controller.cpu());
+        controller.memory().slotBus().plug(alsSlot, std::move(als));
+    }
 
     // Hard reset loads the motherboard reset vector; reset the slot bus
     // as well so DiskIICard can re-arm its trace flags. Autostart firmware
@@ -389,6 +483,17 @@ int main(int argc, char** argv)
         controller.cpu().setProgramCounter(0xC600);
     controller.setMode(EmulationController::Mode::Running);
 
+    // --type: send every entry whose second has come. pasteKeyStream, not
+    // pasteText, so a ^C or ^Z in the script reaches the guest.
+    auto typeDue = [&](uint64_t cycles) {
+        const int seconds = static_cast<int>(cycles / 1'022'727);
+        for (auto& t : typed) {
+            if (t.sent || seconds < t.atSecond) continue;
+            controller.memory().pasteKeyStream(t.text.data(), t.text.size());
+            t.sent = true;
+        }
+    };
+
     // ─── Capture mode ──────────────────────────────────────────────────────
     // tickFrame() runs one frame's cycles INLINE — the same single-threaded
     // path the WASM build uses. No worker thread and no wall-clock pacing, so
@@ -396,7 +501,10 @@ int main(int argc, char** argv)
     // N/60 seconds: 300 frames land in well under a second on any runner.
     if (captureMode) {
         std::fprintf(stderr, "[POM2 headless] capture: running %d frames\n", frames);
-        for (int i = 0; i < frames; ++i) controller.tickFrame();
+        for (int i = 0; i < frames; ++i) {
+            controller.tickFrame();
+            typeDue(controller.memory().getCycleCounter());
+        }
 
         Apple2Display display;
         if (controller.memory().isIIE())
@@ -410,6 +518,18 @@ int main(int argc, char** argv)
             "from the background\n",
             w, h, st.colours, st.differing, w * h);
 
+        if (textDump) {
+            for (int r = 0; r < 24; ++r) {
+                const uint16_t base = uint16_t(0x0400 + (r % 8) * 0x80 + (r / 8) * 0x28);
+                char line[41];
+                for (int c = 0; c < 40; ++c) {
+                    const char ch = char(controller.memory().memRead(uint16_t(base + c)) & 0x7F);
+                    line[c] = (ch >= 0x20 && ch < 0x7F) ? ch : ' ';
+                }
+                line[40] = 0;
+                std::printf("%s\n", line);
+            }
+        }
         if (!shotPath.empty()) {
             if (!writePpm(shotPath, w, h, display.pixels())) {
                 std::fprintf(stderr, "ERROR: cannot write %s\n", shotPath.c_str());
@@ -478,6 +598,7 @@ int main(int argc, char** argv)
             controller.memory().pasteText(setup);
             pasted = true;
         }
+        typeDue(cycles);
     }
 
     std::fprintf(stderr, "[POM2 headless] shutting down.\n");

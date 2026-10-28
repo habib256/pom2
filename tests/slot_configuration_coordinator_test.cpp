@@ -49,6 +49,7 @@
 #include "SlotBus.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
+#include "AlsCpmCard.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
 #include "SlinkyCard.h"
@@ -209,6 +210,7 @@ int main()
     expectLiveKey(std::make_unique<VidHDCard>(3), "vidhd");
     expectLiveKey(std::make_unique<ClockCard>(3), "clock");
     expectLiveKey(std::make_unique<SoftCardZ80>(), "softcard");
+    expectLiveKey(std::make_unique<AlsCpmCard>(), "alscpm");
     expectLiveKey(std::make_unique<LeChatMauveCard>(3), "chatmauve");
     expectLiveKey(std::make_unique<MouseCard>(3), "mouse");
     expectLiveKey(std::make_unique<MouseCardAppleWin>(3), "mouseaw");

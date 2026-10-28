@@ -7036,6 +7036,129 @@ set_tests_properties(softcard_cpm_boot PROPERTIES TIMEOUT 120)
 add_test(NAME softcard_cpm_boot_iie COMMAND test_softcard_cpm_boot "" iie)
 set_tests_properties(softcard_cpm_boot_iie PROPERTIES TIMEOUT 120)
 
+# ─── CP/M file system on a 140 KB image (pom2_cpm's library) ─────────────
+# Blank synthesised disk + the two tracked SoftCard masters, in memory only.
+add_executable(test_cpm_disk_fs
+    cpm_disk_fs_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/CpmDiskFs.cpp
+)
+target_include_directories(test_cpm_disk_fs PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME cpm_disk_fs COMMAND test_cpm_disk_fs
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(cpm_disk_fs PROPERTIES TIMEOUT 15)
+
+# ─── CP/M + SSC through the BIOS IOBYTE (BTERM) ───────────────────────────
+# SoftCard CP/M 2.2 + Super Serial in slot 2 + tests/data/BTERM.COM, a
+# terminal that polls the serial line by pointing the IOBYTE's CON: field
+# at it around each CONST/CONIN. Pins the BIOS's IOBYTE routing.
+add_executable(test_softcard_ssc_bterm
+    softcard_ssc_bterm_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/CpmDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_softcard_ssc_bterm PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_softcard_ssc_bterm PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_softcard_ssc_bterm PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_softcard_ssc_bterm PRIVATE winmm ws2_32)
+endif()
+add_test(NAME softcard_ssc_bterm COMMAND test_softcard_ssc_bterm
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(softcard_ssc_bterm PROPERTIES TIMEOUT 120)
+
+
+# ─── ALS CP/M Card: CP/M Plus boot + BTERM through the BIOS IOBYTE ─────────
+add_executable(test_als_cpm_card
+    als_cpm_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AlsCpmCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
+    ${CMAKE_SOURCE_DIR}/src/CpmDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_als_cpm_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_als_cpm_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_als_cpm_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_als_cpm_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME als_cpm_card COMMAND test_als_cpm_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(als_cpm_card PROPERTIES TIMEOUT 120)
+
+# ─── ALS CP/M Card boot probe (manual, EXCLUDE_FROM_ALL) ──────────────────
+# Boots an ALS disk against a logging stub card: how the card's register map
+# is read off the software. Needs untracked media; asserts nothing.
+add_executable(als_boot_probe EXCLUDE_FROM_ALL
+    als_boot_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(als_boot_probe PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(als_boot_probe PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(als_boot_probe PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(als_boot_probe PRIVATE winmm)
+endif()
 
 # ─── Diagnostic dumps (build-only, EXCLUDE_FROM_ALL) ──────────────────────
 # Five eyeball tools from the project's early days: they print a screen, a
@@ -8065,6 +8188,19 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom")
                      --screenshot ${CMAKE_BINARY_DIR}/headless_boot.ppm
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(headless_boot_capture PROPERTIES TIMEOUT 120)
+endif()
+
+# --softcard + --type + --text-dump: boot the tracked SoftCard CP/M master,
+# type DIR at second 14, and find a file of its listing on the text page.
+# The suite's media are write-protected (sweep at the end of this file).
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2p.rom")
+    add_test(NAME headless_softcard_capture
+             COMMAND pom2_headless --rom roms/apple2p.rom
+                     --disk disks_5.4/dsk/cpm22.dsk --softcard 4
+                     --type "14:DIR\\r" --frames 1200 --text-dump
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_softcard_capture PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "A: DUMP     COM : DOWNLOAD COM")
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -9620,6 +9756,7 @@ set(POM2_PROBE_TARGETS
     dix_menu_raster_probe
     dix_return_crash_probe
     iic_a2fc_printer_port_probe
+    als_boot_probe
     hdv_boot_dump
     hero_probe
     iic_dump

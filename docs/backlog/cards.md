@@ -24,6 +24,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
+| [CARDS-011](#cards-011) | 🟢 | Done 2026-10-28 | ALS "The CP/M Card" (6 MHz Z80B, own 64 KB, CP/M Plus) |
 
 <a id="cards-001"></a>
 
@@ -245,3 +246,73 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 
 - 🧊 **Apple 3.5" Controller IWM-level** — refactor IWMDevice attached
   to a slot card (rare).
+
+<a id="cards-011"></a>
+
+## CARDS-011 — ALS "The CP/M Card"
+
+**Priority:** 🟢 · **State:** Done 2026-10-28 — catalog key `alscpm`,
+`AlsCpmCard.h/.cpp`, pinned by `als_cpm_card` (CP/M Plus 3.01C boots from
+`disks_5.4/dsk/als_cpm3_disk1.dsk`; BTERM finds and drives an SSC through
+the BIOS IOBYTE). Archive this entry with the next CHANGELOG sweep.
+
+**Asked for by:** a letter about a Z80 card run in "ALS CP/M Card" mode with
+an SSC-compatible serial card. No emulator had this card (MAME's
+`a2bus/cards.cpp`: `softcard`, `applicard`; AppleWin: `CT_Z80` = SoftCard),
+and its register map is in no manual: it was read off ALS's software.
+`als_boot_probe` (probes target) boots a disk against a logging stub card.
+
+**Sources (opened, not in the tree except Disk 1):**
+- *The CP/M CARD User's Guide*, ALS 1982 —
+  <https://www.callapple.org/wp-content/uploads/2024/07/ALS-CPM-Card.pdf>
+  (§ 5: 6 MHz Z80B, 2 MHz while it touches the Apple; "an additional
+  64K"; banks by an OUT of 0/1; a write to the slot toggles the Z80; an
+  on-card clock interrupting with RST 30).
+- CP/M 3.01C, VintageWare via Asimov `images/cpm/os/` — the 5.25" disks
+  and the ProDOS `/BOOT` (`CPM3.SYSTEM`, `ZBOOT`, `CPMLDR`, `RWTS`, `APPLE`).
+
+**How the card works, and where each fact comes from:**
+- **Detection.** CPM3.SYSTEM ($237D) / Disk 1 boot ($0900) clear $08FE,
+  copy an 8-byte SoftCard stub to Apple $1000 and `STA $Cn00` for n = 7…1.
+  A SoftCard runs the stub at Z80 $0000, which toggles straight back. The
+  ALS starts at Z80 $0000 = Apple **$9000**, where ZBOOT is loaded
+  (CPM3.SYSTEM's load table: rwts $8800, apple $0300, zboot $9000, cpmldr
+  $9100); ZBOOT finds no RAM at Z80 $5000, stores $FF to Z80 $78FE (Apple
+  $08FE) and its toggle address $6n00 at $73C9.
+- **Bank 0 = the Apple, SoftCard map with Z80 A15 inverted**, below $E000;
+  Apple $7000-$8FFF unreachable. Every address above fits it: ZBOOT/CPMLDR
+  at $0000/$0100, the call page at $7300 (Apple $0300), Apple $C000 at
+  $6000, CPM3.SYS's banked BDOS/BIOS at $2B00-$5FFF = Apple $BB00-$BFFF and
+  the language card.
+- **Bank 1 = card RAM $0000-$DFFF; $E000-$FFFF common** (resident BDOS/BIOS
+  at $F200). 56 + 8 KB = the card's 64 KB.
+- **Bank select** = BIOS SELMEM $F944: `OUT ($00)` of $F0 (bank 0) or $FF
+  (bank 1). Data bit 0; the port is not decoded in the model.
+- **6502 ↔ Z80 calls** go through Apple page 3 (the `apple` file): the
+  6502 loops at $035C saving A/X/Y/P/S in $45-$49, `STA $Cn00`, then
+  `JSR ($03C7)`; the Z80 side ($7312/$7335) stores the target and toggles
+  through $6n00. $7388/$7392 read and write any Apple byte via the 6502.
+- **Clock.** 60 Hz: the BIOS handler at $FB94 counts $3C ticks to a second;
+  vectors at $0030 and $0038 of bank 1; interrupts only enabled in bank 1;
+  no port read to acknowledge.
+- **Console.** The ALS BIOS keeps an IOBYTE: each character entry copies
+  $0003 from the TPA bank and dispatches on the field (banked BIOS $5B6F):
+  slot per value at Apple $08F5-$08F8, driver per card type. CONST follows
+  CON:, AUXIST follows RDR:.
+
+**Also pinned** (`als_cpm_card`): the speed — 6 MHz on card RAM, and an
+Apple access waits for the next bus-cycle edge then takes the whole cycle
+(NOPs fetched from Apple memory run at one per 2 bus cycles); and 3.01C's
+ProDOS path — booted from ProDOS on a slot-5 hard disk
+(`disks_3.5/als_cpm3_prodos_800k.po`, A: = /CPM/SYSTEM through MLI calls),
+INITRAM builds the RAM disk in ProDOS's /RAM and it answers as D:. Two
+media findings on the way: Disks 2 and 3 end their directory in a sector
+the formatter never wrote (zeros, now read as free entries); and the 800K
+volume's virtual disk has DIR/PIP/INITRAM… entries written by an archiving
+tool with 8-bit block numbers on a 16-bit format — they load as garbage on
+the real card too, so the test takes INITRAM from the 3.01C ProDOS disk
+(`disks_5.4/dsk/als_cpm3_prodos_disk_301c.cpm`, CP/M sector order, now
+read by `pom2_cpm`) and PIP from Disk 1.
+
+**Left:** the RTC's rate on a PAL machine is assumed 60 Hz (a crystal on
+the card; nothing in the software says otherwise).

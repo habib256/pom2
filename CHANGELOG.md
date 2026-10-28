@@ -10,6 +10,69 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-28 — ALS card: timing, ProDOS hard disk and RAM disk, all three disks
+
+- **Speed.** An access to the Apple is now a DMA cycle on the Apple's bus:
+  it waits for the next bus-cycle edge and takes the whole cycle, instead of
+  "one extra cycle". Code fetched from Apple memory runs one NOP per 2 bus
+  cycles, from card RAM at 6 MHz (`als_cpm_card` pins both, with a mutation
+  control).
+- **ProDOS path of 3.01C.** CP/M Plus boots from ProDOS on a slot-5 hard
+  disk (`disks_3.5/als_cpm3_prodos_800k.po`) with A: = /CPM/SYSTEM through
+  MLI calls, and INITRAM's RAM disk in ProDOS's /RAM answers as D:. The
+  800K volume's virtual disk carries DIR, PIP, INITRAM… under entries an
+  archiving tool wrote with 8-bit block numbers on a 16-bit format: those
+  load as garbage on the real card as well, so the test uses the 3.01C
+  ProDOS disk's INITRAM and Disk 1's PIP.
+- **`pom2_cpm` reads every ALS disk.** Disks 2 and 3 end their directory in
+  a sector the formatter never wrote (32 zero bytes per entry): free, not a
+  reason to refuse. And `.cpm` images — CP/M sector order, the Apple II
+  Documentation Project's 3.01C ProDOS disk — open directly;
+  `CpmDisk::imageInOrder` converts them for the Disk II.
+
+## 2026-10-28 — ALS "The CP/M Card" (catalog `alscpm`)
+
+The 6 MHz Z80B card with its own 64 KB that ran ALS's CP/M Plus. No
+emulator had it and no manual gives its registers, so the model is read off
+ALS's software (CARDS-011 has every address and where it came from):
+toggle on a `$Cn00` write as on the SoftCard; bank 0 is the Apple through
+the SoftCard's map with Z80 A15 inverted, bank 1 card RAM, `$E000-$FFFF`
+common; `OUT` data bit 0 picks the bank; a 60 Hz RST 30 clock. ALS's
+CP/M 3.01C boots to `A>` from `disks_5.4/dsk/als_cpm3_disk1.dsk`.
+
+**Why BTERM works here and not on a SoftCard:** ALS's CP/M Plus keeps an
+IOBYTE and its CONST follows the CON: field, so pointing CON: at BAT: polls
+the SSC. `als_cpm_card` runs BTERM P (the BAT: column flips on a received
+byte) and BTERM 2 (receive, send through PUNCH, ^A Q). Two harness traps
+met on the way: ALS prints through the 6502's COUT, which ANDs INVFLG, so a
+test must let the Autostart ROM boot rather than poke `$C600`; and an SSC
+with no cable reports DCD/DSR off, which holds PUNCH forever.
+`pom2_headless --als <slot>` mirrors `--softcard`.
+
+## 2026-10-28 — CP/M: files in images, SoftCard headless, IOBYTE pinned
+
+From a letter asking for a Z80 card + SSC CP/M setup (BTERM, a terminal that
+uses only BIOS calls).
+
+- **`pom2_cpm`** lists, extracts, adds and deletes files on a 140 KB CP/M
+  image (`.dsk`/`.do`, `.po`) — `src/CpmDiskFs.*`, cpmtools' `apple-do`
+  geometry read back off `cpm22.dsk`. The 56K/60K sysgens keep their system
+  as a user-31 `cp/m.sys` entry on blocks 128-139, which wrap onto tracks
+  0-2: reads follow the wrap, writes never allocate past block 127. Writes
+  are all-or-nothing and go through the atomic media commit. Test
+  `cpm_disk_fs`.
+- **`pom2_headless --softcard <slot>`, `--type <sec>:<text>`, `--text-dump`.**
+  The SSC there now loads Apple's EPROM when present, as the GUI does: the
+  CP/M BIOS drives it through the Pascal entries in its `$C800` half, and
+  `PIP PUN:` sent nothing over the hand-assembled page. Test
+  `headless_softcard_capture`.
+- **The Microsoft 2.20 BIOS's CONST ignores the IOBYTE.** `$AB08` is
+  `LD HL,($F380) / JP (HL)`: keyboard, or the slot-3 80-column card. CONIN
+  and READER do follow it (CON:=BAT: reads the SSC). So BTERM's poll — CON:
+  pointed at the serial device around a CONST — can only see the keyboard on
+  a SoftCard, on the real machine as in POM2. `softcard_ssc_bterm` pins all
+  four routes with BTERM on the disk.
+
 **v1.0.0 marker** — 2026-10-28. Release notes: [v1.0.0](docs/releases/v1.0.0.md).
 
 ## 2026-10-28 — Bundle A2 File Cmd 1.0

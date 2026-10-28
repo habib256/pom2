@@ -131,6 +131,12 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Real DMA arbitration, 6502 halted per instruction slice; CP/M 2.2 boots "
       "identical to the MAME oracle",
       "Nothing above the arbitration is guest-visible.", "SoftCardZ80.h/.cpp" },
+    { "alscpm", "CPU & memory", "ALS CP/M Card (Z80B, own 64 KB)", AbsLevel::L1,
+      "Toggle, two banks, Apple window and 60 Hz clock read off ALS's own "
+      "CP/M 3.01C; it boots to A> and drives an SSC through the BIOS",
+      "No schematic in print: the map is inferred from the software "
+      "(CARDS-011); an Apple access is one bus cycle synced to an edge.",
+      "AlsCpmCard.h/.cpp" },
     { "memory", "CPU & memory", "Memory / MMU / IOU / RamWorks", AbsLevel::L1,
       "Soft switches, aux paging, LC banks, power-on 00 FF pattern, per-cycle "
       "floating bus (vapor lock)",

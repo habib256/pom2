@@ -353,7 +353,9 @@ void MainWindow::renderAbstractionPanel()
 #endif
     row("fujinet",   plugged("fujinet")   ? Live::Active : Live::NotPlugged);
     row("softcard",  plugged("softcard")  ? Live::Active : Live::NotPlugged);
-    row("z80",       plugged("softcard")  ? Live::Active : Live::NotPlugged);
+    row("alscpm",    plugged("alscpm")    ? Live::Active : Live::NotPlugged);
+    row("z80",       (plugged("softcard") || plugged("alscpm"))
+                         ? Live::Active : Live::NotPlugged);
 
     // ── The switchable boundaries ───────────────────────────────────────
     // Availability is gated on the dump each low side needs, because the
