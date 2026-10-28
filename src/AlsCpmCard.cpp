@@ -22,6 +22,7 @@
 #include "Memory.h"
 #include "SoftCardZ80.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -67,7 +68,8 @@ void AlsCpmCard::onReset()
     bank_ = 0;
     tickPending_ = false;
     nextTick_ = 0;
-    cycleCarry_ = 0.0;
+    busPos_ = 0.0;
+    busCarry_ = 0.0;
 }
 
 uint8_t AlsCpmCard::z80MemRead(uint16_t addr)
@@ -75,8 +77,7 @@ uint8_t AlsCpmCard::z80MemRead(uint16_t addr)
     if (!enabled_ || !mem_)
         return 0xFF;
     if (appleWindow(addr)) {
-        stampAccess();
-        ++appleAccesses_;
+        appleAccess();
         return mem_->memRead(xlateBank0(addr));
     }
     return ram_[addr];
@@ -87,8 +88,7 @@ void AlsCpmCard::z80MemWrite(uint16_t addr, uint8_t v)
     if (!enabled_ || !mem_)
         return;
     if (appleWindow(addr)) {
-        stampAccess();
-        ++appleAccesses_;
+        appleAccess();
         mem_->memWrite(xlateBank0(addr), v);   // $6n00 here is the toggle
         return;
     }
@@ -100,13 +100,19 @@ void AlsCpmCard::z80IoWrite(uint16_t /*port*/, uint8_t v)
     bank_ = v & 1;
 }
 
-// Where the access in progress falls inside the current Z80 instruction,
-// in the 6502's cycles (SoftCardZ80::stampAccess, at this card's clock).
-void AlsCpmCard::stampAccess()
+// An access to the Apple: the Z80 has reached `pos` bus cycles into this
+// instruction (counted from the cycle Memory's counter stands at); the DMA
+// cycle starts on the next edge and lasts one bus cycle, against the 3
+// T-states the access would have taken on the card. The 6502's in-flight
+// count is set to that edge, so devices stamp the access where it lands
+// (SoftCardZ80::stampAccess, at this card's clock).
+double AlsCpmCard::appleAccess()
 {
-    if (!cpu_) return;
-    const double c = z80_.busT() * cyclesPerT_ + appleAccesses_;
-    cpu_->setInFlightCycles(static_cast<int>(c));
+    const double pos = busPos_ + z80_.busT() * busPerT_ + syncExtra_;
+    const double edge = std::ceil(pos);
+    syncExtra_ += (edge - pos) + 1.0 - 3.0 * busPerT_;
+    if (cpu_) cpu_->setInFlightCycles(static_cast<int>(edge * ratio_));
+    return edge;
 }
 
 // 60 Hz from the emulated clock. While the 6502 has the bus the Z80 cannot
@@ -129,14 +135,14 @@ int AlsCpmCard::dmaRun(int cycles6502)
 {
     if (cpu_) cpu_->clearInFlightCycles();
     const double stock = stockHz_ > 0.0 ? stockHz_ : kStockHz;
-    const double ratio = (cpuHz_ > 0.0 && stockHz_ > 0.0 && cpuHz_ > stockHz_)
+    ratio_ = (cpuHz_ > 0.0 && stockHz_ > 0.0 && cpuHz_ > stockHz_)
         ? cpuHz_ / stockHz_ : 1.0;
-    cyclesPerT_ = stock / kZ80Hz * ratio;
+    busPerT_ = stock / kZ80Hz;
     int spent = 0;
     while (spent < cycles6502 && enabled_) {
         clockTicks();
         const bool couldTake = z80_.getState().iff1;
-        appleAccesses_ = 0;
+        syncExtra_ = 0.0;
         const int t = z80_.step();
         // The acknowledge cycle: interrupts were on and the Z80 is now at
         // the RST 30 vector with them off.
@@ -145,9 +151,14 @@ int AlsCpmCard::dmaRun(int cycles6502)
             tickPending_ = false;
             z80_.setIrqLine(false);
         }
-        const double c = t * cyclesPerT_ + appleAccesses_ * ratio + cycleCarry_;
-        const int whole = static_cast<int>(c);
-        cycleCarry_ = c - whole;
+        const double bus = busPos_ + t * busPerT_ + syncExtra_;
+        int whole = static_cast<int>(bus);
+        busPos_ = bus - whole;
+        if (ratio_ != 1.0) {
+            const double a = whole * ratio_ + busCarry_;
+            whole = static_cast<int>(a);
+            busCarry_ = a - whole;
+        }
         if (cpu_) cpu_->clearInFlightCycles();
         if (whole > 0) {
             if (mem_) mem_->advanceCycles(whole);

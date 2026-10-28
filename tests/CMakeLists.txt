@@ -7095,6 +7095,12 @@ set_tests_properties(softcard_ssc_bterm PROPERTIES TIMEOUT 120)
 add_executable(test_als_cpm_card
     als_cpm_card_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AlsCpmCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
     ${CMAKE_SOURCE_DIR}/src/CpmDiskFs.cpp
     ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp

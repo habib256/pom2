@@ -47,7 +47,8 @@ void usage()
     std::fprintf(stderr,
         "Usage: pom2_cpm [-u USER] IMAGE COMMAND [ARGS]\n"
         "\n"
-        "IMAGE is a 140 KB Apple II CP/M disk (.dsk/.do DOS order, .po ProDOS order).\n"
+        "IMAGE is a 140 KB Apple II CP/M disk (.dsk/.do DOS order, .po ProDOS order,\n"
+        ".cpm CP/M order).\n"
         "\n"
         "  ls                         list the files (user 0-15)\n"
         "  get NAME [HOSTFILE]        extract NAME (default: same name, cwd)\n"

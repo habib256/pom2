@@ -136,6 +136,22 @@ void testDirectoryFull()
     CHECK(d.image() == snapshot);
 }
 
+// A directory sector the formatter never wrote (zeros, not $E5) — ALS 3.01C
+// Disks 2 and 3 end in one: its entries are free, not a reason to refuse.
+void testZeroFilledDirectorySector()
+{
+    auto img = blankImage();
+    std::memset(img.data() + (3 * 16 + kSkew[7]) * 256, 0x00, 256);
+    CpmDisk d;
+    std::string err;
+    CHECK(d.open(img, SectorOrder::Dos, err));
+    CHECK(d.list().empty());
+    CHECK(d.freeBlocks() == 126);
+    for (int i = 0; i < 64; ++i)
+        CHECK(d.writeFile(0, "Z" + std::to_string(i), {}, err));
+    CHECK(d.list().size() == 64);
+}
+
 // The same disk in ProDOS order reads the same files.
 void testProdosOrder()
 {
@@ -157,6 +173,20 @@ void testProdosOrder()
     // Read in the wrong order, the directory is not there.
     CpmDisk wrong;
     CHECK(!wrong.open(po, SectorOrder::Dos, err) || wrong.list().empty());
+    for (int n = 0; n < 16; ++n) CHECK(kDosToCpm[kSkew[n]] == n);
+    // CP/M order (.cpm): the de-skewed layout, convertible to DOS order.
+    std::vector<uint8_t> cpm(kImageBytes);
+    for (int t = 0; t < 35; ++t)
+        for (int s = 0; s < 16; ++s)
+            std::memcpy(cpm.data() + (t * 16 + kDosToCpm[s]) * 256,
+                        d.image().data() + (t * 16 + s) * 256, 256);
+    CpmDisk c;
+    CHECK(c.open(cpm, SectorOrder::Cpm, err));
+    back.clear();
+    CHECK(c.readFile(0, "PO.TXT", back, err));
+    CHECK(roundTrips(data, back));
+    CHECK(c.imageInOrder(SectorOrder::Dos) == d.image());
+    CHECK(orderForPath("a/b.cpm") == SectorOrder::Cpm);
     CHECK(orderForPath("x/DISK.PO") == SectorOrder::Prodos);
     CHECK(orderForPath("disk.dsk") == SectorOrder::Dos);
 }
@@ -200,6 +230,7 @@ int main()
 {
     testBlank();
     testDirectoryFull();
+    testZeroFilledDirectorySector();
     testProdosOrder();
     testTracked();
     if (g_fail) { std::fprintf(stderr, "cpm_disk_fs: %d failure(s)\n", g_fail); return 1; }

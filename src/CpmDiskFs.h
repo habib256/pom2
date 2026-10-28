@@ -28,7 +28,9 @@
 // sector kSkew[n] (cpmtools `skewtab 0,6,12,3,9,15,14,5,11,2,8,7,13,4,10,1`;
 // read back off cpm22.dsk, whose directory sits in DOS sectors 0/6/12 of
 // track 3). A ProDOS-order image (.po) stores the same physical sectors in
-// another order; `kDosToProdos` maps one to the other.
+// another order; `kDosToProdos` maps one to the other. A `.cpm` image (the
+// Apple II Documentation Project's ALS 3.01C disks) is in CP/M's own order:
+// logical sector n of a track at position n, i.e. already de-skewed.
 //
 // The data area is 32 tracks = 128 blocks. The 56K/60K sysgens go further:
 // cpm60k.dsk carries a user-31 "cp/m.sys" entry on blocks 128-139, whose
@@ -45,7 +47,7 @@
 
 namespace pom2::cpmfs {
 
-enum class SectorOrder { Dos, Prodos };
+enum class SectorOrder { Dos, Prodos, Cpm };
 
 inline constexpr std::size_t kImageBytes   = 35u * 16u * 256u;   // 143 360
 inline constexpr int         kReservedTracks = 3;
@@ -61,7 +63,11 @@ inline constexpr uint8_t kSkew[16] = {
 inline constexpr uint8_t kDosToProdos[16] = {
     0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 15 };
 
-/// `.po` → ProDOS order; anything else (.dsk, .do) → DOS order.
+/// Position in a CP/M-order track of DOS physical sector d (kSkew inverted).
+inline constexpr uint8_t kDosToCpm[16] = {
+    0, 15, 9, 3, 13, 7, 1, 11, 10, 4, 14, 8, 2, 12, 6, 5 };
+
+/// `.po` → ProDOS order, `.cpm` → CP/M order; anything else (.dsk, .do) → DOS.
 SectorOrder orderForPath(const std::string& path);
 
 struct FileInfo {
@@ -81,6 +87,9 @@ public:
     bool open(std::vector<uint8_t> image, SectorOrder order, std::string& error);
 
     const std::vector<uint8_t>& image() const { return image_; }
+    /// The same 140 KB laid out in another order — `.cpm` → `.dsk` for a
+    /// Disk II, which only takes DOS or ProDOS order.
+    std::vector<uint8_t> imageInOrder(SectorOrder order) const;
 
     /// Files of user areas 0-15, directory order, one entry per file.
     std::vector<FileInfo> list() const;

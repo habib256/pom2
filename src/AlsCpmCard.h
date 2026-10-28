@@ -48,8 +48,13 @@
 //    counts 60 ticks to the second), RST 30 in IM 0, acknowledged by the
 //    interrupt cycle — the BIOS reads no port. The BIOS only enables
 //    interrupts in bank 1, where it puts its vectors at $0030 and $0038.
-//  - **Speed**: 6 MHz, except "the instant that it directly controls" the
-//    Apple, at 2 MHz: one extra Apple cycle per bank-0 window access.
+//  - **Speed**: 6 MHz on its own RAM. An access to the Apple is a DMA cycle
+//    on the Apple's bus: it waits for the next bus-cycle edge and then takes
+//    that whole cycle (~0.98 µs) where its own 3 T-states would take 0.5 —
+//    the manual's "2 MHz for the instant it directly controls" the Apple.
+//    Timing is kept in Apple bus cycles, with the fraction of the cycle the
+//    Z80 has reached carried from one instruction to the next, so the wait
+//    depends on where in the bus cycle each access falls.
 
 #ifndef POM2_ALS_CPM_CARD_H
 #define POM2_ALS_CPM_CARD_H
@@ -98,6 +103,7 @@ public:
     pom2::Z80&       z80()       { return z80_; }
     int  bank() const { return bank_; }
     uint8_t cardRam(uint16_t a) const { return ram_[a]; }
+    void pokeCardRam(uint16_t a, uint8_t v) { ram_[a] = v; }
 
 private:
     uint8_t z80MemRead(uint16_t addr) override;
@@ -105,7 +111,6 @@ private:
     void    z80IoWrite(uint16_t port, uint8_t v) override;
 
     bool appleWindow(uint16_t addr) const { return bank_ == 0 && addr < 0xE000; }
-    void stampAccess();
     void clockTicks();
 
     Memory* mem_ = nullptr;
@@ -119,11 +124,15 @@ private:
     int  bank_         = 0;
     bool tickPending_  = false;
     uint64_t nextTick_ = 0;       // Memory cycle of the next 60 Hz tick
-    int    appleAccesses_ = 0;    // bank-0 window accesses this instruction
-    double cycleCarry_ = 0.0;     // fractional 6502 cycles owed
+    double busPos_     = 0.0;     // where in the current bus cycle the Z80 is (0..1)
+    double syncExtra_  = 0.0;     // bus cycles the Apple accesses added, this instruction
+    double busCarry_   = 0.0;     // fractional CPU cycles owed (accelerator)
     double cpuHz_      = 0.0;
     double stockHz_    = 0.0;
-    double cyclesPerT_ = 0.0;     // 6502 cycles per Z80 T-state, this run
+    double busPerT_    = 0.0;     // Apple bus cycles per Z80 T-state
+    double ratio_      = 1.0;     // CPU cycles per bus cycle (accelerator)
+    /// Bus-cycle position of the access in progress, synced to an edge.
+    double appleAccess();
 };
 
 #endif // POM2_ALS_CPM_CARD_H

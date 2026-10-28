@@ -32,6 +32,16 @@ constexpr int kRecordsPerBlock  = kBlockBytes / 128;
 constexpr int kBlocksPerExtent  = 16;
 constexpr int kDirBlocks        = 2;   // 64 entries × 32 bytes
 
+// Free: $E5, or 32 zero bytes — a directory sector the formatter never
+// wrote (ALS 3.01C Disks 2 and 3 end in one). CP/M would read such an entry
+// as a user-0 file with a name of NULs and no blocks; nothing can open it.
+bool unused(const uint8_t* e)
+{
+    if (e[0] == kDeleted) return true;
+    for (int i = 0; i < 32; ++i) if (e[i]) return false;
+    return true;
+}
+
 int extentNumber(const uint8_t* e) { return (e[12] & 0x1F) + 32 * (e[14] & 0x3F); }
 
 std::string displayName(const uint8_t* e)
@@ -58,7 +68,9 @@ SectorOrder orderForPath(const std::string& path)
     const auto dot = path.find_last_of('.');
     std::string ext = dot == std::string::npos ? std::string() : path.substr(dot + 1);
     for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-    return ext == "po" ? SectorOrder::Prodos : SectorOrder::Dos;
+    if (ext == "po") return SectorOrder::Prodos;
+    if (ext == "cpm") return SectorOrder::Cpm;
+    return SectorOrder::Dos;
 }
 
 bool CpmDisk::toDirName(const std::string& name, std::string& out11)
@@ -84,7 +96,9 @@ bool CpmDisk::toDirName(const std::string& name, std::string& out11)
 
 uint8_t* CpmDisk::sector(int track, int dosSector)
 {
-    const int pos = order_ == SectorOrder::Prodos ? kDosToProdos[dosSector] : dosSector;
+    const int pos = order_ == SectorOrder::Prodos ? kDosToProdos[dosSector]
+                  : order_ == SectorOrder::Cpm    ? kDosToCpm[dosSector]
+                  : dosSector;
     return image_.data() + (size_t(track) * 16 + size_t(pos)) * 256;
 }
 
@@ -127,6 +141,17 @@ void CpmDisk::storeDirectory()
     for (int b = 0; b < kDirBlocks; ++b) writeBlock(b, buf + b * kBlockBytes);
 }
 
+std::vector<uint8_t> CpmDisk::imageInOrder(SectorOrder order) const
+{
+    CpmDisk out;
+    out.image_.assign(image_.size(), 0);
+    out.order_ = order;
+    for (int t = 0; t < 35; ++t)
+        for (int s = 0; s < 16; ++s)
+            std::memcpy(out.sector(t, s), sector(t, s), 256);
+    return out.image_;
+}
+
 bool CpmDisk::open(std::vector<uint8_t> image, SectorOrder order, std::string& error)
 {
     if (image.size() != kImageBytes) {
@@ -140,7 +165,7 @@ bool CpmDisk::open(std::vector<uint8_t> image, SectorOrder order, std::string& e
     // printable name bytes (attribute bits masked) and block numbers inside
     // the disk. A DOS 3.3 or ProDOS disk fails this on its first entry.
     for (const auto& e : dir_) {
-        if (e[0] == kDeleted) continue;
+        if (unused(e)) continue;
         bool ok = e[0] <= 31 && e[15] <= 0x80;
         for (int i = 1; ok && i <= 11; ++i) {
             const uint8_t c = e[i] & 0x7F;
@@ -161,7 +186,7 @@ std::vector<bool> CpmDisk::usedBlocks() const
     std::vector<bool> used(kMaxReadBlock + 1, false);
     for (int b = 0; b < kDirBlocks; ++b) used[size_t(b)] = true;
     for (const auto& e : dir_) {
-        if (e[0] == kDeleted) continue;
+        if (unused(e)) continue;
         for (int i = 16; i < 32; ++i)
             if (e[i]) used[e[i]] = true;
     }
@@ -178,7 +203,8 @@ std::vector<int> CpmDisk::entriesOf(int user, const std::string& name11) const
 {
     std::vector<int> out;
     for (int i = 0; i < kDirEntries; ++i)
-        if (dir_[i][0] == user && sameName(dir_[i], name11)) out.push_back(i);
+        if (!unused(dir_[i]) && dir_[i][0] == user && sameName(dir_[i], name11))
+            out.push_back(i);
     std::sort(out.begin(), out.end(), [this](int a, int b) {
         return extentNumber(dir_[a]) < extentNumber(dir_[b]);
     });
@@ -191,7 +217,7 @@ std::vector<FileInfo> CpmDisk::list() const
     std::map<std::pair<int, std::string>, size_t> index;
     std::map<size_t, int> lastExtent;
     for (const auto& e : dir_) {
-        if (e[0] > 15) continue;   // free, or a label / system pseudo-file
+        if (unused(e) || e[0] > 15) continue;   // free, label, system pseudo-file
         const std::string name = displayName(e);
         const auto key = std::make_pair(int(e[0]), name);
         auto it = index.find(key);
@@ -269,12 +295,12 @@ bool CpmDisk::writeFile(int user, const std::string& name,
     uint8_t dir[kDirEntries][32];
     std::memcpy(dir, dir_, sizeof dir);
     for (auto& e : dir)
-        if (e[0] == user && sameName(e, n11)) e[0] = kDeleted;
+        if (!unused(e) && e[0] == user && sameName(e, n11)) e[0] = kDeleted;
 
     std::vector<bool> used(kMaxReadBlock + 1, false);
     for (int b = 0; b < kDirBlocks; ++b) used[size_t(b)] = true;
     for (const auto& e : dir)
-        if (e[0] != kDeleted)
+        if (!unused(e))
             for (int i = 16; i < 32; ++i) if (e[i]) used[e[i]] = true;
 
     const size_t records = (data.size() + 127) / 128;
@@ -289,7 +315,7 @@ bool CpmDisk::writeFile(int user, const std::string& name,
         return false;
     }
     std::vector<int> slots;
-    for (int i = 0; i < kDirEntries; ++i) if (dir[i][0] == kDeleted) slots.push_back(i);
+    for (int i = 0; i < kDirEntries; ++i) if (unused(dir[i])) slots.push_back(i);
     if (slots.size() < extents) {
         error = "directory full (64 entries)";
         return false;

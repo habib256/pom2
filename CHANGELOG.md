@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-28 — ALS card: timing, ProDOS hard disk and RAM disk, all three disks
+
+- **Speed.** An access to the Apple is now a DMA cycle on the Apple's bus:
+  it waits for the next bus-cycle edge and takes the whole cycle, instead of
+  "one extra cycle". Code fetched from Apple memory runs one NOP per 2 bus
+  cycles, from card RAM at 6 MHz (`als_cpm_card` pins both, with a mutation
+  control).
+- **ProDOS path of 3.01C.** CP/M Plus boots from ProDOS on a slot-5 hard
+  disk (`disks_3.5/als_cpm3_prodos_800k.po`) with A: = /CPM/SYSTEM through
+  MLI calls, and INITRAM's RAM disk in ProDOS's /RAM answers as D:. The
+  800K volume's virtual disk carries DIR, PIP, INITRAM… under entries an
+  archiving tool wrote with 8-bit block numbers on a 16-bit format: those
+  load as garbage on the real card as well, so the test uses the 3.01C
+  ProDOS disk's INITRAM and Disk 1's PIP.
+- **`pom2_cpm` reads every ALS disk.** Disks 2 and 3 end their directory in
+  a sector the formatter never wrote (32 zero bytes per entry): free, not a
+  reason to refuse. And `.cpm` images — CP/M sector order, the Apple II
+  Documentation Project's 3.01C ProDOS disk — open directly;
+  `CpmDisk::imageInOrder` converts them for the Disk II.
+
 ## 2026-10-28 — ALS "The CP/M Card" (catalog `alscpm`)
 
 The 6 MHz Z80B card with its own 64 KB that ran ALS's CP/M Plus. No

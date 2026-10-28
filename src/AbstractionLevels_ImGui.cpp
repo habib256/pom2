@@ -135,7 +135,7 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Toggle, two banks, Apple window and 60 Hz clock read off ALS's own "
       "CP/M 3.01C; it boots to A> and drives an SSC through the BIOS",
       "No schematic in print: the map is inferred from the software "
-      "(CARDS-011); the 2 MHz slow-down is one extra cycle per Apple access.",
+      "(CARDS-011); an Apple access is one bus cycle synced to an edge.",
       "AlsCpmCard.h/.cpp" },
     { "memory", "CPU & memory", "Memory / MMU / IOU / RamWorks", AbsLevel::L1,
       "Soft switches, aux paging, LC banks, power-on 00 FF pattern, per-cycle "

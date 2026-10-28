@@ -300,7 +300,19 @@ and its register map is in no manual: it was read off ALS's software.
   slot per value at Apple $08F5-$08F8, driver per card type. CONST follows
   CON:, AUXIST follows RDR:.
 
-**Left:** the 2 MHz slow-down is approximated (one Apple cycle per access);
-the RTC's rate on a PAL machine is assumed 60 Hz; the ProDOS-hosted hard
-disk and RAM-disk paths of 3.01C are untested; Disks 2 and 3 use another
-CP/M format than Disk 1 (pom2_cpm does not read them).
+**Also pinned** (`als_cpm_card`): the speed — 6 MHz on card RAM, and an
+Apple access waits for the next bus-cycle edge then takes the whole cycle
+(NOPs fetched from Apple memory run at one per 2 bus cycles); and 3.01C's
+ProDOS path — booted from ProDOS on a slot-5 hard disk
+(`disks_3.5/als_cpm3_prodos_800k.po`, A: = /CPM/SYSTEM through MLI calls),
+INITRAM builds the RAM disk in ProDOS's /RAM and it answers as D:. Two
+media findings on the way: Disks 2 and 3 end their directory in a sector
+the formatter never wrote (zeros, now read as free entries); and the 800K
+volume's virtual disk has DIR/PIP/INITRAM… entries written by an archiving
+tool with 8-bit block numbers on a 16-bit format — they load as garbage on
+the real card too, so the test takes INITRAM from the 3.01C ProDOS disk
+(`disks_5.4/dsk/als_cpm3_prodos_disk_301c.cpm`, CP/M sector order, now
+read by `pom2_cpm`) and PIP from Disk 1.
+
+**Left:** the RTC's rate on a PAL machine is assumed 60 Hz (a crystal on
+the card; nothing in the software says otherwise).
