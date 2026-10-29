@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -829,26 +830,63 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
     return true;
 }
 
+bool romsDirTakesDownloads(const std::filesystem::path& romsDir)
+{
+    // Never inside a macOS bundle, writable or not. A notarized .app is
+    // sealed: a file added under Contents/ breaks its code signature and
+    // Gatekeeper calls the app damaged. And replacing the .app with a new
+    // version — how a Mac app is updated — would throw the downloaded
+    // ROMs away with the old bundle. ~/Library/Application Support/POM2
+    // survives both.
+    for (const auto& part : romsDir) {
+        const std::string s = part.string();
+        if (s.size() > 4 && s.compare(s.size() - 4, 4, ".app") == 0) return false;
+    }
+    return dirIsWritable(romsDir);
+}
+
 std::filesystem::path writableRomsDir()
 {
-    // A download has to land where findResource() looks FIRST, or a wrong
-    // file in an earlier root keeps being the one the machine loads. The
-    // per-user data dir is the first root whenever it is per-user, and it is
-    // ours to create — so it is the answer then, whether or not its roms/
-    // exists yet. Created by fetchMissingRoms, not here: this also feeds a
-    // tooltip, and hovering it used to create the directory.
-    if (userDataDirIsPerUser()) return userDataDir() / "roms";
+    // POM2's own roms/ first: the folder its firmware is loaded from — beside
+    // the binary in a portable package, ./roms in a source checkout — so a
+    // download lands next to the dumps it completes. The per-user data dir
+    // is never that folder: it is the override root, searched first. Created
+    // by nothing here: this also feeds a tooltip, and hovering it used to
+    // create the directory.
+    const fs::path perUser = userDataDir();
+    std::error_code ec;
     for (const auto& base : resourceSearchDirs()) {
+        if (!base.empty() && fs::equivalent(base, perUser, ec)) continue;
         // The empty root is the working directory, and it is a root like the
         // others (it used to be skipped, so a writable ./roms was never used).
         const fs::path roms = base.empty() ? fs::path("roms") : base / "roms";
-        std::error_code ec;
-        if (fs::is_directory(roms, ec) && dirIsWritable(roms)) {
-            const fs::path abs = fs::absolute(roms, ec);
-            return ec ? roms : abs;
-        }
+        if (!fs::is_directory(roms, ec)) continue;
+        // The first roms/ found is the one the machine loads from. If it
+        // cannot take files — an AppImage, /usr/share, a macOS .app — the
+        // per-user folder can, and it is searched first, so what lands there
+        // is still what the machine loads.
+        if (!romsDirTakesDownloads(roms)) break;
+        const fs::path abs = fs::absolute(roms, ec);
+        return ec ? roms : fs::path(abs).lexically_normal();
     }
-    return userDataDir() / "roms";
+    return perUser / "roms";
+}
+
+std::string displayPath(const std::filesystem::path& p)
+{
+    std::string s = p.string();
+#if defined(_WIN32)
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    if (home && *home) {
+        const std::string h = fs::path(home).lexically_normal().string();
+        if (s.size() > h.size() && s.compare(0, h.size(), h) == 0 &&
+            (s[h.size()] == '/' || s[h.size()] == '\\'))
+            return "~" + s.substr(h.size());
+    }
+    return s;
 }
 
 std::vector<const RomFetchEntry*> romsToFetch(
@@ -946,9 +984,15 @@ void sweepStaleFetchDirs(const fs::path& destRoot)
 
 }  // namespace
 
+std::string romArchiveMember(const RomFetchEntry& e)
+{
+    return "roms/" + fs::path(e.destRel).filename().string();
+}
+
 RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                                 const RomFetchProgress& progress,
-                                const RomFetchCancel& cancelled)
+                                const RomFetchCancel& cancelled,
+                                RomFetchSources sources)
 {
     RomFetchResult r;
     r.destDir = destRoot.string();
@@ -956,6 +1000,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
 #if defined(__EMSCRIPTEN__)
     (void)progress;
     (void)cancelled;
+    (void)sources;
     r.error   = "ROM download is not available in the browser build";
     r.summary = r.error;
     return r;
@@ -969,7 +1014,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     const auto missing = romsToFetch();
     r.skipped = static_cast<int>(catalogStorage().size() - missing.size());
     if (missing.empty()) {
-        r.summary = "Every RetroBIOS dump POM2 can use is already present.";
+        r.summary = "Every ROM POM2 can download is already present.";
         return r;
     }
 
@@ -998,6 +1043,42 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         if (progress) progress(done, total, label);
     };
 
+    // One archive, downloaded once per run. Zip-bomb gate BEFORE anything is
+    // unpacked: a few hundred downloaded kilobytes can expand to gigabytes,
+    // and the 64 MB cap this module had was applied when reading the
+    // EXTRACTED member back — long after the disk was full. The central
+    // directory states every member's uncompressed size up front, so the
+    // check costs one read of the archive just fetched.
+    auto fetchZip = [&](const std::string& url, std::string& err) -> fs::path {
+        auto it = zipCache.find(url);
+        if (it != zipCache.end()) return it->second;
+        fs::path zipPath = scratch / ("pack-" + std::to_string(zipCache.size()) + ".zip");
+        if (!downloadUrl(url, zipPath, err, cancelled)) return {};
+        std::vector<std::uint8_t> zipBytes;
+        std::uintmax_t unpacked = 0;
+        if (!readAll(zipPath, zipBytes, err) ||
+            !zipUnpackedSizeWithinCap(zipBytes, unpacked, err)) {
+            std::error_code rmEc;
+            fs::remove(zipPath, rmEc);
+            return {};
+        }
+        zipCache.emplace(url, zipPath);
+        return zipPath;
+    };
+
+    // The primary source: POM2's own archive, every dump under the name POM2
+    // probes. Fetched once; a failure here only means every entry goes to
+    // RetroBIOS, as it did before the archive existed.
+    fs::path archiveZip;
+    if (sources.archive) {
+        tick("POM2 ROM archive (archive.org)");
+        std::string err;
+        archiveZip = fetchZip(kPom2RomArchiveUrl, err);
+        if (archiveZip.empty())
+            log().warn("ROM", "the POM2 ROM archive could not be fetched (" + err +
+                       ") — falling back to RetroBIOS");
+    }
+
     for (const RomFetchEntry* e : missing) {
         if (cancelled && cancelled()) {
             if (r.error.empty()) r.error = "cancelled";
@@ -1007,67 +1088,57 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         std::string err;
         std::string backup;
         const fs::path dest = destRoot / fs::path(e->destRel).filename();
+        const fs::path extractDir = scratch / ("x-" + std::to_string(done));
 
         bool ok = false;
-        if (!e->zipMember) {
-            const fs::path raw = scratch / fs::path(e->destRel).filename();
-            ok = downloadUrl(e->url, raw, err, cancelled);
-            if (ok) {
-                std::vector<std::uint8_t> bytes;
-                ok = readAll(raw, bytes, err) &&
-                     commitBytes(dest, *e, bytes, err, backup);
-            }
-        } else {
-            fs::path zipPath;
-            auto it = zipCache.find(e->url);
-            if (it == zipCache.end()) {
-                zipPath = scratch / ("pack-" + std::to_string(zipCache.size()) + ".zip");
-                if (!downloadUrl(e->url, zipPath, err, cancelled)) {
-                    zipPath.clear();
-                } else {
-                    // Zip-bomb gate, BEFORE `unzip` runs: a few hundred
-                    // downloaded kilobytes can expand to gigabytes, and the
-                    // 64 MB cap this module had was applied when reading the
-                    // EXTRACTED member back — long after the disk was full.
-                    // The central directory states every member's
-                    // uncompressed size up front, so the check costs one
-                    // read of the archive we just fetched.
-                    std::vector<std::uint8_t> zipBytes;
-                    std::uintmax_t unpacked = 0;
-                    if (!readAll(zipPath, zipBytes, err) ||
-                        !zipUnpackedSizeWithinCap(zipBytes, unpacked, err)) {
-                        std::error_code rmEc;
-                        fs::remove(zipPath, rmEc);
-                        zipPath.clear();
-                    } else {
-                        zipCache.emplace(e->url, zipPath);
-                    }
+        const char* from = "the POM2 archive";
+        if (!archiveZip.empty()) {
+            // Same gates as a RetroBIOS download: a member that is absent, or
+            // is not the dump the catalogue names, is fetched from RetroBIOS.
+            std::vector<std::uint8_t> bytes;
+            ok = unpackZipMember(archiveZip, romArchiveMember(*e), extractDir,
+                                 bytes, err, cancelled) &&
+                 commitBytes(dest, *e, bytes, err, backup);
+            if (!ok)
+                log().warn("ROM", std::string("POM2 archive: ") + e->destRel +
+                           ": " + err + " — trying RetroBIOS");
+        }
+        if (!ok && sources.retroBios) {
+            from = "RetroBIOS";
+            err.clear();
+            backup.clear();
+            if (!e->zipMember) {
+                const fs::path raw = scratch / fs::path(e->destRel).filename();
+                ok = downloadUrl(e->url, raw, err, cancelled);
+                if (ok) {
+                    std::vector<std::uint8_t> bytes;
+                    ok = readAll(raw, bytes, err) &&
+                         commitBytes(dest, *e, bytes, err, backup);
                 }
             } else {
-                zipPath = it->second;
-            }
-
-            if (!zipPath.empty()) {
-                const fs::path extractDir = scratch / ("x-" + std::to_string(done));
-                std::vector<std::uint8_t> bytes;
-                ok = unpackZipMember(zipPath, e->zipMember, extractDir, bytes,
-                                     err, cancelled);
-                if (ok && e->zipConcat) {
-                    for (const char* const* m = e->zipConcat; *m; ++m) {
-                        std::vector<std::uint8_t> more;
-                        if (!unpackZipMember(zipPath, *m, extractDir, more, err,
-                                             cancelled)) {
-                            ok = false;
-                            break;
+                const fs::path zipPath = fetchZip(e->url, err);
+                if (!zipPath.empty()) {
+                    std::vector<std::uint8_t> bytes;
+                    ok = unpackZipMember(zipPath, e->zipMember, extractDir, bytes,
+                                         err, cancelled);
+                    if (ok && e->zipConcat) {
+                        for (const char* const* m = e->zipConcat; *m; ++m) {
+                            std::vector<std::uint8_t> more;
+                            if (!unpackZipMember(zipPath, *m, extractDir, more, err,
+                                                 cancelled)) {
+                                ok = false;
+                                break;
+                            }
+                            bytes.insert(bytes.end(), more.begin(), more.end());
                         }
-                        bytes.insert(bytes.end(), more.begin(), more.end());
                     }
+                    if (ok)
+                        ok = commitBytes(dest, *e, bytes, err, backup);
                 }
-                if (ok)
-                    ok = commitBytes(dest, *e, bytes, err, backup);
             }
         }
 
+        if (!ok && err.empty()) err = "no source could supply it";
         if (ok) {
             // Saved is not USED: a root searched before `destRoot` that holds
             // this name (and could not be the destination — not writable)
@@ -1085,8 +1156,8 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         }
         if (ok) {
             ++r.saved;
-            log().info("ROM", std::string("fetched ") + e->destRel +
-                       " from RetroBIOS");
+            if (from[0] == 'R') ++r.fromRetroBios; else ++r.fromArchive;
+            log().info("ROM", std::string("fetched ") + e->destRel + " from " + from);
             if (!backup.empty()) {
                 ++r.replaced;
                 log().info("ROM", std::string("the previous ") +
@@ -1095,7 +1166,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             }
         } else {
             ++r.failed;
-            log().warn("ROM", std::string("RetroBIOS fetch of ") + e->destRel +
+            log().warn("ROM", std::string("fetch of ") + e->destRel +
                        " failed: " + err);
             if (r.error.empty()) r.error = err;
         }
@@ -1108,16 +1179,18 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     char buf[192];
     if (r.failed == 0) {
         std::snprintf(buf, sizeof(buf),
-                      "Saved %d ROM%s to %s (%d already present).",
+                      "Saved %d ROM%s to %s (%d already present%s).",
                       r.saved, r.saved == 1 ? "" : "s",
-                      destRoot.string().c_str(), r.skipped);
+                      displayPath(destRoot).c_str(), r.skipped,
+                      r.fromRetroBios ? (", " + std::to_string(r.fromRetroBios) +
+                                         " from RetroBIOS").c_str() : "");
         if (r.replaced > 0) {
             // Say it where the user is looking: a file they had is not the
             // one in roms/ any more.
             char more[256];
             std::snprintf(more, sizeof(more),
                           " %d replaced a different file, kept in %s.",
-                          r.replaced, replacedRomsDir().string().c_str());
+                          r.replaced, displayPath(replacedRomsDir()).c_str());
             r.summary = std::string(buf) + more;
             return r;
         }

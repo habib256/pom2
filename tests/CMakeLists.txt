@@ -8961,6 +8961,26 @@ add_test(NAME rom_fetch
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(rom_fetch PROPERTIES TIMEOUT 10)
 
+# ROM import by content: a dump the user has, whatever its name or a MAME
+# romset .zip, identified by SHA-256 and installed under the probed name.
+add_executable(test_rom_import
+    rom_import_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/RomImport.cpp
+    ${CMAKE_SOURCE_DIR}/src/RomFetch.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+    ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+)
+target_include_directories(test_rom_import PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_rom_import PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads)
+endif()
+add_test(NAME rom_import
+         COMMAND test_rom_import
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(rom_import PROPERTIES TIMEOUT 10)
+
 # The same catalogue, downloaded for real from the pinned RetroBIOS commit
 # into an empty scratch tree. Network-bound, so a probe and not a test: run
 # it before moving POM2_RETROBIOS_COMMIT (RomFetch.h).

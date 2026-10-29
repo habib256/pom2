@@ -26,6 +26,9 @@
 #include "PrinterSoundDevice.h"
 #include "RomCatalog.h"
 #include "RomFetch.h"
+#include "RomImport.h"
+#include "NativeFileDialog.h"
+#include "PersistentFs.h"
 #include "SystemProfile.h"
 #include "ThreadGuard.h"
 #include "VirtualIISoundCatalog.h"
@@ -109,7 +112,7 @@ void RomStatus_ImGui::startRetroBiosFetch()
     fetchCancel_.store(false);
     {
         std::lock_guard<std::mutex> lk(fetchMutex_);
-        fetchLine_    = "Starting RetroBIOS download…";
+        fetchLine_    = "Starting ROM download…";
         fetchSummary_.clear();
     }
     fetchRunning_.store(true);
@@ -142,6 +145,10 @@ void RomStatus_ImGui::startRetroBiosFetch()
         {
             std::lock_guard<std::mutex> lk(fetchMutex_);
             fetchSummary_ = result.summary;
+            // Firmware is read when a machine is switched to, not here.
+            if (result.saved > 0)
+                fetchSummary_ += " Pick a machine in Machine \xe2\x96\xb8 Profile "
+                                 "(or restart) to use them.";
             fetchLine_.clear();
         }
     });
@@ -200,6 +207,22 @@ void RomStatus_ImGui::scanProbe(Probe& p, bool decodeAudio)
             p.usedIndex = static_cast<int>(i);
     }
     p.fallback = (p.usedIndex > 0);
+}
+
+void RomStatus_ImGui::noteImport(const std::string& summary)
+{
+    {
+        std::lock_guard<std::mutex> lk(fetchMutex_);
+        fetchSummary_ = summary;
+    }
+    rescan();
+}
+
+void RomStatus_ImGui::startDownload()
+{
+#if !defined(__EMSCRIPTEN__)
+    if (!fetchRunning_.load()) startRetroBiosFetch();
+#endif
 }
 
 void RomStatus_ImGui::rescan()
@@ -629,7 +652,7 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
     ImGui::SameLine();
 #if defined(__EMSCRIPTEN__)
     ImGui::BeginDisabled();
-    ImGui::Button(ICON_FA_DOWNLOAD " Download missing from RetroBIOS");
+    ImGui::Button(ICON_FA_DOWNLOAD " Download missing ROMs");
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("ROM download is not available in the browser build.");
@@ -637,28 +660,59 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
     {
         const bool busy = fetchRunning_.load();
         ImGui::BeginDisabled(busy);
-        if (ImGui::Button(ICON_FA_DOWNLOAD " Download missing from RetroBIOS"))
+        if (ImGui::Button(ICON_FA_DOWNLOAD " Download missing ROMs"))
             startRetroBiosFetch();
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
             ImGui::TextUnformatted(
-                "Fetches Apple II firmware POM2 knows how to use from the "
-                "RetroBIOS collection (github.com/Abdess/retrobios). A file "
-                "already present is kept if it is the expected dump; if it is "
-                "not, it is replaced and the old one is copied to the "
-                "roms-replaced folder first. The collection now covers "
-                "the //c / //c+ firmware, the Liron, Workstation, "
-                "ThunderClock+ and TransWarp ROMs and the European "
-                "character sets.");
+                "Fetches the Apple II firmware POM2 knows how to use from "
+                "POM2's ROM archive (archive.org/details/pom2_roms), and "
+                "anything it cannot supply from the RetroBIOS collection "
+                "(github.com/Abdess/retrobios). Every file is checked against "
+                "its SHA-256 before it is installed. A file already present "
+                "is kept if it is the expected dump; if it is not, it is "
+                "replaced and the old one is copied to the roms-replaced "
+                "folder first.");
             ImGui::TextDisabled("Saving into: %s",
-                                pom2::writableRomsDir().string().c_str());
+                                pom2::displayPath(pom2::writableRomsDir()).c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
     }
 #endif
+    if (pom2::nativeFileDialogAvailable()) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(fetchRunning_.load());
+        if (ImGui::Button(ICON_FA_FILE_IMPORT " Import ROM file...")) {
+            std::string picked;
+            if (pom2::nativeFileDialog(false, "Import a ROM dump or MAME romset",
+                                       "", "", "", picked) ==
+                pom2::FileDialogResult::Selected) {
+                const pom2::RomImportResult r =
+                    pom2::importRoms({ std::filesystem::path(picked) },
+                                     pom2::writableRomsDir());
+                if (r.installed) pom2::markPersistentStateDirty();
+                noteImport(r.summary);
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
+            ImGui::TextUnformatted(
+                "Installs a dump you already have under the name POM2 looks "
+                "for, whatever the file is called: it is identified by its "
+                "SHA-256. A MAME romset .zip works too. A file POM2 cannot "
+                "identify is not installed. Dropping files onto the window "
+                "does the same.");
+            ImGui::TextDisabled("Saving into: %s",
+                                pom2::displayPath(pom2::writableRomsDir()).c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
     if (fetchRunning_.load()) {
         const int done  = fetchDone_.load();
         const int total = fetchTotal_.load();
@@ -683,8 +737,8 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
             ImGui::TextWrapped("%s", fetchSummary_.c_str());
         } else {
             ImGui::SameLine();
-            ImGui::TextDisabled("Drop dumps into roms/ or fetch the missing "
-                                "ones from RetroBIOS.");
+            ImGui::TextDisabled("Drop dumps or MAME .zip romsets onto the "
+                                "window, or download the missing ones.");
         }
     }
     ImGui::Separator();

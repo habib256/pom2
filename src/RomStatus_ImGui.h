@@ -68,6 +68,15 @@ public:
     /// "used by the active profile" marks move.
     void rescan();
 
+    /// Show the outcome of a ROM import (drop on the window, or the Import
+    /// button) in the summary line, then rescan so the rows turn green.
+    void noteImport(const std::string& summary);
+
+    /// Start "Download missing ROMs" as if its button were pressed
+    /// (the first-launch offer calls it). No-op while a run is in progress
+    /// and in the browser build.
+    void startDownload();
+
     /// Draw the window. `open` is the caller's show-flag (the title-bar
     /// close button clears it). `activeProfileName` is highlighted in the
     /// machine-firmware table so the user can see at a glance whether the

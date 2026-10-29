@@ -271,11 +271,23 @@ MainWindow::MainWindow(bool forceIIPlus)
             if (!r.empty()) { romPath = r; iiePresent = true; break; }
         }
     }
+    bool iiPlusPresent = false;
     if (!iiePresent) {
         for (const std::string& p : romCandidates) {
             std::string r = pom2::findResource(p);
-            if (!r.empty()) { romPath = r; break; }
+            if (!r.empty()) { romPath = r; iiPlusPresent = true; break; }
         }
+    }
+    // A release ships only the //c firmware DIX needs (bundle.manifest); the
+    // rest is fetched from RetroBIOS on request. With neither a //e nor a ][+
+    // ROM, the machine is the //c PAL — the browser demo's — and the saved-
+    // profile catch-up below installs it, ROM and all. Without this the
+    // first launch of every package was a "NO ROM" screen.
+    bool iicOnly = false;
+    if (!iiePresent && !iiPlusPresent && !forceIIPlus) {
+        for (const auto& cand :
+             pom2::profileConfig(pom2::SystemProfile::AppleIIcPAL).romProbeOrder)
+            if (!pom2::findResource(cand).empty()) { iicOnly = true; break; }
     }
     charRomPath.clear();
     // Restore user-selected character ROM locale (toolbar dropdown).
@@ -302,7 +314,7 @@ MainWindow::MainWindow(bool forceIIPlus)
             charRomLocale = pom2::CharRomLocale::ProfileDefault;
         }
     }
-    if (charRomPath.empty() && iiePresent) {
+    if (charRomPath.empty() && (iiePresent || iicOnly)) {
         for (const char* p : charRomIIeCandidates) {
             std::string r = pom2::findResource(p);
             if (!r.empty()) { charRomPath = r; break; }
@@ -327,7 +339,11 @@ MainWindow::MainWindow(bool forceIIPlus)
         display->setAuxMemory(controller->memory().auxData());
     }
 
-    if (controller->memory().loadAppleIIRom(romPath.c_str())) {
+    if (iicOnly) {
+        // Loaded by applyProfile(iic-pal) below, with the //c bank layout.
+        romStatus  = "//c firmware only";
+        romLoaded_ = false;
+    } else if (controller->memory().loadAppleIIRom(romPath.c_str())) {
         romStatus = std::string(iiePresent ? "IIe (128K): " : "loaded: ") + romPath;
         romLoaded_ = true;
     } else {
@@ -868,7 +884,8 @@ MainWindow::MainWindow(bool forceIIPlus)
     // per-card clock updates. Falls back to the auto-probed profile when no
     // //e ROM was found (a PAL //e with no //e ROM would just fail to boot).
     const std::string defaultProfile =
-        iiePresent ? std::string("iie-pal") : std::string();
+        iiePresent ? std::string("iie-pal")
+                   : iicOnly ? std::string("iic-pal") : std::string();
     const std::string savedProfile =
         forceIIPlus ? std::string()
                     : settings->getString("system_profile", defaultProfile);
@@ -894,6 +911,15 @@ MainWindow::MainWindow(bool forceIIPlus)
                 st.cpu().setCpuMode(resolved);
         }
     }
+    // The saved profile may want firmware this tree does not have (a //e
+    // chosen before the ROMs went away): its switch is refused and nothing
+    // is loaded. Land on the //c the package does carry, as a restore.
+    if (iicOnly && !romLoaded_ && activeProfile != pom2::SystemProfile::AppleIIcPAL) {
+        restoringSavedProfile_ = true;
+        applyProfile(pom2::SystemProfile::AppleIIcPAL);
+        restoringSavedProfile_ = false;
+    }
+    if (iicOnly && !romLoaded_) show(pom2::PanelId::Welcome) = true;
     // The //c 40/80 key (Machine menu): a physical setting, applied once.
     controller->lockState().memory().setIic40ColumnSwitch(
         settings->getBool("iic_40col_switch", false));
@@ -1550,6 +1576,7 @@ void MainWindow::render()
     pumpImageWriter();
 
     renderTapeFileDialogs();
+    renderRomDownloadOffer();
     renderPasteFileDialog();
     renderSessionFileDialog();
     renderHdvFileDialog();

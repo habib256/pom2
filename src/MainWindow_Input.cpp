@@ -52,8 +52,11 @@
 #include "FujiNetConfigHostClick.h"
 #include "SnesMaxCard.h"
 #include "PaddleInputs.h"
+#include "PersistentFs.h"
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
+#include "RomImport.h"
+#include "RomStatus_ImGui.h"
 #include "Settings.h"
 
 #include "imgui.h"
@@ -1109,12 +1112,31 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
         tapeStatusUntil = lastFrameTime + 4.0;
         return;
     }
+    // No disk image. The most common other drop is a ROM dump or a MAME
+    // romset .zip: identify it by content and install it under the name
+    // POM2 probes (RomImport.h) — a file that matches no catalogued dump is
+    // left alone and falls through to the refusal below.
+    {
+        std::vector<std::filesystem::path> roms;
+        for (int i = 0; i < count; ++i)
+            if (paths[i] && pom2::romImportCandidate(paths[i])) roms.emplace_back(paths[i]);
+        if (!roms.empty()) {
+            const pom2::RomImportResult r =
+                pom2::importRoms(roms, pom2::writableRomsDir());
+            if (!r.items.empty()) {
+                pom2::markPersistentStateDirty();
+                tapeStatusMessage = r.summary;
+                tapeStatusUntil   = lastFrameTime + 8.0;
+                if (romStatusPanel) romStatusPanel->noteImport(r.summary);
+                return;
+            }
+        }
+    }
     // Nothing usable in the drop — tell the user rather than silently
-    // ignoring it (the most common case is dropping a ROM or a .zip), and
-    // say why in the dialog every refusal uses.
+    // ignoring it, and say why in the dialog every refusal uses.
     tapeStatusMessage =
-        "Dropped file not a disk image "
-        "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg)";
+        "Dropped file is neither a disk image "
+        "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg) nor a known ROM dump";
     tapeStatusUntil = lastFrameTime + 4.0;
     for (int i = 0; i < count; ++i)
         if (paths[i]) { showDiskRefusal(paths[i], pom2::explainUnknownDisk(paths[i])); break; }

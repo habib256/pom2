@@ -1,17 +1,27 @@
-POM2 — bundled Apple ROMs
-=========================
+POM2 — Apple ROMs
+=================
 
-This directory ships with every POM2 release. It holds the system firmware,
-character generators, peripheral dumps and the floppy_samples/ mechanical
-drive sounds that the emulator probes at launch.
+A POM2 package carries only the Apple //c firmware (apple2c-32Kv0.rom and
+the apple2e_char.rom character generator) — enough to boot the //c and the
+DIX demo — plus the floppy_samples/ drive sounds. Apple's other firmware is
+not redistributed with the package.
 
-You do not need to add anything here for a stock install. To override a
-single dump (or add an extra one) in a read-only package:
+At the first launch POM2 offers to download the rest from POM2's ROM
+archive (archive.org/details/pom2_roms), with the RetroBIOS collection
+(github.com/Abdess/retrobios) as a fallback; each file is checked against
+its SHA-256. Any time later: Help -> ROM Status -> Download missing ROMs. A dump you already own can be dropped onto the POM2 window (or
+use Import ROM file... in ROM Status): POM2 recognises it by content and
+installs it under the right name, whatever it is called.
 
-  Linux AppImage / .deb   ~/.local/share/POM2/roms/
-  macOS .app              ~/Library/Application Support/POM2/roms/
-  Windows zip             %LOCALAPPDATA%\POM2\roms\
-                          (or replace the file beside POM2.exe)
+Downloads and imports go into this folder when POM2 can write to it (the
+Windows zip, a portable tarball). Otherwise — the AppImage, a .deb install,
+and always on macOS, so that the .app stays intact and an update keeps your
+ROMs — they go to the per-user data directory, which POM2 searches first
+(and where your own overrides belong):
+
+  Linux                   ~/.local/share/POM2/roms/
+  macOS                   ~/Library/Application Support/POM2/roms/
+  Windows                 %LOCALAPPDATA%\POM2\roms\
 
 `ResourcePaths` also probes a `roms/` folder next to the executable and the
 current working directory (dev layout).

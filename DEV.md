@@ -9873,23 +9873,35 @@ an Alt chord.
 
 ### ROM Status panel
 
-`RomStatus_ImGui.{h,cpp}` + `RomCatalog.h` + `RomFetch.{h,cpp}`
-(Help → ROM Status, `show_rom_status`, palette `panel.romstatus`).
+`RomStatus_ImGui.{h,cpp}` + `RomCatalog.h` + `RomFetch.{h,cpp}` +
+`RomImport.{h,cpp}` (Help → ROM Status, `show_rom_status`, palette `panel.romstatus`).
 Host-side only: stats files, hashes bytes, takes no lock, and rescans
 on demand (open / Rescan) rather than per frame.
 
-**Download missing from RetroBIOS.** The button fetches the Apple II
-dumps POM2 actually probes from
-[Abdess/retrobios](https://github.com/Abdess/retrobios/tree/main/bios)
-(`bios/Apple/Apple II` plus the MAME card zips under
-`bios/Arcade/MAME`). The mapping lives in `romFetchCatalog()` — every
+**Download missing ROMs.** The button fetches the Apple II dumps POM2
+actually probes. **Primary source** *(2026-10-29)*: POM2's own archive,
+`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_roms/pom2_roms.zip>
+— one zip, downloaded once per run, each dump at `roms/<probed name>`
+(`romArchiveMember`). It is not trusted, only checked: every member passes
+the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per
+entry, when the archive is unreachable or a member is absent or wrong:
+[Abdess/retrobios](https://github.com/Abdess/retrobios/tree/main/bios) at
+the pinned commit (`bios/Apple/Apple II` plus the MAME card zips under
+`bios/Arcade/MAME`). `fetchMissingRoms(..., RomFetchSources)` can restrict
+a run to one source; `rom_fetch_live_probe` downloads the whole catalogue
+from each ALONE (2026-10-29: 49/49 from each). The mapping lives in `romFetchCatalog()` — every
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`
 already looks for (pinned by `rom_fetch`). Existing files are skipped
-(`findResource`); new ones land in `writableRomsDir()`: the per-user
-`roms/` whenever the data dir is per-user — it is the FIRST search root, so
-the download is what the machine loads — else the first writable `roms/`
-among the roots (the working directory included). It creates nothing;
-the fetch does. After each save the fetch checks that `findResource` now
+(`findResource`); new ones land in `writableRomsDir()`: POM2's own `roms/`
+— the first one in the search roots outside the per-user data dir, where the
+shipped //c firmware lives (beside the binary,
+`./roms` in a checkout) — when `romsDirTakesDownloads` accepts it: writable
+and **not inside a macOS `.app`** (a file added under `Contents/` breaks a
+notarized bundle's seal, and updating a Mac app replaces the bundle, ROMs
+included). Otherwise (AppImage, `/usr/share`, any `.app`): the per-user
+`roms/`, the FIRST search root, so the download is still what the machine
+loads — on macOS `~/Library/Application Support/POM2/roms`. It creates nothing; the fetch
+does. Messages print the folder with `displayPath` (`~` for the home). After each save the fetch checks that `findResource` now
 resolves to the file it wrote, and reports a shadowing file in an earlier
 root instead of counting a success.
 HTTPS is the system `curl`. MAME zips are unpacked in-process
@@ -9966,6 +9978,24 @@ Verdicts are deliberately unequal:
 CRC-32 (IEEE, reflected) is implemented locally: POM2 links no zlib,
 and the WOZ path only ever writes the "not computed" sentinel, so
 there was nothing to borrow.
+
+**Import by content** *(2026-10-29)* — `RomImport.{h,cpp}`. A dump the user
+already has rarely carries the name POM2 probes (MAME's `341-0270-c.4b`,
+a forum's `AppleMouse.rom`, a romset `.zip`), and a ROM dropped on the
+window used to be refused as "not a disk image". `identifyRom` matches
+bytes against every `romFetchCatalog()` SHA-256 — **all** matches, since
+the catalogue names some dumps twice (`apple2e_char.rom` =
+`apple2e_char_us.rom`). `importRoms` hashes loose files (≤ 256 KB) and
+every member of a zip (`listZipMembers` + `readZipMember`, zip-bomb gate
+first), plus the multi-chip images the catalogue assembles (`zipConcat`:
+the unenhanced //e's two 8 KB chips). Each match goes through
+`installFetchedRom` — the download's own gate, the old file kept in
+`roms-replaced/` — into `writableRomsDir()`; bytes the machine already
+resolves are reported "already present" and not rewritten; an unidentified
+file is never installed. Wired to `MainWindow::onFileDrop` (after the
+disk-image classifier declines) and to the panel's **Import ROM file...**
+button. The machine picks the file up at the next profile switch or
+restart. Pinned by `rom_import`.
 
 **`RomFetchEntry::altPresentSize`** *(2026-09-08, bug hunt #10)*: a local
 file of that size counts as present even though a download must match
@@ -10644,6 +10674,14 @@ reports `child died on signal 6`.
 
 ## Package payload — `packaging/bundle.manifest`
 
+**ROMs (2026-10-29).** A package carries only the //c minimum of `roms/`
+(`apple2c-32Kv0.rom`, `apple2e_char.rom`, `floppy_samples/`), listed as
+`file` entries — the tree stays complete in the repository for tests and
+source builds. `MainWindow`'s constructor then defaults to the //c PAL
+(probe order //e → ][+ → //c), and `MainWindow_RomOffer.cpp` asks once to
+fetch the rest. The release boot smoke passes `--rom` from the checkout,
+since `pom2_headless` only runs a ][.
+
 **One list, four consumers.** What ships inside a package used to be spelled
 out by hand in four places — `CMakeLists.txt`'s `install()` rules,
 `package_macos_release.sh`, `package_windows_release.bat` and the WASM
@@ -10843,7 +10881,7 @@ backing store is in CSS pixels (no `GLFW_SCALE_TO_MONITOR`), as before.
   [§ Browser persistence](#browser-persistence-idbfs) for the three
   parts, none of which is optional.
 - `--preload-file roms@/roms …` — the payload `packaging/bundle.manifest`
-  lists (`roms`, `fonts`, three photographs and `pic/retro/` artwork,
+  lists (the //c minimum of `roms`, `fonts`, the whole `pic/` folder,
   curated `bundled_disks/` files, plus browser-only `wasm floppyemu`),
   baked into `POM2.data` at build time
   (the old `POM2_WASM_BUNDLE` list was never read and is gone). The 3.5" library is opt-in via

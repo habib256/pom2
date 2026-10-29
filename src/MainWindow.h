@@ -1405,6 +1405,11 @@ private:
     // button). Edge-detected against rewindHeldPrev_ — call once per frame.
     void driveRewindHold(bool held);
     void renderTapeFileDialogs();
+    /// First-launch offer to fetch the ROMs a package does not carry
+    /// (MainWindow_RomOffer.cpp). Asked once, remembered in settings.
+    void renderRomDownloadOffer();
+    bool romOfferChecked_ = false;
+    int  romOfferMissing_ = 0;
     void renderPasteFileDialog();
     bool sessionMachineActive_ = false;
     void initializeSessionLoader();

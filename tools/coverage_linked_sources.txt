@@ -87,6 +87,7 @@ src/ProfileSwitch.cpp
 src/ResourcePaths.cpp
 src/RewindBuffer.cpp
 src/RomFetch.cpp
+src/RomImport.cpp
 src/Scc8530Device.cpp
 src/SerialPort.cpp
 src/Settings.cpp

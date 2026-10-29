@@ -38,8 +38,11 @@
 #               to blank icon boxes, a leaked library turns a 6 MB download into
 #               a 200 MB one carrying media that is not ours to redistribute.
 #   · boot      pom2_headless --frames 300 --screenshot — the PACKAGED binary
-#               resolves its own bundled roms/, runs 6502 code and draws a
-#               frame that is not one flat colour. `--help` proves none of that.
+#               runs 6502 code and draws a frame that is not one flat colour.
+#               `--help` proves none of that. Packages ship only the //c
+#               firmware DIX needs (bundle.manifest; the rest is fetched from
+#               RetroBIOS at first launch), and pom2_headless is a ][ harness,
+#               so the ][ ROM comes from the checkout with `--rom`.
 #
 # Triggers: push a version tag to cut a release; "Run workflow" for a dry run
 # (artifacts only, no Release). Both tag conventions fire, matching POM1: the
@@ -321,7 +324,7 @@ jobs:
           bin/pom2_headless --version
           bin/pom2_headless --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          bin/pom2_headless --frames 300 --screenshot boot.ppm
+          bin/pom2_headless --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -423,7 +426,7 @@ jobs:
           cd squashfs-root/usr
           bin/pom2_headless --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          bin/pom2_headless --frames 300 --screenshot boot.ppm
+          bin/pom2_headless --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -549,7 +552,7 @@ jobs:
           cd squashfs-root/usr
           bin/pom2_headless --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          bin/pom2_headless --frames 300 --screenshot boot.ppm
+          bin/pom2_headless --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -649,7 +652,7 @@ jobs:
           cd squashfs-root/usr
           bin/pom2_headless --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          bin/pom2_headless --frames 300 --screenshot boot.ppm
+          bin/pom2_headless --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
@@ -725,7 +728,7 @@ jobs:
           cd dist/POM2.app/Contents
           MacOS/pom2_headless --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          MacOS/pom2_headless --frames 300 --screenshot boot.ppm
+          MacOS/pom2_headless --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           # The .dmg is already built, but do not leave a capture in the .app.
           rm -f boot.ppm
 
@@ -832,7 +835,7 @@ jobs:
           cd dist/POM2-Windows
           ./pom2_headless.exe --version | grep -qF "v${POM2_VERSION}" \
             || { echo "ERROR: packaged binary does not announce v${POM2_VERSION}"; exit 1; }
-          ./pom2_headless.exe --frames 300 --screenshot boot.ppm
+          ./pom2_headless.exe --rom "$GITHUB_WORKSPACE/roms/apple2.rom" --frames 300 --screenshot boot.ppm
           rm -f boot.ppm
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

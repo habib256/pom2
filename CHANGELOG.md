@@ -10,6 +10,62 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-29 — Releases carry only the //c firmware; the rest is one click away
+
+Packages and the WASM bundle shipped the whole `roms/` tree — Apple's
+firmware, redistributed. They now carry `apple2c-32Kv0.rom` and
+`apple2e_char.rom` (plus the BSD-licensed `floppy_samples/`): what the
+browser demo needs to boot DIX on the //c PAL. Checked by booting DIX from
+a tree holding only those two: the same screen as with all 49. The
+repository keeps every dump — the tests and source builds use them.
+
+- **A package with only the //c firmware boots the //c PAL**, not a "NO ROM"
+  screen: the constructor's probe falls back //e → ][+ → //c, and a saved
+  profile whose firmware is gone lands on the //c too.
+- **First launch asks** (desktop only, once — `rom_download_offered`):
+  "Download the Apple II ROMs?" opens ROM Status and starts the download
+  there.
+- **Download source order**: POM2's archive on archive.org
+  (`archive.org/details/pom2_roms`, one zip) first, RetroBIOS at the pinned
+  commit for any entry the archive cannot supply. Same SHA-256 gate on both.
+  `rom_fetch_live_probe` now checks each source alone: 49/49 from each.
+- **Downloads land in POM2's own `roms/`** (beside the binary, `./roms` in
+  a checkout) when writable — except inside a macOS `.app`, where a write
+  would break a notarized bundle's seal and an app update would discard the
+  ROMs: there, and for the AppImage / `.deb`, the per-user folder. Not in kiosk (cannot remember the answer), never when nothing
+  is missing.
+- **Release smoke tests** boot `pom2_headless` (a ][ harness) with
+  `--rom $GITHUB_WORKSPACE/roms/apple2.rom` from the checkout; `pi400.yml`
+  now checks for the //c ROM in the AppImage and tarball.
+- **The whole `pic/` folder now ships** (desktop and browser, ~12 MB),
+  not just the three photos the code opens and `pic/retro/`.
+- **RetroBIOS `main` lost 22 of the 49 dumps** — every //c and //c Plus
+  ROM, the Liron, the Workstation Card, the Grappler+, ten character sets.
+  The pinned commit still serves all of them; that pin is now what a fresh
+  install depends on. → `docs/audits/retrobios-gap-2026-10-29.md`.
+
+## 2026-10-29 — Drop a ROM on the window and POM2 installs it
+
+A dump found elsewhere almost never has the name POM2 probes — MAME calls
+the mouse EPROM `341-0270-c.4b`, a romset is a `.zip` — and dropping one
+on the window was refused as "not a disk image". The user had to find the
+expected name in ROM Status and rename by hand, which is the step that
+went wrong.
+
+- **Identified by content** (`RomImport.h`): the bytes are matched against
+  the SHA-256 every RetroBIOS catalogue entry already carries, so the file
+  name does not matter. Zips are opened in-process, every member hashed,
+  and the unenhanced //e is assembled from MAME's two chips. A dump the
+  catalogue names twice (the US //e charset is also `apple2e_char.rom`)
+  is installed under both names.
+- **Same gate as a download**: size / CRC32 / SHA-256, into
+  `writableRomsDir()`, a replaced file kept in `roms-replaced/`. Bytes the
+  machine already loads are reported, not rewritten. Nothing unidentified
+  is ever installed.
+- Reached by a drop on the window (after the disk-image check declines)
+  and by **Import ROM file...** in ROM Status. `ZipMember` gains
+  `listZipMembers`. Pinned by `rom_import`.
+
 ## 2026-10-28 — "Download missing ROMs" fetched 19 dumps of 45; now all 49
 
 The v1.0.0 Download button (ROM Status → *Download missing from RetroBIOS*)

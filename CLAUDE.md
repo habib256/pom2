@@ -176,7 +176,7 @@ cmake --build build --parallel 3 # → build/POM2
 
 `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; the CPU worker's `cyclesPerFrame` comes from the active profile (`CpuClock.h`: 17045 NTSC / **20313 PAL — the default profile is PAL**), and `EmulationController`'s bare initialiser (17045) only holds until the first `applyProfile`. Single `stateMutex` guards CPU + Memory.
 
-Release packages ship the full `roms/` tree; a source build uses the same in-repo dumps. Default profile is **`Apple //e Enhanced PAL`** (`Apple ][+` only when no //e ROM is found); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
+**ROMs: the repo keeps them all, releases do not** *(2026-10-29)*. A source build (and every test) uses the in-repo `roms/`; release packages and the WASM bundle carry only `apple2c-32Kv0.rom` + `apple2e_char.rom` (+ `floppy_samples/`) — what DIX needs on the //c PAL (`bundle.manifest`). A desktop install asks once, at the first launch that finds catalogued dumps missing, to download the rest (`MainWindow_RomOffer.cpp`, setting `rom_download_offered`; any time later: ROM Status → Download missing ROMs, or drop a dump on the window, `RomImport.h`). **Source order** (`RomFetch.h`): POM2's archive on archive.org (`pom2_roms.zip`, one download), then — per entry it cannot supply — RetroBIOS at a **pinned** commit (on its `main` 22 of the 49 dumps no longer exist: `docs/audits/retrobios-gap-2026-10-29.md`). Every file SHA-256-gated whatever its source. Default profile is **`Apple //e Enhanced PAL`**, then `Apple ][+` when no //e ROM is found, then **`Apple //c PAL`** when only the //c firmware is (a fresh package); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
 
 ## Subsystem map
 
@@ -259,7 +259,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Docking + layout presets | `MainWindow.cpp` (`renderDockSpace`/`applyDockLayout`), `imgui_pin.env` | [§ Docking](DEV.md#docking--layout-presets) |
 | HGR/DHGR Paint editor + sprite editor (portable, shared w/ POM1) | `hgrpaint/*`, `hgrsprite/*`, `Pom2HgrPaintHost.*` | [§ Paint editor](DEV.md#hgr--dhgr-paint-editor-hgrpaint-shared-with-pom1) |
 | Slot Config + Internal Disks & Media (2 windows) — Slot Config is built from the machine's own connector inventory, so a //c shows ports and not slots | `MainWindow_Slots.cpp`, `SlotConnectors.h`, `MountableMediaCard.h`, `SlotCardCatalog.h` | [§ Host control](DEV.md#host-control-center-slot-configuration--floppy-emu) |
-| ROM inventory panel (present / missing / identity) + RetroBIOS fetch | `RomStatus_ImGui.*`, `RomCatalog.h`, `RomFetch.*` | [§ ROM Status](DEV.md#rom-status-panel) |
+| ROM inventory panel (present / missing / identity) + RetroBIOS fetch + import by SHA-256 (drop a dump or MAME `.zip` on the window) | `RomStatus_ImGui.*`, `RomCatalog.h`, `RomFetch.*`, `RomImport.*`, `MainWindow_RomOffer.cpp` (first-launch offer) | [§ ROM Status](DEV.md#rom-status-panel) |
 | Abstraction levels panel (LLE/HLE per subsystem, live + switchable) | `AbstractionLevels_ImGui.*` | [§ Abstraction Levels](DEV.md#abstraction-levels-panel-lle--hle) |
 | Clickable Apple //e keyboard (photo + measured hotspots) | `Keyboard_ImGui.*`, `AppleIIeKeyboardLayout.*` (generated), `AppleKeyLatch.h`, `tools/gen_keyboard_layout.py` | [§ Keyboard panel](DEV.md#apple-e-keyboard-panel) |
 | Floppy Emu (BMOW SD/OLED) | `FloppyEmuDevice.*`, `FloppyEmu_ImGui.*` | [§ Floppy Emu](DEV.md#floppy-emu-bmow) |
@@ -379,7 +379,7 @@ Built-in slots force their listed card onto the SlotBus on profile load (overrid
 
 | | |
 |---|---|
-| Profile | `Apple //e Enhanced PAL (50 Hz)` — falls back to `Apple ][+` if no //e ROM resolves |
+| Profile | `Apple //e Enhanced PAL (50 Hz)` — falls back to `Apple ][+` if no //e ROM resolves, then to `Apple //c PAL` when only the //c firmware does (a release package before the RetroBIOS download) |
 | Display | `Composite (OpenEmulator)` GPU pipeline |
 | sl1 | `grappler` — Grappler+ parallel printer |
 | sl2 | `mockingboard` — Mockingboard A/C (DIX **scans** $C7→$C1 for it — `boot_unidisk.a` `bdet`; titles that hard-code MB@4 must move it) |
@@ -489,8 +489,8 @@ disagrees with `project(VERSION)`, or when the release-notes file is missing.
 ## Package payload
 
 **`packaging/bundle.manifest` is the single list of what ships inside a
-package** — `roms/` (with `packaging/roms_README.txt` renamed to `roms/README.txt`),
-`fonts/`, the About and //e and //c keyboard photos, `pic/retro/` artwork
+package** — the //c minimum of `roms/` (`apple2c-32Kv0.rom`, `apple2e_char.rom`, `floppy_samples/`; with `packaging/roms_README.txt` renamed to `roms/README.txt`),
+`fonts/`, the whole `pic/` folder (About and keyboard photos, `pic/retro/` artwork, ~12 MB)
 and the curated `bundled_disks/` files, with `wasm floppyemu` as the
 browser-only extra (it holds the demo's boot disk), a `deny` list
 (`disks_5.4`, `hdv`, `disks_3.5`, `snapshots`, `printouts`, `cassettes`,

@@ -365,6 +365,7 @@ set(SOURCES
     src/MainWindow_DevicePanels.cpp
     src/MainWindow_SettingsPanels.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_RomOffer.cpp
     src/MainWindow_Slots.cpp
     src/MainWindow_Kiosk.cpp
     src/MainWindow_StoragePanels.cpp
@@ -498,6 +499,7 @@ set(SOURCES
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
     src/RomFetch.cpp
+    src/RomImport.cpp
     src/ZipMember.cpp
     src/RomStatus_ImGui.cpp
     src/AbstractionLevels_ImGui.cpp
@@ -690,6 +692,7 @@ set(POM2_FRONTEND_SOURCES
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_RomOffer.cpp
     src/MainWindow_Panels.cpp
     src/MainWindow_SettingsPanels.cpp
     # The two other application roots. main.cpp is already here; a benchmark
@@ -921,6 +924,7 @@ set(POM2_RUNTIME_SOURCES
     src/PrinterScreenDump.cpp
     src/PrinterSoundDevice.cpp
     src/RomFetch.cpp
+    src/RomImport.cpp
     src/ZipMember.cpp
     src/RewindBuffer.cpp
     src/SlirpNetworkBackend.cpp
@@ -978,6 +982,7 @@ set(HEADERS
     src/Cffa3000Card.h
     src/CharRomCatalog.h
     src/RomFetch.h
+    src/RomImport.h
     src/ProfileSwitch.h
     src/ZipMember.h
     src/CliDispatcher.h

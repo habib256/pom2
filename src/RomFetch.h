@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// RomFetch — pull the Apple II dumps POM2 actually probes from RetroBIOS
+// RomFetch — pull the Apple II dumps POM2 actually probes: first from POM2's
+// own archive on archive.org (kPom2RomArchiveUrl, one zip), then, for any
+// entry it cannot supply, from RetroBIOS
 // (https://github.com/Abdess/retrobios, bios/Apple/Apple II plus MAME's
 // a2mouse romset under bios/Arcade/MAME).
 //
@@ -121,7 +123,22 @@ constexpr const char* kRetroBiosSourceUrl =
 constexpr const char* kRetroBiosCommit    = POM2_RETROBIOS_COMMIT;
 constexpr const char* kRetroBiosRawPrefix = POM2_RETROBIOS_RAW;
 
+/// The PRIMARY source since 2026-10-29: POM2's own archive on archive.org,
+/// one zip holding every catalogued dump as `roms/<the name POM2 probes>`
+/// (`romArchiveMember`). Fetched once per run; each member passes the same
+/// size / CRC32 / SHA-256 gate as a RetroBIOS download, so the archive does
+/// not have to be trusted — only to be right. Any entry it cannot supply
+/// (archive unreachable, member absent or not the expected dump) is fetched
+/// from RetroBIOS at the pinned commit, the SECONDARY source.
+constexpr const char* kPom2RomArchivePage =
+    "https://archive.org/details/pom2_roms";
+constexpr const char* kPom2RomArchiveUrl =
+    "https://archive.org/download/pom2_roms/pom2_roms.zip";
+
 const std::vector<RomFetchEntry>& romFetchCatalog();
+
+/// The member of the POM2 archive that holds `e`: "roms/" + its file name.
+std::string romArchiveMember(const RomFetchEntry& e);
 
 /// Lowercase hex SHA-256 of `n` bytes at `data`. Exposed so the fetch test
 /// can prove the catalog's digests describe the dumps that ship in roms/.
@@ -145,13 +162,23 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
                               std::uintmax_t& totalOut,
                               std::string& err);
 
-/// Where a download goes: `userDataDir()/roms` whenever the data dir is
-/// per-user (it is then the FIRST search root, so what lands there is what
-/// the machine loads), else the first writable `roms/` among the search roots
-/// (the working directory included), else `userDataDir()/roms`. Never
-/// creates anything — `fetchMissingRoms` does, when it runs. An installed
-/// bundle is never written.
+/// Where a download or an import goes: POM2's own `roms/` — the first one
+/// in the search roots outside the per-user data dir, i.e. the folder the
+/// shipped //c firmware is loaded from (beside the binary in a portable
+/// package, ./roms in a source checkout) when `romsDirTakesDownloads`
+/// accepts it; else `userDataDir()/roms`, which is searched first and so is
+/// still what the machine loads (AppImage, .deb, macOS .app). Never creates
+/// anything — `fetchMissingRoms` does, when it runs.
 std::filesystem::path writableRomsDir();
+
+/// True when POM2 may add dumps to `romsDir`: a writable directory that is
+/// not inside a macOS `.app` (a file added to a notarized bundle breaks its
+/// seal, and an app update replaces the whole bundle).
+bool romsDirTakesDownloads(const std::filesystem::path& romsDir);
+
+/// `p` with the home directory written `~`, for the messages that name a
+/// folder (the panel summary, the first-launch offer).
+std::string displayPath(const std::filesystem::path& p);
 
 /// Entries whose destRel does not resolve through findResource() — the
 /// same "missing" the ROM Status panel reports. `present` overrides the
@@ -184,6 +211,8 @@ struct RomFetchResult {
     /// Of `saved`: how many replaced a present file that was not the
     /// expected dump. The old one is kept under userDataDir()/roms-replaced.
     int         replaced = 0;
+    int         fromArchive   = 0;  ///< Of `saved`: from the POM2 archive.
+    int         fromRetroBios = 0;  ///< Of `saved`: from RetroBIOS (the fallback).
     std::string destDir;
     std::string error;     ///< Set when the run could not start (no curl, …).
     std::string summary;   ///< One line for the panel, always filled on return.
@@ -203,9 +232,17 @@ using RomFetchCancel = std::function<bool()>;
 /// expected dump. A present file is never destroyed — it is copied to
 /// userDataDir()/roms-replaced/ first, and left alone if that fails.
 /// Safe to call from a worker thread — no ImGui, no emulator lock.
+/// Which sources a run may use. Both by default; the live probe checks
+/// each one alone.
+struct RomFetchSources {
+    bool archive   = true;
+    bool retroBios = true;
+};
+
 RomFetchResult fetchMissingRoms(const std::filesystem::path& destRoot,
                                 const RomFetchProgress& progress = {},
-                                const RomFetchCancel& cancelled = {});
+                                const RomFetchCancel& cancelled = {},
+                                RomFetchSources sources = {});
 
 }  // namespace pom2
 

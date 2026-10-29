@@ -42,4 +42,11 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
                    std::size_t maxBytes,
                    bool* unsupported = nullptr);
 
+/// Every member name in `zip`'s central directory, in archive order
+/// (directories included — they end in '/'). False with `err` set when the
+/// archive is malformed.
+bool listZipMembers(const std::vector<std::uint8_t>& zip,
+                    std::vector<std::string>& names,
+                    std::string& err);
+
 }  // namespace pom2

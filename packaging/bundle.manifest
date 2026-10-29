@@ -32,11 +32,22 @@
 # Browser builds cannot run a host executable, so it is never preloaded there.
 
 # ─── Firmware and dumps ─────────────────────────────────────────────────────
-# The full tree: system ROMs, character generators, peripheral card dumps, and
-# the MAME floppy mechanical samples (BSD-3-Clause, see floppy_samples/
-# README.txt). Without it the emulator cannot boot at all, so it is never
-# optional. ~800 KB.
-dir  roms
+# Packages carry the MINIMUM Apple firmware: what the browser demo needs to
+# boot DIX on the //c PAL (`--preset iic-pal`, wasm/shell.html) — the 32 KB
+# //c ROM (its own SmartPort firmware boots the 3.5" DIX disk) and the //e
+# character generator the //c profile probes. Checked 2026-10-29: DIX reaches
+# the same screen with these two as with the whole tree. Every other dump
+# stays in the repository's roms/ (tests and source builds use it) but is NOT
+# redistributed: a desktop install offers to download it at first launch
+# (ROM Status → Download missing ROMs, any time after) — from POM2's archive
+# on archive.org, RetroBIOS at a pinned commit as the fallback, each file
+# SHA-256-checked (RomFetch.h).
+file roms/apple2c-32Kv0.rom
+file roms/apple2e_char.rom
+
+# The MAME floppy mechanical samples (BSD-3-Clause, see floppy_samples/
+# README.txt) — recordings, not firmware.
+dir  roms/floppy_samples
 
 # The inventory note, which deliberately OVERWRITES any README already sitting
 # in roms/ — it describes what a *package* contains, not the work tree.
@@ -49,16 +60,13 @@ file packaging/roms_README.txt  roms/README.txt
 # only a structural check catches a package that lost them.
 dir  fonts
 
-# The Apple ][+ photo in Help → About, and the //e and //c keyboard photos the
-# clickable keyboard window (Devices → Apple Keyboard) is built on — its
-# hotspots are fractions OF THAT IMAGE, so without the file the window has
-# nothing to click and says so. Named files, not the folder: pic/ holds 4 MB
-# of reference photography that no code path reads.
-file pic/Apple_II_plus.jpg
-file pic/Keyboard_AppleIIe.jpeg
-file pic/Keyboard_AppleIIc.png
-# MIT Monitor II / Disk II artwork, attribution and editable SVGs.
-dir  pic/retro
+# The whole pic/ folder (2026-10-29, the maintainer's call; ~12 MB, in the
+# browser bundle too). Among it: the Apple ][+ photo in Help → About, the //e
+# and //c keyboard photos the clickable keyboard window (Devices → Apple
+# Keyboard) is built on — its hotspots are fractions OF THAT IMAGE, so
+# without the file the window has nothing to click — and pic/retro/, the MIT
+# Monitor II / Disk II artwork with its attribution and editable SVGs.
+dir  pic
 
 # ─── Browser-only extras ────────────────────────────────────────────────────
 # Retain the legacy floppyemu/ media folder in browser builds only. The

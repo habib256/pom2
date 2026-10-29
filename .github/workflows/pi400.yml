@@ -116,14 +116,14 @@ jobs:
           fi
           ldd "$BIN" | grep -qE 'GLES' \
             || { echo "ERROR: does not link GLESv2 — is POM2_GLES really on?"; exit 1; }
-          test -s squashfs-root/usr/share/POM2/roms/apple2p.rom \
-            || { echo "ERROR: apple2p.rom missing from the AppImage"; exit 1; }
+          test -s squashfs-root/usr/share/POM2/roms/apple2c-32Kv0.rom \
+            || { echo "ERROR: apple2c-32Kv0.rom missing from the AppImage"; exit 1; }
 
           # Tarball: same tree as `cmake --install`, which is what ResourcePaths
           # resolves. ⚠ no `tar | grep -q` under pipefail — grep closes the pipe
           # early, tar dies on write, and you get a false failure.
           LIST=$(tar tzf "$TGZ")
-          for want in ./bin/POM2 ./bin/pom2_bench ./share/POM2/roms/apple2p.rom; do
+          for want in ./bin/POM2 ./bin/pom2_bench ./share/POM2/roms/apple2c-32Kv0.rom; do
             printf '%s\n' "$LIST" | grep -q -- "$want" \
               || { echo "ERROR: $want missing from the tarball"; exit 1; }
           done

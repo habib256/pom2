@@ -69,12 +69,26 @@ one of the included disks.
 New to the Apple II? At the BASIC prompt, type `PRINT "HELLO, APPLE II!"`
 and press Return.
 
-### Missing ROMs and the RetroBIOS download
+### Missing ROMs and the ROM download
+
+From the next release, packages (and the browser demo) carry only the Apple
+//c firmware, which is enough to run the //c and the DIX demo. Apple's other
+firmware is not redistributed. The first time it starts, the desktop
+version offers to download the other ROMs in one click. A source checkout
+still has every dump in `roms/`.
 
 If a ROM is missing or damaged, **Help → ROM Status** says which one, and
-**Download missing from RetroBIOS** fetches it from the
-[RetroBIOS](https://github.com/Abdess/retrobios) collection. POM2 checks
-every downloaded file's size and SHA-256 before installing it.
+**Download missing ROMs** fetches it from POM2's
+[ROM archive](https://archive.org/details/pom2_roms) on archive.org, with
+the [RetroBIOS](https://github.com/Abdess/retrobios) collection as a
+fallback. POM2 checks every downloaded file's size and SHA-256 before
+installing it.
+
+Already have the dump under another name, or as a MAME romset `.zip`? Drop
+it onto the POM2 window (or use **Import ROM file...** in ROM Status). POM2
+recognises it by its SHA-256, installs it under the name it looks for, and
+loads it at the next machine switch or restart. A file it cannot identify
+is left alone.
 
 > **Known problem in v1.0.0:** on 20–22 October 2026 RetroBIOS reorganised
 > its collection and removed many of the files POM2 points to. From a

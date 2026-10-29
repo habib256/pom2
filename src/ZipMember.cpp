@@ -40,6 +40,37 @@ namespace pom2 {
 
 namespace {
 
+std::uint32_t zle16(const std::vector<std::uint8_t>& zip, std::size_t o)
+{
+    return static_cast<std::uint32_t>(zip[o]) |
+           (static_cast<std::uint32_t>(zip[o + 1]) << 8);
+}
+
+std::uint32_t zle32(const std::vector<std::uint8_t>& zip, std::size_t o)
+{
+    return zle16(zip, o) | (zle16(zip, o + 2) << 16);
+}
+
+// End Of Central Directory: scanned back from the tail, because the
+// comment after it has a variable length. A signature inside that binary
+// comment is not a record unless its declared length reaches EOF.
+bool findEndOfCentralDir(const std::vector<std::uint8_t>& zip,
+                         std::size_t& eocd, std::string& err)
+{
+    const std::size_t n = zip.size();
+    if (n < 22) { err = "archive is too small to be a zip"; return false; }
+    const std::size_t maxBack = std::min<std::size_t>(n, 22u + 65535u);
+    for (std::size_t back = 22; back <= maxBack; ++back) {
+        const std::size_t o = n - back;
+        if (zle32(zip, o) == 0x06054B50u && zle16(zip, o + 20) == back - 22) {
+            eocd = o;
+            return true;
+        }
+    }
+    err = "no zip central directory (not an archive?)";
+    return false;
+}
+
 std::uint32_t crc32Of(const std::vector<std::uint8_t>& bytes)
 {
     std::uint32_t crc = 0xFFFFFFFFu;
@@ -71,21 +102,8 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
         return le16(o) | (le16(o + 2) << 16);
     };
 
-    // End Of Central Directory: scanned back from the tail, because the
-    // comment after it has a variable length. A signature inside that binary
-    // comment is not a record unless its declared length reaches EOF.
-    if (n < 22) { err = "archive is too small to be a zip"; return false; }
-    const std::size_t maxBack = std::min<std::size_t>(n, 22u + 65535u);
     std::size_t eocd = 0;
-    bool found = false;
-    for (std::size_t back = 22; back <= maxBack && !found; ++back) {
-        const std::size_t o = n - back;
-        if (le32(o) == 0x06054B50u && le16(o + 20) == back - 22) {
-            eocd = o;
-            found = true;
-        }
-    }
-    if (!found) { err = "no zip central directory (not an archive?)"; return false; }
+    if (!findEndOfCentralDir(zip, eocd, err)) return false;
 
     const std::uint32_t count = le16(eocd + 10);
     std::size_t cd = le32(eocd + 16);
@@ -155,6 +173,29 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
     }
     err = member + " is not in the archive";
     return false;
+}
+
+bool listZipMembers(const std::vector<std::uint8_t>& zip,
+                    std::vector<std::string>& names,
+                    std::string& err)
+{
+    names.clear();
+    std::size_t eocd = 0;
+    if (!findEndOfCentralDir(zip, eocd, err)) return false;
+    const std::size_t n = zip.size();
+    const std::uint32_t count = zle16(zip, eocd + 10);
+    std::size_t cd = zle32(zip, eocd + 16);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (cd + 46 > n || zle32(zip, cd) != 0x02014B50u) {
+            err = "malformed zip central directory";
+            return false;
+        }
+        const std::uint32_t nameLen = zle16(zip, cd + 28);
+        if (cd + 46 + nameLen > n) { err = "malformed zip central directory"; return false; }
+        names.emplace_back(reinterpret_cast<const char*>(zip.data() + cd + 46), nameLen);
+        cd += 46 + nameLen + zle16(zip, cd + 30) + zle16(zip, cd + 32);
+    }
+    return true;
 }
 
 }  // namespace pom2

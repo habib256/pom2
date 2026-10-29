@@ -14,8 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// rom_fetch_live_probe — run the ROM Status panel's "Download missing from
-// RetroBIOS" for real, against the network, from a tree that holds no ROM.
+// rom_fetch_live_probe — run the ROM Status panel's "Download missing ROMs"
+// for real, against the network, from a tree that holds no ROM: once from the
+// POM2 archive on archive.org alone, once from RetroBIOS alone.
 //
 // `rom_fetch` (ctest) never touches the network, which is how the v1.0.0
 // release shipped a catalogue where 26 of 45 URLs answered 404 after
@@ -68,24 +69,40 @@ int main(int argc, char** argv)
 
     const auto& cat  = pom2::romFetchCatalog();
     const auto  plan = pom2::romsToFetch();
-    std::printf("RetroBIOS commit %s\ncatalogue %zu entries, %zu to fetch\n",
-                pom2::kRetroBiosCommit, cat.size(), plan.size());
+    std::printf("archive %s\nRetroBIOS commit %s\ncatalogue %zu entries, %zu to fetch\n",
+                pom2::kPom2RomArchiveUrl, pom2::kRetroBiosCommit, cat.size(), plan.size());
     if (plan.size() != cat.size()) {
         std::fprintf(stderr, "a ROM was found before the fetch — the scratch "
                              "tree is not empty\n");
         return 2;
     }
 
-    const fs::path dest = root / "roms";
-    const auto r = pom2::fetchMissingRoms(dest, [](int done, int total, const char* label) {
-        std::printf("[%d/%d] %s\n", done, total, label ? label : "");
-        std::fflush(stdout);
-    });
-    std::printf("%s\n", r.summary.c_str());
-    if (!r.error.empty()) std::printf("error: %s\n", r.error.c_str());
-
-    const bool ok = r.failed == 0 && r.saved == static_cast<int>(cat.size());
-    std::printf("%s: %d of %zu saved into %s\n", ok ? "PASS" : "FAIL",
-                r.saved, cat.size(), dest.string().c_str());
-    return ok ? 0 : 1;
+    // Each source ALONE, into its own empty folder: the archive must supply
+    // the whole catalogue by itself, and so must RetroBIOS, its fallback —
+    // a run with both would hide a gap in either.
+    struct Leg { const char* name; pom2::RomFetchSources src; };
+    const Leg legs[] = {
+        { "POM2 archive (archive.org)", { true,  false } },
+        { "RetroBIOS (pinned commit)",  { false, true  } },
+    };
+    bool allOk = true;
+    int n = 0;
+    for (const Leg& leg : legs) {
+        const fs::path dest = root / ("roms-" + std::to_string(n++));
+        std::printf("\n== %s ==\n", leg.name);
+        const auto r = pom2::fetchMissingRoms(
+            dest,
+            [](int done, int total, const char* label) {
+                std::printf("[%d/%d] %s\n", done, total, label ? label : "");
+                std::fflush(stdout);
+            },
+            {}, leg.src);
+        std::printf("%s\n", r.summary.c_str());
+        if (!r.error.empty()) std::printf("error: %s\n", r.error.c_str());
+        const bool ok = r.failed == 0 && r.saved == static_cast<int>(cat.size());
+        std::printf("%s: %s, %d of %zu saved into %s\n", ok ? "PASS" : "FAIL",
+                    leg.name, r.saved, cat.size(), dest.string().c_str());
+        allOk = allOk && ok;
+    }
+    return allOk ? 0 : 1;
 }

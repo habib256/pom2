@@ -172,19 +172,37 @@ int main()
         setenv("XDG_DATA_HOME", home.string().c_str(), 1);
 #endif
     }
-    // Where a download lands: the per-user roms/, the FIRST search root, so
-    // a wrong file in a later root can never shadow it — and asking must not
-    // create anything (the ROM Status tooltip asks on every hover).
+    // Where a download lands: POM2's own roms/ — here, run from the repo
+    // root, the tracked one beside the //c firmware — not the per-user
+    // override folder; and asking must not create anything (the ROM Status
+    // tooltip asks on every hover).
     {
         namespace fs = std::filesystem;
         std::error_code dec;
-        const fs::path want = pom2::userDataDir() / "roms";
-        fs::remove_all(want, dec);
+        const fs::path perUser = pom2::userDataDir() / "roms";
+        fs::remove_all(perUser, dec);
         const fs::path got = pom2::writableRomsDir();
         expect(pom2::userDataDirIsPerUser(), "the sandboxed data dir is per-user");
-        expect(got == want, "downloads go to the per-user roms/ (got " +
-                                got.string() + ")");
-        expect(!fs::exists(want, dec), "asking for the directory created it");
+        expect(fs::equivalent(got, fs::path("roms"), dec),
+               "downloads go to POM2's roms/ (got " + got.string() + ")");
+        expect(!fs::exists(perUser, dec), "asking for the directory created it");
+
+        // Never inside a macOS bundle (notarization seal, app updates); a
+        // plain writable folder is fine.
+        const fs::path app = pom2::userDataDir() / "POM2.app" / "Contents" /
+                             "Resources" / "roms";
+        fs::create_directories(app, dec);
+        expect(!pom2::romsDirTakesDownloads(app), "a .app's roms/ takes no download");
+        const fs::path plain = pom2::userDataDir() / "portable" / "roms";
+        fs::create_directories(plain, dec);
+        expect(pom2::romsDirTakesDownloads(plain), "a portable roms/ takes downloads");
+        fs::remove_all(pom2::userDataDir() / "POM2.app", dec);
+        fs::remove_all(pom2::userDataDir() / "portable", dec);
+
+        const char* envHome = std::getenv("HOME");
+        if (envHome && *envHome)
+            expect(pom2::displayPath(fs::path(envHome) / "x" / "roms").rfind("~", 0) == 0,
+                   "displayPath writes the home directory as ~");
     }
 
     // Romsets are unpacked in-process: the host fallback was `tar`, and GNU
@@ -263,6 +281,15 @@ int main()
     const auto& cat  = pom2::romFetchCatalog();
 
     expect(!cat.empty(), "catalog is not empty");
+    // The primary source: an HTTPS archive.org download, and every entry's
+    // member is "roms/" + the name POM2 probes — the layout of pom2_roms.zip.
+    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_roms/", 0) == 0,
+           "the POM2 archive is an HTTPS archive.org download");
+    for (const auto& e : pom2::romFetchCatalog()) {
+        const std::string m = pom2::romArchiveMember(e);
+        expect(m == "roms/" + std::filesystem::path(e.destRel).filename().string(),
+               std::string("archive member for ") + e.destRel);
+    }
     expect(std::string(pom2::kRetroBiosSourceUrl).find("Abdess/retrobios")
                != std::string::npos,
            "source URL names Abdess/retrobios");
