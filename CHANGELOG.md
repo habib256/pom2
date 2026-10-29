@@ -10,6 +10,36 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-29 — POM2's own Disk II boot PROM
+
+With Apple's 341-0027-A out of the source, a Disk II with no
+`roms/disk2.rom` had no boot PROM at all. `DiskIIBootRom.h` is POM2's own,
+written from the boot protocol — what boot sectors call back into — and
+assembled per slot with `SlotRomAsm`. Being per-slot, it reads the data
+latch at `$C0nC` absolute, which frees X to translate and XOR-chain each
+nibble during the read itself (21 of the 32 cycles a nibble lasts): no second
+pass, and the page has room to spare.
+
+- **Boots DOS 3.3 and ProDOS 2.4.3** to their banners from slot 6 and
+  slot 5 with no Apple file on the controller (legacy nibble gate).
+- **ProDOS is the hard client.** Its block 0 reads its second sector through
+  `$Cn5C`, then COPIES `$Cn63-$CnEA` into `$09F7` as its own sector reader:
+  it enters at `$63` with a nibble in A, the mode pushed and X = slot×16,
+  rewrites the branch operands at `$66 $7C $82 $9D $A3 $A5` to land in its
+  retry loop, writes `$AC` at `$D4`, appends `LDX $2B / CLC / RTS` at
+  `$EB`, and reads `$40` back to re-seek. The read routine sits on that grid
+  (a branch before each rewritten operand, a harmless immediate under `$D4`,
+  X restored before every exit to ProDOS), and `buildDiskIIBootRom()`
+  refuses a page that is off it. Measured against Apple's PROM: 73 of 256
+  bytes coincide, 52 of them in `$5C-$A5`, where the grid and ProDOS's zero
+  page leave little freedom; none in the 6-and-2 decode.
+- Apple's dump still wins when present; `pom2::Core::attachDiskII` now takes
+  an empty boot PROM everywhere.
+- Pinned by `diskii_pom2_boot_prom`: the page for slots 1-7, the 64-entry
+  decode table it builds, sector 0 / A / X at the handover, the DOS boot —
+  each against Apple's PROM as the control. A one-opcode mutant of the join
+  fails it five ways.
+
 ## 2026-10-29 — No copyrighted firmware or third-party disk in the repository or a desktop package
 
 The previous entry still redistributed two Apple dumps in every package, the

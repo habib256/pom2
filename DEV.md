@@ -3722,10 +3722,25 @@ emits each "1" cell at `i*cyc + cyc/2` (centre). Pinned:
 256-byte P5A boot PROM, Apple 341-0027-A (CRC `ce7144f6`), loaded by
 `loadBootRom("roms/disk2.rom")`; the P6 sequencer by
 `loadLssRom("roms/diskii_p6.rom")`. Neither is embedded any more
-(2026-10-29, both are Apple's): a card built without them has no boot PROM
-(`hasBootRom()` false) and an empty sequencer, so a test that boots a
-hand-built card loads `disk2.rom` itself, and one that mounts a WOZ loads
-`diskii_p6.rom`.
+(2026-10-29, both are Apple's). Without `disk2.rom` the card boots with
+**POM2's own PROM** (`DiskIIBootRom.h`, `usingPom2BootRom()`), assembled per
+slot with `SlotRomAsm` from the boot protocol rather than Apple's bytes: the
+`$Cn01/03/05/07` signature, `$CnFF=$00`, the `$Cn5C` read entry (sector
+`$3D` into `($26)`, then INC `$27`/`$3D` while `$3D < ($0800)`, then
+`JMP $0801` with A = `$3D`, X = slot×16), `$2B` = slot×16. Being per-slot it
+reads `$C0nC` absolute, which frees X to decode 6-and-2 during the read (21
+of the 32 cycles a nibble takes). It boots DOS 3.3 and ProDOS. ProDOS's
+block 0 is the hard client: it COPIES `$Cn63-$CnEA` into `$09F7` as its own
+sector reader, enters at `$63` with a nibble in A, the mode pushed and
+X = slot×16, rewrites the branch operands at `$66 $7C $82 $9D $A3 $A5`, writes
+`$AC` at `$D4` and appends its return at `$EB`; it also reads back `$40` (the
+track last seen) to re-seek. So `$5C-$EA` sits on that grid, which
+`buildDiskIIBootRom()` verifies after assembling. The grid makes `$5C-$A5`
+resemble Apple's routine in shape (every operand ProDOS rewrites, and the
+zero page it reads, are fixed); the decode inside the grid is POM2's own.
+There is no stand-in for the P6: a test
+that mounts a WOZ loads `diskii_p6.rom` (`tests/DiskIIRoms.h`). Pinned:
+`diskii_pom2_boot_prom` (Apple's PROM as the control).
 PROM autodetects slot via `JSR $FF58 / TSX / LDA $0100,X`. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,
 Q7L/Q7H.

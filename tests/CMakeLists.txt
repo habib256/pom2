@@ -2851,6 +2851,40 @@ endif()
 add_test(NAME disk_boot_smoke COMMAND test_disk_boot)
 set_tests_properties(disk_boot_smoke PROPERTIES TIMEOUT 30)
 
+# POM2's own Disk II boot PROM (DiskIIBootRom.h): the page for every slot, the
+# decode table it builds, and whole DOS 3.3 / ProDOS boots against Apple's.
+add_executable(test_diskii_pom2_boot_prom
+    diskii_pom2_boot_prom_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_pom2_boot_prom PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_pom2_boot_prom PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_pom2_boot_prom PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_pom2_boot_prom PRIVATE winmm)
+endif()
+
+add_test(NAME diskii_pom2_boot_prom COMMAND test_diskii_pom2_boot_prom)
+set_tests_properties(diskii_pom2_boot_prom PROPERTIES TIMEOUT 60)
+
 # ─── DOS 3.2 (13-sector) end-to-end boot trace ────────────────────────────
 # Boots a real DOS 3.2 .d13 master through the 341-0009 boot PROM + the
 # 5-and-3 nibblizer + the bit-level LSS read, via the ][+ Autostart ROM,

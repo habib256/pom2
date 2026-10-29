@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskIICard.h"
+#include "DiskIIBootRom.h"
 #include "Block512Backing.h"
 #include "FloppySoundSink.h"
 #include "IWMDevice.h"
@@ -49,13 +50,14 @@ constexpr int kCyclesPerNibble  = 32;
 // which is what that part of the surface actually holds.
 constexpr int kQuarterTrackMax  = DiskImage::kQuarterTracks - 4;  // 156 = track 39
 
-// The card carries no PROM of its own. Apple's boot PROM (341-0027-A,
-// "P5") and sequencer PROM (341-0028-A, "P6", MAME layout — the scrambled
-// address scheme of `wozfdc.cpp lss_sync()`) are copyrighted dumps, so they
-// come from roms/disk2.rom and roms/diskii_p6.rom (SlotCardFactory, the ROM
-// download). They used to be embedded here as a fallback; without the files
-// the card now has no boot PROM (`hasBootRom()` false) and a WOZ image, which
-// needs the sequencer, cannot be read.
+// Apple's boot PROM (341-0027-A, "P5") and sequencer PROM (341-0028-A,
+// "P6", MAME layout — the scrambled address scheme of `wozfdc.cpp
+// lss_sync()`) are copyrighted dumps: they come from roms/disk2.rom and
+// roms/diskii_p6.rom (SlotCardFactory, the ROM download) and are no longer
+// embedded. Until loadBootRom() installs Apple's, the card boots with POM2's
+// own PROM (DiskIIBootRom.h), written from the boot protocol. There is no
+// stand-in for the P6: without it .dsk/.po/.nib media run the legacy gate and
+// a WOZ, which needs the sequencer, cannot be read.
 
 // Opt-in diagnostic — set POM2_DEBUG_DISK=1 to see one-shot lines marking
 // each milestone of the Disk II boot sequence. Cheap when off (one bool
@@ -81,9 +83,21 @@ bool debugEnabled() { return g_debugDisk; }
 DiskIICard::DiskIICard(int slot)
     : slot_(slot)
 {
-    // No PROM until loadBootRom() / loadLssRom(): `bootRomLoaded` and
-    // `p6RomLoaded` stay false, and `p6RomLoaded` false keeps the legacy
-    // 32-cycle gate for .dsk/.nib media.
+    // POM2's own boot PROM until loadBootRom() installs Apple's dump. No P6
+    // until loadLssRom(): `p6RomLoaded` false keeps the legacy 32-cycle gate
+    // for .dsk/.nib media.
+    const pom2::DiskIIBootRomBuild prom = pom2::buildDiskIIBootRom(slot_);
+    if (prom.ok) {
+        bootRom = prom.rom;
+        bootRomLoaded = true;
+    } else {
+        pom2::log().warn("Disk II", "POM2 boot PROM failed to assemble: " + prom.error);
+    }
+}
+
+bool DiskIICard::usingPom2BootRom() const
+{
+    return bootRomLoaded && bootRom == pom2::buildDiskIIBootRom(slot_).rom;
 }
 
 bool DiskIICard::loadBootRom(const std::string& path)

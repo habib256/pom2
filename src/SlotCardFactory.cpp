@@ -108,7 +108,7 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
             result.resourcePath = bootRom;
             result.status = "loaded: " + bootRom;
         } else {
-            result.status = "no boot PROM (roms/disk2.rom missing) — 5.25\" disks cannot boot";
+            result.status = "POM2 boot PROM (no roms/disk2.rom)";
         }
 
         const std::string lssRom = locate_("roms/diskii_p6.rom");

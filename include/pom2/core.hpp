@@ -166,8 +166,9 @@ public:
     std::string lastError() const;
 
     /// Install the core's Disk II controller, with its two drives, in `slot`
-    /// (1-7, 6 by convention). The P5 boot ROM is required, except on a //c
-    /// or //c+ (pass it empty: their $C600 is the system ROM). The P6
+    /// (1-7, 6 by convention). The P5 boot ROM is optional: left empty, the
+    /// controller boots with POM2's own PROM (DOS 3.3 and ProDOS disks); a
+    /// //c or //c+ does not use it at all ($C600 is the system ROM). The P6
     /// logic-state-sequencer ROM is optional for .dsk/.po/.nib media but
     /// REQUIRED for a WOZ: POM2 embeds neither PROM (both are Apple's), and
     /// insertDisk() refuses a WOZ on a controller without one. The //c+'s

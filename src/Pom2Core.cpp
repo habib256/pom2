@@ -295,10 +295,10 @@ bool Core::attachDiskII(std::string_view bootRom,
     card->setIwmHost(impl_->iicClass());
     if (impl_->plus) card->setIWM(&impl_->plus->iwm);
 
-    // A //c's $C600 is its system ROM, so the boot PROM is optional there —
-    // which is how a //c+ caller gives its built-in controller a sequencer.
-    if ((!bootRom.empty() || !impl_->iicClass())
-        && !card->loadBootRom(std::string(bootRom))) {
+    // Optional: without it the card boots with POM2's own PROM
+    // (DiskIIBootRom.h), and a //c's $C600 is its system ROM anyway — which
+    // is how a //c+ caller gives its built-in controller a sequencer.
+    if (!bootRom.empty() && !card->loadBootRom(std::string(bootRom))) {
         impl_->error = "Cannot load Disk II boot ROM: " + std::string(bootRom);
         return false;
     }

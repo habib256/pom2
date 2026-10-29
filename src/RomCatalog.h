@@ -80,7 +80,8 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         // ─── Disk II ──────────────────────────────────────────────────────
         { "Disk II (5.25\")", "Boot PROM, 16-sector (Apple 341-0027-A)",
           { "roms/disk2.rom" }, 256, 0, "",
-          "The card has no boot PROM: 5.25\" disks mount but cannot boot.",
+          "POM2's own boot PROM boots DOS 3.3 and ProDOS disks; a copy "
+          "protection that relies on Apple's exact PROM may not boot.",
           RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "P6 sequencer PROM, 16-sector (Apple 341-0028-A)",
           { "roms/diskii_p6.rom" }, 256, 0, "",

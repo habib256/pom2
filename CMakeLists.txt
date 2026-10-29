@@ -546,6 +546,7 @@ set(POM2_DEVICES_HEADERS
     src/ProDOSBlockCard.h
     src/CardVideoSource.h
     src/SlotRomAsm.h
+    src/DiskIIBootRom.h
     src/SuperSerialTransport.h
     src/Via6522.h
     src/W5100Resolver.h
@@ -991,6 +992,7 @@ set(HEADERS
     src/Disk35Image.h
     src/Disk35Controller_ImGui.h
     src/DiskController_ImGui.h
+    src/DiskIIBootRom.h
     src/DiskIICard.h
     src/DiskImage.h
     src/SmartPortHub.h

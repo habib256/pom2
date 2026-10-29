@@ -146,6 +146,9 @@ public:
     /// $FF and `PR#6` jumps into nothing.
     bool loadBootRom(const std::string& path);
     bool hasBootRom() const { return bootRomLoaded; }
+    /// True while the card boots with POM2's own PROM (DiskIIBootRom.h)
+    /// rather than an Apple dump from loadBootRom().
+    bool usingPom2BootRom() const;
     /// 13-sector boot PROM (Apple 341-0009, "P5" 13-sector) + LSS PROM
     /// (341-0010, "P6" 13-sector). Served instead of the 16-sector pair
     /// only while a 13-sector (pre-DOS-3.3) disk is mounted. Optional —
