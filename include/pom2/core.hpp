@@ -166,8 +166,13 @@ public:
     std::string lastError() const;
 
     /// Install the core's Disk II controller, with its two drives, in `slot`
-    /// (1-7, 6 by convention). The P5 boot ROM is required; the P6
-    /// logic-state-sequencer ROM is optional but recommended. A second call
+    /// (1-7, 6 by convention). The P5 boot ROM is required, except on a //c
+    /// or //c+ (pass it empty: their $C600 is the system ROM). The P6
+    /// logic-state-sequencer ROM is optional for .dsk/.po/.nib media but
+    /// REQUIRED for a WOZ: POM2 embeds neither PROM (both are Apple's), and
+    /// insertDisk() refuses a WOZ on a controller without one. The //c+'s
+    /// built-in controller starts with no sequencer: call
+    /// attachDiskII({}, "roms/diskii_p6.rom") to give it one. A second call
     /// replaces the controller, moving it if `slot` differs; a //c's disk
     /// port is wired to slot 6, so another slot is refused there.
     bool attachDiskII(std::string_view bootRom,

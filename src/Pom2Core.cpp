@@ -295,7 +295,10 @@ bool Core::attachDiskII(std::string_view bootRom,
     card->setIwmHost(impl_->iicClass());
     if (impl_->plus) card->setIWM(&impl_->plus->iwm);
 
-    if (!card->loadBootRom(std::string(bootRom))) {
+    // A //c's $C600 is its system ROM, so the boot PROM is optional there —
+    // which is how a //c+ caller gives its built-in controller a sequencer.
+    if ((!bootRom.empty() || !impl_->iicClass())
+        && !card->loadBootRom(std::string(bootRom))) {
         impl_->error = "Cannot load Disk II boot ROM: " + std::string(bootRom);
         return false;
     }
@@ -329,6 +332,16 @@ bool Core::insertDisk(int drive, std::string_view path)
     const bool inserted = impl_->diskII->insertDisk(drive, std::string(path));
     impl_->error = inserted ? std::string{}
                             : impl_->diskII->getLastError(drive);
+    // No sequencer PROM is embedded (Apple's): a WOZ forces the bit-level
+    // LSS, which reads nothing from an empty table. Refuse it rather than
+    // hand the guest a disk that spins and never answers.
+    if (inserted && impl_->diskII->driveImage(drive).isWoz()
+        && !impl_->diskII->hasLssTable()) {
+        impl_->diskII->ejectDisk(drive);
+        impl_->error = "A WOZ image needs the Disk II sequencer ROM "
+                       "(attachDiskII's sequencerRom, roms/diskii_p6.rom)";
+        return false;
+    }
     return inserted;
 }
 

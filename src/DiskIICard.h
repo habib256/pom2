@@ -166,6 +166,13 @@ public:
     /// what the card did with its embedded default before 2026-10-29.
     bool loadLssRom(const std::string& path, bool selectBitLss = true);
     bool hasLssRom() const { return p6RomLoaded; }
+    /// Does the card hold a sequencer table at all — loaded with or without
+    /// `selectBitLss`, or restored from a session? A WOZ needs one: with an
+    /// all-zero table the bit-level LSS it forces reads nothing.
+    bool hasLssTable() const {
+        for (uint8_t b : p6Rom) if (b) return true;
+        return false;
+    }
     struct SessionRestore {
         std::vector<uint8_t> runtime;
         std::array<std::unique_ptr<DiskImage>, 2> media;

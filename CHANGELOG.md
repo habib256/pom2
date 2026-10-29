@@ -37,6 +37,13 @@ CP/M, Ultima IV, …). None of it is POM2's to give away.
   has neither until `loadBootRom` / `loadLssRom`; the factory loads them
   from `roms/` as before, so a machine with the files behaves identically
   (both files are byte-identical to the removed tables).
+- **`pom2::Core` (the SDK facade)** lost the same fallback: the //c+'s
+  built-in Disk II has no sequencer, and `attachDiskII` without one had an
+  empty table, so a WOZ spun and never answered. `insertDisk` now refuses a
+  WOZ on a controller with no sequencer table (`DiskIICard::hasLssTable`),
+  saying why, and `attachDiskII` takes an empty boot PROM on a //c or //c+
+  (their `$C600` is the system ROM) — `attachDiskII({}, "roms/diskii_p6.rom")`
+  gives the //c+ controller its sequencer. Pinned in `pom2_core_api`.
 - **Desktop packages ship no ROM**; `stage_data.sh --verify` fails one that
   carries any file in `roms/` but the floppy samples and the README, with a
   negative control in `--self-test`. The first-launch offer is the way in.
