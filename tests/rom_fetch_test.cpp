@@ -283,7 +283,7 @@ int main()
     expect(!cat.empty(), "catalog is not empty");
     // The primary source: an HTTPS archive.org download, and every entry's
     // member is "roms/" + the name POM2 probes — the layout of pom2_roms.zip.
-    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_roms/", 0) == 0,
+    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_roms_202610/", 0) == 0,
            "the POM2 archive is an HTTPS archive.org download");
     for (const auto& e : pom2::romFetchCatalog()) {
         const std::string m = pom2::romArchiveMember(e);

@@ -79,7 +79,7 @@ still has every dump in `roms/`.
 
 If a ROM is missing or damaged, **Help → ROM Status** says which one, and
 **Download missing ROMs** fetches it from POM2's
-[ROM archive](https://archive.org/details/pom2_roms) on archive.org, with
+[ROM archive](https://archive.org/details/pom2_roms_202610) on archive.org, with
 the [RetroBIOS](https://github.com/Abdess/retrobios) collection as a
 fallback. POM2 checks every downloaded file's size and SHA-256 before
 installing it.

@@ -9880,7 +9880,7 @@ on demand (open / Rescan) rather than per frame.
 
 **Download missing ROMs.** The button fetches the Apple II dumps POM2
 actually probes. **Primary source** *(2026-10-29)*: POM2's own archive,
-`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_roms/pom2_roms.zip>
+`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_roms_202610/pom2_roms.zip>
 — one zip, downloaded once per run, each dump at `roms/<probed name>`
 (`romArchiveMember`). It is not trusted, only checked: every member passes
 the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per

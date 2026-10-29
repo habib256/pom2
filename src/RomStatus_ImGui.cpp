@@ -668,7 +668,7 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
             ImGui::TextUnformatted(
                 "Fetches the Apple II firmware POM2 knows how to use from "
-                "POM2's ROM archive (archive.org/details/pom2_roms), and "
+                "POM2's ROM archive (archive.org/details/pom2_roms_202610), and "
                 "anything it cannot supply from the RetroBIOS collection "
                 "(github.com/Abdess/retrobios). Every file is checked against "
                 "its SHA-256 before it is installed. A file already present "

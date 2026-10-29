@@ -26,7 +26,7 @@ repository keeps every dump — the tests and source builds use them.
   "Download the Apple II ROMs?" opens ROM Status and starts the download
   there.
 - **Download source order**: POM2's archive on archive.org
-  (`archive.org/details/pom2_roms`, one zip) first, RetroBIOS at the pinned
+  (`archive.org/details/pom2_roms_202610`, one zip) first, RetroBIOS at the pinned
   commit for any entry the archive cannot supply. Same SHA-256 gate on both.
   `rom_fetch_live_probe` now checks each source alone: 49/49 from each.
 - **Downloads land in POM2's own `roms/`** (beside the binary, `./roms` in

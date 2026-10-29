@@ -7,7 +7,7 @@ DIX demo — plus the floppy_samples/ drive sounds. Apple's other firmware is
 not redistributed with the package.
 
 At the first launch POM2 offers to download the rest from POM2's ROM
-archive (archive.org/details/pom2_roms), with the RetroBIOS collection
+archive (archive.org/details/pom2_roms_202610), with the RetroBIOS collection
 (github.com/Abdess/retrobios) as a fallback; each file is checked against
 its SHA-256. Any time later: Help -> ROM Status -> Download missing ROMs. A dump you already own can be dropped onto the POM2 window (or
 use Import ROM file... in ROM Status): POM2 recognises it by content and

@@ -131,9 +131,9 @@ constexpr const char* kRetroBiosRawPrefix = POM2_RETROBIOS_RAW;
 /// (archive unreachable, member absent or not the expected dump) is fetched
 /// from RetroBIOS at the pinned commit, the SECONDARY source.
 constexpr const char* kPom2RomArchivePage =
-    "https://archive.org/details/pom2_roms";
+    "https://archive.org/details/pom2_roms_202610";
 constexpr const char* kPom2RomArchiveUrl =
-    "https://archive.org/download/pom2_roms/pom2_roms.zip";
+    "https://archive.org/download/pom2_roms_202610/pom2_roms.zip";
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
 
