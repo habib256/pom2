@@ -24,8 +24,12 @@
 //      byte — which the guest's `LDA $C08C,X / BPL` loops are timed against;
 //   2. a whole boot of that disk on the ][+: the same RAM, cycle for cycle,
 //      at every checkpoint;
-//   3. without a P6 the WOZ senses write-protected (the sequencer does not
-//      write), and loading the P6 lifts it.
+//   3. a writable WOZ senses writable without a P6, as with it;
+//   4. writing: an RWTS-shaped burst — Q7H with the first byte, a load
+//      (STA $C0nD) then a shift (ORA $C0nC) 4 CPU cycles later per byte, 40
+//      cycles apart for self-sync $FFs and 32 for data — lays down the same
+//      flux transitions as Apple's P6, for every phase of the burst against
+//      the bit cell (8) and every Q7H-to-shift delay RWTS can have (4).
 
 #include "DiskIICard.h"
 #include "DiskIIRoms.h"
@@ -124,6 +128,42 @@ std::vector<uint64_t> bootHashes(const std::string& woz, bool appleP6)
     return out;
 }
 
+// An RWTS-shaped write burst on a writable copy of `woz`; the flux the track
+// holds after it. `lead` moves the burst against the bit cell, `entry` is
+// the Q7H-to-shift delay.
+std::vector<int> writeBurst(const std::string& woz, bool appleP6, int lead, int entry)
+{
+    const auto tmp = std::filesystem::temp_directory_path() / "pom2_own_sequencer_write.woz";
+    std::filesystem::copy_file(woz, tmp, std::filesystem::copy_options::overwrite_existing);
+    DiskIICard c(6);
+    c.setWriteBackEnabled(true);
+    if (appleP6) c.loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"));
+    if (!c.insertDisk(0, tmp.string())) std::exit(1);
+    c.driveImage(0).setWriteBackEnabled(true);
+    long now = 0;
+    auto at = [&](long t) { if (t > now) { c.advanceCycles(int(t - now)); now = t; } };
+    auto rd = [&](long t, uint8_t sw) { at(t); c.deviceSelectRead(sw); };
+    auto wr = [&](long t, uint8_t sw, uint8_t v) { at(t); c.deviceSelectWrite(sw, v); };
+    rd(0, 0x9);
+    long t = 100000 + lead;
+    rd(t, 0xD); rd(t + 4, 0xE);                  // sense
+    wr(t + 8, 0xF, 0xFF);                        // Q7H, the first byte
+    rd(t + 8 + entry, 0xC);                      // Q6L
+    t += 40;
+    const uint8_t data[] = { 0xD5, 0xAA, 0xAD, 0x96, 0xFF, 0x9A, 0xB7, 0xEA,
+                             0xCB, 0xDF, 0xF2, 0xA6, 0xDE, 0xAA, 0xEB, 0xFF };
+    for (int i = 0; i < 6; ++i) { wr(t, 0xD, 0xFF); rd(t + 4, 0xC); t += 40; }
+    for (uint8_t b : data)      { wr(t, 0xD, b);    rd(t + 4, 0xC); t += 32; }
+    rd(t, 0xE);                                  // Q7L: the splice
+    rd(t + 4, 0xC);
+    at(t + 1000);
+    std::vector<int> ev = c.driveImage(0).fluxEvents(c.getHalfTrack() * 2);
+    c.deviceSelectRead(0x8);
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
+    return ev;
+}
+
 } // namespace
 
 int main()
@@ -151,30 +191,39 @@ int main()
     if (firstDiff >= 0) std::fprintf(stderr, "RAM differs from %d M cycles\n", firstDiff + 1);
     check(firstDiff < 0, "the boot runs the same 12 M cycles as with Apple's P6");
 
-    // 3. It does not write: the WOZ senses protected until a P6 is loaded.
-    // A writable copy, so the image's own protection is out of the way.
+    // 3. A writable WOZ senses writable, with or without the P6.
     {
         const auto tmp = std::filesystem::temp_directory_path() / "pom2_own_sequencer.woz";
         std::filesystem::copy_file(woz, tmp, std::filesystem::copy_options::overwrite_existing);
-        DiskIICard c(6);
-        c.setWriteBackEnabled(true);
-        c.insertDisk(0, tmp.string());
-        c.driveImage(0).setWriteBackEnabled(true);
-        const bool writable = !c.driveImage(0).isWriteProtected();
-        check(writable, "the copy is writable (precondition)");
-        auto sense = [&c] {
+        for (bool appleP6 : { false, true }) {
+            DiskIICard c(6);
+            c.setWriteBackEnabled(true);
+            if (appleP6) c.loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"));
+            c.insertDisk(0, tmp.string());
+            c.driveImage(0).setWriteBackEnabled(true);
+            check(!c.driveImage(0).isWriteProtected(), "the copy is writable (precondition)");
+            c.deviceSelectRead(0x9);             // motor on
             c.deviceSelectRead(0xD);             // Q6H
-            uint8_t v = 0;
+            uint8_t v = 0xFF;
             for (int i = 0; i < 64; ++i) { c.advanceCycles(1); v = c.deviceSelectRead(0xE); }
-            return (v & 0x80) != 0;              // shifted-in WPT
-        };
-        c.deviceSelectRead(0x9);                 // motor on
-        check(sense(), "without a P6 a WOZ senses write-protected");
-        c.loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"));
-        check(!writable || !sense(), "with the P6 the same WOZ senses writable");
-        c.deviceSelectRead(0x8);                 // motor off
+            check(!(v & 0x80), appleP6 ? "the P6 senses the copy writable"
+                                       : "POM2's sequencer senses the copy writable");
+            c.deviceSelectRead(0x8);
+        }
         std::error_code ec;
         std::filesystem::remove(tmp, ec);
+    }
+
+    // 4. Writing, against Apple's P6.
+    {
+        int same = 0, cases = 0;
+        for (int lead = 0; lead < 8; ++lead)
+            for (int entry = 4; entry < 8; ++entry) {
+                ++cases;
+                same += writeBurst(woz, true, lead, entry) == writeBurst(woz, false, lead, entry);
+            }
+        std::printf("write bursts: %d of %d lay down Apple's flux\n", same, cases);
+        check(same == cases, "RWTS-shaped writes lay down the same flux as Apple's P6");
     }
 
     if (failures) {

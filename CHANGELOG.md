@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-29 — POM2's own sequencer writes WOZ too
+
+The read-only fallback is gone: `ownSequencerStep` writes, on the same cell
+clock as it reads, so writing picks up reading's phase as the hardware's
+does. The register takes the bus every cycle while Q6 is high and shifts
+once per cell while it is low; the bit 7 it held at the decision point goes
+out five LSS cycles later as a write-line flip, which the existing write
+buffer turns into flux. Measured first on Apple's P6 as a black box with a
+new probe (`lss_write_probe`): an RWTS-shaped burst — Q7H with the first
+byte, `STA $C0nD,X` then `ORA $C0nC,X` per byte, 40 cycles apart for
+self-sync and 32 for data — replayed at every phase against the cell.
+
+- **RWTS writes lay down Apple's flux exactly**: 32 of 32 bursts with the
+  4-cycle load-then-shift spacing every DOS/ProDOS RWTS uses, all phases,
+  all Q7H-to-shift delays (`diskii_own_sequencer`). Over all 128 timings
+  the probe tries, 96 match; the rest start the shift 5-7 cycles after the
+  load, which no standard RWTS does, and differ by one sync bit. No
+  one-clock model reached more: Apple's sequencer changes rhythm with the
+  mode, and following it further would be re-deriving its table.
+- A WOZ without the P6 now senses writable; `writingInhibited()` lost the
+  clause. The snapshot's v5 flags byte carries the pending write bit.
+- Mutation controls: removing the shift fails 32 of 32. Moving the flip
+  within the cell does not — and cannot: a WOZ track keeps transitions per
+  bit cell, so that phase is not observable on the disk.
+
 ## 2026-10-29 — POM2's own read sequencer: WOZ without Apple's P6
 
 Without `roms/diskii_p6.rom` a WOZ, which forces the bit-level path, read

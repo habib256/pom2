@@ -9869,6 +9869,26 @@ add_executable(lss_window_probe EXCLUDE_FROM_ALL
 )
 target_include_directories(lss_window_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+# lss_write_probe — manual: the flux an RWTS-shaped write burst lays on a WOZ,
+# Apple's P6 against POM2's own sequencer, transition for transition.
+add_executable(lss_write_probe EXCLUDE_FROM_ALL
+    lss_write_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(lss_write_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 set(POM2_PROBE_TARGETS
     a2osx_boot_probe
     artifact_probe
@@ -9902,6 +9922,7 @@ set(POM2_PROBE_TARGETS
     test_total_replay_boot_trace
     u5_woz_save_probe
     lss_window_probe
+    lss_write_probe
 )
 set(_pom2_probe_present)
 foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)

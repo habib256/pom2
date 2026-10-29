@@ -50,7 +50,7 @@
 # own boot PROM (DiskIIBootRom.h) boots every floppy POM2 distributes —
 # checked with `pom2_headless --prom pom2` on Dirtbike, Micro-Sokoban and
 # ChromaBreak, the same screens as Apple's — and POM2's own sequencer
-# (DiskIICard::ownSequencerStep) reads a dropped WOZ, read-only. The //e's
+# (DiskIICard::ownSequencerStep) reads and writes a dropped WOZ. The //e's
 # other default cards run without a dump (Grappler+ degraded, SmartPort
 # synthetic). CI fetches them with tools/fetch_test_media.py before the WASM
 # build.

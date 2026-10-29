@@ -3746,12 +3746,20 @@ table: a pulse marks its cell as a 1 and re-times the cell clock (decision 4
 LSS cycles later, a 0 every 8 after), bits shift in until bit 7, and the
 finished byte is held — zeros ignored, the first 1 folded in at the next
 decision — for 8 CPU cycles (16 after a sync byte), the windows
-`lss_window_probe` measured on Apple's P6. Read-only: `writingInhibited()`
-is true for a WOZ without a table. Its three counters are in the snapshot
-(`D2S1` v5, two bytes after the v4 write burst; older blobs start it fresh),
-because `session_snapshot` restores a WOZ mid-read and demands the same
-nibbles after. Pinned: `diskii_own_sequencer` (same
-stream hash, same hold windows and same 12 M-cycle boot as Apple's P6). Pinned:
+`lss_window_probe` measured on Apple's P6. It writes too, on the same cell
+clock (so writing picks up reading's phase): the register takes the bus every
+cycle while Q6 is high, shifts once per cell while Q6 is low, and the bit 7
+it held at the decision point goes out 5 LSS cycles later as a write-line
+flip. With RWTS's load-then-shift spacing (STA $C0nD,X / ORA $C0nC,X, 4 CPU
+cycles) that lays down Apple's flux exactly at every phase; a shift started
+5-7 cycles after the load can differ by one sync bit (`lss_write_probe`
+measures 96/128 over those). Where in the cell the flip falls is not
+observable — a WOZ track keeps transitions per bit cell. Its counters are in
+the snapshot (`D2S1` v5, two bytes after the v4 write burst; older blobs
+start it fresh), because `session_snapshot` restores a WOZ mid-read and
+demands the same nibbles after. Pinned: `diskii_own_sequencer` (same stream
+hash, hold windows and 12 M-cycle boot as Apple's P6, and the same flux from
+32 RWTS-shaped write bursts). Pinned:
 `diskii_pom2_boot_prom` (Apple's PROM as the control).
 PROM autodetects slot via `JSR $FF58 / TSX / LDA $0100,X`. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,

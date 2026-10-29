@@ -171,7 +171,7 @@ public:
     bool hasLssRom() const { return p6RomLoaded; }
     /// Does the card hold a sequencer table at all — loaded with or without
     /// `selectBitLss`, or restored from a session? Without one, a WOZ is read
-    /// by POM2's own sequencer (ownSequencerStep), read-only.
+    /// and written by POM2's own sequencer (ownSequencerStep).
     bool hasLssTable() const { return lssTable_; }
     struct SessionRestore {
         std::vector<uint8_t> runtime;
@@ -603,7 +603,8 @@ private:
     int     seqCount_   = 0;
     bool    seqSeen_    = false;
     bool    seqPending_ = false;
-    void    ownSequencerStep();
+    bool    seqWriteBit_ = false;           // bit decided, emitted next cell
+    void    ownSequencerStep(DiskImage& img, int qt, int64_t revStart);
     // 13-sector (341-0010) LSS PROM + the "this card is currently a
     // 13-sector controller" latch. serving13_ is recomputed on every
     // insertDisk from whether any mounted disk is 13-sector AND both
@@ -743,10 +744,7 @@ private:
     /// write current comes on.
     bool writingInhibited() const {
         return (drivePhases_[activeDrive] & 0x2) != 0 ||
-               images[activeDrive].isWriteProtected() ||
-               // POM2's own sequencer reads a WOZ but does not write one:
-               // the disk senses protected, so a guest refuses cleanly.
-               (images[activeDrive].isWoz() && !lssTable_);
+               images[activeDrive].isWriteProtected();
     }
 
     /// The WPT line as the CONTROLLER senses it — MAME

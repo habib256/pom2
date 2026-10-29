@@ -170,8 +170,8 @@ public:
     /// controller boots with POM2's own PROM (DOS 3.3 and ProDOS disks); a
     /// //c or //c+ does not use it at all ($C600 is the system ROM). The P6
     /// logic-state-sequencer ROM is optional: without it .dsk/.po/.nib media
-    /// run the legacy nibble gate and a WOZ is read by POM2's own sequencer
-    /// (the same nibbles, read-only: the disk senses write-protected). The
+    /// run the legacy nibble gate and a WOZ goes through POM2's own sequencer
+    /// (the same nibbles and, for RWTS writes, the same flux as Apple's). The
     /// //c+'s built-in controller starts with none: attachDiskII({},
     /// "roms/diskii_p6.rom") gives it Apple's. A second call
     /// replaces the controller, moving it if `slot` differs; a //c's disk

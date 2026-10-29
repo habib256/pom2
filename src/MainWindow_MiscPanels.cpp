@@ -242,7 +242,7 @@ void MainWindow::renderAbstractionPanel()
     // mounted means the legacy 32-cycle nibble gate, which reads stock DOS
     // 3.3 fine and loses every bitstream-reading protection. `usingBitLss()`
     // is the honest test — a mounted WOZ forces the bit-level path (POM2's
-    // own sequencer, read-only, when there is no roms/diskii_p6.rom).
+    // own sequencer when there is no roms/diskii_p6.rom).
     degradable("diskii", primaryDiskII() != nullptr,
                primaryDiskII() && primaryDiskII()->usingBitLss(), pom2::AbsLevel::H1,
                "roms/diskii_p6.rom absent and no WOZ mounted — running the "

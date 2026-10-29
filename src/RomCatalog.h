@@ -86,8 +86,8 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         { "Disk II (5.25\")", "P6 sequencer PROM, 16-sector (Apple 341-0028-A)",
           { "roms/diskii_p6.rom" }, 256, 0, "",
           "Falls back to the legacy 32-cycle nibble gate for .dsk/.po/.nib, "
-          "and to POM2's own sequencer for WOZ: the same nibbles, but "
-          "read-only (the disk senses write-protected).",
+          "and to POM2's own sequencer for WOZ, which reads and writes like "
+          "Apple's for every standard RWTS.",
           RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "Boot PROM, 13-sector (Apple 341-0009)",
           { "roms/disk2_13.rom" }, 256, 0, "",
