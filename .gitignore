@@ -83,7 +83,7 @@ imgui.ini
 
 # No copyrighted firmware and no third-party disk image in the repository
 # (2026-10-29). ROMs come from the ROM download (archive.org pom2_roms_202610);
-# the test media from tools/fetch_test_media.py (pom2_testmedia_202610). The
+# the test media from tools/fetch_test_media.py (pom2_testmedia_20261029). The
 # files still tracked under these folders — the author's own GPL software,
 # French Touch's GPL DIX, the MAME floppy samples (pic/ holds the author's
 # own photos and the MIT drive artwork, and stays tracked as a whole) —

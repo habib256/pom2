@@ -58,7 +58,9 @@ std::vector<uint8_t> pattern(size_t n, uint8_t seed)
 bool roundTrips(const std::vector<uint8_t>& in, const std::vector<uint8_t>& out)
 {
     if (out.size() != (in.size() + 127) / 128 * 128) return false;
-    if (std::memcmp(in.data(), out.data(), in.size()) != 0) return false;
+    // An empty vector's data() may be null, and memcmp on null is UB even
+    // for a zero length (UBSan's nonnull check, nightly asan-ubsan).
+    if (!in.empty() && std::memcmp(in.data(), out.data(), in.size()) != 0) return false;
     for (size_t i = in.size(); i < out.size(); ++i) if (out[i] != 0x1A) return false;
     return true;
 }

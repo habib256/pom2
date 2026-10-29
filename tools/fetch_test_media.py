@@ -28,7 +28,7 @@ import time
 import urllib.request
 import zipfile
 
-DEFAULT_URL = ("https://archive.org/download/pom2_testmedia_202610/"
+DEFAULT_URL = ("https://archive.org/download/pom2_testmedia_20261029/"
                "pom2_testmedia.zip")
 
 

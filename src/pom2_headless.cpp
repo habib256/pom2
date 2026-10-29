@@ -101,7 +101,9 @@ void usage(const char* prog)
         "\n"
         "  --rom <path>          System ROM (normally 12/16 KiB for II/II+).\n"
         "                        Default: probe roms/apple2.rom; no profile switch.\n"
-        "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/\n"
+        "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
+        "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
+        "                        `--prom pom2` forces POM2's even with a dump\n"
         "  --disk <path>         Disk II image. Default: probe disks_5.4/dos33_master.dsk\n"
         "  --port <N>            SSC TCP port. Default 6502\n"
         "  --paste-after <sec>   Emulated seconds before autopasting\n"
@@ -318,7 +320,8 @@ int main(int argc, char** argv)
 
     const std::string romPath = !romArg.empty() ? romArg : findAsset(
         "roms/apple2.rom", { "../roms/apple2.rom", "../../roms/apple2.rom" });
-    const std::string promPath = !promArg.empty() ? promArg : findAsset(
+    const std::string promPath = promArg == "pom2" ? std::string()
+        : !promArg.empty() ? promArg : findAsset(
         "roms/disk2.rom", { "../roms/disk2.rom", "../../roms/disk2.rom" });
     // This legacy DOS master probe resolves only in a development library.
     // Packages ship named curated images under bundled_disks/ instead;
@@ -335,13 +338,15 @@ int main(int argc, char** argv)
     // DOS 3.3), so its absence stays fatal. In capture mode the machine boots
     // the ROM to the Applesoft prompt on its own. Packages omit the legacy
     // DOS master; requiring it would make their no-argument smoke fail.
-    if (!captureMode && (promPath.empty() || diskPath.empty())) {
-        std::fprintf(stderr, "missing prom/disk; try --help\n");
+    // No disk2.rom is not fatal: the card boots with POM2's own PROM.
+    if (!captureMode && diskPath.empty()) {
+        std::fprintf(stderr, "missing disk; try --help\n");
         return 1;
     }
     std::fprintf(stderr,
         "[POM2 headless] rom=%s prom=%s disk=%s port=%d\n",
-        romPath.c_str(), promPath.c_str(), diskPath.c_str(), port);
+        romPath.c_str(), promPath.empty() ? "(POM2 boot PROM)" : promPath.c_str(),
+        diskPath.c_str(), port);
 
     // II/II+ mode is enough for DOS 3.3. We deliberately avoid loading
     // apple2e.rom here even if present so the headless target stays
@@ -362,10 +367,13 @@ int main(int argc, char** argv)
     // falls through to Applesoft and draws its banner — which is what we want
     // to photograph. Packages omit the legacy default disk, so this is the
     // normal path without an explicit --disk there.
-    const bool plugDiskII = !promPath.empty() && (!captureMode || !diskPath.empty());
+    const bool plugDiskII = !captureMode || !diskPath.empty();
     if (plugDiskII) {
         auto disk = std::make_unique<DiskIICard>();
-        if (!disk->loadBootRom(promPath))     { std::fprintf(stderr, "PROM load failed\n");   return 1; }
+        if (!promPath.empty() && !disk->loadBootRom(promPath)) {
+            std::fprintf(stderr, "PROM load failed\n");
+            return 1;
+        }
         // Optional: load the bit-level LSS PROM if available. Falls back to
         // the legacy 32-cycle gate when missing.
         {
