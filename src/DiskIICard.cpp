@@ -55,9 +55,9 @@ constexpr int kQuarterTrackMax  = DiskImage::kQuarterTracks - 4;  // 156 = track
 // lss_sync()`) are copyrighted dumps: they come from roms/disk2.rom and
 // roms/diskii_p6.rom (SlotCardFactory, the ROM download) and are no longer
 // embedded. Until loadBootRom() installs Apple's, the card boots with POM2's
-// own PROM (DiskIIBootRom.h), written from the boot protocol. There is no
-// stand-in for the P6: without it .dsk/.po/.nib media run the legacy gate and
-// a WOZ, which needs the sequencer, cannot be read.
+// own PROM (DiskIIBootRom.h), written from the boot protocol. Without the P6,
+// .dsk/.po/.nib media run the legacy gate and a WOZ is read by POM2's own
+// sequencer (ownSequencerStep), read-only.
 
 // Opt-in diagnostic — set POM2_DEBUG_DISK=1 to see one-shot lines marking
 // each milestone of the Disk II boot sequence. Cheap when off (one bool
@@ -148,6 +148,7 @@ bool DiskIICard::loadLssRom(const std::string& path, bool selectBitLss)
         pom2::log().warn("Disk II", "Short read on " + path);
         return false;
     }
+    lssTable_ = true;
     if (!selectBitLss) return true;
     p6RomLoaded = true;
     pom2::log().info("Disk II", "P6 LSS PROM loaded: " + path);
@@ -205,8 +206,8 @@ void DiskIICard::refreshMediaDerivedState(bool warnMissing13Rom)
     // the legacy 32-cycle gate available for tests that pin pre-LSS
     // behaviour. Plus: any drive holding a .woz image *forces* the LSS
     // path. WOZ stores raw bit cells, which the legacy gate cannot decode;
-    // without roms/diskii_p6.rom the sequencer table is empty and the WOZ
-    // reads nothing, which is the honest answer for a card with no P6.
+    // without roms/diskii_p6.rom POM2's own sequencer reads them
+    // (ownSequencerStep), read-only.
     const bool wasBitLss = useBitLss;
     useBitLss = p6RomLoaded;
     for (int d = 0; d < kDriveCount; ++d) {
@@ -829,7 +830,7 @@ void DiskIICard::pushIwmFloppy()
 // keeps the media near-zero until a track is actually written. Blob is
 // self-describing (magic + version) so a foreign card on this slot ignores it.
 namespace {
-constexpr uint8_t kDiskIISnapVersion = 4;
+constexpr uint8_t kDiskIISnapVersion = 5;
 
 // FNV-1a 64 of the image path — the media identity stamped next to each
 // captured track buffer (v3). Restoring a media snapshot onto a drive
@@ -903,6 +904,13 @@ void DiskIICard::appendSnapshotState(std::vector<uint8_t>& out) const
     u8(writeLineActive ? 1 : 0);
     u64(static_cast<uint64_t>(writeStartTime));
     for (int i = 0; i < wp; ++i) u64(static_cast<uint64_t>(writeBuffer[i]));
+
+    // v5: POM2's own sequencer (no P6) — the cycles to its next bit
+    // decision, a pulse seen in the current cell, a 1 held aside. Without
+    // them a restore mid-read re-timed on the next pulse and the guest saw
+    // different nibbles than the machine it was saved from.
+    u8(static_cast<uint8_t>(seqCount_));
+    u8(static_cast<uint8_t>((seqSeen_ ? 1 : 0) | (seqPending_ ? 2 : 0)));
 }
 
 void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -954,6 +962,8 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
             if (wp > static_cast<uint32_t>(kWriteBufferSize)) return;
             q += 4 + 1 + 8;
             if (static_cast<std::size_t>(wp) * 8 > len - q) return;
+            q += static_cast<std::size_t>(wp) * 8;
+            if (version >= 5 && len - q < 2) return;
         }
     }
 
@@ -1057,6 +1067,19 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
         writePosition   = 0;
         writeLineActive = false;
         writeStartTime  = writeMode ? static_cast<int64_t>(lssCycle) : 0;
+    }
+
+    // v5: POM2's own sequencer. Older blobs start it fresh: it re-times on
+    // the next pulse.
+    if (version >= 5) {
+        seqCount_ = g8();
+        if (seqCount_ > 8) seqCount_ = 0;
+        const uint8_t flags = g8();
+        seqSeen_    = (flags & 1) != 0;
+        seqPending_ = (flags & 2) != 0;
+    } else {
+        seqCount_ = 0;
+        seqSeen_ = seqPending_ = false;
     }
 
     // The motor flag is a member, but the floppy sound device holds its own
@@ -1216,6 +1239,58 @@ void DiskIICard::advanceNoise(uint64_t extraCycles)
 // pipe latency on $C0nC reads. PULSE is set for exactly one LSS cycle
 // when the head crosses a flux transition, fed from
 // DiskImage::getNextTransition (the flux model port).
+// POM2's own read sequencer — what the controller does when there is no P6
+// table (Apple's 341-0028-A is not redistributed). Not a re-encoding of that
+// table: a data separator written from the behaviour the guest can observe.
+//
+//   * A flux pulse marks the bit cell it falls in as a 1 and re-times the
+//     cell clock: the bit is decided 4 LSS cycles (a half cell) after the
+//     pulse, and every 8 cycles after that a cell with no pulse is a 0.
+//   * Bits shift into the data register until its bit 7 is set: a byte.
+//   * The byte is then HELD. Zeros are ignored; the first 1 is kept aside,
+//     and at the decision after it the register restarts as that 1 followed
+//     by the new bit. So a byte stays readable for two bit cells (8 CPU
+//     cycles), and a sync byte's two trailing zeros keep it for four (16) —
+//     what Apple's sequencer gives, measured on WOZ media (lss_window_probe),
+//     and what `LDA $C08C,X / BPL` polling loops are timed against.
+//   * With Q6 high it senses write-protect the way the hardware does: the
+//     register shifts right with the WPT line in bit 7.
+//   * It does not write. A WOZ without the P6 senses write-protected
+//     (writingInhibited), so a guest refuses to write instead of corrupting.
+//
+// Its three counters are in the snapshot (D2S1 v5), so a rewind or a session
+// restored mid-read serves the same nibbles as the machine it was saved from.
+void DiskIICard::ownSequencerStep()
+{
+    const bool q6 = (address & 0x04) != 0;
+    const bool q7 = (address & 0x08) != 0;
+    if (q7) {                                    // write modes: no writing
+        if (q6) lssData = writeLatch;
+        return;
+    }
+    if (q6) {                                    // sense write-protect
+        lssData = static_cast<uint8_t>((lssData >> 1)
+                | (senseWriteProtect() ? 0x80 : 0x00));
+        return;
+    }
+    if ((address & 0x10) == 0) {                 // PULSE (active low)
+        seqSeen_  = true;
+        seqCount_ = 4;
+    }
+    if (seqCount_ > 0 && --seqCount_ > 0) return;
+    const int bit = seqSeen_ ? 1 : 0;
+    seqSeen_  = false;
+    seqCount_ = 8;
+    if (!(lssData & 0x80)) {
+        lssData = static_cast<uint8_t>((lssData << 1) | bit);
+    } else if (seqPending_) {
+        lssData = static_cast<uint8_t>(0x02 | bit);
+        seqPending_ = false;
+    } else if (bit) {
+        seqPending_ = true;
+    }
+}
+
 void DiskIICard::lssSync(uint64_t extraCycles)
 {
     if (active == MODE_IDLE) return;
@@ -1377,6 +1452,11 @@ void DiskIICard::lssSync(uint64_t extraCycles)
         }
 
         while (static_cast<int64_t>(lssCycle) < cyclesNextTrans) {
+            if (!lssTable_) {                // no P6: POM2's own sequencer
+                ownSequencerStep();
+                ++lssCycle;
+                continue;
+            }
             const uint8_t op = p6Rom[address];
 
             // Write side: edge-detect on WRITE_DATA (= address bit 7).

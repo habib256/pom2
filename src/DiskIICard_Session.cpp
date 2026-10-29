@@ -35,8 +35,10 @@ bool DiskIICard::installSessionIdentity(const std::vector<uint8_t>& bytes)
         return true;
     };
     iwmHost_ = bytes[1] != 0;
-    return prom(bootRomLoaded, bootRom) && prom(bootRom13Loaded, bootRom13) &&
-           prom(p6RomLoaded, p6Rom) && prom(p6Rom13Loaded, p6Rom13);
+    const bool ok = prom(bootRomLoaded, bootRom) && prom(bootRom13Loaded, bootRom13) &&
+                    prom(p6RomLoaded, p6Rom) && prom(p6Rom13Loaded, p6Rom13);
+    lssTable_ = std::any_of(p6Rom.begin(), p6Rom.end(), [](uint8_t b) { return b != 0; });
+    return ok;
 }
 
 bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& error) const
@@ -84,6 +86,7 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
     validator->bootRom = bootRom; validator->bootRomLoaded = bootRomLoaded;
     validator->bootRom13 = bootRom13; validator->bootRom13Loaded = bootRom13Loaded;
     validator->p6Rom = p6Rom; validator->p6RomLoaded = p6RomLoaded;
+    validator->lssTable_ = lssTable_;
     validator->p6Rom13 = p6Rom13; validator->p6Rom13Loaded = p6Rom13Loaded;
     validator->iwmHost_ = iwmHost_;
     for (int d = 0; d < kDriveCount; ++d) {

@@ -332,16 +332,6 @@ bool Core::insertDisk(int drive, std::string_view path)
     const bool inserted = impl_->diskII->insertDisk(drive, std::string(path));
     impl_->error = inserted ? std::string{}
                             : impl_->diskII->getLastError(drive);
-    // No sequencer PROM is embedded (Apple's): a WOZ forces the bit-level
-    // LSS, which reads nothing from an empty table. Refuse it rather than
-    // hand the guest a disk that spins and never answers.
-    if (inserted && impl_->diskII->driveImage(drive).isWoz()
-        && !impl_->diskII->hasLssTable()) {
-        impl_->diskII->ejectDisk(drive);
-        impl_->error = "A WOZ image needs the Disk II sequencer ROM "
-                       "(attachDiskII's sequencerRom, roms/diskii_p6.rom)";
-        return false;
-    }
     return inserted;
 }
 

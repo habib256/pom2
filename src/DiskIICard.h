@@ -170,12 +170,9 @@ public:
     bool loadLssRom(const std::string& path, bool selectBitLss = true);
     bool hasLssRom() const { return p6RomLoaded; }
     /// Does the card hold a sequencer table at all — loaded with or without
-    /// `selectBitLss`, or restored from a session? A WOZ needs one: with an
-    /// all-zero table the bit-level LSS it forces reads nothing.
-    bool hasLssTable() const {
-        for (uint8_t b : p6Rom) if (b) return true;
-        return false;
-    }
+    /// `selectBitLss`, or restored from a session? Without one, a WOZ is read
+    /// by POM2's own sequencer (ownSequencerStep), read-only.
+    bool hasLssTable() const { return lssTable_; }
     struct SessionRestore {
         std::vector<uint8_t> runtime;
         std::array<std::unique_ptr<DiskImage>, 2> media;
@@ -193,9 +190,9 @@ public:
                              bool allowWritable = false) const;
     void applySessionState(SessionRestore&& prepared);
     /// Is the bit-level LSS actually driving the head right now? Distinct
-    /// from `hasLssRom()`: a mounted WOZ forces the bit-level path (and
-    /// reads nothing without `diskii_p6.rom`, the card carrying no PROM of
-    /// its own), and with neither the card runs the legacy 32-cycle gate. The
+    /// from `hasLssRom()`: a mounted WOZ forces the bit-level path (through
+    /// POM2's own sequencer when there is no `diskii_p6.rom`), and with
+    /// neither the card runs the legacy 32-cycle gate. The
     /// Abstraction Levels panel reports exactly this difference — it is the
     /// L0-vs-fallback line for the whole 5.25" stack.
     bool usingBitLss() const { return useBitLss; }
@@ -599,6 +596,14 @@ private:
     // differently). Empty until loadLssRom().
     std::array<uint8_t, 256> p6Rom{};
     bool    p6RomLoaded = false;
+    bool    lssTable_   = false;        // p6Rom holds a table (any way in)
+    // POM2's own read sequencer (ownSequencerStep), which runs when there is
+    // no P6 table: LSS cycles to the next bit decision, a pulse seen in this
+    // bit cell, and a 1 that arrived while a finished byte was being held.
+    int     seqCount_   = 0;
+    bool    seqSeen_    = false;
+    bool    seqPending_ = false;
+    void    ownSequencerStep();
     // 13-sector (341-0010) LSS PROM + the "this card is currently a
     // 13-sector controller" latch. serving13_ is recomputed on every
     // insertDisk from whether any mounted disk is 13-sector AND both
@@ -738,7 +743,10 @@ private:
     /// write current comes on.
     bool writingInhibited() const {
         return (drivePhases_[activeDrive] & 0x2) != 0 ||
-               images[activeDrive].isWriteProtected();
+               images[activeDrive].isWriteProtected() ||
+               // POM2's own sequencer reads a WOZ but does not write one:
+               // the disk senses protected, so a guest refuses cleanly.
+               (images[activeDrive].isWoz() && !lssTable_);
     }
 
     /// The WPT line as the CONTROLLER senses it — MAME

@@ -44,17 +44,19 @@
 # the WASM bundle alone keeps the base that runs a //c and a //e on every disk
 # POM2 distributes: the 32 KB //c ROM (DIX on the //c PAL, its own SmartPort
 # firmware), the enhanced //e ROM (A2FILECMD XL, the pom2games disks), the //e
-# character generator both profiles probe, the Disk II boot + sequencer
-# PROMs (no longer embedded in DiskIICard.cpp) and the AppleMouse slot
-# firmware the //e's default slot 4 needs (`mouseaw`; without it the slot
-# stays empty — the //c's mouse is in its own ROM). The //e's other default
-# cards run without a dump (Grappler+ degraded, SmartPort synthetic). CI
-# fetches them with tools/fetch_test_media.py before the WASM build.
+# character generator both profiles probe, and the AppleMouse slot firmware
+# the //e's default slot 4 needs (`mouseaw`; without it the slot stays
+# empty — the //c's mouse is in its own ROM). NEITHER Disk II PROM: POM2's
+# own boot PROM (DiskIIBootRom.h) boots every floppy POM2 distributes —
+# checked with `pom2_headless --prom pom2` on Dirtbike, Micro-Sokoban and
+# ChromaBreak, the same screens as Apple's — and POM2's own sequencer
+# (DiskIICard::ownSequencerStep) reads a dropped WOZ, read-only. The //e's
+# other default cards run without a dump (Grappler+ degraded, SmartPort
+# synthetic). CI fetches them with tools/fetch_test_media.py before the WASM
+# build.
 wasm roms/apple2c-32Kv0.rom
 wasm roms/apple2e.rom
 wasm roms/apple2e_char.rom
-wasm roms/disk2.rom
-wasm roms/diskii_p6.rom
 wasm roms/mouse_341-0270-c.bin
 
 # The MAME floppy mechanical samples (BSD-3-Clause, see floppy_samples/

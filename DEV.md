@@ -3738,8 +3738,20 @@ track last seen) to re-seek. So `$5C-$EA` sits on that grid, which
 `buildDiskIIBootRom()` verifies after assembling. The grid makes `$5C-$A5`
 resemble Apple's routine in shape (every operand ProDOS rewrites, and the
 zero page it reads, are fixed); the decode inside the grid is POM2's own.
-There is no stand-in for the P6: a test
-that mounts a WOZ loads `diskii_p6.rom` (`tests/DiskIIRoms.h`). Pinned:
+Without the P6, .dsk/.po/.nib run the legacy
+gate and a WOZ goes through **POM2's own sequencer**
+(`DiskIICard::ownSequencerStep`), called per LSS cycle in place of the table
+lookup while `lssTable_` is false. It is a data separator, not a re-encoded
+table: a pulse marks its cell as a 1 and re-times the cell clock (decision 4
+LSS cycles later, a 0 every 8 after), bits shift in until bit 7, and the
+finished byte is held — zeros ignored, the first 1 folded in at the next
+decision — for 8 CPU cycles (16 after a sync byte), the windows
+`lss_window_probe` measured on Apple's P6. Read-only: `writingInhibited()`
+is true for a WOZ without a table. Its three counters are in the snapshot
+(`D2S1` v5, two bytes after the v4 write burst; older blobs start it fresh),
+because `session_snapshot` restores a WOZ mid-read and demands the same
+nibbles after. Pinned: `diskii_own_sequencer` (same
+stream hash, same hold windows and same 12 M-cycle boot as Apple's P6). Pinned:
 `diskii_pom2_boot_prom` (Apple's PROM as the control).
 PROM autodetects slot via `JSR $FF58 / TSX / LDA $0100,X`. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,

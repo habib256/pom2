@@ -725,13 +725,12 @@ void testIIcPlus(const std::string& sourceDir)
 
     // $C64E: STATUS then READ block 2 of the 5.25" disk, as the article's
     // monitor session does. A = error, X/Y = block count after STATUS.
-    // The built-in controller has no sequencer (no PROM is embedded): a WOZ
-    // is refused with a reason, then accepted once attachDiskII gives it one
-    // — boot PROM left empty, the //c+'s $C600 being its own ROM.
+    // The built-in controller has no P6: a WOZ is read by POM2's own
+    // sequencer. attachDiskII gives it Apple's — boot PROM left empty, the
+    // //c+'s $C600 being its own ROM.
     const std::string woz = sourceDir + "/disks_5.4/demo/fastloader/fastloader.woz";
-    assert(!core.insertDisk(0, woz));
-    assert(core.lastError().find("sequencer") != std::string::npos);
-    assert(!core.diskInserted(0));
+    assert(core.insertDisk(0, woz));
+    assert(core.ejectDisk(0));
     assert(core.attachDiskII({}, sourceDir + "/roms/diskii_p6.rom"));
     assert(core.insertDisk(0, woz));
     assert(core.ejectDisk(0));

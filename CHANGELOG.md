@@ -10,6 +10,47 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-29 — POM2's own read sequencer: WOZ without Apple's P6
+
+Without `roms/diskii_p6.rom` a WOZ, which forces the bit-level path, read
+nothing — and an "original" P6 table would only be Apple's under another
+name: any table with the same behaviour has the same bytes. So
+`DiskIICard::ownSequencerStep` is not a table but a data separator written
+from what the guest can observe: a pulse marks its bit cell as a 1 and
+re-times the cell clock (decision half a cell later, a 0 for each empty cell
+after); bits shift in until bit 7 is set; the finished byte is then held —
+zeros ignored, the first 1 kept aside and folded in at the next decision —
+so it stays readable for 8 CPU cycles, 16 after a sync byte. The hold
+windows were measured first, with Apple's P6 as a black box
+(`lss_window_probe`, a new manual probe).
+
+- **Indistinguishable on the read side**: on `fastloader.woz` and 816 Paint,
+  the same nibbles at the same cycles as Apple's P6 over 400 000 cycles (one
+  hash for the whole stream), and a ][+ boot of the WOZ keeps the same RAM
+  for 12 M cycles. Pinned by `diskii_own_sequencer`; a decision moved by one
+  CPU cycle, or a missing hold, fails it three and four ways.
+- **Read-only**: it does not write; a WOZ without the P6 senses
+  write-protected, so a guest refuses instead of corrupting the image.
+- The P6 still wins when present (`lssTable_`, cached so the hot path tests
+  a flag). `pom2::Core::insertDisk` stops refusing a WOZ without a P6.
+- **Snapshot `D2S1` v5**: the sequencer's three counters, two bytes after
+  the v4 write burst (older blobs start it fresh). First written to re-time
+  on the next pulse instead; `session_snapshot`, which restores a WOZ
+  mid-read and wants the same nibbles after, said no.
+- **The WASM bundle drops `diskii_p6.rom` too**: no Disk II firmware of
+  Apple's ships anywhere now.
+
+## 2026-10-29 — The browser bundle drops Apple's Disk II boot PROM
+
+POM2's own boot PROM boots every floppy POM2 distributes, so the WASM bundle
+no longer carries `roms/disk2.rom`: one Apple file fewer on GitHub Pages and
+in the web zip. Checked with `pom2_headless --prom pom2` — a new spelling
+that forces POM2's PROM even when a dump is present — on Dirtbike,
+Micro-Sokoban and ChromaBreak: the same screens, pixel counts included, as
+with Apple's. `pom2_headless` also stops requiring a PROM at all: with no
+`disk2.rom` the Disk II boots with POM2's. The sequencer (`diskii_p6.rom`)
+stays: WOZ images need it and there is no stand-in.
+
 ## 2026-10-29 — POM2's own Disk II boot PROM
 
 With Apple's 341-0027-A out of the source, a Disk II with no
@@ -54,7 +95,7 @@ CP/M, Ultima IV, …). None of it is POM2's to give away.
   (`pic/`), French Touch's GPL-3 demos (DIX, Digidream, Fastloader, Mad
   Effect, Oldskool, Shadow, Terra Nova, the DIX-collected ones). `.gitignore`
   keeps the rest out; a new disk goes in with `git add -f`.
-- **Test media on archive.org** — `pom2_testmedia_202610`: the 51 ROMs plus
+- **Test media on archive.org** — `pom2_testmedia_20261029`: the 51 ROMs plus
   the 17 third-party disks and the CP/M `BTERM.COM` that ctest opens (Total
   Replay and `DOS13SEC.DSK` are only used by manual probes, and left out).
   `tools/fetch_test_media.py` downloads it and checks every file against

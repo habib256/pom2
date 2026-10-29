@@ -2491,8 +2491,8 @@ set_tests_properties(disk_write_controller_smoke PROPERTIES TIMEOUT 5)
 # Pins the verbatim port of MAME `src/lib/formats/woz_dsk.cpp`: minimal
 # in-memory WOZ1 + WOZ2 files, chunk walk, MSB-first bit unpack, the
 # always-WP override, plus an end-to-end LSS read that recovers the
-# prologue from a synthetic .woz disk without loading the optional P6
-# PROM file (the embedded default in DiskIICard's constructor suffices).
+# prologue from a synthetic .woz disk; the P6 table comes from
+# roms/diskii_p6.rom without selecting the bit-level LSS (tests/DiskIIRoms.h).
 add_executable(test_woz_load
     woz_load_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -2884,6 +2884,40 @@ endif()
 
 add_test(NAME diskii_pom2_boot_prom COMMAND test_diskii_pom2_boot_prom)
 set_tests_properties(diskii_pom2_boot_prom PROPERTIES TIMEOUT 60)
+
+# POM2's own read sequencer (no P6): the same nibble stream and hold windows
+# as Apple's 341-0028-A on a real WOZ, the same boot, and no writing.
+add_executable(test_diskii_own_sequencer
+    diskii_own_sequencer_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_own_sequencer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_own_sequencer PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_own_sequencer PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_own_sequencer PRIVATE winmm)
+endif()
+
+add_test(NAME diskii_own_sequencer COMMAND test_diskii_own_sequencer)
+set_tests_properties(diskii_own_sequencer PROPERTIES TIMEOUT 120)
 
 # ─── DOS 3.2 (13-sector) end-to-end boot trace ────────────────────────────
 # Boots a real DOS 3.2 .d13 master through the 341-0009 boot PROM + the
@@ -9815,6 +9849,26 @@ if(TARGET pom2_core_test)
     target_link_libraries(dix_auto_tour_probe PRIVATE pom2_core_test)
 endif()
 
+# lss_window_probe — manual: how long each nibble keeps bit 7 set in the read
+# latch, with Apple's P6 (second argument) or POM2's own sequencer (none).
+add_executable(lss_window_probe EXCLUDE_FROM_ALL
+    lss_window_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+)
+target_include_directories(lss_window_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 set(POM2_PROBE_TARGETS
     a2osx_boot_probe
     artifact_probe
@@ -9847,6 +9901,7 @@ set(POM2_PROBE_TARGETS
     test_iicplus_boot_trace
     test_total_replay_boot_trace
     u5_woz_save_probe
+    lss_window_probe
 )
 set(_pom2_probe_present)
 foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)

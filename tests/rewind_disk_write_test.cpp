@@ -154,21 +154,25 @@ int main()
         std::vector<uint8_t> blob;
         card->appendSnapshotState(blob);
         // A quiescent controller's v4 tail is 13 bytes: count(4) = 0,
-        // lineActive(1), startTime(8).
+        // lineActive(1), startTime(8). v5 follows it with POM2's own
+        // sequencer state (2 bytes), so the burst is not the last thing.
         constexpr size_t kTail = 4 + 1 + 8;
-        assert(blob.size() > kTail);
-        for (int i = 0; i < 4; ++i) assert(blob[blob.size() - kTail + i] == 0);
+        constexpr size_t kSeq  = 2;
+        assert(blob.size() > kTail + kSeq);
+        for (int i = 0; i < 4; ++i) assert(blob[blob.size() - kSeq - kTail + i] == 0);
+        const std::vector<uint8_t> seqTail(blob.end() - kSeq, blob.end());
 
         // Rewrite it as a burst of three flux stamps with the write line high.
         auto put64 = [](std::vector<uint8_t>& v, uint64_t x) {
             for (int i = 0; i < 8; ++i)
                 v.push_back(static_cast<uint8_t>(x >> (8 * i)));
         };
-        std::vector<uint8_t> burst(blob.begin(), blob.end() - kTail);
+        std::vector<uint8_t> burst(blob.begin(), blob.end() - kSeq - kTail);
         burst.push_back(3); burst.push_back(0); burst.push_back(0); burst.push_back(0);
         burst.push_back(1);                       // writeLineActive
         put64(burst, 0x0011223344556677ULL);      // writeStartTime
         put64(burst, 111); put64(burst, 222); put64(burst, 333);
+        burst.insert(burst.end(), seqTail.begin(), seqTail.end());
 
         Memory mem2;
         M6502  cpu2(&mem2);
@@ -184,7 +188,7 @@ int main()
         // A count past the 32-entry buffer is refused WHOLE (framing check),
         // leaving the card as it was rather than half-restored.
         std::vector<uint8_t> huge = burst;
-        huge[burst.size() - 3 * 8 - 8 - 1 - 4] = 99;   // count = 99
+        huge[burst.size() - kSeq - 3 * 8 - 8 - 1 - 4] = 99;   // count = 99
         Memory mem3;
         M6502  cpu3(&mem3);
         (void)cpu3;
@@ -200,7 +204,7 @@ int main()
 
         // A pre-v4 blob (no burst tail at all) must still load, and leave the
         // restored controller on a CLEAN splice.
-        std::vector<uint8_t> v3(blob.begin(), blob.end() - kTail);
+        std::vector<uint8_t> v3(blob.begin(), blob.end() - kSeq - kTail);
         v3[4] = 3;                                   // version 4 → 3
         Memory mem4;
         M6502  cpu4(&mem4);
@@ -212,7 +216,7 @@ int main()
         card4->loadSnapshotState(v3.data(), v3.size());         // then a v3 blob
         std::vector<uint8_t> back4;
         card4->appendSnapshotState(back4);
-        assert(back4.size() == v3.size() + kTail);
+        assert(back4.size() == v3.size() + kTail + kSeq);
         for (int i = 0; i < 4; ++i) assert(back4[v3.size() + i] == 0);
         assert(back4[v3.size() + 4] == 0);           // writeLineActive cleared
     }
