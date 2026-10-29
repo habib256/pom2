@@ -26,10 +26,10 @@
 //      decomposes into 24 specific bits in a known order).
 //   4. WOZ disks always report write-protected (first-cut: read-only).
 //   5. End-to-end: insert a synthetic .woz into DiskIICard, drive Q6L
-//      reads of $C0EC, and confirm the LSS surfaces D5 AA 96. Crucially,
-//      this works WITHOUT loading roms/diskii_p6.rom — the embedded
-//      default P6 ROM is sufficient and `insertDisk` forces useBitLss
-//      whenever any drive holds a WOZ image.
+//      reads of $C0EC, and confirm the LSS surfaces D5 AA 96. The P6
+//      table comes from roms/diskii_p6.rom WITHOUT selecting the bit-level
+//      LSS (DiskIIRoms.h): `insertDisk` forces useBitLss whenever any
+//      drive holds a WOZ image.
 //
 // Building a minimal WOZ file:
 //
@@ -49,6 +49,7 @@
 // LSS revolution is ~256 cycles).
 
 #include "DiskIICard.h"
+#include "DiskIIRoms.h"
 #include "DiskImage.h"
 
 #include <algorithm>
@@ -337,6 +338,7 @@ bool testWozLssEndToEnd() {
     const std::string path = writeTempFile(woz, "lss");
 
     DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
     // No loadLssRom() — the embedded default P6 PROM is in the
     // constructor's p6Rom array. We rely on insertDisk to flip
     // useBitLss=true for WOZ even though p6RomLoaded is false.

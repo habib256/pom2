@@ -10,6 +10,7 @@ The full-suite commands below target Linux/macOS. Windows uses the
 
 ```bash
 ./setup_imgui.sh                              # once: dependencies + pinned Dear ImGui
+python3 tools/fetch_test_media.py             # once: ROMs + test disks (archive.org)
 cmake -S . -B build -DPOM2_ENABLE_TESTS=ON
 cmake --build build -j3
 ctest --test-dir build --parallel 2 --output-on-failure

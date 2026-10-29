@@ -689,6 +689,7 @@ platform dependencies and fetches the pinned Dear ImGui docking revision.
 git clone https://github.com/habib256/pom2.git
 cd pom2
 ./setup_imgui.sh
+python3 tools/fetch_test_media.py   # ROMs + test disks, from archive.org
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 3
 ./build/POM2

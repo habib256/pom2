@@ -80,12 +80,12 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
         // ─── Disk II ──────────────────────────────────────────────────────
         { "Disk II (5.25\")", "Boot PROM, 16-sector (Apple 341-0027-A)",
           { "roms/disk2.rom" }, 256, 0, "",
-          "Falls back to the embedded 341-0027-A — the card still boots.",
+          "The card has no boot PROM: 5.25\" disks mount but cannot boot.",
           RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "P6 sequencer PROM, 16-sector (Apple 341-0028-A)",
           { "roms/diskii_p6.rom" }, 256, 0, "",
-          "Falls back to the legacy 32-cycle nibble gate. WOZ images force "
-          "the bit-level LSS path anyway, using the embedded default.",
+          "Falls back to the legacy 32-cycle nibble gate; WOZ images, which "
+          "need the sequencer, cannot be read.",
           RomMissingEffect::Degraded },
         { "Disk II (5.25\")", "Boot PROM, 13-sector (Apple 341-0009)",
           { "roms/disk2_13.rom" }, 256, 0, "",

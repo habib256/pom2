@@ -1,12 +1,11 @@
 POM2 — Apple ROMs
 =================
 
-A POM2 package carries only the Apple //c firmware (apple2c-32Kv0.rom and
-the apple2e_char.rom character generator) — enough to boot the //c and the
-DIX demo — plus the floppy_samples/ drive sounds. Apple's other firmware is
-not redistributed with the package.
+A POM2 package carries NO firmware: Apple's ROMs and every card's are
+copyrighted and are not redistributed. This folder ships with the
+floppy_samples/ drive sounds only.
 
-At the first launch POM2 offers to download the rest from POM2's ROM
+At the first launch POM2 offers to download them from POM2's ROM
 archive (archive.org/details/pom2_roms_202610), with the RetroBIOS collection
 (github.com/Abdess/retrobios) as a fallback; each file is checked against
 its SHA-256. Any time later: Help -> ROM Status -> Download missing ROMs. A dump you already own can be dropped onto the POM2 window (or

@@ -125,6 +125,18 @@ verify() {
     [ -d "$dest" ] || die "verify: '$dest' is not a directory"
     local failed=0
 
+    # No firmware dump in a desktop package: roms/ may hold the floppy samples
+    # and the README, nothing else (bundle.manifest § Firmware and dumps).
+    if [ -d "$dest/roms" ]; then
+        local dump
+        dump="$(find "$dest/roms" -type f ! -path "$dest/roms/floppy_samples/*" \
+                    ! -path "$dest/roms/README.txt" 2>/dev/null | head -1)"
+        if [ -n "$dump" ]; then
+            printf 'FIRMWARE %s (desktop packages ship no ROM dump)\n' "${dump#"$dest"/}" >&2
+            failed=1
+        fi
+    fi
+
     for d in "${DIRS[@]:-}"; do
         [ -n "$d" ] || continue
         # "non-empty" was too weak to be a guard. The manifest installs
@@ -310,6 +322,18 @@ case "${1:-}" in
             log "OK: the WASM leg excludes denyglob matches as files AND as directories"
         fi
         fi
+
+        # A firmware dump in a staged desktop tree must FAIL.
+        TMP4="$(mktemp -d)"
+        stage "$TMP4" >/dev/null
+        mkdir -p "$TMP4/roms"
+        printf 'dump' > "$TMP4/roms/apple2e.rom"
+        if ( verify "$TMP4" ) >/dev/null 2>&1; then
+            rm -rf "$TMP4"
+            die "self-test: verify() accepted a package carrying roms/apple2e.rom"
+        fi
+        rm -rf "$TMP4"
+        log "OK: verify() rejects a desktop package carrying a ROM dump"
 
         # A payload dir holding nothing but its README must FAIL: that is a
         # package with zero ROMs, and it used to verify clean.

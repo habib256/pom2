@@ -176,7 +176,7 @@ cmake --build build --parallel 3 # → build/POM2
 
 `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; the CPU worker's `cyclesPerFrame` comes from the active profile (`CpuClock.h`: 17045 NTSC / **20313 PAL — the default profile is PAL**), and `EmulationController`'s bare initialiser (17045) only holds until the first `applyProfile`. Single `stateMutex` guards CPU + Memory.
 
-**ROMs: the repo keeps them all, releases do not** *(2026-10-29)*. A source build (and every test) uses the in-repo `roms/`; release packages and the WASM bundle carry only `apple2c-32Kv0.rom` + `apple2e_char.rom` (+ `floppy_samples/`) — what DIX needs on the //c PAL (`bundle.manifest`). A desktop install asks once, at the first launch that finds catalogued dumps missing, to download the rest (`MainWindow_RomOffer.cpp`, setting `rom_download_offered`; any time later: ROM Status → Download missing ROMs, or drop a dump on the window, `RomImport.h`). **Source order** (`RomFetch.h`): POM2's archive on archive.org (`pom2_roms.zip`, one download), then — per entry it cannot supply — RetroBIOS at a **pinned** commit (on its `main` 22 of the 49 dumps no longer exist: `docs/audits/retrobios-gap-2026-10-29.md`). Every file SHA-256-gated whatever its source. Default profile is **`Apple //e Enhanced PAL`**, then `Apple ][+` when no //e ROM is found, then **`Apple //c PAL`** when only the //c firmware is (a fresh package); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
+**No copyrighted firmware or third-party disk in the repo or a desktop package** *(2026-10-29)*. `roms/` tracks only `floppy_samples/` (MAME, BSD); the disk folders track only the author's own GPL software (A2FILECMD, pom2games titles), French Touch's GPL demos (DIX, Digidream, Oldskool, …) and nothing else; `pic/` is the author's own photos + MIT drive art. Every dump and third-party disk the tests open is in **archive.org `pom2_testmedia`** — `tools/fetch_test_media.py` downloads it and checks each file against `tools/test_media.sha256` (CI runs it in every build/test job; run it once in a fresh clone). `.gitignore` covers `roms/*`, `disks_5.4/`, `disks_3.5/`, `hdv/`, `floppyemu/`, `cassettes/`: a new disk of your own goes in with `git add -f` after checking its licence. The Disk II boot + P6 PROMs are no longer embedded in `DiskIICard.cpp` — a card without `roms/disk2.rom` has no boot PROM, and a test that boots a hand-built card loads it. Desktop packages carry **no** ROM (`stage_data.sh --verify` fails one that does); the WASM bundle alone keeps the //c + //e base (`apple2c-32Kv0.rom`, `apple2e.rom`, `apple2e_char.rom`, `disk2.rom`, `diskii_p6.rom`, `mouse_341-0270-c.bin` as `wasm` entries) because a browser cannot fetch from archive.org (no CORS). A desktop install asks once, at the first launch that finds catalogued dumps missing, to download the rest (`MainWindow_RomOffer.cpp`, setting `rom_download_offered`; any time later: ROM Status → Download missing ROMs, or drop a dump on the window, `RomImport.h`). **Source order** (`RomFetch.h`): POM2's archive on archive.org (`pom2_roms.zip`, one download), then — per entry it cannot supply — RetroBIOS at a **pinned** commit (on its `main` 22 of the 49 dumps no longer exist: `docs/audits/retrobios-gap-2026-10-29.md`). Every file SHA-256-gated whatever its source. Default profile is **`Apple //e Enhanced PAL`**, then `Apple ][+` when no //e ROM is found, then **`Apple //c PAL`** when only the //c firmware is (a fresh package); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
 
 ## Subsystem map
 
@@ -329,8 +329,8 @@ $C300-$C3FF  IIe 80-col firmware (internal when SLOTC3ROM=off)
 $C400-$C4FF  Slot 4 ROM — defaults to the AppleWin-HLE Mouse Card
              (`mouseaw`); the ProDOS clock card lives here only when
              the user plugs `clock` into slot 4
-$C600-$C6FF  Disk II boot PROM (341-0027-A embedded; roms/disk2.rom
-             overrides)
+$C600-$C6FF  Disk II boot PROM (341-0027-A, roms/disk2.rom — no
+             longer embedded; none without the file)
 $C700-$C7FF  Slot 7 ROM — `chatmauve` is the fresh-install default on
              every profile, and the //c PAL forces it; the CLI still
              prefers slot 7 for FujiNet / the HDV auto-plug when the
@@ -489,10 +489,10 @@ disagrees with `project(VERSION)`, or when the release-notes file is missing.
 ## Package payload
 
 **`packaging/bundle.manifest` is the single list of what ships inside a
-package** — the //c minimum of `roms/` (`apple2c-32Kv0.rom`, `apple2e_char.rom`, `floppy_samples/`; with `packaging/roms_README.txt` renamed to `roms/README.txt`),
+package** — no firmware on the desktop (`roms/floppy_samples/` + `packaging/roms_README.txt` renamed to `roms/README.txt`; the //c + //e ROMs are `wasm` entries),
 `fonts/`, the whole `pic/` folder (About and keyboard photos, `pic/retro/` artwork, ~12 MB)
-and the curated `bundled_disks/` files, with `wasm floppyemu` as the
-browser-only extra (it holds the demo's boot disk), a `deny` list
+and the curated `bundled_disks/` files, with `wasm floppyemu` and the
+//c + //e ROMs as the browser-only extras, a `deny` list
 (`disks_5.4`, `hdv`, `disks_3.5`, `snapshots`, `printouts`, `cassettes`,
 `prodos_folder`, `virtual_ii_sons`) that must never appear in one, and a `denyglob` archive filter
 (`*.zip`, `*.7z`, …). **All three parsers enforce `deny` and

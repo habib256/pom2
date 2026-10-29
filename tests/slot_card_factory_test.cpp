@@ -65,9 +65,12 @@ int main()
     pom2::SlotCardFactory missing(
         [](std::string_view) { return std::string(); });
 
-    const auto embeddedDisk = missing.create(request("diskii", 6));
-    assert(dynamic_cast<DiskIICard*>(embeddedDisk.card.get()));
-    assert(embeddedDisk.status.find("embedded") != std::string::npos);
+    // No PROM is embedded any more (Apple's): without roms/disk2.rom the
+    // card still plugs, with no boot PROM, and says so.
+    const auto noPromDisk = missing.create(request("diskii", 6));
+    const auto* noPromCard = dynamic_cast<DiskIICard*>(noPromDisk.card.get());
+    assert(noPromCard && !noPromCard->hasBootRom());
+    assert(noPromDisk.status.find("no boot PROM") != std::string::npos);
 
     const auto missingCffa = missing.create(request("cffa"));
     // The CFFA ships two firmware builds and the factory picks by the CPU it

@@ -10,6 +10,41 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-29 — No copyrighted firmware or third-party disk in the repository or a desktop package
+
+The previous entry still redistributed two Apple dumps in every package, the
+repository held all 51, two Apple PROMs were compiled into the binary, and
+the disk folders carried commercial software (Total Replay, Montezuma's
+Revenge, Apple's DOS/ProDOS/Pascal masters, AppleShare, Purplesoft, ALS
+CP/M, Ultima IV, …). None of it is POM2's to give away.
+
+- **Repository**: 144 files untracked (`git rm --cached`; history is not
+  rewritten). What stays is POM2's or GPL: `roms/floppy_samples/` (MAME,
+  BSD), the author's own disks (A2FILECMD, the pom2games titles) and photos
+  (`pic/`), French Touch's GPL-3 demos (DIX, Digidream, Fastloader, Mad
+  Effect, Oldskool, Shadow, Terra Nova, the DIX-collected ones). `.gitignore`
+  keeps the rest out; a new disk goes in with `git add -f`.
+- **Test media on archive.org** — `pom2_testmedia`: the 51 ROMs plus
+  the 17 third-party disks and the CP/M `BTERM.COM` that ctest opens (Total
+  Replay and `DOS13SEC.DSK` are only used by manual probes, and left out).
+  `tools/fetch_test_media.py` downloads it and checks every file against
+  `tools/test_media.sha256`; it never overwrites a file already in the tree
+  (a working copy may hold disks the emulator wrote to) — `--strict`, which
+  CI uses, turns a mismatch into an error. Every CI and release job that
+  builds, tests or boots runs it right after checkout.
+- **Disk II PROMs out of the source**: `DiskIICard.cpp` embedded Apple's
+  341-0027-A boot PROM and 341-0028-A sequencer as fallbacks. A card now
+  has neither until `loadBootRom` / `loadLssRom`; the factory loads them
+  from `roms/` as before, so a machine with the files behaves identically
+  (both files are byte-identical to the removed tables).
+- **Desktop packages ship no ROM**; `stage_data.sh --verify` fails one that
+  carries any file in `roms/` but the floppy samples and the README, with a
+  negative control in `--self-test`. The first-launch offer is the way in.
+- **The WASM bundle keeps the //c + //e base** — a browser cannot download
+  from archive.org (no CORS header): `apple2c-32Kv0.rom`, `apple2e.rom`,
+  `apple2e_char.rom`, `disk2.rom`, `diskii_p6.rom` and the AppleMouse slot
+  firmware the //e's default slot 4 needs, as `wasm` manifest entries.
+
 ## 2026-10-29 — Releases carry only the //c firmware; the rest is one click away
 
 Packages and the WASM bundle shipped the whole `roms/` tree — Apple's

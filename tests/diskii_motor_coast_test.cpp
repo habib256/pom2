@@ -34,6 +34,7 @@
 //      at $FF.
 
 #include "DiskIICard.h"
+#include "DiskIIRoms.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
 
@@ -82,6 +83,7 @@ int main()
 
     Memory mem;
     auto card = std::make_unique<DiskIICard>();
+    pom2test::loadDiskIIDefaults(*card);
     if (!card->insertDisk(dsk.string())) {
         std::fprintf(stderr, "insertDisk failed: %s\n", card->getLastError().c_str());
         return 1;
@@ -197,6 +199,7 @@ int main()
             {   // The bit-level LSS turns in real time too (see 6).
                 auto changesOver = [&](double cpuHz) {
                     DiskIICard c;
+                    pom2test::loadDiskIIDefaults(c);
                     c.setIwmHost(false);
                     c.setWriteBackEnabled(false);
                     assert(c.insertDisk(0, scratchWoz.string()) && c.usingBitLss());
@@ -222,6 +225,7 @@ int main()
             }
             {   // A
                 DiskIICard c;
+                pom2test::loadDiskIIDefaults(c);
                 c.setIwmHost(false);
                 c.setWriteBackEnabled(false);
                 assert(c.insertDisk(0, scratchWoz.string()) && c.usingBitLss());
@@ -234,6 +238,7 @@ int main()
             }
             {   // B
                 DiskIICard c;
+                pom2test::loadDiskIIDefaults(c);
                 c.setIwmHost(false);
                 c.setWriteBackEnabled(false);
                 assert(c.insertDisk(0, dsk.string()) && !c.usingBitLss());
@@ -267,6 +272,7 @@ int main()
             };
             auto run = [&](long pause) {
                 DiskIICard c;
+                pom2test::loadDiskIIDefaults(c);
                 c.setIwmHost(false);
                 c.setWriteBackEnabled(false);
                 assert(c.loadLssRom(p6));

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check_ctest_skips.sh <build-dir> — after `ctest`, fail if a test SKIPPED.
 #
-# The repository tracks its ROMs and its test media, so on CI a test that
+# CI fetches every ROM and test disk (tools/fetch_test_media.py), so a test that
 # skips has lost something it needs — a dump renamed, a probe path moved — and
 # the green suite hides that the L0 path stopped being exercised (TODO G5-15).
 # Two shapes are caught:

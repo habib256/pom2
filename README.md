@@ -71,11 +71,11 @@ and press Return.
 
 ### Missing ROMs and the ROM download
 
-From the next release, packages (and the browser demo) carry only the Apple
-//c firmware, which is enough to run the //c and the DIX demo. Apple's other
-firmware is not redistributed. The first time it starts, the desktop
-version offers to download the other ROMs in one click. A source checkout
-still has every dump in `roms/`.
+From the next release, POM2 redistributes no copyrighted firmware: desktop
+packages carry no ROM at all, and the first time it starts the desktop
+version offers to download them in one click. The browser demo, which
+cannot download them, keeps the //c and //e ROMs that run the disks POM2
+ships. The source repository has no ROM either (see [Build it](#build-it)).
 
 If a ROM is missing or damaged, **Help → ROM Status** says which one, and
 **Download missing ROMs** fetches it from POM2's
@@ -186,10 +186,17 @@ On Linux or macOS, install Git, CMake 3.16 or newer, a C++17 compiler and GLFW, 
 git clone https://github.com/habib256/pom2.git
 cd pom2
 ./setup_imgui.sh
+python3 tools/fetch_test_media.py   # ROMs + test disks, from archive.org
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 3
 ./build/POM2
 ```
+
+The repository carries no copyrighted ROM or third-party disk image.
+`tools/fetch_test_media.py` downloads the ROMs and the disks the tests use
+from POM2's [test-media archive](https://archive.org/details/pom2_testmedia),
+checking every file against `tools/test_media.sha256`; skip it and the
+first launch offers the ROM download instead.
 
 The same build makes `build/pom2_headless`, the machine without a window: it
 boots a disk and serves the Super Serial Card over telnet, and can capture

@@ -16,9 +16,9 @@
 
 // MainWindow_RomOffer — the first-launch "download the Apple II ROMs?" offer.
 //
-// A release package carries only the //c firmware the DIX demo needs
-// (packaging/bundle.manifest); every other dump is fetched from RetroBIOS by
-// ROM Status → Download missing. A new user does not know that panel exists,
+// A desktop package carries no firmware at all (packaging/bundle.manifest:
+// every dump is copyrighted); they are fetched — POM2's archive.org archive,
+// RetroBIOS as the fallback — by ROM Status → Download missing. A new user does not know that panel exists,
 // so the desktop build asks ONCE: the first launch that finds catalogued dumps
 // missing opens this modal, and either answer sets `rom_download_offered`.
 // "Download" opens ROM Status and starts its fetch there, so progress, cancel
@@ -72,10 +72,9 @@ void MainWindow::renderRomDownloadOffer()
 
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
     ImGui::TextWrapped(
-        "POM2 comes with the Apple //c firmware only — enough for the //c "
-        "and the DIX demo. The other machines (][, ][+, //e, //c Plus), the "
-        "card firmware and the international character sets are %d more "
-        "ROM files.", romOfferMissing_);
+        "POM2 does not ship Apple's firmware: it is copyrighted. The "
+        "machines (][, ][+, //e, //c, //c Plus), the card firmware and the "
+        "international character sets are %d ROM files.", romOfferMissing_);
     ImGui::Spacing();
     ImGui::TextWrapped(
         "They can be downloaded now from POM2's ROM archive on archive.org, "

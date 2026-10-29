@@ -7,6 +7,11 @@
 # smoke test; the pages job deploys the resulting demo when its conditions hold.
 # Job definitions below are authoritative for triggers, filters and toolchains.
 #
+# The repository carries no copyrighted ROM and no third-party disk image
+# (2026-10-29): every job that builds, tests or boots something first runs
+# tools/fetch_test_media.py, which downloads POM2's test-media archive from
+# archive.org and checks each file against tools/test_media.sha256.
+#
 # MOST OF THE SUITE DOES DEPEND ON roms/. This file used to claim the opposite
 # ("no test depends on machine ROM dumps — the suite drives the emulator core
 # directly"); about 70 test sources open a file under roms/, and the boot,
@@ -94,6 +99,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Install build dependencies + software GL
         run: |
           sudo apt-get update
@@ -136,6 +147,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       # Cheap, and first: TODO.md's standing rule is "do not grow the
       # god-objects" (target < 3000 lines). It had no mechanism, and
@@ -347,6 +364,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Fetch Dear ImGui (pinned)
         run: tools/fetch_imgui_pinned.sh
 
@@ -412,6 +435,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        shell: bash
+        run: python -I tools/fetch_test_media.py --strict
 
       - name: Fetch Dear ImGui (pinned)
         shell: bash
@@ -485,6 +515,12 @@ jobs:
             targets: '--target test_rewind_transport test_ui_worker_contention test_audio_source_teardown test_ai_control_server test_sp_over_slip_link test_printer_history test_thread_guard test_fujinet_net_device test_child_process'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       - name: Install build dependencies
         run: |
@@ -656,6 +692,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Fetch Dear ImGui (pinned)
         run: |
           set -euo pipefail
@@ -755,6 +797,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       - name: Install build dependencies
         run: |

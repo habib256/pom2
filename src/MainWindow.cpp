@@ -278,11 +278,11 @@ MainWindow::MainWindow(bool forceIIPlus)
             if (!r.empty()) { romPath = r; iiPlusPresent = true; break; }
         }
     }
-    // A release ships only the //c firmware DIX needs (bundle.manifest); the
-    // rest is fetched from RetroBIOS on request. With neither a //e nor a ][+
-    // ROM, the machine is the //c PAL — the browser demo's — and the saved-
-    // profile catch-up below installs it, ROM and all. Without this the
-    // first launch of every package was a "NO ROM" screen.
+    // A desktop package ships no firmware (bundle.manifest) — it is fetched
+    // on request; the browser bundle keeps the //c and //e ROMs. With neither
+    // a //e nor a ][+ ROM but the //c firmware present, the machine is the
+    // //c PAL — the browser demo's — and the saved-profile catch-up below
+    // installs it, ROM and all.
     bool iicOnly = false;
     if (!iiePresent && !iiPlusPresent && !forceIIPlus) {
         for (const auto& cand :

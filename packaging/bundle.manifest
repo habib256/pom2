@@ -32,18 +32,30 @@
 # Browser builds cannot run a host executable, so it is never preloaded there.
 
 # ─── Firmware and dumps ─────────────────────────────────────────────────────
-# Packages carry the MINIMUM Apple firmware: what the browser demo needs to
-# boot DIX on the //c PAL (`--preset iic-pal`, wasm/shell.html) — the 32 KB
-# //c ROM (its own SmartPort firmware boots the 3.5" DIX disk) and the //e
-# character generator the //c profile probes. Checked 2026-10-29: DIX reaches
-# the same screen with these two as with the whole tree. Every other dump
-# stays in the repository's roms/ (tests and source builds use it) but is NOT
-# redistributed: a desktop install offers to download it at first launch
-# (ROM Status → Download missing ROMs, any time after) — from POM2's archive
-# on archive.org, RetroBIOS at a pinned commit as the fallback, each file
-# SHA-256-checked (RomFetch.h).
-file roms/apple2c-32Kv0.rom
-file roms/apple2e_char.rom
+# Desktop packages carry NO firmware dump (2026-10-29): every Apple and
+# third-party ROM is copyrighted. A desktop install offers to download them at
+# first launch (ROM Status → Download missing ROMs, any time after) — from
+# POM2's archive on archive.org, RetroBIOS at a pinned commit as the fallback,
+# each file SHA-256-checked (RomFetch.h). `stage_data.sh --verify` fails a
+# package that has any file in roms/ other than the floppy samples and the
+# README.
+#
+# The browser demo cannot download them (archive.org sends no CORS header), so
+# the WASM bundle alone keeps the base that runs a //c and a //e on every disk
+# POM2 distributes: the 32 KB //c ROM (DIX on the //c PAL, its own SmartPort
+# firmware), the enhanced //e ROM (A2FILECMD XL, the pom2games disks), the //e
+# character generator both profiles probe, the Disk II boot + sequencer
+# PROMs (no longer embedded in DiskIICard.cpp) and the AppleMouse slot
+# firmware the //e's default slot 4 needs (`mouseaw`; without it the slot
+# stays empty — the //c's mouse is in its own ROM). The //e's other default
+# cards run without a dump (Grappler+ degraded, SmartPort synthetic). CI
+# fetches them with tools/fetch_test_media.py before the WASM build.
+wasm roms/apple2c-32Kv0.rom
+wasm roms/apple2e.rom
+wasm roms/apple2e_char.rom
+wasm roms/disk2.rom
+wasm roms/diskii_p6.rom
+wasm roms/mouse_341-0270-c.bin
 
 # The MAME floppy mechanical samples (BSD-3-Clause, see floppy_samples/
 # README.txt) — recordings, not firmware.

@@ -140,6 +140,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -214,6 +220,12 @@ jobs:
       BUILDER_IMAGE: ghcr.io/habib256/pom2-bionic-builder@sha256:c44b786517f041f779b082b813e84a17b141db3983fc0b28f2c3e4deedeb4cca
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       - name: Log in to GHCR (pull the builder image)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -349,6 +361,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -462,6 +480,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       - name: Build POM2 + AppImage in a bookworm arm64 container (GLES)
         env:
@@ -584,6 +608,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Build -mcpu=cortex-a72 + PGO + LTO in a bookworm arm64 container
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
@@ -680,6 +710,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Fetch Dear ImGui (pinned commit)
         run: tools/fetch_imgui_pinned.sh
 
@@ -745,6 +781,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        shell: bash
+        run: python -I tools/fetch_test_media.py --strict
 
       - name: Fetch Dear ImGui (pinned commit)
         shell: bash
@@ -858,6 +901,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The repository carries no copyrighted ROM or third-party disk:
+      # the suite's are fetched from archive.org, SHA-256-checked file by
+      # file against tools/test_media.sha256.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
 
       # Pinned, not `latest`. The WASM bundle published with a tag has to be
       # reproducible from that tag, and `latest` silently re-toolchains it: a

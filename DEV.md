@@ -3719,8 +3719,13 @@ emits each "1" cell at `i*cyc + cyc/2` (centre). Pinned:
 
 ### DiskIICard
 
-256-byte P5A boot PROM. Apple 341-0027-A (CRC `ce7144f6`) embedded
-as `kBootPromDefault[256]`; `loadBootRom("roms/disk2.rom")` overrides.
+256-byte P5A boot PROM, Apple 341-0027-A (CRC `ce7144f6`), loaded by
+`loadBootRom("roms/disk2.rom")`; the P6 sequencer by
+`loadLssRom("roms/diskii_p6.rom")`. Neither is embedded any more
+(2026-10-29, both are Apple's): a card built without them has no boot PROM
+(`hasBootRom()` false) and an empty sequencer, so a test that boots a
+hand-built card loads `disk2.rom` itself, and one that mounts a WOZ loads
+`diskii_p6.rom`.
 PROM autodetects slot via `JSR $FF58 / TSX / LDA $0100,X`. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,
 Q7L/Q7H.

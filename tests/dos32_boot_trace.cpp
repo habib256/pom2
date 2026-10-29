@@ -25,6 +25,7 @@
 // diskii_p6_13.rom + a *.d13 master in the conventional locations.
 
 #include "DiskIICard.h"
+#include "DiskIIRoms.h"
 #include "DiskImage.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -123,6 +124,7 @@ int main()
     }
 
     auto card = std::make_unique<DiskIICard>();
+    pom2test::loadDiskIIDefaults(*card);
     if (!card->loadBootRom13(boot13) || !card->loadLssRom13(lss13)) {
         std::fprintf(stderr, "13-sector PROM load failed\n");
         return 1;
@@ -146,6 +148,7 @@ int main()
                     probe.is13Sector(), probe.trackBitLength(0));
 
         DiskIICard rd;
+        pom2test::loadDiskIIDefaults(rd);
         rd.loadBootRom13(boot13);   // → serving13_; read uses the 16s P6 LSS
         rd.insertDisk(d13);
         const auto nibs = spinAndCollect(rd, 1'000'000, 64);

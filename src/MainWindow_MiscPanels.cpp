@@ -241,8 +241,8 @@ void MainWindow::renderAbstractionPanel()
     // Disk II is the sharpest case in the whole table: no P6 dump and no WOZ
     // mounted means the legacy 32-cycle nibble gate, which reads stock DOS
     // 3.3 fine and loses every bitstream-reading protection. `usingBitLss()`
-    // is the honest test — a mounted WOZ forces the L0 path even with no
-    // roms/diskii_p6.rom, using the embedded default P6.
+    // is the honest test — a mounted WOZ forces the L0 path (and reads
+    // nothing without roms/diskii_p6.rom).
     degradable("diskii", primaryDiskII() != nullptr,
                primaryDiskII() && primaryDiskII()->usingBitLss(), pom2::AbsLevel::H1,
                "roms/diskii_p6.rom absent and no WOZ mounted — running the "
@@ -700,7 +700,7 @@ void MainWindow::renderWelcomePanelWindow()
         ImGui::TextWrapped("No Apple II ROM is loaded yet.");
         ImGui::PopStyleColor();
         ImGui::TextWrapped(
-            "POM2 packages carry only the Apple //c firmware; the other "
+            "POM2 packages carry no Apple firmware (it is copyrighted); the "
             "dumps come from Help \xe2\x96\xb8 ROM Status \xe2\x96\xb8 "
             "Download missing ROMs, or from your own files (drop "
             "them onto this window). Then use Reload ROM below, or relaunch.");

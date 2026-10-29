@@ -161,7 +161,10 @@ public:
     /// the simplified 32-cycle byteReady gate (which is good enough for
     /// stock DOS 3.3 / ProDOS RWTS but not for software like Copy II
     /// Plus that scans for sync-gap-shifted byte boundaries).
-    bool loadLssRom(const std::string& path);
+    /// `selectBitLss = false` only fills the table: WOZ media (which force
+    /// the bit-level path) can be read, nibble media keep the legacy gate —
+    /// what the card did with its embedded default before 2026-10-29.
+    bool loadLssRom(const std::string& path, bool selectBitLss = true);
     bool hasLssRom() const { return p6RomLoaded; }
     struct SessionRestore {
         std::vector<uint8_t> runtime;
@@ -180,9 +183,9 @@ public:
                              bool allowWritable = false) const;
     void applySessionState(SessionRestore&& prepared);
     /// Is the bit-level LSS actually driving the head right now? Distinct
-    /// from `hasLssRom()`: a mounted WOZ forces the bit-level path even with
-    /// no `diskii_p6.rom` on disk (the embedded default P6 suffices), and
-    /// with neither the card runs the legacy 32-cycle nibble gate. The
+    /// from `hasLssRom()`: a mounted WOZ forces the bit-level path (and
+    /// reads nothing without `diskii_p6.rom`, the card carrying no PROM of
+    /// its own), and with neither the card runs the legacy 32-cycle gate. The
     /// Abstraction Levels panel reports exactly this difference — it is the
     /// L0-vs-fallback line for the whole 5.25" stack.
     bool usingBitLss() const { return useBitLss; }
@@ -581,10 +584,9 @@ private:
     // state[3]) is the WRITE_DATA bit driven onto the disk surface for
     // the next cell.
     //
-    // The PROM bytes embedded as kP6RomDefault[] are pre-permuted into
-    // MAME's address layout by scripts/permute_p6_rom.py from the
-    // apple2js `SEQUENCER_ROM_16` table; same 256 logical bytes, indexed
-    // differently. roms/diskii_p6.rom on disk is also MAME-layout.
+    // roms/diskii_p6.rom is in MAME's address layout (the apple2js
+    // `SEQUENCER_ROM_16` table holds the same 256 logical bytes, indexed
+    // differently). Empty until loadLssRom().
     std::array<uint8_t, 256> p6Rom{};
     bool    p6RomLoaded = false;
     // 13-sector (341-0010) LSS PROM + the "this card is currently a

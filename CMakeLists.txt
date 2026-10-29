@@ -1304,10 +1304,10 @@ if(EMSCRIPTEN)
     # single HDV. `deny` entries (disks_5.4, hdv, …) are hundreds of MB and
     # would blow past GitHub Pages' per-file limits and choke browser preload.
     #
-    # Apple ROMs are always bundled — without them the emulator can't boot, and
-    # the browser build has no drag-and-drop ROM upload path yet. Populating
-    # `roms/` before building WASM is the user's job (same constraint as
-    # native); we just guarantee the folder ships when it exists.
+    # The browser bundle is the one payload that carries Apple ROMs — the //c
+    # and //e base, as `wasm` entries — because it cannot download them
+    # (archive.org sends no CORS header). The repository holds none: run
+    # tools/fetch_test_media.py before building WASM (CI does).
     #
     # --preload-file: pass src+dst as ONE token via SHELL: so CMake doesn't try
     # to interpret the bare `@` as a response-file marker.

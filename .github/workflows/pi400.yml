@@ -62,6 +62,11 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # No copyrighted ROM or third-party disk in the repository: the PGO
+      # training load and the launch smoke fetch theirs from archive.org.
+      - name: Fetch the test media (ROMs + third-party disks)
+        run: python3 -I tools/fetch_test_media.py --strict
+
       - name: Build identity
         id: id
         run: |
@@ -116,17 +121,24 @@ jobs:
           fi
           ldd "$BIN" | grep -qE 'GLES' \
             || { echo "ERROR: does not link GLESv2 — is POM2_GLES really on?"; exit 1; }
-          test -s squashfs-root/usr/share/POM2/roms/apple2c-32Kv0.rom \
-            || { echo "ERROR: apple2c-32Kv0.rom missing from the AppImage"; exit 1; }
+          # Desktop packages ship NO firmware dump (bundle.manifest).
+          if find squashfs-root/usr/share/POM2/roms -type f ! -path '*/floppy_samples/*' \
+               ! -name README.txt | grep -q .; then
+            echo "ERROR: the AppImage carries a ROM dump"; exit 1
+          fi
 
           # Tarball: same tree as `cmake --install`, which is what ResourcePaths
           # resolves. ⚠ no `tar | grep -q` under pipefail — grep closes the pipe
           # early, tar dies on write, and you get a false failure.
           LIST=$(tar tzf "$TGZ")
-          for want in ./bin/POM2 ./bin/pom2_bench ./share/POM2/roms/apple2c-32Kv0.rom; do
+          for want in ./bin/POM2 ./bin/pom2_bench ./share/POM2/roms/floppy_samples/; do
             printf '%s\n' "$LIST" | grep -q -- "$want" \
               || { echo "ERROR: $want missing from the tarball"; exit 1; }
           done
+          if printf '%s\n' "$LIST" | grep '/share/POM2/roms/' \
+               | grep -v -e '/floppy_samples/' -e '/README.txt$' -e '/$' | grep -q .; then
+            echo "ERROR: the tarball carries a ROM dump"; exit 1
+          fi
           echo "OK: both packages verified"
 
       - name: Install runtime GLES/X libs for the launch smoke

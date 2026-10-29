@@ -41,6 +41,7 @@
 //    `getNextTransition` call stays deterministic (rewind reproducibility).
 
 #include "DiskIICard.h"
+#include "DiskIIRoms.h"
 #include "DiskImage.h"
 
 #include <cstdio>
@@ -199,6 +200,7 @@ void testHeadReachesTrack39() {
           "quarter-track 156 (track 39) carries bit cells");
 
     DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
     check(card.insertDisk(0, p), "insert");
     spinUp(card);
 
@@ -233,6 +235,7 @@ void testWeakZoneIsNoisyAndVaries() {
     check(a == b, "getNextTransition is deterministic in the weak zone");
 
     DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
     card.insertDisk(0, p);
     spinUp(card);
 

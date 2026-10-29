@@ -29,6 +29,7 @@
 
 #include "DiskImage.h"
 #include "DiskIICard.h"
+#include "DiskIIRoms.h"
 
 #include <algorithm>
 #include <array>
@@ -212,6 +213,8 @@ void advance(DiskIICard& card, int cycles, int chunk) {
 void testFatTrackContinuity(int obt) {
     Fixture fixture(obt, {50003, 50003, 50003});
     DiskIICard moving, stationary;
+    pom2test::loadDiskIIDefaults(moving);
+    pom2test::loadDiskIIDefaults(stationary);
     moving.setIwmHost(false); stationary.setIwmHost(false);
     for (auto* card : {&moving, &stationary}) {
         require(card->insertDisk(0, fixture.path), "insert fat-track fixture");
@@ -249,6 +252,8 @@ void testControllerCadence() {
         // The schedule crosses aliased fat-track positions and distinct
         // neighbouring streams without pausing guest reads.
         DiskIICard fine, batched;
+        pom2test::loadDiskIIDefaults(fine);
+        pom2test::loadDiskIIDefaults(batched);
         fine.setIwmHost(false); batched.setIwmHost(false);
         require(fine.insertDisk(0, fixture.path), "insert fine drive 1");
         require(batched.insertDisk(0, fixture.path), "insert batched drive 1");
