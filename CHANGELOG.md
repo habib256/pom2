@@ -24,7 +24,7 @@ CP/M, Ultima IV, …). None of it is POM2's to give away.
   (`pic/`), French Touch's GPL-3 demos (DIX, Digidream, Fastloader, Mad
   Effect, Oldskool, Shadow, Terra Nova, the DIX-collected ones). `.gitignore`
   keeps the rest out; a new disk goes in with `git add -f`.
-- **Test media on archive.org** — `pom2_testmedia`: the 51 ROMs plus
+- **Test media on archive.org** — `pom2_testmedia_202610`: the 51 ROMs plus
   the 17 third-party disks and the CP/M `BTERM.COM` that ctest opens (Total
   Replay and `DOS13SEC.DSK` are only used by manual probes, and left out).
   `tools/fetch_test_media.py` downloads it and checks every file against

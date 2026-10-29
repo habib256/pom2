@@ -1,5 +1,5 @@
 # tools/test_media.sha256 — every file of the test-media archive (archive.org
-# item pom2_testmedia, pom2_testmedia.zip): sha256 + repo path.
+# item pom2_testmedia_202610, pom2_testmedia.zip): sha256 + repo path.
 # tools/fetch_test_media.sh verifies each file against this list.
 634e91bae5938820da79183984c03aa06075cbd5701d480debcc4f6d70620001  roms/341-0057.bin
 ce785b913b9fcec6db0fab89b2d94f07fcd07664a822531dcbba3a5ca70ca3bf  roms/341-0358-A.bin
