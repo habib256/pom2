@@ -1,1 +1,0 @@
-InsertBIN.py ..\DSK\test.dsk 8 0 2000 hitch.bin.lz4,homer.bin.lz4,apple.bin.lz4,credits.bin.lz4,ghost.bin.lz4,snoopy.bin.lz4,sw.bin.lz4,thanos.bin.lz4,ft.bin.lz4>log.txt

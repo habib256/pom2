@@ -1,9 +1,0 @@
-
-InsertZIC v0.2 - 2015
-
-
-Injection de part3b.mai soit 4 secteurs (0X400 octets) de T0E/S00 a T0E/S03 - Offset $0400
-
-Injection de part3b.aux soit 4 secteurs (0X400 octets) de T0E/S04 a T0E/S07 - Offset $0800
-
--> fichier ..\dsk\test.dsk modifie et sauve

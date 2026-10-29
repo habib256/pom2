@@ -1,9 +1,0 @@
-CRAZY CYCLES II
-Additional notes from the OLD FRENCH TOUCH PAGE:
-
-    - La synchronisation est OK à 50 Hz (machines PAL) et 60 Hz. Les musiques joueront juste un peu plus vite à 60 Hz (pas d'utilisation d'interruption possible ici, comptage de cycles précis oblige...). 
-    Toutes nos excuses aux auteurs des musiques pour ce détournement même si elles ont été spécialement choisies pour leur (bon) rendu en accéléré...
-    
-    - La partie 4 utilise l'instruction JMP (IND) qui a la particularité d'utiliser 6 cycles sur 65C02 et seulement 5 sur 6502 et 65816. Si un 65C02 est détecté, le cycle supplémentaire est bien évidemment compensé afin de ne pas perdre la synchronisation mais le switch entre PAGE 1 et PAGE 2 se fera avec un cycle de décalage (retard). Ce qui explique que l'on peut remarquer en bas à gauche que le I ne disparaît pas complètement si la démo tourne sur un 65C02. Il est vrai qu'il aurait été facile d'éviter cela (par exemple en resserrant un peu la ligne de texte de façon à la faire commencer un peu plus à droite) mais finalement on a préféré laisser comme ça. Cela permet d'avoir un moyen visuel d'identifier si la démo tourne sur un 65C02 ou pas.
-    
-    - Sur IIgs, on peut remarquer dans la partie 1 que les changements de mode entre LORES et HIRES génèrent à la jointure des deux modes des artefacts de couleurs pas toujours élégants.

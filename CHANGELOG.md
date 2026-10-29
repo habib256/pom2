@@ -37,6 +37,12 @@ CP/M, Ultima IV, …). None of it is POM2's to give away.
   has neither until `loadBootRom` / `loadLssRom`; the factory loads them
   from `roms/` as before, so a machine with the files behaves identically
   (both files are byte-identical to the removed tables).
+- **Disk folders tidied**: `disks_5.4/demo/` left the repository (the two
+  disks ctest opens, `digidream/DD.dsk` and `fastloader/fastloader.woz`,
+  joined the test-media archive), as did the unpatched `disks_3.5/DIX.po`
+  (`DIX-fix.po` stays; `tools/make_dix_fix.py` and the DIX probes take any
+  copy, e.g. French Touch's release, via their argument) and A2FILECMD
+  0.9.5. `disks_5.4/DIRTBIKE.dsk` joins the library.
 - **`pom2::Core` (the SDK facade)** lost the same fallback: the //c+'s
   built-in Disk II has no sequencer, and `attachDiskII` without one had an
   empty table, so a WOZ spun and never answered. `insertDisk` now refuses a

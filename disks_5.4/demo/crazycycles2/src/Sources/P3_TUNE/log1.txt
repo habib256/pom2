@@ -1,7 +1,0 @@
-
-InsertZIC v0.2 - 2015
-
-
-Injection de ZIC soit 6 secteurs (0X600 octets) de T0E/S08 … T0E/S0D - Offset $8000
-
--> fichier ..\dsk\test.dsk modifie et sauve

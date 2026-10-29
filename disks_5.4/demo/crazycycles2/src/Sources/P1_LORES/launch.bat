@@ -1,1 +1,0 @@
-InsertZIC.py "..\dsk\test.dsk" 1 0 "part1b.mai","part1b.aux" >log1.txt
