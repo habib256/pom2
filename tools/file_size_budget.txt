@@ -444,7 +444,12 @@
 #   src/ProDOSVolume.cpp         2063 -> 2146 (+83)
 #
 src/Apple2Display.cpp                    2536
-src/DiskIICard.cpp                       2143
+# 2026-10-30: Apple's two embedded Disk II PROM tables left (2026-10-29), and
+# POM2's own sequencer — which landed here and pushed the file to 2167, red
+# on main — moved to its own TU (DiskIICard_Sequencer.cpp). Tightened to the
+# new size so the room freed is not spent quietly.
+#   src/DiskIICard.cpp: 2143 -> 2076 (-67)
+src/DiskIICard.cpp                       2076
 # 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
 # the existing format detection and loader; covered by disk_macbinary_smoke.
 #   src/DiskImage.cpp: 3293 -> 3316 (+23)

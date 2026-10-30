@@ -324,6 +324,7 @@ set(SOURCES
     src/MainWindow_DriveRack.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
+    src/DiskIICard_Sequencer.cpp
     src/Debugger.cpp
     src/Debugger_ImGui.cpp
     src/Debugger_Assembler.cpp
@@ -561,6 +562,7 @@ set(POM2_DEVICES_SOURCES
     src/Cs8900aDevice.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
+    src/DiskIICard_Sequencer.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EchoPlusTMS5220Snapshot.cpp
@@ -1533,6 +1535,7 @@ set(POM2_CORE_SOURCES
     src/Disk35Image_Session.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
+    src/DiskIICard_Sequencer.cpp
     src/Debugger.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
@@ -1804,6 +1807,7 @@ add_executable(pom2_headless
     src/DiskImageWozFlux.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
+    src/DiskIICard_Sequencer.cpp
     src/EmulationController.cpp
     src/ZipChip.cpp
     src/EmulationController_Storage.cpp
@@ -1916,6 +1920,7 @@ add_executable(pom2_bench
     src/Disk35Image_Session.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
+    src/DiskIICard_Sequencer.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/FloppySoundDevice.cpp
