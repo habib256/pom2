@@ -87,6 +87,18 @@ public:
     /// debugger off the CPU's hot loop entirely. Caller holds `stateMutex`.
     void syncDebugHook();
 
+    /// Switch the ProDOS MLI (6502) and CP/M BDOS (card Z80) call trace —
+    /// `debugger().osCalls()` holds the lines. Caller holds `stateMutex`.
+    void setOsCallTrace(bool mli, bool bdos)
+    {
+        pom2::OsCallTrace& t = debugger_->osCalls();
+        t.bind(&processor, &mem);
+        t.setMli(mli);
+        t.setBdos(bdos);
+        mem.slotBus().setZ80Observer(bdos ? &t : nullptr);
+        syncDebugHook();
+    }
+
     /// Resume from a debugger stop: clears the hit and grants the current PC
     /// one instruction of amnesty, so Run does not re-trigger the breakpoint
     /// it is standing on. Caller holds `stateMutex`.

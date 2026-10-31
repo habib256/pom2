@@ -43,7 +43,7 @@
 #include <string_view>
 #include <vector>
 
-namespace pom2 { class SmartPortBusUnit; class Block512Backing; class AutosavedMedium;
+namespace pom2 { class Z80; class SmartPortBusUnit; class Block512Backing; class AutosavedMedium;
                  class CentronicsPrinter; }
 
 class SlotBus;
@@ -292,6 +292,11 @@ public:
     /// intelligent device over the IWM (`SmartPortBusDevice`); a card that
     /// answers here is what that firmware finds, enumerates and boots from,
     /// with no ROM substitution at all. Default: nothing on the port.
+    /// The card's Z80, for a card that carries one (SoftCard, SoftCard II,
+    /// Applicard, Premium SoftCard, ALS). `SlotBus::setZ80Observer` hangs
+    /// the OS-call trace on it, at plug time too.
+    virtual pom2::Z80* z80Core() { return nullptr; }
+
     virtual int smartPortBusUnitCount() const { return 0; }
     virtual pom2::SmartPortBusUnit* smartPortBusUnit(int /*index*/) { return nullptr; }
 

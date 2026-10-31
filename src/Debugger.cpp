@@ -322,6 +322,7 @@ void Debugger::clearForTimeJump()
     resumeSkip_      = 0;
     curPc_           = 0;
     hit_             = {};
+    osCalls_.dropPending();
     clearMeasurements();
 }
 
@@ -343,6 +344,7 @@ bool Debugger::onInstruction(uint16_t pc)
     // ever clear when the controller has consumed it (debugResume), so this
     // cannot swallow a resume.
     if (hit_.valid()) return true;
+    if (osCalls_.mli()) osCalls_.on6502Instruction(pc);
     // Latched for noteAccess(), which fires mid-instruction and would
     // otherwise have no way to name the instruction responsible.
     beginStep(pc);

@@ -1137,6 +1137,7 @@ add_executable(test_rewind_transport
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -1179,6 +1180,7 @@ add_executable(test_ui_worker_contention
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -5886,6 +5888,7 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/CliDispatcher.cpp
     ${CMAKE_SOURCE_DIR}/src/CliRunner.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
@@ -6434,6 +6437,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -6767,6 +6771,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -7109,6 +7114,7 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -7274,6 +7280,8 @@ set_tests_properties(als_cpm_card PROPERTIES TIMEOUT 120)
 add_executable(test_softcard2_card
     softcard2_card_test.cpp
     ${CMAKE_SOURCE_DIR}/src/SoftCardIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/VidexVideotermCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Hd6845Crtc.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
@@ -7426,6 +7434,49 @@ add_test(NAME applicard_card COMMAND test_applicard_card
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(applicard_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+# ─── OS-call trace: ProDOS MLI (6502) + CP/M BDOS (card Z80) ─────────────────
+# Stub MLI / BDOS answer like the real ones; pins the decoded lines, the
+# no-return cases, and that the trace is off the CPU and the Z80s when off.
+add_executable(test_os_call_trace
+    os_call_trace_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplicardCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_os_call_trace PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_os_call_trace PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_os_call_trace PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_os_call_trace PRIVATE winmm ws2_32)
+endif()
+add_test(NAME os_call_trace COMMAND test_os_call_trace
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(os_call_trace PROPERTIES TIMEOUT 30)
+
 # ─── Premium SoftCard //e: aux-slot Z80, $C07E, CP/M 2.25 boot ──────────────
 add_executable(test_premium_softcard
     premium_softcard_test.cpp
@@ -7469,6 +7520,20 @@ set_tests_properties(premium_softcard PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
 add_executable(test_saturn_card
     saturn_card_test.cpp
     ${CMAKE_SOURCE_DIR}/src/SaturnCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_saturn_card PRIVATE
@@ -7487,7 +7552,7 @@ if(WIN32)
 endif()
 add_test(NAME saturn_card COMMAND test_saturn_card
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-set_tests_properties(saturn_card PROPERTIES TIMEOUT 60)
+set_tests_properties(saturn_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 # ─── Videx UltraTerm: bus map, picture, real firmware PR#3 ─────────────────
 add_executable(test_videx_ultraterm
@@ -8511,6 +8576,7 @@ set_tests_properties(thread_guard PROPERTIES TIMEOUT 30)
 add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
@@ -9915,6 +9981,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp

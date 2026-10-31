@@ -82,6 +82,12 @@ uint8_t SoftCardIICard::z80MemRead(uint16_t addr)
     return toZ80_;
 }
 
+// In boot mode a fetch below $8000 takes the latch; a peek leaves it.
+uint8_t SoftCardIICard::z80Peek(uint16_t addr)
+{
+    return ram_[addr];
+}
+
 void SoftCardIICard::z80MemWrite(uint16_t addr, uint8_t v)
 {
     if (stalled_)

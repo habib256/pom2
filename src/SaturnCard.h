@@ -22,12 +22,13 @@
 //  - **DEVSEL $C0n0-$C0nF**, read or write, A2 picks the meaning:
 //        A2 = 0 ($C0n0-3, $C0n8-B): a language-card switch, the Apple
 //          card's rules — A0-A1 = 0/3 read RAM, 1/2 read ROM; A3 = 0 the
-//          $D000 bank 2, 1 bank 1; write-enable needs two odd reads in a
-//          row, an even access or any write drops the pre-write latch and
-//          an even one write-enable too (POM2's own LC,
-//          `Memory::languageCardSwitchAccess`, MAME apple2e lc_update).
-//          MAME's ramcard128k sets write-enable on the first odd access;
-//          the manual says the card behaves as Apple's.
+//          $D000 bank 2, 1 bank 1; write-enable needs two odd accesses in
+//          a row, and unlike Apple's card a WRITE counts as one ("either
+//          reading or writing to the location", Operations Manual p. 70;
+//          "accessed twice", p. 72); an even access drops the pre-write
+//          latch and write-enable. MAME's ramcard128k sets write-enable on
+//          the first odd access. Saturn's own RAM test refuses a card that
+//          wants reads only (VCF forum thread 69188).
 //        A2 = 1: the 16 KB block — $C0n4-7 blocks 0-3, $C0nC-F blocks 4-7.
 //  - **INH**: while it reads RAM the card takes $D000-$FFFF reads from
 //    the ROM and the motherboard language card, while writes are enabled

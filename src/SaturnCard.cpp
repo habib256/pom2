@@ -57,9 +57,11 @@ void SaturnCard::access(uint8_t low4, bool isWrite)
         prewrite_ = false;
         writeEnable_ = false;
     }
-    if (isWrite) {
-        prewrite_ = false;
-    } else if (low4 & 1) {
+    // Not Apple's rule: "This can be accomplished by either reading or
+    // writing to the location" (Saturn Operations Manual, p. 70), and the
+    // write-enabling address "must be accessed twice" (p. 72).
+    (void)isWrite;
+    if (low4 & 1) {
         if (!prewrite_) prewrite_ = true;
         else            writeEnable_ = true;
     }

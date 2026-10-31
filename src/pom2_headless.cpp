@@ -139,6 +139,9 @@ void usage(const char* prog)
         "                        frames when --frames is absent or zero.\n"
         "  --text-dump           After the frames, print the 40-column text page\n"
         "                        to stdout (24 lines, inverse/flash shown as is).\n"
+        "  --trace-mli           Print every ProDOS MLI call and its result\n"
+        "                        to stderr (puts the CPU on its debugged loop).\n"
+        "  --trace-bdos          Print every CP/M BDOS call a card Z80 makes.\n"
         "  --version             Print the version and exit.\n"
         "  -h, --help            Show this and exit.\n"
         "\n"
@@ -220,6 +223,8 @@ int main(int argc, char** argv)
     bool doSetup     = true;
     bool setupGiven  = false;
     bool textDump    = false;
+    bool traceMli    = false;
+    bool traceBdos   = false;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
     int  sc2Slot      = 0;   // 0 = none
@@ -304,6 +309,8 @@ int main(int argc, char** argv)
             typed.push_back({ at, unescape(v.substr(colon + 1)), false });
         }
         else if (a == "--text-dump") textDump = true;
+        else if (a == "--trace-mli") traceMli = true;
+        else if (a == "--trace-bdos") traceBdos = true;
         else if (a == "--frames" && i+1 < argc) {
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
@@ -522,6 +529,14 @@ int main(int argc, char** argv)
             t.sent = true;
         }
     };
+
+    // Before the worker exists, like the rest of the setup.
+    if (traceMli || traceBdos) {
+        controller.debugger().osCalls().setSink([](const std::string& line) {
+            std::fprintf(stderr, "%s\n", line.c_str());
+        });
+        controller.setOsCallTrace(traceMli, traceBdos);
+    }
 
     // ─── Capture mode ──────────────────────────────────────────────────────
     // tickFrame() runs one frame's cycles INLINE — the same single-threaded

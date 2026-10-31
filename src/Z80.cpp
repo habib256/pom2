@@ -410,6 +410,7 @@ int Z80::step()
             cyc = 4;
             return cyc;
         }
+        if (observer_) observer_->onZ80Instruction(*this);
     }
 
     uint8_t op = fetchOp();

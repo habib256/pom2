@@ -530,12 +530,18 @@ computes `6 * 7`; negative controls for the text-page SRAM.
 ### Saturn 128K (`SaturnCard`)
 
 Catalog `saturn`, any slot. MAME `ramcard128k.cpp` decode — $C0n0-3 /
-$C0n8-B language-card switches, $C0n4-7 / $C0nC-F block 0-7 — with Apple's
-two-odd-reads write-enable (MAME's card enables on the first). The card
+$C0n8-B language-card switches, $C0n4-7 / $C0nC-F block 0-7 — with a
+two-access write-enable where, unlike Apple's card, a write counts as an
+access (Saturn Operations Manual pp. 70-72; MAME's card enables on the
+first access, POM2 had copied Apple's reads-only rule until 2026-10-31). The card
 takes $D000-$FFFF over the bus INH line, reads and writes separately
 (`Memory::LcInhibitor`, MAME `recalc_inh`): its read side folds into
 `romFastRead_`, writes above $D000 were already slow. Pinned by
-`saturn_card` on the real bus, with a negative control on the fold.
+`saturn_card` on the real bus, with a negative control on the fold, and by
+Saturn's own `RAMTEST128K` (the 1982 software disk,
+`disks_5.4/dsk/saturn128k_software.dsk`, from the Apple II Documentation
+Project): every mode check, the static and the dynamic test of all sixteen
+4K banks pass. With Apple's reads-only rule it answers `?NOT RAM` at once.
 
 ### Videx UltraTerm (`VidexUltratermCard`)
 
@@ -10779,6 +10785,46 @@ breakpoint, and missed it outright when the entry runs once. The four
 verbs call `clearForTimeJump()`, which is what a rewind already did for the
 same reason. Pinned in `debugger` (`testStepOverDecodesTheCpuView`,
 `testResetClearsTheLatchedStop`).
+
+### OS-call trace (`OsCallTrace.h/.cpp`)
+
+Every ProDOS MLI call the 6502 makes and every CP/M BDOS call a card Z80
+makes, decoded and paired with its result — the tool that would have
+decoded the ALS card and the Premium SoftCard from their own software.
+Idea and call tables after izapple2's `traceProDOS.go` / `traceCpm.go`.
+
+```
+MLI  $08F3 OPEN "QUIT.SYSTEM" buf=$1400 -> ref=1
+MLI  $0800 GET_FILE_INFO "atinit" -> ERR $46 file not found
+BDOS $94C3 F_SFIRST ????????.??? -> A=$00
+```
+
+- **Pairing.** A call is caught at its entry (`$BF00`, Z80 `$0005`) and
+  closed when the CPU reaches the return address *at the stack depth the
+  call returns with* (MLI: JSR + 6, SP + 2; BDOS: the pushed word, SP + 2).
+  A nested call, an interrupt or an inline-argument routine therefore
+  cannot close it early. A call the stack passes beneath without returning
+  is printed `(no return)`; MLI QUIT and BDOS 0 are printed at entry.
+  Reaching the return address at the right depth *is* a return, whatever
+  got the CPU there.
+- **MLI half** rides the Debugger hook: `Debugger::armed()` includes it, so
+  it puts the CPU on the debugged loop only while it is on.
+- **BDOS half** is a `pom2::Z80Observer`. The Z80 core calls it before each
+  instruction (not for an interrupt entry, a HALT cycle or the opcode behind
+  a DD/FD prefix) — one pointer test per `step()` when unset.
+  `SlotBus::setZ80Observer` hangs it on every card's `z80Core()`, and on any
+  card plugged later; it reads through `Z80Bus::z80Peek`, which the SoftCard
+  (6502 space), the ALS card (its Apple window) and the SoftCard II (its
+  boot-mode latch) override so a trace never takes a byte or stamps an
+  access. The SoftCard II replays a stalled instruction; a second entry at
+  the same depth with the same return address is ignored.
+- **Switches.** `EmulationController::setOsCallTrace(mli, bdos)` (under the
+  lock); the Debugger panel's "OS calls" section (copy to the clipboard);
+  `pom2_headless --trace-mli` / `--trace-bdos` print to stderr. 4000 lines
+  are kept. A time jump drops the open calls.
+
+Pinned by `os_call_trace` (stub MLI and BDOS, no-return cases, observer
+propagation). Checked by hand on ProDOS 2.4.3 and SoftCard CP/M 2.2.
 
 ### Thread exception barrier (`ThreadGuard.h`)
 

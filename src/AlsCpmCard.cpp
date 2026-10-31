@@ -83,6 +83,12 @@ uint8_t AlsCpmCard::z80MemRead(uint16_t addr)
     return ram_[addr];
 }
 
+uint8_t AlsCpmCard::z80Peek(uint16_t addr)
+{
+    if (!mem_) return 0xFF;
+    return appleWindow(addr) ? mem_->peekCpuView(xlateBank0(addr)) : ram_[addr];
+}
+
 void AlsCpmCard::z80MemWrite(uint16_t addr, uint8_t v)
 {
     if (!enabled_ || !mem_)

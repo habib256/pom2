@@ -59,6 +59,8 @@
 #include <utility>
 #include <vector>
 
+namespace pom2 { class Z80Observer; }
+
 class SlotBus
 {
 public:
@@ -77,6 +79,10 @@ public:
     /// Called only on the SLOW $Cxxx dispatch paths.
     using FloatingBusFn = std::function<uint8_t()>;
     void setFloatingBusSource(FloatingBusFn fn) { floatingBus_ = std::move(fn); }
+
+    /// Watch every card Z80, present and future (the OS-call trace). Null
+    /// detaches.
+    void setZ80Observer(pom2::Z80Observer* o);
 
     SlotBus() = default;
     ~SlotBus() = default;
@@ -317,6 +323,7 @@ private:
     IrqRouter irqRouter;
     /// Open-bus source (see `FloatingBusFn`). Optional.
     FloatingBusFn floatingBus_;
+    pom2::Z80Observer* z80Observer_ = nullptr;
 
     /// MAME's `read_floatingbus()` tail — what an unclaimed $Cxxx read
     /// puts on the data bus.

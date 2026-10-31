@@ -64,6 +64,7 @@ public:
     SoftCardIICard();
 
     std::string_view name() const override { return "SoftCard II"; }
+    pom2::Z80* z80Core() override { return &z80_; }
 
     uint8_t deviceSelectRead(uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
@@ -89,6 +90,7 @@ public:
 
 private:
     uint8_t z80MemRead(uint16_t addr) override;
+    uint8_t z80Peek(uint16_t addr) override;
     void    z80MemWrite(uint16_t addr, uint8_t v) override;
     uint8_t z80IoRead(uint16_t port) override;
     void    z80IoWrite(uint16_t port, uint8_t v) override;

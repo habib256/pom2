@@ -269,6 +269,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Clickable Apple //e keyboard (photo + measured hotspots) | `Keyboard_ImGui.*`, `AppleIIeKeyboardLayout.*` (generated), `AppleKeyLatch.h`, `tools/gen_keyboard_layout.py` | [§ Keyboard panel](DEV.md#apple-e-keyboard-panel) |
 | Floppy Emu (BMOW SD/OLED) | `FloppyEmuDevice.*`, `FloppyEmu_ImGui.*` | [§ Floppy Emu](DEV.md#floppy-emu-bmow) |
 | Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
+| OS-call trace — ProDOS MLI (6502) + CP/M BDOS (card Z80, via `Z80Observer` / `SlotBus::setZ80Observer`); Debugger panel, `pom2_headless --trace-mli/--trace-bdos` | `OsCallTrace.h/.cpp` | [§ OS-call trace](DEV.md#os-call-trace-oscalltracehcpp) |
 | Resumable sessions (v7, automatic profile/firmware/card reconstruction, detached media and program tapes) | `SessionArchive.*`, `SessionSnapshot.*`, `SessionMachine.*`, `SessionCards.*`, `SessionLoadQueue.*`, `SessionFiles.*`, `CassetteDevice_Session.cpp` | [Session contract](docs/session-format.md) |
 | Clock & threading | `EmulationController.h/.cpp` | [§ Threading](DEV.md#clock--threading) |
 | Thread exception barrier (every long-lived thread) | `ThreadGuard.h` | [§ Threading](DEV.md#thread-exception-barrier-threadguardh) |

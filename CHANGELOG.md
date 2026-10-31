@@ -10,6 +10,42 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — Saturn: a write counts toward write-enable; SoftCard II on a ][+ + Videoterm
+
+- **Saturn 128K write-enable.** POM2 copied the Language Card's rule: two
+  odd *reads*, and a write dropped the pre-write latch. The Saturn manual
+  says otherwise — a state is set "by either reading or writing to the
+  location" (Operations Manual p. 70), and write-enabling "must be accessed
+  twice" (p. 72). Found by comparing with Simon Babcock's ReplicApple2Plus,
+  which cites the same page. **Measured:** Saturn's own `RAMTEST128K` (1982
+  software disk) answers `?NOT RAM` under the old rule and passes every
+  mode, static and dynamic test of all sixteen 4K banks under the new one;
+  `saturn_card` runs it (media-gated) and pins write-write and read-write
+  enables on the bus.
+- **CP/M 2.28B on a ][+.** The SoftCard II server's built-in console writes
+  a //e's aux 80 columns; on a ][+ the card in slot 3 is the console, and a
+  Videx Videoterm there is typed and driven through its `$C800` entry
+  points. `softcard2_card` boots it to `A>` and runs `DIR` (SoftCard2's
+  HARDWARE-REFERENCE.md, "Built-in console").
+
+## 2026-10-31 — OS-call trace: ProDOS MLI and CP/M BDOS
+
+The debugger can now print every ProDOS MLI call and every CP/M BDOS call
+of a card Z80, decoded and with its result (`OsCallTrace`; Debugger panel
+"OS calls", `pom2_headless --trace-mli` / `--trace-bdos`). After izapple2's
+`traceProDOS.go` / `traceCpm.go`; the gap it fills is the one the ALS card
+and the Premium SoftCard were decoded through, by hand.
+
+- **A call closes at its return address and stack depth**, not at the
+  first RTS/RET: an inline-argument routine or an interrupt cannot end it.
+  The first test of the no-return case jumped to the call's own return
+  address at its own depth and the trace called it a return — which it is.
+- **No cost when off.** The MLI half rides the Debugger hook (the CPU stays
+  on its fast loop until it is on); the BDOS half is a `Z80Observer`, one
+  pointer test per Z80 step, hung on the cards only while it is on.
+- **Peeks have no side effect.** A new `Z80Bus::z80Peek` keeps the trace
+  from taking the SoftCard II's boot latch or stamping a SoftCard access.
+
 ## 2026-10-31 — a2audit and mb-audit pass; 6522 IFR edge, 65C02 dummy read
 
 Two outside audits joined the suite, each booting its own disk:

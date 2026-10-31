@@ -53,6 +53,7 @@
 
 #include "M6502.h"
 #include "MemoryWatchSink.h"
+#include "OsCallTrace.h"
 
 #include <atomic>
 #include <cstdint>
@@ -166,6 +167,7 @@ public:
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
         return breakpointCount() || watchpointCount() || profiling_ || historyEnabled_ ||
+               osCalls_.mli() ||
                transientArmed_.load(std::memory_order_relaxed);
     }
     /// Watchpoints specifically — what Memory gates its hook on.
@@ -224,6 +226,12 @@ public:
     /// they are addresses in a program, not in a timeline. Caller must hold
     /// `stateMutex`.
     void clearForTimeJump();
+
+    /// ProDOS MLI / CP/M BDOS call trace. Its MLI half runs off this hook;
+    /// switch it through EmulationController::setOsCallTrace, which also
+    /// re-syncs the hook and hangs the BDOS half on the card Z80s.
+    OsCallTrace& osCalls() { return osCalls_; }
+    const OsCallTrace& osCalls() const { return osCalls_; }
 
 private:
     void ensureBpBits();
@@ -292,6 +300,7 @@ private:
     uint16_t curPc_ = 0;
 
     Hit hit_{};
+    OsCallTrace osCalls_;
 };
 
 } // namespace pom2

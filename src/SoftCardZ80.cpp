@@ -101,6 +101,12 @@ uint8_t SoftCardZ80::z80MemRead(uint16_t addr)
     return mem_->memRead(xlate(addr));
 }
 
+// The 6502 space without the access stamp or an I/O side effect.
+uint8_t SoftCardZ80::z80Peek(uint16_t addr)
+{
+    return mem_ ? mem_->peekCpuView(xlate(addr)) : 0xFF;
+}
+
 void SoftCardZ80::z80MemWrite(uint16_t addr, uint8_t v)
 {
     if (!enabled_ || !mem_)

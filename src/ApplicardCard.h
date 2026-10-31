@@ -65,6 +65,7 @@ public:
     bool loadRom(const std::vector<uint8_t>& bytes);
 
     std::string_view name() const override { return "Applicard"; }
+    pom2::Z80* z80Core() override { return &z80_; }
 
     uint8_t deviceSelectRead(uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;

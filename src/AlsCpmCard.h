@@ -82,6 +82,7 @@ public:
     void setCpu(M6502* cpu) { cpu_ = cpu; }
 
     std::string_view name() const override { return "ALS CP/M Card"; }
+    pom2::Z80* z80Core() override { return &z80_; }
 
     /// $CnXX write = bus-ownership toggle.
     void slotRomWrite(uint8_t low8, uint8_t v) override;
@@ -107,6 +108,7 @@ public:
 
 private:
     uint8_t z80MemRead(uint16_t addr) override;
+    uint8_t z80Peek(uint16_t addr) override;
     void    z80MemWrite(uint16_t addr, uint8_t v) override;
     void    z80IoWrite(uint16_t port, uint8_t v) override;
 

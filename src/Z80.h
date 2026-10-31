@@ -62,6 +62,21 @@ public:
     /// register forms). The SoftCard decodes no I/O — default open bus.
     virtual uint8_t z80IoRead (uint16_t /*port*/) { return 0xFF; }
     virtual void    z80IoWrite(uint16_t /*port*/, uint8_t /*v*/) {}
+    /// Side-effect-free read for an observer (the OS-call trace). A bus whose
+    /// reads touch a latch or the 6502's I/O must override it.
+    virtual uint8_t z80Peek(uint16_t addr) { return z80MemRead(addr); }
+};
+
+class Z80;
+
+/// Told of every instruction before it runs — not of an interrupt entry, a
+/// HALT idle cycle or the opcode behind a DD/FD prefix. Unset, it costs one
+/// pointer test per step().
+class Z80Observer
+{
+public:
+    virtual ~Z80Observer() = default;
+    virtual void onZ80Instruction(const Z80& z80) = 0;
 };
 
 class Z80
@@ -123,6 +138,11 @@ public:
     /// progress — valid inside a Z80Bus callback (see the header note).
     int  busT() const { return busT_; }
 
+    void setObserver(Z80Observer* o) { observer_ = o; }
+    Z80Observer* observer() const { return observer_; }
+    /// Through Z80Bus::z80Peek: no side effect on the card.
+    uint8_t peek(uint16_t addr) const { return bus.z80Peek(addr); }
+
     const State& getState() const { return st; }
     void         setState(const State& s) { st = s; }
 
@@ -145,6 +165,7 @@ private:
     enum : int { MODE_HL = 0, MODE_IX = 1, MODE_IY = 2 };
 
     Z80Bus& bus;
+    Z80Observer* observer_ = nullptr;
     State   st;
     int     cyc = 0;   // T-states consumed by the in-flight step()
     int     busT_ = 0; // T-state of the next bus access in this step()

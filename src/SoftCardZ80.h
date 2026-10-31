@@ -78,6 +78,7 @@ public:
     void setCpu(M6502* cpu) { cpu_ = cpu; }
 
     std::string_view name() const override { return "SoftCard Z80"; }
+    pom2::Z80* z80Core() override { return &z80_; }
 
     /// $CnXX write = bus-ownership toggle (MAME write_cnxx). Data and
     /// offset are ignored by the hardware.
@@ -111,6 +112,7 @@ public:
 private:
     // pom2::Z80Bus — the Z80's view of the Apple II bus.
     uint8_t z80MemRead(uint16_t addr) override;
+    uint8_t z80Peek(uint16_t addr) override;
     void    z80MemWrite(uint16_t addr, uint8_t v) override;
 
     Memory* mem_ = nullptr;

@@ -77,6 +77,7 @@ private:
         bool profiling = false, historyEnabled = false;
         std::vector<Debugger::ProfileEntry> profile;
         std::vector<Debugger::TraceEntry> history;
+        bool traceMli = false, traceBdos = false;
         /// 64 KiB of main RAM, copied so the disassembly can be laid out
         /// after the lock is released.
         std::vector<uint8_t> memory;
@@ -90,6 +91,11 @@ private:
     void drawStopBanner(const Snapshot& snap);
     void drawSource(EmulationController& ctrl, const Snapshot& snap);
     void drawAssembler(EmulationController& ctrl, const Snapshot& snap);
+
+    /// The OS-call trace, re-copied only when it has grown.
+    std::vector<std::string> osLines_;
+    uint64_t osEmitted_ = ~uint64_t(0);
+    void drawOsCalls(EmulationController& ctrl, Snapshot& snap);
 
     /// Disassembly origin. Follows the PC unless the user has scrolled away.
     uint16_t  viewAddr_    = 0;

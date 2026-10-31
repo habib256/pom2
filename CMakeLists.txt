@@ -332,6 +332,7 @@ set(SOURCES
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
     src/Debugger.cpp
+    src/OsCallTrace.cpp
     src/Debugger_ImGui.cpp
     src/Debugger_Assembler.cpp
     src/Assembler6502.cpp
@@ -879,6 +880,7 @@ set(POM2_RUNTIME_HEADERS
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
     src/Debugger.h
+    src/OsCallTrace.h
     src/DebuggerSymbols.h
     src/DebuggerSourceMap.h
     # MediaMount.h is pure contract — one <string> include and forward
@@ -914,6 +916,7 @@ set(POM2_RUNTIME_SOURCES
     src/PrinterPortControl.cpp
     src/PrinterRender.cpp
     src/Debugger.cpp
+    src/OsCallTrace.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/TnfsClient.cpp
@@ -1562,6 +1565,7 @@ set(POM2_CORE_SOURCES
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
     src/Debugger.cpp
+    src/OsCallTrace.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/DiskImage.cpp
@@ -1845,6 +1849,7 @@ add_executable(pom2_headless
     src/IIcExternalSmartPort.cpp
     src/SmartPortBusDevice.cpp
     src/Debugger.cpp
+    src/OsCallTrace.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp
     src/SmartPortHub.cpp

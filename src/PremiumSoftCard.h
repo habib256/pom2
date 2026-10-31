@@ -103,6 +103,7 @@ public:
     void setMemory(Memory* mem) { mem_ = mem; }
 
     std::string_view name() const override { return "Premium SoftCard //e"; }
+    pom2::Z80* z80Core() override { return &z80_; }
 
     void onPlug() override   { if (mem_) mem_->setAuxSlotPort(this); }
     void onUnplug() override { if (mem_ && mem_->auxSlotPort() == this) mem_->setAuxSlotPort(nullptr); }

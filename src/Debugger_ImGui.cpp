@@ -94,6 +94,13 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.historyEnabled = ctrl.debugger().historyEnabled();
         snap.profile = ctrl.debugger().profile();
         snap.history = ctrl.debugger().history();
+        const pom2::OsCallTrace& os = ctrl.debugger().osCalls();
+        snap.traceMli = os.mli();
+        snap.traceBdos = os.bdos();
+        if (os.emitted() != osEmitted_) {
+            osEmitted_ = os.emitted();
+            osLines_.assign(os.lines().begin(), os.lines().end());
+        }
         // The PAGED view, not mem.data(). The flat mirror is main-bank only,
         // so on a //e running out of aux, out of a RamWorks bank or out of
         // language-card RAM the panel disassembled bytes the CPU never
@@ -202,6 +209,8 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         ImGui::EndChild();
     }
 
+    drawOsCalls(ctrl, snap);
+
     // Disassembly left, breakpoints right.
     const float rightWidth = 270.0f;
     ImGui::BeginChild("##disasm",
@@ -219,6 +228,40 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     ImGui::EndChild();
 
     ImGui::End();
+}
+
+// ── ProDOS MLI / CP/M BDOS calls ─────────────────────────────────────────
+
+void Debugger_ImGui::drawOsCalls(EmulationController& ctrl, Snapshot& snap)
+{
+    if (!ImGui::CollapsingHeader("OS calls (ProDOS MLI, CP/M BDOS)")) return;
+    bool changed = ImGui::Checkbox("ProDOS MLI", &snap.traceMli);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("CP/M BDOS (card Z80)", &snap.traceBdos);
+    if (changed) {
+        auto st = ctrl.lockState();
+        ctrl.setOsCallTrace(snap.traceMli, snap.traceBdos);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear##oscalls")) {
+        auto st = ctrl.lockState();
+        ctrl.debugger().osCalls().clear();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Copy##oscalls")) {
+        std::string all;
+        for (const auto& l : osLines_) all += l + "\n";
+        ImGui::SetClipboardText(all.c_str());
+    }
+    ImGui::TextWrapped("Each call with its result, at its caller's address. The MLI trace runs the CPU on its debugged loop while it is on.");
+    ImGui::BeginChild("##oscalls", ImVec2(0, 160), true, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGuiListClipper clip;
+    clip.Begin(static_cast<int>(osLines_.size()));
+    while (clip.Step())
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
+            ImGui::TextUnformatted(osLines_[static_cast<std::size_t>(i)].c_str());
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
 }
 
 // ── Why are we stopped? ──────────────────────────────────────────────────

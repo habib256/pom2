@@ -16,6 +16,7 @@
 
 #include <cassert>
 #include "SlotBus.h"
+#include "Z80.h"
 
 // ─── SlotPeripheral ↔ SlotBus wiring ────────────────────────────────────
 // Definitions for SlotPeripheral live here so they have full visibility
@@ -93,8 +94,17 @@ void SlotBus::plug(int slot, std::unique_ptr<SlotPeripheral> card)
         slots[slot] = std::move(card);
         slots[slot]->attachToBus(this, slot);
         slots[slot]->onPlug();
+        if (pom2::Z80* z = slots[slot]->z80Core()) z->setObserver(z80Observer_);
     }
     rebuildActiveCache();
+}
+
+void SlotBus::setZ80Observer(pom2::Z80Observer* o)
+{
+    z80Observer_ = o;
+    for (auto& card : slots)
+        if (card)
+            if (pom2::Z80* z = card->z80Core()) z->setObserver(o);
 }
 
 std::unique_ptr<SlotPeripheral> SlotBus::unplug(int slot)
