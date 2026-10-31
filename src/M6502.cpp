@@ -200,9 +200,8 @@ void M6502::Abs(void)
 // on an Apple II the un-fixed address can be a soft switch, so
 // `STA $C030,X` clicks the speaker TWICE on a ][ / ][+ / unenhanced //e and
 // a page-crossing `LDA $C0F0,X` touches $C030 on its way (bug hunt #8).
-// The 65C02 re-reads the last operand byte instead — never the data
-// address — so nothing is emitted there. Cycle counts were already right,
-// which is why no timing test could see it.
+// The 65C02 differs, see cmosIndexedWriteDummyRead below. Cycle counts were
+// already right, which is why no timing test could see it.
 void M6502::nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always)
 {
     if (cpuMode == CpuMode::CMOS) return;
@@ -215,6 +214,32 @@ void M6502::nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always)
     --cycles;
     (void)memory->memRead(static_cast<uint16_t>((base & 0xFF00) |
                                                 (indexed & 0x00FF)));
+    ++cycles;
+}
+
+// 65C02 indexed-WRITE dummy read (STA/STZ/INC/DEC abs,X, STA abs,Y). The
+// 65C02 fixed the NMOS's read of the WRONG page, not the double access: with
+// no page crossing the extra cycle still READS the target, the page-crossing
+// one re-reads the operand's high byte (PC+2, nothing emitted here). Read off
+// two real-machine bus captures (hoglet67/6502Decoder test/beebr65c02 — a
+// Rockwell R65C02 — and test/master — a 65C12): over ~2 900 STA abs,X/abs,Y
+// with a low AAL the dummy cycle carries the target's old value, not AAH
+// (e.g. `9D 04 01 | 0F | 09`, STA $0104,X reading $0F then writing $09).
+// The same as Kent Dickey (KEGS) and Nick Westgate (AppleWin) in "Phantom
+// reads on 6502, 65C02 and 65816", comp.sys.apple2.programmer 2020, and what
+// mb-audit T263_1 needs on an enhanced //e — the "Willy Byte" false read that
+// clears a Mockingboard's T1 IRQ through `STA $C444,X`. SingleStepTests'
+// 65C02 vectors show PC+2 there; they are generated from an emulator core,
+// and this cycle is one of their known mismatches with silicon (cf. the
+// JMP (a) report, TomHarte/CLK#1924). STA (zp),Y re-reads the pointer's
+// high byte (zp+1) on both captures, 100 % — never the target — and the
+// 6-cycle CMOS shifts (RmwAbsX) have no cycle before the read: neither
+// comes here.
+void M6502::cmosIndexedWriteDummyRead(uint16_t base, uint16_t indexed)
+{
+    if (cpuMode != CpuMode::CMOS || (base & 0xFF00) != (indexed & 0xFF00)) return;
+    --cycles;                       // the bus cycle just before the access
+    (void)memory->memRead(indexed);
     ++cycles;
 }
 
@@ -328,6 +353,7 @@ void M6502::WAbsX(void)
     op = base + xRegister;
     cycles += 3;
     nmosIndexDummyRead(base, op, /*always=*/true);
+    cmosIndexedWriteDummyRead(base, op);
 }
 
 // abs,X for the 65C02 RMW shift/rotate ops (ASL/LSR/ROL/ROR). On the 65C02
@@ -356,6 +382,7 @@ void M6502::WAbsY(void)
     op = base + yRegister;
     cycles += 3;
     nmosIndexDummyRead(base, op, /*always=*/true);
+    cmosIndexedWriteDummyRead(base, op);
 }
 
 void M6502::WIndZeroY(void)

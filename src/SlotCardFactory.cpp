@@ -17,6 +17,7 @@
 #include "SlotCardFactory.h"
 
 #include "CffaCard.h"
+#include "ApplicardCard.h"
 #include "Cffa3000Card.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
@@ -34,6 +35,7 @@
 #include "SmartPortCard.h"
 #include "SlinkyCard.h"
 #include "SuperSerialCard.h"
+#include "VidexUltratermCard.h"
 #include "VidexVideotermCard.h"
 #include "VidHDCard.h"
 #include "SnesMaxCard.h"
@@ -42,6 +44,7 @@
 #include <cstdint>
 #include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -276,6 +279,70 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         result.status = "loaded: " + fwPath + " + " + normal +
             (card->alternateIsDerived() ? std::string(" (inverse set derived)")
                                         : " + " + alt);
+        card->onReset();
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "applicard") {
+        // PCPI Appli-Card. ROM-gated: the Z80 boots from its 2 KB ROM and has
+        // nothing else to run (ApplicardCard.h).
+        const std::string rom = locate_(ApplicardCard::kRomPath);
+        std::vector<uint8_t> bytes;
+        if (!rom.empty()) {
+            std::ifstream f(rom, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        auto card = std::make_unique<ApplicardCard>();
+        if (!card->loadRom(bytes)) {
+            result.warningCategory = "Applicard";
+            result.warning = "PCPI Applicard requested in slot " +
+                std::to_string(request.slot) + " but " + ApplicardCard::kRomPath +
+                " (2 KB) is missing or the wrong size — slot left empty";
+            return result;
+        }
+        result.resourcePath = rom;
+        result.status = "loaded: " + rom;
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "ultraterm") {
+        // Videx UltraTerm. ROM-gated like the Videoterm. A //e-class machine
+        // takes the enhanced-//e set (MouseText glyphs) when it is present,
+        // MAME's a2ultrme; everything else the original a2ulttrm.
+        const auto readFile = [](const std::string& path) {
+            std::vector<uint8_t> b;
+            if (path.empty()) return b;
+            std::ifstream f(path, std::ios::binary);
+            b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            return b;
+        };
+        auto card = std::make_unique<VidexUltratermCard>(request.slot);
+        std::string fw, chars;
+        const bool iie = profileConfig(request.profile).iieMode;
+        const std::pair<const char*, const char*> sets[] = {
+            { VidexUltratermCard::kRomPathEnh, VidexUltratermCard::kCharPathEnh },
+            { VidexUltratermCard::kRomPath,    VidexUltratermCard::kCharPath },
+        };
+        for (std::size_t i = iie ? 0 : 1; i < 2; ++i) {
+            const std::string f = locate_(sets[i].first), c = locate_(sets[i].second);
+            if (!f.empty() && !c.empty() && card->loadRoms(readFile(f), readFile(c))) {
+                fw = f;
+                chars = c;
+                break;
+            }
+        }
+        if (fw.empty()) {
+            result.warningCategory = "UltraTerm";
+            result.warning = "Videx UltraTerm requested in slot " +
+                std::to_string(request.slot) + " but its firmware and character ROM (" +
+                VidexUltratermCard::kRomPath + ", " + VidexUltratermCard::kCharPath +
+                ", 4 KB each) are missing or the wrong size — slot left empty";
+            return result;
+        }
+        result.resourcePath = fw;
+        result.status = "loaded: " + fw + " + " + chars;
         card->onReset();
         result.card = std::move(card);
         return result;

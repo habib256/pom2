@@ -107,6 +107,10 @@ struct Via6522
     // 0 → -1, i.e. the pulse fires when we count *through* zero).
     uint16_t t1Latch = 0xFFFF;
     int32_t  t1Counter = 0xFFFF;
+    /// IFR bits raised on the last advanced cycle, not yet on the pin
+    /// (irqOut). Not in the snapshot: one cycle, re-derived by the next
+    /// advance at worst one cycle late.
+    uint8_t  ifrFresh_ = 0;
     bool     t1FireArmed = false;  // post-reset T1 doesn't fire until SW loads T1CH
     // Timer 2. One-shot on phase-2 (ACR.bit5 PB6 pulse-counting NOT
     // modelled — no POM2 card drives PB6 externally). Unlocks Ultima IV
@@ -154,6 +158,7 @@ struct Via6522
         t1FireArmed = false;
         t2Active   = false;
         ifr = 0;
+        ifrFresh_ = 0;
         ier = 0;
     }
 
@@ -245,7 +250,17 @@ struct Via6522
         return readPortA();
     }
 
-    inline bool irqOut() const { return (ifr & ier & 0x7F) != 0; }
+    /// The /IRQ pin as the 6502 acts on it. A flag raised on the LAST cycle
+    /// the VIA has been advanced to (`ifrFresh_`) is readable in IFR at once
+    /// but kept off the pin until one more cycle has passed: the 6502
+    /// samples IRQ on an instruction's penultimate cycle, POM2's core at its
+    /// boundary (M6502.cpp, "interrupt sampling is instruction-granular"),
+    /// and holding a last-cycle flag back one cycle is what makes the two
+    /// agree. Together with the N + 2 flag edge in `advance()` this is the
+    /// hardware: IFR polled exactly at N + 2 (mb-audit T6522_F/10/11), the
+    /// interrupt taken where MAME's N + 3 used to put it (the French Touch
+    /// raster pins).
+    inline bool irqOut() const { return (ifr & ~ifrFresh_ & ier & 0x7F) != 0; }
 
     /// MAME 6522via.cpp:99 — `CLR_PA_INT()` = `clear_int(INT_CA1 |
     /// ((!CA2_IND_IRQ(m_pcr)) ? INT_CA2 : 0))`, executed on EVERY read or
@@ -553,14 +568,49 @@ struct Via6522
     inline bool advance(int cycles)
     {
         if (cycles <= 0) return false;
+        // A cycle has passed: last time's last-cycle flags reach the pin.
+        // Not reported as a fire — the cards re-read irqOut() after every
+        // advance (MockingboardCard::updateIrq and friends).
         bool fired = false;
-        t1Counter -= cycles;
-        while (t1Counter < 0) {
-            const bool armed = t1FireArmed;
-            if (armed) {
-                ifr |= IFR_T1;
-                fired = true;
-                if (!t1Continuous()) t1FireArmed = false;
+        ifrFresh_ = 0;
+        const uint8_t ifrBefore = ifr;
+        // T1. The visible counter is `t1Counter - 1` (see the T1CL read):
+        // N, N-1 … 0, $FFFF, then N again. The 6522 raises IFR.T1 on the
+        // cycle the counter shows $FFFF — `t1Counter == 0` here — and
+        // reloads on the NEXT one, so the period is latch + 2 and the first
+        // shot after a T1CH write lands N + 2 cycles after it. mb-audit
+        // T6522_F reads IFR on the 5th cycle of `LDA (zp),Y` exactly there
+        // (real WDC/Rockwell 65C22s, AppleWin); POM2 used to raise IFR with
+        // the reload, one cycle late — MAME's `TIMER1_VALUE + IFR_DELAY`.
+        //
+        // Done arithmetically on the un-reloaded line `lin`: the counter
+        // passes through 0 at lin = 0, -P, -2P …, and every pass is an
+        // underflow. A counter already sitting on 0 had its underflow
+        // counted by the call that put it there.
+        {
+            const int64_t period = static_cast<int64_t>(t1Latch) + 2;
+            const int64_t before = t1Counter;
+            const int64_t lin    = before - cycles;
+            int64_t underflows = 0;
+            if (lin <= 0) {
+                underflows = (-lin) / period + (before > 0 ? 1 : 0);
+            }
+            if (underflows > 0) {
+                const bool armed = t1FireArmed;
+                if (armed) {
+                    ifr |= IFR_T1;
+                    fired = true;
+                    if (!t1Continuous()) t1FireArmed = false;
+                }
+                // PB7 toggles on an underflow only while ACR.7 drives it AND
+                // the timer is armed: every underflow in continuous mode
+                // (parity of the collapsed ones; a zero latch freezes it,
+                // MAME `if (TIMER1_VALUE > 0)`), only the first — armed — one
+                // in one-shot. It TOGGLES (die analysis; VICE via_pb7).
+                if ((acr & 0x80) && armed) {
+                    if (!t1Continuous())                         t1Pb7 = !t1Pb7;
+                    else if (t1Latch != 0 && (underflows & 1))   t1Pb7 = !t1Pb7;
+                }
             }
             // The counter reloads from the latch on EVERY underflow, one-shot
             // or continuous — one-shot only stops the interrupt (and PB7):
@@ -568,46 +618,38 @@ struct Via6522
             // there was a Timer 1 underflow" (6522 die analysis, 6502.org);
             // mb-audit T6522_9 checks it on real Mockingboards (WDC 65C22,
             // Phasor, SMS); VICE ("contrary to the datasheet"), AppleWin and
-            // MAME master agree. POM2 free-ran from $FFFF instead, so a
-            // one-shot driver reading T1C after the IRQ saw $FFxx, not the
-            // latch countdown.
+            // MAME master agree.
             //
-            // Period is latch + 2 — the 6522 free-run contract. Was +3,
-            // which is MAME's `TIMER1_VALUE + IFR_DELAY`; but IFR_DELAY
-            // models the one-off underflow→IFR latency, NOT part of the
-            // recurring period. French Touch "MAD EFFECT" computes its latch
-            // as `20280 - 2` (`Sources/main.a`); with +3 its drawing loop
-            // slid a cycle per frame. Pinned by `via_t1_continuous_period`.
-            //
-            // Collapsed arithmetically (a tiny latch under a huge `cycles`
-            // would spin), with a CEILING: a slice ending exactly ON an
-            // underflow must not swallow a whole extra period (bug hunt #8).
-            const int64_t period  = static_cast<int64_t>(t1Latch) + 2;
-            const int64_t deficit = -static_cast<int64_t>(t1Counter);   // > 0
-            const int64_t periods = (deficit + period - 1) / period;
-            t1Counter = static_cast<int32_t>(
-                static_cast<int64_t>(t1Counter) + periods * period);
-            // PB7 toggles on an underflow only while ACR.7 drives it AND the
-            // timer is armed: every underflow in continuous mode (parity of
-            // the collapsed ones; a zero latch freezes it, MAME `if
-            // (TIMER1_VALUE > 0)`), only the first — armed — one in one-shot.
-            // It TOGGLES; it is not forced high (die analysis; VICE via_pb7).
-            if ((acr & 0x80) && armed) {
-                if (!t1Continuous())                      t1Pb7 = !t1Pb7;
-                else if (t1Latch != 0 && (periods & 1))   t1Pb7 = !t1Pb7;
+            // Period is latch + 2 — the 6522 free-run contract. French Touch
+            // "MAD EFFECT" computes its latch as `20280 - 2`
+            // (`Sources/main.a`). Pinned by `via_t1_continuous_period`.
+            // The reload is collapsed with a CEILING, so a slice ending ON an
+            // underflow leaves the counter at 0 — showing $FFFF, underflow
+            // already counted — rather than swallowing a period (bug hunt #8).
+            if (lin < 0) {
+                const int64_t reloads = (-lin + period - 1) / period;
+                t1Counter = static_cast<int32_t>(lin + reloads * period);
+            } else {
+                t1Counter = static_cast<int32_t>(lin);
             }
+            // Counter on 0 now = the underflow was this advance's last cycle.
+            if (t1Counter == 0 && (ifr & IFR_T1) && !(ifrBefore & IFR_T1))
+                ifrFresh_ |= IFR_T1;
         }
         // T2 advance — phase-2 mode only.
+        // Same edge as T1: IFR.T2 rises on the cycle the counter shows
+        // $FFFF (`t2Counter == 0`), mb-audit T6522_11; the counter itself
+        // just wraps and keeps counting.
         if ((acr & 0x20) == 0) {
+            const int32_t before = t2Counter;
             t2Counter -= cycles;
-            while (t2Counter < 0) {
-                if (t2Active) {
-                    ifr |= IFR_T2;
-                    fired = true;
-                    t2Active = false;
-                }
-                t2Counter += 0x10000;
+            if (t2Active && before > 0 && t2Counter <= 0) {
+                ifr |= IFR_T2;
+                fired = true;
+                t2Active = false;
+                if (t2Counter == 0 && !(ifrBefore & IFR_T2)) ifrFresh_ |= IFR_T2;
             }
+            while (t2Counter < 0) t2Counter += 0x10000;
         }
         return fired;
     }

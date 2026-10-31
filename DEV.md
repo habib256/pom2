@@ -10,7 +10,7 @@ from. When MAME upstream renames a path (e.g. `wozfdc.cpp` `bus/a2bus
 
 ## Table of contents
 
-- [CPU](#cpu) · [Z80 core](#z80-core-z80hcpp--softcardcpm-phase-1) · [SoftCard Z80](#softcard-z80-softcardz80hcpp--cpm-phase-2)
+- [CPU](#cpu) · [Z80 core](#z80-core-z80hcpp--softcardcpm-phase-1) · [SoftCard Z80](#softcard-z80-softcardz80hcpp--cpm-phase-2) · [SoftCard II](#softcard-ii-softcardiicard) · [Applicard / Premium SoftCard](#z80-cards-with-their-own-ram-applicard-premium-softcard) · [Saturn 128K](#saturn-128k-saturncard) · [Videx UltraTerm](#videx-ultraterm-videxultratermcard)
 - [Memory](#memory)
 - [Display](#display)
 - [Audio](#audio) · [Mockingboard](#mockingboard) · [Floppy mechanical sounds](#floppy-mechanical-sounds)
@@ -435,6 +435,18 @@ behaves identically). The 44K master is the correct II+ image. The boot
 also exercises the LC heavily: 56K/60K CBIOS lives in the Z80's
 $B000-$DFFF windows = 6502 $D000-$FFFF Language Card RAM.
 
+**65C02 indexed-write dummy read** *(2026-10-31, mb-audit)*. The 65C02 kept
+the double access of `STA/STZ/INC/DEC abs,X` and `STA abs,Y` when no page is
+crossed: the extra cycle READS the target (`M6502::cmosIndexedWriteDummyRead`);
+a page crossing re-reads PC+2, `STA (zp),Y` re-reads the pointer's high byte,
+neither emitted. Settled on silicon — hoglet67/6502Decoder's bus captures of a
+Rockwell R65C02 and a 65C12 (`test/beebr65c02`, `test/master`): ~2 900
+`STA abs,X/Y` with a low AAL carry the target's old value in that cycle, and
+on 564 `INC/DEC abs,X` the dummy byte equals the real read every time (the
+capture's own consistency check). SingleStepTests' 65C02 vectors say PC+2:
+they are generated from an emulator core. mb-audit T263_1 ("Willy Byte",
+`STA $C444,X` clearing a Mockingboard T1 IRQ) pins it on an enhanced //e.
+
 **NMOS indexed dummy read** *(2026-09-08, bug hunt #8)*. A 6502 adds the
 index to the low byte first and performs a real bus READ at that un-fixed
 address before correcting the high byte: on every `STA abs,X/Y`,
@@ -446,6 +458,96 @@ re-reads the last operand byte instead and emits nothing. No measurable cost
 on `pom2_bench`. Pinned by `cpu_nmos_index_dummy_read` with the speaker
 toggle counter as the bus witness; the full Tom Harte NMOS + CMOS corpus
 still passes.
+
+### SoftCard II (`SoftCardIICard`)
+
+Microsoft's Z-80 SoftCard II, catalog key `softcard2`: a 6 MHz Z80 on 64 KB
+of its own, the Applicard's design rather than the SoftCard's. It is **not a
+bus master** — both CPUs run all the time and only meet at an AMD Am2950
+bidirectional latch, so the card is paced by `advanceCycles` like the
+Workstation Card, not by `dmaRun`. No MAME model; ported from izapple2's
+`cardZ80Softcard2.go` (GPL-3.0) and checked against Microsoft's CP/M 2.28B
+for the card, which boots to `A>` on a //e with the card in slot 4.
+
+| 6502 (DEVSEL, A0-A1) | | Z80 (any port, A0) | |
+|---|---|---|---|
+| read `$C0n0` | byte from the Z80, empties it | `IN` even | byte from the 6502, empties it |
+| read `$C0n1` | status: b7 Z80 byte waiting, b0 own byte not taken | `IN` odd | the same, mirrored |
+| write `$C0n0` | byte for the Z80 | `OUT` even | byte for the 6502 |
+| write `$C0n3` | resets the Z80 and the latches | | |
+
+**Boot mode** (reset → first `OUT`): the card's RAM is empty, so every Z80
+read below `$8000`, opcode fetches included, takes the 6502's latch, and a
+write below `$8000` goes to RAM *and* back to the 6502. CP/M's 6502 loader
+feeds the Z80 its first code that way. A read on an empty latch holds the
+Z80 (its WAIT line on the card): the instruction is undone and re-run, with
+the bytes it already took replayed (`fetched_`, in the snapshot), and a held
+Z80 loses its time. The first `OUT` ends boot mode and is not delivered.
+Pinned by `softcard2_card`; the boot half needs
+`disks_5.4/dsk/softcard2_cpm228b.dsk` (not yet in the test-media archive).
+
+### Z80 cards with their own RAM (Applicard, Premium SoftCard)
+
+**PCPI Applicard** (`ApplicardCard`, catalog `applicard`) — the SoftCard
+II's design with a 2 KB boot ROM: MAME `a2applicard.cpp`, with izapple2's
+port decode (each Z80 port repeated over its 32-port range, as the OEM
+manual says; MAME decodes the exact ports). ROM-gated on
+`roms/applicard_v9.bin` (RetroBIOS `a2aplcrd.zip`). PCPI's CP/M 2.2 boots
+from it; pinned by `applicard_card`.
+
+**Premium SoftCard //e** (`PremiumSoftCard`) — Microsoft's AUXILIARY-slot
+card: the extended 80-column card's 64 KB and 80 columns with a 6 MHz Z80B
+on that same RAM. Not a slot card, so not in the catalog: setting
+`premium_softcard` (Machine menu), seated on SlotBus **slot 0**, which a //e
+does not have — Memory decodes $C080-$C08F itself — so the card gets the
+bus's pacing, reset and snapshot fan-out for free. No emulator had it and no
+programmer's manual is online; everything below is read off Microsoft's CP/M
+2.25 and 2.26 (6502 and Z80 BIOS) and the Installation manual pp. 72-74:
+
+- The Z80's memory is the aux RAM by physical address
+  (`Memory::auxPhysical`: $C000-$CFFF the aux LC bank 1, $D000 bank 2,
+  $E000 the rest) — **except $0400-$07FF**: two AM9114 SRAMs on the board
+  hold the text page the 6502 and the video see, and the Z80's own
+  $0400-$07FF is DRAM under it (`dram0400_`). Sharing that page let every
+  character on screen overwrite GBASIC's code (`6 * 7 = 6`).
+- The Z80 calls the 6502 with `CALL $0040` → `LD I,$80`: the card sees I
+  on A8-A15 in the refresh cycle and holds the Z80. The 6502 polls the
+  status byte (RAMRD read of aux $2000 = the Z80's I; $FF is the console
+  fast path), serves the 7-byte mailbox at $45-$4B, releases with $41.
+- `$C07E` (`Memory::AuxSlotPort::c07eWrite`): bit 0 Z80 out of reset,
+  bit 2 the 6502's aux accesses have A15 inverted, bit 6 run.
+- Hot path: `auxDivert_` folds into `iieFastRead_`, `auxFlip_` into
+  `iieWriteSlow_` (memWrite's //e gate, formerly `bankTrace_`) — a //e
+  without the card runs the same instructions as before.
+- Not forced by anything the software does: that the status answers only
+  while bit 6 is set (the boot still works without that gate), and the
+  6 MHz figure (the manual's "three times as fast"). RAM contention between
+  the Z80, the 6502 and the video is not modelled.
+
+Pinned by `premium_softcard`: both CP/M versions boot, `DIR`, GBASIC
+computes `6 * 7`; negative controls for the text-page SRAM.
+
+### Saturn 128K (`SaturnCard`)
+
+Catalog `saturn`, any slot. MAME `ramcard128k.cpp` decode — $C0n0-3 /
+$C0n8-B language-card switches, $C0n4-7 / $C0nC-F block 0-7 — with Apple's
+two-odd-reads write-enable (MAME's card enables on the first). The card
+takes $D000-$FFFF over the bus INH line, reads and writes separately
+(`Memory::LcInhibitor`, MAME `recalc_inh`): its read side folds into
+`romFastRead_`, writes above $D000 were already slow. Pinned by
+`saturn_card` on the real bus, with a negative control on the fold.
+
+### Videx UltraTerm (`VidexUltratermCard`)
+
+Catalog `ultraterm`. MAME `a2ultraterm.cpp` on the Videoterm's
+`Hd6845Crtc`: 4 KB VRAM in 512-byte blocks (Videoterm mode, A2-A3) or
+256-byte pages (MCP bits 0-4), 4 KB firmware ($CnXX the slot's copy,
+$C800-$CBFF, $CC00 firmware or VRAM by MCP bit 7), attributes from control
+2. Its own video switch (MCP bit 6) is `ownsScreen`; the picture is R1 × 9
+by R6 × (R9 + 1). ROM-gated (RetroBIOS `a2ulttrm`, `a2ultrme` — the
+enhanced-//e set is preferred on a //e). Where izapple2 differs (ninth dot,
+cursor, lowlight level) the header says which was kept. Pinned by
+`videx_ultraterm` — the real firmware's PR#3 in slot 3 of a ][+.
 
 ## Memory
 
@@ -2001,6 +2103,18 @@ the desired suffix themselves; that method writes WAV only for `.wav`, ACI
 otherwise. Historical finding: CHANGELOG 2026-09-09 (bug hunt #17).
 
 ### Mockingboard
+
+**6522 timer flag vs /IRQ pin** *(2026-10-31, mb-audit)*. A T1/T2 underflow
+raises IFR on the cycle the counter shows $FFFF — N+2 after the CxH write —
+and `Via6522::irqOut()` holds a flag raised on the last advanced cycle off the
+pin for one more (`ifrFresh_`). The real 6502 samples IRQ on an instruction's
+penultimate cycle, POM2 at its boundary; the one-cycle hold makes them agree,
+so interrupts land where MAME's `TIMERn_VALUE + IFR_DELAY` (N+3) put them —
+the French Touch pins are untouched — while polled IFR reads are now exact
+(mb-audit T6522_F/10/11). AY bus: every non-READ function releases it and
+port A reads $FF (mb-audit TestAYReadHiZ, 21:14); a WDC 65C22 may hold the
+value, which mb-audit only warns about. All four `mb_audit` configurations
+pass, reset tests included.
 
 **VIA ↔ AY bus rules** (history: CHANGELOG 2026-09-08 bug hunt #5,
 2026-09-12 bug hunts #18 and #19; the speech wiring is under

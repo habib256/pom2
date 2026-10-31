@@ -30,13 +30,15 @@
 // type DOS 3.3 commands, observe behaviour. Exits cleanly on SIGINT.
 //
 // CP/M: `--softcard <slot>` plugs the Microsoft SoftCard (Z80) — or `--als
-// <slot>` the ALS CP/M Card (CP/M Plus) — and drops the
+// <slot>` the ALS CP/M Card (CP/M Plus), or `--softcard2 <slot>` the
+// SoftCard II (Z80 on its own 64 KB) — and drops the
 // BASIC setup paste; the SSC then stays a serial line (no keyboard sink), so
 // a CP/M program's RDR:/PUN: traffic is what the telnet client sees. The
 // console is typed with `--type <sec>:<text>`, at an emulated second, in
 // both modes; `--text-dump` prints the text page after a capture run.
 
 #include "AlsCpmCard.h"
+#include "SoftCardIICard.h"
 #include "Apple2Display.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
@@ -122,6 +124,11 @@ void usage(const char* prog)
         "                        Example: --type 12:'DIR\\r'\n"
         "  --als <slot>          Plug an ALS CP/M Card (Z80B, CP/M Plus) instead;\n"
         "                        slot 4 or 7 as ALS says. Same rules as --softcard.\n"
+        "  --softcard2 <slot>    Plug a Microsoft SoftCard II (6 MHz Z80, own\n"
+        "                        64 KB) instead, slot 4 for CP/M 2.28B. That\n"
+        "                        CP/M is a //e build (80 columns): on this ][+\n"
+        "                        machine every other column is lost.\n"
+        "                        Same rules as --softcard.\n"
         "\n"
         "Capture mode (no telnet listener, no threads, deterministic):\n"
         "  --frames <N>          N > 0: run N emulated frames, then exit.\n"
@@ -215,6 +222,7 @@ int main(int argc, char** argv)
     bool textDump    = false;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
+    int  sc2Slot      = 0;   // 0 = none
     // --type: text to type at an emulated second, in the order given.
     struct TypedKeys { int atSecond; std::string text; bool sent; };
     std::vector<TypedKeys> typed;
@@ -246,7 +254,8 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
-            a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als") {
+            a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als" ||
+            a == "--softcard2") {
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
         }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
@@ -272,6 +281,14 @@ int main(int argc, char** argv)
             if (alsSlot == 2 || alsSlot == 6) {
                 std::fprintf(stderr, "--als: slot %d holds the %s\n", alsSlot,
                              alsSlot == 2 ? "Super Serial Card" : "Disk II");
+                return 1;
+            }
+        }
+        else if (a == "--softcard2" && i+1 < argc) {
+            if (!parseInt("--softcard2", argv[++i], 1, 7, sc2Slot)) return 1;
+            if (sc2Slot == 2 || sc2Slot == 6) {
+                std::fprintf(stderr, "--softcard2: slot %d holds the %s\n", sc2Slot,
+                             sc2Slot == 2 ? "Super Serial Card" : "Disk II");
                 return 1;
             }
         }
@@ -309,11 +326,11 @@ int main(int argc, char** argv)
     // binary found its bundled roms/, executed 6502 code and drew a frame,
     // which `--help` cannot. Deterministic by construction: no worker thread
     // (tickFrame drives the CPU inline), no sleeps, no TCP listener.
-    if (softcardSlot && alsSlot) {
-        std::fprintf(stderr, "--softcard and --als: one Z80 card at a time\n");
+    if ((softcardSlot != 0) + (alsSlot != 0) + (sc2Slot != 0) > 1) {
+        std::fprintf(stderr, "--softcard, --als and --softcard2: one Z80 card at a time\n");
         return 1;
     }
-    const int z80Slot = softcardSlot ? softcardSlot : alsSlot;
+    const int z80Slot = softcardSlot ? softcardSlot : alsSlot ? alsSlot : sc2Slot;
     if (z80Slot && !setupGiven) doSetup = false;
     const bool captureMode = frames > 0 || !shotPath.empty() || textDump;
     if (captureMode && frames <= 0) frames = 300;   // ~5 s: past the boot beep
@@ -464,6 +481,10 @@ int main(int argc, char** argv)
         als->setCpu(&controller.cpu());
         controller.memory().slotBus().plug(alsSlot, std::move(als));
     }
+    // The SoftCard II is no bus master: its Z80 runs beside the 6502, paced
+    // by the slot bus's advanceCycles.
+    if (sc2Slot)
+        controller.memory().slotBus().plug(sc2Slot, std::make_unique<SoftCardIICard>());
 
     // Hard reset loads the motherboard reset vector; reset the slot bus
     // as well so DiskIICard can re-arm its trace flags. Autostart firmware

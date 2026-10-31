@@ -354,7 +354,13 @@ void MainWindow::renderAbstractionPanel()
     row("fujinet",   plugged("fujinet")   ? Live::Active : Live::NotPlugged);
     row("softcard",  plugged("softcard")  ? Live::Active : Live::NotPlugged);
     row("alscpm",    plugged("alscpm")    ? Live::Active : Live::NotPlugged);
-    row("z80",       (plugged("softcard") || plugged("alscpm"))
+    row("softcard2", plugged("softcard2") ? Live::Active : Live::NotPlugged);
+    row("applicard", plugged("applicard") ? Live::Active : Live::NotPlugged);
+    row("saturn",    plugged("saturn")    ? Live::Active : Live::NotPlugged);
+    row("ultraterm", plugged("ultraterm") ? Live::Active : Live::NotPlugged);
+    row("premium_softcard", plugged("premium_softcard") ? Live::Active : Live::NotPlugged);
+    row("z80",       (plugged("softcard") || plugged("alscpm") || plugged("softcard2")
+                      || plugged("applicard") || plugged("premium_softcard"))
                          ? Live::Active : Live::NotPlugged);
 
     // ── The switchable boundaries ───────────────────────────────────────

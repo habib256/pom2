@@ -10,6 +10,83 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — a2audit and mb-audit pass; 6522 IFR edge, 65C02 dummy read
+
+Two outside audits joined the suite, each booting its own disk:
+`a2audit` (zellyn, MIT) — language card, aux memory and soft switches on
+the ][+, //e and enhanced //e, all clean as POM2 stood — and `mb_audit`
+(tomcw, the AppleWin author's Mockingboard suite, v1.61), which found three
+real bugs. Mockingboard, Sound II + SSI263, Phasor and two Mockingboards now
+pass everything, reset tests included.
+
+- **6522: IFR one cycle late.** POM2 raised T1/T2 flags at N+3 (MAME's
+  `TIMERn_VALUE + IFR_DELAY`); the flag is readable at N+2, the cycle the
+  counter shows $FFFF. **Why the interrupts did not move:** the 6502
+  samples IRQ on the penultimate cycle and POM2 at the instruction
+  boundary, so the pin now trails a last-cycle flag by one cycle — the IRQ
+  path keeps N+3 exactly and every French Touch raster pin still passes.
+  Moving the first shot instead shifted the counter read-back (test 11:03)
+  and broke three pinned tests: the flag and the counter are different signals.
+- **65C02: STA abs,X/Y reads its target.** Without a page crossing the
+  extra cycle is a read of the target, not of PC+2 — measured on two real
+  CPUs (hoglet67/6502Decoder captures), consistent with KEGS and AppleWin.
+  **Why POM2 had it wrong:** SingleStepTests' 65C02 vectors say PC+2, and
+  they are generated from an emulator; POM2's Tom Harte gate checks cycle
+  counts, not addresses. It matters on the Apple II wherever the target is
+  I/O: the "Willy Byte" `STA $C444,X` that clears a Mockingboard IRQ, and
+  `STA $C08F,X` on an enhanced //e.
+- **AY bus floats high** when the chip is not reading (Mockingboard and
+  Phasor), mb-audit 21:14.
+
+## 2026-10-31 — Applicard, Premium SoftCard //e, Saturn 128K, Videx UltraTerm
+
+Four cards from izapple2's inventory, each pinned by a test that runs the
+card's own software.
+
+- **PCPI Applicard** (`applicard`) — MAME `a2applicard` with izapple2's
+  port decode; PCPI's CP/M 2.2 boots from the real v9 ROM.
+- **Premium SoftCard //e** (setting `premium_softcard`, aux slot = SlotBus
+  slot 0) — no emulator had it. Read off Microsoft's CP/M 2.25 and 2.26 and
+  the manual: the Z80 runs on the aux RAM beside the 6502, calls it by
+  loading I with bit 7 (the card watches the refresh address), and `$C07E`
+  holds reset / A15 flip / run. **Why the text page is separate:** with one
+  RAM for both, every character on screen overwrote GBASIC's code at Z80
+  $0400 — `6 * 7` printed `6` and the screen filled with BASIC's own
+  strings. The photo shows two AM9114 (1 KB) for the text page, and the 6502
+  BIOS flips A15 for every Z80 page below $20 to reach the DRAM under it.
+- **Saturn 128K** (`saturn`) — the bus INH line, new in `Memory`
+  (`LcInhibitor`), folded into `romFastRead_` like the foreign bus.
+- **Videx UltraTerm** (`ultraterm`) — MAME `a2ultraterm` on the Videoterm's
+  CRTC; the real firmware's PR#3 works, ROM-gated and fetched from
+  RetroBIOS.
+
+Media for the next test archive: PCPI's boot disk, Microsoft's CP/M 2.25 and
+2.26 for the Premium SoftCard (2.26 is in ProDOS order whatever its `.dsk`
+says), the Applicard and UltraTerm ROMs. Until then those boot halves skip.
+
+## 2026-10-31 — Microsoft SoftCard II (catalog `softcard2`)
+
+The other Microsoft Z80 card: 6 MHz, 64 KB of its own, the PCPI Applicard's
+design. A question about POM2's SoftCard ("the original DMA one, or the
+SoftCard II with 64 KB on board?") found only the first one modelled.
+
+**Why it is not a SoftCard variant:** the SoftCard is a bus master: it
+halts the 6502 and runs on the Apple's memory through `dmaRun`. The SoftCard
+II never touches the Apple's bus. Both CPUs run all the time, and the only
+thing they share is an Am2950 latch pair at `$C0n0/$C0n1` (reset at
+`$C0n3`). So it paces itself from `advanceCycles`, the way the Workstation
+Card does. Until its first `OUT` it is in boot mode: the Z80 fetches its
+opcodes from the latch, the 6502 loader feeds it byte by byte, and the Z80
+waits on an empty latch. Here that wait is an instruction undone and re-run,
+with the bytes it already took replayed, so no byte is lost or taken twice.
+
+No MAME model and no schematic: ported from izapple2's `cardZ80Softcard2.go`
+(GPL-3.0). Microsoft's CP/M 2.28B for the card ("Softcard II CP/M, 64K
+Version 2.28B") boots to `A>` on an enhanced //e with the card in slot 4,
+and `DIR` lists the disk. A status byte with bit 7 moved breaks both the
+unit test and the boot. Pinned by `softcard2_card`; its boot half skips
+until `softcard2_cpm228b.dsk` joins the test-media archive.
+
 ## 2026-10-29 — POM2's own sequencer writes WOZ too
 
 The read-only fallback is gone: `ownSequencerStep` writes, on the same cell

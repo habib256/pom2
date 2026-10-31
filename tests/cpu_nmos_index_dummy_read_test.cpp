@@ -7,8 +7,10 @@
 // On an Apple II that address is often a soft switch, so `STA $C030,X`
 // clicks the speaker twice on a ][ / ][+ / unenhanced //e, and a
 // page-crossing `LDA $C0F0,X` (un-fixed $C030, fixed $C130) clicks it once
-// on its way past. The 65C02 re-reads the last operand byte instead and
-// never touches the data address. Cycle counts were already right, so the
+// on its way past. The 65C02 fixed the wrong-PAGE read only: an indexed
+// store with no page crossing still reads its target first (silicon, see
+// M6502::cmosIndexedWriteDummyRead), a crossing one and `STA (zp),Y` re-read
+// an operand / pointer byte, and a crossing load re-reads PC+2. Cycle counts were already right, so the
 // speaker toggle counter is the bus witness here, and the cycle totals are
 // asserted unchanged so the pin guards the timing too.
 
@@ -61,9 +63,15 @@ int main()
     const auto CMOS = M6502::CpuMode::CMOS;
     // LDX #0 : STA $C030,X — dummy read at the target itself on NMOS.
     check("LDX #0 : STA $C030,X", NMOS, {0xA2, 0x00, 0x9D, 0x30, 0xC0}, 2, 2, 2 + 5);
-    check("LDX #0 : STA $C030,X", CMOS, {0xA2, 0x00, 0x9D, 0x30, 0xC0}, 2, 1, 2 + 5);
+    // The 65C02 too, without a page crossing (silicon: hoglet67/6502Decoder
+    // R65C02 and 65C12 captures — M6502::cmosIndexedWriteDummyRead).
+    check("LDX #0 : STA $C030,X", CMOS, {0xA2, 0x00, 0x9D, 0x30, 0xC0}, 2, 2, 2 + 5);
+    // Page crossing: NMOS reads the un-fixed $C030, the 65C02 re-reads PC+2.
+    check("LDX #$40 : STA $C0F0,X", NMOS, {0xA2, 0x40, 0x9D, 0xF0, 0xC0}, 2, 1, 2 + 5);
+    check("LDX #$40 : STA $C0F0,X", CMOS, {0xA2, 0x40, 0x9D, 0xF0, 0xC0}, 2, 0, 2 + 5);
     // LDY #0 : STA ($10),Y — same, through the zero-page pointer.
     check("LDY #0 : STA ($10),Y", NMOS, {0xA0, 0x00, 0x91, 0x10}, 2, 2, 2 + 6);
+    // The 65C02 re-reads the pointer's high byte there, never the target.
     check("LDY #0 : STA ($10),Y", CMOS, {0xA0, 0x00, 0x91, 0x10}, 2, 1, 2 + 6);
     // LDX #$40 : LDA $C0F0,X — page cross: the un-fixed address is $C030,
     // the fixed one $C130 (slot ROM, no side effect).

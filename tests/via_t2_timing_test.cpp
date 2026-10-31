@@ -16,18 +16,24 @@
 
 // 6522 timer + interrupt-flag timing (Via6522 unit level).
 //
-// T2: MAME (`6522via.cpp:957-960`) schedules the T2 underflow IRQ at
-// `TIMER2_VALUE + IFR_DELAY` cycles after the T2CH write, with IFR_DELAY = 3.
-// A Timer-2-synced beam-racer (French Touch DIX: `T2 = 7512 − latency`, where
-// the latency folds in this 6522 delay + the 6502 IRQ sequence) lands its
-// mid-scanline effect on the intended byte only if T2 fires at exactly N+3 —
-// POM2 used to fire at N+1 (counter crosses < 0), two bytes early.
+// Two edges per timer shot, pinned separately:
 //
-// T1: same constant — MAME schedules BOTH the first shot after a T1CH write
-// (`6522via.cpp:927-943`, adjust at :941) and every continuous-mode reload
-// (t1_tick, `:536-543`) at `TIMER1_VALUE + IFR_DELAY`. POM2 used to fire the
-// first shot at N+1 while reloading at N+3 — the first IRQ of a music driver
-// landed two cycles early relative to all subsequent ones.
+//  - the IFR flag, readable at N+2 after the CxH write — the cycle the
+//    counter shows $FFFF. mb-audit (tomcw, the AppleWin author's suite, run
+//    on real WDC / Rockwell 65C22 Mockingboards and Phasors) polls IFR on
+//    the 5th cycle of `LDA (zp),Y` exactly there: T6522_F (T1), T6522_10/11
+//    (T1 and T2 data tables).
+//  - the /IRQ pin as the CPU acts on it, at N+3 — MAME's `TIMERn_VALUE +
+//    IFR_DELAY` (`6522via.cpp:941`, :957-960). The real 6502 samples IRQ on
+//    an instruction's penultimate cycle, POM2's core at its boundary, so a
+//    flag raised on the last cycle is held off the pin for one more
+//    (`Via6522::irqOut`). A Timer-2-synced beam-racer (French Touch DIX:
+//    `T2 = 7512 − latency`, the latency folding this delay + the IRQ
+//    sequence) lands its mid-scanline effect on the intended byte only with
+//    the interrupt at N+3 — POM2 once fired at N+1, two bytes early.
+//
+// Before 2026-10-31 both edges were N+3, which kept the interrupts right and
+// read IFR one cycle late; mb-audit stopped at 11:0F:00.
 //
 // ORA / IFR.CA1: MAME's `CLR_PA_INT()` (`6522via.cpp:99`) runs on ANY access
 // to register 1 (ORA) — read (:676) or write (:875) — clearing IFR.CA1 and,
@@ -53,44 +59,48 @@ constexpr uint8_t IFR_T2 = 0x20;
 
 // Cycles from the T2CH write until IFR.T2 latches, advancing one cycle at a
 // time (so the test is independent of any chunk granularity).
-int t2FireCycle(int n) {
+// `pin` = when irqOut() first holds instead (IER.T2 enabled).
+int t2FireCycle(int n, bool pin = false) {
     Via6522 via;
+    if (pin) via.write(0xE, 0x80 | IFR_T2);   // IER: enable T2
     via.write(ACR, 0x00);                 // T2 timed phase-2 mode (ACR bit5 = 0)
     via.write(T2CL, n & 0xFF);            // low latch
     via.write(T2CH, (n >> 8) & 0xFF);     // high latch → load counter + arm
     for (int c = 1; c <= n + 16; ++c) {
         via.advance(1);
-        if (via.ifr & IFR_T2) return c;
+        if (pin ? via.irqOut() : (via.ifr & IFR_T2) != 0) return c;
     }
     return -1;
 }
 
 // Cycles from the T1CH write until IFR.T1 first latches (one-shot mode).
-int t1FirstShotCycle(int n) {
+int t1FirstShotCycle(int n, bool pin = false) {
     Via6522 via;
+    if (pin) via.write(0xE, 0x80 | IFR_T1);   // IER: enable T1
     via.write(ACR, 0x00);                 // T1 one-shot
     via.write(T1LL, n & 0xFF);            // latch low
     via.write(T1CH, (n >> 8) & 0xFF);     // latch high → load counter + arm
     for (int c = 1; c <= n + 16; ++c) {
         via.advance(1);
-        if (via.ifr & IFR_T1) return c;
+        if (pin ? via.irqOut() : (via.ifr & IFR_T1) != 0) return c;
     }
     return -1;
 }
 
 void testT1FirstShotTiming()
 {
-    // First shot at exactly N+3, MAME `TIMER1_VALUE + IFR_DELAY`
-    // (`6522via.cpp:941`, IFR_DELAY = 3 at :102).
+    // First shot: IFR.T1 at N+2 (mb-audit T6522_F), the pin at N+3 (MAME
+    // `TIMER1_VALUE + IFR_DELAY`, `6522via.cpp:941`).
     for (int n : {0, 1, 10, 100, 1000, 7479, 0x3FFF}) {
         const int c = t1FirstShotCycle(n);
-        std::printf("  T1=%d → IFR.T1 at cycle %d (MAME N+IFR_DELAY = %d)\n",
-                    n, c, n + 3);
-        assert(c == n + 3 && "T1 first-shot timing != MAME TIMER1_VALUE+IFR_DELAY");
+        const int p = t1FirstShotCycle(n, true);
+        std::printf("  T1=%d → IFR.T1 at cycle %d, /IRQ at %d\n", n, c, p);
+        assert(c == n + 2 && "T1 first-shot IFR != N+2 (mb-audit T6522_F)");
+        assert(p == n + 3 && "T1 first-shot /IRQ != N+3 (MAME TIMER1_VALUE+IFR_DELAY)");
     }
 
-    // Continuous mode: first shot at N+3 (the IFR_DELAY latency above
-    // applies once), then every **N+2** — the hardware free-run period.
+    // Continuous mode: IFR at N+2, then every **N+2** — the hardware
+    // free-run period (the pin trails each flag by the one cycle above).
     //
     // This assertion used to demand N+3 for the reload too, copying MAME's
     // `t1_tick` (:536-543), which adds IFR_DELAY on every reload. That is a
@@ -121,9 +131,9 @@ void testT1FirstShotTiming()
             if (via.ifr & IFR_T1) {
                 ++fires;
                 std::printf("  T1 continuous fire %d at cycle %d\n", fires, c);
-                const int expect = (n + 3) + (fires - 1) * (n + 2);
+                const int expect = fires * (n + 2);
                 assert(c == expect &&
-                       "T1 continuous: first shot N+3, then period N+2");
+                       "T1 continuous: IFR at N+2, then period N+2");
                 last = c;
                 (void)via.read(T1CL);     // clear IFR.T1, keep counting
             }
@@ -131,7 +141,7 @@ void testT1FirstShotTiming()
         (void)last;
         assert(fires == 3);
     }
-    std::printf("OK t1 timing (first shot N+3, continuous period N+2)\n");
+    std::printf("OK t1 timing (IFR at N+2, pin at N+3, continuous period N+2)\n");
 }
 
 void testOraAccessClearsCa1()
@@ -185,7 +195,7 @@ void testOraAccessClearsCa1()
 // $FFFE / $FFFF and the fire landed 64 ms late — once per ~period/2 ACR
 // writes for any driver that re-writes ACR while T1 free-runs. Whatever cycle
 // the ACR write lands on, and whether T1 started one-shot or continuous, the
-// first IFR.T1 must still latch at N+3.
+// first IFR.T1 must still latch at N+2.
 void testAcrWriteNeverMovesALiveT1()
 {
     const int N = 100;
@@ -201,9 +211,9 @@ void testAcrWriteNeverMovesALiveT1()
                 via.advance(1);
                 if (via.ifr & IFR_T1) { fired = c; break; }
             }
-            if (fired != N + 3) {
+            if (fired != N + 2) {
                 std::printf("  ACR<-$40 at cycle %d (start ACR=$%02X): IFR.T1 "
-                            "at %d, want %d\n", k, start, fired, N + 3);
+                            "at %d, want %d\n", k, start, fired, N + 2);
                 assert(false && "an ACR write moved a live T1's underflow");
             }
         }
@@ -216,9 +226,10 @@ int main()
     testAcrWriteNeverMovesALiveT1();
     for (int n : {0, 1, 10, 100, 1000, 7479, 0x3FFF}) {
         const int c = t2FireCycle(n);
-        std::printf("  T2=%d → IFR.T2 at cycle %d (MAME N+IFR_DELAY = %d)\n",
-                    n, c, n + 3);
-        assert(c == n + 3 && "T2 underflow IRQ timing != MAME TIMER2_VALUE+IFR_DELAY");
+        const int p = t2FireCycle(n, true);
+        std::printf("  T2=%d → IFR.T2 at cycle %d, /IRQ at %d\n", n, c, p);
+        assert(c == n + 2 && "T2 IFR != N+2 (mb-audit T6522_11)");
+        assert(p == n + 3 && "T2 /IRQ != N+3 (MAME TIMER2_VALUE+IFR_DELAY, DIX)");
     }
 
     // One-shot: only ONE interrupt per T2CH write — after firing, further
@@ -228,7 +239,7 @@ int main()
         via.write(ACR, 0x00);
         via.write(T2CL, 5);
         via.write(T2CH, 0);
-        for (int c = 0; c < 8; ++c) via.advance(1);   // fire at cyc 8 (=5+3)
+        for (int c = 0; c < 8; ++c) via.advance(1);   // IFR at cyc 7 (=5+2)
         assert(via.ifr & IFR_T2);
         via.read(T2CL);                                // T2CL read clears IFR.T2
         assert(!(via.ifr & IFR_T2));
@@ -260,7 +271,7 @@ int main()
             std::printf("  T2 rb at e=%d → %04X (want %04X)\n", e, got, expect);
             assert(got == expect && "T2 read-back != written+1-elapsed");
         }
-        while (elapsed < 105) { via.advance(1); ++elapsed; }   // fired at 103
+        while (elapsed < 105) { via.advance(1); ++elapsed; }   // IFR at 102
         assert(rb() == ((100 + 1 - 105) & 0xFFFF) &&
                "T2 read-back line must be continuous through the underflow");
     }

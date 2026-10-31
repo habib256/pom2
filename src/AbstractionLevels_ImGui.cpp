@@ -137,6 +137,30 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "No schematic in print: the map is inferred from the software "
       "(CARDS-011); an Apple access is one bus cycle synced to an edge.",
       "AlsCpmCard.h/.cpp" },
+    { "softcard2", "CPU & memory", "SoftCard II (Z80, own 64 KB, Am2950 latch)", AbsLevel::L1,
+      "Am2950 latches, status bytes and boot mode as izapple2 models them; "
+      "Microsoft's CP/M 2.28B boots to A> and lists its disk",
+      "No schematic or MAME model: the boot-mode WAIT is an undone and re-run "
+      "instruction; the 6 MHz clock is the advertised one.",
+      "SoftCardIICard.h/.cpp" },
+    { "applicard", "CPU & memory", "PCPI Applicard (Z80, own 64 KB, boot ROM)", AbsLevel::L1,
+      "MAME a2applicard latches, ROM overlay, $C0n5 reset and $C0n7 NMI; "
+      "PCPI's CP/M 2.2 boots from the real v9 ROM",
+      "The CTC socket is empty, as on the stock card.", "ApplicardCard.h/.cpp" },
+    { "premium_softcard", "CPU & memory", "Premium SoftCard //e (aux slot, Z80 on aux RAM)", AbsLevel::L1,
+      "$C07E register, A15 flip, status byte and the I-register call read "
+      "off Microsoft's CP/M 2.25/2.26; both boot and run GBASIC",
+      "No schematic: RAM contention between the Z80, the 6502 and the video "
+      "is not modelled.", "PremiumSoftCard.h/.cpp" },
+    { "saturn", "CPU & memory", "Saturn 128K (eight language cards over INH)", AbsLevel::L1,
+      "MAME ramcard128k decode with Apple's two-read write-enable; takes "
+      "$D000-$FFFF over the bus INH line, per direction",
+      "Nothing above the switches is guest-visible.", "SaturnCard.h/.cpp" },
+    { "ultraterm", "Video", "Videx UltraTerm (80-160 columns)", AbsLevel::L1,
+      "MAME a2ultraterm bus map, VRAM pages and attributes on the HD6845S; "
+      "the real firmware's PR#3 drives it",
+      "The 6845 frame is painted whole, not raster by raster.",
+      "VidexUltratermCard.h/.cpp" },
     { "memory", "CPU & memory", "Memory / MMU / IOU / RamWorks", AbsLevel::L1,
       "Soft switches, aux paging, LC banks, power-on 00 FF pattern, per-cycle "
       "floating bus (vapor lock)",

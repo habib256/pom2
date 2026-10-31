@@ -22,7 +22,21 @@ ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
-  $'videx_videoterm_boot\t*' )
+  $'videx_videoterm_boot\t*' \
+  $'softcard2_card\t*' \
+  $'applicard_card\t*' \
+  $'videx_ultraterm\t*' \
+  $'premium_softcard\t*' \
+  $'a2audit\t*' \
+  $'mb_audit\t*' )
+# softcard2_card's boot half needs Microsoft's CP/M 2.28B for the SoftCard II
+# (disks_5.4/dsk/softcard2_cpm228b.dsk), which is not in the test-media
+# archive yet; its unit half (latches, boot mode, pace, snapshot) still runs.
+# Same for applicard_card (PCPI's boot disk + roms/applicard_v9.bin),
+# videx_ultraterm (its two ROMs) and premium_softcard (Microsoft's CP/M 2.25
+# and 2.26), a2audit and mb_audit (the a2audit and mb-audit v1.61 disks).
+# The ROMs are in RetroBIOS (the app downloads them) but not in
+# the test-media archive. Drop each line when its media join the archive.
 # videx_videoterm_boot is the one ROM-gated test whose dumps are deliberately
 # NOT in the tree: the Videoterm firmware and character ROMs are third-party
 # and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending

@@ -109,6 +109,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -2389,6 +2390,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -5957,6 +5959,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6012,6 +6015,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6071,6 +6075,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6128,6 +6133,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6186,6 +6192,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6244,6 +6251,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -7262,6 +7270,250 @@ add_test(NAME als_cpm_card COMMAND test_als_cpm_card
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(als_cpm_card PROPERTIES TIMEOUT 120)
 
+# ─── Microsoft SoftCard II: Am2950 latches, boot mode, CP/M 2.28B boot ────
+add_executable(test_softcard2_card
+    softcard2_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCardIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_softcard2_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_softcard2_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_softcard2_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_softcard2_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME softcard2_card COMMAND test_softcard2_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(softcard2_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# ─── a2audit (zellyn): LC, aux memory, soft switches on ][+ / //e / //e enh ─
+add_executable(test_a2audit
+    a2audit_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_a2audit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_a2audit PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_a2audit PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_a2audit PRIVATE winmm ws2_32)
+endif()
+add_test(NAME a2audit COMMAND test_a2audit
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(a2audit PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+# ─── mb-audit (tomcw): Mockingboard / Sound II / Phasor / two cards ──────────
+add_executable(test_mb_audit
+    mb_audit_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
+    ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_mb_audit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_mb_audit PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_mb_audit PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_mb_audit PRIVATE winmm ws2_32)
+endif()
+add_test(NAME mb_audit COMMAND test_mb_audit
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(mb_audit PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+
+# ─── PCPI Applicard: latches, ROM overlay, NMI, PCPI CP/M 2.2 boot ─────────────
+add_executable(test_applicard_card
+    applicard_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplicardCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_applicard_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_applicard_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_applicard_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_applicard_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME applicard_card COMMAND test_applicard_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(applicard_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# ─── Premium SoftCard //e: aux-slot Z80, $C07E, CP/M 2.25 boot ──────────────
+add_executable(test_premium_softcard
+    premium_softcard_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/PremiumSoftCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Z80.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_premium_softcard PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_premium_softcard PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_premium_softcard PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_premium_softcard PRIVATE winmm ws2_32)
+endif()
+add_test(NAME premium_softcard COMMAND test_premium_softcard
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(premium_softcard PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# ─── Saturn 128K: INH over $D000-$FFFF, LC switches, eight blocks ─────────
+add_executable(test_saturn_card
+    saturn_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SaturnCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_saturn_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_saturn_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_saturn_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_saturn_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME saturn_card COMMAND test_saturn_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(saturn_card PROPERTIES TIMEOUT 60)
+
+# ─── Videx UltraTerm: bus map, picture, real firmware PR#3 ─────────────────
+add_executable(test_videx_ultraterm
+    videx_ultraterm_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/VidexUltratermCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Hd6845Crtc.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_videx_ultraterm PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_videx_ultraterm PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_videx_ultraterm PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_videx_ultraterm PRIVATE winmm ws2_32)
+endif()
+add_test(NAME videx_ultraterm COMMAND test_videx_ultraterm
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(videx_ultraterm PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+
 # ─── ALS CP/M Card boot probe (manual, EXCLUDE_FROM_ALL) ──────────────────
 # Boots an ALS disk against a logging stub card: how the card's register map
 # is read off the software. Needs untracked media; asserts nothing.
@@ -7283,6 +7535,30 @@ if(APPLE)
 endif()
 if(WIN32)
     target_link_libraries(als_boot_probe PRIVATE winmm)
+endif()
+
+
+# ─── Premium SoftCard //e boot probe (manual, EXCLUDE_FROM_ALL) ─────────
+# Boots a Premium SoftCard disk on a //e and logs the 6502's $C0xx-$CFFF
+# accesses: how the aux-slot card's registers are read off the software.
+add_executable(premium_softcard_probe EXCLUDE_FROM_ALL
+    premium_softcard_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(premium_softcard_probe PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(premium_softcard_probe PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(premium_softcard_probe PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(premium_softcard_probe PRIVATE winmm)
 endif()
 
 # ─── Diagnostic dumps (build-only, EXCLUDE_FROM_ALL) ──────────────────────
@@ -7914,6 +8190,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -9274,6 +9551,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -9978,6 +10256,7 @@ set(POM2_PROBE_TARGETS
     dix_return_crash_probe
     iic_a2fc_printer_port_probe
     als_boot_probe
+    premium_softcard_probe
     hdv_boot_dump
     hero_probe
     iic_dump

@@ -278,6 +278,11 @@ set(SOURCES
     src/M6502_Undoc.cpp
     src/Z80.cpp
     src/AlsCpmCard.cpp
+    src/SoftCardIICard.cpp
+    src/ApplicardCard.cpp
+    src/SaturnCard.cpp
+    src/VidexUltratermCard.cpp
+    src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -285,6 +290,7 @@ set(SOURCES
     src/MemorySnapshotValidation.cpp
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
+    src/MemoryLanguageCard.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -602,6 +608,11 @@ set(POM2_DEVICES_SOURCES
     src/SmartPortHdvUnit.cpp
     src/SmartPortUnit.cpp
     src/AlsCpmCard.cpp
+    src/SoftCardIICard.cpp
+    src/ApplicardCard.cpp
+    src/SaturnCard.cpp
+    src/VidexUltratermCard.cpp
+    src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
@@ -786,6 +797,7 @@ set(POM2_FRONTEND_SOURCES
 )
 
 set(POM2_MACHINE_HEADERS
+    src/Z80StateBlob.h
     src/DebugAddress.h
     src/Opcode6502.h
     src/Apple2VideoDecode.h
@@ -802,6 +814,7 @@ set(POM2_MACHINE_SOURCES
     src/Assembler6502.cpp
     src/Keyboard.cpp
     src/MemoryWatch.cpp
+    src/MemoryLanguageCard.cpp
     src/MemoryVideoLog.cpp
     src/M6502.cpp
     src/M6502_Undoc.cpp
@@ -961,6 +974,12 @@ set(HEADERS
     src/M6502.h
     src/Z80.h
     src/AlsCpmCard.h
+    src/SoftCardIICard.h
+    src/ApplicardCard.h
+    src/SaturnCard.h
+    src/VidexUltratermCard.h
+    src/PremiumSoftCard.h
+    src/Z80StateBlob.h
     src/SoftCardZ80.h
     src/ByteIO.h
     src/Memory.h
@@ -1497,6 +1516,11 @@ set(POM2_CORE_SOURCES
     src/M6502_Undoc.cpp
     src/Z80.cpp
     src/AlsCpmCard.cpp
+    src/SoftCardIICard.cpp
+    src/ApplicardCard.cpp
+    src/SaturnCard.cpp
+    src/VidexUltratermCard.cpp
+    src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
     src/MemoryCpuView.cpp
@@ -1504,6 +1528,7 @@ set(POM2_CORE_SOURCES
     src/MemorySnapshotValidation.cpp
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
+    src/MemoryLanguageCard.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1836,6 +1861,7 @@ add_executable(pom2_headless
     src/MemorySnapshotValidation.cpp
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
+    src/MemoryLanguageCard.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1849,6 +1875,7 @@ add_executable(pom2_headless
     src/Ssi263.cpp
     src/Ssi263PhonemeData.cpp
     src/AlsCpmCard.cpp
+    src/SoftCardIICard.cpp
     src/SoftCardZ80.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
@@ -1935,6 +1962,7 @@ add_executable(pom2_bench
     src/MemorySnapshot.cpp
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
+    src/MemoryLanguageCard.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp

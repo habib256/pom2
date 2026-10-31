@@ -266,6 +266,73 @@ public:
     }
     ForeignBus* foreignBus() const { return foreignBus_; }
 
+    // ── Bus INH: a slot card that replaces $D000-$FFFF ───────────────────
+    // A RAM card in a peripheral slot (the Saturn 128K) pulls the bus's INH
+    // line to take $D000-$FFFF from the motherboard ROM and the built-in
+    // language card, separately for reads and writes (MAME a2bus
+    // `inh_type`: INH_READ / INH_WRITE). One such card at a time. Same rule
+    // as the foreign bus: the read side folds into `romFastRead_`, so the
+    // ROM fast path tests nothing new, and writes above $D000 are already
+    // on the slow path.
+    struct LcInhibitor {
+        virtual ~LcInhibitor() = default;
+        virtual bool    inhibitsRead() const = 0;
+        virtual bool    inhibitsWrite() const = 0;
+        virtual uint8_t inhRead(uint16_t addr) const = 0;
+        virtual void    inhWrite(uint16_t addr, uint8_t value) = 0;
+    };
+    /// Seat (or, with nullptr, remove) the card. It calls refreshLcInhibit()
+    /// whenever its INH state changes.
+    void setLcInhibitor(LcInhibitor* card) { lcInhibitor_ = card; refreshLcInhibit(); }
+    LcInhibitor* lcInhibitor() const { return lcInhibitor_; }
+    void refreshLcInhibit() {
+        inhRead_ = lcInhibitor_ && lcInhibitor_->inhibitsRead();
+        refreshReadFastFlags();
+    }
+
+    // ── A card in the //e auxiliary slot that sits on the aux RAM ───────
+    // The Premium SoftCard //e (PremiumSoftCard.h) is the aux memory, and a
+    // Z80 shares it. It answers a register at $C07E, and while it says so
+    // the 6502's aux accesses are not plain: A15 inverted (to reach the Z80's
+    // top 16 KB, which the 6502 sees as $C000-$FFFF), or a status byte read
+    // at $2000. Folded like the foreign bus: `auxDivert_` closes
+    // `iieFastRead_`, `auxFlip_` joins `bankTrace_` in the one test memWrite's
+    // //e fast path already made (`iieWriteSlow_`) — so a //e without the
+    // card runs the same instructions as before.
+    struct AuxSlotPort {
+        virtual ~AuxSlotPort() = default;
+        virtual void c07eWrite(uint8_t value) = 0;
+        /// 6502 aux accesses see A15 inverted.
+        virtual bool flipsA15() const = 0;
+        /// A RAMRD read of aux $2000 is the card's (status), not RAM's.
+        virtual bool answersStatus(uint8_t& value) const = 0;
+        /// Either of the two above may hold — keep the slow path.
+        virtual bool divertsAux() const = 0;
+        /// A physical cell the card keeps itself instead of the aux array
+        /// (nullptr: the aux array's). Slow paths only.
+        virtual uint8_t* ownCell(uint16_t /*phys*/) { return nullptr; }
+    };
+    void setAuxSlotPort(AuxSlotPort* port) { auxPort_ = port; refreshAuxSlotPort(); }
+    AuxSlotPort* auxSlotPort() const { return auxPort_; }
+    void refreshAuxSlotPort() {
+        auxDivert_ = auxPort_ && auxPort_->divertsAux();
+        auxFlip_   = auxPort_ && auxPort_->flipsA15();
+        iieWriteSlow_ = bankTrace_ || auxFlip_;
+        refreshReadFastFlags();
+    }
+    /// The aux card's RAM by physical address, as its chips hold it: $0000-
+    /// $BFFF the aux bank, $C000-$CFFF the aux language card's $D000 bank 1,
+    /// $D000-$DFFF its bank 2, $E000-$FFFF its $E000-$FFFF (the //e MMU's
+    /// language-card layout). The CPU's current bank (no RamWorks with the
+    /// Premium SoftCard: it IS the aux card).
+    uint8_t& auxPhysical(uint16_t p) {
+        if (auxPort_) if (uint8_t* own = auxPort_->ownCell(p)) return *own;
+        if (p < 0xC000) return aux[p];
+        if (p < 0xD000) return auxLcBank1[p - 0xC000];
+        if (p < 0xE000) return auxLcBank2[p - 0xD000];
+        return auxLcHigh[p - 0xE000];
+    }
+
     /// Test/debug accessor for the current floating-bus byte (the value an
     /// undriven soft-switch read returns) at EXACTLY `cycleCounter` — no
     /// in-instruction offset, so a test that sets the cycle gets a
@@ -393,7 +460,7 @@ public:
         if (addr < 0xC000 && !flatBus_ && writable[addr]
             && static_cast<uint16_t>(addr - 0x0400u) > 0x27u) {
             if (!iieMode) { mem[addr] = value; return; }
-            if (!bankTrace_) {
+            if (!iieWriteSlow_) {
                 if (iieWriteToAux(addr)) aux[addr] = value;
                 else                     mem[addr] = value;
                 return;
@@ -1112,6 +1179,16 @@ private:
     // a foreign bus closes them all and every read falls through to
     // memReadSlow without memRead testing anything new.
     ForeignBus*          foreignBus_ = nullptr;
+    // The INH card, and whether it holds $D000-$FFFF reads now — folded
+    // into `romFastRead_` (refreshLcInhibit).
+    LcInhibitor*         lcInhibitor_ = nullptr;
+    bool                 inhRead_     = false;
+    // The aux-slot card and its two folds (refreshAuxSlotPort).
+    AuxSlotPort*         auxPort_     = nullptr;
+    bool                 auxDivert_   = false;
+    bool                 auxFlip_     = false;
+    // memWrite's //e fast-path gate: `bankTrace_ || auxFlip_`.
+    bool                 iieWriteSlow_ = false;
     // The test BOTH slow paths and memWrite's fast path already made, widened
     // from `testMode` to "testMode or a foreign bus" — the two cases where
     // none of the Apple II decode applies. Same one test, not one more.
@@ -1119,8 +1196,8 @@ private:
     void refreshReadFastFlags() {
         plainRead_   = (!iieMode || testMode) && !readDivert_ && !foreignBus_;
         iieFastRead_ = iieMode && !testMode && !bankTrace_ && !readDivert_
-                       && !foreignBus_;
-        romFastRead_ = !iicProfile_ && !readDivert_ && !foreignBus_;
+                       && !foreignBus_ && !auxDivert_;
+        romFastRead_ = !iicProfile_ && !readDivert_ && !foreignBus_ && !inhRead_;
     }
     void refreshBusFlags() {
         flatBus_ = testMode || foreignBus_ != nullptr;

@@ -403,7 +403,7 @@ int main()
                                   std::to_string(checked) + " probed dumps)");
     }
 
-    // Only TEN entries still need a host unzip/tar: RetroBIOS publishes a
+    // Only FIFTEEN entries still need a host unzip/tar: RetroBIOS publishes a
     // loose copy of everything else, so a machine without those tools can
     // still complete almost all of its romset. Name them — an entry that
     // quietly goes back to a zip costs every such machine that dump.
@@ -422,13 +422,19 @@ int main()
                    d == "roms/videx_videoterm_v24_50hz.bin" ||
                    d == "roms/videx_videoterm_char_normal.bin" ||
                    d == "roms/videx_videoterm_char_inverse.bin" ||
-                   d == "roms/slinky_341-0344a.bin",
+                   d == "roms/slinky_341-0344a.bin" ||
+                   d == "roms/applicard_v9.bin" ||
+                   d == "roms/videx_ultraterm_frm_b537.bin" ||
+                   d == "roms/videx_ultraterm_chs_7859.bin" ||
+                   d == "roms/videx_ultraterm_enh_frm_b5c9.bin" ||
+                   d == "roms/videx_ultraterm_enh_chs_5604.bin",
                    std::string("zip-sourced entries are the mouse slot eprom, "
                                "the SSC, Grappler and PIC ROMs, the "
                                "unenhanced //e pair, the four Videx "
-                               "Videoterm dumps and the Slinky, not ") + d);
+                               "Videoterm dumps, the Slinky, the Applicard "
+                               "and the four UltraTerm dumps, not ") + d);
         }
-        expect(zipped == 10, "exactly ten entries unpack a zip");
+        expect(zipped == 15, "exactly fifteen entries unpack a zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +

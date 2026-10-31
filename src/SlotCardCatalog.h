@@ -143,6 +143,18 @@ inline constexpr CardType kCardTypes[] = {
     // Advanced Logic Systems "The CP/M Card" — 6 MHz Z80B, 64 KB of its
     // own, CP/M Plus. No ROM either; slot 4 or 7 as ALS's software says.
     { "alscpm",       "ALS CP/M Card (CP/M Plus)" },
+    // Microsoft SoftCard II — 6 MHz Z80 on its own 64 KB, talking to the
+    // 6502 through an Am2950 latch at $C0n0. No ROM; CP/M 2.28B wants slot 4.
+    { "softcard2",    "SoftCard II (CP/M 2.28B)" },
+    // PCPI Appli-Card — 6 MHz Z80 with its own 64 KB and a 2 KB boot ROM
+    // (roms/applicard_v9.bin, ROM-gated). MAME a2applicard.cpp port.
+    { "applicard",    "PCPI Applicard (CP/M 2.2)" },
+    // Saturn 128K — eight 16 KB language cards; takes $D000-$FFFF over the
+    // bus INH line (Memory::LcInhibitor). MAME ramcard128k.cpp port.
+    { "saturn",       "Saturn 128K RAM card" },
+    // Videx UltraTerm — 80 to 160 columns, its own video switch; ROM-gated
+    // (roms/videx_ultraterm_*). MAME a2ultraterm.cpp port.
+    { "ultraterm",    "Videx UltraTerm (80-160 col)" },
     { "chatmauve",    "Le Chat Mauve",     CardScope::Core },
     { "mouse",        "Mouse Interface"   },
     // AppleWin-style HLE variant — only needs the slot EPROM (no MCU mask

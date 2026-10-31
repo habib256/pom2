@@ -895,6 +895,7 @@ void PhasorCard::onViaPortBChange(int viaIdx)
             ayResetHeld_[ayBase + 1] = true;
             queueAyEvent(ayBase + 1, kRegAyReset, 0);
         }
+        v.setPortAInput(0xFF);          // a chip in reset drives nothing
         return;
     }
     // PB2 is high again: the next falling edge may arm.
@@ -955,7 +956,10 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     };
     if (targetMask & 0b01) routeOne(ayBase);
     if (targetMask & 0b10) routeOne(ayBase + 1);
-    if (command == 1) v.setPortAInput(readDriven ? readBus : 0xFF);
+    // Only a READ drives the bus; every other function leaves it undriven
+    // and it floats back high at once (mb-audit TestAYReadHiZ, test 21:14 —
+    // same rule as MockingboardCard).
+    v.setPortAInput(command == 1 && readDriven ? readBus : 0xFF);
 }
 
 // ─── Cycle pacing + IRQ ──────────────────────────────────────────────────

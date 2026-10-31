@@ -153,6 +153,10 @@ uint8_t Memory::peekCpuWriteTarget(uint16_t addr) const
     // Viewer's UNDO push a ROM opcode into Language-Card RAM. Resolve the RAM
     // cell whenever writes are enabled; when they are not, the write is
     // dropped and so is its undo, so the read view is the right answer.
+    // A card holding INH for writes owns the cell (its inhRead is a plain
+    // RAM index, whatever its read mode).
+    if (addr >= 0xD000 && lcInhibitor_ && lcInhibitor_->inhibitsWrite())
+        return lcInhibitor_->inhRead(addr);
     if (addr >= 0xD000 && lcWriteEnable) return languageCardRamPeek(addr);
     return peekCpuView(addr);
 }
@@ -194,6 +198,11 @@ pom2::DebugBank Memory::debugBank(uint16_t addr, bool write) const
         return auxiliary ? B{B::Aux, ramWorksBank_} : B{B::Main};
     }
     if (addr >= 0xD000) {
+        if (lcInhibitor_ && (write ? lcInhibitor_->inhibitsWrite() : inhRead_)) {
+            for (int slot = 1; slot <= 7; ++slot)
+                if (dynamic_cast<const LcInhibitor*>(slots.peripheral(slot)) == lcInhibitor_)
+                    return {B::Slot, static_cast<uint8_t>(slot)};
+        }
         if (write ? lcWriteEnable : lcReadRam) {
             const uint8_t segment = addr >= 0xE000 ? 0 : lcBank2Active ? 2 : 1;
             const bool auxiliary = iieMode && (iieMemMode & MF_ALTZP);

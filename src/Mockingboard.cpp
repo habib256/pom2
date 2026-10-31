@@ -1178,7 +1178,14 @@ void MockingboardCard::onViaPortBChange(int chip)
         // until the next port-A write, so a driver's presence check
         // (write a register, read it back) actually sees the chip.
         via_[chip]->setPortAInput(ay_[chip]->busOut);
-    } else if (res == Ay3_8910::ApplyResult::ResetOnly) {
+    } else {
+        // Any other function leaves the AY's bus undriven and it floats
+        // back high at once — mb-audit TestAYReadHiZ (test 21:14), which
+        // AppleWin passes. A WDC 65C22 can hold the last value instead;
+        // mb-audit only warns there, so the pulled-up bus is the reference.
+        via_[chip]->setPortAInput(0xFF);
+    }
+    if (res == Ay3_8910::ApplyResult::ResetOnly) {
         ++ayResetCount_[chip];              // UI telemetry, every strobe
         // Stamp only the FALLING edge. `applyControl` reports ResetOnly on
         // every VIA write while PB2 is held low, and holding it low across

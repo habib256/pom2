@@ -701,6 +701,22 @@ void MainWindow::renderMenuBar()
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Select the Zip Chip speed after the next reset.");
         }
+        {
+            // Premium SoftCard //e — an AUXILIARY-slot card (the //e's 64 KB
+            // aux RAM and 80 columns, with a Z80), so a machine option and
+            // not a Slot Config row. Changing it rebuilds the cards.
+            bool psc = settings->getBool("premium_softcard", false);
+            if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc)) {
+                settings->setBool("premium_softcard", psc);
+                settings->save();
+                restartEmulationFromSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Microsoft's Premium SoftCard //e in the auxiliary slot: the\n"
+                    "extended 80-column card's 64 KB, shared with a 6 MHz Z80 for\n"
+                    "CP/M. //e-class machines with slots only. Boot its CP/M disk.");
+        }
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::SlotConfig);
         panelMenuItem(pom2::PanelId::Rewind);

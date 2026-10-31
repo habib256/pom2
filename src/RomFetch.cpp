@@ -308,6 +308,29 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "341-0344a.bin", nullptr, 0x1E994E17u, "MAME a2memexp",
           "2b9beab16f64cda027ef8f2a048e54f3cb8f8016eafdc98d7be500c6a90ccc9c", 0u },
 
+        // The Applicard and the UltraTerm are ROM-gated; RetroBIOS has them
+        // only inside MAME's romsets.
+        { "roms/applicard_v9.bin", "PCPI Applicard Z80 boot ROM v9", 2048,
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2aplcrd.zip",
+          "applicard-v9.bin", nullptr, 0x1D461000u, "MAME a2aplcrd",
+          "ee9841257e923e1d6be9cd366d2d98d12db9647c9cb1cfe3ce5d631f588cdeca", 0u },
+        { "roms/videx_ultraterm_frm_b537.bin", "Videx UltraTerm firmware (original)", 4096,
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2ulttrm.zip",
+          "frm_b537.bin", nullptr, 0x1E85A93Eu, "MAME a2ulttrm",
+          "8c9888dbc0c5dc8d51493e3f192a09415216ccb96d99e9d94ea29c58dec643e0", 0u },
+        { "roms/videx_ultraterm_chs_7859.bin", "Videx UltraTerm character ROM (original)", 4096,
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2ulttrm.zip",
+          "chs_7859.bin", nullptr, 0xEBE8F333u, "MAME a2ulttrm",
+          "d9c3108abb2a21a3807deb992af62c963891f18938f1da945e536f82e4676651", 0u },
+        { "roms/videx_ultraterm_enh_frm_b5c9.bin", "Videx UltraTerm firmware (enhanced //e)", 4096,
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2ultrme.zip",
+          "frm_b5c9.bin", nullptr, 0xB71E05E0u, "MAME a2ultrme",
+          "cb17d747d3370723df02504f94bcf72aae9ef6d7419dc1e2edeb2cccfedf4024", 0u },
+        { "roms/videx_ultraterm_enh_chs_5604.bin", "Videx UltraTerm character ROM (enhanced //e)", 4096,
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2ultrme.zip",
+          "chs_5604.bin", nullptr, 0x3FB4E90Au, "MAME a2ultrme",
+          "cbbfd3d07be729795d2b5a2bcdb1f1daf01af945f2f80430a5666bb7f0fedcd0", 0u },
+
         // ── Reference dumps (no POM2 card reads them yet) ─────────────
         { "roms/341-0438-a.bin", "Apple 3.5\" SuperDrive controller", 32768,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/341-0438-a.bin",

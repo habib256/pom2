@@ -188,6 +188,11 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Z80 core (standalone, zexall-clean) | `Z80.h/.cpp` | [§ Z80 core](DEV.md#z80-core-z80hcpp--softcardcpm-phase-1) |
 | Microsoft SoftCard (Z80 DMA bus master) — catalog `softcard` | `SoftCardZ80.h/.cpp` | [§ SoftCard Z80](DEV.md#softcard-z80-softcardz80hcpp--cpm-phase-2) |
 | ALS "The CP/M Card" (Z80B, own 64 KB, CP/M Plus; map read off ALS's software) — catalog `alscpm` | `AlsCpmCard.h/.cpp` | [CARDS-011](docs/backlog/cards.md#cards-011) |
+| Microsoft SoftCard II (6 MHz Z80, own 64 KB, Am2950 latch at `$C0n0`; not a bus master; izapple2 port) — catalog `softcard2` | `SoftCardIICard.h/.cpp` | [§ SoftCard II](DEV.md#softcard-ii-softcardiicard) |
+| PCPI Applicard (6 MHz Z80, own 64 KB, 2 KB boot ROM `roms/applicard_v9.bin`; MAME `a2applicard` port) — catalog `applicard` | `ApplicardCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
+| Premium SoftCard //e — the AUX-slot card (aux 64 KB + 80 col + Z80 on that RAM), seated on SlotBus **slot 0**; setting `premium_softcard`, Machine menu; `$C07E` register, A15 flip and status hooks in `Memory::AuxSlotPort` | `PremiumSoftCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
+| Saturn 128K — eight language cards in any slot, over the bus INH line (`Memory::LcInhibitor`) — catalog `saturn` | `SaturnCard.h/.cpp` | [§ Saturn 128K](DEV.md#saturn-128k-saturncard) |
+| Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
 | CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm) | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
 | Memory + IIe paging + RamWorks | `Memory.h/.cpp` (keyboard latch + paste FIFO → `Keyboard.h/.cpp`; game port → `PaddleInputs.h`; write/read watchpoints → `MemoryWatch.cpp`; beam-time video RAM for the display → `MemoryVideoLog.cpp`) | [§ Memory](DEV.md#memory) |
 | Display (HGR / DHGR / 80-col) | `Apple2Display.h/.cpp` | [§ Display](DEV.md#display) |

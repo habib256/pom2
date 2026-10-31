@@ -433,6 +433,7 @@ private :
     /// NMOS indexed-access dummy READ at the un-fixed address (low byte
     /// indexed, high byte not yet corrected). See the definition.
     void nmosIndexDummyRead(uint16_t base, uint16_t indexed, bool always);
+    void cmosIndexedWriteDummyRead(uint16_t base, uint16_t indexed);
 
     struct OpcodeEntry {
         void (M6502::*addrMode)();

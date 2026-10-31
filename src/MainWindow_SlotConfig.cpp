@@ -84,6 +84,10 @@
 #include "SmartPortHdvUnit.h"
 #include "SoftCardZ80.h"
 #include "AlsCpmCard.h"
+#include "SoftCardIICard.h"
+#include "PremiumSoftCard.h"
+#include "SaturnCard.h"
+#include "VidexUltratermCard.h"
 #include "SuperSerialCard.h"
 #include "SuperSerialTcpTransport.h"
 #include "SuperSerialTransport.h"
@@ -410,6 +414,19 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         auto card = std::make_unique<AlsCpmCard>();
         card->setMemory(&st.memory());
         card->setCpu(&st.cpu());
+        st.memory().slotBus().plug(s, std::move(card));
+    };
+
+    auto plugSoftCard2 = [&](int s) {
+        // SoftCard II: its Z80 runs on its own RAM and only meets the Apple
+        // at the card's DEVSEL latch, so it needs neither bus nor 6502.
+        st.memory().slotBus().plug(s, std::make_unique<SoftCardIICard>());
+    };
+
+    auto plugSaturn = [&](int s) {
+        // Saturn 128K: drives the bus INH line, so it needs the Memory.
+        auto card = std::make_unique<SaturnCard>();
+        card->setMemory(&st.memory());
         st.memory().slotBus().plug(s, std::move(card));
     };
 
@@ -789,6 +806,26 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "clock")       plugClock(s);
         else if (kind == "softcard")    plugSoftCard(s);
         else if (kind == "alscpm")      plugAlsCpm(s);
+        else if (kind == "softcard2")   plugSoftCard2(s);
+        else if (kind == "saturn")      plugSaturn(s);
+        else if (kind == "applicard") {
+            auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
+            if (!made.warning.empty())
+                pom2::log().warn(made.warningCategory.c_str(), made.warning);
+            if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
+        else if (kind == "ultraterm") {
+            // ROM-gated in the factory; the display gets its picture through
+            // the same seam as the Videoterm, cleared before every rebuild.
+            auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
+            if (!made.warning.empty())
+                pom2::log().warn(made.warningCategory.c_str(), made.warning);
+            if (made) {
+                auto* ut = static_cast<VidexUltratermCard*>(made.card.get());
+                st.memory().slotBus().plug(s, std::move(made.card));
+                display->setCardVideoSource(ut);
+            }
+        }
         else if (kind == "chatmauve")   plugChatMauve(s);
         else if (kind == "mouse")       plugMouse(s);
         else if (kind == "mouseaw" || kind == "iicmouse") {
@@ -870,6 +907,16 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                 "Slot " + std::to_string(s) + " has unknown card type '" +
                 kind + "' — leaving empty");
         }
+    }
+
+    // The //e auxiliary slot: a Premium SoftCard //e in place of the
+    // extended 80-column card (setting `premium_softcard`, Machine menu),
+    // seated on SlotBus slot 0 (PremiumSoftCard.h). A //e with slots only.
+    if (settings->getBool("premium_softcard", false) && st.memory().isIIE()
+        && !pom2::profileConfig(activeProfile).noPhysicalSlots) {
+        auto psc = std::make_unique<PremiumSoftCard>();
+        psc->setMemory(&st.memory());
+        st.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(psc));
     }
 
     // The printer's mechanical sound is not owned by any card, but it IS
