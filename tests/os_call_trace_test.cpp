@@ -30,11 +30,18 @@
 //     peekCpuView, so a card is traced only if it answers peekSlotRom.
 //  6. Pascal: the BIOS table at $EC/$ED — entries with a JMP log, console
 //     read/write do not, and a table of non-JMPs logs nothing.
+//  7. Disk II: a seek of consecutive steps is one line, closed by the data
+//     latch; the spindle starting and really stopping (the 556 delay).
+//  8. Monitor: COUT lines, a GETLN with what it returns.
+//  9. Applecorn: an OSBYTE through its page-2 vector in aux RAM.
+// 10. CP/M-65: a BDOS call recognised by its prologue and paired with its
+//     return, a BIOS call by its jmpdispatch.
 //  4. The trace is free when off: the Debugger is not armed, and SlotBus
 //     hangs the observer on a card Z80 plugged after it was set, and takes
 //     it off again.
 
 #include "ApplicardCard.h"
+#include "DiskIICard.h"
 #include "Debugger.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -294,6 +301,151 @@ void testPascal()
     CHECK(dbg.osCalls().lines().empty());
 }
 
+struct LineSink : pom2::CardTraceSink {
+    std::vector<std::string> lines;
+    void onCardLine(const char* l) override { lines.emplace_back(l); }
+};
+
+void testDiskHead()
+{
+    SlotBus bus;
+    bus.plug(6, std::make_unique<DiskIICard>(6));
+    LineSink sink;
+    bus.setCardTrace(&sink);
+    SlotPeripheral* d = bus.peripheral(6);
+    CHECK(d->cardTrace() == &sink);
+    d->deviceSelectRead(0x9);                    // motor on
+    // Out two tracks: each next phase on, the previous off.
+    const int seq[][2] = { {3, 0}, {5, 2}, {7, 4}, {1, 6} };
+    for (const auto& s : seq) { d->deviceSelectRead(uint8_t(s[0])); d->deviceSelectRead(uint8_t(s[1])); }
+    d->deviceSelectRead(0xC);                    // reading: the seek is over
+    d->deviceSelectRead(0x8);                    // motor off: the 556 keeps it turning…
+    CHECK(sink.lines.size() == 2);
+    d->advanceCycles(2'000'000);                 // …until it runs out
+    CHECK(sink.lines.size() == 3);
+    CHECK(sink.lines.size() > 0 && sink.lines[0] == "DISK S6,D1 motor on, track 0");
+    CHECK(sink.lines.size() > 1 && sink.lines[1] == "DISK S6,D1 seek 0 -> 2");
+    CHECK(sink.lines.size() > 2 && sink.lines[2] == "DISK S6,D1 motor stopped");
+    if (sink.lines.size() != 3) for (const auto& l : sink.lines) std::fprintf(stderr, "  | %s\n", l.c_str());
+    bus.setCardTrace(nullptr);
+    CHECK(d->cardTrace() == nullptr);
+}
+
+// A Monitor ROM page with the two entry points the trace knows: COUT at
+// $FDED (JMP (CSW)) and GETLN at $FD6A (LDA $33, …): here GETLN "reads"
+// the line already at $0200 and returns its length in X.
+void testMonitor()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    std::vector<uint8_t> rom(0x0800, 0xEA);      // $F800-$FFFF
+    auto at = [&](uint16_t a, std::initializer_list<int> b) { for (int v : b) rom[size_t(a++ - 0xF800)] = uint8_t(v); };
+    at(0xFDED, { 0x6C, 0x36, 0x00 });            // COUT: JMP (CSW)
+    at(0xFD6A, { 0xA5, 0x33, 0x20, 0xED, 0xFD,   // GETLN: LDA $33 / JSR COUT (the prompt)
+                 0xA2, 0x02, 0x60 });            //        LDX #2 / RTS
+    mem.loadRomBytes(rom.data(), rom.size(), 0xF800);
+    poke(mem, 0x0036, { 0x00, 0x03 });           // CSW = $0300: RTS
+    mem.memWrite(0x0300, 0x60);
+    mem.memWrite(0x0033, 0xDD);                  // prompt ']'
+    poke(mem, 0x0200, { 0xC8, 0xC9, 0x8D });     // "HI" CR
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setMonitor(true);
+    cpu.setDebugHook(&dbg);
+    poke(mem, 0x0800, {
+        0xA9, 0xCF, 0x20, 0xED, 0xFD,            // 'O'
+        0xA9, 0xCB, 0x20, 0xED, 0xFD,            // 'K'
+        0xA9, 0x8D, 0x20, 0xED, 0xFD,            // CR
+        0x20, 0x6A, 0xFD,                        // JSR GETLN
+        0x4C, 0x12, 0x08,                        // JMP *
+    });
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    for (int i = 0; i < 40; ++i) cpu.run(1);
+    const auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 2);
+    CHECK(l.size() > 0 && l[0] == "MON  \"OK\"");
+    CHECK(l.size() > 1 && l[1] == "MON  $080F GETLN ']' -> \"HI\"");
+    if (l.size() != 2) dump(dbg.osCalls());
+}
+
+// Applecorn: the BBC program runs from aux RAM (RAMRD), the MOS in the aux
+// language card; OSBYTE through its page-2 vector.
+void testApplecorn()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.setIIEMode(true);
+    mem.memWrite(0xC003, 0);                     // RAMRD aux
+    mem.memWrite(0xC005, 0);                     // RAMWRT aux
+    mem.memWrite(0xC009, 0);                     // ALTZP aux
+    (void)mem.memRead(0xC08B); (void)mem.memRead(0xC08B);   // LC bank 1, read + write RAM
+    poke(mem, 0x020A, { 0x00, 0xD0 });           // OSBYTE vector -> $D000
+    poke(mem, 0xD000, { 0xA2, 0x00, 0xA0, 0x80, 0x60 });   // LDX #0 / LDY #$80 / RTS
+    poke(mem, 0x0800, {
+        0xA9, 0x84, 0x20, 0x00, 0xD0,            // LDA #$84 / JSR (the vector's target)
+        0x4C, 0x05, 0x08,                        // JMP *
+    });
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setApplecorn(true);
+    cpu.setDebugHook(&dbg);
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    for (int i = 0; i < 12; ++i) cpu.run(1);
+    const auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 1);
+    CHECK(l.size() > 0 && l[0] == "MOS  OSBYTE $84 (read HIMEM) X=$00 Y=$00 -> A=$84 X=$00 Y=$80");
+    if (l.size() != 1) dump(dbg.osCalls());
+}
+
+// CP/M-65: the BDOS ENTRY of src/bdos/dispatch.S and the BIOS jmpdispatch of
+// src/lib/biosentry.S, at addresses the trace has to find for itself.
+void testCpm65()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    poke(mem, 0x6000, {
+        0x85, 0x10, 0x86, 0x11,                  // STA param / STX param+1
+        0x20, 0x20, 0x60,                        // JSR BEGINSYS ($6020: RTS)
+        0x20, 0x30, 0x60,                        // JSR icall
+        0x4C, 0x20, 0x60,                        // JMP ENDSYS ($6020: RTS)
+    });
+    mem.memWrite(0x6020, 0x60);
+    poke(mem, 0x6030, { 0xB9, 0x40, 0x60, 0x48, 0xB9, 0x50, 0x60, 0x48, 0x60 });   // icall
+    mem.memWrite(0x6040 + 12, 0x60);             // hi (GET_VERSION - 1)
+    mem.memWrite(0x6050 + 12, 0x5F);             // lo: $6060 - 1
+    poke(mem, 0x6060, { 0xA9, 0x22, 0xA2, 0x00, 0x18, 0x60 });   // LDA #$22 / LDX #0 / CLC / RTS
+    poke(mem, 0x6100, {                          // biosentry: jmpdispatch
+        0x85, 0x12, 0xB9, 0x1D, 0x61, 0x48, 0xB9, 0x0D, 0x61, 0x48, 0xA5, 0x12, 0x60 });
+    mem.memWrite(0x610D + 3, 0xFF);              // lo (SELDSK - 1) = $61FF
+    mem.memWrite(0x611D + 3, 0x61);
+    mem.memWrite(0x6200, 0x60);                  // SELDSK: RTS
+    poke(mem, 0x0800, {
+        0xA0, 0x0C, 0x20, 0x00, 0x60,            // LDY #12 / JSR BDOS
+        0xA0, 0x03, 0xA9, 0x01, 0x20, 0x00, 0x61,   // LDY #3 / LDA #1 / JSR BIOS
+        0x4C, 0x0C, 0x08,                        // JMP *
+    });
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setCpm65(true);
+    cpu.setDebugHook(&dbg);
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    for (int i = 0; i < 40; ++i) cpu.run(1);
+    const auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 2);
+    CHECK(l.size() > 0 && l[0] == "CPM65 $0802 BDOS GET_VERSION -> A=$22 X=$00");
+    CHECK(l.size() > 1 && l[1] == "CPM65 BIOS SELDSK B:");
+    if (l.size() != 2) dump(dbg.osCalls());
+}
+
 struct FlatBus : pom2::Z80Bus {
     uint8_t ram[0x10000] = {};
     uint8_t z80MemRead(uint16_t a) override { return ram[a]; }
@@ -359,6 +511,10 @@ int main()
     testBdos();
     testSmartPort();
     testPascal();
+    testDiskHead();
+    testMonitor();
+    testApplecorn();
+    testCpm65();
     testSlotBusObserver();
     if (g_fail) {
         std::fprintf(stderr, "os_call_trace: %d failure(s)\n", g_fail);

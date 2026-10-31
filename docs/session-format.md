@@ -207,7 +207,10 @@ Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX,
 and 12 ProDOS HDV (v6+). Version 7 adds 13 CFFA, 14 TransWarp, 15 Phasor,
 16 SSI263 Echo+, 17 S.A.M., 18 4play and 19 TMS5220C Echo+.
 Configuration v1 is four bytes: version, No-Slot Clock present, enabled and
-slot (255 means no slot). Configuration v2 appends a Zip Chip kind byte (1) and boot-fast flag.
+slot (255 means no slot). Configuration v2 appends a socket-accelerator kind byte and one
+parameter: 1 = Zip Chip + its boot-fast flag, 2 = FASTChip //e + its power-on speed
+(0-40, the speed register's scale; FastChip.h). The chip's live registers travel in the
+machine snapshot like the Zip Chip's.
 The ENV section carries the exact firmware and geometry used to build the
 candidate; standalone `.pom2snap` loads continue comparing ENV without
 installing it.

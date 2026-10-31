@@ -77,6 +77,11 @@ void DiskIICard::advanceCycles(int cycles)
         if (motorOffDelay <= 0) {
             motorOffDelay = 0;
             motorOn       = false;
+            if (cardTrace()) {                   // the spindle really stops (DiskIICard.h)
+                flushSeekRun();
+                traceLine("DISK S" + std::to_string(busSlot()) + ",D" +
+                          std::to_string(activeDrive + 1) + " motor stopped");
+            }
             if (active == MODE_DELAY) {
                 active = MODE_IDLE;
                 // Commit any in-flight write splice BEFORE invalidating

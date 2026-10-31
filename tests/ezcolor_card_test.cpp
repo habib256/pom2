@@ -23,6 +23,12 @@
 //     by the VDP's raster into the card's 288 × 216 picture
 //  3. the frame interrupt: slot IRQ with R1 IE, dropped by the status read
 //  4. bus reset, snapshot round trip, never the Apple's screen by itself
+//  5. the access window (silicon-strict, the card's default): a burst with
+//     no time between the bytes loses them and counts them; spaced, it lands;
+//     the gap each mode needs
+//
+// 1-4 drive the ports with no CPU time between accesses, so they switch the
+// window off; 5 puts it back.
 
 #include "EzColorCard.h"
 #include "Memory.h"
@@ -52,6 +58,8 @@ int main()
     auto owned = std::make_unique<EzColorCard>();
     EzColorCard* card = owned.get();
     mem.slotBus().plug(3, std::move(owned));
+    CHECK(card->vdp().isSiliconStrictMode() && "the card enforces the window");
+    card->vdp().setSiliconStrictMode(false);
     auto frames = [&](int n) {
         for (int i = 0; i < n * TMS9918::kCyclesPerFrame / 64 + 1; ++i) card->advanceCycles(64);
     };
@@ -113,6 +121,48 @@ int main()
     CHECK(!card->ownsScreen(true, true) && !card->ownsScreen(false, false));
     mem.slotBus().reset();
     CHECK(card->vdp().regsData()[1] == 0 && "bus reset resets the VDP");
+
+    // 5. The window. Display on, Graphics I, the beam on an active line.
+    card->vdp().setSiliconStrictMode(true);
+    reg(mem, 1, 0xC0);
+    card->advanceCycles(64);
+    writeAddr(mem, 0x0400);
+    card->advanceCycles(40);
+    const uint64_t before = card->vdp().droppedWriteCount();
+    for (int i = 0; i < 4; ++i) mem.memWrite(kData, uint8_t(0xA0 + i));   // no time between
+    CHECK(card->vdp().droppedWriteCount() > before && "back to back: dropped and counted");
+    card->advanceCycles(40);                            // the one pending access lands…
+    CHECK(card->vdp().vramData()[0x0400] == 0xA3 && "…and it is the newest (openMSX)");
+    writeAddr(mem, 0x0500);
+    card->advanceCycles(40);
+    const uint64_t spaced = card->vdp().droppedWriteCount();
+    for (int i = 0; i < 4; ++i) { mem.memWrite(kData, uint8_t(0xB0 + i)); card->advanceCycles(40); }
+    CHECK(card->vdp().droppedWriteCount() == spaced && "40 cycles apart: every byte lands");
+    CHECK(card->vdp().vramData()[0x0503] == 0xB3);
+
+    // The gap a stream of data writes needs during the display, three frames
+    // of it in each mode (openMSX's slot tables): 8 cycles is always enough,
+    // 7 is not in Graphics I / II (Multicolor needs 7, Text 3). What a
+    // program keeping ≥ 18 cycles relies on.
+    {
+        struct M { const char* n; uint8_t r0, r1; } modes[] = {
+            {"GfxI", 0x00, 0xC0}, {"GfxII", 0x02, 0xC0}, {"Text", 0x00, 0xD0}, {"Multi", 0x00, 0xC8} };
+        auto drops = [&](const M& md, int gap) {
+            reg(mem, 0, md.r0); card->advanceCycles(40);
+            reg(mem, 1, md.r1); card->advanceCycles(40);
+            writeAddr(mem, 0x0000); card->advanceCycles(40);
+            card->vdp().resetDroppedWriteCount();
+            const int n = 3 * TMS9918::kCyclesPerFrame / gap;
+            for (int i = 0; i < n; ++i) { mem.memWrite(kData, uint8_t(i)); card->advanceCycles(gap); }
+            return card->vdp().droppedWriteCount();
+        };
+        for (const auto& md : modes) {
+            CHECK(drops(md, 8) == 0 && "8 cycles apart: never dropped");
+            CHECK(drops(md, 18) == 0);
+        }
+        CHECK(drops(modes[0], 7) > 0 && drops(modes[1], 7) > 0 && "7 is too close in Graphics I / II");
+        CHECK(drops(modes[3], 7) == 0 && drops(modes[2], 3) == 0);
+    }
 
     if (g_fail) {
         std::fprintf(stderr, "ezcolor_card: %d failure(s)\n", g_fail);

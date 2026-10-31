@@ -144,6 +144,8 @@ void usage(const char* prog)
         "  --trace-bdos          Print every CP/M BDOS call a card Z80 makes.\n"
         "  --trace-sp            Print every SmartPort call and its result.\n"
         "  --trace-pascal        Print the Apple Pascal BIOS calls (entries).\n"
+        "  --trace-monitor       Print the Monitor's output lines and GETLNs.\n"
+        "  --trace-disk          Print the Disk II's seeks, motor and writes.\n"
         "  --version             Print the version and exit.\n"
         "  -h, --help            Show this and exit.\n"
         "\n"
@@ -225,10 +227,7 @@ int main(int argc, char** argv)
     bool doSetup     = true;
     bool setupGiven  = false;
     bool textDump    = false;
-    bool traceMli    = false;
-    bool traceBdos   = false;
-    bool traceSp     = false;
-    bool tracePascal = false;
+    pom2::OsTraceKinds trace;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
     int  sc2Slot      = 0;   // 0 = none
@@ -313,10 +312,12 @@ int main(int argc, char** argv)
             typed.push_back({ at, unescape(v.substr(colon + 1)), false });
         }
         else if (a == "--text-dump") textDump = true;
-        else if (a == "--trace-mli") traceMli = true;
-        else if (a == "--trace-bdos") traceBdos = true;
-        else if (a == "--trace-sp") traceSp = true;
-        else if (a == "--trace-pascal") tracePascal = true;
+        else if (a == "--trace-mli") trace.mli = true;
+        else if (a == "--trace-bdos") trace.bdos = true;
+        else if (a == "--trace-sp") trace.smartPort = true;
+        else if (a == "--trace-pascal") trace.pascalBios = true;
+        else if (a == "--trace-monitor") trace.monitor = true;
+        else if (a == "--trace-disk") trace.disk = true;
         else if (a == "--frames" && i+1 < argc) {
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
@@ -537,11 +538,11 @@ int main(int argc, char** argv)
     };
 
     // Before the worker exists, like the rest of the setup.
-    if (traceMli || traceBdos || traceSp || tracePascal) {
+    if (trace.mli || trace.bdos || trace.smartPort || trace.pascalBios || trace.monitor || trace.disk) {
         controller.debugger().osCalls().setSink([](const std::string& line) {
             std::fprintf(stderr, "%s\n", line.c_str());
         });
-        controller.setOsCallTrace(traceMli, traceBdos, traceSp, tracePascal);
+        controller.setOsCallTrace(trace);
     }
 
     // ─── Capture mode ──────────────────────────────────────────────────────

@@ -95,6 +95,7 @@ void SlotBus::plug(int slot, std::unique_ptr<SlotPeripheral> card)
         slots[slot]->attachToBus(this, slot);
         slots[slot]->onPlug();
         if (pom2::Z80* z = slots[slot]->z80Core()) z->setObserver(z80Observer_);
+        slots[slot]->setCardTrace(cardTrace_);
     }
     rebuildActiveCache();
 }
@@ -105,6 +106,13 @@ void SlotBus::setZ80Observer(pom2::Z80Observer* o)
     for (auto& card : slots)
         if (card)
             if (pom2::Z80* z = card->z80Core()) z->setObserver(o);
+}
+
+void SlotBus::setCardTrace(pom2::CardTraceSink* sink)
+{
+    cardTrace_ = sink;
+    for (auto& card : slots)
+        if (card) card->setCardTrace(sink);
 }
 
 std::unique_ptr<SlotPeripheral> SlotBus::unplug(int slot)

@@ -649,6 +649,13 @@ MainWindow::MainWindow(bool forceIIPlus)
         // Zip Chip in the CPU socket (ZipChip.h) — off by default.
         controller->zipChip().setBootFast(settings->getBool("zip_chip_boot_fast", true));
         controller->setZipChipInstalled(settings->getBool("zip_chip", false));
+        // FASTChip //e, the other socket part (FastChip.h) — off by default;
+        // the Zip Chip wins if a hand-edited file asks for both.
+        controller->fastChip().setPowerOnSpeed(
+            static_cast<uint8_t>(std::clamp(settings->getInt("fast_chip_speed", pom2::FastChip::kSpeedMax),
+                                            0, int(pom2::FastChip::kSpeedMax))));
+        if (!controller->zipChipInstalled())
+            controller->setFastChipInstalled(settings->getBool("fast_chip", false));
         // Composite-NTSC shader params (saved under ntsc_*). We can't
         // call ntscFx->setParams() yet because the postprocessor is
         // lazy-constructed in drawScreenImage; stash them into a

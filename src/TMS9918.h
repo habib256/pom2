@@ -239,6 +239,10 @@ public:
     // Read-only VRAM view for the editor (16 KB).
     const uint8_t* vramData() const { return vram.data(); }
     const uint8_t* regsData() const { return regs.data(); }
+    // Debug reads: the status register and the VRAM pointer as they stand,
+    // without the side effects of a port read (F / 5S / C stay set).
+    uint8_t  statusRegister() const { return statusReg; }
+    uint16_t vramAddress() const { return vramAddr; }
     // Copy the active 256×192 region of the live framebuffer (the chip's own
     // rendered output, exactly what the Graphic Card window shows) into `out`,
     // stripping the 16/12-px R7 border. Lets the paint editor display the real

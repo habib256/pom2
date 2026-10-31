@@ -337,8 +337,10 @@ set(SOURCES
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
+    src/DiskIICard_Trace.cpp
     src/Debugger.cpp
     src/OsCallTrace.cpp
+    src/OsCallTrace_Guest.cpp
     src/Debugger_ImGui.cpp
     src/Debugger_Assembler.cpp
     src/Assembler6502.cpp
@@ -352,7 +354,9 @@ set(SOURCES
     src/EchoPlusTMS5220Snapshot.cpp
     src/Tms5220.cpp
     src/EmulationController.cpp
+    src/EmulationController_Socket.cpp
     src/ZipChip.cpp
+    src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
@@ -583,6 +587,7 @@ set(POM2_DEVICES_SOURCES
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
+    src/DiskIICard_Trace.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EchoPlusTMS5220Snapshot.cpp
@@ -831,6 +836,7 @@ set(POM2_MACHINE_HEADERS
     src/MemoryWatchSink.h
     src/PaddleInputs.h
     src/SlotPeripheral.h
+    src/CardTraceSink.h
 )
 
 set(POM2_MACHINE_SOURCES
@@ -859,6 +865,7 @@ set(POM2_MACHINE_SOURCES
     src/Sony35Drive_Session.cpp
     src/NoSlotClock.cpp
     src/ZipChip.cpp
+    src/FastChip.cpp
     src/SlotBus.cpp
     src/SpeakerDevice.cpp
     src/SystemProfile.cpp
@@ -942,6 +949,7 @@ set(POM2_RUNTIME_SOURCES
     src/PrinterRender.cpp
     src/Debugger.cpp
     src/OsCallTrace.cpp
+    src/OsCallTrace_Guest.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/TnfsClient.cpp
@@ -953,6 +961,7 @@ set(POM2_RUNTIME_SOURCES
     src/AudioDevice.cpp
     src/CharRomCatalog.cpp
     src/EmulationController.cpp
+    src/EmulationController_Socket.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/FloppySoundDevice.cpp
@@ -1002,6 +1011,7 @@ set(HEADERS
     src/SessionIO.h
     src/M6502.h
     src/Z80.h
+    src/CardTraceSink.h
     src/AlsCpmCard.h
     src/SoftCardIICard.h
     src/SoftCard2Protocol.h
@@ -1130,6 +1140,7 @@ set(HEADERS
     src/TranswarpCard.h
     src/SlinkyCard.h
     src/ZipChip.h
+    src/FastChip.h
     src/CpuSocketAccelerator.h
     src/SamCard.h
     src/Dac8Audio.h
@@ -1603,8 +1614,10 @@ set(POM2_CORE_SOURCES
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
+    src/DiskIICard_Trace.cpp
     src/Debugger.cpp
     src/OsCallTrace.cpp
+    src/OsCallTrace_Guest.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
     src/DiskImage.cpp
@@ -1614,7 +1627,9 @@ set(POM2_CORE_SOURCES
     src/EchoPlusTMS5220Snapshot.cpp
     src/Tms5220.cpp
     src/EmulationController.cpp
+    src/EmulationController_Socket.cpp
     src/ZipChip.cpp
+    src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
@@ -1876,8 +1891,11 @@ add_executable(pom2_headless
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
+    src/DiskIICard_Trace.cpp
     src/EmulationController.cpp
+    src/EmulationController_Socket.cpp
     src/ZipChip.cpp
+    src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp
@@ -1889,6 +1907,7 @@ add_executable(pom2_headless
     src/SmartPortBusDevice.cpp
     src/Debugger.cpp
     src/OsCallTrace.cpp
+    src/OsCallTrace_Guest.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp
     src/SmartPortHub.cpp
@@ -2006,6 +2025,7 @@ add_executable(pom2_bench
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
+    src/DiskIICard_Trace.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/FloppySoundDevice.cpp

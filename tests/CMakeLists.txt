@@ -687,6 +687,7 @@ add_executable(test_iicplus_boot35
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -767,6 +768,7 @@ add_executable(test_iic_external_smartport
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
@@ -814,6 +816,7 @@ add_executable(test_iic_diskii_after_smartport
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortUnit.cpp
@@ -853,6 +856,7 @@ add_executable(test_iicplus_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -885,6 +889,7 @@ add_executable(test_iic_boot_trace
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -919,6 +924,7 @@ add_executable(test_iic_nodisk_boot_trace
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -953,6 +959,7 @@ add_executable(test_choplifter_iie_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -1127,7 +1134,9 @@ set_tests_properties(rewind_delta PROPERTIES TIMEOUT 5)
 add_executable(test_rewind_transport
     rewind_transport_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -1139,6 +1148,7 @@ add_executable(test_rewind_transport
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -1170,7 +1180,9 @@ set_tests_properties(rewind_transport PROPERTIES TIMEOUT 20)
 add_executable(test_ui_worker_contention
     ui_worker_contention_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -1182,6 +1194,7 @@ add_executable(test_ui_worker_contention
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -1215,6 +1228,7 @@ add_executable(test_rewind_slot_state
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1277,6 +1291,7 @@ add_executable(test_rewind_disk_write
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1454,6 +1469,7 @@ add_executable(test_storage_rebuild_persist
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -1561,6 +1577,7 @@ add_executable(test_media_write_default
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2202,6 +2219,7 @@ add_executable(test_disk_media_state
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2225,6 +2243,7 @@ add_executable(test_two_phase_mount
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2378,6 +2397,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2439,6 +2459,7 @@ add_executable(test_mame_lss_parity
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2495,6 +2516,7 @@ add_executable(test_disk_write_controller
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2524,6 +2546,7 @@ add_executable(test_woz_load
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2643,6 +2666,7 @@ add_executable(test_iic_dual_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortHdvUnit.cpp
@@ -2811,6 +2835,7 @@ add_executable(test_disk_drive2
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2853,6 +2878,7 @@ add_executable(test_disk_boot
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2888,6 +2914,7 @@ add_executable(test_diskii_pom2_boot_prom
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2923,6 +2950,7 @@ add_executable(test_diskii_own_sequencer
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -2962,6 +2990,7 @@ add_executable(test_dos32_boot_trace
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3001,6 +3030,7 @@ add_executable(test_dos33_save
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3040,6 +3070,7 @@ add_executable(test_diskii_format
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3077,6 +3108,7 @@ add_executable(test_ssc_fallback_dos
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3111,6 +3143,7 @@ add_executable(test_clock_card_dos_driver
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3152,6 +3185,7 @@ add_executable(test_diskii_unformatted
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3195,6 +3229,7 @@ add_executable(test_diskii_write_integrity
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3234,6 +3269,7 @@ add_executable(test_prodos_save
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3273,6 +3309,7 @@ add_executable(test_sector_order
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3312,6 +3349,7 @@ add_executable(test_no_slot_clock_prodos_driver
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3348,6 +3386,7 @@ add_executable(c2plus_boot_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3382,6 +3421,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3443,6 +3483,7 @@ add_executable(iic_a2fc_printer_port_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -3460,6 +3501,7 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -3924,6 +3966,7 @@ add_executable(madef_phase_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3950,6 +3993,7 @@ add_executable(u5_woz_save_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -3980,6 +4024,7 @@ add_executable(dd2_ay_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4116,6 +4161,7 @@ add_executable(test_drol_probe
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_drol_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4142,6 +4188,7 @@ add_executable(test_diskii_motor_coast
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_diskii_motor_coast PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4166,6 +4213,7 @@ add_executable(test_diskii_step_rewind
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_diskii_step_rewind PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4200,6 +4248,7 @@ add_executable(test_purplesoft_eve_screens
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_purplesoft_eve_screens PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4233,6 +4282,7 @@ add_executable(test_chatmauve_feline_screens
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_chatmauve_feline_screens PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4266,6 +4316,7 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
     ${CMAKE_SOURCE_DIR}/src/IIcMouse.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
@@ -4301,6 +4352,7 @@ add_executable(test_purplesoft_eve_probe
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_purplesoft_eve_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -4545,6 +4597,7 @@ add_executable(test_diskii_empty_drive
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4636,6 +4689,7 @@ add_executable(test_bus_fastpath
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -4666,6 +4720,7 @@ add_executable(test_memory_cpu_view
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -5462,6 +5517,7 @@ add_executable(test_slot_config
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -5893,9 +5949,12 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/CliRunner.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/SystemProfile.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -6425,6 +6484,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -6436,7 +6496,9 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -6448,6 +6510,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -6507,6 +6570,7 @@ add_executable(hero_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -6769,8 +6833,11 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -6782,6 +6849,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -7113,7 +7181,9 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/SoftCardZ80.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -7125,6 +7195,7 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
@@ -7159,6 +7230,7 @@ add_executable(test_softcard_cpm_boot
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7243,6 +7315,7 @@ add_executable(test_softcard_ssc_bterm
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7292,6 +7365,7 @@ add_executable(test_als_cpm_card
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7326,6 +7400,7 @@ add_executable(test_softcard2_card
     softcard2_card_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Ccs7710Card.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SoftCardIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/SoftCard2Protocol.cpp
@@ -7337,6 +7412,7 @@ add_executable(test_softcard2_card
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7374,6 +7450,7 @@ add_executable(test_a2audit
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7415,6 +7492,7 @@ add_executable(test_mb_audit
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7454,6 +7532,7 @@ add_executable(test_applicard_card
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7490,6 +7569,7 @@ add_executable(test_os_call_trace
     os_call_trace_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/ApplicardCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -7497,6 +7577,7 @@ add_executable(test_os_call_trace
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7536,6 +7617,7 @@ add_executable(test_premium_softcard
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7574,6 +7656,7 @@ add_executable(test_saturn_card
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7664,6 +7747,7 @@ add_executable(test_ccs7710_card
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
@@ -7726,6 +7810,7 @@ add_executable(als_boot_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7750,6 +7835,7 @@ add_executable(premium_softcard_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7789,6 +7875,7 @@ foreach(_diag cpu_smoke disasm_smoke iic_dump rom_basic rom_boot)
         ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
         ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
         ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+        ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
         ${POM2_TEST_CORE_SOURCES}
     )
     target_include_directories(${_diag} PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7815,6 +7902,7 @@ add_executable(test_iwm_mig_snapshot
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -7978,6 +8066,7 @@ add_executable(test_iic_printer_port
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_iic_printer_port PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -8011,6 +8100,7 @@ add_executable(iicplus_boot_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -8042,6 +8132,7 @@ add_executable(test_iic_plus_boot_write
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -8132,6 +8223,7 @@ set(POM2_DD1_AB_COMMON
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -8323,6 +8415,7 @@ add_executable(test_disk_path_snapshot
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -8352,6 +8445,7 @@ add_executable(test_diskii_insert_thread_stack
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -8717,8 +8811,11 @@ add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -8905,6 +9002,7 @@ add_executable(test_fuzz_snapshot
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
 )
 target_include_directories(test_fuzz_snapshot PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -9042,6 +9140,14 @@ pom2_add_headless_test(test_m6502_undoc_access_timing
 pom2_add_headless_test(test_zip_chip
     NAME zip_chip TIMEOUT 30
     SOURCES zip_chip_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# ─── FASTChip //e (the other CPU-socket accelerator) ─────────────────────
+# Its User's Guide registers through a real controller on a //e: the
+# unlock, the speed table, the manual's routines run by the 6502.
+pom2_add_headless_test(test_fast_chip
+    NAME fast_chip TIMEOUT 30
+    SOURCES fast_chip_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 # The //c Plus's built-in accelerator, driven by its own ROM: 4 MHz after a
@@ -9648,6 +9754,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(dix_menu_raster_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9688,6 +9795,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(oldskool_raster_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9728,6 +9836,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(oldskool_crash_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -9891,6 +10000,7 @@ add_executable(test_diskii_write_burst
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -10110,8 +10220,11 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
@@ -10123,6 +10236,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -10165,6 +10279,7 @@ add_executable(test_diskii_track_reach_weak
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -10200,6 +10315,7 @@ add_executable(test_disk_protection_signals
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -10403,6 +10519,8 @@ if(TARGET pom2_core_test)
     # A2osX (disks_3.5) on a //e or a //c assembled piece by piece.
     add_executable(a2osx_boot_probe EXCLUDE_FROM_ALL a2osx_boot_probe.cpp)
     target_link_libraries(a2osx_boot_probe PRIVATE pom2_core_test)
+    add_executable(os_trace_probe EXCLUDE_FROM_ALL os_trace_probe.cpp)
+    target_link_libraries(os_trace_probe PRIVATE pom2_core_test)
     # DIX's automatic mode on the fresh-install //e PAL (VALIDATION-002).
     add_executable(dix_auto_tour_probe EXCLUDE_FROM_ALL dix_auto_tour_probe.cpp)
     target_link_libraries(dix_auto_tour_probe PRIVATE pom2_core_test)
@@ -10417,6 +10535,7 @@ add_executable(lss_window_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -10438,6 +10557,7 @@ add_executable(lss_write_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
@@ -10452,6 +10572,7 @@ target_include_directories(lss_write_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 set(POM2_PROBE_TARGETS
     a2osx_boot_probe
+    os_trace_probe
     artifact_probe
     c2plus_boot_probe
     cffa_boot_dump

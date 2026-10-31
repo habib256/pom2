@@ -196,6 +196,43 @@ it, which is why a host checks it from here. `renderFrame()` keeps painting
 the composite picture; the card changes what `rgbDhgrMode()` reports, not the
 software framebuffer.
 
+## E-Z Color (TMS9918A)
+
+`attachEzColor(slot, siliconStrict = true)` installs Steve Ciarcia's E-Z
+Color Graphics Interface (BYTE, August 1982) in an empty slot of a ][+ or a
+//e — a //c refuses, one card per core. It has no ROM: `$C0n0` is the VDP's
+data port, `$C0n1` its register / status port, every other `$C0nX` reads
+`$FF`, so a program finds it by probing those two. The VDP is POM1's
+TMS9918; its `/INT` is the slot IRQ (R1 bit 5 with the frame flag F, dropped
+by a `$C0n1` read), and a bus reset resets it.
+
+- `ezColorState()` reads R0-R7, the status (F, 5S, C, fifth-sprite number),
+  the VRAM pointer, `/INT`, the mode and the drop counter **without touching
+  the chip**: F stays set until the guest reads `$C0n1`.
+- `ezColorVram(out, len, from)` copies VRAM (16 KB, wrapping).
+- `renderEzColorFrame()` is the card's own monitor, 288 × 216 (the 256 × 192
+  picture at x 16, y 12 inside the R7 border), `0xAABBGGRR`, the same lifetime
+  as `renderFrame()`. The VDP paints it line by line as its beam passes, so
+  below the beam it still shows the previous frame; sample it at a fixed point
+  of the frame (after the guest's VBlank wait) for comparable captures.
+- **The access window.** With `siliconStrict` (the default, and what the
+  application runs) a port access the chip has not had time to serve is
+  dropped, as on the part, and counted in `droppedAccesses`;
+  `resetEzColorDropCount()` zeroes it. The gap is not one fixed figure: it
+  comes from openMSX's TMS9918 access-slot tables, so it depends on the mode
+  and on where the beam is. Measured over three frames of data writes
+  (`ezcolor_card` pins it): **8 cycles apart is never dropped** in any mode;
+  7 drops in Graphics I / II, while Multicolor needs 7 and Text 3; in VBlank
+  or with the display off about 2. A program keeping ≥ 18 cycles is well
+  inside. A burst that comes too close keeps only its newest byte, which the
+  chip writes at its slot — at the address current then. Strict mode also
+  makes R1 bit 7 select 4 KB / 16 KB addressing, as the silicon does: set it.
+- **Time.** The VDP runs on CPU cycles (it advances with each instruction,
+  catching its raster up to the beam at every write), on its own NTSC frame of
+  17 062 cycles (59.94 Hz, 262 lines, 192 active) whatever the Apple's video
+  timing — the card has its own crystal. Same cycles, same VRAM, same picture,
+  same drops.
+
 ## Mouse
 
 `attachMouse(slot, model, romDirectory)` installs the Apple Mouse Interface

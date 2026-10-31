@@ -30,6 +30,7 @@ constexpr char kMagic[4] = { 'E', 'Z', 'C', '1' };
 EzColorCard::EzColorCard()
 {
     vdp_.setIrqStrapped(true);   // the VDP's /INT drives the slot IRQ
+    vdp_.setSiliconStrictMode(true);   // the access window, as the chip (header)
     vdp_.reset();
 }
 
@@ -56,6 +57,7 @@ uint8_t EzColorCard::deviceSelectRead(uint8_t low4)
 void EzColorCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     if (low4 > 1) return;
+    if (cpu_) vdp_.setLastAccessPc(cpu_->getProgramCounter());   // the drop histogram's site
     vdp_.renderBeamCatchUp(inFlight());
     if (low4 == 0) vdp_.writeData(v);
     else           vdp_.writeControl(v);

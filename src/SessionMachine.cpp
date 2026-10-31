@@ -22,9 +22,17 @@
 #include <array>
 #include <utility>
 
+void EmulationController::setFastChipInstalled(const pom2::StateAccess&, bool on)
+{
+    fastInstalled_.store(on); fastChip_.onReset(0);
+    if (on) zipInstalled_.store(false);
+    installSocketAccelerator();
+}
+
 void EmulationController::setZipChipInstalled(const pom2::StateAccess&, bool on)
 {
     zipInstalled_.store(on); zipChip_.onReset(0);
+    if (on) fastInstalled_.store(false);
     installSocketAccelerator();
 }
 
@@ -217,7 +225,8 @@ bool reconstructSession(EmulationController& c, const SessionArchive& session,
     if (!coreConfiguration(session, env, mode, profile, error)) return false;
     const auto& config = session.configuration;
     if (((config.size() != 4 || config[0] != 1) &&
-         (session.version < 7 || config.size() != 6 || config[0] != 2 || config[4] != 1 || config[5] > 1)) || config[1] > 1 || config[2] > 1 ||
+         (session.version < 7 || config.size() != 6 || config[0] != 2 ||
+          !((config[4] == 1 && config[5] <= 1) || (config[4] == 2 && config[5] <= FastChip::kSpeedMax)))) || config[1] > 1 || config[2] > 1 ||
         (config[1] && config[3] != 255 && (config[3] < 1 || config[3] > 7)) || (!config[1] && (config[2] || config[3]))) {
         error = "invalid session clock configuration"; return false;
     }
@@ -231,8 +240,12 @@ bool reconstructSession(EmulationController& c, const SessionArchive& session,
             // option on (it would follow the user back to a //e profile).
             target.installSocketAccelerator();
         } else {
-            target.setZipChipInstalled(state, config.size() == 6);
-            if (config.size() == 6) target.zipChip().setBootFast(config[5]);
+            const bool zip = config.size() == 6 && config[4] == 1;
+            const bool fast = config.size() == 6 && config[4] == 2;
+            target.setZipChipInstalled(state, zip);
+            if (zip) target.zipChip().setBootFast(config[5]);
+            target.setFastChipInstalled(state, fast);
+            if (fast) target.fastChip().setPowerOnSpeed(config[5]);
         }
         target.memory().setNoSlotClock(config[1] ? &target.noSlotClock() : nullptr);
         target.noSlotClock().setEnabled(config[2]); target.noSlotClock().setSlot(config[3]);

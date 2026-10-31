@@ -95,10 +95,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.profile = ctrl.debugger().profile();
         snap.history = ctrl.debugger().history();
         const pom2::OsCallTrace& os = ctrl.debugger().osCalls();
-        snap.traceMli = os.mli();
-        snap.traceBdos = os.bdos();
-        snap.traceSp = os.smartPort();
-        snap.tracePascal = os.pascal();
+        snap.trace = os.kinds();
         if (os.emitted() != osEmitted_) {
             osEmitted_ = os.emitted();
             osLines_.assign(os.lines().begin(), os.lines().end());
@@ -236,17 +233,25 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
 
 void Debugger_ImGui::drawOsCalls(EmulationController& ctrl, Snapshot& snap)
 {
-    if (!ImGui::CollapsingHeader("OS calls (ProDOS MLI, SmartPort, Pascal, CP/M BDOS)")) return;
-    bool changed = ImGui::Checkbox("ProDOS MLI", &snap.traceMli);
+    if (!ImGui::CollapsingHeader("OS calls and traces")) return;
+    pom2::OsTraceKinds& k = snap.trace;
+    bool changed = ImGui::Checkbox("ProDOS MLI", &k.mli);
     ImGui::SameLine();
-    changed |= ImGui::Checkbox("SmartPort", &snap.traceSp);
+    changed |= ImGui::Checkbox("SmartPort", &k.smartPort);
     ImGui::SameLine();
-    changed |= ImGui::Checkbox("Pascal BIOS", &snap.tracePascal);
+    changed |= ImGui::Checkbox("Disk II head", &k.disk);
     ImGui::SameLine();
-    changed |= ImGui::Checkbox("CP/M BDOS (card Z80)", &snap.traceBdos);
+    changed |= ImGui::Checkbox("Monitor", &k.monitor);
+    changed |= ImGui::Checkbox("Pascal BIOS", &k.pascalBios);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("Applecorn MOS", &k.applecorn);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("CP/M-65", &k.cpm65);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("CP/M BDOS (card Z80)", &k.bdos);
     if (changed) {
         auto st = ctrl.lockState();
-        ctrl.setOsCallTrace(snap.traceMli, snap.traceBdos, snap.traceSp, snap.tracePascal);
+        ctrl.setOsCallTrace(k);
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear##oscalls")) {

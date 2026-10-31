@@ -38,6 +38,8 @@
 #ifndef POM2_SLOT_PERIPHERAL_H
 #define POM2_SLOT_PERIPHERAL_H
 
+#include "CardTraceSink.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -300,6 +302,12 @@ public:
     /// the OS-call trace on it, at plug time too.
     virtual pom2::Z80* z80Core() { return nullptr; }
 
+    /// The OS-call trace's line sink, hung by `SlotBus::setCardTrace` (at
+    /// plug time too) while a card trace is on; null otherwise. A card that
+    /// has something to say tests it and calls `onCardLine`.
+    void setCardTrace(pom2::CardTraceSink* sink) { cardTrace_ = sink; }
+    pom2::CardTraceSink* cardTrace() const { return cardTrace_; }
+
     virtual int smartPortBusUnitCount() const { return 0; }
     virtual pom2::SmartPortBusUnit* smartPortBusUnit(int /*index*/) { return nullptr; }
 
@@ -365,6 +373,7 @@ private:
     SlotBus* bus_       = nullptr;
     int      busSlot_   = -1;
     bool     irqAsserted_ = false;
+    pom2::CardTraceSink* cardTrace_ = nullptr;
 };
 
 #endif // POM2_SLOT_PERIPHERAL_H

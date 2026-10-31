@@ -700,6 +700,27 @@ private:
     void commitInFlightWrite();
 
     void handleSwitchAccess(uint8_t low4);
+    void switchAccess(uint8_t low4);
+
+    // ── The head trace (OS-call trace "DISK" lines; cardTrace() set) ──────
+    /// Compare the state an access found with the one it left, and say what
+    /// changed: a seek (consecutive steps one way are one line, closed by
+    /// the next read of the data latch, a turn, a motor or drive change), the
+    /// spindle starting, a drive select, the start of a write. "motor
+    /// stopped" comes from the 556 delay running out (DiskIICard_Cycles.cpp):
+    /// RWTS switches the motor off after every sector, and the drive keeps
+    /// turning through the next one, so the commands themselves are noise.
+    void traceSwitch(uint8_t low4, int drive, int head, bool motorWas, bool writeWas);
+    void flushSeekRun();
+    bool spinning() const { return useBitLss ? active != MODE_IDLE : motorOn.load(); }
+    struct SeekRun { bool open = false; int drive = 0, from = 0, to = 0, dir = 0; };
+    SeekRun seekRun_;
+    /// The head held against track 0 while the phases sweep (a boot PROM's
+    /// or an RWTS's recalibration) moves 0 → 0.5 → 0 over and over: one
+    /// line, with the count, instead of one per bounce.
+    int recalBounces_ = 0;
+    void flushRecal();
+    void traceLine(const std::string& line);
     /// MAME `floppy_image_device::seek_phase_w`: settle the head into the
     /// well of the current 4-bit magnet pattern, capped at ±4 quarter-
     /// tracks per call. Called from handleSwitchAccess after every phase

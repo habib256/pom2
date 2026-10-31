@@ -33,6 +33,23 @@
 //         izapple2's tracePascal.go does. The table must look like one —
 //         its first three entries the same JMP or JSR (1.1's is JSR $FF9E
 //         ×n in the language card) — so a stray $EC/$ED does not log.
+//   MON   the Monitor's character output (COUT, $FDED, while it holds its
+//         JMP (CSW)), one line per carriage return, and each GETLN ($FD6A /
+//         $FD67 / $FD6F) paired with the line it returns ($0200, X long) —
+//         izapple2's traceMonitor.go, with the echo of the typed line kept out.
+//   DISK  a card's own lines (CardTraceSink.h): the Disk II's seeks, motor,
+//         drive select and writes, hung on the cards by SlotBus::setCardTrace.
+//   MOS   Applecorn's BBC Micro MOS calls (bobbimanners/Applecorn): while the
+//         CPU reads aux RAM (RAMRD), an entry into the kernel at $D000+ from
+//         below $C000 is a call, named through the page-2 vectors and the
+//         $FFxx jump block, and the way back out is its result — plus the
+//         language ($8000) and service ($8003) entries of the paged ROM.
+//         After izapple2's traceApplecorn.go.
+//   CPM65 CP/M-65's BDOS (function in Y, parameter in XA, C on error; paired
+//         with its return) and BIOS (entries) — David Given's cpm65. The
+//         entries move with every build (izapple2 hard-codes one), so they
+//         are recognised by their code: the BDOS's STA/STX/JSR/JSR icall/JMP
+//         prologue and the BIOS's jmpdispatch over a 16-entry table.
 //
 // A call is caught at its entry address and closed when the CPU reaches the
 // return address at the stack depth the call will return to — so a nested
@@ -64,6 +81,12 @@ class Memory;
 
 namespace pom2 {
 
+/// Which traces are on — `EmulationController::setOsCallTrace` takes it.
+struct OsTraceKinds {
+    bool mli = false, bdos = false, smartPort = false, pascalBios = false;
+    bool monitor = false, disk = false, applecorn = false, cpm65 = false;
+};
+
 class OsCallTrace : public Z80Observer
 {
 public:
@@ -73,12 +96,29 @@ public:
     void setBdos(bool on) { bdos_ = on; if (!on) bdosPending_.clear(); }
     void setSmartPort(bool on) { sp_ = on; if (!on) spPending_.clear(); }
     void setPascal(bool on) { pascal_ = on; }
+    void setMonitor(bool on) { mon_ = on; if (!on) { monPending_.clear(); monLine_.clear(); monEcho_.clear(); } }
+    void setApplecorn(bool on) { acorn_ = on; acornInKernel_ = false; }
+    void setCpm65(bool on) { cpm65_ = on; if (!on) cpmPending_.clear(); }
+    /// Only recorded here: the lines come from the cards, on which the
+    /// controller hangs this trace (SlotBus::setCardTrace).
+    void setDisk(bool on) { disk_ = on; }
+    bool disk() const { return disk_; }
+    OsTraceKinds kinds() const
+    {
+        OsTraceKinds k;
+        k.mli = mli_; k.bdos = bdos_; k.smartPort = sp_; k.pascalBios = pascal_;
+        k.monitor = mon_; k.disk = disk_; k.applecorn = acorn_; k.cpm65 = cpm65_;
+        return k;
+    }
     bool mli() const  { return mli_; }
     bool bdos() const { return bdos_; }
     bool smartPort() const { return sp_; }
-    bool pascal() const { return pascal_; }
+    bool pascalBios() const { return pascal_; }  // not pascal(): a macro on Windows
+    bool monitor() const { return mon_; }
+    bool applecorn() const { return acorn_; }
+    bool cpm65() const { return cpm65_; }
     /// Anything traced off the 6502 — what keeps the Debugger's hook armed.
-    bool any6502() const { return mli_ || sp_ || pascal_; }
+    bool any6502() const { return mli_ || sp_ || pascal_ || mon_ || acorn_ || cpm65_; }
 
     /// Each finished line, as it is made (the headless frontend's stderr).
     using Sink = std::function<void(const std::string&)>;
@@ -93,6 +133,10 @@ public:
                     (!spPending_.empty() && pc == spPending_.back().ret)))
             spStep(pc);
         if (pascal_) pascalStep(pc);
+        if (mon_ && ((pc >= 0xFD00 && pc < 0xFE00) || !monPending_.empty()))
+            monStep(pc);
+        if (acorn_) acornStep(pc);
+        if (cpm65_) cpm65Step(pc);
     }
     void onZ80Instruction(const Z80& z80) override;
     void onCardLine(const char* line) override { emit(line); }
@@ -104,7 +148,11 @@ public:
     uint64_t emitted() const { return emitted_; }
     void clear() { lines_.clear(); }
     /// The machine jumped in time: open calls name a timeline that is gone.
-    void dropPending() { mliPending_.clear(); bdosPending_.clear(); spPending_.clear(); }
+    void dropPending()
+    {
+        mliPending_.clear(); bdosPending_.clear(); spPending_.clear();
+        monPending_.clear(); cpmPending_.clear(); acornInKernel_ = false;
+    }
 
     static const char* mliName(uint8_t cmd);
     static const char* prodosError(uint8_t code);
@@ -112,6 +160,8 @@ public:
     static const char* smartPortName(uint8_t cmd);     ///< bit 6 (extended) ignored
     static const char* smartPortError(uint8_t code);
     static const char* pascalName(uint8_t offset);     ///< nullptr off the table
+    static const char* cpm65BdosName(uint8_t fn);
+    static const char* cpm65BiosName(uint8_t fn);
 
 private:
     struct Pending {
@@ -124,6 +174,12 @@ private:
     void mliStep(uint16_t pc);
     void spStep(uint16_t pc);
     void pascalStep(uint16_t pc);
+    void monStep(uint16_t pc);
+    void acornStep(uint16_t pc);
+    void cpm65Step(uint16_t pc);
+    bool isCpm65Bdos(uint16_t pc) const;
+    bool isCpm65Bios(uint16_t pc) const;
+    std::string terminated(uint16_t a, uint8_t end, std::size_t max = 64) const;
     std::string spCall(uint8_t cmd, uint32_t list) const;
     std::string spResult(const Pending& p, uint8_t a, bool carry) const;
     std::string mliCall(uint8_t cmd, uint16_t params) const;
@@ -140,7 +196,16 @@ private:
     const M6502* cpu_ = nullptr;
     const Memory* mem_ = nullptr;
     bool mli_ = false, bdos_ = false, sp_ = false, pascal_ = false;
-    std::vector<Pending> mliPending_, bdosPending_, spPending_;
+    bool mon_ = false, acorn_ = false, cpm65_ = false, disk_ = false;
+    std::vector<Pending> mliPending_, bdosPending_, spPending_, monPending_, cpmPending_;
+    std::string monLine_;                  // COUT output since the last CR
+    std::string monEcho_;                  // what the open GETLN echoed
+    int monEchoState_ = 0;                 // 0 its prompt, 1 the keys, 2 past the CR
+    bool acornInKernel_ = false;
+    struct AcornCall { std::string text; uint8_t a = 0, x = 0, y = 0; uint16_t api = 0; bool log = false; };
+    AcornCall acornCall_;
+    uint32_t cpmSector_ = 0;               // the last BIOS SETSEC / SETDMA
+    uint16_t cpmDma_ = 0;
     std::deque<std::string> lines_;
     uint64_t emitted_ = 0;
     Sink sink_;

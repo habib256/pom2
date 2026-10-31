@@ -61,6 +61,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -729,6 +730,7 @@ void MainWindow::renderMenuBar()
             if (ImGui::MenuItem("Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
                 controller->setZipChipInstalled(zip);
                 settings->setBool("zip_chip", zip);
+                if (zip) settings->setBool("fast_chip", false);   // one socket
                 settings->save();
             }
             if (ImGui::IsItemHovered())
@@ -752,6 +754,41 @@ void MainWindow::renderMenuBar()
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Select the Zip Chip speed after the next reset.");
+
+            // FASTChip //e — the same socket, so one or the other.
+            bool fast = controller->fastChipInstalled();
+            if (ImGui::MenuItem("FASTChip //e (to 16.6 MHz, CPU socket)", nullptr, &fast)) {
+                controller->setFastChipInstalled(fast);
+                settings->setBool("fast_chip", fast);
+                if (fast) settings->setBool("zip_chip", false);
+                settings->save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "a2heaven's FASTChip //e: a 65C02 from 0.2 to 16.6 MHz in the CPU\n"
+                    "socket. Software drives it at $C06A-$C06F (unlock, speed, slot\n"
+                    "speeds); it drops to 1 MHz around slots set to normal, the\n"
+                    "speaker and the paddles. Takes the Zip Chip's place.");
+            int speed;
+            {
+                auto st = controller->lockState();
+                speed = controller->fastChip().powerOnSpeed();
+            }
+            char label[32];
+            std::snprintf(label, sizeof label, speed ? "%.2f MHz" : "off",
+                          pom2::FastChip::speedMHz(static_cast<uint8_t>(speed)));
+            ImGui::SetNextItemWidth(140.0f);
+            if (ImGui::SliderInt("FASTChip start speed", &speed, 0, pom2::FastChip::kSpeedMax, label)) {
+                {
+                    auto st = controller->lockState();
+                    controller->fastChip().setPowerOnSpeed(static_cast<uint8_t>(speed));
+                }
+                settings->setInt("fast_chip_speed", speed);
+                settings->save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The speed saved in the chip's configuration: what it starts at\n"
+                                  "after the next reset (the manual's SET Speed).");
         }
         {
             // Premium SoftCard //e — an AUXILIARY-slot card (the //e's 64 KB

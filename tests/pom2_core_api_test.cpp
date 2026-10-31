@@ -668,6 +668,72 @@ void testRgbCard(const std::string& sourceDir)
     assert(iic.rgbDhgrMode() == pom2::RgbDhgrMode::Mixed);
 }
 
+// attachEzColor (pom2games, ROGUE on the E-Z Color): any slot of a ][+ or a
+// //e, debug reads that leave the chip alone, the frame interrupt on the
+// slot IRQ, the card's own monitor, and the access window's drop counter.
+void testEzColor(const std::string& sourceDir)
+{
+    pom2::Core plus;
+    assert(plus.loadRom(sourceDir + "/roms/apple2.rom"));
+    assert(!plus.ezColorAttached());
+    assert(plus.renderEzColorFrame().pixels == nullptr);
+    std::uint8_t probe = 0x55;
+    assert(plus.ezColorVram(&probe, 1) == 0 && probe == 0x55);
+    assert(plus.attachMockingboard(2));
+    assert(!plus.attachEzColor(2));                  // occupied
+    assert(!plus.attachEzColor(0) && !plus.attachEzColor(8));
+    assert(plus.attachEzColor(7, false));            // the window off: the host
+    assert(plus.ezColorAttached());                  // writes with no time between
+    assert(!plus.attachEzColor(5));                  // one card
+    assert(plus.read(0xC0F2) == 0xFF);               // only $C0n0 / $C0n1 answer
+
+    const auto reg = [&](int r, std::uint8_t v) { plus.write(0xC0F1, v); plus.write(0xC0F1, static_cast<std::uint8_t>(0x80 | r)); };
+    reg(1, 0x80);                                    // 16 KB, display off
+    reg(7, 0x04);                                    // border: dark blue
+    plus.write(0xC0F1, 0x00); plus.write(0xC0F1, 0x41);   // write address $0100
+    for (std::uint8_t b : { 0x11, 0x22, 0x33 }) plus.write(0xC0F0, b);
+    std::uint8_t vram[4] = {};
+    assert(plus.ezColorVram(vram, 4, 0x0100) == 4);
+    assert(vram[0] == 0x11 && vram[2] == 0x33 && vram[3] == 0x00);
+    pom2::EzColorState s = plus.ezColorState();
+    assert(s.registers[7] == 0x04 && s.registers[1] == 0x80 && s.address == 0x0103);
+    assert(!s.siliconStrict && !s.irqAsserted);
+
+    reg(1, 0xE0);                                    // display on + IE
+    plus.run(40000);                                 // past a frame
+    s = plus.ezColorState();
+    assert((s.status & 0x80) && s.irqAsserted);      // F and /INT…
+    assert((plus.ezColorState().status & 0x80));     // …still there after a debug read
+    assert(plus.read(0xC0F1) & 0x80);                // the port read returns F…
+    s = plus.ezColorState();
+    assert(!(s.status & 0x80) && !s.irqAsserted);    // …and clears it
+
+    const pom2::FramebufferView v = plus.renderEzColorFrame();
+    assert(v.pixels && v.width == 288 && v.height == 216);
+    assert(v.pixels[2 * 288 + 2] == 0xFFED5554u);    // R7 border, 0xAABBGGRR
+
+    // The window enforced (the default): a burst on an active line drops.
+    pom2::Core e = makeSmartPortCore(sourceDir);
+    assert(e.attachEzColor(4));
+    assert(e.ezColorState().siliconStrict && e.ezColorState().droppedAccesses == 0);
+    runProgram(e, {
+        0xA9, 0xC0, 0x8D, 0xC1, 0xC0, 0xA9, 0x81, 0x8D, 0xC1, 0xC0,   // R1 = $C0
+        0xA9, 0x00, 0x8D, 0xC1, 0xC0, 0xA9, 0x40, 0x8D, 0xC1, 0xC0,   // address $0000
+    });
+    e.run(1000);                                     // onto the active lines
+    runProgram(e, {
+        0x8D, 0xC0, 0xC0, 0x8D, 0xC0, 0xC0, 0x8D, 0xC0, 0xC0, 0x8D, 0xC0, 0xC0,
+    });
+    assert(e.ezColorState().droppedAccesses > 0);
+    e.resetEzColorDropCount();
+    assert(e.ezColorState().droppedAccesses == 0);
+
+    pom2::CoreConfig cfg;
+    cfg.machine = pom2::Machine::AppleIIc;
+    pom2::Core iic(cfg);
+    assert(!iic.attachEzColor(4));                   // no slots
+}
+
 // Request 5: the unenhanced //e's ROM on Machine::AppleIIe — the NMOS //e a
 // "65C02 required" check has to be run on.
 void testUnenhancedIIe(const std::string& sourceDir)
@@ -788,6 +854,7 @@ int main()
     testBusWatch(POM2_TEST_SOURCE_DIR);
     testDisplayState(POM2_TEST_SOURCE_DIR);
     testRgbCard(POM2_TEST_SOURCE_DIR);
+    testEzColor(POM2_TEST_SOURCE_DIR);
     testUnenhancedIIe(POM2_TEST_SOURCE_DIR);
     testIIcPlus(POM2_TEST_SOURCE_DIR);
 

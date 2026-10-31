@@ -10,6 +10,46 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — The E-Z Color in the SDK, with its access window enforced
+
+`pom2_core` gains `attachEzColor(slot, siliconStrict)`, `ezColorState()` (R0-R7,
+status, VRAM pointer, /INT, drop count — read without touching the chip),
+`ezColorVram()`, `resetEzColorDropCount()` and `renderEzColorFrame()` (the
+card's 288 × 216 monitor), for pom2games' ROGUE port (docs/SDK.md § E-Z
+Color). Writing the request's answer showed that the application's card had
+never switched POM1's silicon-strict mode on: the access window was not
+enforced at all. It is now, from construction — the chip drops what comes too
+close and counts it. Measured (and pinned by `ezcolor_card`) over three
+frames of data writes: 8 cycles apart is never dropped, 7 is too close in
+Graphics I / II, Multicolor needs 7, Text 3; the "≥ 18 cycles" of POM1's
+contract is far inside. A burst keeps only its newest byte, written at the
+chip's slot with the address current then — so a program that changes the
+address right after a too-fast burst sees that byte land at the new address.
+
+## 2026-10-31 — Traces of the Disk II head, the Monitor, Applecorn and CP/M-65; FASTChip //e
+
+**Traces.** The OS-call trace gains four sources. *Disk II head*: seeks as
+one line per run of steps, recalibration as one line with its bounce count,
+the spindle starting and really stopping — the first card to write through
+`CardTraceSink`, which every slot card now carries. *Monitor*: COUT lines and
+each GETLN with its line. *Applecorn*: the BBC MOS calls with their results.
+*CP/M-65*: BDOS calls paired with their returns, BIOS calls. What izapple2
+does not: its CP/M-65 entries are hard-coded for one build, POM2 finds them
+by their code; its Monitor trace would have been blind under DOS 3.3, which
+runs a command at the echo of its CR, hands back an empty line and never
+returns from that GETLN — an open call that never closes hid every later line
+until the step started watching the stack. RWTS commands the motor off after
+every sector, so the head trace reports the 556 running out, not the command.
+All checked on the real systems (DOS 3.3, ProDOS, Applecorn 0.54, CP/M-65)
+with the new `os_trace_probe`; both disks are local only — they go into the
+test-media archive with the next upload.
+
+**FASTChip //e.** a2heaven's accelerator, from its User's Guide: the
+`$C06A-$C06F` registers, the 41-step speed table, slot / speaker / joystick
+slow-downs, one socket shared with the Zip Chip, carried by sessions. The CI
+of the previous push failed on Windows because `pascal` is a macro there; the
+trace field is `pascalBios`.
+
 ## 2026-10-31 — SmartPort and Apple Pascal BIOS call traces
 
 The Debugger's OS-call trace gains two 6502 sources (izapple2's

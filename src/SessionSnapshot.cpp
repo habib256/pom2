@@ -8,6 +8,7 @@
 #include "Memory.h"
 #include "Mockingboard.h"
 #include "NoSlotClock.h"
+#include "FastChip.h"
 #include "ZipChip.h"
 #include "SnesMaxCard.h"
 #include "SlinkyCard.h"
@@ -66,15 +67,21 @@ bool safeClockState(const Blob& bytes)
 bool configuration(Memory& memory, Blob& out, std::string& error)
 {
     const auto* accelerator = memory.cpuSocketAccelerator();
-    if (accelerator && !dynamic_cast<const ZipChip*>(accelerator)) {
+    if (accelerator && !dynamic_cast<const ZipChip*>(accelerator) &&
+        !dynamic_cast<const FastChip*>(accelerator)) {
         error = "unsupported session socket accelerator"; return false;
     }
     const auto* clock = memory.getNoSlotClock();
     out = {1, uint8_t(clock != nullptr), uint8_t(clock && clock->isEnabled()),
            uint8_t(clock ? clock->slot() : 0)};
-    if (accelerator) {
+    // [4] the socket part — 1 Zip Chip ([5] boots fast), 2 FASTChip ([5]
+    // its power-on speed, 0-40).
+    if (const auto* zip = dynamic_cast<const ZipChip*>(accelerator)) {
         out[0] = 2; out.push_back(1);
-        out.push_back(static_cast<const ZipChip*>(accelerator)->bootFast() ? 1 : 0);
+        out.push_back(zip->bootFast() ? 1 : 0);
+    } else if (const auto* fast = dynamic_cast<const FastChip*>(accelerator)) {
+        out[0] = 2; out.push_back(2);
+        out.push_back(fast->powerOnSpeed());
     }
     return true;
 }

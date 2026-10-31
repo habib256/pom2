@@ -9,6 +9,7 @@
 #ifndef POM2_CORE_HPP
 #define POM2_CORE_HPP
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <cstddef>
@@ -127,6 +128,20 @@ struct FramebufferView {
     const std::uint32_t* pixels = nullptr;
     int width  = 0;
     int height = 0;
+};
+
+/// The E-Z Color card's TMS9918A, read the way a debugger reads it: nothing
+/// here touches the chip (the status keeps F / 5S / C, the read-ahead and the
+/// address latch are left alone).
+struct EzColorState {
+    std::array<std::uint8_t, 8> registers{};   ///< R0-R7 as last written
+    std::uint8_t  status = 0;                   ///< F, 5S, C and the fifth-sprite number
+    std::uint16_t address = 0;                  ///< the auto-incrementing VRAM pointer
+    bool          irqAsserted = false;          ///< /INT, i.e. the slot IRQ: R1 IE and F
+    bool          siliconStrict = true;         ///< the access window is enforced
+    /// Port accesses the chip dropped because they came inside a closed
+    /// access window — since attachEzColor() or resetEzColorDropCount().
+    std::uint64_t droppedAccesses = 0;
 };
 
 /// Host-visible cassette transport state. Program tapes remain armed after
@@ -283,6 +298,30 @@ public:
     bool attachRgbCard(int slot = 7,
                        RgbCardModel model = RgbCardModel::LeChatMauveFeline);
     bool rgbCardAttached() const;
+    /// Install the E-Z Color Graphics Interface (Steve Ciarcia, BYTE, August
+    /// 1982) in an empty slot: a TMS9918A with 16 KB of VRAM and its own video
+    /// output, no ROM — only $C0n0 (data) and $C0n1 (register / status) answer,
+    /// every other $C0nX reads $FF. The VDP's /INT is the slot IRQ (R1 bit 5
+    /// and the frame flag; a $C0n1 read drops it). Any slotted machine, a ][+
+    /// as well as a //e; a //c refuses. `siliconStrict` enforces the VDP's
+    /// access window as the chip does (POM1's model, openMSX's slot tables:
+    /// the gap needed depends on the mode and the beam) and makes R1 bit 7
+    /// select 4 KB / 16 KB addressing; it is what the application runs.
+    bool attachEzColor(int slot = 4, bool siliconStrict = true);
+    bool ezColorAttached() const;
+    /// The chip's registers and counters, read without side effects; all
+    /// zero (strict true) when no card is attached.
+    EzColorState ezColorState() const;
+    /// Copy up to `len` bytes of VRAM from `from` (wrapping at 16 KB) into
+    /// `out`; returns how many were copied (0 with no card).
+    std::size_t ezColorVram(std::uint8_t* out, std::size_t len, std::uint16_t from = 0) const;
+    void resetEzColorDropCount();
+    /// The card's own monitor: 288 × 216, the 256 × 192 picture inside its
+    /// R7 border (at x 16, y 12), 0xAABBGGRR like renderFrame() and with the
+    /// same lifetime rule. The VDP paints it line by line as its beam passes,
+    /// so mid-frame the lines below the beam still show the previous frame.
+    /// An empty view with no card.
+    FramebufferView renderEzColorFrame();
     /// The card's double hi-res mode now; Color140 (its power-on and reset
     /// mode) when no card is attached.
     RgbDhgrMode rgbDhgrMode() const;

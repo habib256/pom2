@@ -1749,7 +1749,8 @@ void DiskIICard::control(int offset)
     }
 }
 
-void DiskIICard::handleSwitchAccess(uint8_t low4)
+
+void DiskIICard::switchAccess(uint8_t low4)
 {
     if (debugEnabled() && !trace.sawDevSelect) {
         trace.sawDevSelect = true;

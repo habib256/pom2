@@ -31,6 +31,7 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "NoSlotClock.h"
+#include "FastChip.h"
 #include "ZipChip.h"
 #include "RewindBuffer.h"
 #include "SmartPortHub.h"
@@ -87,18 +88,24 @@ public:
     /// debugger off the CPU's hot loop entirely. Caller holds `stateMutex`.
     void syncDebugHook();
 
-    /// Switch the ProDOS MLI, SmartPort and Apple Pascal BIOS (6502) and CP/M
-    /// BDOS (card Z80) call traces — `debugger().osCalls()` holds the lines.
+    /// Switch the OS-call traces (OsCallTrace.h): the 6502's (MLI, SmartPort,
+    /// Pascal, Monitor, Applecorn, CP/M-65), the card Z80s' BDOS and the
+    /// cards' own lines (Disk II) — `debugger().osCalls()` holds the lines.
     /// Caller holds `stateMutex`.
-    void setOsCallTrace(bool mli, bool bdos, bool smartPort = false, bool pascal = false)
+    void setOsCallTrace(const pom2::OsTraceKinds& k)
     {
         pom2::OsCallTrace& t = debugger_->osCalls();
         t.bind(&processor, &mem);
-        t.setMli(mli);
-        t.setBdos(bdos);
-        t.setSmartPort(smartPort);
-        t.setPascal(pascal);
-        mem.slotBus().setZ80Observer(bdos ? &t : nullptr);
+        t.setMli(k.mli);
+        t.setBdos(k.bdos);
+        t.setSmartPort(k.smartPort);
+        t.setPascal(k.pascalBios);
+        t.setMonitor(k.monitor);
+        t.setApplecorn(k.applecorn);
+        t.setCpm65(k.cpm65);
+        t.setDisk(k.disk);
+        mem.slotBus().setZ80Observer(k.bdos ? &t : nullptr);
+        mem.slotBus().setCardTrace(k.disk ? &t : nullptr);
         syncDebugHook();
     }
 
@@ -157,6 +164,13 @@ public:
     void setZipChipInstalled(bool on);
     void setZipChipInstalled(const pom2::StateAccess& state, bool on);
     bool zipChipInstalled() const { return zipInstalled_.load(); }
+    /// a2heaven's FASTChip //e (FastChip.h), the other socket accelerator —
+    /// setting `fast_chip`. One socket: installing it takes the Zip Chip
+    /// out, and installing the Zip Chip takes it out.
+    pom2::FastChip& fastChip() { return fastChip_; }
+    void setFastChipInstalled(bool on);
+    void setFastChipInstalled(const pom2::StateAccess& state, bool on);
+    bool fastChipInstalled() const { return fastInstalled_.load(); }
     /// The //c Plus's built-in accelerator (the CGGA, Zip-licensed and
     /// Zip-compatible — MAME apple2e.cpp header): always present on that
     /// profile, never the user's `zip_chip` option. Its ROM drives it at
@@ -565,6 +579,8 @@ private:
     std::unique_ptr<pom2::NoSlotClock>  noSlotClock_;
     pom2::ZipChip      zipChip_;
     std::atomic<bool>  zipInstalled_{false};
+    pom2::FastChip     fastChip_;
+    std::atomic<bool>  fastInstalled_{false};
     pom2::ZipChip      iicPlusZip_;     // the //c Plus CGGA (boots fast)
 
     pom2::RewindBuffer rewind_;

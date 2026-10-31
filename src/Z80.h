@@ -46,6 +46,8 @@
 #ifndef POM2_Z80_H
 #define POM2_Z80_H
 
+#include "CardTraceSink.h"
+
 #include <cstdint>
 
 namespace pom2 {
@@ -72,14 +74,12 @@ class Z80;
 /// Told of every instruction before it runs — not of an interrupt entry, a
 /// HALT idle cycle or the opcode behind a DD/FD prefix. Unset, it costs one
 /// pointer test per step().
-class Z80Observer
+/// Its `onCardLine` (CardTraceSink.h) takes the card's own lines — the
+/// SoftCard II's 6502 BIOS calls (SoftCard2Protocol.h) — while it is hung.
+class Z80Observer : public CardTraceSink
 {
 public:
-    virtual ~Z80Observer() = default;
     virtual void onZ80Instruction(const Z80& z80) = 0;
-    /// A line about the card's own traffic (the SoftCard II's 6502 BIOS
-    /// calls, SoftCard2Protocol.h), sent only while the observer is hung.
-    virtual void onCardLine(const char* /*line*/) {}
 };
 
 class Z80

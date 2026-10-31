@@ -3124,6 +3124,38 @@ locked and unlocked accesses, the register reads, `$C05A`/`$C05B` visible in
 the cycles a frame burns and in `emulatedCpuClockHz`, the slot-6 window, the
 delay disable, reset, and the ][+ gate).
 
+## FASTChip //e (CPU socket, `FastChip`)
+
+a2heaven's FASTChip //e: a 65C02 from 0.2 to 16.6 MHz cabled into the 6502
+socket. A second `CpuSocketAccelerator`, so it goes where the Zip Chip goes —
+Memory's `$C0xx` slow path, nothing on the fast one. Setting `fast_chip`
+(Machine menu, "FASTChip //e"), start speed `fast_chip_speed` (0-40). **One
+socket**: `EmulationController::setFastChipInstalled` takes the Zip Chip out
+and `setZipChipInstalled` takes the FASTChip out; a hand-edited file that
+asks for both gets the Zip Chip.
+
+Registers, from the FASTChip IIe User's Guide v0.06 (a2heaven, 2017),
+pp. 21-24 — the full contract is in `FastChip.h`:
+
+- `$C06A` `$6A` ×4 unlocks, `$A6` locks (any other value locks too: the
+  manual's "indefinite synchronous sequence" is not modelled).
+- `$C06B` write enables the registers once unlocked; read bit 7 = present
+  and enabled. The registers answer only while enabled; **the speed survives
+  the lock** (4cade's `hw.accel.a` sets it and locks straight away).
+- `$C06C` slot speeds (bit n = slot n fast), `$C06D` the speed — 0 off,
+  1-40 the table on p. 22, 9 = 1.00 MHz = the stock clock, so the multiplier
+  is MHz / 1.00 — and `$C06E`/`$C06F` the configuration index and data
+  (0 speed, 1 slots, 2 speaker delay, 3 joystick delay; 4-7 kept, inert).
+- Slow-downs: a slot set to normal, the speaker (delay ≠ NONE) and the
+  paddles (≠ NONE) drop to 1 MHz. The manual names the settings and gives no
+  durations, so POM2 uses the Zip Chip's (MAME): 52 ms after a slot access,
+  5 ms after a speaker or paddle one.
+- Sessions: configuration v2 kind byte 2 + the power-on speed
+  (`docs/session-format.md`); the live registers ride the machine snapshot.
+
+Pinned by `fast_chip` (the manual's routines run by the 6502; an 8.3 MHz
+frame runs 141 474 cycles = 8.3 × 17 045).
+
 ## Slot bus & IRQ aggregation
 
 `SlotBus` + `SlotPeripheral`, 8 slots. Memory routes 3 windows:
@@ -11020,16 +11052,54 @@ BDOS $94C3 F_SFIRST ????????.??? -> A=$00
   the trace shows `DINIT drive=4`, then `DREAD … block=2 len=2048` — the
   directory, blocks 2-5 — which confirms izapple2's block / length / buffer
   layout; the unit (A) and drive words it marks as unsure read 0 there.
-- **Switches.** `EmulationController::setOsCallTrace(mli, bdos, smartPort,
-  pascal)` (under the lock); the Debugger panel's "OS calls" section (copy to
-  the clipboard); `pom2_headless --trace-mli` / `--trace-bdos` / `--trace-sp`
-  / `--trace-pascal` print to stderr. 4000 lines are kept. A time jump drops
-  the open calls. Any of the three 6502 traces arms the Debugger hook
-  (`OsCallTrace::any6502`).
+- **Monitor** (`MON`). COUT (`$FDED`, while it holds `JMP (CSW)`) collected
+  into one line per CR, and each GETLN (`$FD6A` / `$FD67` / `$FD6F`, `LDA $33`
+  checked) paired with its line (`$0200`, X long). GETLN's own output — its
+  prompt, the key echo — is not program output and is kept out. DOS 3.3 runs
+  a command at the echo of its CR and hands back an empty line, the buffer
+  cleared: the echo then says what it took (`-> "" (DOS took "CATALOG")`).
+  A GETLN the stack unwinds past is closed `(not returned)` — while one is
+  open the step watches SP, since an open call that never closes would hide
+  every later line. DOS's own CATALOG printing bypasses `$FDED` and is not
+  seen. After izapple2's `traceMonitor.go`.
+- **Disk II head** (`DISK`), the first card to speak through `CardTraceSink`
+  (a pointer on `SlotPeripheral`, hung by `SlotBus::setCardTrace`; unset, one
+  test per `$C0nX` access). `DiskIICard::handleSwitchAccess` compares the
+  state an access found with the one it left: consecutive steps one way are
+  one `seek a -> b` line, closed by the data latch, a turn, a drive change;
+  the head held against track 0 while the phases sweep (the boot PROM's and
+  RWTS's recalibration) is one `recalibrate` line with its bounce count;
+  `motor on` when the spindle starts, `motor stopped` when the 556 runs out
+  (DiskIICard_Cycles.cpp) — RWTS commands the motor off after every sector
+  and the drive turns through the next one, so the commands are noise.
+- **Applecorn** (`MOS`, `OsCallTrace_Guest.cpp`). While RAMRD is on, the
+  entry into the MOS kernel ($D000+) from below $C000 is a call, named through
+  the page-2 vectors and the `$FFxx` block; the way back out is its result.
+  Language (`$8000`) and service (`$8003`) entries too. Console calls are left
+  out. Checked on Applecorn 0.54: `OSWORD 0 … "PRINT 6*7"`, `OSCLI "*CAT"`
+  with ProDOS's directory read under it (MLI on at the same time).
+- **CP/M-65** (`CPM65`). izapple2 hard-codes the entries of one build; they
+  move with every build, so POM2 recognises them by their code at the PC:
+  the BDOS ENTRY prologue (`STA/STX param, JSR, JSR icall, JMP`, icall's
+  `LDA,Y PHA LDA,Y PHA RTS` checked through the JSR) and the BIOS's
+  `jmpdispatch` over a 16-entry table that follows it (a driver's strategy
+  routine dispatches the same way over a table elsewhere). BDOS calls pair
+  with their return (A, X, C; READ_LINE shows the line); BIOS SETSEC / SETDMA
+  fold into the READ / WRITE line. Console calls are left out. Checked on the
+  CP/M-65 //e disk: `READ_LINE -> "DIR"`, `FIND_FIRST` / `FIND_NEXT`.
+- **Switches.** `EmulationController::setOsCallTrace(pom2::OsTraceKinds)`
+  (under the lock); the Debugger panel's "OS calls and traces" section (copy
+  to the clipboard); `pom2_headless --trace-mli/-bdos/-sp/-pascal/-monitor/
+  -disk` print to stderr (that tool is a ][+); `os_trace_probe` (`probes`
+  target) boots a //e enhanced on a 5.25" or 3.5" disk with any of them.
+  4000 lines are kept. A time jump drops the open calls. Any 6502 trace arms
+  the Debugger hook (`OsCallTrace::any6502`). The field is `pascalBios`, not
+  `pascal`: that is a macro on Windows.
 
-Pinned by `os_call_trace` (stub MLI, BDOS, SmartPort dispatch and Pascal
-table, no-return cases, observer propagation). Checked by hand on ProDOS
-2.4.3, SoftCard CP/M 2.2 and Apple Pascal 1.1.
+Pinned by `os_call_trace` (stub MLI, BDOS, SmartPort dispatch, Pascal table,
+Disk II head, Monitor, Applecorn and CP/M-65 shapes, no-return cases,
+observer propagation). Checked by hand on ProDOS 2.4.3, DOS 3.3, SoftCard
+CP/M 2.2, Apple Pascal 1.1, Applecorn 0.54 and CP/M-65.
 
 ### Thread exception barrier (`ThreadGuard.h`)
 

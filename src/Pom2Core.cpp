@@ -21,6 +21,7 @@
 #include "CassetteDevice.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
+#include "EzColorCard.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
@@ -188,6 +189,8 @@ public:
     Machine            machine  = Machine::Custom;
     bool               iieMemory = false;
     LeChatMauveCard*   rgbCard  = nullptr;   // non-owning; its slot owns it
+    EzColorCard*       ezColor  = nullptr;   // non-owning; its slot owns it
+    std::vector<std::uint32_t> ezFrame;      // renderEzColorFrame()'s pixels
     // setBusWatch: Memory reports each watched access here. Only the CPU's
     // accesses go out — `cpuRunning` is set across run()/step(), so the
     // host's read()/write() and the facade's own peeks (boot signatures,
@@ -636,6 +639,78 @@ bool Core::attachRgbCard(int slot, RgbCardModel model)
 bool Core::rgbCardAttached() const
 {
     return impl_->rgbCard != nullptr;
+}
+
+bool Core::attachEzColor(int slot, bool siliconStrict)
+{
+    if (impl_->iicClass()) {
+        impl_->error = "The E-Z Color is a slot card; a //c has no slots";
+        return false;
+    }
+    if (slot < 1 || slot > 7) {
+        impl_->error = "E-Z Color slot must be between 1 and 7";
+        return false;
+    }
+    if (impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "Requested E-Z Color slot is already occupied";
+        return false;
+    }
+    if (impl_->ezColor) {
+        impl_->error = "An E-Z Color card is already attached";
+        return false;
+    }
+    auto card = std::make_unique<EzColorCard>();
+    card->setCpu(&impl_->cpu);
+    card->vdp().setSiliconStrictMode(siliconStrict);
+    impl_->ezColor = card.get();
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::ezColorAttached() const
+{
+    return impl_->ezColor != nullptr;
+}
+
+EzColorState Core::ezColorState() const
+{
+    EzColorState s;
+    const EzColorCard* card = impl_->ezColor;
+    if (!card) return s;
+    const TMS9918& vdp = card->vdp();
+    std::copy_n(vdp.regsData(), s.registers.size(), s.registers.begin());
+    s.status = vdp.statusRegister();
+    s.address = vdp.vramAddress();
+    s.irqAsserted = vdp.irqAsserted();
+    s.siliconStrict = vdp.isSiliconStrictMode();
+    s.droppedAccesses = vdp.droppedWriteCount();
+    return s;
+}
+
+std::size_t Core::ezColorVram(std::uint8_t* out, std::size_t len, std::uint16_t from) const
+{
+    if (!impl_->ezColor || !out) return 0;
+    const std::uint8_t* vram = impl_->ezColor->vdp().vramData();
+    constexpr std::size_t kSize = 0x4000;
+    const std::size_t n = std::min(len, kSize);
+    for (std::size_t i = 0; i < n; ++i) out[i] = vram[(from + i) & (kSize - 1)];
+    return n;
+}
+
+void Core::resetEzColorDropCount()
+{
+    if (impl_->ezColor) impl_->ezColor->vdp().resetDroppedWriteCount();
+}
+
+FramebufferView Core::renderEzColorFrame()
+{
+    EzColorCard* card = impl_->ezColor;
+    if (!card) return {};
+    const int w = card->pictureWidth(), h = card->pictureHeight();
+    impl_->ezFrame.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    card->paintPicture(impl_->ezFrame.data(), 0, 0, 0, 0);
+    return { impl_->ezFrame.data(), w, h };
 }
 
 RgbDhgrMode Core::rgbDhgrMode() const

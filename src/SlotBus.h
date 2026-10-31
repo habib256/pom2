@@ -83,6 +83,9 @@ public:
     /// Watch every card Z80, present and future (the OS-call trace). Null
     /// detaches.
     void setZ80Observer(pom2::Z80Observer* o);
+    /// Hang a card-trace sink on every card, and on any plugged later
+    /// (CardTraceSink.h); null takes it off.
+    void setCardTrace(pom2::CardTraceSink* sink);
 
     SlotBus() = default;
     ~SlotBus() = default;
@@ -324,6 +327,7 @@ private:
     /// Open-bus source (see `FloatingBusFn`). Optional.
     FloatingBusFn floatingBus_;
     pom2::Z80Observer* z80Observer_ = nullptr;
+    pom2::CardTraceSink* cardTrace_ = nullptr;
 
     /// MAME's `read_floatingbus()` tail — what an unclaimed $Cxxx read
     /// puts on the data bus.
