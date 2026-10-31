@@ -92,9 +92,13 @@ void SoftCardIICard::z80MemWrite(uint16_t addr, uint8_t v)
 {
     if (stalled_)
         return;
+    // Boot mode: A15 low is the mailbox, not RAM (sbabcoc's SoftCard2
+    // HARDWARE-REFERENCE.md; izapple2 also stores the byte in RAM, which no
+    // known code can tell apart).
     if (booting_ && addr < 0x8000) {
         fromZ80_ = v;
         fromZ80Full_ = true;
+        return;
     }
     ram_[addr] = v;
 }

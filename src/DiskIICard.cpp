@@ -1629,7 +1629,7 @@ void DiskIICard::control(int offset)
     switch (offset) {
         case 0x8:
             if (active == MODE_ACTIVE) {
-                motorOffDelay = 1'022'727;   // 1 sec @ 1.0227 MHz
+                motorOffDelay = motorOffCycles();   // the 556, ~1.14 s
                 active = MODE_DELAY;
             }
             break;
@@ -1791,7 +1791,7 @@ void DiskIICard::handleSwitchAccess(uint8_t low4)
                 // keeps turning — and the countdown in advanceCycles() stops
                 // the drive (and fires the spin-down sound) when it expires.
                 if (motorOn && motorOffDelay <= 0)
-                    motorOffDelay = 1'022'727;   // 1 sec @ 1.0227 MHz
+                    motorOffDelay = motorOffCycles();   // the 556, ~1.14 s
                 break;
             case 0x9:
                 if (!motorOn) {
@@ -1978,11 +1978,10 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         // `senseWriteProtect()` (not `img.isWriteProtected()`) because stepper
         // phase 1 drives the same wire — MAME floppy.cpp:817-820. See the
         // header note next to `writingInhibited()`.
-        if (low4 == 0xD && !writeMode) {
-            DiskImage& img = images[activeDrive];
-            return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
-        }
-        return 0xFF;
+        // Odd reads drive nothing (MAME: $FF): the Disk II's '323 output
+        // enable takes A0 (UTAIIe Table 9.1, AppleWin IORead); the IWM's A0
+        // is its /READ input (IWM spec rev 19, p. 5). No $C0nD WP shortcut.
+        return openBus();
     }
 
     // Legacy gate path.
@@ -2016,9 +2015,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     }
     // Same wire, same answer as the bit-LSS path and as $C0nE: no disk reads
     // as write-protected.
-    if (low4 == 0xD && !writeMode) {
-        return (!img.isLoaded() || senseWriteProtect()) ? 0x80 : 0x00;
-    }
+    if (low4 & 1) return openBus();   // odd: undriven, as above
     // $C0nE with Q6 still high is the SECOND half of the sense: DOS 3.3 does
     // `LDA $C08D,X / LDA $C08E,X / BMI`, so the flags it branches on come
     // from THIS read. MAME returns the data register on every even offset,

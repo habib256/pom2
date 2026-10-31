@@ -59,7 +59,8 @@ void    wr(SoftCardIICard& c, uint8_t o, uint8_t v) { c.deviceSelectWrite(o, v);
 
 // Boot mode: the 6502 sends `LD A,$5A / LD ($1000),A / OUT ($00),A`. Each
 // byte is fed only once the previous one is taken; the store below $8000
-// lands in RAM and comes back on the latch; the OUT ends boot mode, after
+// comes back on the latch and does NOT reach RAM (A15 low is the mailbox);
+// the OUT ends boot mode, after
 // which the Z80 runs from its own RAM (zero from $0007: NOPs).
 void testBootMode()
 {
@@ -77,7 +78,7 @@ void testBootMode()
         CHECK(!(rd(c, 1) & 0x01));               // taken, exactly once
     }
     CHECK(c.z80().getState().a == 0x5A);
-    CHECK(c.cardRam(0x1000) == 0x5A);
+    CHECK(c.cardRam(0x1000) == 0x00);
     CHECK(!c.booting());
     CHECK(rd(c, 1) == 0x80);                      // the store came back
     CHECK(rd(c, 0) == 0x5A);

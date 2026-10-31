@@ -478,13 +478,16 @@ for the card, which boots to `A>` on a //e with the card in slot 4.
 
 **Boot mode** (reset → first `OUT`): the card's RAM is empty, so every Z80
 read below `$8000`, opcode fetches included, takes the 6502's latch, and a
-write below `$8000` goes to RAM *and* back to the 6502. CP/M's 6502 loader
+write below `$8000` goes back to the 6502 only (A15 low is the mailbox —
+sbabcoc's SoftCard2 HARDWARE-REFERENCE.md; izapple2 also stores it in RAM,
+and no known code tells them apart). CP/M's 6502 loader
 feeds the Z80 its first code that way. A read on an empty latch holds the
 Z80 (its WAIT line on the card): the instruction is undone and re-run, with
 the bytes it already took replayed (`fetched_`, in the snapshot), and a held
 Z80 loses its time. The first `OUT` ends boot mode and is not delivered.
 Pinned by `softcard2_card`; the boot half needs
-`disks_5.4/dsk/softcard2_cpm228b.dsk` (not yet in the test-media archive).
+`disks_5.4/dsk/softcard2_cpm228b.dsk` (not yet in the test-media archive)
+and also boots it on a ][+ whose console is a Videx Videoterm in slot 3.
 
 ### Z80 cards with their own RAM (Applicard, Premium SoftCard)
 
@@ -2732,8 +2735,10 @@ PROM's full phase sweep lands in one audio buffer → gap=0 → buzz.
 Floor at 1 ms gap defends `mixLoop` against `INF` rate; pitch in
 [1, 2] for `SEEK_2MS`.
 
-**Wall-clock motor-off hold-off**: turbo bumps CPU ~60× → 1-sec
-spin-down (`motorOffDelay = 1'022'727` cycles) becomes ~17 ms
+**Wall-clock motor-off hold-off**: turbo bumps CPU ~60× → the ~1.1 s
+spin-down (`DiskIICard::motorOffCycles`: the Disk II's 556, R5 47 kΩ ×
+C2 22 µF × ln 3 = 1.136 s on Apple's 050-0005-00 schematic; an IWM
+host's "about 1 second", IWM spec rev 19 p. 6) becomes ~17 ms
 wall-clock. Device defers audible transition by `kMotorOffHoldMs`
 (default 800 ms) in **audio output frames** not cycles; fresh
 `motor(true)` cancels.

@@ -35,8 +35,10 @@
 //        OUT even     a byte for the 6502
 //  - **Boot mode**, from reset to the first OUT: the card's RAM holds
 //    nothing, so every Z80 read below $8000 — opcode fetches included —
-//    comes from the 6502's latch, and a write below $8000 lands in RAM
-//    *and* in the latch back to the 6502. The 6502 thereby feeds the Z80 a
+//    comes from the 6502's latch, and a write below $8000 goes to the
+//    latch back to the 6502 only — the simplest decode, sbabcoc's
+//    SoftCard2 reconstruction; izapple2 also stores it in RAM, which no
+//    known code can tell apart. The 6502 thereby feeds the Z80 a
 //    loader one byte at a time. A read with the latch empty holds the Z80
 //    (on the card, its WAIT line) until the 6502 writes; here the
 //    instruction is undone and re-run on the next step, the bytes it had

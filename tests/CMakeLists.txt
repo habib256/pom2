@@ -2198,6 +2198,7 @@ add_executable(test_disk_media_state
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
@@ -2220,6 +2221,7 @@ add_executable(test_two_phase_mount
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
     ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp

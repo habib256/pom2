@@ -42,6 +42,7 @@
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -246,6 +247,7 @@ int main()
         // under COL140 ($A = 1010) is two white dots and two black ones.
         mem.memWrite(0xC00D, 0);
         (void)mem.memRead(0xC05E);
+        for (int c = 0; c < 40; ++c) mem.auxDataMutable()[0x2000 + c] = 0;   // power-on 00/FF
         mem.auxDataMutable()[0x2000] = 0x0A;
         mem.memWrite(0x2000, 0x00);
         display.render(mem);
@@ -430,6 +432,9 @@ int main()
         raw->setMemory(&mem);
         mem.slotBus().plug(7, std::move(card));
         const uint8_t* aux = mem.auxData();
+        // Aux starts at 00 here so "== 0x00" reads "untouched" (power-on is
+        // the 00/FF pattern).
+        std::fill(mem.auxDataMutable(), mem.auxDataMutable() + 0x10000, uint8_t(0));
 
         // Nothing armed: a text write is just a text write.
         mem.memWrite(0x0400, 0xC1);

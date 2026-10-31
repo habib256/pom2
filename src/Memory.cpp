@@ -54,9 +54,7 @@ Memory::Memory()
 {
     mem.fill(0);
     writable.fill(true);
-    lcBank1.fill(0);
-    lcBank2.fill(0);
-    lcHigh.fill(0);
+    clearRam();   // power-on RAM is never zero: Joust froze on it (CHANGELOG 2026-10-31)
     // ROM mirror. Language Card RAM is separate and selected by the paging
     // latches; $D000-$FFFF starts ROM-protected here. The slot ROM range
     // $C100-$C7FF is NOT marked as ROM here: SlotBus owns that window and
@@ -762,11 +760,12 @@ void Memory::clearRam()
     fill00FF(lcBank1, lcBank1.size());
     fill00FF(lcBank2, lcBank2.size());
     fill00FF(lcHigh,  lcHigh.size());
+    // Aux unconditionally: a Memory is born in ][ mode (setIIEMode won't paint).
+    fill00FF(aux,        aux.size());
+    fill00FF(auxLcBank1, auxLcBank1.size());
+    fill00FF(auxLcBank2, auxLcBank2.size());
+    fill00FF(auxLcHigh,  auxLcHigh.size());
     if (iieMode) {
-        fill00FF(aux,        aux.size());
-        fill00FF(auxLcBank1, auxLcBank1.size());
-        fill00FF(auxLcBank2, auxLcBank2.size());
-        fill00FF(auxLcHigh,  auxLcHigh.size());
         // RamWorks III backing — wipe every bank slot, snap back to
         // bank 0 (MAME `device_reset`-equivalent, plus a cold RAM
         // wipe which `device_reset` itself doesn't do).

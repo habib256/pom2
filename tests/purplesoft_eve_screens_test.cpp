@@ -165,18 +165,18 @@ struct Golden { const char* label; uint64_t hash; };
 
 // Regenerate with POM2_GOLDEN_RECORD=1 (see file header).
 const Golden kGr16k[] = {
-    { "eve=01 an3=0 80col=1 HIRES", 0x3692b3fb2952c803ULL },
-    { "eve=03 an3=0 80col=1 HIRES", 0x9970a4166c430203ULL },
-    { "eve=05 an3=0 80col=1 HIRES", 0x4d9447938811fdc3ULL },
-    { "eve=0F an3=0 80col=0 HIRES", 0xf7c22d3637a68c83ULL },
-    { "eve=0D an3=0 80col=1 HIRES", 0xc182c9278abcdf83ULL },
+    { "eve=01 an3=0 80col=1 HIRES", 0xa1ce293f08586d83ULL },
+    { "eve=03 an3=0 80col=1 HIRES", 0x686b0a7bec903e83ULL },
+    { "eve=05 an3=0 80col=1 HIRES", 0x87ff5af240676f43ULL },
+    { "eve=0F an3=0 80col=0 HIRES", 0x19c9847f26d950c3ULL },
+    { "eve=0D an3=0 80col=1 HIRES", 0x6aa2620df027dd5cULL },
     { "eve=00 an3=1 80col=0 TEXT", 0x746637af3427b55cULL },
 };
 const Golden kTexte[] = {
     { "eve=00 an3=1 80col=0 TEXT", 0x4029be5b3d86ff83ULL },
     { "eve=00 an3=1 80col=0 TEXT", 0x5470d09f71d5d15cULL },
-    { "eve=10 an3=1 80col=0 TEXT", 0xbf5f45860b15d6c3ULL },
-    { "eve=10 an3=1 80col=0 TEXT", 0xf9a128193ccfb803ULL },
+    { "eve=10 an3=1 80col=0 TEXT", 0xd538879524487843ULL },
+    { "eve=10 an3=1 80col=0 TEXT", 0xf69ed457e200b7c3ULL },
     { "eve=00 an3=1 80col=1 TEXT", 0x2bf25c769f26715cULL },
     { "eve=20 an3=1 80col=1 TEXT", 0x8f7fde43dde94603ULL },
     { "eve=00 an3=1 80col=1 TEXT", 0xb46f0ef3a6a5275cULL },

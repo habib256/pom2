@@ -183,6 +183,8 @@ void testHgrChatMauve560()
     assert(!mem.getDisplayState().dhgr);
 
     disp.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+    // A blank page: power-on RAM is the 00/FF pattern, not zeros.
+    for (uint32_t a = 0x2000; a < 0x4000; ++a) mem.memWrite(uint16_t(a), 0);
 
     // Pattern: lay down a single byte at the leftmost column of HGR row 0
     // with bits = 0b0010_0011 = $23 → pixels (bit 0 leftmost):

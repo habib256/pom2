@@ -9,7 +9,7 @@
 # which fix in the commit message. Paths are relative to the repo root.
 #
 # args | cycles | ram
---rom roms/apple2p.rom --frames 3000 | 51140925 | 66520b00bd0361ca
---rom roms/apple2p.rom --disk disks_5.4/dsk/dos33_master.dsk --frames 900 | 15341775 | 92d33cc1c77f2221
---rom roms/apple2e.rom --iie --frames 3000 | 51140426 | 00955e3a93492a81
---rom roms/apple2e.rom --iie --pal --frames 1000 | 20314706 | aa712e7a50e8df6b
+--rom roms/apple2p.rom --frames 3000 | 51140925 | a37d764af4ee5bab
+--rom roms/apple2p.rom --disk disks_5.4/dsk/dos33_master.dsk --frames 900 | 15341775 | 59121e8f93c6b606
+--rom roms/apple2e.rom --iie --frames 3000 | 51140431 | 766cdfbbd451c5a8
+--rom roms/apple2e.rom --iie --pal --frames 1000 | 20314782 | 28c67bf1f569f3a6

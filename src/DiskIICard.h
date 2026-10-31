@@ -485,6 +485,19 @@ private:
     enum ActiveMode { MODE_IDLE = 0, MODE_ACTIVE, MODE_DELAY };
     ActiveMode active = MODE_IDLE;
     int  motorOffDelay = 0;     // STOCK bus cycles (see setCpuClock)
+    /// The 556's motor-control half (D2 on Apple's 050-0005-00 schematic):
+    /// C2 = 22 uF charges through R5 = 47 kOhm from 0 to the 2/3 Vcc
+    /// threshold, T = R5 * C2 * ln 3 = 1.136 s. MAME's wozfdc uses a round
+    /// 1 s. Nominal parts; a real card's electrolytic is +/-20 %. An IWM
+    /// host has the IWM's own timer instead: "about 1 second" (IWM device
+    /// specification rev 19, 1982, p. 6).
+    static constexpr double kMotorOffSeconds = 47e3 * 22e-6 * 1.0986122886681098;
+    static constexpr double kIwmMotorOffSeconds = 1.0;
+    int motorOffCycles() const
+    {
+        return static_cast<int>((iwmHost_ ? kIwmMotorOffSeconds : kMotorOffSeconds)
+                                * motorClock_.busHz() + 0.5);
+    }
     pom2::SlotBusClock motorClock_;   // CPU cycles -> stock: LSS, delay, stepper
     bool writeMode = false;     // Q7 latch: false=read, true=write
     bool loadMode  = false;     // Q6 latch: false=shift, true=load

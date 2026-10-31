@@ -311,7 +311,8 @@ void testControllerCadence() {
             }
         }
         // Full motor stop/restart as well as the shorter coasting windows.
-        access(8, "motor off"); delay(1022730, 4096);
+        // The 556 holds the motor ~1.136 s (DiskIICard::kMotorOffSeconds).
+        access(8, "motor off"); delay(1170000, 4096);
         require(!fine.isMotorOn() && !batched.isMotorOn(), "motor failed to stop");
         access(9, "restart"); delay(8193, 8193); access(0xC, "restart latch");
     }

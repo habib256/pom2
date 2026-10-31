@@ -10,6 +10,44 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — Toward the silicon: floating bus on odd Disk II/IWM reads and ROM-less slots, the 556's motor delay, power-on RAM
+
+- **Odd `$C0nX` reads are the floating bus**, on a Disk II and on a //c's
+  IWM alike; POM2 returned MAME's `$FF`. The Disk II drives the bus from
+  its 74LS323 only on even addresses (Understanding the Apple IIe Table
+  9.1; AppleWin `Disk2InterfaceCard::IORead`), and the IWM's A0 is its
+  /READ input: "A low on this input enables the IWM to send the register
+  selected by the state onto the data bus" (IWM device specification rev
+  19, 1982, p. 5). The `$C0nD` write-protect answer POM2 gave at the odd
+  address itself — a shortcut from the first commit, on no hardware — is
+  gone; the sense is read the Apple way, `$C0nD` then `$C0nE`, as DOS and
+  ProDOS do. `diskii_empty_drive` pins `$5A` from a RAM full of `$5A`.
+- **Motor-off delay = the 556.** The Disk II holds the motor through ½ 556
+  (D2) with C2 = 22 µF charging through R5 = 47 kΩ to ⅔ Vcc: R·C·ln 3 =
+  1.136 s, read off Apple's 050-0005-00 schematic. MAME and POM2 used a
+  round 1 s. The IWM's own timer stays at the spec's "about 1 second"
+  (p. 6). The count follows the bus clock, so it holds under PAL too.
+- **SoftCard II boot mode:** a Z80 write below `$8000` goes to the mailbox
+  only, not RAM as well (sbabcoc's reconstruction; izapple2 stores it too,
+  and no known code tells them apart).
+- **A slot card with no ROM reads as the floating bus at `$Cn00-$CnFF`**,
+  not `$FF` (`SlotPeripheral::slotRomRead`'s default): nothing drives the
+  bus there, AppleWin answers an empty page the same way, and the SoftCard
+  II's CP/M loader sums `$Cn00` twice and takes an unstable sum for an
+  empty slot (sbabcoc's SoftCard2 HARDWARE-REFERENCE.md). Affects the
+  SoftCard, SoftCard II, Applicard, ALS, Saturn, 4play, SAM, SNES MAX and
+  TransWarp, which drive no 6502 ROM there.
+- **A fresh `Memory` is powered on.** Its constructor zero-filled RAM; only
+  `coldBoot()` painted MAME's `00 FF…` power-on pattern, so everything that
+  builds a machine without one — `pom2_headless`, `Pom2Core`, the bench,
+  test harnesses — ran on a DRAM no Apple II has. Joust froze there exactly
+  as sbabcoc's ReplicApple2Plus logged (its RNG seeds from `$4D-$4F` and
+  loops in `$AB21-$AB36` on `00 00 00`); with `FF 00 FF` it plays.
+  The constructor now paints main, language card and aux RAM. **Bench
+  goldens rewritten** (the two //e workloads moved; deliberate), the Eve
+  screens' golden regenerated (areas the demo never clears), two tests that
+  assumed zero RAM made explicit; `system_profile_smoke` pins the state.
+
 ## 2026-10-31 — Saturn: a write counts toward write-enable; SoftCard II on a ][+ + Videoterm
 
 - **Saturn 128K write-enable.** POM2 copied the Language Card's rule: two

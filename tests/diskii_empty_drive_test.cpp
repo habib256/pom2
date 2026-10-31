@@ -160,11 +160,11 @@ long pollUntilByteReady(bool useBitLss, const std::string& p6Rom,
 
 // ── The other thing an empty drive has to answer consistently ────────────
 //
-// Write-protect is ONE wire, and POM2 offers two ways to read it: the
-// canonical `LDA $C08D,X / LDA $C08E,X / BMI` sequence the Apple II actually
-// uses, and a shortcut at $C0nD that POM2 answers directly. They used to
-// disagree about an empty drive — $C0nE said protected, $C0nD said writable —
-// so what a guest was told depended on which idiom it happened to use.
+// Write-protect is ONE wire, read the Apple way: `LDA $C08D,X / LDA
+// $C08E,X / BMI`. POM2 also used to answer it at $C0nD directly, a shortcut
+// no hardware has (an odd read is undriven, testOddReadsFloat; removed
+// 2026-10-31), and the two once disagreed about an empty drive. The
+// `shortcut` field now carries the canonical answer.
 //
 // Protected is the right answer, and not merely for consistency: the sense is
 // a phototransistor watching the write-enable notch, and with no disk in the
@@ -233,10 +233,56 @@ WpAnswers readWriteProtect(bool useBitLss, const std::string& p6Rom,
                      "the head to quarter-track %d\n", raw->getQuarterTrack(0));
         return { 0x80, 0x80, true };
     }
-    const uint8_t shortcut = mem.memRead(0xC0ED);          // POM2's own probe
+    uint8_t shortcut = 0;
     mem.memRead(0xC0ED);                                   // Q6 high
     const uint8_t canonical = mem.memRead(0xC0EE);         // Q7 low -> WP in b7
+    // There is no shortcut on either controller: an odd read is undriven
+    // (testOddReadsFloat), so only the Apple way carries the sense.
+    shortcut = canonical;
     return { shortcut, canonical, true };
+}
+
+// A Disk II controller drives the bus on even addresses only (the 74LS323's
+// output enable takes A0; Understanding the Apple IIe Table 9.1, AppleWin
+// Disk2InterfaceCard::IORead): an odd read is the floating bus. An IWM is
+// the same — its A0 is the /READ input (IWM device specification rev 19,
+// p. 5). With all of RAM $5A, the floating bus reads $5A wherever the beam
+// is. Both gates, both controllers.
+int testOddReadsFloat(const std::string& p6Rom, const std::string& nib)
+{
+    int failures = 0;
+    for (int k = 0; k < 4; ++k) {
+        const bool bitLss = k & 1, iwm = k & 2;
+        Memory mem;
+        auto card = std::make_unique<DiskIICard>();
+        card->setIwmHost(iwm);
+        if (bitLss && !card->loadLssRom(p6Rom)) return 1;
+        if (!card->insertDisk(0, nib)) return 1;
+        mem.slotBus().plug(6, std::move(card));
+        M6502 cpu(&mem);
+        mem.setCpu(&cpu);
+        mem.clearRam();
+        mem.resetSoftSwitches();
+        mem.slotBus().reset();
+        cpu.hardReset();
+        // All of RAM: in HBL the scanner fetches outside the text page
+        // (MAME's $1000 phantom row).
+        for (uint32_t a = 0; a < 0xC000; ++a) mem.memWrite(uint16_t(a), 0x5A);
+        mem.memRead(0xC051);                                // TEXT
+        mem.memRead(0xC0E9);                                // motor on
+        for (uint16_t odd : { 0xC0E1, 0xC0E9, 0xC0EB, 0xC0ED, 0xC0EF }) {
+            const uint8_t v = mem.memRead(odd);
+            if (odd == 0xC0EF) mem.memRead(0xC0EE);         // back to read mode
+            if (v != 0x5A) {
+                std::fprintf(stderr, "FAIL: %s %s read $%04X = $%02X, "
+                             "wanted the floating bus ($5A)\n",
+                             bitLss ? "bit-LSS" : "legacy", iwm ? "IWM" : "Disk II", odd, v);
+                ++failures;
+            }
+        }
+    }
+    if (!failures) std::printf("[ OK ] odd reads are the floating bus: Disk II and IWM, both gates\n");
+    return failures;
 }
 
 struct Case {
@@ -409,6 +455,8 @@ int main()
                         "protected\n", gate);
         }
     }
+
+    failures += testOddReadsFloat(p6, nib);
 
     std::error_code ec;
     fs::remove(nib, ec);

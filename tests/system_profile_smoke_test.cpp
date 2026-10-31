@@ -432,6 +432,21 @@ void testIicInternalRomAlwaysMapped()
 // old "best effort" loader landed loadAddr at $B000, clobbering user
 // RAM with filler bytes. Verify the new path skips the filler and
 // lands the reset vector and main ROM bytes where they belong.
+// A Memory nobody cold-booted is still powered on: the 00/FF pattern in main
+// RAM, the language card and the aux 64 KB, never zeros. Zero RAM froze Joust
+// in pom2_headless (its RNG seeds from $4D-$4F and spins on 00 00 00 —
+// sbabcoc's ReplicApple2Plus found it; reproduced 2026-10-31).
+void testFreshMemoryIsPoweredOn()
+{
+    Memory mem;
+    assert(mem.peekMainRam(0x4D) == 0xFF && mem.peekMainRam(0x4E) == 0x00
+           && mem.peekMainRam(0x4F) == 0xFF);
+    mem.setIIEMode(true);
+    mem.memWrite(0xC003, 0);                 // RAMRD: reads from aux
+    assert(mem.memRead(0x0800) == 0x00 && mem.memRead(0x0801) == 0xFF);
+    mem.memWrite(0xC002, 0);
+}
+
 void test20kIIPlusRomLoad()
 {
     namespace fs = std::filesystem;
@@ -464,10 +479,11 @@ void test20kIIPlusRomLoad()
     assert(mem.memRead(0xF000) == 0x6F);
     // User RAM at $B000-$BFFF stays clean — was NOT clobbered by the
     // leading-filler bytes. (The previous "best effort" branch would
-    // have written 0xEE here.)
+    // have written 0xEE here.) Clean = the power-on 00/FF pattern.
     assert(mem.memRead(0xB000) == 0x00);
     assert(mem.memRead(0xB800) == 0x00);
-    assert(mem.memRead(0xBFFF) == 0x00);
+    assert(mem.memRead(0xBFFE) == 0x00);
+    assert(mem.memRead(0xBFFF) == 0xFF);
 
     fs::remove(tmp);
 }
@@ -824,6 +840,9 @@ void testBootScanOrder()
 
 int main()
 {
+    testFreshMemoryIsPoweredOn();
+    std::printf("  ok: a fresh Memory holds the power-on pattern (main + aux)\n");
+
     testBootScanOrder();
     std::printf("  ok: boot scan order (7 -> 1, //c 6 first, //c+ 5 first)\n");
 

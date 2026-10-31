@@ -86,7 +86,10 @@ public:
     /// select range) treat $CnXX as memory-mapped I/O. The SlotBus
     /// forwards both reads and writes; cards that don't override
     /// `slotRomWrite` get the default no-op (matching ROM behaviour).
-    virtual uint8_t slotRomRead (uint8_t /*low8*/)              { return 0xFF; }
+    /// A card with no slot ROM drives nothing there: the floating bus
+    /// (AppleWin's empty-page read; the SoftCard II's CP/M loader counts on
+    /// it — sbabcoc's SoftCard2 HARDWARE-REFERENCE.md). It used to be $FF.
+    virtual uint8_t slotRomRead (uint8_t /*low8*/)              { return openBus(); }
     virtual void    slotRomWrite(uint8_t /*low8*/, uint8_t /*v*/) {}
 
     /// $C800-$CFFF — 2 KB expansion ROM. `offset` is the byte offset into
