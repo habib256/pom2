@@ -230,7 +230,16 @@ void check(const Entry& e)
         // state for every truncation (testLironAtomicRejection below).
         auto rc = e.make(); drive(*rc, 0x99u); rc->onReset();
         const Blob fresh = cap(*rc);
-        for (size_t n = 0; n < ba.size(); ++n) {
+        // Every length through the header and the tail, a prime stride
+        // through the bulk in between: exhaustive for every small blob, and
+        // linear rather than quadratic for the 64-128 KB RAM images (Z80
+        // cards, Saturn), which timed this test out under coverage.
+        auto nextLen = [&](size_t n) {
+            const size_t edge = 512;
+            if (n + 1 < edge || n + 1 + edge >= ba.size()) return n + 1;
+            return std::min(n + 4093, ba.size() - edge);
+        };
+        for (size_t n = 0; n < ba.size(); n = nextLen(n)) {
             auto d = e.make();
             drive(*d, 0x99u);
             d->loadSnapshotState(ba.data(), n);      // truncated
