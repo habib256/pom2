@@ -489,6 +489,19 @@ Pinned by `softcard2_card`; the boot half needs
 `disks_5.4/dsk/softcard2_cpm228b.dsk` (not yet in the test-media archive)
 and also boots it on a ][+ whose console is a Videx Videoterm in slot 3.
 
+**The 6502 BIOS calls in the trace** *(2026-10-31)*. Under CP/M the Z80
+asks the 6502 for every sector, character and screen operation through the
+mailbox — 17 commands, their names from Microsoft's manual, their byte
+counts from sbabcoc's SoftCard2 HARDWARE-REFERENCE.md. `SoftCard2Protocol`
+reads the byte stream (command, Z80 parameters, 6502 reply; READSEC adds
+the sector only on status 0, WRITESLOT's character follows the reply) and
+writes one line per call into the OS-call trace (`SC2  READSEC S6,D1 T17
+sector 0 -> ok`), fed only while the trace's observer is on the Z80. The
+boot's own transfers are 6502 -> Z80 only and an idle decoder ignores them.
+`softcard2_card` also pins the loader's slot table at Z80 `$F3B9-$F3BF`
+(CCS 7710 = 3, Super Serial = 6, Disk II = 2) and the BIOS extension words
+at `$F38E-$F395` (`$0D54 $0D44 $1600 $DB00`, as sbabcoc measured).
+
 ### Z80 cards with their own RAM (Applicard, Premium SoftCard)
 
 **PCPI Applicard** (`ApplicardCard`, catalog `applicard`) — the SoftCard
@@ -529,6 +542,43 @@ programmer's manual is online; everything below is read off Microsoft's CP/M
 
 Pinned by `premium_softcard`: both CP/M versions boot, `DIR`, GBASIC
 computes `6 * 7`; negative controls for the text-page SRAM.
+
+### CCS 7710 (`Ccs7710Card`)
+
+Catalog `ccs7710`, any slot. California Computer Systems' Model 7710: a
+Motorola 6850 ACIA decoded on A0 alone across $C0n0-$C0nF (MAME
+`ccs7710.cpp`), so even = control/status and odd = data — the $C0nE/$C0nF
+the SoftCard II CP/M BIOS uses. Status per the MC6850 sheet: RDRF, TDRE
+(always set: the line is infinitely fast), /DCD and /CTS low, OVRN, IRQ
+from CR7 (receive) and CR6:5 = 01 (transmit); CR1:0 = 11 is master reset,
+the power-up state. What it sends goes to a spool the ImageWriter takes
+(`PrinterCoordinator::SourceKind::Serial6850`); `receive()` queues bytes
+from the host.
+
+**Firmware: LLE reference and POM2's page.** CCS's two 256×4 PROMs
+(`7710-03h.u5`/`l.u6`, MAME `ROM_NIBBLE`: each holds one nibble of every
+byte) load from `roms/ccs7710_03h.u5` + `roms/ccs7710_03l.u6` and execute —
+the reference (Abstraction Levels: `ccs7710`, L2). RetroBIOS has no
+`ccs7710` set, so they are not in the ROM catalogue (`rom_fetch` requires
+every catalogued dump to be downloadable — they go in when POM2's ROM
+archive carries them), and a tree without them, or `ccs7710_firmware` = "pom2" (the
+panel's switch, a restart), serves POM2's own page (`ccs7710_pom2`, H1),
+written from the 7710-03's disassembly: the serial-card ID kept byte for
+byte (`BIT $FF58 / BVS / CLC / BCS / [SEC] / CLV` — `$Cn05` is the output
+entry, the `$38` at `$Cn07` is a SEC and the input entry); the first call
+master-resets the 6850 (`$A3`), keeps its mode `$51` in `$07F8+n`, sets the
+echo flag `$06F8+n` and moves CSW to `$Cn05` or KSW to `$Cn07`; output
+sends the byte as it is (8 bits — Applesoft's high bit goes out) and
+echoes it through COUT1; input sets bit 7 and drops line feeds. Not
+written: the PROM's terminal mode (Ctrl-A commands, Ctrl-R / Ctrl-T) and
+its flashing cursor. The first version stripped bit 7, never echoed and
+never set the 6850 up — the comparison with the PROM showed all three.
+
+`ccs7710_card` runs the same ][+ session on both pages — PR#1 / PRINT /
+PR#0, then IN#1 taking Applesoft lines off the line — and requires the
+same bytes sent and the same screens (negative control: echo off fails
+it). `softcard2_card` pins the CP/M side (type 3 in the slot scan; ^P
+sends DIR to the 6850).
 
 ### Saturn 128K (`SaturnCard`)
 
@@ -1335,6 +1385,18 @@ rows 20..23 overlay. ALTCHAR selects MouseText from a 4 KB //e character
 ROM; no-op against the built-in fallback.
 
 ### Videx Videoterm (`VidexVideotermCard`)
+
+**Card Monitor** *(2026-10-31)*. What reaches the screen when a card has
+its own picture is `Apple2Display::CardMonitor`: `Auto` (the card's rule —
+the Videoterm's Soft Video Switch, TEXT + AN0, from Videx's SVS-000
+schematic), `Apple` or `Card` (a manual switch, or a monitor cabled to one
+source: Merlin's `VID 0` leaves AN0 up, and on the real machine the stale 80
+columns stay). The Card Monitor panel sets it (`card_monitor_switch`) and
+shows the card's picture in its own window — Apple video + the panel is two
+monitors. After sbabcoc's ReplicApple2Plus. SETUP's "already initialised"
+marker (`$077B AND $F8 = $30` skips the 6845) is pinned both ways in
+`videx_videoterm_boot`: POM2's power-on `$FF` never trips it; planted, the
+real firmware skips.
 
 *(2026-09-29)* Catalog key `videoterm`. A port of MAME `a2bus_videx80_device`
 (`src/devices/bus/a2bus/a2videoterm.cpp`) plus the one thing MAME does not
@@ -3843,6 +3905,16 @@ emits each "1" cell at `i*cyc + cyc/2` (centre). Pinned:
 `woz_bit_timing_smoke` (obt 32/40/28 + WOZ1 fallback).
 
 ### DiskIICard
+
+> **Further reading — a debugging method worth reusing.** sbabcoc's
+> ReplicApple2Plus keeps a 32-step log of a DOS 3.3 boot failure
+> (`DOS33-BOOT-INVESTIGATION.md`): every hypothesis tested against real
+> hardware (Virtual ][ breakpoints on a real boot), the dead ends recorded
+> as "do not re-investigate", and two root causes in the stepper — the
+> head moved half the distance per phase change, and a remembered "current
+> phase" drifted away from the head (a magnet opposite the head moves
+> nothing). POM2's stepper is MAME's and has neither; the log is the model
+> to follow for the next disk hunt that resists.
 
 256-byte P5A boot PROM, Apple 341-0027-A (CRC `ce7144f6`), loaded by
 `loadBootRom("roms/disk2.rom")`; the P6 sequencer by
@@ -8812,6 +8884,17 @@ available; `mouseaw` lets users with just the slot EPROM get a
 working mouse.
 
 ### Joystick / paddles
+
+**Empty game port and Shift-key mods** *(2026-10-31)*. `game_port_connected`
+(default on) off = nothing plugged in: every paddle reads 255 (the 558
+never times out on an open pot) and a ][ / ][+'s PB0/PB1 read pressed —
+their pull-downs are in the controller, the //e moved them to the board
+(MAME `apple2.cpp` c060_r, `apple2e.cpp` `!is_device_connected()`). The
+][+ Shift-key mods are MAME's three wirings (`keyboard_shift_key_mod_ii`):
+SW2 = Shift, PADDL2/3 = Shift/Ctrl (Zardax, the "lewis" Monitor), SW0/1 =
+Shift/Ctrl (Format-II, Sandy's) — every wire active low (`a2kbd.h`). The
+//e keeps its own SW2 setting. All in `PaddleInputs.h`, on the slow $C06x
+path; pinned by `input_io_smoke`.
 
 `JoystickInput` polls all 16 GLFW slots each UI frame (hot-plug).
 Each paddle reads a **source** (`Binding::source`, keys

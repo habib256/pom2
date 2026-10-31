@@ -280,6 +280,26 @@ int main()
                "a green monitor shows the 80 columns in green");
         expect(disp.pixels()[1] == kBlack, "unlit dots stay black");
         disp.setHiResMode(Apple2Display::HiResMode::ColorNTSC);
+        // The monitor switch (Card Monitor panel): Apple video only holds the
+        // Apple's picture under TEXT + AN0; card video only holds the card's
+        // in graphics with AN0 off — Merlin's VID 0 leaves AN0 up, and a
+        // monitor cabled to the card alone keeps showing it.
+        using CM = Apple2Display::CardMonitor;
+        disp.setCardMonitor(CM::Apple);
+        disp.render(mem);
+        expect(disp.width() == 280 && !disp.showingCardPicture(),
+               "Apple video only: TEXT + AN0 shows the Apple");
+        disp.setCardMonitor(CM::Card);
+        mem.memWrite(0xC058, 0);
+        mem.memWrite(0xC050, 0);
+        disp.render(mem);
+        expect(disp.showingCardPicture() && disp.width() == 720,
+               "card video only: graphics + AN0 off still shows the card");
+        disp.setCardMonitor(CM::Auto);
+        disp.render(mem);
+        expect(!disp.showingCardPicture(), "back to the soft switch: the Apple");
+        mem.memWrite(0xC051, 0);
+        mem.memWrite(0xC059, 0);
         // Unwiring the card returns the monitor to the Apple.
         disp.setCardVideoSource(nullptr);
         disp.render(mem);

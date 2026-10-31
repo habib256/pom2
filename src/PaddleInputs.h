@@ -51,11 +51,38 @@ public:
     void setOpenAppleKey (bool down) { openApple_.store(down,  std::memory_order_relaxed); }
     void setSolidAppleKey(bool down) { solidApple_.store(down, std::memory_order_relaxed); }
     void setShiftKey     (bool down) { shift_.store(down,      std::memory_order_relaxed); }
+    void setControlKey   (bool down) { ctrl_.store(down,       std::memory_order_relaxed); }
     /// The //e "Shift key = SW2" modification (MAME `kbd_shift_mod`, Apple
     /// IIe Technical Note #9): a wire from the Shift key to PB2. Off by
     /// default, as in MAME.
     void setShiftKeyMod  (bool on)   { shiftMod_.store(on,     std::memory_order_relaxed); }
     bool shiftKeyMod() const         { return shiftMod_.load(std::memory_order_relaxed); }
+
+    /// The ][ / ][+ modifications: Shift (and, for some word processors,
+    /// Control) wired to a game-I/O input. MAME `apple2.cpp` "Shift key mod"
+    /// (a2_config 0x0c): SW2 = Shift; PADDL2 = Shift + PADDL3 = Ctrl (Zardax,
+    /// the "lewis" lowercase Monitor); SW0 = Shift + SW1 = Ctrl (Format-II,
+    /// Sandy's Word Processor). Each wire is active LOW, as the //e one:
+    /// `a2kbd.h` "0 = pressed, 1 = not pressed". Separate from the //e
+    /// setting, and read only on a ][ / ][+. Not fitted by default (a stock
+    /// machine; MAME defaults to SW2).
+    enum class IiShiftWiring : uint8_t { None = 0, Sw2 = 1, Paddl23 = 2, Sw01 = 3 };
+
+    /// Is a joystick or a pair of paddles plugged into the game port? With
+    /// nothing there each pot is an open circuit, so the 558 never times out
+    /// and every paddle reads 255; and on a ][ / ][+ the pull-downs of PB0
+    /// and PB1 are in the controller, so those two inputs float HIGH and
+    /// read pressed — the //e put its pull-downs on the motherboard (MAME
+    /// `apple2.cpp` c060_r "polls high if not connected, unlike IIe";
+    /// `apple2e.cpp` cases $C064-$C067 `!is_device_connected()`). Default
+    /// connected: a ][+ with nothing plugged in looks like a fire button
+    /// held down to most games.
+    void setConnected(bool on) { connected_.store(on, std::memory_order_relaxed); }
+    bool connected() const     { return connected_.load(std::memory_order_relaxed); }
+    void setIiShiftWiring(IiShiftWiring w) { iiWiring_.store(uint8_t(w), std::memory_order_relaxed); }
+    IiShiftWiring iiShiftWiring() const {
+        return IiShiftWiring(iiWiring_.load(std::memory_order_relaxed));
+    }
 
     // ── Push-button reads ($C061-$C063 bit 7) ─────────────────────────────
     // PB0/PB1 OR the paddle button with Open/Solid-Apple. PB2 is the game
@@ -65,16 +92,30 @@ public:
     // c000_r, $C063: `m_kbd_shift_mod ? (kbspecial & 0x06) == 0 : sw2_r()`.
     // The dead code this replaced OR'd Shift in HIGH and was never called
     // (INPUT-001).
-    bool button0() const {
+    //
+    // `iiPlus` = a ][ / ][+ (its own wirings); `iieMod` = a //e whose PB2
+    // may carry the //e mod (not a //c). MAME `apple2.cpp` c060_r, cases
+    // 1-3 and 6-7.
+    bool button0(bool iiPlus = false) const {
+        if (iiPlus && iiShiftWiring() == IiShiftWiring::Sw01) return !shift_.load(std::memory_order_relaxed);
+        if (!connected()) return iiPlus || openApple_.load(std::memory_order_relaxed);
         return button_[0] || openApple_.load(std::memory_order_relaxed);
     }
-    bool button1() const {
+    bool button1(bool iiPlus = false) const {
+        if (iiPlus && iiShiftWiring() == IiShiftWiring::Sw01) return !ctrl_.load(std::memory_order_relaxed);
+        if (!connected()) return iiPlus || solidApple_.load(std::memory_order_relaxed);
         return button_[1] || solidApple_.load(std::memory_order_relaxed);
     }
-    bool button2(bool iieMode) const {
-        if (iieMode && shiftMod_.load(std::memory_order_relaxed))
+    bool button2(bool iieMod, bool iiPlus = false) const {
+        if ((iieMod && shiftMod_.load(std::memory_order_relaxed))
+            || (iiPlus && iiShiftWiring() == IiShiftWiring::Sw2))
             return !shift_.load(std::memory_order_relaxed);
-        return button_[2];
+        return connected() && button_[2];
+    }
+    /// PADDL2 / PADDL3 replaced by Shift / Ctrl (][+ only). -1 = the timer.
+    int wiredPaddle(int idx, bool iiPlus) const {
+        if (!iiPlus || iiShiftWiring() != IiShiftWiring::Paddl23 || idx < 2) return -1;
+        return !(idx == 2 ? shift_ : ctrl_).load(std::memory_order_relaxed);
     }
 
     // ── Paddle read ($C064-$C067 bit 7) ───────────────────────────────────
@@ -86,7 +127,7 @@ public:
     // off the paddles read 3-4x low. The count is the value AT the trigger,
     // as MAME stores an expiry time.
     bool discharging(int idx, uint64_t stockElapsed) const {
-        return stockElapsed < armed_[idx];
+        return !connected() || stockElapsed < armed_[idx];
     }
 
     // $C070 (mirrored $C070-$C07F). The 558 is four monostables, and a
@@ -127,6 +168,9 @@ private:
     std::atomic<bool> solidApple_{ false };
     std::atomic<bool> shift_     { false };
     std::atomic<bool> shiftMod_  { false };
+    std::atomic<bool> ctrl_      { false };
+    std::atomic<uint8_t> iiWiring_ { 0 };
+    std::atomic<bool> connected_ { true };
     // Boot-time value: cycleCounter - latch_ must exceed every paddle
     // threshold (max 255*11 = 2805) at power-on so an un-strobed $C064-$C067
     // reads low — else the //e "no paddle connected" self-test is confused.

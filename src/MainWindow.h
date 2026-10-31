@@ -882,6 +882,8 @@ private:
     /// Host Shift keys held, OR'd onto the //e Shift-key mod's PB2 wire.
     bool        leftShiftDown_  = false;
     bool        rightShiftDown_ = false;
+    bool        leftCtrlDown_   = false;   // the ][+ Ctrl wire (PADDL3 / SW1)
+    bool        rightCtrlDown_  = false;
     /// `keyboard_alt_apple_keys` (default on): Left/Right Alt drive
     /// Open/Solid Apple, i.e. the PB0/PB1 fire buttons. Off is the escape
     /// hatch for layouts where Alt/Option is how ordinary characters are
@@ -967,6 +969,8 @@ private:
     // Devices → Apple Keyboard.
     std::unique_ptr<pom2::Keyboard_ImGui> keyboardPanel;
     unsigned     kbImageTex_   = 0;
+    unsigned     cardMonitorTex_ = 0;          // MainWindow_CardMonitor.cpp
+    std::vector<uint32_t> cardMonitorPixels_;
     int          kbImageW_     = 0;
     int          kbImageH_     = 0;
     bool         kbImageTried_ = false;
@@ -1478,6 +1482,12 @@ private:
     /// The LaserWriter's PostScript path: spool, render off-thread, adopt.
     void pumpPostScript(const std::vector<uint8_t>& fresh);
     void renderNoSlotClockPanelWindow();
+    /// The card monitor switch + second monitor (MainWindow_CardMonitor.cpp).
+    void renderCardMonitorPanel();
+    void applyCardMonitorSetting();
+    /// File ▸ Save BASIC listing (MainWindow_BasicListing.cpp).
+    void saveBasicListing();
+    std::string basicListingStatus_;
     /// Apple //e keyboard window: lazy-loads the photo, draws it, and turns
     /// a clicked cap into a keystroke on the emulated machine.
     void renderKeyboardPanel();

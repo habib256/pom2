@@ -45,6 +45,9 @@ public:
         /// Any card whose printer is a CentronicsPrinter: the Apple Parallel
         /// Interface, the 1981 Grappler.
         Parallel,
+        /// A CCS 7710 (6850 serial): what it sends is the printer's input,
+        /// as the SoftCard II CP/M uses a type 3 card in slot 1.
+        Serial6850,
     };
 
     struct PrinterPanelSnapshot {

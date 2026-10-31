@@ -188,12 +188,14 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Z80 core (standalone, zexall-clean) | `Z80.h/.cpp` | [§ Z80 core](DEV.md#z80-core-z80hcpp--softcardcpm-phase-1) |
 | Microsoft SoftCard (Z80 DMA bus master) — catalog `softcard` | `SoftCardZ80.h/.cpp` | [§ SoftCard Z80](DEV.md#softcard-z80-softcardz80hcpp--cpm-phase-2) |
 | ALS "The CP/M Card" (Z80B, own 64 KB, CP/M Plus; map read off ALS's software) — catalog `alscpm` | `AlsCpmCard.h/.cpp` | [CARDS-011](docs/backlog/cards.md#cards-011) |
-| Microsoft SoftCard II (6 MHz Z80, own 64 KB, Am2950 latch at `$C0n0`; not a bus master; izapple2 port) — catalog `softcard2` | `SoftCardIICard.h/.cpp` | [§ SoftCard II](DEV.md#softcard-ii-softcardiicard) |
+| Microsoft SoftCard II (6 MHz Z80, own 64 KB, Am2950 latch at `$C0n0`; not a bus master; izapple2 port) — catalog `softcard2`; its 17 "6502 BIOS calls" decoded into the OS-call trace | `SoftCardIICard.h/.cpp`, `SoftCard2Protocol.h/.cpp` | [§ SoftCard II](DEV.md#softcard-ii-softcardiicard) |
 | PCPI Applicard (6 MHz Z80, own 64 KB, 2 KB boot ROM `roms/applicard_v9.bin`; MAME `a2applicard` port) — catalog `applicard` | `ApplicardCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
 | Premium SoftCard //e — the AUX-slot card (aux 64 KB + 80 col + Z80 on that RAM), seated on SlotBus **slot 0**; setting `premium_softcard`, Machine menu; `$C07E` register, A15 flip and status hooks in `Memory::AuxSlotPort` | `PremiumSoftCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
+| CCS 7710 serial — a 6850 ACIA in any slot (the SoftCard II CP/M's "type 3" card; slot 1 = its printer, spooled to the ImageWriter); CCS's 7710-03 PROMs execute when in roms/ (LLE reference), else POM2's own page, compared against them by `ccs7710_card`; switch `ccs7710_firmware` — catalog `ccs7710` | `Ccs7710Card.h/.cpp` | [§ CCS 7710](DEV.md#ccs-7710-ccs7710card) |
 | Saturn 128K — eight language cards in any slot, over the bus INH line (`Memory::LcInhibitor`) — catalog `saturn` | `SaturnCard.h/.cpp` | [§ Saturn 128K](DEV.md#saturn-128k-saturncard) |
 | Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
 | CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm) | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
+| DOS 3.3 file system on a 140 KB image + host tool `pom2_dos33` (ls/get/put/rm, `list` = an A file as text); File ▸ Save BASIC listing (the Applesoft program in RAM, as text) | `Dos33DiskFs.h/.cpp`, `ApplesoftListing.h/.cpp`, `pom2_dos33.cpp`, `MainWindow_BasicListing.cpp` | — |
 | Memory + IIe paging + RamWorks | `Memory.h/.cpp` (keyboard latch + paste FIFO → `Keyboard.h/.cpp`; game port → `PaddleInputs.h`; write/read watchpoints → `MemoryWatch.cpp`; beam-time video RAM for the display → `MemoryVideoLog.cpp`) | [§ Memory](DEV.md#memory) |
 | Display (HGR / DHGR / 80-col) | `Apple2Display.h/.cpp` | [§ Display](DEV.md#display) |
 | Composite NTSC shader (OpenEmulator-style) | `NtscPostProcessor.*`, `OpenGLShader.*` | [§ Composite NTSC shader](DEV.md#composite-ntsc-shader-colorcompositeoe) |
@@ -201,6 +203,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | CRT glass pass (scanlines, mask, vignette, phosphor γ) | `CrtEffectStack.*` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack) |
 | Le Chat Mauve RGB — one catalog key `chatmauve`, five variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · RVB Graph with `$C0F0+S+U+K` + `$C70F-Bn` colour registers, from its manual · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
 | Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`). **Dropped from the plan on every `iieMode` profile** (`SlotConfigurationCoordinator::resolve`, the saved key kept): a //e's 80 columns are built in, and the card's `$C0Bx` decode would cut the Chat Mauve's Eve window | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
+| Card Monitor — the monitor switch for a card with its own picture (soft video switch / Apple video / card video, setting `card_monitor_switch`) + a second-monitor panel | `MainWindow_CardMonitor.cpp`, `Apple2Display::CardMonitor` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | VidHD — IIgs Super Hi-Res on a //e (any slot, no ROM) — catalog `vidhd`; latches `$C022/$C029/$C034/$C035` writes, SHR (NEWVIDEO `$C0`) paints 640×400 from the CPU's aux bank through `CardVideoSource`. **Dropped on ][ / ][+ and //c** | `VidHDCard.h/.cpp` | [§ VidHD](DEV.md#vidhd-vidhdcard) |
 | Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed) | `AudioDevice.*`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
 | Mockingboard A/C + Sound II | `Mockingboard.h/.cpp` + `Via6522.h` + `Ay3_8910.h` + `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard), [§ Sound II](DEV.md#mockingboardcard-variantsoundii) |
@@ -433,7 +436,13 @@ Keyboard wiring:
 - **Host Shift → PB2 ($C063) only with the //e Shift-key mod** — setting
   `keyboard_shift_key_mod` (default **off**, as MAME's `kbd_shift_mod`;
   Machine menu, //e profiles). Active LOW: $C063 reads $80 with Shift UP,
-  and the game port's button 2 is cut off (`PaddleInputs.h`).
+  and the game port's button 2 is cut off (`PaddleInputs.h`). A ][ / ][+
+  has its own: `keyboard_shift_key_mod_ii` (0 none, 1 SW2, 2 PADDL2 = Shift
+  + PADDL3 = Ctrl, 3 SW0 = Shift + SW1 = Ctrl — MAME `apple2.cpp`'s
+  wirings), host Ctrl feeding the Ctrl wire.
+- **`game_port_connected`** (default **on**; Machine menu): off, every
+  paddle reads 255 and a ][ / ][+'s PB0/PB1 read PRESSED (their pull-downs
+  are in the joystick; MAME "polls high if not connected, unlike IIe").
 - **Ctrl+Alt+F = full screen ⇄ windowed** (kiosk toggle — see CLI section). **F10** does the same; the chord exists because F10 is swallowed by the window manager on several desktops.
 - **Ctrl+Alt+G = capture / release the host pointer** for the Mouse Card (a middle click toggles it too; a left click never captures; policy in `MouseGrab.h`) → [DEV § Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh)
 - F9 / F10 / F11 / F12 / Ctrl+Alt+F / Ctrl+Alt+G / Ctrl+Shift+P / Left Alt / Right Alt routed unconditionally (even when ImGui captures keyboard focus).

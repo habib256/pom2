@@ -52,6 +52,7 @@ tests/hero_probe
 
 # Runtime output written by the emulator itself, not source.
 /printouts/
+/listings/
 /snapshots/
 
 # Virtual ][ commercial recordings, copied locally from a USB key for

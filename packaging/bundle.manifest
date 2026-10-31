@@ -109,6 +109,7 @@ deny hdv
 deny disks_3.5
 deny snapshots
 deny printouts
+deny listings
 deny cassettes
 deny prodos_folder
 # Virtual ][ drive/printer/UI recordings (Gerard Putter). Kept under

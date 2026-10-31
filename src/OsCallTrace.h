@@ -73,6 +73,7 @@ public:
             mliStep(pc);
     }
     void onZ80Instruction(const Z80& z80) override;
+    void onCardLine(const char* line) override { emit(line); }
 
     /// Newest last; at most kCapacity lines.
     static constexpr std::size_t kCapacity = 4000;

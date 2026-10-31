@@ -926,6 +926,14 @@ MainWindow::MainWindow(bool forceIIPlus)
     // The //e Shift-key mod (Machine menu), a wire someone soldered in.
     controller->lockState().memory().setShiftKeyMod(
         settings->getBool("keyboard_shift_key_mod", false));
+    // …and the ][ / ][+ ones (0 none, 1 SW2, 2 PADDL2/3, 3 SW0/1).
+    controller->lockState().memory().setIiShiftWiring(pom2::PaddleInputs::IiShiftWiring(
+        std::clamp(settings->getInt("keyboard_shift_key_mod_ii", 0), 0, 3)));
+    // Is anything plugged into the game port (Machine menu)? Default yes.
+    controller->lockState().memory().setGamePortConnected(
+        settings->getBool("game_port_connected", true));
+    // The card monitor switch (Display ▸ Card Monitor).
+    { auto st = controller->lockState(); applyCardMonitorSetting(); }
     // Profile-specific floppy motor pitch — applies only to the 5.25"
     // bank. The 3.5" instance keeps motorPitch=1.0 because the 35_*.wav
     // samples are already recorded at the Sony 800K cadence, so a pitch
@@ -1069,6 +1077,11 @@ MainWindow::~MainWindow()
         GLuint t = kbImageTex_;
         glDeleteTextures(1, &t);
         kbImageTex_ = 0;
+    }
+    if (cardMonitorTex_) {
+        GLuint t = cardMonitorTex_;
+        glDeleteTextures(1, &t);
+        cardMonitorTex_ = 0;
     }
 }
 

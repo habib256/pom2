@@ -77,6 +77,9 @@ class Z80Observer
 public:
     virtual ~Z80Observer() = default;
     virtual void onZ80Instruction(const Z80& z80) = 0;
+    /// A line about the card's own traffic (the SoftCard II's 6502 BIOS
+    /// calls, SoftCard2Protocol.h), sent only while the observer is hung.
+    virtual void onCardLine(const char* /*line*/) {}
 };
 
 class Z80

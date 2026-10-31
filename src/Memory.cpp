@@ -1322,12 +1322,13 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         const uint8_t mirrored = static_cast<uint8_t>(0x60 | (low & 0x07));
         const uint8_t bit7 = [&]() -> uint8_t {
             switch (mirrored) {
-                case 0x61: return paddles_.button0() ? 0x80 : 0x00;
-                case 0x62: return paddles_.button1() ? 0x80 : 0x00;
-                // The Shift-key mod is a //e wire; a //c has no such option.
-                case 0x63: return paddles_.button2(iieMode && !iicProfile_) ? 0x80 : 0x00;
+                case 0x61: return paddles_.button0(!iieMode) ? 0x80 : 0x00;
+                case 0x62: return paddles_.button1(!iieMode) ? 0x80 : 0x00;
+                // Shift-key mods: //e (not //c) and ][/][+ wirings, PaddleInputs.h.
+                case 0x63: return paddles_.button2(iieMode && !iicProfile_, !iieMode) ? 0x80 : 0x00;
                 case 0x64: case 0x65: case 0x66: case 0x67: {
                     const int idx = mirrored - 0x64;
+                    if (const int w = paddles_.wiredPaddle(idx, !iieMode); w >= 0) return w ? 0x80 : 0x00;
                     return paddles_.discharging(idx, stockSincePaddleStrobe(idx)) ? 0x80 : 0x00;
                 }
                 case 0x60:

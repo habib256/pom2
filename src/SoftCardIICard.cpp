@@ -38,6 +38,7 @@ SoftCardIICard::SoftCardIICard() : z80_(*this)
 
 void SoftCardIICard::resetZ80()
 {
+    proto_.reset();
     z80_.reset();
     booting_ = true;
     toZ80Full_ = false;
@@ -60,7 +61,10 @@ uint8_t SoftCardIICard::deviceSelectRead(uint8_t low4)
 void SoftCardIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     switch (low4 & 3) {
-    case 0: toZ80_ = v; toZ80Full_ = true; break;
+    case 0:
+        toZ80_ = v; toZ80Full_ = true;
+        if (!booting_ && z80_.observer()) proto_.appleSent(v);
+        break;
     case 3: resetZ80(); break;
     default: break;
     }
@@ -123,6 +127,7 @@ void SoftCardIICard::z80IoWrite(uint16_t /*port*/, uint8_t v)
     }
     fromZ80_ = v;
     fromZ80Full_ = true;
+    if (z80_.observer()) proto_.z80Sent(v);
 }
 
 bool SoftCardIICard::stepZ80(int& tStates)

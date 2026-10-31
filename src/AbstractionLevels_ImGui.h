@@ -90,6 +90,7 @@ enum class AbsToggle {
     MouseCard,       ///< `mouse` (L0, M68705 mask ROM executes) / `mouseaw` (H1)
     BlockStorage,    ///< `cffa` (L2, real firmware + ATA) / `hdv` (H1, synthetic)
     PrinterIface,    ///< `grappler` (L2, real EPROM) / `printer` (H1, synthetic)
+    SerialFirmware,  ///< `ccs7710`: CCS's PROMs (L2) / POM2's page (H1)
     CompositeVideo   ///< OpenEmulator signal demodulation (L1) / artifact LUT (H1)
 };
 

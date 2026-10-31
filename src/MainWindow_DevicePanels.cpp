@@ -755,6 +755,10 @@ void MainWindow::renderImageWriterWindow()
             host.sourceLabel = "fed by Super Serial (printer port), slot " +
                                std::to_string(printerHost.sourceSlot);
             break;
+        case SourceKind::Serial6850:
+            host.sourceLabel = "fed by CCS 7710 serial, slot " +
+                               std::to_string(printerHost.sourceSlot);
+            break;
         case SourceKind::None:
             break;
     }

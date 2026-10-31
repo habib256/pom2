@@ -18,6 +18,7 @@
 
 #include "CffaCard.h"
 #include "ApplicardCard.h"
+#include "Ccs7710Card.h"
 #include "Cffa3000Card.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
@@ -280,6 +281,27 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
             (card->alternateIsDerived() ? std::string(" (inverse set derived)")
                                         : " + " + alt);
         card->onReset();
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "ccs7710") {
+        // CCS 7710: never refused — without CCS's PROMs it serves POM2's
+        // own firmware page (Ccs7710Card.h).
+        auto card = std::make_unique<Ccs7710Card>(request.slot);
+        auto read = [&](const char* rel) {
+            std::vector<uint8_t> b;
+            const std::string p = locate_(rel);
+            if (!p.empty()) {
+                std::ifstream f(p, std::ios::binary);
+                b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            }
+            return b;
+        };
+        if (card->loadProms(read(Ccs7710Card::kPromHiPath), read(Ccs7710Card::kPromLoPath)))
+            result.status = std::string("loaded: ") + Ccs7710Card::kPromHiPath + " + " + Ccs7710Card::kPromLoPath;
+        else
+            result.status = "POM2's own firmware page";
         result.card = std::move(card);
         return result;
     }

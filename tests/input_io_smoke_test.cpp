@@ -160,6 +160,81 @@ void testShiftKeyMod()
     std::printf("[ OK ] //e Shift-key mod: Shift on PB2, active low\n");
 }
 
+// ── 2b'. The ][ / ][+ Shift-key mods: MAME apple2.cpp's three wirings ─────
+// c060_r cases 1-3 and 6-7: SW2 = Shift; PADDL2 = Shift + PADDL3 = Ctrl;
+// SW0 = Shift + SW1 = Ctrl. Every wire active LOW (a2kbd.h "0 = pressed"),
+// read only on a ][ / ][+ — the //e keeps its own setting.
+void testIiShiftWirings()
+{
+    using W = pom2::PaddleInputs::IiShiftWiring;
+    Memory mem;                                         // ][+ mode
+    auto up = [&](uint16_t a) { return (mem.memRead(a) & 0x80) != 0; };
+
+    mem.setShiftKey(true);
+    assert(!up(kBtn2) && "not fitted: Shift is nowhere");
+    mem.setShiftKey(false);
+
+    mem.setIiShiftWiring(W::Sw2);
+    assert(up(kBtn2));
+    mem.setShiftKey(true);
+    assert(!up(kBtn2) && "SW2: Shift down grounds PB2");
+    mem.setShiftKey(false);
+
+    mem.setIiShiftWiring(W::Paddl23);
+    assert(up(0xC066) && up(0xC067) && "PADDL2/3: both keys up read $80");
+    mem.setShiftKey(true);
+    assert(!up(0xC066) && up(0xC067));
+    mem.setShiftKey(false);
+    mem.setControlKey(true);
+    assert(up(0xC066) && !up(0xC067));
+    mem.setControlKey(false);
+
+    mem.setIiShiftWiring(W::Sw01);
+    assert(up(kBtn0) && up(kBtn1));
+    mem.setShiftKey(true);
+    assert(!up(kBtn0) && up(kBtn1));
+    mem.setShiftKey(false);
+    mem.setControlKey(true);
+    assert(up(kBtn0) && !up(kBtn1));
+    mem.setControlKey(false);
+
+    // A //e ignores every ][+ wiring: its PB0/PB1 are the Apple keys.
+    mem.setIIEMode(true);
+    assert(!up(kBtn0) && !up(kBtn1));
+    std::printf("[ OK ] ][+ Shift-key mods: SW2, PADDL2/3, SW0/1, active low\n");
+}
+
+// ── 2b''. Nothing on the game port ─────────────────────────────────────
+// MAME apple2.cpp c060_r: a ][+'s PB0/PB1 "poll high if not connected,
+// unlike IIe" (their pull-downs are in the controller), and on both machines
+// an empty port's paddles never time out (`!is_device_connected()`). The
+// setting defaults to connected, so nothing changes until it is turned off.
+void testEmptyGamePort()
+{
+    auto up = [](Memory& m, uint16_t a) { return (m.memRead(a) & 0x80) != 0; };
+    Memory plus;                                        // ][+
+    assert(!up(plus, kBtn0) && !up(plus, kBtn1) && "connected by default: released");
+    plus.setGamePortConnected(false);
+    assert(up(plus, kBtn0) && up(plus, kBtn1) && "][+ empty port: PB0/PB1 float high");
+    assert(!up(plus, kBtn2) && "PB2 is not pulled up");
+    plus.memRead(kPdlRst);
+    for (int i = 0; i < 20000; ++i) plus.memRead(0xC000);   // far past any count
+    assert(up(plus, kPdl0) && up(plus, 0xC067) && "empty port: paddles never time out");
+    plus.setPaddleButton(0, false);
+    plus.setGamePortConnected(true);
+    assert(!up(plus, kBtn0));
+
+    Memory iie;
+    iie.setIIEMode(true);
+    iie.setGamePortConnected(false);
+    assert(!up(iie, kBtn0) && !up(iie, kBtn1) && "//e: pull-downs on the board");
+    iie.setOpenAppleKey(true);
+    assert(up(iie, kBtn0) && "the Apple keys still work");
+    iie.setOpenAppleKey(false);
+    assert(up(iie, kPdl0) && "//e empty port: paddle reads 255");
+    std::printf("[ OK ] empty game port: ][+ PB0/PB1 high, paddles 255\n");
+}
+
 // ── 2c. The host mouse as paddles (INPUT-003, PaddleMouse.h) ──────────────
 void testPaddleMouse()
 {
@@ -266,6 +341,8 @@ int main()
     testKeyboardLatch();
     testButtons();
     testShiftKeyMod();
+    testIiShiftWirings();
+    testEmptyGamePort();
     testPaddleMouse();
     testPaddleTiming();
     testPaddleNoRetrigger();

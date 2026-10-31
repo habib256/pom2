@@ -238,6 +238,7 @@ void MainWindow::registerPanelDraws()
     draw(P::Mouse,        [this] { renderMouseInspectorWindow(); });
     draw(P::NoSlotClock,  [this] { renderNoSlotClockPanelWindow(); });
     draw(P::Crt,          [this] { renderNtscSettingsWindow(); });
+    draw(P::CardMonitor,  [this] { renderCardMonitorPanel(); });
     draw(P::Voxel,        [] { /* drawn inside renderScreenWindow */ });
     draw(P::VoxelSettings,[this] { renderVoxelSettingsWindow(); });
     draw(P::MemViewer,    [this] { renderMemoryViewerWindow(); });
@@ -294,6 +295,7 @@ const char* panelIcon(pom2::PanelId id)
     case P::Joystick:      return ICON_FA_GAMEPAD;
     case P::Mouse:         return ICON_FA_COMPUTER_MOUSE;
     case P::Printer:       return ICON_FA_PRINT;
+    case P::CardMonitor:   return ICON_FA_TV;
     case P::ImageWriter:   return ICON_FA_IMAGES;
     case P::Ssc:           return ICON_FA_PLUG;
     case P::Ethernet:      return ICON_FA_ETHERNET;

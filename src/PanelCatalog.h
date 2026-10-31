@@ -85,7 +85,7 @@ enum class PanelId : std::size_t {
     Mockingboard, Phasor, EchoPlus, Mixer,
     Ssc, Ethernet, Printer, ImageWriter, ChatMauve, Joystick, Keyboard,
     Rewind, Mouse, NoSlotClock,
-    Crt, Voxel, VoxelSettings,
+    Crt, CardMonitor, Voxel, VoxelSettings,
     MemViewer, Debugger, MemBar, MemBarH, MemGrid,
     HgrPaint, HgrSprite, AiControl,
     Welcome, RomStatus, Abstraction,
@@ -225,6 +225,11 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "show_ntsc", nullptr,
   "Scanlines, shadow mask, barrel, phosphor curve, persistence,\n"
   "brightness/contrast/saturation." },
+{ PanelId::CardMonitor, "panel.cardmonitor", "Card Monitor (80-column card)...", PanelGroup::Display,
+  "show_card_monitor", nullptr,
+  "A Videoterm's (or UltraTerm's, VidHD's) picture in its own window, and\n"
+  "what the main screen shows: the soft video switch, Apple video only or\n"
+  "card video only. Apple video + this panel = two monitors." },
 { PanelId::Voxel, "panel.voxel", "3D voxel view", PanelGroup::Display,
   "show_3d_voxel", nullptr,
   "MicroM8-style cube renderer.\n"

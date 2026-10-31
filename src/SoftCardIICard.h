@@ -52,6 +52,7 @@
 #define POM2_SOFTCARD_II_CARD_H
 
 #include "SlotPeripheral.h"
+#include "SoftCard2Protocol.h"
 #include "Z80.h"
 
 #include <array>
@@ -102,6 +103,10 @@ private:
     bool stepZ80(int& tStates);
 
     pom2::Z80 z80_;
+    /// The 6502 BIOS calls on the mailbox, decoded for the OS-call trace —
+    /// fed only while the trace hangs an observer on the Z80.
+    pom2::SoftCard2Protocol proto_{ [this](const std::string& l) {
+        if (auto* o = z80_.observer()) o->onCardLine(l.c_str()); } };
     std::array<uint8_t, 0x10000> ram_{};
     bool booting_ = true;
 

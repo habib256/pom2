@@ -152,6 +152,10 @@ inline constexpr CardType kCardTypes[] = {
     // Saturn 128K — eight 16 KB language cards; takes $D000-$FFFF over the
     // bus INH line (Memory::LcInhibitor). MAME ramcard128k.cpp port.
     { "saturn",       "Saturn 128K RAM card" },
+    // CCS 7710 — a 6850 ACIA serial card; what the SoftCard II CP/M calls a
+    // type 3 card (slot 1 = its buffered printer). POM2's own firmware page
+    // unless CCS's two nibble PROMs are in roms/. MAME ccs7710.cpp.
+    { "ccs7710",      "CCS 7710 serial (6850)" },
     // Videx UltraTerm — 80 to 160 columns, its own video switch; ROM-gated
     // (roms/videx_ultraterm_*). MAME a2ultraterm.cpp port.
     { "ultraterm",    "Videx UltraTerm (80-160 col)" },

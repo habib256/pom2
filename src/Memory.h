@@ -904,6 +904,9 @@ public:
     void setSolidAppleKey (bool down) { paddles_.setSolidAppleKey(down); }
     void setShiftKey      (bool down) { paddles_.setShiftKey(down); }
     void setShiftKeyMod   (bool on)   { paddles_.setShiftKeyMod(on); }
+    void setControlKey    (bool down) { paddles_.setControlKey(down); }
+    void setGamePortConnected(bool on) { paddles_.setConnected(on); }
+    void setIiShiftWiring (pom2::PaddleInputs::IiShiftWiring w) { paddles_.setIiShiftWiring(w); }
 
     // Reset — returns LC/MMU/IOU/video switches to cold-boot defaults.
     // Does NOT touch RAM. Used by power-on (`coldBoot`), profile apply,

@@ -17,6 +17,7 @@
 #include "PrinterCoordinator.h"
 
 #include "CentronicsPrinter.h"
+#include "Ccs7710Card.h"
 
 #include "Block512Backing.h"   // pom2::noteMediaWrite
 
@@ -56,6 +57,8 @@ std::string sourceName(PrinterCoordinator::SourceKind kind, int slot)
             return "Super Serial slot " + std::to_string(slot);
         case PrinterCoordinator::SourceKind::Parallel:
             return "Parallel card slot " + std::to_string(slot);
+        case PrinterCoordinator::SourceKind::Serial6850:
+            return "CCS 7710 serial slot " + std::to_string(slot);
         case PrinterCoordinator::SourceKind::None:
             break;
     }
@@ -109,11 +112,14 @@ PrinterCoordinator::captureHost(EmulationController& controller) const
     auto* grappler = findFirst<GrapplerCard>(bus);
     FujiNetCard* fujiNet = nullptr;
     int parallelSlot = -1;
+    int serial6850Slot = -1;
     std::vector<SuperSerialCard*> serialTaps;
     for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
         auto* peripheral = bus.peripheral(slot);
         if (parallelSlot < 0 && peripheral && peripheral->centronicsPrinter())
             parallelSlot = slot;
+        if (serial6850Slot < 0 && dynamic_cast<Ccs7710Card*>(peripheral))
+            serial6850Slot = slot;
         if (!fujiNet) {
             if (auto* card = dynamic_cast<FujiNetCard*>(peripheral);
                 card && card->hasPrinterUnit()) {
@@ -139,6 +145,9 @@ PrinterCoordinator::captureHost(EmulationController& controller) const
     } else if (fujiNet) {
         snapshot.source = SourceKind::FujiNet;
         snapshot.sourceSlot = fujiNet->getSlot();
+    } else if (serial6850Slot > 0) {
+        snapshot.source = SourceKind::Serial6850;
+        snapshot.sourceSlot = serial6850Slot;
     } else if (!serialTaps.empty()) {
         snapshot.source = SourceKind::SuperSerial;
         snapshot.sourceSlot = serialTaps.front()->getSlot();
@@ -163,6 +172,7 @@ PrinterCoordinator::captureHost(EmulationController& controller) const
     if (grappler) ignore(SourceKind::Grappler, grappler->getSlot());
     if (parallelSlot > 0) ignore(SourceKind::Parallel, parallelSlot);
     if (fujiNet) ignore(SourceKind::FujiNet, fujiNet->getSlot());
+    if (serial6850Slot > 0) ignore(SourceKind::Serial6850, serial6850Slot);
     for (auto* card : serialTaps)
         ignore(SourceKind::SuperSerial, card->getSlot());
 
@@ -245,6 +255,17 @@ PrinterCoordinator::drainImageWriter(EmulationController& controller)
         auto* card = dynamic_cast<FujiNetCard*>(bus.peripheral(slot));
         if (!card || !card->hasPrinterUnit()) continue;
         batch.source = SourceKind::FujiNet;
+        batch.sourceSlot = slot;
+        prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
+                     card->bytesWritten());
+        consumed_ = card->drainSpoolFrom(consumed_, batch.bytes);
+        notePrinted(batch);
+        return batch;
+    }
+    for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
+        auto* card = dynamic_cast<Ccs7710Card*>(bus.peripheral(slot));
+        if (!card) continue;
+        batch.source = SourceKind::Serial6850;
         batch.sourceSlot = slot;
         prepareDrain({batch.source, reinterpret_cast<std::uintptr_t>(card)},
                      card->bytesWritten());

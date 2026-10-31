@@ -388,6 +388,12 @@ void MainWindow::renderMenuBar()
             driveRackFilePicker_.openForBoot();
         }
 #endif
+        if (ImGui::MenuItem("Save BASIC listing")) saveBasicListing();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The Applesoft program in memory as text, in the listings\n"
+                              "folder and on the clipboard. To move files to and from a\n"
+                              "DOS 3.3 disk, see the pom2_dos33 tool.");
+        if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::DiskLibrary);
         // Every drive of the machine, the Drives window's own list and
@@ -655,6 +661,44 @@ void MainWindow::renderMenuBar()
                     "game-port button: $C063 reads Shift instead (bit 7 = 1 with\n"
                     "Shift UP). Some word processors use it to tell upper from\n"
                     "lower case. The game port's own button 2 is cut off.");
+        }
+        {
+            bool plugged = settings->getBool("game_port_connected", true);
+            if (ImGui::MenuItem("Joystick plugged into the game port", nullptr, &plugged)) {
+                settings->setBool("game_port_connected", plugged);
+                if (!settingsReadOnly()) settings->save();
+                controller->lockState().memory().setGamePortConnected(plugged);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Off = nothing on the game port, as the real machine reads it:\n"
+                    "every paddle at 255, and on a ][ / ][+ buttons 0 and 1 read\n"
+                    "PRESSED (their pull-downs are in the joystick; the //e has its\n"
+                    "own). On by default: most games would see fire held down.");
+        }
+        if (!pom2::profileConfig(activeProfile).iieMode) {
+            // The ][ / ][+ Shift-key mods: MAME apple2.cpp's three wirings.
+            static const char* const kWirings[] = {
+                "Not fitted", "SW2 = Shift ($C063)",
+                "PADDL2 = Shift, PADDL3 = Ctrl ($C066/$C067)",
+                "SW0 = Shift, SW1 = Ctrl ($C061/$C062)" };
+            const int cur = std::clamp(settings->getInt("keyboard_shift_key_mod_ii", 0), 0, 3);
+            if (ImGui::BeginMenu("Shift key mod")) {
+                for (int i = 0; i < 4; ++i)
+                    if (ImGui::MenuItem(kWirings[i], nullptr, cur == i)) {
+                        settings->setInt("keyboard_shift_key_mod_ii", i);
+                        if (!settingsReadOnly()) settings->save();
+                        controller->lockState().memory().setIiShiftWiring(
+                            pom2::PaddleInputs::IiShiftWiring(i));
+                    }
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "A ][+ keyboard sends upper case only, so owners wired Shift\n"
+                    "(and for some word processors Ctrl) to a game-port input.\n"
+                    "Each reads bit 7 = 1 with the key UP. SW2 is the common one;\n"
+                    "Zardax wants PADDL2/3; Format-II and Sandy's want SW0/SW1.");
         }
         if (pom2::profileConfig(activeProfile).noPhysicalSlots) {
             // The //c keyboard's 80/40 key, read at $C060 (Memory.h). A

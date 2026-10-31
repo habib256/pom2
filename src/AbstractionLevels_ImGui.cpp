@@ -153,9 +153,21 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "No schematic: RAM contention between the Z80, the 6502 and the video "
       "is not modelled.", "PremiumSoftCard.h/.cpp" },
     { "saturn", "CPU & memory", "Saturn 128K (eight language cards over INH)", AbsLevel::L1,
-      "MAME ramcard128k decode with Apple's two-read write-enable; takes "
+      "MAME ramcard128k decode with Saturn's two-access write-enable (a write "
+      "counts, manual p. 70; RAMTEST128K passes); takes "
       "$D000-$FFFF over the bus INH line, per direction",
       "Nothing above the switches is guest-visible.", "SaturnCard.h/.cpp" },
+    { "ccs7710", "Network & serial", "CCS 7710 (6850) — CCS's 7710-03 PROMs", AbsLevel::L2,
+      "The real firmware executes on MAME ccs7710's decode (A0 only) and a "
+      "6850 with its status, master reset and interrupt enables",
+      "The line is infinitely fast (TDRE always set) and goes to a spool, "
+      "not a host port.", "Ccs7710Card.h/.cpp" },
+    { "ccs7710_pom2", "Network & serial", "CCS 7710 (6850) — POM2's firmware page", AbsLevel::H1,
+      "Same card; the $Cn00 page is POM2's, written to the 7710-03's "
+      "behaviour: ID bytes, ACIA set-up, 8-bit output with screen echo, "
+      "IN#n input. ccs7710_card runs both and compares line and screens",
+      "The PROM's terminal mode (Ctrl-A commands, Ctrl-R / Ctrl-T from the "
+      "line) and its flashing cursor are not written.", "Ccs7710Card.cpp" },
     { "ultraterm", "Video", "Videx UltraTerm (80-160 columns)", AbsLevel::L1,
       "MAME a2ultraterm bus map, VRAM pages and attributes on the HD6845S; "
       "the real firmware's PR#3 drives it",
@@ -468,6 +480,7 @@ AbstractionLevels_ImGui::render(bool* open, const Snapshot& snap)
             case AbsToggle::MouseCard:      lo = "mouse";    hi = "mouseaw";     break;
             case AbsToggle::BlockStorage:   lo = "cffa";     hi = "hdv";         break;
             case AbsToggle::PrinterIface:   lo = "grappler"; hi = "printercard"; break;
+            case AbsToggle::SerialFirmware: lo = "ccs7710";  hi = "ccs7710_pom2"; break;
             case AbsToggle::CompositeVideo: lo = "oe";       hi = "lut";         break;
             case AbsToggle::None:           break;
         }

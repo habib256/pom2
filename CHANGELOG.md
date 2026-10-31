@@ -10,6 +10,46 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — From SoftCard2: the 6502 BIOS calls traced, the CP/M slot scan, a 6850 card
+
+- **SoftCard II calls in the OS-call trace.** The 17 commands the Z80 sends
+  the 6502 under CP/M (READSEC, WRITESLOT, CALLSUB…, names from Microsoft's
+  manual, byte counts from sbabcoc's SoftCard2) are decoded off the mailbox
+  (`SoftCard2Protocol`): a boot traces UPDATE, INITSLOT 7→1, then the
+  console and the disk.
+- **The loader's slot scan and the BIOS extension words pinned**: with a
+  CCS 7710 in slot 1 and a Super Serial in 2, CP/M types them 3 and 6
+  (Disk II 2), and `$F38E-$F395` hold `$0D54 $0D44 $1600 $DB00` as sbabcoc
+  measured. ^P sends `DIR` to slot 1's printer.
+- **CCS 7710 serial card** (`ccs7710`): a 6850 ACIA, MAME's decode, its
+  output spooled to the ImageWriter. CCS's 7710-03 PROMs, when in roms/,
+  execute: the LLE reference. Otherwise (RetroBIOS has no `ccs7710` set),
+  or by choice in Abstraction Levels, the card serves POM2's own page,
+  written from the PROM's disassembly. **Measured against it**: the first
+  version stripped bit 7, never echoed to the screen and never set the 6850
+  up; now a ][+ PR#1 / IN#1 session sends the same bytes and leaves the
+  same screens on both (`ccs7710_card`, negative control included).
+- The Abstraction Levels row of the Saturn still described Apple's
+  reads-only write-enable after the morning's fix; corrected.
+
+## 2026-10-31 — From ReplicApple2Plus: game port, ][+ Shift mods, Card Monitor, DOS 3.3 transfer
+
+- **Empty game port** (`game_port_connected`, default on). Off: paddles
+  read 255 and a ][ / ][+'s PB0/PB1 read pressed, as MAME and the real
+  machine do — the pull-downs are in the controller. Default on so a ][+
+  with no joystick configured does not look like fire held down.
+- **][ / ][+ Shift-key mods**: MAME `apple2.cpp`'s three wirings (SW2;
+  PADDL2/3 = Shift/Ctrl; SW0/1 = Shift/Ctrl), active low, host Ctrl wired
+  for the two Ctrl variants. POM2 had only the //e's.
+- **Card Monitor**: the soft video switch, Apple video only or card video
+  only, and a second-monitor panel with the card's picture.
+- **Videoterm SETUP marker** pinned both ways (no fix needed: POM2's
+  power-on pattern never trips it).
+- **`pom2_dos33`** (ls / get / put / rm / list) on a DOS 3.3 image, and
+  **File ▸ Save BASIC listing** (the Applesoft program in RAM as text, to
+  `listings/` and the clipboard). Checked against the real DOS: a file
+  written by the tool is CATALOGed, `EXEC`ed and `RUN` by DOS 3.3.
+
 ## 2026-10-31 — Toward the silicon: floating bus on odd Disk II/IWM reads and ROM-less slots, the 556's motor delay, power-on RAM
 
 - **Odd `$C0nX` reads are the floating bus**, on a Disk II and on a //c's

@@ -221,6 +221,13 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
             (action != GLFW_RELEASE);
         controller->memory().setShiftKey(leftShiftDown_ || rightShiftDown_);
     }
+    // Host Ctrl → the ][+ Ctrl wire (PADDL3 or SW1), read only with that
+    // Shift-key mod wiring. Same rules: not consumed, an atomic.
+    if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
+        (key == GLFW_KEY_LEFT_CONTROL ? leftCtrlDown_ : rightCtrlDown_) =
+            (action != GLFW_RELEASE);
+        controller->memory().setControlKey(leftCtrlDown_ || rightCtrlDown_);
+    }
     if (key == GLFW_KEY_RIGHT_ALT) {
         rightAltDown_ = (action != GLFW_RELEASE);
         if (action == GLFW_RELEASE) rightAltLevel3_ = false;

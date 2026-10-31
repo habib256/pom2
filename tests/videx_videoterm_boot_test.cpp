@@ -29,6 +29,12 @@
 //   3. `PRINT 6*7` answers 42 in VRAM
 //   4. Ctrl-Reset: the ][+ RESET handler reads $C058 (Autostart $FA6F), AN0
 //      drops, and the monitor shows the Apple's 40 columns again
+//   5. SETUP's "already initialised" marker: the firmware skips programming
+//      the 6845 when screen-hole byte $077B AND $F8 = $30 (sbabcoc's
+//      ReplicApple2Plus, read off the v2.4 ROM; ~1 power-on in 32 on random
+//      DRAM leaves the 80 columns dark until a reboot). POM2's power-on
+//      pattern puts $FF there, so step 2 always initialises; with the marker
+//      planted, the real firmware skips — the code really runs.
 
 #include "Apple2Display.h"
 #include "M6502.h"
@@ -119,7 +125,8 @@ int main()
     disp.render(mem);
     expect(disp.width() == 280 && !disp.showingCardPicture(), "power-on: the Apple's picture");
 
-    // 2. PR#3.
+    // 2. PR#3. The power-on byte under SETUP's marker is not $30-$37.
+    expect((mem.peekMainRam(0x077B) & 0xF8) != 0x30, "power-on: $077B is not the init marker");
     typeLine(mem, cpu, "PR#3\r");
     expect(mem.getDisplayState().an0, "PR#3: the firmware set AN0 ($C059)");
     expect(card->crtc().horizDisplayed() == 80, "PR#3: 6845 R1 = 80 columns");
@@ -153,6 +160,26 @@ int main()
     expect(disp.width() == 280 && !disp.showingCardPicture(),
            "Ctrl-Reset: the monitor shows the Apple's 40 columns again");
     expect(apple40Has(mem, ']'), "Ctrl-Reset: Applesoft prompt on the 40-column page");
+
+    // 5. The marker planted on a fresh machine: PR#3 leaves the 6845 alone.
+    {
+        auto made2 = factory.create({ "videoterm", 3, false, pom2::SystemProfile::AppleIIPlus });
+        Memory mem2;
+        M6502 cpu2(&mem2);
+        mem2.setCpu(&cpu2);
+        mem2.loadAppleIIRom(rom.c_str());
+        auto* card2 = static_cast<VidexVideotermCard*>(made2.card.get());
+        mem2.slotBus().plug(3, std::move(made2.card));
+        cpu2.setCpuMode(M6502::CpuMode::NMOS);
+        mem2.resetSoftSwitches();
+        mem2.slotBus().reset();
+        cpu2.hardReset();
+        runCycles(cpu2, 3'000'000);
+        mem2.memWrite(0x077B, 0x30);
+        typeLine(mem2, cpu2, "PR#3\r");
+        expect(card2->crtc().horizDisplayed() != 80,
+               "marker $30: SETUP skips the 6845 (R1 never programmed)");
+    }
 
     if (failures) {
         std::printf("videx_videoterm_boot: %d failure(s)\n", failures);

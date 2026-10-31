@@ -279,7 +279,9 @@ set(SOURCES
     src/Z80.cpp
     src/AlsCpmCard.cpp
     src/SoftCardIICard.cpp
+    src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
+    src/Ccs7710Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -373,6 +375,9 @@ set(SOURCES
     src/MainWindow_DevicePanels.cpp
     src/MainWindow_SettingsPanels.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_CardMonitor.cpp
+    src/MainWindow_BasicListing.cpp
+    src/ApplesoftListing.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Slots.cpp
     src/MainWindow_Kiosk.cpp
@@ -610,7 +615,9 @@ set(POM2_DEVICES_SOURCES
     src/SmartPortUnit.cpp
     src/AlsCpmCard.cpp
     src/SoftCardIICard.cpp
+    src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
+    src/Ccs7710Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -707,6 +714,8 @@ set(POM2_FRONTEND_SOURCES
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_CardMonitor.cpp
+    src/MainWindow_BasicListing.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Panels.cpp
     src/MainWindow_SettingsPanels.cpp
@@ -715,6 +724,7 @@ set(POM2_FRONTEND_SOURCES
     # anywhere lower would just be a lie the guard then enforces.
     src/pom2_bench.cpp
     src/pom2_cpm.cpp
+    src/pom2_dos33.cpp
     src/pom2_headless.cpp
     src/DebugCoordinator.cpp
     src/DevicePanelCoordinator.cpp
@@ -851,6 +861,8 @@ set(POM2_MEDIA_HEADERS
 
 set(POM2_MEDIA_SOURCES
     src/CpmDiskFs.cpp
+    src/Dos33DiskFs.cpp
+    src/ApplesoftListing.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
     src/AtaBlockDevice.cpp
@@ -978,7 +990,9 @@ set(HEADERS
     src/Z80.h
     src/AlsCpmCard.h
     src/SoftCardIICard.h
+    src/SoftCard2Protocol.h
     src/ApplicardCard.h
+    src/Ccs7710Card.h
     src/SaturnCard.h
     src/VidexUltratermCard.h
     src/PremiumSoftCard.h
@@ -1520,7 +1534,9 @@ set(POM2_CORE_SOURCES
     src/Z80.cpp
     src/AlsCpmCard.cpp
     src/SoftCardIICard.cpp
+    src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
+    src/Ccs7710Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -1881,6 +1897,7 @@ add_executable(pom2_headless
     src/Ssi263PhonemeData.cpp
     src/AlsCpmCard.cpp
     src/SoftCardIICard.cpp
+    src/SoftCard2Protocol.cpp
     src/SoftCardZ80.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
@@ -1925,6 +1942,18 @@ add_executable(pom2_cpm
     src/CpmDiskFs.cpp
 )
 target_include_directories(pom2_cpm PRIVATE ${POM2_SRC_DIR})
+endif()
+
+# ─── pom2_dos33 ───────────────────────────────────────────────────────────
+# Host tool: catalog / get / put / rm on a DOS 3.3 disk image, and an
+# Applesoft file as a text listing (src/Dos33DiskFs.h, ApplesoftListing.h).
+if(NOT EMSCRIPTEN)
+add_executable(pom2_dos33
+    src/pom2_dos33.cpp
+    src/Dos33DiskFs.cpp
+    src/ApplesoftListing.cpp
+)
+target_include_directories(pom2_dos33 PRIVATE ${POM2_SRC_DIR})
 endif()
 
 # ─── pom2_bench ───────────────────────────────────────────────────────────
@@ -2097,6 +2126,10 @@ if(TARGET pom2_headless)
 endif()
 if(TARGET pom2_cpm)
     install(TARGETS pom2_cpm
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+if(TARGET pom2_dos33)
+    install(TARGETS pom2_dos33
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
 

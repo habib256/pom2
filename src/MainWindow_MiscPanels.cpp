@@ -22,6 +22,7 @@
 // to that translation unit.)
 
 #include "MainWindow.h"
+#include "Ccs7710Card.h"
 #include "DevicePanelCoordinator.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
@@ -357,6 +358,40 @@ void MainWindow::renderAbstractionPanel()
     row("softcard2", plugged("softcard2") ? Live::Active : Live::NotPlugged);
     row("applicard", plugged("applicard") ? Live::Active : Live::NotPlugged);
     row("saturn",    plugged("saturn")    ? Live::Active : Live::NotPlugged);
+    {
+        // Which firmware the plugged 7710 runs, read off the card itself.
+        int ccsSlot = 0;
+        bool ccsProm = false;
+        {
+            auto st = controller->lockState();
+            for (int sl = 1; sl < SlotBus::kSlotCount && !ccsSlot; ++sl)
+                if (auto* c = dynamic_cast<Ccs7710Card*>(st.memory().slotBus().peripheral(sl))) {
+                    ccsSlot = sl;
+                    ccsProm = c->promsLoaded();
+                }
+        }
+        row("ccs7710",      ccsSlot && ccsProm  ? Live::Active : Live::NotPlugged);
+        row("ccs7710_pom2", ccsSlot && !ccsProm ? Live::Active : Live::NotPlugged);
+        Panel::ToggleState t;
+        t.id           = pom2::AbsToggle::SerialFirmware;
+        t.title        = "CCS 7710 firmware";
+        t.needsRestart = true;
+        t.low.label    = "CCS's 7710-03 PROMs execute";
+        t.low.level    = pom2::AbsLevel::L2;
+        t.low.available = !pom2::findResource(Ccs7710Card::kPromHiPath).empty() &&
+                          !pom2::findResource(Ccs7710Card::kPromLoPath).empty();
+        t.low.blockedBy = "roms/ccs7710_03h.u5 and roms/ccs7710_03l.u6 are needed";
+        t.low.why      = "The real page: the reference, terminal mode included.";
+        t.high.label   = "POM2's firmware page";
+        t.high.level   = pom2::AbsLevel::H1;
+        t.high.why     = "Written to the 7710-03's behaviour and compared with it\n"
+                         "(ccs7710_card): same bytes on the line, same screens.\n"
+                         "No terminal mode.";
+        t.selected     = ccsSlot ? (ccsProm ? 0 : 1) : -1;
+        if (t.selected < 0)
+            t.note = "No CCS 7710 is plugged — add one in Slot Configuration.";
+        snap.toggles.push_back(std::move(t));
+    }
     row("ultraterm", plugged("ultraterm") ? Live::Active : Live::NotPlugged);
     row("premium_softcard", plugged("premium_softcard") ? Live::Active : Live::NotPlugged);
     row("z80",       (plugged("softcard") || plugged("alscpm") || plugged("softcard2")
@@ -489,6 +524,11 @@ void MainWindow::renderAbstractionPanel()
         case pom2::AbsToggle::PrinterIface:
             swapSlotCardVariant(req.option == 0 ? "printer" : "grappler",
                                 req.option == 0 ? "grappler" : "printer");
+            break;
+        case pom2::AbsToggle::SerialFirmware:
+            settings->setString("ccs7710_firmware", req.option == 0 ? "ccs" : "pom2");
+            if (!settingsReadOnly()) settings->save();
+            restartEmulationFromSettings();
             break;
         case pom2::AbsToggle::CompositeVideo:
             // No restart: the colour pipeline is a render-path choice, and

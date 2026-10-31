@@ -344,7 +344,7 @@ void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, 
     // card is not showing its Super Hi-Res picture and the monitor is not a
     // monochrome one (its lit dot is not white, so there is nothing to map).
     uint32_t fg = 0, bg = 0;
-    if (cardVideo_ && !cardVideo_->ownsScreen(state.textMode, state.an0) &&
+    if (cardVideo_ && !cardOwnsMonitor(state.textMode, state.an0) &&
         !isMonochrome() && cardVideo_->textColours(fg, bg))
         tintText(state, scanY0, scanY1, fg, bg);
 }

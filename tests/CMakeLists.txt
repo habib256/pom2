@@ -7185,6 +7185,18 @@ add_test(NAME cpm_disk_fs COMMAND test_cpm_disk_fs
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(cpm_disk_fs PROPERTIES TIMEOUT 15)
 
+# ─── DOS 3.3 file system + Applesoft listing (pom2_dos33's library) ────────
+# A blank volume built in memory; the System Master too when present.
+add_executable(test_dos33_disk_fs
+    dos33_disk_fs_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Dos33DiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplesoftListing.cpp
+)
+target_include_directories(test_dos33_disk_fs PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME dos33_disk_fs COMMAND test_dos33_disk_fs
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(dos33_disk_fs PROPERTIES TIMEOUT 15)
+
 # ─── CP/M + SSC through the BIOS IOBYTE (BTERM) ───────────────────────────
 # SoftCard CP/M 2.2 + Super Serial in slot 2 + tests/data/BTERM.COM, a
 # terminal that polls the serial line by pointing the IOBYTE's CON: field
@@ -7281,7 +7293,11 @@ set_tests_properties(als_cpm_card PROPERTIES TIMEOUT 120)
 # ─── Microsoft SoftCard II: Am2950 latches, boot mode, CP/M 2.28B boot ────
 add_executable(test_softcard2_card
     softcard2_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ccs7710Card.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/SoftCardIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCard2Protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/VidexVideotermCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Hd6845Crtc.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
@@ -7555,6 +7571,45 @@ endif()
 add_test(NAME saturn_card COMMAND test_saturn_card
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(saturn_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# ─── CCS 7710 (6850 serial) + the SoftCard II mailbox decoder ─────────────
+add_executable(test_ccs7710_card
+    ccs7710_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ccs7710Card.cpp
+    ${CMAKE_SOURCE_DIR}/src/SoftCard2Protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_ccs7710_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ccs7710_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ccs7710_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ccs7710_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME ccs7710_card COMMAND test_ccs7710_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(ccs7710_card PROPERTIES TIMEOUT 30)
 
 # ─── Videx UltraTerm: bus map, picture, real firmware PR#3 ─────────────────
 add_executable(test_videx_ultraterm

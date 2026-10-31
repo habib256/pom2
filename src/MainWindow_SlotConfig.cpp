@@ -30,6 +30,7 @@
 // is NON-RECURSIVE. The handle is the caller's proof of ownership.
 
 #include "MainWindow.h"
+#include "Ccs7710Card.h"
 
 #include "AudioCoordinator.h"
 #include "AudioDevice.h"
@@ -808,6 +809,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "alscpm")      plugAlsCpm(s);
         else if (kind == "softcard2")   plugSoftCard2(s);
         else if (kind == "saturn")      plugSaturn(s);
+        else if (kind == "ccs7710") {
+            // The factory loads CCS's PROMs when they are there (the LLE
+            // reference); `ccs7710_firmware` = "pom2" keeps POM2's page.
+            auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
+            if (made && settings->getString("ccs7710_firmware", "ccs") == "pom2")
+                static_cast<Ccs7710Card*>(made.card.get())->useOwnFirmware();
+            if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
         else if (kind == "applicard") {
             auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
             if (!made.warning.empty())

@@ -265,6 +265,21 @@ public:
         framebufferMutated();
     }
     pom2::CardVideoSource* cardVideoSource() const { return cardVideo_; }
+    /// What reaches the monitor when a card has its own picture. `Auto` is
+    /// the card's rule (the Videoterm's Soft Video Switch: TEXT + AN0);
+    /// `Apple` and `Card` hold the monitor on one source, as a manual
+    /// switch or a second monitor would — for software that leaves the
+    /// 80 columns without turning AN0 off (Merlin's VID 0). sbabcoc's
+    /// ReplicApple2Plus offers the same positions.
+    enum class CardMonitor : uint8_t { Auto = 0, Apple = 1, Card = 2 };
+    void setCardMonitor(CardMonitor m) { cardMonitor_ = m; framebufferMutated(); }
+    CardMonitor cardMonitor() const { return cardMonitor_; }
+    /// The card's picture is on the monitor this frame.
+    bool cardOwnsMonitor(bool textMode, bool an0) const
+    {
+        if (!cardVideo_ || cardMonitor_ == CardMonitor::Apple) return false;
+        return cardMonitor_ == CardMonitor::Card || cardVideo_->ownsScreen(textMode, an0);
+    }
     /// The card's border colour (a VidHD's $C034) as of the last render(),
     /// 0xAABBGGRR, 0 = none. Latched under stateMutex by whichever render()
     /// ran last (the UI's or the AI server's /screen), atomic so the screen
@@ -321,6 +336,7 @@ private:
     int  cardPictureW_ = 0;
     int  cardPictureH_ = 0;
     pom2::CardVideoSource* cardVideo_ = nullptr;   // non-owning, owned by SlotBus
+    CardMonitor cardMonitor_ = CardMonitor::Auto;
     std::atomic<uint32_t> cardBorder_{0};                     // cardBorderColour()
     uint32_t monitorLitColor() const;   // the Apple text painters' lit colour
     /// Paints the card's picture and publishes it when the card's rule holds
@@ -338,7 +354,7 @@ private:
     /// rule does not hold, after taking the card's buffer off the screen.
     bool renderCardPicture(Memory& mem, const Memory::DisplayState& state)
     {
-        if (!cardVideo_ || !cardVideo_->ownsScreen(state.textMode, state.an0) ||
+        if (!cardOwnsMonitor(state.textMode, state.an0) ||
             cardVideo_->pictureWidth() <= 0 || cardVideo_->pictureHeight() <= 0) {
             if (useCardPicture_) { useCardPicture_ = false; framebufferMutated(); }
             return false;
