@@ -64,6 +64,14 @@ bool safeClockState(const Blob& bytes)
     for (int i = 0; i < 4; ++i) rate |= uint32_t(bytes[21 + i]) << (8 * i);
     return rate == 0 || rate == 32 || rate == 64 || rate == 256 || rate == 2048;
 }
+// Slot 0 holds a card only on a //e with the Premium SoftCard in its
+// auxiliary slot, which no Slot Config row shows: name it, or the user is
+// sent looking for a "slot 0" the machine does not have.
+std::string slotZeroRefusal(SlotPeripheral* card)
+{
+    return "sessions do not support the " + std::string(card->name()) +
+           " (the //e auxiliary slot): switch it off in the Machine menu first";
+}
 bool configuration(Memory& memory, Blob& out, std::string& error)
 {
     const auto* accelerator = memory.cpuSocketAccelerator();
@@ -126,7 +134,7 @@ bool captureSession(SessionArchive& out, M6502& cpu, Memory& memory,
     if (!machineId) { error = "session requires a configured machine profile"; return false; }
     if (!configuration(memory, staged.configuration, error)) return false;
     size_t mediaBytes = 0;
-    if (memory.slotBus().peripheral(0)) { error = "sessions require an empty slot 0"; return false; }
+    if (auto* p0 = memory.slotBus().peripheral(0)) { error = slotZeroRefusal(p0); return false; }
     if (memory.isIIcClass() && !captureSessionSonyMedia(memory, staged.slots[0], mediaBytes, error)) return false;
     for (int slot = 1; slot <= 7; ++slot) {
         auto* card = memory.slotBus().peripheral(slot);
@@ -176,7 +184,7 @@ bool restoreSession(const SessionArchive& session, M6502& cpu, Memory& memory,
         error = "session machine/clock configuration differs; select the matching configuration first";
         return false;
     }
-    if (memory.slotBus().peripheral(0)) { error = "sessions require an empty slot 0"; return false; }
+    if (auto* p0 = memory.slotBus().peripheral(0)) { error = slotZeroRefusal(p0); return false; }
     std::array<std::unique_ptr<DiskIICard::SessionRestore>, 8> disks;
     std::array<std::unique_ptr<SlotPeripheral>, 8> devices;
     SessionSonyMedia sonyMedia;

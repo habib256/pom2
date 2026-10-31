@@ -95,6 +95,16 @@ void testBootMode()
     CHECK(rd(d, 1) == 0x00);
     wr(d, 3, 0);                                   // $C0n3: back to boot mode
     CHECK(d.booting() && d.z80().getState().pc == 0x0000);
+
+    // A 16-bit immediate fed through the latch arrives low byte first, as
+    // the Z80 fetches it (M2 then M3). The latch serves bytes in CALL order,
+    // so a core that evaluated `rd(a) | rd(a+1) << 8` right to left read
+    // $3412 here (GCC -O2, the 2026-10-31 red nightly).
+    SoftCardIICard e;
+    const uint8_t ldhl[] = { 0x21, 0x34, 0x12 };    // LD HL,$1234
+    for (uint8_t b : ldhl) { wr(e, 0, b); e.advanceCycles(20); }
+    CHECK(e.z80().getState().h == 0x12);
+    CHECK(e.z80().getState().l == 0x34);
 }
 
 // The Z80 runs at 6 MHz whatever the 6502's clock: a NOP is 4 T, so in

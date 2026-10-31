@@ -34,6 +34,7 @@
 #define POM2_CARD_VIDEO_SOURCE_H
 
 #include <cstdint>
+#include <string>
 
 namespace pom2 {
 
@@ -66,7 +67,45 @@ public:
     /// The colour of the border around the picture, as 0xAABBGGRR, or 0 for
     /// none (the window's own background shows). Default: none.
     virtual uint32_t borderColour() const { return 0; }
+
+    /// Can the card put its picture on the Apple's monitor by a rule of its
+    /// own (`ownsScreen` can hold)? The Videoterm, the UltraTerm and the VidHD
+    /// can; the E-Z Color, whose picture only ever went to a monitor of its
+    /// own, cannot. Decides who gets the Apple II Screen when two such cards
+    /// are plugged (preferScreenSource).
+    virtual bool takesMonitor() const { return true; }
 };
+
+/// The display holds ONE card picture. With two cards that have one, the
+/// one that can take the Apple's monitor gets it whatever the slot order —
+/// a Videoterm's 80 columns used to vanish behind an E-Z Color in a higher
+/// slot (bug hunt 2026-10-31). Between two that can, the later one, as
+/// before. `cand` null keeps `cur`.
+inline CardVideoSource* preferScreenSource(CardVideoSource* cur, CardVideoSource* cand)
+{
+    if (!cand) return cur;
+    if (!cur || !cur->takesMonitor() || cand->takesMonitor()) return cand;
+    return cur;
+}
+
+/// The Card Monitor panel (the card's own second monitor) prefers the other
+/// way: the card that cannot take the Apple's monitor, whose picture has
+/// nowhere else to go. A lone card is shown whatever it is.
+inline CardVideoSource* preferPanelSource(CardVideoSource* cur, CardVideoSource* cand)
+{
+    if (!cand) return cur;
+    if (!cur || cur->takesMonitor() || !cand->takesMonitor()) return cand;
+    return cur;
+}
+
+/// Does the Card Monitor tab offer itself? `prev` / `next` name the panel's
+/// card as "<slot>:<catalog key>" ("" = none) on the last frame and this one.
+/// A name, not a pointer: every Slot Config apply and profile switch rebuilds
+/// every card, and a pointer compare reopened a tab the user had closed.
+inline bool shouldOfferCardMonitor(const std::string& prev, const std::string& next)
+{
+    return !next.empty() && next != prev;
+}
 
 } // namespace pom2
 

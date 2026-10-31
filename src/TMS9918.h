@@ -222,7 +222,18 @@ public:
     // looks for the STA at PC-3 in the disassembly.
     void setLastAccessPc(uint16_t pc) { lastAccessPc = pc; }
 
+    // Two resets, as the hardware has two. reset() is POWER-ON: VRAM gets
+    // its power-on contents (the MSX1 bistable pattern or noise, above), the
+    // registers and the counters are cleared, the picture goes white.
+    // resetPin() is the chip's /RESET line alone: registers, status, the
+    // two-byte latch, the VRAM pointer, the read-ahead, a pending access and
+    // the raster cursors — but NOT the DRAM, which is outside the VDP and
+    // keeps its contents (MAME tms9928a.cpp device_reset; a card on a bus
+    // whose RESET is Ctrl-Reset needs this one). The picture is rebuilt from
+    // the surviving VRAM. reset() = VRAM fill + resetPin(). (POM2, bug hunt
+    // 2026-10-31; for POM1 to pick up.)
     void reset();
+    void resetPin();
 
     // ── Editor seam (TMS9918 Paint) ──────────────────────────────────────────
     // Direct VRAM / register writes from the host-side paint editor. Unlike a

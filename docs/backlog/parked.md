@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [PARKED-001](#parked-001) | 🧊 | Frozen | The MAME `a2bus` backlog — what is worth porting, and why. |
-| [PARKED-002](#parked-002) | 🧊 | Frozen | E-Z Color / TMS9918 card |
+| [PARKED-002](#parked-002) | 🟢 | Done 2026-10-31 — landed as catalog `ezcolor` (CHANGELOG "E-Z Color Graphics Interface"); archive this entry | E-Z Color / TMS9918 card |
 
 <a id="parked-001"></a>
 
@@ -114,7 +114,10 @@ an explicit request before scheduling.
 
 ## PARKED-002 — E-Z Color / TMS9918 card
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** 🟢 · **State:** Done 2026-10-31. The card landed as catalog
+`ezcolor` (`EzColorCard.h/.cpp`, POM1's `TMS9918`), with the SDK's
+`attachEzColor`; see the CHANGELOG entries of 2026-10-31. The plan below is
+kept as history until the entry is archived.
 
 **Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
 

@@ -100,10 +100,37 @@ static void testLineAtATime()
     std::printf("paste_smoke: line at a time, 0.1 s settle, 2 s cap OK\n");
 }
 
+// The settle and the cap are TIME, not CPU cycles (bug hunt 2026-10-31): a 4x
+// accelerator runs four times the cycles in the same 0.1 s, and the hold used
+// to let the next line go after 25 ms — the outrun it exists to stop. Memory's
+// video clock is the crystal's (setVideoClockRatio = 1 / the accelerator).
+static void testLineAtATimeAccelerated()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.setVideoClockRatio(0.25);                   // a 4x CPU
+    const uint8_t prog[] = { 0xAD, 0x00, 0xC0, 0x10, 0xFB, 0x9D, 0x00, 0x04,
+                             0x2C, 0x10, 0xC0, 0xE8, 0x4C, 0x00, 0x03 };
+    for (unsigned i = 0; i < sizeof prog; ++i) mem.memWrite(uint16_t(0x0300 + i), prog[i]);
+    cpu.setProgramCounter(0x0300);
+    cpu.setXRegister(0);
+    auto run = [&](long n) { for (long t = 0; t < n;) t += cpu.run(64); };
+    auto typed = [&] { std::string t; for (int i = 0; i < 8; ++i) t.push_back(char(mem.peekMainRam(uint16_t(0x0400 + i)) & 0x7F)); return t; };
+    mem.pasteText("AB\rCD");
+    run(300'000);                                   // 75 ms of crystal time
+    assert(typed().compare(0, 3, "AB\r") == 0 && typed()[3] != 'C'
+           && "4x CPU: 300 000 cycles are 75 ms, the line still waits");
+    run(400'000);                                   // 175 ms in all
+    assert(typed().compare(0, 5, "AB\rCD") == 0 && "…and goes after 0.1 s of a quiet screen");
+    std::printf("paste_smoke: the hold counts time under a 4x CPU OK\n");
+}
+
 int main()
 {
     testReleasePollDoesNotEatTheQueue();
     testLineAtATime();
+    testLineAtATimeAccelerated();
     // Live keys append behind a paste, so they must share its queue ceiling.
     {
         Memory mem;

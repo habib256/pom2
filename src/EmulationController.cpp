@@ -81,7 +81,9 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // Virtual hook rather than a dynamic_cast per card type: casting made
     // EmulationController link-depend on every card it named, breaking
     // tests that link the controller without them.
-    for (int slot = 1; slot <= 7; ++slot) {
+    // Slot 0 included: it is the //e aux slot, where the Premium SoftCard
+    // //e times its own 6 MHz Z80 against this clock (bug hunt 2026-10-31).
+    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
         if (SlotPeripheral* card = mem.slotBus().peripheral(slot)) {
             card->setCpuClock(hz);
             card->setStandardClock(vt.cpuClockHz);
@@ -135,7 +137,7 @@ void EmulationController::applyAcceleratorClock(double mul)
     if (tape)      tape->setCpuClock(hz);
     if (floppy525) floppy525->setCpuClock(stockHz);   // the Disk II stamps stock time
     if (floppy35)  floppy35->setCpuClock(hz);
-    for (int slot = 1; slot <= 7; ++slot)
+    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot)   // 0: the aux slot
         if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
             card->setCpuClock(hz);
 }

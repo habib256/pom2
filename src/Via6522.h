@@ -281,8 +281,12 @@ struct Via6522
 
     inline uint8_t computedIfr() const
     {
+        // Bit 7 is the OR of the enabled flags, the node that drives /IRQ:
+        // it rises WITH the flag. Only the pin is held a cycle (irqOut(),
+        // `ifrFresh_`), for the 6502's sampling — a register read at N + 2
+        // sees $C0 (bug hunt 2026-10-31; built on irqOut() it read $40).
         return static_cast<uint8_t>(
-            (ifr & 0x7F) | (irqOut() ? IFR_ANY : 0));
+            (ifr & 0x7F) | ((ifr & ier & 0x7F) ? IFR_ANY : 0));
     }
 
     // T1 mode bits live in ACR bits 7..6.
@@ -433,11 +437,11 @@ struct Via6522
             // MAME schedules the FIRST T1 shot at `TIMER1_VALUE + IFR_DELAY`
             // (`6522via.cpp:927-943`, adjust at :941; IFR_DELAY = 3 at :102)
             // — same constant the continuous reload uses (t1_tick,
-            // `6522via.cpp:536-543`). POM2's `advance()` fires when the
-            // counter crosses < 0, i.e. one tick AFTER it reaches 0, so a
-            // raw `t1Counter = N` would fire at N+1 — two cycles EARLY.
-            // Pre-bias by (IFR_DELAY - 1) = 2 so the first shot lands at
-            // exactly N+3, matching hardware. The RECURRING period below is
+            // `6522via.cpp:536-543`). POM2's `advance()` raises IFR.T1 on
+            // the cycle the counter reaches 0 (it shows $FFFF), so the +2
+            // pre-bias puts the flag at N+2 (mb-audit T6522_F) and, held one
+            // cycle off the pin by `ifrFresh_`, /IRQ at N+3 — MAME's
+            // first shot. The RECURRING period below is
             // a different number — latch+2, not latch+3 — because IFR_DELAY
             // is a one-off underflow→IFR latency and does not repeat; see
             // the free-run comment in `advance()`. Same pre-bias protocol as
@@ -475,11 +479,10 @@ struct Via6522
             t2Latch    = static_cast<uint16_t>((static_cast<uint16_t>(v) << 8) | t2ll);
             // MAME schedules the underflow IRQ at `TIMER2_VALUE + IFR_DELAY`
             // (`:959`), with IFR_DELAY = 3 (latch-copy + IRQ-latch settle —
-            // same constant T1 uses above). POM2's `advance()` fires when the
-            // counter crosses < 0, i.e. one tick AFTER it reaches 0, so a raw
-            // `t2Counter = N` would fire at N+1 — two cycles EARLY. Pre-bias by
-            // (IFR_DELAY - 1) = 2 so the one-shot fires at exactly N+3, matching
-            // real hardware. This is what lets a Timer-2-synced beam-racer
+            // same constant T1 uses above). As for T1, `advance()` raises
+            // IFR.T2 when the counter reaches 0: the +2 pre-bias puts the flag
+            // at N+2 (mb-audit T6522_11) and /IRQ, held a cycle, at N+3. This
+            // is what lets a Timer-2-synced beam-racer
             // (French Touch DIX: `T2 = 7512 - latency`) land its effect on the
             // intended scanline instead of two bytes early.
             // In PB6 pulse-counting mode (ACR.5) the counter does not run on

@@ -32,8 +32,9 @@
 //   ENV   optional  versioned firmware/configuration identity, written when
 //                   includeSlots=false and checked before a file load can
 //                   touch live state. Older files load with a warning.
-//   SLOTn optional  per-card volatile state (e.g. DiskIICard head/LSS) —
-//                   written ONLY when captureMachineState(includeSlots=true).
+//   SLOTn optional  per-card volatile state (e.g. DiskIICard head/LSS), n =
+//                   0-7 (0 = the //e aux slot's Premium SoftCard) — written
+//                   ONLY when captureMachineState(includeSlots=true).
 //
 // `includeSlots` is the dividing line: the rewind ring buffer passes true so
 // a rewind during disk I/O restores the drive head and writable non-WOZ

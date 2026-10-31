@@ -16,7 +16,9 @@
 
 // ApplesoftListing — a tokenised Applesoft program as text, the way LIST
 // would type it, minus the screen: one line per program line, keywords
-// spaced so the text can be typed back in (EXEC, paste).
+// spaced so the text can be typed back in (EXEC, paste). Control characters
+// in strings and REMs are kept as they are (DOS's Ctrl-D); only CR and LF,
+// which would cut the line, become '?'.
 //
 // The program is a chain of lines: next-line pointer (2), line number (2),
 // tokens and characters, $00. A next pointer of $0000 ends it. Tokens are

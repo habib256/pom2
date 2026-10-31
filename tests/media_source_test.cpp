@@ -58,12 +58,15 @@ uint32_t crc32(const std::vector<uint8_t>& d)
 void p16(std::vector<uint8_t>& o, uint32_t v) { o.push_back(uint8_t(v)); o.push_back(uint8_t(v >> 8)); }
 void p32(std::vector<uint8_t>& o, uint32_t v) { p16(o, v & 0xFFFF); p16(o, v >> 16); }
 
-// gzip of `data` in stored deflate blocks (BTYPE 00), with FNAME.
+// gzip of `data` in stored deflate blocks (BTYPE 00), with FNAME — or
+// without one when `name` is null (`gzip -n`, or gzip reading stdin).
 std::vector<uint8_t> gzipStored(const std::vector<uint8_t>& data, const char* name)
 {
-    std::vector<uint8_t> o = { 0x1F, 0x8B, 8, 0x08, 0, 0, 0, 0, 0, 3 };
-    for (const char* p = name; *p; ++p) o.push_back(uint8_t(*p));
-    o.push_back(0);
+    std::vector<uint8_t> o = { 0x1F, 0x8B, 8, uint8_t(name ? 0x08 : 0), 0, 0, 0, 0, 0, 3 };
+    if (name) {
+        for (const char* p = name; *p; ++p) o.push_back(uint8_t(*p));
+        o.push_back(0);
+    }
     std::size_t at = 0;
     do {
         const std::size_t n = std::min<std::size_t>(65535, data.size() - at);
@@ -155,6 +158,57 @@ int main()
     put(dir / "bad.dsk.gz", bad);
     r = pom2::resolveMediaSource((dir / "bad.dsk.gz").string(), cache);
     CHECK(!r.ok && r.error.find("CRC") != std::string::npos);
+    { // the drop's refusal says what failed, not "no disk image format"
+        const std::string why = pom2::explainMediaSourceRefusal((dir / "bad.dsk.gz").string(), r.error);
+        CHECK(why.find("bad.dsk.gz") != std::string::npos && why.find("CRC") != std::string::npos);
+        CHECK(why.find("match no Apple II disk format") == std::string::npos);
+    }
+
+    // 3b. '#' and '?' belong to a URL's query and fragment only. In a local
+    //     path, a zip member or a gzip name they are part of the name: cut
+    //     there, a FNAME-less "a#b.dsk.gz" threw std::out_of_range (the
+    //     ".gz" erase ran past a one-letter name), a zip's "Disk #1.dsk" was
+    //     "no disk image", and the cache copy lost its extension.
+    {
+        auto endsWith = [](const std::string& s, const std::string& x) {
+            return s.size() >= x.size() && s.compare(s.size() - x.size(), x.size(), x) == 0;
+        };
+        put(dir / "a#b.dsk.gz", gzipStored(disk, nullptr));
+        r = pom2::resolveMediaSource((dir / "a#b.dsk.gz").string(), cache);
+        CHECK(r.ok && endsWith(fs::path(r.localPath).filename().string(), "a#b.dsk"));
+        CHECK(r.ok && get(r.localPath) == disk);
+
+        fs::create_directories(dir / "#games", ec);
+        put(dir / "#games" / "x.dsk.gz", gzipStored(disk, nullptr));
+        r = pom2::resolveMediaSource((dir / "#games" / "x.dsk.gz").string(), cache);
+        CHECK(r.ok && endsWith(fs::path(r.localPath).filename().string(), "-x.dsk"));
+
+        put(dir / "hash.zip", zipStored({ { "Side #2/Disk #1.dsk", disk } }));
+        r = pom2::resolveMediaSource((dir / "hash.zip").string(), cache);
+        CHECK(r.ok && endsWith(fs::path(r.localPath).filename().string(), "Disk #1.dsk"));
+
+        put(dir / "named.gz", gzipStored(disk, "Disk #1.dsk"));
+        r = pom2::resolveMediaSource((dir / "named.gz").string(), cache);
+        CHECK(r.ok && endsWith(fs::path(r.localPath).filename().string(), "Disk #1.dsk"));
+    }
+
+    // 3c. One archive, two spellings (a symlinked folder; macOS's /tmp is
+    //     /private/tmp): one cache copy, so the guest's writes are found
+    //     again whichever path the next mount names.
+    {
+        fs::create_directories(dir / "real", ec);
+        put(dir / "real" / "twice.dsk.gz", gzipStored(disk, "twice.dsk"));
+        std::error_code lec;
+        fs::create_directory_symlink(dir / "real", dir / "link", lec);
+        if (!lec) {
+            const auto a = pom2::resolveMediaSource((dir / "real" / "twice.dsk.gz").string(), cache);
+            const auto b = pom2::resolveMediaSource((dir / "link" / "twice.dsk.gz").string(), cache);
+            CHECK(a.ok && b.ok && b.fromCache && a.localPath == b.localPath);
+        } else {
+            std::printf("media_source: no symlink here (%s), spelling case skipped\n",
+                        lec.message().c_str());
+        }
+    }
 
     // 4. An unreachable URL: a clean failure, nothing left in the cache.
     r = pom2::resolveMediaSource("http://127.0.0.1:9/nothing.dsk", cache);
@@ -163,6 +217,29 @@ int main()
     for (const auto& e : fs::directory_iterator(cache, ec))
         if (e.path().filename().string().find("nothing.dsk") != std::string::npos) partial = true;
     CHECK(!partial);
+
+    // 4b. A body that is a web page is not a disk: never cached, and a copy
+    //     an older build cached is dropped, so the next try downloads again
+    //     instead of mounting the same HTML for good.
+    {
+        const std::string url = "http://127.0.0.1:9/soft404.dsk";
+        const fs::path stale = pom2::mediaUrlCachePath(url, cache);
+        CHECK(stale.filename().string().find("soft404.dsk") != std::string::npos);
+        const std::string html = "\n  <!DOCTYPE html><html><body>Not found</body></html>";
+        put(stale, std::vector<uint8_t>(html.begin(), html.end()));
+        r = pom2::resolveMediaSource(url, cache);
+        CHECK(!r.ok && !r.fromCache);
+        CHECK(!fs::exists(stale));
+        CHECK(pom2::mediaBodyIsWebPage(std::vector<uint8_t>(html.begin(), html.end())));
+        const std::string xml = "<?xml version=\"1.0\"?><Error/>";
+        CHECK(pom2::mediaBodyIsWebPage(std::vector<uint8_t>(xml.begin(), xml.end())));
+        CHECK(!pom2::mediaBodyIsWebPage(disk));
+        CHECK(!pom2::mediaBodyIsWebPage({ 'W', 'O', 'Z', '2' }));
+        auto ext = [](const char* e) { return std::string(e ? e : ""); };
+        CHECK(ext(pom2::mediaArchiveExtension(gzipStored(disk, "a.dsk"))) == ".gz");
+        CHECK(ext(pom2::mediaArchiveExtension(zipStored({ { "a.dsk", disk } }))) == ".zip");
+        CHECK(pom2::mediaArchiveExtension(disk) == nullptr);
+    }
 
     // 5. Predicates.
     CHECK(pom2::isHttpUrl("HTTPS://example.org/a.dsk") && !pom2::isHttpUrl("tnfs://h/a.po"));

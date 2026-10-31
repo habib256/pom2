@@ -186,7 +186,13 @@ private:
     uint8_t  rd (uint16_t a) { const uint8_t v = bus.z80MemRead(a); busT_ += 3; return v; }
     void     wr (uint16_t a, uint8_t v) { bus.z80MemWrite(a, v); busT_ += 3; }
     uint8_t  fetchOp() { const uint8_t v = rd(st.pc++); ++busT_; return v; }   // M1: 4 T
-    uint16_t rd16(uint16_t a) { return rd(a) | (rd(uint16_t(a + 1)) << 8); }
+    // Low byte first, as the silicon does (M2 then M3): the two reads are
+    // sequenced on purpose. Written as `rd(a) | rd(a+1) << 8` their order was
+    // unspecified, and GCC at -O2 read the high byte first. Plain RAM cannot
+    // tell, but the SoftCard II boot latch serves bytes in call order, so
+    // `LD HL,$1234` fed through it came back as $3412 (the 2026-10-31 red
+    // nightly, softcard2_card under ASan/RelWithDebInfo).
+    uint16_t rd16(uint16_t a) { const uint8_t lo = rd(a); const uint8_t hi = rd(uint16_t(a + 1)); return uint16_t(lo | (hi << 8)); }
     void     wr16(uint16_t a, uint16_t v) { wr(a, uint8_t(v)); wr(uint16_t(a + 1), uint8_t(v >> 8)); }
     uint8_t  fetch8()  { return rd(st.pc++); }
     uint16_t fetch16() { uint16_t v = rd16(st.pc); st.pc += 2; return v; }

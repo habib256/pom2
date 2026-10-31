@@ -37,6 +37,9 @@
 // track number wraps past 34 onto tracks 0-2 — the system tracks seen
 // through the file system. Reads follow that wrap; writes never allocate
 // past block 127, and every block any entry names (user 0-31) is in use.
+//
+// CP/M 3's directory label (user $20) and SFCB date-stamp entries (user $21)
+// are accepted and left as they are: they name no blocks.
 
 #ifndef POM2_CPM_DISK_FS_H
 #define POM2_CPM_DISK_FS_H

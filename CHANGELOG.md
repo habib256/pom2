@@ -10,6 +10,231 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — The red nightly: `Z80::rd16` read its two bytes in an unspecified order
+
+The ASan/UBSan nightly on 41d72da7 failed `softcard2_card` with no sanitizer
+report: in boot mode the `LD ($1000),A` fed through the SoftCard II's latch
+landed at `$0010`. `Z80::rd16` was `rd(a) | (rd(a + 1) << 8)`, whose two calls
+C++ orders as the compiler likes: GCC at -O2 (RelWithDebInfo) read the high
+byte first, GCC at -O3 and clang the low one. Plain RAM cannot tell, but the
+SoftCard II's boot latch serves bytes in *call* order, so every 16-bit
+immediate the loader fed the Z80 came back byte-swapped on that build and
+CP/M 2.28B did not boot. The reads are now sequenced low then high, as the
+silicon's M2/M3 cycles are. Pinned by `softcard2_card` (`LD HL,$1234` through
+the latch must give `$1234`; reversing the order in `rd16` fails that check
+and both boot checks).
+
+## 2026-10-31 — Bug hunt: Z80 cards and the disk file-system tools
+
+- **A rewind never captured the Premium SoftCard //e.** The card sits on
+  SlotBus slot 0 (it stands for the //e auxiliary slot), and
+  `captureMachineState` wrote `SLOT1`-`SLOT7` only — the card's own `PSC1`
+  blob (the Z80's registers, the `$C07E` register, the pending 6502 call,
+  the 1 KB of DRAM under the text page) was written for nobody. A rewind
+  rolled the aux RAM — the Z80's 64 KB — back under a Z80 that kept its live
+  PC and a half-made call. `SLOT0` is now captured and restored; a frame
+  without it still loads (absence was always tolerated), and file snapshots
+  still carry no SLOT section. Pinned by `premium_softcard`
+  (`testRewindCapturesSlot0`).
+- **Nor did it ever get the CPU clock.** The three `setCpuClock` fan-outs
+  (`EmulationController::setVideoStandard`, `applyAcceleratorClock`, the
+  Slot Config replug in `plugSlotsFromSettings`) walked slots 1-7, so the
+  card divided its 6 MHz Z80 by the stock NTSC 1 022 727 Hz for ever: 0.7 %
+  fast on the default PAL //e, ~3.5x under a TransWarp, 4x under a FASTChip
+  or Zip Chip. All three now start at slot 0. The loops that stay at 1-7
+  were left alone on purpose: they look for printers, mice, network, storage
+  or displaced ROM in a physical slot, which the aux-slot card never is.
+  Pinned by `accelerator_clock_chunk` (check 6).
+- **The Applesoft listing turned control characters into `?`.**
+  `pom2_dos33 list` and File ▸ Save BASIC listing printed COPYA's line 70 as
+  `PRINT "?BLOAD COPY.OBJ0"`: the string's Ctrl-D — DOS 3.3's own idiom —
+  was gone, and the listing typed back was another program. LIST types
+  those bytes as they are, and now so does the listing; only CR and LF,
+  which would cut the line, keep the `?`. Pinned by `dos33_disk_fs` (a
+  hand-tokenised line, and COPYA off the System Master).
+- **`pom2_cpm` refused any CP/M 3 disk with a directory label or date
+  stamps.** The ALS card's CP/M Plus writes a label entry (user `$20`,
+  `SET [NAME=...]` / INITDIR) and, after INITDIR, an SFCB (user `$21`)
+  every fourth entry, whose bytes 16-31 are a password or stamps, not
+  blocks. `open()` refused the whole disk ("no CP/M directory on track 3");
+  those entries are now accepted, never counted as allocation, and left
+  untouched by put/rm. Pinned by `cpm_disk_fs` (`testCpm3LabelAndStamps`).
+- **The CCS 7710's 6850 said TDRE while held in master reset.** The status
+  register read `$02` at power-up and after `$03`; the MC6850 data sheet's
+  master reset "clears the status register", and MAME's `6850acia`
+  `status_r` masks TDRE while the divider is in reset. A program polling
+  TDRE before leaving reset was told to send, and its byte was dropped. Now
+  `$00` in reset, `$02` after the mode write. Pinned by `ccs7710_card`
+  (which pinned the wrong `$02` before).
+
+## 2026-10-31 — Bug hunt: media from URL and archives, ROM import, headless, sessions
+
+- **A `#` or `?` in a path crashed POM2 or lost the disk.** `MediaSource`'s
+  `safeName` cut every name at the first `?`/`#` — a URL's query rule, applied
+  to local paths, zip members and gzip names, and to the WHOLE path before
+  its last segment was taken. A gzip without a stored name (`gzip -n`, or
+  from stdin) at `/tmp/a#b.dsk.gz` came out as `"a"`, and dropping the
+  `.gz` from it ran `string::erase` past the end: `std::out_of_range`,
+  uncaught — on the command line and in the window's drop callback, a
+  crash; in File ▸ Open disk from URL a dialog stuck on "downloading…". On
+  Windows a `#` in the user name did it to every such `.gz`. A zip whose
+  image is `Disk #1.dsk` "held no disk image", and a gzip named so gave a
+  cache copy with no extension. Only a URL is cut now (`media_source`).
+- **The same archive by two paths had two copies.** The cache key was the
+  `fs::absolute` spelling: `/tmp/x.zip` from the command line and
+  `/private/tmp/x.zip` from the Finder unpacked twice, and the guest's saves
+  seemed gone. The key is the canonical path (`media_source`, a symlink).
+- **A URL that once answered a web page answered it for ever.** A soft 404
+  (HTTP 200 + HTML) was cached under the disk's name and mounted — and
+  refused — on every later try; nothing in the UI clears the cache. Such a
+  body is refused, a stale one dropped, and a zip or gzip served under a name
+  with no extension (`…/download?id=12`) gets it, so it is unpacked.
+- **A dropped archive that would not open was "not a disk image".** Its
+  error ("gzip: CRC mismatch", an encrypted member, a 40 MB one) was
+  discarded, the drop fell through to the ROM import, and the refusal said
+  the file was no disk "…or one inside a .zip or a .gz, which POM2 opens
+  itself". It now gives the archive's reason (`explainMediaSourceRefusal`).
+- **`pom2_headless --disk` takes a .zip, a .gz or a URL** like the GUI's
+  positional; it used to be refused by its size (`headless_zip_disk`, a zip
+  made at test time by `cmake -E tar --format=zip`).
+- **ROM import knew nothing of the CCS 7710 PROMs or the DAN ][ EPROM.**
+  Both cards probe them; neither was in the catalogue, ROM Status or the
+  import, so a dropped dump was "No known ROM dump", and `rom_fetch`'s
+  "every probed dump is downloadable" walk skipped them (its list held no
+  card paths). They are **import-only** entries now (no source serves
+  them — RetroBIOS has neither and POM2's archive.org items went dark on
+  2026-10-31): identified, listed, never planned by "Download missing" or
+  counted by the first-launch offer (`rom_fetch`, `rom_import`).
+- **The ROM download with the archive dark.** Checked live: the archive
+  answers 403 with a 4.8 KB page, which curl 8 reports as exit 56; the run
+  fell back per entry and fetched all 54 downloadable dumps from RetroBIOS,
+  but its summary only said "54 from RetroBIOS", or, had RetroBIOS failed
+  too, the first entry's error. It now names the archive as unavailable,
+  says why in words ("the server refused the download (an HTTP error…)",
+  not "curl exited 56"), and a page served as `pom2_roms.zip` is deleted
+  with the run's scratch folder — never reused. `rom_download_offered` is
+  set by either answer before the download starts, so a failed fetch does
+  not bring the offer back. Pinned by `rom_fetch_archive_down`
+  (`RomFetchSources::download` plays the servers: 403, and 200 + HTML).
+- **Sessions and the Premium SoftCard.** Saving with the card on said
+  "sessions require an empty slot 0", a slot no row shows; it names the
+  card now (`session_snapshot`). After loading a session — which never
+  holds it — the Machine menu still ticked it; the tick follows the
+  machine while a session is loaded. `docs/session-format.md` lists the
+  cards added since 1.0.0 among the unsupported ones.
+
+The `maybe-uninitialized` initialiser of dc4c5dfe was not hiding a real
+read: `coreConfiguration` sets the CPU mode exactly when it reports success.
+
+## 2026-10-31 — Bug hunt: the E-Z Color's clock and VRAM, card pictures, the held paste
+
+- **The E-Z Color's VDP ran on the CPU's cycles.** POM1's `TMS9918` counts
+  its frame, its access slots and its beam in nominal 1.022727 MHz cycles
+  (17062 a frame), and `EzColorCard` fed it the Apple's CPU cycles raw: it
+  never overrode `setCpuClock`. Under a TransWarp, a Zip or a FASTChip the
+  frame flag and /INT came 3.5-4x as often (a 60 Hz IRQ-paced program ran
+  3.5x fast, and strict mode accepted bursts the chip drops); on the PAL
+  profiles the frame was 59.53 Hz instead of 59.94. The card now converts
+  through a `SlotBusClock` (bus clock = the nominal NTSC clock), the shape
+  the Mockingboard and the Phasor got on 2026-09-29; ratio 1, every cycle as
+  is, on a stock NTSC machine, so the SDK's `attachEzColor` and the access
+  window pins (8 cycles safe, 7 too close) are unchanged. Pinned by
+  `ezcolor_card` § 6 (first frame flag at 1×, 4× and PAL).
+- **Ctrl-Reset wiped its 16 KB of VRAM.** `onReset` called `TMS9918::reset()`,
+  the power-on path that refills VRAM with the bistable `$FF/$00` pattern.
+  MAME's `reset_from_bus` → `tms9928a.cpp` `device_reset` clears registers,
+  status, latch, pointer and read-ahead and never touches VRAM — the DRAM is
+  outside the VDP. `TMS9918` now has the two resets the hardware has:
+  `resetPin()` (the /RESET line: everything but the DRAM) and `reset()` =
+  VRAM fill + `resetPin()`, POM1's behaviour unchanged. The card resets the
+  pin on a bus RESET and the whole chip on `onPowerCycle` (the controller's
+  `coldBoot` / `bootFromSlot` power-cycle the bus; the SDK's `Core::coldBoot`
+  power-cycles the card explicitly, so its cold boot is unchanged). **POM1
+  should pick up `resetPin()`** (`TMS9918.h`, the comment above `reset()`).
+  Pinned by `ezcolor_card` § 4.
+- **Two cards with a picture: one of them lost it.** The display holds one
+  card-picture source and every plug site overwrote it, so the higher slot
+  won: a ][+ with a Videoterm in slot 3 and an E-Z Color in slot 4 showed
+  the Videoterm's 80 columns nowhere (PR#3 turned TEXT + AN0 on, the screen
+  stayed on 40 columns, the Card Monitor showed the TMS picture). Now the
+  card that can take the Apple's monitor by its own rule
+  (`CardVideoSource::takesMonitor`, false for the E-Z Color) gets the Apple
+  II Screen, and the Card Monitor panel the other one — the real two-monitor
+  set-up — whatever the slot order (`pom2::preferScreenSource` /
+  `preferPanelSource`, `MainWindow::plugCardVideoSource`).
+- **The Card Monitor tab came back after being closed.** It offered itself
+  whenever the card pointer changed, and every Slot Config apply, profile
+  switch or firmware toggle rebuilds every card. It now compares the card's
+  slot and catalog key (`pom2::shouldOfferCardMonitor`). Both pinned by the
+  new header-only `card_video_source`.
+- **A held paste hashed the text page on every `$C000` read, and timed the
+  hold in CPU cycles.** The line-at-a-time hold (`MemoryPaste.cpp`) computed
+  its 1-2 KB FNV hash on each KEYIN poll and used it once per 8192 cycles:
+  a 31-line paste into the headless ][+ ran ~3x slower than idle while
+  held (0.745 s against 0.505 s for 1500 frames; 0.47 s against 0.47 s now).
+  And its 0.1 s settle and 2 s cap counted `cycleCounter`, so under a 4x
+  accelerator a line went after 25 ms — the outrun the hold exists to stop.
+  The hash now runs only when a sample is due, and the clock is
+  `Memory::videoNow()` (the crystal's). The path with no paste held is the
+  same two relaxed loads and one store as before. Pinned by `paste_smoke`
+  (the hold under `setVideoClockRatio(0.25)`).
+
+## 2026-10-31 — Bug hunt: the 6522's IFR bit 7, the IWM motor-off delay, the slow-CPU motor split
+
+- **IFR bit 7 lagged the flag it summarises by one cycle.** The VIA rework
+  holds a flag raised on the last advanced cycle off the /IRQ PIN
+  (`ifrFresh_`), because the 6502 samples IRQ on an instruction's
+  penultimate cycle and POM2's core at its boundary. `computedIfr()` built
+  bit 7 from that held pin, so with IER enabled a read of IFR exactly on
+  the underflow cycle (N + 2, mb-audit T6522_F) gave `$40` instead of `$C0`.
+  A `BIT IFR / BMI` poller missed the interrupt for one poll. On the chip
+  bit 7 is the OR of the enabled flags, the same node that drives /IRQ, and
+  MAME's `set_int` raises INT_ANY with the flag. Bit 7 is now
+  `ifr & ier & 0x7F`; the pin keeps its one-cycle hold (/IRQ still at
+  N + 3), and the T1 read-back bias is untouched. Pinned by `via_t2_timing`
+  (`testIfrBit7RisesWithTheFlag`, T1 and T2).
+- **A //c-class Disk II stopped its motor at 1.0 s; the IWM's timer is
+  2^23 ticks of its 7.16 MHz clock, 1.172 s.** The 556 delay of 2026-10-31
+  gave the IWM host a round second, while MAME's `iwm.cpp` and POM2's own
+  `IWMDevice` use `8388608` ticks. On a //c+ the observing card stopped the
+  5.25" spindle and its sound 0.17 s before the IWM dropped the drive, and
+  on a plain //c a program re-entering RWTS between 1.0 and 1.17 s after
+  `$C0E8` paid the full spin-up wait. The card also ignored the IWM's mode
+  bit 2, "motor-off immediately" (MAME `if(m_mode & 0x04)` → idle, no
+  timer). Both are fixed: the delay is a constant chosen when `$C0n8`
+  starts it, and with bit 2 set on an IWM host the spindle stops at once
+  through `stopSpindle()`, the expiry block of `advanceCycles` made a
+  function. A Disk II still has no mode register. The per-tick path is
+  unchanged (one decrement and one test). Pinned by `diskii_motor_coast`
+  § 4 (still on at 1.15 M cycles, off by 1.21 M), § 5 (4x, past 1.172 s of
+  real time) and § 7 (the 556 off by 1.175 M; IWM mode `$0F` stops at
+  once; a Disk II ignores the register).
+- **A CPU slower than the bus ran the disk past its motor stop.**
+  `advanceCycles` splits a batch at the spin-down deadline so the LSS never
+  reads past it. The split converted the deadline with
+  `ratio >= 1 ? delay : delay / ratio`, on the assumption that an
+  accelerator only ever makes the CPU faster. A FASTChip set to 0.2-0.9 MHz
+  makes the bus/CPU ratio greater than 1 (5 at 0.2 MHz), which put the
+  deadline up to 5x late, and the nibbles a guest read after the next
+  motor-on depended on how the time had been batched. The conversion now
+  applies to any ratio but 1, and the ratio-1 path is the same code as
+  before. Pinned by `diskii_motor_coast` § 8: at 0.2 MHz, one 300 k-cycle
+  batch and 300 k one-cycle steps across the stop read the same stream
+  (fails with the old condition).
+- Comments that no longer described the code: the Disk II's `$C0nD`
+  write-protect probe (removed on 2026-10-31), the VIA's "first shot at
+  N+3" (the flag is at N+2, the pin at N+3), the Uthernets' "$FF" slot
+  page (the floating bus since 2026-10-31).
+- A pitfall the longer IWM coast exposed: `no_slot_clock_prodos_driver`
+  hand-builds its Disk II, and a hand-built card keeps the IWM hooks (the
+  documented default), so its coast moved from 1.0 s to 1.172 s and the
+  II+ case printed a phantom "NO-SLOT CLOCK - 8/0/0". The driver's probe of
+  an empty slot reads the floating bus, so what it prints there follows the
+  machine's timing, not the chip. The test now builds its card with
+  `setIwmHost(false)`, as a ][+ / //e Disk II is, and pins the real
+  invariant too: the fixed time must never appear on a II+ (the chip under
+  the Monitor ROM is never read).
+
 ## 2026-10-31 — The E-Z Color in the SDK, with its access window enforced
 
 `pom2_core` gains `attachEzColor(slot, siliconStrict)`, `ezColorState()` (R0-R7,

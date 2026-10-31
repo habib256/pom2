@@ -59,8 +59,11 @@ void testAcia()
     Ccs7710Card c(1);
     CHECK(c.slotRomRead(0x05) == 0x18 && c.slotRomRead(0x07) == 0x38);
     CHECK(!c.romLayoutError());
-    // Powered up in master reset: TDRE, nothing received, nothing sent.
-    CHECK(c.deviceSelectRead(0x0) == 0x02);
+    // Powered up in master reset: the status register is clear — TDRE
+    // included (MC6850 data sheet: master reset "clears the status
+    // register"; MAME 6850acia status_r masks TDRE while divide == 0) —
+    // nothing received, nothing sent.
+    CHECK(c.deviceSelectRead(0x0) == 0x00);
     c.deviceSelectWrite(0x1, 'X');
     CHECK(c.bytesWritten() == 0 && "held in reset: the byte is dropped");
     c.deviceSelectWrite(0xE, 0x15);                  // 8N1, /16, no IRQs
@@ -85,6 +88,7 @@ void testAcia()
     CHECK(c.status() & 0x80 && "TIE with TDRE set");
     c.deviceSelectWrite(0x0, 0x03);
     CHECK(!(c.status() & 0x80) && "master reset");
+    CHECK(c.status() == 0x00 && "no TDRE in master reset");
     std::printf("[ OK ] 6850: decode, reset, spool, receive queue, IRQs\n");
 }
 

@@ -157,6 +157,20 @@ inline const std::vector<RomCatalogEntry>& romCatalog()
           "The card does not plug: its Z80 boots from this ROM and has "
           "nothing else to run.",
           RomMissingEffect::Unavailable },
+        { "Other cards", "CCS 7710 serial PROM 7710-03 (high, U5)",
+          { "roms/ccs7710_03h.u5" }, 256, 0xA2CDB6BDu, "CCS 7710-03 (import only: no download source)",
+          "The card runs POM2's own firmware page instead (compared against these "
+          "PROMs by ccs7710_card).",
+          RomMissingEffect::Degraded },
+        { "Other cards", "CCS 7710 serial PROM 7710-03 (low, U6)",
+          { "roms/ccs7710_03l.u6" }, 256, 0x18E3983Fu, "CCS 7710-03 (import only: no download source)",
+          "Goes with the high PROM above.",
+          RomMissingEffect::Degraded },
+        { "Other cards", "DAN ][ Controller EPROM",
+          { "roms/dan2_eprom.bin" }, 512, 0xB1C3860Fu, "ThorstenBr DAN ][ (import only: no download source)",
+          "The card serves POM2's own slot page instead (same ID bytes, a ProDOS "
+          "driver and a boot).",
+          RomMissingEffect::Degraded },
         { "Other cards", "Videx UltraTerm firmware (original, frm_b537)",
           { "roms/videx_ultraterm_frm_b537.bin" }, 4096, 0x1E85A93Eu, "MAME a2ulttrm",
           "The UltraTerm does not plug unless the enhanced-//e set below is "

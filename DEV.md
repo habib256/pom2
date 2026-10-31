@@ -516,7 +516,8 @@ card: the extended 80-column card's 64 KB and 80 columns with a 6 MHz Z80B
 on that same RAM. Not a slot card, so not in the catalog: setting
 `premium_softcard` (Machine menu), seated on SlotBus **slot 0**, which a //e
 does not have — Memory decodes $C080-$C08F itself — so the card gets the
-bus's pacing, reset and snapshot fan-out for free. No emulator had it and no
+bus's pacing, reset, rewind (`SLOT0`) and CPU-clock fan-out — the last two
+since the 2026-10-31 bug hunt, when they still walked slots 1-7 only. No emulator had it and no
 programmer's manual is online; everything below is read off Microsoft's CP/M
 2.25 and 2.26 (6502 and Z80 BIOS) and the Installation manual pp. 72-74:
 
@@ -549,19 +550,29 @@ Catalog `ezcolor`, any slot, no ROM. Steve Ciarcia's card from BYTE, August
 1982: a TMS9918A with 16 KB of VRAM on a 10.738635 MHz crystal and its own
 video output. MAME `a2bus/ezcgi.cpp`: `$C0n0` the data port, `$C0n1` the
 register port, other offsets `$FF`, the VDP's /INT on the slot IRQ, a bus
-reset resets it. The VDP is **POM1's** (`TMS9918.h/.cpp`, the same author's
+reset resets its registers (`TMS9918::resetPin`) and keeps its VRAM, as
+MAME's `tms9928a.cpp` `device_reset`; only a power cycle (`onPowerCycle`,
+the cold boot) gives VRAM its power-on pattern. The VDP is **POM1's** (`TMS9918.h/.cpp`, the same author's
 Apple-1 emulator, P-LAB Graphic Card), imported as-is so the two stay
 syncable: namespace `pom2::tms`, no `pom1::Peripheral` base, byte-vector
 state (`appendState` / `loadState` = POM1's serialize / deserialize field
 for field), the 17062-cycle NTSC frame (59.94 Hz on the VDP's own crystal)
 defined in the header. Writes call `renderBeamCatchUp` and a status read
 `syncSpriteScanToBeam` with the CPU's in-flight cycles (POM1's Étapes 0/1),
-so mid-line register writes split the raster where the beam is.
+so mid-line register writes split the raster where the beam is. Those
+17062 cycles are nominal-NTSC ones: the card converts the Apple's CPU cycles
+through a `SlotBusClock` (`setCpuClock`), so a TransWarp, a Zip or a PAL
+machine leaves the VDP on its 59.94 Hz frame and its access-window timing
+(ratio 1, every cycle as is, on a stock NTSC machine and in the SDK).
 
 The card's monitor is its own: the 288 × 216 picture is a `CardVideoSource`
 whose `ownsScreen` is always false — Display ▸ Card Monitor shows it next to
 the Apple's (two monitors, as the card was used), or the main screen with
-the switch at "Card video". Pinned by `ezcolor_card` (ports, read-ahead, a
+the switch at "Card video". With another picture card plugged (a
+Videoterm, an UltraTerm, a VidHD), that card gets the Apple II Screen and the
+E-Z Color the Card Monitor, whatever the slot order
+(`pom2::preferScreenSource` / `preferPanelSource`, `CardVideoSource.h`,
+pinned by `card_video_source`). Pinned by `ezcolor_card` (ports, read-ahead, a
 Graphics I screen and its R7 border, the frame IRQ, reset, snapshot) and
 `card_snapshot_contract`.
 
@@ -601,7 +612,9 @@ Catalog `ccs7710`, any slot. California Computer Systems' Model 7710: a
 Motorola 6850 ACIA decoded on A0 alone across $C0n0-$C0nF (MAME
 `ccs7710.cpp`), so even = control/status and odd = data — the $C0nE/$C0nF
 the SoftCard II CP/M BIOS uses. Status per the MC6850 sheet: RDRF, TDRE
-(always set: the line is infinitely fast), /DCD and /CTS low, OVRN, IRQ
+(always set outside master reset — the line is infinitely fast — and clear
+in it, as the sheet's "clears the status register" and MAME's `6850acia`
+`status_r` have it), /DCD and /CTS low, OVRN, IRQ
 from CR7 (receive) and CR6:5 = 01 (transmit); CR1:0 = 11 is master reset,
 the power-up state. What it sends goes to a spool the ImageWriter takes
 (`PrinterCoordinator::SourceKind::Serial6850`); `receive()` queues bytes
@@ -2875,7 +2888,9 @@ Floor at 1 ms gap defends `mixLoop` against `INF` rate; pitch in
 **Wall-clock motor-off hold-off**: turbo bumps CPU ~60× → the ~1.1 s
 spin-down (`DiskIICard::motorOffCycles`: the Disk II's 556, R5 47 kΩ ×
 C2 22 µF × ln 3 = 1.136 s on Apple's 050-0005-00 schematic; an IWM
-host's "about 1 second", IWM spec rev 19 p. 6) becomes ~17 ms
+host's "about 1 second", IWM spec rev 19 p. 6 — 2^23 ticks of its
+7.16 MHz clock, 1.172 s, as MAME `iwm.cpp` and `IWMDevice`; none at all
+when the IWM's mode bit 2 is set) becomes ~17 ms
 wall-clock. Device defers audible transition by `kMotorOffHoldMs`
 (default 800 ms) in **audio output frames** not cycles; fresh
 `motor(true)` cancels.
@@ -4020,13 +4035,21 @@ a 34 MB cap, `--proto-redir =http,https`), a `.gz` is inflated
 CRC-32 checked), a `.zip` gives its first member whose extension a drive
 takes (`__MACOSX/._*` skipped). The result is a file in
 `<user data>/media_cache` named `<key>-<name>`; the key is the URL, or the
-archive's path + size + date — a changed archive is unpacked afresh, an
-unchanged one reuses the copy and keeps what the guest wrote. Callers: the
+archive's CANONICAL path (`weakly_canonical`: a symlinked folder or another
+case is the same file) + size + date — a changed archive is unpacked afresh,
+an unchanged one reuses the copy and keeps what the guest wrote. Only a URL
+loses a `?query` / `#fragment` from its name; in a local path, a member or a
+gzip FNAME `#` and `?` are part of the name. A download whose body is an
+HTML / XML page (a soft 404) is refused and never cached — a stale one is
+dropped on the next resolve — and a zip or gzip served under a name without
+the extension gets it, so it is unpacked (`mediaBodyIsWebPage`,
+`mediaArchiveExtension`). Callers: the
 CLI positional (before the window), `insertAndBootImage` (drops, Insert
 disk and boot), `mountEmptyDrive` (a drive's picker, a drop on a drive),
 and File ▸ Open disk from URL, whose download runs on a guarded thread and
-can be cancelled. A dropped zip with no disk falls through to the ROM
-import. Pinned by `media_source` (archives built in the test, an
+can be cancelled; `pom2_headless --disk` too. A dropped zip with no disk
+falls through to the ROM import; if nothing installs, the refusal is the
+archive's own error (`explainMediaSourceRefusal`), not "no disk format". Pinned by `media_source` (archives built in the test, an
 unreachable URL); checked by hand against Asimov.
 
 ### DiskIICard
@@ -5305,7 +5328,8 @@ requested duration.
 LSS runtime state (head quarter-track, motor, phase magnets, data
 register, sequencer, rotational timing — NOT the media or PROMs), so a
 rewind during disk I/O doesn't leave an in-progress read on the wrong
-nibble. `MachineSnapshot` writes these as per-slot `SLOTn` sections **only when
+nibble. `MachineSnapshot` writes these as per-slot `SLOTn` sections (n = 0-7:
+slot 0 is the //e aux slot, where the Premium SoftCard //e keeps its Z80) **only when
 `captureMachineState(includeSlots=true)`** — the rewind path opts in;
 the AI-control `/snapshot` file path keeps its documented "disk/slot
 excluded" contract (an archival file can outlive a media swap). Restore
@@ -10260,9 +10284,16 @@ the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per
 entry, when the archive is unreachable or a member is absent or wrong:
 [Abdess/retrobios](https://github.com/Abdess/retrobios/tree/main/bios) at
 the pinned commit (`bios/Apple/Apple II` plus the MAME card zips under
-`bios/Arcade/MAME`). `fetchMissingRoms(..., RomFetchSources)` can restrict
-a run to one source; `rom_fetch_live_probe` downloads the whole catalogue
-from each ALONE (2026-10-29: 49/49 from each). The mapping lives in `romFetchCatalog()` — every
+`bios/Arcade/MAME`). When the archive is down (2026-10-31: the item is dark,
+403 + an HTML page, which curl 8 reports as exit 56) the run says so in its
+summary — "POM2's ROM archive on archive.org is unavailable (…); RetroBIOS
+was used instead" — and a page served as the zip is deleted with the run's
+scratch dir, never reused (pinned by `rom_fetch_archive_down`, whose
+`RomFetchSources::download` plays the servers). `fetchMissingRoms(...,
+RomFetchSources)` can restrict a run to one source; `rom_fetch_live_probe` downloads the whole catalogue
+from each ALONE (2026-10-29: 49/49 from each). Entries with a null `url` are **import-only** (`romDownloadable` false: the
+CCS 7710 PROMs, the DAN ][ EPROM): identified by RomImport, listed in ROM
+Status, never planned by `romsToFetch()`. The mapping lives in `romFetchCatalog()` — every
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`
 already looks for (pinned by `rom_fetch`). Existing files are skipped
 (`findResource`); new ones land in `writableRomsDir()`: POM2's own `roms/`

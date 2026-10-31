@@ -478,5 +478,9 @@ src/StorageCoordinator.cpp               2425
 # Apple-1 emulator), imported nearly verbatim for the E-Z Color card so the
 # two copies can be kept in sync. Splitting it here would break that diff;
 # the split, if any, belongs upstream in POM1 first.
-src/TMS9918.cpp                          2029
+# 2026-10-31 (bug hunt): reset() split into the VRAM fill + resetPin(), so a
+# bus reset keeps the card's 16 KB as the chip does; POM1 should pick up the
+# same split, which keeps the two copies diffable.
+#   src/TMS9918.cpp: 2029 -> 2037 (+8)
+src/TMS9918.cpp                          2037
 src/hgrpaint/HgrPaintEditor.cpp          2656

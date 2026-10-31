@@ -81,8 +81,14 @@ std::string list(uint16_t start, const std::function<uint8_t(uint16_t)>& peek,
                 }
                 continue;
             }
+            // Control characters go out as they are, as LIST types them: a
+            // string's Ctrl-D (PRINT "<Ctrl-D>BLOAD ...") is the program, and
+            // a '?' in its place listed another one. CR and LF alone would
+            // cut the line, so they keep the '?'.
             const char c = char(b & 0x7F);
-            out += (c >= 0x20 && c < 0x7F) ? c : '?';
+            const bool keep = (c >= 0x20 && c < 0x7F)
+                           || (c >= 0x01 && c < 0x20 && c != 0x0A && c != 0x0D);
+            out += keep ? c : '?';
             spaced = c == ' ';
         }
         while (!out.empty() && out.back() == ' ') out.pop_back();

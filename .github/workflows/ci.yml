@@ -212,8 +212,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
-            libslirp-dev libglib2.0-dev
+            libslirp-dev libglib2.0-dev ccache
           pkg-config --exists slirp
+
+      # Measured 2026-10-31: this leg's "Build everything" took 95 minutes on
+      # 41d72da7 and over two hours on dc4c5dfe, with no timeout set (the
+      # default is six hours). Every test target compiles its own copies of
+      # the src files it links, so the tree grows with each pinned test; the
+      # units are the same ones as the push before, which is what ccache is
+      # for (the sanitizer job below has used it since 2026-10). Keyed apart
+      # from the sanitizer caches: different flags, different objects.
+      - name: Compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.ccache
+          key: ccache-linux-release-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-release-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
 
       # Dear ImGui is gitignored (setup_imgui.sh normally clones it). POM2 needs
       # the `docking` branch at a PINNED commit — docking is absent from master
@@ -255,10 +275,19 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=ON \
             -DPOM2_FETCH_TOMHARTE=ON \
-            -DPOM2_WERROR=ON
+            -DPOM2_WERROR=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
+      # --parallel 4: the runner has four cores and 16 GB; an uninstrumented
+      # Release unit is small enough that four at once never came near it.
       - name: Build everything
-        run: cmake --build build --parallel 2
+        run: cmake --build build --parallel 4
+
+      # A hit rate near zero means the key stopped matching, not that the
+      # tree grew.
+      - name: ccache statistics
+        run: ccache --show-stats
 
       # The oracles that are DOWNLOADED at configure time (Klaus 6502/65C02,
       # zexdoc/zexall) are wrapped in `if(EXISTS ...)` around their add_test().

@@ -27,6 +27,7 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Mockingboard.h"
+#include "PremiumSoftCard.h"
 #include "Memory.h"
 #include "SlotBus.h"
 #include "TranswarpCard.h"
@@ -154,6 +155,34 @@ void checkMockingboardStaysOnPhase0()
            "an accelerator re-clocked the Mockingboard's 6522");
 }
 
+// The //e aux slot is SlotBus slot 0 (PremiumSoftCard::kAuxSlot), and every
+// clock fan-out walked slots 1-7: the Premium SoftCard's Z80 divided by the
+// stock NTSC 1 022 727 Hz for ever — 0.7 % fast on PAL, ~3.5x under a
+// TransWarp, 4x under a FASTChip.
+void checkAuxSlotGetsTheClock()
+{
+    auto c = makeWithTranswarp();
+    PremiumSoftCard* psc = nullptr;
+    {
+        auto st = c->lockState();
+        auto card = std::make_unique<PremiumSoftCard>();
+        card->setMemory(&st.memory());
+        psc = card.get();
+        st.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(card));
+    }
+    loadNops(*c);
+    for (int i = 0; i < 3; ++i) c->tickFrame();
+    std::printf("  aux-slot card at 3.5x: holds %9.0f Hz, machine %9.0f Hz\n",
+                psc->cpuClockHz(), c->emulatedCpuClockHz());
+    assert(std::fabs(psc->cpuClockHz() - c->emulatedCpuClockHz()) < 1.0 &&
+           "the accelerator fan-out skipped the //e aux slot");
+    c->setVideoStandard(VideoStandard::PAL);
+    std::printf("  aux-slot card on PAL:  holds %9.0f Hz, machine %9.0f Hz\n",
+                psc->cpuClockHz(), c->emulatedCpuClockHz());
+    assert(std::fabs(psc->cpuClockHz() - c->emulatedCpuClockHz()) < 1.0 &&
+           "the video-standard fan-out skipped the //e aux slot");
+}
+
 }  // namespace
 
 int main()
@@ -194,6 +223,8 @@ int main()
     }
     // 5. The accelerator must leave phase-0 devices alone.
     checkMockingboardStaysOnPhase0();
+    // 6. The //e aux slot (slot 0) is a card too.
+    checkAuxSlotGetsTheClock();
     std::puts("accelerator_clock_chunk OK");
     return 0;
 }

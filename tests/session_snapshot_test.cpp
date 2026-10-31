@@ -8,6 +8,7 @@
 #include "Mockingboard.h"
 #include "SnesMaxCard.h"
 #include "SlinkyCard.h"
+#include "PremiumSoftCard.h"
 #include "SnapshotIO.h"
 #include "SystemProfile.h"
 #include "TestTempPath.h"
@@ -570,6 +571,26 @@ void diskFormats()
     }
 }
 }
+// The Premium SoftCard sits on slot 0 (the //e auxiliary slot), which no
+// Slot Config row shows: the refusal names the card, not "slot 0".
+void premiumSoftCardRefusal()
+{
+    auto fixture = std::make_unique<Fixture>(MockingboardCard::Variant::AC, false);
+    auto& f = *fixture;
+    {
+        auto state = f.ctrl.lockState();
+        auto psc = std::make_unique<PremiumSoftCard>();
+        psc->setMemory(&state.memory());
+        state.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(psc));
+        SessionArchive out;
+        std::string error;
+        assert(!pom2::captureSession(out, state.cpu(), state.memory(), f.ctrl.machineId(), error));
+        assert(error.find("Premium SoftCard") != std::string::npos);
+        assert(error.find("slot 0") == std::string::npos);
+        state.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, nullptr);
+    }
+}
+
 int main()
 {
     for (bool bitLss : {false, true}) {
@@ -583,5 +604,6 @@ int main()
     diskFormats();
     wozSessions();
     writableWozSessions();
+    premiumSoftCardRefusal();
     std::puts("session_snapshot: all ok");
 }

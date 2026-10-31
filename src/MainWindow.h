@@ -976,7 +976,13 @@ private:
     /// monitor opens as a tab; frames left to keep the screen tab selected.
     unsigned     screenDockId_ = 0;
     int          focusScreenFrames_ = 3;
-    const void*  lastCardVideo_ = nullptr;
+    /// The cards with a picture of their own (CardVideoSource.h): the one the
+    /// Card Monitor panel shows, by "<slot>:<catalog key>", and that name on
+    /// the last frame — the tab offers itself when it changes, not when a
+    /// rebuild re-creates the same card (MainWindow_CardMonitor.cpp).
+    pom2::CardVideoSource* cardPanelSource_ = nullptr;
+    std::string  cardPanelKey_;
+    std::string  lastCardMonitorKey_;
     std::vector<uint32_t> cardMonitorPixels_;
     int          kbImageW_     = 0;
     int          kbImageH_     = 0;
@@ -1491,6 +1497,12 @@ private:
     void renderNoSlotClockPanelWindow();
     /// The card monitor switch + second monitor (MainWindow_CardMonitor.cpp).
     void renderCardMonitorPanel();
+    /// A card with its own picture was plugged in `slot` as `key`: the Apple
+    /// II Screen and the Card Monitor panel each take it or keep theirs
+    /// (pom2::preferScreenSource / preferPanelSource). Under the lock.
+    void plugCardVideoSource(pom2::CardVideoSource* card, int slot, const char* key);
+    /// Before the bus drops its cards: both pointers go.
+    void clearCardVideoSources();
     void applyCardMonitorSetting();
     /// File ▸ Open disk from URL (MainWindow_OpenUrl.cpp): the download runs
     /// on its own thread; the frame loop boots the image when it lands.

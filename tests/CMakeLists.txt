@@ -7611,6 +7611,7 @@ set_tests_properties(os_call_trace PROPERTIES TIMEOUT 30)
 add_executable(test_premium_softcard
     premium_softcard_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PremiumSoftCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
@@ -8916,6 +8917,39 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2p.rom")
                          PASS_REGULAR_EXPRESSION "A: DUMP     COM : DOWNLOAD COM")
 endif()
 
+# --disk takes a .zip like the GUI's positional (MediaSource.h): it used to
+# reach insertDisk raw and be refused by its size. The zip is made here by
+# `cmake -E tar --format=zip` around a copy of the tracked DIRTBIKE.dsk, and
+# HOME / XDG_DATA_HOME point the media cache into the build tree.
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom"
+   AND EXISTS "${CMAKE_SOURCE_DIR}/disks_5.4/DIRTBIKE.dsk")
+    set(_hz ${CMAKE_BINARY_DIR}/headless_zip)
+    add_test(NAME headless_zip_disk_clean
+             COMMAND ${CMAKE_COMMAND} -E remove_directory ${_hz})
+    add_test(NAME headless_zip_disk_setup
+             COMMAND ${CMAKE_COMMAND} -E make_directory ${_hz}/src ${_hz}/home)
+    set_tests_properties(headless_zip_disk_clean PROPERTIES FIXTURES_SETUP headless_zip)
+    add_test(NAME headless_zip_disk_copy
+             COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/disks_5.4/DIRTBIKE.dsk ${_hz}/src/)
+    add_test(NAME headless_zip_disk_pack
+             COMMAND ${CMAKE_COMMAND} -E tar cf ${_hz}/dirtbike.zip --format=zip DIRTBIKE.dsk
+             WORKING_DIRECTORY ${_hz}/src)
+    set_tests_properties(headless_zip_disk_setup PROPERTIES FIXTURES_SETUP headless_zip
+                         DEPENDS headless_zip_disk_clean)
+    set_tests_properties(headless_zip_disk_copy PROPERTIES FIXTURES_SETUP headless_zip
+                         DEPENDS headless_zip_disk_setup)
+    set_tests_properties(headless_zip_disk_pack PROPERTIES FIXTURES_SETUP headless_zip
+                         DEPENDS headless_zip_disk_copy)
+    add_test(NAME headless_zip_disk
+             COMMAND pom2_headless --disk ${_hz}/dirtbike.zip --frames 60
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_zip_disk PROPERTIES TIMEOUT 120
+                         FIXTURES_REQUIRED headless_zip
+                         ENVIRONMENT "HOME=${_hz}/home;XDG_DATA_HOME=${_hz}/home"
+                         PASS_REGULAR_EXPRESSION "DIRTBIKE.dsk from the zip -> .*DIRTBIKE.dsk"
+                         FAIL_REGULAR_EXPRESSION "insertDisk failed")
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────
 # Open-Apple / Solid-Apple source arbitration
 # ─────────────────────────────────────────────────────────────────────────
@@ -8933,6 +8967,14 @@ target_include_directories(test_apple_key_latch PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME apple_key_latch COMMAND test_apple_key_latch)
 set_tests_properties(apple_key_latch PROPERTIES TIMEOUT 5)
+
+# Cards with a picture of their own (CardVideoSource.h): which one the Apple
+# II Screen and the Card Monitor panel get when two are plugged, and when the
+# Card Monitor tab offers itself. Header-only, with fakes (bug hunt 2026-10-31).
+add_executable(test_card_video_source card_video_source_test.cpp)
+target_include_directories(test_card_video_source PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME card_video_source COMMAND test_card_video_source)
+set_tests_properties(card_video_source PROPERTIES TIMEOUT 5)
 
 # ─────────────────────────────────────────────────────────────────────────
 # Parser fuzz smokes (bounded, deterministic, self-contained)
@@ -9683,6 +9725,24 @@ add_test(NAME rom_fetch
          COMMAND test_rom_fetch
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(rom_fetch PROPERTIES TIMEOUT 10)
+
+# "Download missing ROMs" with POM2's archive.org item dark (403, or 200 with
+# an HTML page): the per-entry RetroBIOS fallback runs, the summary names the
+# archive as unavailable, nothing is kept. RomFetchSources::download plays
+# the servers — no network.
+add_executable(test_rom_fetch_archive_down
+    rom_fetch_archive_down_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/RomFetch.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+    ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+)
+target_include_directories(test_rom_fetch_archive_down PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_rom_fetch_archive_down PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+endif()
+add_test(NAME rom_fetch_archive_down COMMAND test_rom_fetch_archive_down)
+set_tests_properties(rom_fetch_archive_down PROPERTIES TIMEOUT 30)
 
 # ROM import by content: a dump the user has, whatever its name or a MAME
 # romset .zip, identified by SHA-256 and installed under the probed name.

@@ -35,6 +35,7 @@
 #include "CardVideoSource.h"
 #include "CpuClock.h"
 #include "EmulationController.h"
+#include "Logger.h"
 #include "Pom2GL.h"
 #include "Settings.h"
 
@@ -49,19 +50,42 @@ void MainWindow::applyCardMonitorSetting()
     display->setCardMonitor(static_cast<Apple2Display::CardMonitor>(m));
 }
 
+void MainWindow::plugCardVideoSource(pom2::CardVideoSource* card, int slot, const char* key)
+{
+    if (!card) return;
+    pom2::CardVideoSource* screen = display->cardVideoSource();
+    if (screen && screen != card)
+        pom2::log().warn("Slots", std::string("Two cards with a picture of their own; slot ") +
+                         std::to_string(slot) + " (" + key + ") shares the monitors "
+                         "(the Apple II Screen goes to the card that can take it, the Card "
+                         "Monitor to the other)");
+    display->setCardVideoSource(pom2::preferScreenSource(screen, card));
+    if (pom2::preferPanelSource(cardPanelSource_, card) == card) {
+        cardPanelSource_ = card;
+        cardPanelKey_ = std::to_string(slot) + ":" + key;
+    }
+}
+
+void MainWindow::clearCardVideoSources()
+{
+    display->setCardVideoSource(nullptr);
+    cardPanelSource_ = nullptr;
+    cardPanelKey_.clear();
+}
+
 void MainWindow::renderCardMonitorPanel()
 {
     // A card that brings its own monitor offers it as a tab next to the
     // Apple II Screen the moment it is plugged; the screen stays the tab in
-    // front. Closing the tab sticks until the next such card is plugged.
-    const void* source = display->cardVideoSource();
-    if (source != lastCardVideo_) {
-        lastCardVideo_ = source;
-        if (source && !show(pom2::PanelId::CardMonitor)) {
-            show(pom2::PanelId::CardMonitor) = true;
-            focusScreenFrames_ = 3;
-        }
+    // front. Closing the tab sticks until the next such card is plugged —
+    // a card by slot and kind, so a Slot Config apply or a profile switch
+    // that rebuilds the same card does not bring a closed tab back.
+    if (pom2::shouldOfferCardMonitor(lastCardMonitorKey_, cardPanelKey_)
+        && !show(pom2::PanelId::CardMonitor)) {
+        show(pom2::PanelId::CardMonitor) = true;
+        focusScreenFrames_ = 3;
     }
+    lastCardMonitorKey_ = cardPanelKey_;
     if (!show(pom2::PanelId::CardMonitor)) return;
     // First appearance: in the Apple II Screen's dock node, as a tab. After
     // that it goes wherever the user puts it (imgui.ini).
@@ -103,7 +127,7 @@ void MainWindow::renderCardMonitorPanel()
     int w = 0, h = 0;
     {
         auto st = controller->lockState();
-        if (const pom2::CardVideoSource* card = display->cardVideoSource()) {
+        if (const pom2::CardVideoSource* card = cardPanelSource_) {
             w = card->pictureWidth();
             h = card->pictureHeight();
             if (w > 0 && h > 0) {
@@ -116,7 +140,7 @@ void MainWindow::renderCardMonitorPanel()
     }
     if (w <= 0 || h <= 0) {
         ImGui::TextDisabled("No card with its own picture is plugged (Videx Videoterm\n"
-                            "on a ][ / ][+, UltraTerm, VidHD).");
+                            "on a ][ / ][+, UltraTerm, VidHD, E-Z Color).");
         ImGui::End();
         return;
     }

@@ -181,7 +181,12 @@ bool Ccs7710Card::loadProms(const std::vector<uint8_t>& hi, const std::vector<ui
 
 uint8_t Ccs7710Card::status() const
 {
-    uint8_t st = kStatusTdre;            // /DCD and /CTS low: wired
+    // /DCD and /CTS low: wired. Master reset clears the status register,
+    // TDRE included (MC6850 data sheet; MAME 6850acia status_r masks TDRE
+    // while divide == 0): a program polling TDRE before it leaves reset
+    // waits, as on the chip, instead of sending a byte that is dropped.
+    const bool inReset = (control_ & 0x03) == 0x03;
+    uint8_t st = inReset ? 0 : kStatusTdre;
     if (rdrf_) st |= kStatusRdrf;
     if (overrun_) st |= kStatusOvrn;
     const bool rie = (control_ & 0x80) != 0;

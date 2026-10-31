@@ -817,8 +817,9 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             // screen by itself).
             auto card = std::make_unique<EzColorCard>();
             card->setCpu(&st.cpu());
-            display->setCardVideoSource(card.get());
+            EzColorCard* ez = card.get();
             st.memory().slotBus().plug(s, std::move(card));
+            plugCardVideoSource(ez, s, "ezcolor");
         }
         else if (kind == "ccs7710") {
             // The factory loads CCS's PROMs when they are there (the LLE
@@ -851,7 +852,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             if (made) {
                 auto* ut = static_cast<VidexUltratermCard*>(made.card.get());
                 st.memory().slotBus().plug(s, std::move(made.card));
-                display->setCardVideoSource(ut);
+                plugCardVideoSource(ut, s, "ultraterm");
             }
         }
         else if (kind == "chatmauve")   plugChatMauve(s);
@@ -902,7 +903,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             if (made) {
                 auto* videx = static_cast<VidexVideotermCard*>(made.card.get());
                 st.memory().slotBus().plug(s, std::move(made.card));
-                display->setCardVideoSource(videx);
+                plugCardVideoSource(videx, s, "videoterm");
             }
         }
         else if (kind == "vidhd") {
@@ -914,7 +915,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             if (made) {
                 auto* vidhd = static_cast<VidHDCard*>(made.card.get());
                 st.memory().slotBus().plug(s, std::move(made.card));
-                display->setCardVideoSource(vidhd);
+                plugCardVideoSource(vidhd, s, "vidhd");
             }
         }
         else if (kind == "workstation") plugWorkstation(s);
@@ -1036,7 +1037,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         const double cpuHz = controller->emulatedCpuClockHz();
         const double standardHz = static_cast<double>(
             pom2VideoTiming(controller->getVideoStandard()).cpuClockHz);
-        for (int s = 1; s < SlotBus::kSlotCount; ++s) {
+        // From 0: the //e aux slot's Premium SoftCard times its Z80 too.
+        for (int s = 0; s < SlotBus::kSlotCount; ++s) {
             if (auto* card = st.memory().slotBus().peripheral(s)) {
                 card->setCpuClock(cpuHz);
                 card->setStandardClock(standardHz);   // Liron's mechanisms

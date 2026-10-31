@@ -41,6 +41,8 @@
 #include "RomCatalog.h"
 #include "CharRomCatalog.h"
 #include "SystemProfile.h"
+#include "Ccs7710Card.h"
+#include "Dan2Card.h"
 
 #include <algorithm>
 #include <iterator>
@@ -147,6 +149,11 @@ std::set<std::string> knownDests()
     // used to read "missing" in ROM Status while the card was using it.
     assert(s.count("roms/Thunderware_REV_1.3_ROM_U9.bin") == 1);
     assert(s.count("roms/ae transwarp rom v1.4.bin") == 1);
+    // A card's own probe, not a profile's: the CCS 7710 PROMs and the DAN ][
+    // EPROM were absent from every list, so the walk below never asked
+    // whether they could be fetched or identified.
+    assert(s.count(Ccs7710Card::kPromHiPath) == 1 && s.count(Ccs7710Card::kPromLoPath) == 1);
+    assert(s.count(Dan2Card::kEpromPath) == 1);
     return s;
 }
 
@@ -299,8 +306,13 @@ int main()
         expect(e.destRel && *e.destRel, "every entry has a destRel");
         expect(e.label && *e.label, std::string("label for ") +
                (e.destRel ? e.destRel : "?"));
-        expect(e.url && *e.url, std::string("url for ") +
-               (e.destRel ? e.destRel : "?"));
+        // Import-only entries (no source serves them) are named here, so an
+        // entry cannot lose its URL by accident.
+        static const std::set<std::string> importOnly = {
+            "roms/ccs7710_03h.u5", "roms/ccs7710_03l.u6", "roms/dan2_eprom.bin" };
+        const bool noSource = e.destRel && importOnly.count(e.destRel);
+        expect(noSource ? !pom2::romDownloadable(e) : (e.url && *e.url),
+               std::string("url for ") + (e.destRel ? e.destRel : "?"));
         expect(e.expectedSize > 0, std::string("size for ") +
                (e.destRel ? e.destRel : "?"));
         if (e.destRel) {
@@ -573,18 +585,24 @@ int main()
     // a single hit removes just that dest.
     {
         const auto all = pom2::romsToFetch([](const char*) { return false; });
-        expect(all.size() == cat.size(), "missing-everything queues the catalog");
+        std::size_t downloadable = 0;
+        for (const auto& e : cat) downloadable += pom2::romDownloadable(e) ? 1 : 0;
+        expect(all.size() == downloadable && downloadable + 3 == cat.size(),
+               "missing-everything queues the downloadable catalog, not the 3 import-only dumps");
+        for (const auto* e : all) expect(pom2::romDownloadable(*e), "no import-only entry is fetched");
     }
     {
         const auto none = pom2::romsToFetch([](const char*) { return true; });
         expect(none.empty(), "present-everything queues nothing");
     }
     {
+        std::size_t downloadableCount = 0;
+        for (const auto& e : cat) downloadableCount += pom2::romDownloadable(e) ? 1 : 0;
         const char* keep = cat.front().destRel;
         const auto rest = pom2::romsToFetch([&](const char* destRel) {
             return destRel && keep && std::string(destRel) == keep;
         });
-        expect(rest.size() == cat.size() - 1,
+        expect(rest.size() == downloadableCount - 1,
                "one present dest is skipped and only that one");
         for (const auto* e : rest)
             expect(std::string(e->destRel) != keep,

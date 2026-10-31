@@ -1629,8 +1629,9 @@ void DiskIICard::control(int offset)
     switch (offset) {
         case 0x8:
             if (active == MODE_ACTIVE) {
-                motorOffDelay = motorOffCycles();   // the 556, ~1.14 s
+                motorOffDelay = motorOffCycles();   // the 556 1.136 s, the IWM 1.172 s
                 active = MODE_DELAY;
+                if (iwmTimerOff()) stopSpindle();   // IWM mode bit 2: no timer
             }
             break;
         case 0x9:
@@ -1791,8 +1792,10 @@ void DiskIICard::switchAccess(uint8_t low4)
                 // `motorOn` stays true through the window — the nibble gate
                 // keeps turning — and the countdown in advanceCycles() stops
                 // the drive (and fires the spin-down sound) when it expires.
-                if (motorOn && motorOffDelay <= 0)
-                    motorOffDelay = motorOffCycles();   // the 556, ~1.14 s
+                if (motorOn && motorOffDelay <= 0) {
+                    motorOffDelay = motorOffCycles();   // the 556 1.136 s, the IWM 1.172 s
+                    if (iwmTimerOff()) stopSpindle();   // IWM mode bit 2: no timer
+                }
                 break;
             case 0x9:
                 if (!motorOn) {
@@ -1965,20 +1968,6 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
             }
             return lssData;
         }
-        // For odd offsets MAME returns 0xFF (open bus), but POM2 still
-        // needs the write-protect probe at $C0nD (low4=0xD, !writeMode).
-        //
-        // An EMPTY drive reads as WRITE-PROTECTED, same as the $C0nE answer
-        // above. That is what the hardware does — the sense is a phototransistor
-        // watching the notch, and with no disk in the way the light reaches it,
-        // which is the protected state — and it is what this card already told
-        // anyone who asked through $C0nE. Answering 0x00 here said "writable"
-        // about a drive with nothing in it, so the two probes for one wire
-        // disagreed depending on which idiom the guest happened to use.
-        //
-        // `senseWriteProtect()` (not `img.isWriteProtected()`) because stepper
-        // phase 1 drives the same wire — MAME floppy.cpp:817-820. See the
-        // header note next to `writingInhibited()`.
         // Odd reads drive nothing (MAME: $FF): the Disk II's '323 output
         // enable takes A0 (UTAIIe Table 9.1, AppleWin IORead); the IWM's A0
         // is its /READ input (IWM spec rev 19, p. 5). No $C0nD WP shortcut.

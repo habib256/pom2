@@ -32,7 +32,9 @@
 
 #include <atomic>
 #include <filesystem>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace pom2 {
 
@@ -48,6 +50,22 @@ inline bool needsMediaResolve(const std::string& source)
 
 /// `<user data>/media_cache`.
 std::filesystem::path mediaCacheDir();
+
+/// Where a URL's download is cached (before any archive extension the
+/// download adds: a zip or gzip served under a name without one).
+std::filesystem::path mediaUrlCachePath(const std::string& url,
+                                        const std::filesystem::path& cacheDir);
+/// The first bytes of a download are an HTML / XML page (a soft 404, a
+/// login wall), not a disk: refused, never cached.
+bool mediaBodyIsWebPage(const std::vector<uint8_t>& head);
+/// ".zip" or ".gz" when the bytes start like one, else nullptr.
+const char* mediaArchiveExtension(const std::vector<uint8_t>& head);
+
+/// The refusal shown when `archive` (a .zip, a .gz or a URL) was given as a
+/// disk and could not be opened: what failed, in the archive's own words —
+/// not "this is no disk image", which a .gz that failed its CRC is not.
+std::string explainMediaSourceRefusal(const std::string& archive,
+                                      const std::string& error);
 
 struct MediaSourceResult {
     bool        ok = false;

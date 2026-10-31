@@ -1030,6 +1030,9 @@ void Core::coldBoot()
     impl_->memory.clearRam();
     impl_->memory.resetSoftSwitches();
     impl_->memory.slotBus().reset();
+    // A cold boot is power-on for the E-Z Color's DRAM too: the bus RESET
+    // above only resets the VDP's pin and keeps VRAM (EzColorCard.h).
+    if (impl_->ezColor) impl_->ezColor->onPowerCycle();
     if (impl_->plus) {
         impl_->plus->iwm.reset();
         impl_->plus->hub.reset();

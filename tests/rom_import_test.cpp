@@ -172,6 +172,21 @@ int main()
         expect(!fs::exists(dest / "disk2.rom"), "already-present dump was not copied");
     }
 
+    // ── A card's own dump that no source serves (import-only entry): the
+    //    CCS 7710 PROM, renamed as MAME-style, is identified by content and
+    //    named as the card probes it — it used to be "No known ROM dump".
+    if (fs::exists("roms/ccs7710_03h.u5") && fs::exists("roms/dan2_eprom.bin")) {
+        const fs::path a = scratch / "7710-03H.U5", b = scratch / "dan2.bin";
+        writeFile(a, readFile("roms/ccs7710_03h.u5"));
+        writeFile(b, readFile("roms/dan2_eprom.bin"));
+        const auto r = pom2::importRoms({ a, b }, dest);
+        expect(itemFor(r, "roms/ccs7710_03h.u5") != nullptr, "CCS 7710 PROM identified: " + r.summary);
+        expect(itemFor(r, "roms/dan2_eprom.bin") != nullptr, "DAN ][ EPROM identified: " + r.summary);
+        expect(r.unrecognised.empty(), "nothing left unrecognised: " + r.summary);
+    } else {
+        std::printf("rom_import: CCS 7710 / DAN ][ dumps absent, import-only case skipped\n");
+    }
+
     // ── A wrong file in the FIRST search root: the import replaces it, and
     //    keeps it in roms-replaced/.
     {

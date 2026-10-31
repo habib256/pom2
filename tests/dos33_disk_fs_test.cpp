@@ -167,6 +167,18 @@ void testListing()
     CHECK(std::string(pom2::applesoft::keyword(0x80)) == "END");
     CHECK(std::string(pom2::applesoft::keyword(0xEA)) == "MID$");
     CHECK(pom2::applesoft::keyword(0xEB) == nullptr);
+
+    // A control character inside a string is part of the program: DOS 3.3's
+    // PRINT "<Ctrl-D>CATALOG" idiom. LIST types it as it is; it used to come
+    // out as '?', and the listing typed back was another program. Only CR and
+    // LF, which would cut the line in two, keep the '?'.
+    const std::vector<uint8_t> ctl = {
+        0x0D, 0x08, 0x1E, 0x00, 0xBA, '"', 0x04, 'C', 'A', 'T', 0x07, 0x0D, '"', 0x00,
+        0x00, 0x00 };
+    const std::string t2 = pom2::applesoft::list(0, [&](uint16_t a) {
+        return a < ctl.size() ? ctl[a] : uint8_t(0);
+    }, ctl.size());
+    CHECK(t2 == "30 PRINT \"\x04" "CAT\x07?\"\n");
 }
 
 int testMaster()
@@ -185,6 +197,13 @@ int testMaster()
         return a < prog.size() ? prog[a] : uint8_t(0);
     }, prog.size());
     CHECK(text.rfind("10 TEXT : HOME\n", 0) == 0);
+    // COPYA line 70: PRINT "<Ctrl-D>BLOAD COPY.OBJ0".
+    CHECK(d.readFile("COPYA", raw, err));
+    const auto copya = Dos33Disk::payload(0x02, raw);
+    const std::string t3 = pom2::applesoft::list(0, [&](uint16_t a) {
+        return a < copya.size() ? copya[a] : uint8_t(0);
+    }, copya.size());
+    CHECK(t3.find("70 PRINT \"\x04" "BLOAD COPY.OBJ0\"") != std::string::npos);
     return 0;
 }
 

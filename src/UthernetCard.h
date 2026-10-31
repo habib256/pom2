@@ -30,7 +30,7 @@
 // The Uthernet I really is that simple: the CS8900A has an on-chip boot
 // PROM interface but a2RetroSystems left it unpopulated, so the card is
 // invisible to ProDOS and every driver has to be loaded from disk. That
-// is why `slotRomRead` stays at the SlotPeripheral default ($FF open bus)
+// is why `slotRomRead` stays at the SlotPeripheral default (the floating bus)
 // — presenting a signature here would be wrong, and would make ProDOS
 // probe a device that does not exist.
 //
