@@ -543,6 +543,28 @@ programmer's manual is online; everything below is read off Microsoft's CP/M
 Pinned by `premium_softcard`: both CP/M versions boot, `DIR`, GBASIC
 computes `6 * 7`; negative controls for the text-page SRAM.
 
+### E-Z Color Graphics Interface (`EzColorCard`)
+
+Catalog `ezcolor`, any slot, no ROM. Steve Ciarcia's card from BYTE, August
+1982: a TMS9918A with 16 KB of VRAM on a 10.738635 MHz crystal and its own
+video output. MAME `a2bus/ezcgi.cpp`: `$C0n0` the data port, `$C0n1` the
+register port, other offsets `$FF`, the VDP's /INT on the slot IRQ, a bus
+reset resets it. The VDP is **POM1's** (`TMS9918.h/.cpp`, the same author's
+Apple-1 emulator, P-LAB Graphic Card), imported as-is so the two stay
+syncable: namespace `pom2::tms`, no `pom1::Peripheral` base, byte-vector
+state (`appendState` / `loadState` = POM1's serialize / deserialize field
+for field), the 17062-cycle NTSC frame (59.94 Hz on the VDP's own crystal)
+defined in the header. Writes call `renderBeamCatchUp` and a status read
+`syncSpriteScanToBeam` with the CPU's in-flight cycles (POM1's Étapes 0/1),
+so mid-line register writes split the raster where the beam is.
+
+The card's monitor is its own: the 288 × 216 picture is a `CardVideoSource`
+whose `ownsScreen` is always false — Display ▸ Card Monitor shows it next to
+the Apple's (two monitors, as the card was used), or the main screen with
+the switch at "Card video". Pinned by `ezcolor_card` (ports, read-ahead, a
+Graphics I screen and its R7 border, the frame IRQ, reset, snapshot) and
+`card_snapshot_contract`.
+
 ### CCS 7710 (`Ccs7710Card`)
 
 Catalog `ccs7710`, any slot. California Computer Systems' Model 7710: a
@@ -796,6 +818,13 @@ Latch + strobe live in `pom2::Keyboard` under its own `mtx_`. UI
 `queueKey()` sets strobe high. CPU reads `$C000` via `softSwitchAccess()` →
 `Keyboard::readLatch()` (lock-free unless a paste byte is handed over).
 Strobe stays high until `$C010`.
+
+**A paste goes a line at a time** *(2026-10-31)*. After a pasted Return with
+more queued, `Keyboard::pasteHeld()` holds the rest until `Memory::readKeyLatch`
+(`MemoryPaste.cpp`) sees the text page (main + aux, sampled every 8192
+cycles while the guest polls $C000) unchanged for 0.1 s, or 2 s pass. The
+strobe alone outran the SoftCard II CP/M's 256-byte type-ahead ring (55 of
+80 pasted lines arrived). No CPU wired = no time = no hold.
 
 ### Reset architecture
 
@@ -1402,7 +1431,14 @@ schematic), `Apple` or `Card` (a manual switch, or a monitor cabled to one
 source: Merlin's `VID 0` leaves AN0 up, and on the real machine the stale 80
 columns stay). The Card Monitor panel sets it (`card_monitor_switch`) and
 shows the card's picture in its own window — Apple video + the panel is two
-monitors. After sbabcoc's ReplicApple2Plus. SETUP's "already initialised"
+monitors. **It is a tab beside the Apple II Screen**: every dock preset puts
+`###cardMonitor` in the screen's node, and on first appearance in an existing
+layout it joins that node (`SetNextWindowDockID`, FirstUseEver). Plugging a
+card that has a picture opens it; the Apple II Screen stays the selected tab —
+at startup and after such a plug (`focusScreenFrames_`) — and has no close
+button. Any rearrangement is ImGui's and is saved in `imgui.ini`. Checked on
+a real run: both windows in one node, the node's selected tab the screen's
+(ImGui's CRC32C TabId `0x552F64CB`). After sbabcoc's ReplicApple2Plus. SETUP's "already initialised"
 marker (`$077B AND $F8 = $30` skips the 6845) is pinned both ways in
 `videx_videoterm_boot`: POM2's power-on `$FF` never trips it; planted, the
 real firmware skips.

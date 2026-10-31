@@ -21,6 +21,7 @@
 //   - queue drains exactly one byte per $C010 strobe clear
 //   - cap at Memory::kPasteMaxChars (no overflow)
 
+#include "M6502.h"
 #include "Memory.h"
 
 #include <cassert>
@@ -67,9 +68,42 @@ static void testReleasePollDoesNotEatTheQueue()
     std::printf("paste_smoke: $C010 release poll keeps the queue OK\n");
 }
 
+// Line at a time: after a pasted Return, the next line waits until the
+// text screen has stayed unchanged for 0.1 s (2 s at most) — a program that
+// empties the keyboard into its own buffer (SoftCard II CP/M: 256 bytes)
+// lost the end of a long paste. A tiny echo loop: every key lands on the
+// text page, so the screen settles 0.1 s after the last one.
+static void testLineAtATime()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    // $0300: LDA $C000 / BPL $0300 / STA $0400,X / BIT $C010 / INX / JMP $0300
+    const uint8_t prog[] = { 0xAD, 0x00, 0xC0, 0x10, 0xFB, 0x9D, 0x00, 0x04,
+                             0x2C, 0x10, 0xC0, 0xE8, 0x4C, 0x00, 0x03 };
+    for (unsigned i = 0; i < sizeof prog; ++i) mem.memWrite(uint16_t(0x0300 + i), prog[i]);
+    cpu.setProgramCounter(0x0300);
+    cpu.setXRegister(0);
+    auto run = [&](long n) { for (long t = 0; t < n;) t += cpu.run(64); };
+    auto typed = [&] { std::string t; for (int i = 0; i < 16; ++i) t.push_back(char(mem.peekMainRam(uint16_t(0x0400 + i)) & 0x7F)); return t; };
+    mem.pasteText("AB\rCD\rEF");
+    run(20'000);
+    assert(typed().compare(0, 3, "AB\r") == 0 && typed()[3] != 'C' && "the second line waits");
+    run(150'000);                                   // > 0.1 s of a quiet screen
+    assert(typed().compare(0, 6, "AB\rCD\r") == 0 && typed()[6] != 'E');
+    run(150'000);
+    assert(typed().compare(0, 8, "AB\rCD\rEF") == 0);
+    // A screen that never settles holds a line at most 2 s.
+    mem.pasteText("X\rY");
+    for (int i = 0; i < 25; ++i) { mem.memWrite(0x0500, uint8_t(i)); run(100'000); }
+    assert(typed().find('Y') != std::string::npos && "2 s cap");
+    std::printf("paste_smoke: line at a time, 0.1 s settle, 2 s cap OK\n");
+}
+
 int main()
 {
     testReleasePollDoesNotEatTheQueue();
+    testLineAtATime();
     // Live keys append behind a paste, so they must share its queue ceiling.
     {
         Memory mem;

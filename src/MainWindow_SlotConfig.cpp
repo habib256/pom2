@@ -31,6 +31,7 @@
 
 #include "MainWindow.h"
 #include "Ccs7710Card.h"
+#include "EzColorCard.h"
 
 #include "AudioCoordinator.h"
 #include "AudioDevice.h"
@@ -809,6 +810,15 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "alscpm")      plugAlsCpm(s);
         else if (kind == "softcard2")   plugSoftCard2(s);
         else if (kind == "saturn")      plugSaturn(s);
+        else if (kind == "ezcolor") {
+            // Its own monitor: the picture goes to the card-video seam,
+            // shown by Display ▸ Card Monitor (never taking the Apple's
+            // screen by itself).
+            auto card = std::make_unique<EzColorCard>();
+            card->setCpu(&st.cpu());
+            display->setCardVideoSource(card.get());
+            st.memory().slotBus().plug(s, std::move(card));
+        }
         else if (kind == "ccs7710") {
             // The factory loads CCS's PROMs when they are there (the LLE
             // reference); `ccs7710_firmware` = "pom2" keeps POM2's page.

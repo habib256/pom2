@@ -474,4 +474,9 @@ src/Memory.cpp                           2275
 # "persisted path not found" sites, so the quit writer cannot erase it.
 #   src/StorageCoordinator.cpp: 2415 -> 2425 (+10)
 src/StorageCoordinator.cpp               2425
+# 2026-10-31: src/TMS9918.cpp is POM1's TMS9918 VDP (the same author's
+# Apple-1 emulator), imported nearly verbatim for the E-Z Color card so the
+# two copies can be kept in sync. Splitting it here would break that diff;
+# the split, if any, belongs upstream in POM1 first.
+src/TMS9918.cpp                          2029
 src/hgrpaint/HgrPaintEditor.cpp          2656

@@ -282,6 +282,8 @@ set(SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/EzColorCard.cpp
+    src/TMS9918.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -293,6 +295,7 @@ set(SOURCES
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryLanguageCard.cpp
+    src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -541,6 +544,8 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Architecture.cmake)
 
 set(POM2_DEVICES_HEADERS
+    src/Tms9918BeamClock.h
+    src/Tms9918Diagnostics.h
     src/Tms5220Tables.h
     src/Cffa3000Card.h
     src/Ay3_8910.h
@@ -618,6 +623,8 @@ set(POM2_DEVICES_SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/EzColorCard.cpp
+    src/TMS9918.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -826,6 +833,7 @@ set(POM2_MACHINE_SOURCES
     src/Keyboard.cpp
     src/MemoryWatch.cpp
     src/MemoryLanguageCard.cpp
+    src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
     src/M6502.cpp
     src/M6502_Undoc.cpp
@@ -993,6 +1001,10 @@ set(HEADERS
     src/SoftCard2Protocol.h
     src/ApplicardCard.h
     src/Ccs7710Card.h
+    src/EzColorCard.h
+    src/TMS9918.h
+    src/Tms9918BeamClock.h
+    src/Tms9918Diagnostics.h
     src/SaturnCard.h
     src/VidexUltratermCard.h
     src/PremiumSoftCard.h
@@ -1537,6 +1549,8 @@ set(POM2_CORE_SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/EzColorCard.cpp
+    src/TMS9918.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -1548,6 +1562,7 @@ set(POM2_CORE_SOURCES
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryLanguageCard.cpp
+    src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1883,6 +1898,7 @@ add_executable(pom2_headless
     src/MemorySnapshot.cpp
     src/MemoryWatch.cpp
     src/MemoryLanguageCard.cpp
+    src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
@@ -1997,6 +2013,7 @@ add_executable(pom2_bench
     src/CharRomDump.cpp
     src/MemoryWatch.cpp
     src/MemoryLanguageCard.cpp
+    src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp

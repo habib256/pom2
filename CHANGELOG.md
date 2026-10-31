@@ -10,6 +10,41 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — A card's monitor is a tab beside the Apple II Screen
+
+A card with a picture of its own (Videoterm, UltraTerm, VidHD, E-Z Color)
+opens its monitor as a tab in the Apple II Screen's dock node as soon as it
+is plugged, in every layout preset and in an existing layout alike. The
+Apple II Screen is the tab in front at startup and after the plug, and
+cannot be closed; tabs can be dragged elsewhere and the arrangement is saved
+with the rest of the layout.
+
+## 2026-10-31 — E-Z Color Graphics Interface (TMS9918A), the VDP from POM1
+
+New card `ezcolor`: Steve Ciarcia's E-Z Color Graphics Interface (BYTE,
+August 1982), a TMS9918A with 16 KB of VRAM — MAME `ezcgi.cpp`'s decode
+(`$C0n0` data, `$C0n1` register, /INT on the slot IRQ). The VDP is POM1's
+`TMS9918` (the Apple-1 emulator's P-LAB Graphic Card chip: sprites with the
+5th-sprite and collision flags, the access window, a progressive raster
+synced to the CPU's in-flight cycle), imported nearly verbatim so the two
+can be kept in sync. Its picture is the card's own monitor, shown in
+Display ▸ Card Monitor. `ezcolor_card` drives it through the real bus.
+
+## 2026-10-31 — Paste a line at a time (CP/M lost the end of long pastes)
+
+POM2's paste was paced by the keyboard strobe alone: a byte as soon as the
+guest acknowledged the last. Software that empties the keyboard into a
+buffer of its own outruns that — the SoftCard II's 6502 server keeps a
+256-byte type-ahead ring and drops the rest, so 80 CP/M commands (560
+bytes) pasted at once reached the CCP as 55, measured with the OS-call
+trace. Now, after a pasted Return with more text queued, the paste holds
+until the text page (main + aux) has stayed unchanged for 0.1 s of machine
+time — software echoes what it takes — or 2 s at most
+(`Keyboard::pasteHeld`, `MemoryPaste.cpp`). The same pacing as sbabcoc's
+ReplicApple2Plus TypingFeeder. A bare Memory with no CPU has no time and
+never holds. Pinned by `paste_smoke` (echo loop: second line waits, 0.1 s
+settle, 2 s cap) and `softcard2_card` (80 of 80 lines reach the CCP).
+
 ## 2026-10-31 — From SoftCard2: the 6502 BIOS calls traced, the CP/M slot scan, a 6850 card
 
 - **SoftCard II calls in the OS-call trace.** The 17 commands the Z80 sends

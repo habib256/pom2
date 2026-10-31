@@ -236,7 +236,16 @@ void MainWindow::renderScreenWindow()
     // drag manually below.
     const ImGuiWindowFlags screenFlags =
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+    // The Apple II Screen is the tab shown at startup and after a card's
+    // monitor joins it as a tab (MainWindow_CardMonitor.cpp): focus it for
+    // a couple of frames, the time ImGui takes to select a newly docked tab.
+    // No close button (p_open = nullptr): it is always there.
+    if (focusScreenFrames_ > 0) {
+        ImGui::SetNextWindowFocus();
+        --focusScreenFrames_;
+    }
     if (ImGui::Begin("Apple II Screen", nullptr, screenFlags)) {
+        screenDockId_ = ImGui::GetWindowDockID();
         // ── Manual title-bar drag ─────────────────────────────────────
         // Compute the title bar rect from the public Begin geometry
         // (window pos + size + frame height). When the user clicks

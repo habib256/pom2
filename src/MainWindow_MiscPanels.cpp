@@ -371,6 +371,7 @@ void MainWindow::renderAbstractionPanel()
                 }
         }
         row("ccs7710",      ccsSlot && ccsProm  ? Live::Active : Live::NotPlugged);
+        row("ezcolor",      plugged("ezcolor") ? Live::Active : Live::NotPlugged);
         row("ccs7710_pom2", ccsSlot && !ccsProm ? Live::Active : Live::NotPlugged);
         Panel::ToggleState t;
         t.id           = pom2::AbsToggle::SerialFirmware;

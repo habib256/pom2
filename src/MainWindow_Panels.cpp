@@ -238,7 +238,8 @@ void MainWindow::registerPanelDraws()
     draw(P::Mouse,        [this] { renderMouseInspectorWindow(); });
     draw(P::NoSlotClock,  [this] { renderNoSlotClockPanelWindow(); });
     draw(P::Crt,          [this] { renderNtscSettingsWindow(); });
-    draw(P::CardMonitor,  [this] { renderCardMonitorPanel(); });
+    // Always drawn: it opens itself when a card with a monitor is plugged.
+    draw(P::CardMonitor,  [this] { renderCardMonitorPanel(); }, /*always=*/true);
     draw(P::Voxel,        [] { /* drawn inside renderScreenWindow */ });
     draw(P::VoxelSettings,[this] { renderVoxelSettingsWindow(); });
     draw(P::MemViewer,    [this] { renderMemoryViewerWindow(); });

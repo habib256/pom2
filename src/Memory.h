@@ -1273,6 +1273,14 @@ private:
     // the next paste byte); the cold IIe status reads use
     // `keyboard_.lastKey7()`.
     pom2::Keyboard keyboard_;
+    /// The $C000 read, with the paste's wait for a line to be taken
+    /// (MemoryPaste.cpp).
+    uint8_t readKeyLatch();
+    struct PasteSettle {
+        bool     tracking = false;
+        uint64_t heldSince = 0, stableSince = 0, lastSample = 0;
+        uint64_t hash = 0;
+    } pasteSettle_;
 
     // Speaker.
     std::atomic<uint64_t> speakerToggles{0};

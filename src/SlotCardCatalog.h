@@ -156,6 +156,10 @@ inline constexpr CardType kCardTypes[] = {
     // type 3 card (slot 1 = its buffered printer). POM2's own firmware page
     // unless CCS's two nibble PROMs are in roms/. MAME ccs7710.cpp.
     { "ccs7710",      "CCS 7710 serial (6850)" },
+    // E-Z Color Graphics Interface (BYTE, Aug 1982) — a TMS9918A with 16 KB
+    // of VRAM and its own monitor (Display ▸ Card Monitor). No ROM. MAME
+    // ezcgi.cpp decode; the VDP is POM1's TMS9918.
+    { "ezcolor",      "E-Z Color (TMS9918A)" },
     // Videx UltraTerm — 80 to 160 columns, its own video switch; ROM-gated
     // (roms/videx_ultraterm_*). MAME a2ultraterm.cpp port.
     { "ultraterm",    "Videx UltraTerm (80-160 col)" },

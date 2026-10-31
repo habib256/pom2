@@ -68,13 +68,18 @@ uint8_t Keyboard::readLatch()
     const uint8_t v = mirror_.load(std::memory_order_relaxed);
     // Strobe still set (the guest has not acked yet) or nothing queued: the
     // overwhelmingly common case, and it stays off the mutex.
-    if ((v & 0x80) != 0 || !pasteArmed_.load(std::memory_order_relaxed))
+    if ((v & 0x80) != 0 || !pasteArmed_.load(std::memory_order_relaxed)
+        || pasteHeld_.load(std::memory_order_relaxed))
         return v;
     std::lock_guard<std::mutex> lk(mtx_);
-    if (!keyReady_ && !pasteQueue_.empty()) {
+    if (!keyReady_ && !pasteQueue_.empty() && !pasteHeld_.load(std::memory_order_relaxed)) {
         lastKey_  = pasteQueue_.front() & 0x7F;
         keyReady_ = true;
         pasteQueue_.pop_front();
+        // A Return with more to come: the next line waits for this one to be
+        // taken (pasteHeld above).
+        if (lastKey_ == 0x0D && !pasteQueue_.empty())
+            pasteHeld_.store(true, std::memory_order_relaxed);
         publish();
     }
     return mirror_.load(std::memory_order_relaxed);

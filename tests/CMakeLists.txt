@@ -110,6 +110,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -2395,6 +2396,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -5965,6 +5967,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6021,6 +6024,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6081,6 +6085,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6139,6 +6144,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6198,6 +6204,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -6257,6 +6264,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -7572,6 +7580,27 @@ add_test(NAME saturn_card COMMAND test_saturn_card
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(saturn_card PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+# ─── E-Z Color Graphics Interface (TMS9918A, POM1's VDP) ───────────────────
+add_executable(test_ezcolor_card
+    ezcolor_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/EzColorCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/TMS9918.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_ezcolor_card PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ezcolor_card PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ezcolor_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ezcolor_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME ezcolor_card COMMAND test_ezcolor_card WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(ezcolor_card PROPERTIES TIMEOUT 30)
+
 # ─── CCS 7710 (6850 serial) + the SoftCard II mailbox decoder ─────────────
 add_executable(test_ccs7710_card
     ccs7710_card_test.cpp
@@ -8313,6 +8342,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
@@ -9675,6 +9705,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp

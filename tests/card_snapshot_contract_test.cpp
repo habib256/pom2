@@ -68,6 +68,7 @@
 #include "PremiumSoftCard.h"
 #include "SaturnCard.h"
 #include "Ccs7710Card.h"
+#include "EzColorCard.h"
 #include "VidexUltratermCard.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
@@ -395,6 +396,7 @@ int main()
         { "ApplicardCard",     [] { return std::unique_ptr<SlotPeripheral>(new ApplicardCard()); } },
         { "SaturnCard",        [] { return std::unique_ptr<SlotPeripheral>(new SaturnCard()); } },
         { "Ccs7710Card",       [] { return std::unique_ptr<SlotPeripheral>(new Ccs7710Card(1)); } },
+        { "EzColorCard",       [] { return std::unique_ptr<SlotPeripheral>(new EzColorCard()); } },
         { "VidexUltraterm",    [] { return std::unique_ptr<SlotPeripheral>(new VidexUltratermCard(3)); } },
         { "PremiumSoftCard",   [] { return std::unique_ptr<SlotPeripheral>(new PremiumSoftCard()); } },
         { "WorkstationCard",   [] { return std::unique_ptr<SlotPeripheral>(new WorkstationCard(7)); } },
@@ -441,7 +443,7 @@ int main()
         {"uthernet", "UthernetCard"}, {"uthernet2", "UthernetIICard"},
         {"fujinet", "(FujiNetCard: its link is a live socket; snapshot pinned in fujinet_card_smoke)"},
         {"softcard", "SoftCardZ80"}, {"alscpm", "AlsCpmCard"}, {"softcard2", "SoftCardIICard"},
-        {"applicard", "ApplicardCard"}, {"saturn", "SaturnCard"}, {"ccs7710", "Ccs7710Card"}, {"ultraterm", "VidexUltraterm"}, {"chatmauve", "LeChatMauveFeline"},
+        {"applicard", "ApplicardCard"}, {"saturn", "SaturnCard"}, {"ccs7710", "Ccs7710Card"}, {"ezcolor", "EzColorCard"}, {"ultraterm", "VidexUltraterm"}, {"chatmauve", "LeChatMauveFeline"},
         {"mouse", "MouseCard"}, {"mouseaw", "MouseCardAppleWin"},
         {"mockingboard", "MockingboardAC"}, {"mockingboard_c", "MockingboardSndII"},
         {"phasor", "PhasorCard"}, {"echoplus", "EchoPlusCard"},

@@ -15,8 +15,10 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // The card monitor: what reaches the screen when a card has its own picture
-// (Videx Videoterm, UltraTerm, VidHD), and a second monitor that always shows
-// that picture.
+// (Videx Videoterm, UltraTerm, VidHD, E-Z Color), and a second monitor that
+// always shows that picture — a tab next to the Apple II Screen, opened when
+// such a card is plugged (the screen tab stays in front; the screen itself
+// can never be closed).
 //
 // A Videoterm reaches the monitor through Videx's Soft Video Switch: the
 // card's 80 columns while annunciator 0 is high and the machine is in text,
@@ -49,9 +51,24 @@ void MainWindow::applyCardMonitorSetting()
 
 void MainWindow::renderCardMonitorPanel()
 {
+    // A card that brings its own monitor offers it as a tab next to the
+    // Apple II Screen the moment it is plugged; the screen stays the tab in
+    // front. Closing the tab sticks until the next such card is plugged.
+    const void* source = display->cardVideoSource();
+    if (source != lastCardVideo_) {
+        lastCardVideo_ = source;
+        if (source && !show(pom2::PanelId::CardMonitor)) {
+            show(pom2::PanelId::CardMonitor) = true;
+            focusScreenFrames_ = 3;
+        }
+    }
     if (!show(pom2::PanelId::CardMonitor)) return;
+    // First appearance: in the Apple II Screen's dock node, as a tab. After
+    // that it goes wherever the user puts it (imgui.ini).
+    if (screenDockId_ != 0)
+        ImGui::SetNextWindowDockID(screenDockId_, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(760, 330), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Card Monitor (80-column card)###cardMonitor",
+    if (!ImGui::Begin("Card Monitor###cardMonitor",
                       &show(pom2::PanelId::CardMonitor))) {
         ImGui::End();
         return;

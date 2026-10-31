@@ -381,6 +381,19 @@ int testSlotsCallsAndPrinter()
         for (const auto& l : trace.lines())
             if (l.rfind("SC2", 0) == 0 && n++ < 40) std::fprintf(stderr, "  | %s\n", l.c_str());
     }
+    // A long paste: 80 CCP lines, 560 bytes, more than the 6502 server's
+    // 256-byte type-ahead ring. POM2's paste waits for each line to be taken
+    // (MemoryPaste.cpp); strobe-paced alone, 25 of the 80 were lost.
+    trace.clear();
+    std::string many;
+    for (int i = 0; i < 80; ++i) many += "USER " + std::to_string(i % 10) + "\r";
+    mem.pasteText(many);
+    run(60 * kSecond);
+    int users = 0;
+    for (const auto& l : trace.lines())
+        if (l.find("F_USERNUM") != std::string::npos && l.find("get") == std::string::npos) ++users;
+    std::fprintf(stderr, "  long paste: %d of 80 lines reached the CCP\n", users);
+    CHECK(users == 80 && "a long paste is not lost in CP/M's type-ahead ring");
     mem.slotBus().setZ80Observer(nullptr);
     return 0;
 }

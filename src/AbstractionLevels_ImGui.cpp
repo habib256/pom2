@@ -170,6 +170,13 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Its own code: the timing of its loops is not the PROM's, so RNDL "
       "($4E/$4F) counts a different number of steps while input waits.",
       "Ccs7710Card.cpp" },
+    { "ezcolor", "Video", "E-Z Color (TMS9918A VDP)", AbsLevel::L1,
+      "MAME ezcgi decode ($C0n0 data, $C0n1 register, /INT = slot IRQ); "
+      "POM1's TMS9918: four modes, sprites with 5th-sprite and collision "
+      "flags, the access window, a progressive raster synced to the CPU's "
+      "in-flight cycle",
+      "The card's composite encoder is not modelled: the picture is the "
+      "VDP's RGB palette.", "EzColorCard.h/.cpp, TMS9918.h/.cpp" },
     { "ultraterm", "Video", "Videx UltraTerm (80-160 columns)", AbsLevel::L1,
       "MAME a2ultraterm bus map, VRAM pages and attributes on the HD6845S; "
       "the real firmware's PR#3 drives it",

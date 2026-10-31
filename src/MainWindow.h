@@ -970,6 +970,11 @@ private:
     std::unique_ptr<pom2::Keyboard_ImGui> keyboardPanel;
     unsigned     kbImageTex_   = 0;
     unsigned     cardMonitorTex_ = 0;          // MainWindow_CardMonitor.cpp
+    /// The Apple II Screen's dock node (0 when floating), where a card's
+    /// monitor opens as a tab; frames left to keep the screen tab selected.
+    unsigned     screenDockId_ = 0;
+    int          focusScreenFrames_ = 3;
+    const void*  lastCardVideo_ = nullptr;
     std::vector<uint32_t> cardMonitorPixels_;
     int          kbImageW_     = 0;
     int          kbImageH_     = 0;

@@ -915,7 +915,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // A READ of $C000-$C00F is the guest asking for a key, and that is
         // where a draining host paste hands its next byte over (Keyboard.h) —
         // never on the $C010 strobe clear, which a program may poll.
-        return keyboard_.readLatch();
+        return readKeyLatch();   // MemoryPaste.cpp: the line-at-a-time paste
     }
     // Keyboard strobe clear.
     //

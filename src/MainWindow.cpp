@@ -1238,6 +1238,8 @@ void MainWindow::applyDockLayout(DockLayout preset)
     // title-bar drag; `renderScreenWindow` disables that drag while docked so
     // the two don't fight (a docked window is moved by its tab, not its body).
     ImGui::DockBuilderDockWindow("Apple II Screen", centre);
+    // A card's own monitor is a tab beside it, in every preset.
+    ImGui::DockBuilderDockWindow("###cardMonitor", centre);
 
     // Everything below docks by literal title. Panels that are hidden right
     // now still get assigned — the assignment is what makes them open as a

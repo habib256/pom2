@@ -54,6 +54,7 @@
 #include "ApplicardCard.h"
 #include "SaturnCard.h"
 #include "Ccs7710Card.h"
+#include "EzColorCard.h"
 #include "VidexUltratermCard.h"
 #include "SuperSerialCard.h"
 #include "TranswarpCard.h"
@@ -220,6 +221,7 @@ int main()
     expectLiveKey(std::make_unique<ApplicardCard>(), "applicard");
     expectLiveKey(std::make_unique<SaturnCard>(), "saturn");
     expectLiveKey(std::make_unique<Ccs7710Card>(1), "ccs7710");
+    expectLiveKey(std::make_unique<EzColorCard>(), "ezcolor");
     expectLiveKey(std::make_unique<VidexUltratermCard>(3), "ultraterm");
     expectLiveKey(std::make_unique<LeChatMauveCard>(3), "chatmauve");
     expectLiveKey(std::make_unique<MouseCard>(3), "mouse");

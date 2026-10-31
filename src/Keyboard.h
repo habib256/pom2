@@ -21,7 +21,8 @@
 // clears the strobe (the byte stays latched — KEYIN re-polls until a fresh
 // key arrives). POM2 adds a host paste FIFO behind it: pasted text lands one
 // byte at a time, promoted into the latch by the next `readLatch()` once the
-// strobe is clear, so the ROM's own strobe-and-poll loop clocks it out at
+// strobe is clear — and, after a Return, once the line is taken
+// (pasteHeld / MemoryPaste.cpp) — so the ROM's own strobe-and-poll loop clocks it out at
 // exactly the rate it consumes.
 //
 // Threading: writers (the GLFW key callback on the UI thread, the AI-control
@@ -83,6 +84,19 @@ public:
     // paste delivered one and dropped nine. Lock-free when there is nothing to
     // promote; the mutex is taken only for the hand-over itself.
     uint8_t readLatch();
+
+    // Line-at-a-time paste. Once a paste hands over a Return with more text
+    // queued, it HOLDS until whoever owns time and the screen (Memory,
+    // MemoryPaste.cpp) sees the line taken and calls releasePasteHold().
+    // The strobe alone is not enough for software that empties the keyboard
+    // into a ring of its own — the SoftCard II's CP/M server keeps 256
+    // bytes and drops the rest, and a 560-byte paste lost 25 lines of 80.
+    // sbabcoc's ReplicApple2Plus TypingFeeder paces the same way.
+    bool pasteHeld() const { return pasteHeld_.load(std::memory_order_relaxed); }
+    void releasePasteHold() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        pasteHeld_.store(false, std::memory_order_relaxed);
+    }
 
     // The last latched character, low 7 bits, taken under the lock — the
     // value the IIe $C011/$C012/$C019 status reads fold into bit 0-6.
@@ -167,6 +181,7 @@ public:
     void cancelPaste() {
         std::lock_guard<std::mutex> lk(mtx_);
         pasteQueue_.clear();
+        pasteHeld_.store(false, std::memory_order_relaxed);
         publish();
     }
 
@@ -179,6 +194,7 @@ public:
         streamPrevCR_ = false;
         heldKeys_.reset();
         pasteQueue_.clear();
+        pasteHeld_.store(false, std::memory_order_relaxed);
         publish();
     }
 
@@ -189,6 +205,7 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         streamPrevCR_ = false;
         pasteQueue_.clear();
+        pasteHeld_.store(false, std::memory_order_relaxed);
         const bool held = pressCodeValid_ && heldKeys_.test(pressToken_);
         lastKey_  = held ? pressCode_ : 0;
         keyReady_ = held;
@@ -227,6 +244,7 @@ private:
     bool                 streamPrevCR_ = false;
     std::atomic<uint8_t> mirror_{ 0 };
     std::atomic<bool>    pasteArmed_{ false };
+    std::atomic<bool>    pasteHeld_{ false };
     std::deque<uint8_t>  pasteQueue_;
 };
 
