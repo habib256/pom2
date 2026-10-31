@@ -1153,7 +1153,7 @@ void TMS9918::renderCloneSpritesLineRaw(int line, uint32_t* lineBuf,
         // Block 1: cloning iff R4 bit 0 = 0
         if (!(regs[4] & 0x01)) {
             cm[0] = 0x3F;
-            cm[5] = static_cast<uint8_t>((~regs[3] << 1) & 0x40);
+            cm[5] = static_cast<uint8_t>(((regs[3] ^ 0xFF) << 1) & 0x40);  // ~R3 stays 8-bit: `~uint8_t` is a negative int, UB to shift
             active = true;
         }
     }

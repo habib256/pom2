@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — The nightly, again: a `~uint8_t` shifted left in the TMS9918's sprite-clone mask
+
+The ASan/UBSan leg on 29370d30 failed `ezcolor_card` with
+`TMS9918.cpp:1156: left shift of negative value -1`. The sprite-clone mask
+for block 1 was `(~regs[3] << 1) & 0x40` (meisei's `~vdp_regs[3] << 1 & 0x40`):
+`~` promotes the `uint8_t` to `int`, so with R3 = `$00` the operand is `-1`
+and shifting it is undefined behaviour, however harmless every compiler
+makes it. The complement is now taken in eight bits (`regs[3] ^ 0xFF`), same
+bit, no sign. The report was new because the hunt of 2026-10-31 added a
+three-frame data-stream test to `ezcolor_card` that reaches the clone path
+with a zeroed register file. Verified under the CI's `-fsanitize=address,undefined`
+build: the old line reports, the new one does not, and the test passes either
+way without the sanitizer (which is why `ctest` alone never saw it). POM1
+carries the same line in its own TMS9918.cpp.
+
 ## 2026-10-31 — The red nightly: `Z80::rd16` read its two bytes in an unspecified order
 
 The ASan/UBSan nightly on 41d72da7 failed `softcard2_card` with no sanitizer
