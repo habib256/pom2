@@ -27,8 +27,11 @@ marker and the previous one.
   or by choice in Abstraction Levels, the card serves POM2's own page,
   written from the PROM's disassembly. **Measured against it**: the first
   version stripped bit 7, never echoed to the screen and never set the 6850
-  up; now a ][+ PR#1 / IN#1 session sends the same bytes and leaves the
-  same screens on both (`ccs7710_card`, negative control included).
+  up, and had none of the PROM's terminal mode (flashing cursor, Ctrl-A
+  commands, Ctrl-R / Ctrl-T from the line, duplex, break); now a ][+
+  PR#1 / IN#1 session and a terminal session give the same bytes, screens
+  and 6850 control on both at every checkpoint (`ccs7710_card`, negative
+  controls included). Only the loop timing is POM2's own.
 - The Abstraction Levels row of the Saturn still described Apple's
   reads-only write-enable after the morning's fix; corrected.
 

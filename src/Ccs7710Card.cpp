@@ -36,68 +36,129 @@ Ccs7710Card::Ccs7710Card(int slot) : slot_(slot)
 }
 
 // POM2's page, written to behave as CCS's 7710-03 does (disassembled from
-// the PROMs; the differential test runs both). The first nine bytes are the
-// serial-card ID, kept byte for byte because they ARE the interface:
+// the PROMs; `ccs7710_card` runs both and compares). The first nine bytes are
+// the serial-card ID, kept byte for byte because they ARE the interface:
 // $Cn00 BIT $FF58 sets V (an RTS there) and branches to the common entry —
-// the first call after PR#n / IN#n; $Cn05 CLC (BCS never taken) is the
-// output entry; $Cn07 is the operand $38, a SEC — the input entry; both
+// the first call after PR#n / IN#n; $Cn05 CLC (the BCS is never taken) is
+// the output entry; $Cn07 is the operand $38, a SEC — the input entry; both
 // fall through CLV. $Cn05/$Cn07 = $18/$38 is what Pascal 1.1's scan and the
 // SoftCard II loader read.
 //
-// The first call (V set) master-resets the 6850 ($A3), keeps its mode $51
-// (÷16, 8 bits, 2 stop) in the slot's screen hole $07F8+n, sets the echo
-// flag byte $06F8+n, and moves the hook it came through to $Cn05 (CSW) or
-// $Cn07 (KSW). Every call writes the mode with RTS on, then: output waits
-// for TDRE, sends the byte as it is (8 bits), and echoes it on the screen
-// through COUT1 ($FDF0) unless bit 7 of the flag is set; input waits for
-// RDRF, sets bit 7, drops line feeds. A, X and Y come back as they went in
-// (A = the character). Not modelled: the PROM's terminal mode — Ctrl-A
-// commands typed at the keyboard while input waits, Ctrl-R / Ctrl-T from the
-// line — and its flashing cursor.
+// RAM: $0578 the character; $07F8 MSLOT; $07F8+n the 6850 mode ($51: ÷16,
+// 8 bits, 2 stop, RTS off); $06F8+n the case mask ($20: lower case shown
+// as upper in terminal mode); $06F8 bit 7 "no local echo" — shifted right on
+// every entry and back on the way out of an output call only, as the PROM
+// does, so it is clear except inside terminal mode.
+//
+// First call (V set): master reset ($A3), mode $51, mask $20, and the hook
+// it came through moved to $Cn05 (CSW) or $Cn07 (KSW). Then, every call,
+// the mode goes out with RTS on, and:
+//   output   wait for TDRE, send the byte as it is (8 bits), echo it
+//            through COUT1 ($FDF0) unless $06F8 bit 7.
+//   input    show the character under the cursor flashing (AND #$3F /
+//            ORA #$40), stepping RNDL ($4E/$4F) as KEYIN does, until the
+//            6850 has a byte or a key is down. A key is read (KEYIN) and,
+//            outside terminal mode, dropped — but Ctrl-A starts a command.
+//            A byte puts the screen back, raises RTS, gets bit 7, and:
+//            Ctrl-R restarts the wait, a line feed is dropped, Ctrl-T is a
+//            command; anything else is returned.
+//   command  (after Ctrl-A at the keyboard, or Ctrl-T from the line)
+//            Ctrl-X ends terminal mode and gives input back to the keyboard
+//            (SETKBD, $FE89); Ctrl-S sends a break (control $70); Ctrl-F
+//            full duplex (no local echo), Ctrl-H half duplex; anything else
+//            enters terminal mode.
+//   terminal what arrives is displayed (COUT, lower case through the mask);
+//            what is typed is sent, echoed or not by the duplex; the wait
+//            goes on until Ctrl-A Ctrl-X.
 void Ccs7710Card::buildOwnFirmware()
 {
     rom_.fill(0xFF);
     const uint8_t n = uint8_t(slot_), s = uint8_t(slot_ << 4);
-    const uint8_t mode = uint8_t(0xF8 + n), flags = uint8_t(0xF8 + n);   // $07F8+n, $06F8+n
+    const uint8_t mode = uint8_t(0xF8 + n), mask = uint8_t(0xF8 + n);   // $07F8+n, $06F8+n
     pom2::SlotRomAsm a(rom_, slot_, "CCS 7710 (POM2)");
     a.region("id", 0x00, 0x09)
      .emit({ 0x2C, 0x58, 0xFF })          // BIT $FF58: V = 1
      .branch(0x70, "common")              // BVS common
      .emit({ 0x18, 0xB0, 0x38, 0xB8 });   // CLC / BCS (never) / [SEC] / CLV
-    a.region("common", 0x09, 0xC0)
-     .emit({ 0x8D, 0x78, 0x05 })          // STA $0578: the character
-     .emit({ 0x98, 0x48, 0x8A, 0x48 })    // TYA PHA TXA PHA
-     .emit({ 0x08, 0xA9, a.pageHi(), 0x8D, 0xF8, 0x07 })   // PHP / LDA #$Cn / STA MSLOT
-     .emit({ 0xA2, s, 0x28 })             // LDX #$n0 / PLP
-     .branch(0x50, "run")                 // BVC run
-     // First call: reset the 6850, keep its mode, echo on, move the hook.
-     .emit({ 0xA9, 0x20, 0x8D, flags, 0x06 })        // LDA #$20 / STA $06F8+n
-     .emit({ 0xA9, 0xA3, 0x9D, 0x80, 0xC0 })         // LDA #$A3 / STA $C080,X
-     .emit({ 0x4A, 0x8D, mode, 0x07 })               // LSR ($51) / STA $07F8+n
-     .emit({ 0xA5, 0x36 }).branch(0xD0, "ksw")       // LDA CSWL / BNE ksw
-     .emit({ 0xA5, 0x37, 0xC9, a.pageHi() }).branch(0xD0, "ksw")   // CSWH = $Cn?
-     .emit({ 0xA9, 0x05, 0x85, 0x36, 0x18 })         // CSWL = $05 / CLC (output)
+    a.region("common", 0x09, 0x100)
+     .emit({ 0x8D, 0x78, 0x05 })                     // STA $0578: the character
+     .emit({ 0x98, 0x48, 0x8A, 0x48, 0x08 })         // TYA PHA TXA PHA / PHP
+     .emit({ 0xA9, a.pageHi(), 0x8D, 0xF8, 0x07 })   // MSLOT = $Cn
+     .emit({ 0xA2, s, 0x4E, 0xF8, 0x06, 0x28 })      // LDX #$n0 / LSR $06F8 / PLP
+     .branch(0x50, "run")                            // BVC run
+     // First call.
+     .emit({ 0xA9, 0x20, 0x8D, mask, 0x06 })         // case mask
+     .emit({ 0xA9, 0xA3, 0x9D, 0x80, 0xC0 })         // master reset
+     .emit({ 0x4A, 0x8D, mode, 0x07 })               // mode $51
+     .emit({ 0xA5, 0x36 }).branch(0xD0, "ksw")
+     .emit({ 0xA5, 0x37, 0xC9, a.pageHi() }).branch(0xD0, "ksw")
+     .emit({ 0xA9, 0x05, 0x85, 0x36, 0x18 })         // CSWL = $05 / CLC
      .branch(0x90, "run")
      .label("ksw")
-     .emit({ 0xA9, 0x07, 0x85, 0x38, 0x38 })         // KSWL = $07 / SEC (input)
+     .emit({ 0xA9, 0x07, 0x85, 0x38, 0x38 })         // KSWL = $07 / SEC
      .label("run")
-     .emit({ 0xAD, mode, 0x07, 0x29, 0xBF, 0x9D, 0x80, 0xC0 })   // mode, RTS on
-     .branch(0xB0, "input")
-     .label("txwait")
-     .emit({ 0xBD, 0x80, 0xC0, 0x29, 0x02 })         // LDA $C080,X / AND #TDRE
-     .branch(0xF0, "txwait")
-     .emit({ 0xAD, 0x78, 0x05, 0x9D, 0x81, 0xC0 })   // LDA char / STA $C081,X
-     .emit({ 0xAD, flags, 0x06 }).branch(0x30, "done")   // flag bit 7: no echo
-     .emit({ 0xAD, 0x78, 0x05, 0x20, 0xF0, 0xFD })   // LDA char / JSR COUT1
-     .jmp("done")                                    // COUT1 may move any flag
-     .label("input")
-     .emit({ 0xBD, 0x80, 0xC0, 0x4A })               // LDA $C080,X / LSR: RDRF -> C
-     .branch(0x90, "input")
-     .emit({ 0xBD, 0x81, 0xC0, 0x09, 0x80, 0xC9, 0x8A })   // data | $80 / CMP LF
-     .branch(0xF0, "input")
-     .emit({ 0x8D, 0x78, 0x05 })                     // STA $0578
-     .label("done")
-     .emit({ 0x68, 0xAA, 0x68, 0xA8, 0xAD, 0x78, 0x05, 0x60 });   // PLA TAX PLA TAY / LDA / RTS
+     .emit({ 0xB8 })                                 // CLV: not terminal mode
+     .label("arm")
+     .emit({ 0xAD, mode, 0x07, 0x29, 0xBF })         // the mode, RTS on
+     .label("ctl")
+     .emit({ 0x9D, 0x80, 0xC0 })
+     .branch(0x90, "send")                           // C clear: output
+     // Input: the cursor flashes until a byte or a key.
+     .emit({ 0xA4, 0x24, 0xB1, 0x28, 0x48 })         // the char under the cursor
+     .label("poll")
+     .emit({ 0xAD, 0x00, 0xC0, 0x0A, 0x68 })         // key down? (A back)
+     .branch(0x90, "flash")
+     .emit({ 0x08, 0x20, 0x1B, 0xFD, 0x28 })         // KEYIN
+     .emit({ 0xC9, 0x81 }).branch(0xF0, "ctrlA")     // Ctrl-A: a command
+     .branch(0x70, "type")                           // terminal: send it
+     .label("reread")
+     .emit({ 0xA4, 0x24, 0xB1, 0x28 })
+     .label("flash")
+     .emit({ 0x48, 0x29, 0x3F, 0x09, 0x40, 0x91, 0x28 })   // shown flashing
+     .emit({ 0xE6, 0x4E, 0xD0, 0x02, 0xE6, 0x4F })   // RNDL++
+     .emit({ 0xBD, 0x80, 0xC0, 0x4A })               // RDRF?
+     .branch(0x90, "poll")
+     .emit({ 0x68, 0x91, 0x28 })                     // the screen back
+     .emit({ 0xAD, mode, 0x07, 0x9D, 0x80, 0xC0 })   // RTS off
+     .emit({ 0xBD, 0x81, 0xC0, 0x09, 0x80 })         // the byte, bit 7 set
+     .emit({ 0xC9, 0x92 }).branch(0xF0, "run")       // Ctrl-R: wait again
+     .emit({ 0xC9, 0x94 }).branch(0xF0, "cmd")       // Ctrl-T: a command
+     .emit({ 0xC9, 0x8A }).branch(0xF0, "arm")       // line feed: dropped
+     .branch(0x50, "leave")                          // not terminal: return it
+     .emit({ 0xC9, 0xE0 }).branch(0x90, "show")
+     .emit({ 0x4D, mask, 0x06 })                     // EOR the case mask
+     .label("show")
+     .emit({ 0x08, 0x20, 0xED, 0xFD, 0x28 })         // COUT
+     .label("again")
+     .emit({ 0x38 }).branch(0x70, "arm")             // SEC / BVS (always)
+     .label("ctrlA")
+     .emit({ 0x20, 0x1B, 0xFD })                     // KEYIN: the command key
+     .label("cmd")
+     .emit({ 0x2C, 0x58, 0xFF })                     // V = 1: terminal mode
+     .emit({ 0xC9, 0x98 }).branch(0xF0, "leave")     // Ctrl-X: end
+     .emit({ 0x49, 0xE3, 0xC9, 0x70 }).branch(0xF0, "ctl")   // Ctrl-S: break ($70)
+     .emit({ 0x49, 0x6B }).branch(0xF0, "duplex")    // Ctrl-H: C clear -> echo
+     .emit({ 0xC9, 0x0E }).branch(0xD0, "again")     // Ctrl-F: C set -> none
+     .label("duplex")
+     .emit({ 0x6E, 0xF8, 0x06 })                     // ROR $06F8
+     .branch(0x70, "again")
+     .label("type")
+     .emit({ 0x8D, 0x78, 0x05 })                     // a typed key goes out
+     .label("send")
+     .emit({ 0xBD, 0x80, 0xC0, 0x29, 0x02 })         // TDRE?
+     .branch(0xF0, "send")
+     .emit({ 0xAD, 0x78, 0x05, 0x9D, 0x81, 0xC0 })   // the byte, 8 bits
+     .emit({ 0xAC, 0xF8, 0x06 }).branch(0x30, "echoed")   // $06F8 bit 7: no echo
+     .emit({ 0x08, 0x20, 0xF0, 0xFD, 0x28 })         // COUT1
+     .label("echoed")
+     .branch(0x70, "reread")                         // terminal: keep waiting
+     .emit({ 0x0E, 0xF8, 0x06 })                     // ASL $06F8
+     .label("leave")
+     .emit({ 0x8D, 0x78, 0x05 })
+     .branch(0x50, "restore")
+     .emit({ 0x20, 0x89, 0xFE })                     // SETKBD: input back
+     .label("restore")
+     .emit({ 0x68, 0xAA, 0x68, 0xA8, 0xAD, 0x78, 0x05, 0x60 });
     romLayoutError_ = !a.finish();
 }
 

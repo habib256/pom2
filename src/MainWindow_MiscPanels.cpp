@@ -381,12 +381,13 @@ void MainWindow::renderAbstractionPanel()
         t.low.available = !pom2::findResource(Ccs7710Card::kPromHiPath).empty() &&
                           !pom2::findResource(Ccs7710Card::kPromLoPath).empty();
         t.low.blockedBy = "roms/ccs7710_03h.u5 and roms/ccs7710_03l.u6 are needed";
-        t.low.why      = "The real page: the reference, terminal mode included.";
+        t.low.why      = "The real page: the reference.";
         t.high.label   = "POM2's firmware page";
         t.high.level   = pom2::AbsLevel::H1;
-        t.high.why     = "Written to the 7710-03's behaviour and compared with it\n"
-                         "(ccs7710_card): same bytes on the line, same screens.\n"
-                         "No terminal mode.";
+        t.high.why     = "Written to the 7710-03's behaviour, terminal mode and\n"
+                         "commands included, and compared with it (ccs7710_card):\n"
+                         "same bytes, screens and 6850 control at every step.\n"
+                         "Its loop timing is its own (RNDL steps differently).";
         t.selected     = ccsSlot ? (ccsProm ? 0 : 1) : -1;
         if (t.selected < 0)
             t.note = "No CCS 7710 is plugged — add one in Slot Configuration.";

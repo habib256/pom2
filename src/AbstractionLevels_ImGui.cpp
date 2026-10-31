@@ -164,10 +164,12 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "not a host port.", "Ccs7710Card.h/.cpp" },
     { "ccs7710_pom2", "Network & serial", "CCS 7710 (6850) — POM2's firmware page", AbsLevel::H1,
       "Same card; the $Cn00 page is POM2's, written to the 7710-03's "
-      "behaviour: ID bytes, ACIA set-up, 8-bit output with screen echo, "
-      "IN#n input. ccs7710_card runs both and compares line and screens",
-      "The PROM's terminal mode (Ctrl-A commands, Ctrl-R / Ctrl-T from the "
-      "line) and its flashing cursor are not written.", "Ccs7710Card.cpp" },
+      "behaviour: ID bytes, ACIA set-up, 8-bit output with echo, IN#n with "
+      "its flashing cursor, terminal mode and the Ctrl-A / Ctrl-R / Ctrl-T "
+      "commands. ccs7710_card runs both and compares line, screens, control",
+      "Its own code: the timing of its loops is not the PROM's, so RNDL "
+      "($4E/$4F) counts a different number of steps while input waits.",
+      "Ccs7710Card.cpp" },
     { "ultraterm", "Video", "Videx UltraTerm (80-160 columns)", AbsLevel::L1,
       "MAME a2ultraterm bus map, VRAM pages and attributes on the HD6845S; "
       "the real firmware's PR#3 drives it",

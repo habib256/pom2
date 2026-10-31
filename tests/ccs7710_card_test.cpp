@@ -34,6 +34,7 @@
 #include "SoftCard2Protocol.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -145,6 +146,107 @@ Run scenario(bool lle)
     return r;
 }
 
+// The PROM's terminal mode, step by step, on one firmware. Every
+// checkpoint records the bytes sent so far, the screen and the 6850's
+// control register.
+struct Step { std::string label, sent, screen; uint8_t control; };
+
+std::vector<Step> terminalSession(bool lle)
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.loadAppleIIRom("roms/apple2p.rom");
+    auto card = std::make_unique<Ccs7710Card>(1);
+    Ccs7710Card* c = card.get();
+    if (lle) c->loadProms(slurp(Ccs7710Card::kPromHiPath), slurp(Ccs7710Card::kPromLoPath));
+    mem.slotBus().plug(1, std::move(card));
+    cpu.hardReset();
+    mem.slotBus().reset();
+    auto run = [&](long n) { for (long t = 0; t < n;) t += cpu.run(4096); };
+    std::vector<Step> steps;
+    auto mark = [&](const char* label) {
+        steps.push_back({ label, spool(*c), screen40(mem), c->control() });
+    };
+    auto keys = [&](const char* k) {
+        for (const char* p = k; *p; ++p) {
+            mem.pasteKeyStream(p, 1);
+            run(150'000);
+        }
+    };
+    auto line = [&](const char* t) {
+        for (const char* p = t; *p; ++p) c->receive(uint8_t(*p));
+        run(600'000);
+    };
+    run(2'000'000);
+    mem.pasteText("HOME\rIN#1\r");
+    run(1'000'000);
+    mark("IN#1 waiting: the cursor flashes");
+    line("\x12");
+    mark("Ctrl-R from the line: still waiting");
+    line("\x14hello\r");
+    mark("Ctrl-T: terminal mode, received text shown upper case");
+    keys("AB");
+    mark("typed keys go out, echoed");
+    keys("\x01\x06C");
+    mark("Ctrl-A Ctrl-F: full duplex, no echo");
+    keys("\x01\x13");
+    mark("Ctrl-A Ctrl-S: a break");
+    keys("\x01\x08D");
+    mark("Ctrl-A Ctrl-H: half duplex again");
+    keys("\x01\x18");
+    run(500'000);
+    mark("Ctrl-A Ctrl-X: terminal mode ends, keyboard input");
+    mem.pasteText("PRINT 6*7\r");
+    run(1'500'000);
+    mark("BASIC from the keyboard again");
+    return steps;
+}
+
+void testTerminalModeAgainstProm()
+{
+    if (!std::filesystem::is_regular_file("roms/apple2p.rom")) return;
+    const auto hle = terminalSession(false);
+    // What the PROM is known to do, checked on POM2's page on its own.
+    std::string sent7;
+    for (unsigned char ch : hle.back().sent) sent7.push_back(char(ch & 0x7F));
+    CHECK(hle[0].screen.find("]`") != std::string::npos && "the cursor shown flashing ($60)");
+    CHECK(hle[2].screen.find("HELLO") != std::string::npos && "lower case shown upper");
+    CHECK(sent7.rfind("AB", 0) == 0 && "typed keys reached the line");
+    CHECK(hle[7].screen.find("AB\\") != std::string::npos && "Ctrl-X cancelled GETLN's line");
+    if (std::getenv("POM2_DUMP") || sent7.rfind("AB", 0) != 0) {
+        std::string vis;
+        for (char ch : sent7) vis += (ch >= 0x20 && ch < 0x7F) ? std::string(1, ch) : "<" + std::to_string(int(ch)) + ">";
+        std::fprintf(stderr, "  sent: %s\n", vis.c_str());
+        for (const auto& st : hle) std::fprintf(stderr, "---- %s (ctl $%02X)\n%s", st.label.c_str(), st.control, st.screen.substr(0, 41 * 6).c_str());
+    }
+    CHECK(hle[3].screen.find("AB") != std::string::npos && "half duplex echo");
+    CHECK(hle[5].control == 0x70 && "Ctrl-A Ctrl-S: break");
+    CHECK(hle.back().screen.find("42") != std::string::npos && "keyboard input is back");
+    if (!std::filesystem::is_regular_file(Ccs7710Card::kPromHiPath)
+        || !std::filesystem::is_regular_file(Ccs7710Card::kPromLoPath)) {
+        std::printf("[ OK ] terminal mode on POM2's page (SKIP the comparison: no PROMs)\n");
+        return;
+    }
+    const auto lle = terminalSession(true);
+    CHECK(lle.size() == hle.size());
+    for (std::size_t i = 0; i < lle.size() && i < hle.size(); ++i) {
+        const bool same = lle[i].sent == hle[i].sent && lle[i].screen == hle[i].screen
+                       && lle[i].control == hle[i].control;
+        if (!same) {
+            ++g_fail;
+            std::fprintf(stderr, "FAIL terminal step '%s': control CCS $%02X POM2 $%02X, "
+                         "sent %zu vs %zu bytes\n---- CCS ----\n%s---- POM2 ----\n%s",
+                         lle[i].label.c_str(), lle[i].control, hle[i].control,
+                         lle[i].sent.size(), hle[i].sent.size(),
+                         lle[i].screen.c_str(), hle[i].screen.c_str());
+            break;
+        }
+    }
+    std::printf("[ OK ] terminal mode, cursor and commands = CCS 7710-03 at %zu checkpoints\n",
+                hle.size());
+}
+
 void testFirmwareAgainstProm()
 {
     if (!std::filesystem::is_regular_file("roms/apple2p.rom")) {
@@ -234,6 +336,7 @@ int main()
 {
     testAcia();
     testFirmwareAgainstProm();
+    testTerminalModeAgainstProm();
     testProms();
     testProtocol();
     if (g_fail) {

@@ -30,8 +30,8 @@
 // high and low nibble of each byte) are in no download POM2 uses; when both
 // sit in roms/ they are loaded and execute — the LLE reference. Without
 // them, or with `ccs7710_firmware` = "pom2", the card serves POM2's own
-// page, written to behave as the 7710-03 does (see buildOwnFirmware; the
-// `ccs7710_card` test runs both and compares).
+// page, written to behave as the 7710-03 does, terminal mode included (see
+// buildOwnFirmware; the `ccs7710_card` test runs both and compares).
 //
 // ACIA (MC6850 data sheet): control CR1:0 = 11 master reset; CR6:5 = 01
 // enables the transmit interrupt; CR7 the receive one. Status: b0 RDRF, b1

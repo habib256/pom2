@@ -563,21 +563,30 @@ the reference (Abstraction Levels: `ccs7710`, L2). RetroBIOS has no
 every catalogued dump to be downloadable — they go in when POM2's ROM
 archive carries them), and a tree without them, or `ccs7710_firmware` = "pom2" (the
 panel's switch, a restart), serves POM2's own page (`ccs7710_pom2`, H1),
-written from the 7710-03's disassembly: the serial-card ID kept byte for
-byte (`BIT $FF58 / BVS / CLC / BCS / [SEC] / CLV` — `$Cn05` is the output
-entry, the `$38` at `$Cn07` is a SEC and the input entry); the first call
-master-resets the 6850 (`$A3`), keeps its mode `$51` in `$07F8+n`, sets the
-echo flag `$06F8+n` and moves CSW to `$Cn05` or KSW to `$Cn07`; output
-sends the byte as it is (8 bits — Applesoft's high bit goes out) and
-echoes it through COUT1; input sets bit 7 and drops line feeds. Not
-written: the PROM's terminal mode (Ctrl-A commands, Ctrl-R / Ctrl-T) and
-its flashing cursor. The first version stripped bit 7, never echoed and
-never set the 6850 up — the comparison with the PROM showed all three.
+written from the 7710-03's disassembly (its comment block is the
+behavioural spec): the serial-card ID kept byte for byte (`BIT $FF58 / BVS
+/ CLC / BCS / [SEC] / CLV` — `$Cn05` is the output entry, the `$38` at
+`$Cn07` is a SEC and the input entry); the first call master-resets the
+6850 (`$A3`), keeps its mode `$51` in `$07F8+n`, the case mask `$20` in
+`$06F8+n`, and moves CSW to `$Cn05` or KSW to `$Cn07`; output sends the
+byte as it is (8 bits) and echoes it through COUT1 unless `$06F8` bit 7;
+input shows the character under the cursor flashing and steps RNDL while
+it waits, drops typed keys except Ctrl-A, raises RTS on a byte, sets bit 7,
+restarts on Ctrl-R, drops line feeds; Ctrl-T from the line or Ctrl-A + a
+key is a command — Ctrl-X ends terminal mode and calls SETKBD, Ctrl-S sends
+a break (control `$70`), Ctrl-F / Ctrl-H full / half duplex, anything else
+terminal mode, where received text is displayed (lower case through the
+mask) and typed keys go out. The PROM's quirk is kept too: `$06F8` is
+shifted right on every entry and back only after an output call. Its own
+code, so its loop timing — and the number of RNDL steps while input waits —
+is not the PROM's. The first version stripped bit 7, never echoed, never
+set the 6850 up and had no terminal mode; the comparison found each.
 
-`ccs7710_card` runs the same ][+ session on both pages — PR#1 / PRINT /
-PR#0, then IN#1 taking Applesoft lines off the line — and requires the
-same bytes sent and the same screens (negative control: echo off fails
-it). `softcard2_card` pins the CP/M side (type 3 in the slot scan; ^P
+`ccs7710_card` runs the same ][+ sessions on both pages — PR#1 / PRINT /
+PR#0 then IN#1 taking Applesoft lines off the line; and a terminal session
+(cursor, Ctrl-R, Ctrl-T, typed keys, Ctrl-A Ctrl-F / S / H / X, keyboard
+back) — and requires the same bytes sent, screens and 6850 control at
+every checkpoint (negative controls: echo off, case mask off). `softcard2_card` pins the CP/M side (type 3 in the slot scan; ^P
 sends DIR to the 6850).
 
 ### Saturn 128K (`SaturnCard`)
