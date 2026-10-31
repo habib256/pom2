@@ -167,7 +167,7 @@ public:
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
         return breakpointCount() || watchpointCount() || profiling_ || historyEnabled_ ||
-               osCalls_.mli() ||
+               osCalls_.any6502() ||
                transientArmed_.load(std::memory_order_relaxed);
     }
     /// Watchpoints specifically — what Memory gates its hook on.

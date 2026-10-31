@@ -19,6 +19,7 @@
 #include "CffaCard.h"
 #include "ApplicardCard.h"
 #include "Ccs7710Card.h"
+#include "Dan2Card.h"
 #include "Cffa3000Card.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
@@ -300,6 +301,24 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         };
         if (card->loadProms(read(Ccs7710Card::kPromHiPath), read(Ccs7710Card::kPromLoPath)))
             result.status = std::string("loaded: ") + Ccs7710Card::kPromHiPath + " + " + Ccs7710Card::kPromLoPath;
+        else
+            result.status = "POM2's own firmware page";
+        result.card = std::move(card);
+        return result;
+    }
+
+    if (request.key == "dan2") {
+        // DAN ][: never refused — without the card's EPROM it serves POM2's
+        // own page (Dan2Card.h). Its SD images mount through the media bays.
+        auto card = std::make_unique<Dan2Card>(request.slot);
+        std::vector<uint8_t> b;
+        const std::string p = locate_(Dan2Card::kEpromPath);
+        if (!p.empty()) {
+            std::ifstream f(p, std::ios::binary);
+            b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        if (card->loadEprom(b))
+            result.status = std::string("loaded: ") + Dan2Card::kEpromPath;
         else
             result.status = "POM2's own firmware page";
         result.card = std::move(card);

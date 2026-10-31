@@ -162,6 +162,10 @@ inline constexpr CardType kCardTypes[] = {
     { "ezcolor",      "E-Z Color (TMS9918A)" },
     // Videx UltraTerm — 80 to 160 columns, its own video switch; ROM-gated
     // (roms/videx_ultraterm_*). MAME a2ultraterm.cpp port.
+    // DAN ][ Controller (ThorstenBr) — an 8255 talking to an ATmega that
+    // serves two SD cards as ProDOS volumes. POM2's own page unless the
+    // card's EPROM (zlib licence) is roms/dan2_eprom.bin. izapple2 dan2.go.
+    { "dan2",         "DAN ][ Controller (2 SD)" },
     { "ultraterm",    "Videx UltraTerm (80-160 col)" },
     { "chatmauve",    "Le Chat Mauve",     CardScope::Core },
     { "mouse",        "Mouse Interface"   },

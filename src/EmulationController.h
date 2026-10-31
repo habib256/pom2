@@ -87,14 +87,17 @@ public:
     /// debugger off the CPU's hot loop entirely. Caller holds `stateMutex`.
     void syncDebugHook();
 
-    /// Switch the ProDOS MLI (6502) and CP/M BDOS (card Z80) call trace —
-    /// `debugger().osCalls()` holds the lines. Caller holds `stateMutex`.
-    void setOsCallTrace(bool mli, bool bdos)
+    /// Switch the ProDOS MLI, SmartPort and Apple Pascal BIOS (6502) and CP/M
+    /// BDOS (card Z80) call traces — `debugger().osCalls()` holds the lines.
+    /// Caller holds `stateMutex`.
+    void setOsCallTrace(bool mli, bool bdos, bool smartPort = false, bool pascal = false)
     {
         pom2::OsCallTrace& t = debugger_->osCalls();
         t.bind(&processor, &mem);
         t.setMli(mli);
         t.setBdos(bdos);
+        t.setSmartPort(smartPort);
+        t.setPascal(pascal);
         mem.slotBus().setZ80Observer(bdos ? &t : nullptr);
         syncDebugHook();
     }

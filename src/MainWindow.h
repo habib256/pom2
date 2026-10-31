@@ -54,6 +54,8 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <thread>
+#include <atomic>
 
 struct GLFWwindow;
 
@@ -1490,6 +1492,18 @@ private:
     /// The card monitor switch + second monitor (MainWindow_CardMonitor.cpp).
     void renderCardMonitorPanel();
     void applyCardMonitorSetting();
+    /// File ▸ Open disk from URL (MainWindow_OpenUrl.cpp): the download runs
+    /// on its own thread; the frame loop boots the image when it lands.
+    struct UrlFetch {
+        std::thread t;
+        std::atomic<bool> done{false}, abort{false};
+        std::string url, localPath, error;
+        ~UrlFetch() { abort = true; if (t.joinable()) t.join(); }
+    };
+    std::unique_ptr<UrlFetch> urlFetch_;
+    bool openUrlRequested_ = false;
+    char urlInput_[512] = {};
+    void renderOpenUrlPopup();
     /// File ▸ Save BASIC listing (MainWindow_BasicListing.cpp).
     void saveBasicListing();
     std::string basicListingStatus_;

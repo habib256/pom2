@@ -1433,6 +1433,7 @@ void MainWindow::render()
     }
 
     renderMenuBar();
+    renderOpenUrlPopup();
     // Toolbar must render after the menu bar so we know its height
     // (`ImGui::GetFrameHeight()` reflects the menu bar font size +
     // padding). It's positioned just below — pinned, can't be moved

@@ -97,6 +97,8 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         const pom2::OsCallTrace& os = ctrl.debugger().osCalls();
         snap.traceMli = os.mli();
         snap.traceBdos = os.bdos();
+        snap.traceSp = os.smartPort();
+        snap.tracePascal = os.pascal();
         if (os.emitted() != osEmitted_) {
             osEmitted_ = os.emitted();
             osLines_.assign(os.lines().begin(), os.lines().end());
@@ -230,17 +232,21 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     ImGui::End();
 }
 
-// ── ProDOS MLI / CP/M BDOS calls ─────────────────────────────────────────
+// ── ProDOS MLI / SmartPort / Pascal BIOS / CP/M BDOS calls ───────────────
 
 void Debugger_ImGui::drawOsCalls(EmulationController& ctrl, Snapshot& snap)
 {
-    if (!ImGui::CollapsingHeader("OS calls (ProDOS MLI, CP/M BDOS)")) return;
+    if (!ImGui::CollapsingHeader("OS calls (ProDOS MLI, SmartPort, Pascal, CP/M BDOS)")) return;
     bool changed = ImGui::Checkbox("ProDOS MLI", &snap.traceMli);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("SmartPort", &snap.traceSp);
+    ImGui::SameLine();
+    changed |= ImGui::Checkbox("Pascal BIOS", &snap.tracePascal);
     ImGui::SameLine();
     changed |= ImGui::Checkbox("CP/M BDOS (card Z80)", &snap.traceBdos);
     if (changed) {
         auto st = ctrl.lockState();
-        ctrl.setOsCallTrace(snap.traceMli, snap.traceBdos);
+        ctrl.setOsCallTrace(snap.traceMli, snap.traceBdos, snap.traceSp, snap.tracePascal);
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear##oscalls")) {
@@ -253,7 +259,7 @@ void Debugger_ImGui::drawOsCalls(EmulationController& ctrl, Snapshot& snap)
         for (const auto& l : osLines_) all += l + "\n";
         ImGui::SetClipboardText(all.c_str());
     }
-    ImGui::TextWrapped("Each call with its result, at its caller's address. The MLI trace runs the CPU on its debugged loop while it is on.");
+    ImGui::TextWrapped("Each call with its result, at its caller's address (Pascal: the BIOS entry only — it returns through the p-machine). The 6502 traces run the CPU on its debugged loop while one is on.");
     ImGui::BeginChild("##oscalls", ImVec2(0, 160), true, ImGuiWindowFlags_HorizontalScrollbar);
     ImGuiListClipper clip;
     clip.Begin(static_cast<int>(osLines_.size()));

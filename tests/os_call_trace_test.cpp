@@ -23,6 +23,13 @@
 //  2. QUIT never returns and is reported at entry; a call whose stack the
 //     program unwinds without returning is reported "(no return)".
 //  3. BDOS: a Z80 program makes three CALL 5s into a stub BDOS.
+//  5. SmartPort: a slot page with the SmartPort ID and a dispatch at
+//     $CnFF + 3 that answers like a Liron (steps over the inline command and
+//     list pointer, 3 bytes or 5 in the extended set); a JSR to the same
+//     page that is NOT the dispatch is not a call. The page is read through
+//     peekCpuView, so a card is traced only if it answers peekSlotRom.
+//  6. Pascal: the BIOS table at $EC/$ED — entries with a JMP log, console
+//     read/write do not, and a table of non-JMPs logs nothing.
 //  4. The trace is free when off: the Debugger is not armed, and SlotBus
 //     hangs the observer on a card Z80 plugged after it was set, and takes
 //     it off again.
@@ -35,6 +42,7 @@
 #include "SlotBus.h"
 #include "Z80.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -169,6 +177,123 @@ void testMliNoReturn()
     if (l.empty() || l[0] != "MLI  $0C00 CLOSE ref=0 -> (no return)") dump(dbg.osCalls());
 }
 
+// A SmartPort page: ID bytes, $C5FF = $0A, dispatch at $C50D. STATUS and
+// READBLOCK succeed (X/Y = 8 / 512 bytes), anything else answers $28.
+class SmartPortStub : public SlotPeripheral {
+public:
+    SmartPortStub()
+    {
+        const uint8_t code[] = {
+            0x68, 0x85, 0xFA, 0x68, 0x85, 0xFB,         // PLA STA $FA PLA STA $FB
+            0xA0, 0x01, 0xB1, 0xFA, 0xA8,               // LDY #1 LDA ($FA),Y TAY
+            0x29, 0x40, 0xF0, 0x02, 0xA9, 0x02,         // AND #$40 BEQ +2 LDA #2
+            0x18, 0x69, 0x03, 0x65, 0xFA, 0xAA,         // CLC ADC #3 ADC $FA TAX
+            0xA5, 0xFB, 0x69, 0x00, 0x48, 0x8A, 0x48,   // LDA $FB ADC #0 PHA TXA PHA
+            0x98, 0x29, 0x3F,                           // TYA AND #$3F
+            0xF0, 0x0A, 0xC9, 0x01, 0xD0, 0x0C,         // BEQ status CMP #1 BNE err
+            0xA2, 0x00, 0xA0, 0x02, 0xD0, 0x02,         // LDX #0 LDY #2 BNE ok
+            0xA2, 0x08,                                 // status: LDX #8 (Y = the command, 0)
+            0xA9, 0x00, 0x18, 0x60,                     // ok: LDA #0 CLC RTS
+            0xA9, 0x28, 0x38, 0x60,                     // err: LDA #$28 SEC RTS
+        };
+        page_.fill(0xEA);
+        page_[1] = 0x20; page_[3] = 0x00; page_[5] = 0x03; page_[7] = 0x00;
+        page_[0xFF] = 0x0A;
+        for (std::size_t i = 0; i < sizeof code; ++i) page_[0x0D + i] = code[i];
+        page_[0x0A] = 0x60;                             // $C50A: RTS (the ProDOS entry)
+    }
+    std::string_view name() const override { return "SmartPort stub"; }
+    uint8_t slotRomRead(uint8_t offset) override { return page_[offset]; }
+    bool peekSlotRom(uint8_t offset, uint8_t& out) const override { out = page_[offset]; return true; }
+private:
+    std::array<uint8_t, 256> page_{};
+};
+
+void testSmartPort()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.slotBus().plug(5, std::make_unique<SmartPortStub>());
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setSmartPort(true);
+    CHECK(dbg.armed());
+    cpu.setDebugHook(&dbg);
+    poke(mem, 0x0800, {
+        0x20, 0x0D, 0xC5, 0x00, 0x00, 0x09,         // JSR SP / STATUS / $0900
+        0x20, 0x0D, 0xC5, 0x01, 0x10, 0x09,         // JSR SP / READBLOCK / $0910
+        0x20, 0x0D, 0xC5, 0x41, 0x20, 0x09, 0x00, 0x00,   // JSR SP / READBLOCK.X / $00000920
+        0x20, 0x0D, 0xC5, 0x05, 0x30, 0x09,         // JSR SP / INIT / $0930
+        0x20, 0x0A, 0xC5,                           // JSR $C50A: the ProDOS entry, not a call
+        0x4C, 0x1D, 0x08,                           // JMP *
+    });
+    poke(mem, 0x0900, { 0x03, 0x00, 0x40, 0x09, 0x00 });            // STATUS unit 0, code 0
+    mem.memWrite(0x0940, 2);                                         // two devices
+    poke(mem, 0x0910, { 0x03, 0x01, 0x00, 0x20, 0x05, 0x00, 0x00 }); // unit 1, buf $2000, block 5
+    poke(mem, 0x0920, { 0x03, 0x02, 0x00, 0x30, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00 });
+    poke(mem, 0x0930, { 0x01, 0x00 });
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    for (int i = 0; i < 400; ++i) cpu.run(1);
+    const auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 4);
+    CHECK(l.size() > 0 && l[0] == "SP   $0800 S5 STATUS unit=0 code=$00 list=$0940 -> ok, 2 devices");
+    CHECK(l.size() > 1 && l[1] == "SP   $0806 S5 READBLOCK unit=1 block=5 buf=$2000 -> ok, 512 bytes");
+    CHECK(l.size() > 2 && l[2] == "SP   $080C S5 READBLOCK.X unit=2 block=1600 buf=$00003000 -> ok, 512 bytes");
+    CHECK(l.size() > 3 && l[3] == "SP   $0814 S5 INIT unit=0 -> ERR $28 no device");
+    if (l.size() != 4) dump(dbg.osCalls());
+    dbg.osCalls().setSmartPort(false);
+    CHECK(!dbg.armed());
+}
+
+void testPascal()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setPascal(true);
+    CHECK(dbg.armed());
+    cpu.setDebugHook(&dbg);
+    // The table at $4000, every entry JMP $4100: RTS.
+    mem.memWrite(0xEC, 0x00);
+    mem.memWrite(0xED, 0x40);
+    for (int e = 0; e < 21; ++e) poke(mem, uint16_t(0x4000 + 3 * e), { 0x4C, 0x00, 0x41 });
+    mem.memWrite(0x4100, 0x60);
+    // The caller pushes the block-I/O parameters the way the p-machine
+    // leaves them: control, drive, buffer, length, block, then JSR.
+    poke(mem, 0x0800, {
+        0xA9, 'A', 0x20, 0x03, 0x40,                // CWRITE: not logged
+        0xA9, 'X', 0x20, 0x09, 0x40,                // PWRITE 'X'
+        0xA9, 0x00, 0x48, 0x48,                     // control = 0
+        0xA9, 0x00, 0x48, 0xA9, 0x01, 0x48,         // drive = 1
+        0xA9, 0x08, 0x48, 0xA9, 0x00, 0x48,         // buffer = $0800
+        0xA9, 0x02, 0x48, 0xA9, 0x00, 0x48,         // length = 512
+        0xA9, 0x00, 0x48, 0xA9, 0x02, 0x48,         // block = 2
+        0xA9, 0x04, 0x20, 0x12, 0x40,               // DREAD, unit 4
+        0x4C, 0x2B, 0x08,                           // JMP *
+    });
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    for (int i = 0; i < 80; ++i) cpu.run(1);
+    auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 2);
+    CHECK(l.size() > 0 && l[0] == "PASC $0807 PWRITE 'X'");
+    CHECK(l.size() > 1 && l[1] == "PASC $0828 DREAD unit=4 block=2 len=512 buf=$0800 drive=1 control=$0000");
+    if (l.size() != 2) dump(dbg.osCalls());
+    // No JMP at the entries: $EC/$ED is someone else's.
+    dbg.osCalls().clear();
+    for (int e = 0; e < 21; ++e) mem.memWrite(uint16_t(0x4000 + 3 * e), 0x60);
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0805);
+    for (int i = 0; i < 80; ++i) cpu.run(1);
+    CHECK(dbg.osCalls().lines().empty());
+}
+
 struct FlatBus : pom2::Z80Bus {
     uint8_t ram[0x10000] = {};
     uint8_t z80MemRead(uint16_t a) override { return ram[a]; }
@@ -232,6 +357,8 @@ int main()
     testMli();
     testMliNoReturn();
     testBdos();
+    testSmartPort();
+    testPascal();
     testSlotBusObserver();
     if (g_fail) {
         std::fprintf(stderr, "os_call_trace: %d failure(s)\n", g_fail);

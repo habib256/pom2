@@ -198,4 +198,44 @@ bool listZipMembers(const std::vector<std::uint8_t>& zip,
     return true;
 }
 
+
+bool gunzip(const std::vector<std::uint8_t>& gz, std::vector<std::uint8_t>& out,
+            std::string& err, std::size_t maxBytes, std::string* name)
+{
+    out.clear();
+    if (gz.size() < 18 || gz[0] != 0x1F || gz[1] != 0x8B || gz[2] != 8) {
+        err = "not a gzip stream";
+        return false;
+    }
+    const std::uint8_t flags = gz[3];
+    std::size_t p = 10;
+    if (flags & 0x04) {                                   // FEXTRA
+        if (p + 2 > gz.size()) { err = "gzip: truncated header"; return false; }
+        p += 2 + std::size_t(gz[p] | gz[p + 1] << 8);
+    }
+    auto skipString = [&](std::string* keep) {
+        while (p < gz.size() && gz[p] != 0) { if (keep) keep->push_back(char(gz[p])); ++p; }
+        ++p;
+    };
+    if (flags & 0x08) skipString(name);                   // FNAME
+    if (flags & 0x10) skipString(nullptr);                // FCOMMENT
+    if (flags & 0x02) p += 2;                             // FHCRC
+    if (p + 8 > gz.size()) { err = "gzip: truncated"; return false; }
+    const std::uint8_t* t = gz.data() + gz.size() - 8;
+    const std::uint32_t crc   = std::uint32_t(t[0] | t[1] << 8 | t[2] << 16) | std::uint32_t(t[3]) << 24;
+    const std::uint32_t isize = std::uint32_t(t[4] | t[5] << 8 | t[6] << 16) | std::uint32_t(t[7]) << 24;
+    if (isize > maxBytes || isize > std::uint32_t(INT_MAX - 1)) {
+        err = "gzip: " + std::to_string(isize) + " bytes unpacked is more than allowed";
+        return false;
+    }
+    out.resize(std::size_t(isize) + 1);     // one spare: an overrun shows as a length mismatch
+    const int got = stbi_zlib_decode_noheader_buffer(
+        reinterpret_cast<char*>(out.data()), static_cast<int>(out.size()),
+        reinterpret_cast<const char*>(gz.data() + p), static_cast<int>(gz.size() - 8 - p));
+    if (got != static_cast<int>(isize)) { out.clear(); err = "gzip: inflate failed"; return false; }
+    out.resize(isize);
+    if (crc32Of(out) != crc) { out.clear(); err = "gzip: CRC mismatch"; return false; }
+    return true;
+}
+
 }  // namespace pom2

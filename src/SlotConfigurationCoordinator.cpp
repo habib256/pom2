@@ -52,6 +52,7 @@
 #include "PremiumSoftCard.h"
 #include "SaturnCard.h"
 #include "Ccs7710Card.h"
+#include "Dan2Card.h"
 #include "EzColorCard.h"
 #include "VidexUltratermCard.h"
 #include "SuperSerialCard.h"
@@ -106,6 +107,7 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const SaturnCard*>(&peripheral)) return "saturn";
     if (dynamic_cast<const Ccs7710Card*>(&peripheral)) return "ccs7710";
     if (dynamic_cast<const EzColorCard*>(&peripheral)) return "ezcolor";
+    if (dynamic_cast<const Dan2Card*>(&peripheral)) return "dan2";
     if (dynamic_cast<const VidexUltratermCard*>(&peripheral)) return "ultraterm";
     if (dynamic_cast<const PremiumSoftCard*>(&peripheral)) return "premium_softcard";
     if (dynamic_cast<const LeChatMauveCard*>(&peripheral)) return "chatmauve";

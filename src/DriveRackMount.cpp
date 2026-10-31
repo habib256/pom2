@@ -1,5 +1,6 @@
 // POM2 — GPL-3.0-or-later
 #include "DriveRackMount.h"
+#include "MediaSource.h"
 #include "DiskIICard.h"
 #include "DiskImage.h"
 #include "EmulationController.h"
@@ -57,13 +58,22 @@ std::string explainUnknownDisk(const std::string& path)
            "name and size match no Apple II disk format.\n\n"
            "Apple II disk images end in .dsk, .do, .po, .nib or .woz (5.25-inch "
            "floppies), .po, .2mg or .woz (3.5-inch disks), or .hdv / .2mg (hard "
-           "disks). A .zip or .7z archive has to be unpacked first.";
+           "disks) — or be one of those inside a .zip or a .gz, which POM2 opens "
+           "itself. A .7z or .shk archive has to be unpacked first.";
 }
 
 bool mountEmptyDrive(EmulationController& controller, Settings& settings,
                      StorageCoordinator& storage, const DrivePicture& target,
-                     const std::string& path, std::string& error) {
+                     const std::string& source, std::string& error) {
     error.clear();
+    // A .zip, a .gz or a URL becomes its local image first (MediaSource.h),
+    // outside the machine lock; the drive then mounts that file.
+    std::string path = source;
+    if (needsMediaResolve(source)) {
+        const auto got = resolveMediaSource(source, mediaCacheDir());
+        if (!got.ok) { error = quotedName(source) + ": " + got.error; return false; }
+        path = got.localPath;
+    }
     // Inspect fresh state: a file picker may remain open across media changes.
     if (target.slot < 0) {
         if (target.kind != DrivePictureKind::Floppy35 || target.bay < 0 || target.bay > 2) {

@@ -108,6 +108,14 @@ public:
     /// into X, so the firmware knows where it lives without self-modifying
     /// code. Offset 0x000 is a copyright string, not a page.
     uint8_t slotRomRead(uint8_t low8) override;
+    /// The page has no side effect: the debugger and the SmartPort trace
+    /// read it through peekCpuView.
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        out = (!romLoaded_ || slot_ < 1 || slot_ > 7)
+            ? 0xFF : rom_[static_cast<std::size_t>(slot_) * 256 + low8];
+        return true;
+    }
 
     /// $C800-$CFFF — the upper 2 KB of the dump, where the GCR routines and
     /// the SmartPort dispatcher live.

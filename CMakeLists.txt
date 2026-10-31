@@ -284,6 +284,7 @@ set(SOURCES
     src/Ccs7710Card.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
+    src/Dan2Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -380,6 +381,7 @@ set(SOURCES
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
+    src/MainWindow_OpenUrl.cpp
     src/ApplesoftListing.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Slots.cpp
@@ -506,6 +508,7 @@ set(SOURCES
     src/SnapshotIO.cpp
     src/TnfsClient.cpp
     src/TnfsMedia.cpp
+    src/MediaSource.cpp
     src/SpeakerDevice.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
@@ -625,6 +628,7 @@ set(POM2_DEVICES_SOURCES
     src/Ccs7710Card.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
+    src/Dan2Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp
@@ -723,6 +727,7 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
+    src/MainWindow_OpenUrl.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Panels.cpp
     src/MainWindow_SettingsPanels.cpp
@@ -941,6 +946,7 @@ set(POM2_RUNTIME_SOURCES
     src/MediaBoot.cpp
     src/TnfsClient.cpp
     src/TnfsMedia.cpp
+    src/MediaSource.cpp
     src/Apple2Display.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
@@ -1003,6 +1009,7 @@ set(HEADERS
     src/Ccs7710Card.h
     src/EzColorCard.h
     src/TMS9918.h
+    src/Dan2Card.h
     src/Tms9918BeamClock.h
     src/Tms9918Diagnostics.h
     src/SaturnCard.h
@@ -1551,6 +1558,7 @@ set(POM2_CORE_SOURCES
     src/Ccs7710Card.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
+    src/Dan2Card.cpp
     src/SaturnCard.cpp
     src/VidexUltratermCard.cpp
     src/PremiumSoftCard.cpp

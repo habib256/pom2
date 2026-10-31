@@ -7193,6 +7193,29 @@ add_test(NAME cpm_disk_fs COMMAND test_cpm_disk_fs
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(cpm_disk_fs PROPERTIES TIMEOUT 15)
 
+# ─── Disks from a .gz, a .zip or a URL (MediaSource.h) ─────────────────────
+add_executable(test_media_source
+    media_source_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+    ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_media_source PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_media_source PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_media_source PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_media_source PRIVATE winmm ws2_32)
+endif()
+add_test(NAME media_source COMMAND test_media_source)
+set_tests_properties(media_source PROPERTIES TIMEOUT 60)
+
 # ─── DOS 3.3 file system + Applesoft listing (pom2_dos33's library) ────────
 # A blank volume built in memory; the System Master too when present.
 add_executable(test_dos33_disk_fs
@@ -7600,6 +7623,36 @@ if(WIN32)
 endif()
 add_test(NAME ezcolor_card COMMAND test_ezcolor_card WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(ezcolor_card PROPERTIES TIMEOUT 30)
+
+# ─── DAN ][ Controller: the 8255 protocol, ProDOS on EPROM and POM2's page ─
+add_executable(test_dan2_card
+    dan2_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Dan2Card.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_dan2_card PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_dan2_card PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_dan2_card PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_dan2_card PRIVATE winmm ws2_32)
+endif()
+add_test(NAME dan2_card COMMAND test_dan2_card
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(dan2_card PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
 # ─── CCS 7710 (6850 serial) + the SoftCard II mailbox decoder ─────────────
 add_executable(test_ccs7710_card
@@ -10569,6 +10622,7 @@ pom2_add_headless_test(test_frontend_device_panel_concurrency
 pom2_add_headless_test(test_drive_rack_mount
     NAME drive_rack_mount TIMEOUT 20
     SOURCES drive_rack_mount_test.cpp ${CMAKE_SOURCE_DIR}/src/DriveRackMount.cpp
+            ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
     LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_boot_configuration

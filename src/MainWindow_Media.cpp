@@ -37,6 +37,7 @@
 //     every caller wrong at once.
 
 #include "MainWindow.h"
+#include "MediaSource.h"
 
 #include "Block512Backing.h"
 #include "CffaCard.h"
@@ -548,8 +549,16 @@ bool MainWindow::mountOnboard35(int drive, const std::string& path, std::string&
     return result.ok;
 }
 
-bool MainWindow::insertAndBootImage(const std::string& path, std::string& errOut)
+bool MainWindow::insertAndBootImage(const std::string& source, std::string& errOut)
 {
+    // A .zip, a .gz or a URL: its local image (MediaSource.h). A URL from the
+    // File menu arrives already resolved — its download ran off this thread.
+    std::string path = source;
+    if (pom2::needsMediaResolve(source)) {
+        const auto got = pom2::resolveMediaSource(source, pom2::mediaCacheDir());
+        if (!got.ok) { errOut = got.error; return false; }
+        path = got.localPath;
+    }
     // Classify by extension + size, route into the matching slot under the
     // active profile/slot config, then cold-boot. Shared by the CLI
     // positional-disk / --kiosk launcher and (potentially) any future

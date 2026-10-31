@@ -10,6 +10,51 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-10-31 — SmartPort and Apple Pascal BIOS call traces
+
+The Debugger's OS-call trace gains two 6502 sources (izapple2's
+`traceProDOS` / `tracePascal` idea): every SmartPort dispatch call, paired
+with its result like the MLI (standard and extended sets, bus STATUS shows the
+device count, a DIB the name), and the Apple Pascal BIOS entries off the table
+at `$EC/$ED`. Panel check boxes, `pom2_headless --trace-sp / --trace-pascal`.
+Two traps: the dispatch page is read through `peekCpuView`, which only sees a
+card that answers `peekSlotRom` — the Liron and the CFFA did not, so the trace
+was blind to them (they do now, and the debugger's disassembly gains their
+page); and izapple2 assumes a table of `JMP`s where Pascal 1.1 has
+`JSR $FF9E` ×n in the language card, while the power-on pattern leaves
+`$EC/$ED` = `$FF00` on the Monitor ROM — so a table is recognised by three
+equal first entries, `JMP` or `JSR`. Checked on the 1.1 boot disk: the
+directory read is `DREAD block=2 len=2048`.
+
+## 2026-10-31 — DAN ][ Controller (catalog `dan2`)
+
+ThorstenBr's two-SD-card ProDOS controller: an 8255 in mode 2 at
+`$C0n0-$C0n3`, an ATmega answering a six-byte command after `$AC`. The
+ATmega is answered at the protocol (izapple2 `dan2.go`'s reading of
+`Apple2Arduino.ino`); the slot page is the card's real EPROM when
+`roms/dan2_eprom.bin` is there (zlib licence — it still goes in the
+archive.org ROM item, not in git), else POM2's own page: same ID bytes, a
+SAFEREAD boot and a ProDOS driver. Each SD slot is a media bay (two
+images, autosaved like an HDV). `dan2_card` boots ProDOS 2.4.3 on a //e
+through both pages and calls the driver for STATUS / WRITE / READ / a
+protected WRITE: identical. Two things to know: the ROM page is port C
+bit 0, set by the 8255's *bit set/reset* word, which the mode word `$FA`
+must leave alone; and a test that takes the CPU over at a //e keyboard wait
+is inside the 80-column firmware with INTCXROM on — `$C700` is the //e's
+ROM until `$C006` is written.
+
+## 2026-10-31 — Disks from a URL, a .zip or a .gz
+
+A disk can now be given as an http(s) link, or as a `.zip` / `.gz` holding
+one — on the command line, dropped on the window or on a drive, through a
+drive's file picker, or with File ▸ Open disk from URL (downloaded on its
+own thread, cancellable). `MediaSource` turns the source into a local image
+in the media cache and the usual mount takes it from there; a second mount
+of the same source reuses the copy, so what the guest wrote is still there,
+and the archive or the server is never written to (izapple2's overlay idea
+without a second file format). Checked against Asimov; `media_source` pins
+the archives, the cache reuse and the failures.
+
 ## 2026-10-31 — A card's monitor is a tab beside the Apple II Screen
 
 A card with a picture of its own (Videoterm, UltraTerm, VidHD, E-Z Color)

@@ -33,6 +33,7 @@
 // they are among the few things allowed to reach memory without `stateMutex`.
 
 #include "MainWindow.h"
+#include "MediaSource.h"
 #include "PaddleMouse.h"
 #include "DriveRackMount.h"
 #include "BrowserFiles.h"
@@ -1105,7 +1106,13 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
     for (int i = 0; i < count; ++i) {
         if (!paths[i]) continue;
         const std::string path = paths[i];
-        if (classifyDiskForSlot(path) == DiskSlotClass::Unknown) continue;
+        // A .zip may be a disk (POM2 opens it) or a MAME romset (the ROM
+        // import below): a zip holding no disk image falls through.
+        if (pom2::needsMediaResolve(path)) {
+            if (!pom2::resolveMediaSource(path, pom2::mediaCacheDir()).ok) continue;
+        } else if (classifyDiskForSlot(path) == DiskSlotClass::Unknown) {
+            continue;
+        }
         std::string err;
         if (insertAndBootImage(path, err)) {
             tapeStatusMessage = "Dropped + booted: " +

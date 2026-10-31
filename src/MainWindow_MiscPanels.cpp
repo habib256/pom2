@@ -23,6 +23,7 @@
 
 #include "MainWindow.h"
 #include "Ccs7710Card.h"
+#include "Dan2Card.h"
 #include "DevicePanelCoordinator.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
@@ -394,6 +395,37 @@ void MainWindow::renderAbstractionPanel()
             t.note = "No CCS 7710 is plugged — add one in Slot Configuration.";
         snap.toggles.push_back(std::move(t));
     }
+    {
+        int danSlot = 0;
+        bool danEprom = false;
+        {
+            auto st = controller->lockState();
+            for (int sl = 1; sl < SlotBus::kSlotCount && !danSlot; ++sl)
+                if (auto* c = dynamic_cast<Dan2Card*>(st.memory().slotBus().peripheral(sl))) {
+                    danSlot = sl;
+                    danEprom = c->epromLoaded();
+                }
+        }
+        row("dan2",      danSlot && danEprom  ? Live::Active : Live::NotPlugged);
+        row("dan2_pom2", danSlot && !danEprom ? Live::Active : Live::NotPlugged);
+        Panel::ToggleState t;
+        t.id           = pom2::AbsToggle::Dan2Firmware;
+        t.title        = "DAN ][ firmware";
+        t.needsRestart = true;
+        t.low.label    = "The card's EPROM executes";
+        t.low.level    = pom2::AbsLevel::L2;
+        t.low.available = !pom2::findResource(Dan2Card::kEpromPath).empty();
+        t.low.blockedBy = "roms/dan2_eprom.bin is needed";
+        t.low.why      = "The real page: the reference.";
+        t.high.label   = "POM2's firmware page";
+        t.high.level   = pom2::AbsLevel::H1;
+        t.high.why     = "Boot + ProDOS driver over the same protocol, compared\n"
+                         "with the EPROM call by call (dan2_card). No boot menu.";
+        t.selected     = danSlot ? (danEprom ? 0 : 1) : -1;
+        if (t.selected < 0)
+            t.note = "No DAN ][ is plugged — add one in Slot Configuration.";
+        snap.toggles.push_back(std::move(t));
+    }
     row("ultraterm", plugged("ultraterm") ? Live::Active : Live::NotPlugged);
     row("premium_softcard", plugged("premium_softcard") ? Live::Active : Live::NotPlugged);
     row("z80",       (plugged("softcard") || plugged("alscpm") || plugged("softcard2")
@@ -529,6 +561,11 @@ void MainWindow::renderAbstractionPanel()
             break;
         case pom2::AbsToggle::SerialFirmware:
             settings->setString("ccs7710_firmware", req.option == 0 ? "ccs" : "pom2");
+            if (!settingsReadOnly()) settings->save();
+            restartEmulationFromSettings();
+            break;
+        case pom2::AbsToggle::Dan2Firmware:
+            settings->setString("dan2_firmware", req.option == 0 ? "eprom" : "pom2");
             if (!settingsReadOnly()) settings->save();
             restartEmulationFromSettings();
             break;

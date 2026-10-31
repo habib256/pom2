@@ -193,6 +193,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Premium SoftCard //e — the AUX-slot card (aux 64 KB + 80 col + Z80 on that RAM), seated on SlotBus **slot 0**; setting `premium_softcard`, Machine menu; `$C07E` register, A15 flip and status hooks in `Memory::AuxSlotPort` | `PremiumSoftCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
 | CCS 7710 serial — a 6850 ACIA in any slot (the SoftCard II CP/M's "type 3" card; slot 1 = its printer, spooled to the ImageWriter); CCS's 7710-03 PROMs execute when in roms/ (LLE reference), else POM2's own page, compared against them by `ccs7710_card`; switch `ccs7710_firmware` — catalog `ccs7710` | `Ccs7710Card.h/.cpp` | [§ CCS 7710](DEV.md#ccs-7710-ccs7710card) |
 | E-Z Color Graphics Interface (BYTE 1982) — a TMS9918A VDP, 16 KB VRAM, its own monitor (Display ▸ Card Monitor); `$C0n0` data, `$C0n1` register, /INT = slot IRQ — catalog `ezcolor`. The VDP is POM1's (`TMS9918.*`, imported, namespace `pom2::tms`) | `EzColorCard.h/.cpp`, `TMS9918.h/.cpp` | [§ E-Z Color](DEV.md#e-z-color-graphics-interface-ezcolorcard) |
+| DAN ][ Controller (8255 + ATmega serving two SD images as ProDOS volumes; izapple2 `dan2.go`) — its EPROM `roms/dan2_eprom.bin` when present (LLE reference), else POM2's page; switch `dan2_firmware` — catalog `dan2` | `Dan2Card.h/.cpp` | [§ DAN ][](DEV.md#dan--controller-dan2card) |
 | Saturn 128K — eight language cards in any slot, over the bus INH line (`Memory::LcInhibitor`) — catalog `saturn` | `SaturnCard.h/.cpp` | [§ Saturn 128K](DEV.md#saturn-128k-saturncard) |
 | Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
 | CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm) | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
@@ -273,7 +274,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Clickable Apple //e keyboard (photo + measured hotspots) | `Keyboard_ImGui.*`, `AppleIIeKeyboardLayout.*` (generated), `AppleKeyLatch.h`, `tools/gen_keyboard_layout.py` | [§ Keyboard panel](DEV.md#apple-e-keyboard-panel) |
 | Floppy Emu (BMOW SD/OLED) | `FloppyEmuDevice.*`, `FloppyEmu_ImGui.*` | [§ Floppy Emu](DEV.md#floppy-emu-bmow) |
 | Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
-| OS-call trace — ProDOS MLI (6502) + CP/M BDOS (card Z80, via `Z80Observer` / `SlotBus::setZ80Observer`); Debugger panel, `pom2_headless --trace-mli/--trace-bdos` | `OsCallTrace.h/.cpp` | [§ OS-call trace](DEV.md#os-call-trace-oscalltracehcpp) |
+| OS-call trace — ProDOS MLI, SmartPort dispatch and the Apple Pascal BIOS table (6502) + CP/M BDOS (card Z80, via `Z80Observer` / `SlotBus::setZ80Observer`); Debugger panel, `pom2_headless --trace-mli/--trace-sp/--trace-pascal/--trace-bdos` | `OsCallTrace.h/.cpp` | [§ OS-call trace](DEV.md#os-call-trace-oscalltracehcpp) |
 | Resumable sessions (v7, automatic profile/firmware/card reconstruction, detached media and program tapes) | `SessionArchive.*`, `SessionSnapshot.*`, `SessionMachine.*`, `SessionCards.*`, `SessionLoadQueue.*`, `SessionFiles.*`, `CassetteDevice_Session.cpp` | [Session contract](docs/session-format.md) |
 | Clock & threading | `EmulationController.h/.cpp` | [§ Threading](DEV.md#clock--threading) |
 | Thread exception barrier (every long-lived thread) | `ThreadGuard.h` | [§ Threading](DEV.md#thread-exception-barrier-threadguardh) |
@@ -468,6 +469,14 @@ can't disturb your desktop setup" promise.
 
 **Positional disk + kiosk**: `POM2 <disk-image>` mounts the image into the slot its type maps to (`classifyDiskForSlot`: 5.25" Disk II / 400K, 800K or 1.44 MB 3.5" / ProDOS HDV) under the saved profile + slot config, then cold-boots. `--kiosk` adds exclusive full-screen with a chrome-free render path. Kiosk suppresses settings writes; mounted disks still follow the normal media write policy. An HDV with no HDV/SmartPort card in the saved config auto-plugs a `ProDOSHardDiskCard` into a free slot. Pinned: `cli_kiosk`.
 
+The positional (and a dropped file, a drive's file picker, "Insert disk and
+boot", File ▸ Open disk from URL) may also be an **http(s) URL, a `.zip` or a
+`.gz`** — `MediaSource.h` turns it into a local image in `<user
+data>/media_cache` (curl for URLs, the in-process inflater for archives, the
+first disk image of a zip), keyed on the source, so a second mount reuses it
+and the guest's writes stay in that copy: the archive and the server are
+never written to.
+
 The positional may also be a **TNFS URL** — `tnfs://host[:port]/path/image.po`
 — fetched into a local cache (`TnfsMedia.*`) and then booted like any other
 image. The scheme is required there: a bare `host/path` is accepted by the
@@ -498,6 +507,13 @@ cannot `#include` the header:
 - `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes; the
   publish job tries both conventions, and says so loudly in the log when it
   finds neither before falling back to a generated commit list
+
+**Before every release — and whenever a ROM or a test medium is added — update
+the two archive.org items**: `pom2_roms` (`pom2_roms_202610`, the zip the ROM
+download fetches) and `pom2_media` (`pom2_testmedia_20261029` +
+`tools/test_media.sha256`). A dump or disk that is only in someone's `roms/`
+is missing for every user and every CI job. Checklist:
+`docs/backlog/release-1.0.md` § archive.org media.
 
 `tools/check_version_strings.sh` (CI Linux job) fails when any of these
 disagrees with `project(VERSION)`, or when the release-notes file is missing.

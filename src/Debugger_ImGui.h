@@ -77,7 +77,7 @@ private:
         bool profiling = false, historyEnabled = false;
         std::vector<Debugger::ProfileEntry> profile;
         std::vector<Debugger::TraceEntry> history;
-        bool traceMli = false, traceBdos = false;
+        bool traceMli = false, traceBdos = false, traceSp = false, tracePascal = false;
         /// 64 KiB of main RAM, copied so the disassembly can be laid out
         /// after the lock is released.
         std::vector<uint8_t> memory;

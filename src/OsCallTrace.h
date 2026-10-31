@@ -21,6 +21,18 @@
 //         A = error and C set on one (ProDOS 8 Technical Reference § 4.1).
 //   BDOS  CALL $0005 with the function in C and the argument in DE, return
 //         in A (= L) and HL (CP/M 2.2 Interface Guide § 5; 3.x adds HL).
+//   SP    JSR dispatch / .byte cmd / .word list (.long list when cmd has
+//         bit 6, the extended set), dispatch = $Cn00 + $CnFF + 3 of a slot
+//         whose page carries the SmartPort ID ($Cn01/03/05/07 = $20/00/03/00);
+//         return past the inline bytes with A = error, C set on one, X/Y =
+//         the byte count (Apple IIc Technical Reference ch. 7, IIgs Firmware
+//         Reference ch. 7).
+//   PASC  the Apple Pascal 1.x BIOS jump table, whose address the system
+//         keeps at $EC/$ED: entries only — the BIOS returns through the
+//         p-machine, not to the JSR — and console read/write left out, as
+//         izapple2's tracePascal.go does. The table must look like one —
+//         its first three entries the same JMP or JSR (1.1's is JSR $FF9E
+//         ×n in the language card) — so a stray $EC/$ED does not log.
 //
 // A call is caught at its entry address and closed when the CPU reaches the
 // return address at the stack depth the call will return to — so a nested
@@ -59,8 +71,14 @@ public:
 
     void setMli(bool on)  { mli_ = on; if (!on) mliPending_.clear(); }
     void setBdos(bool on) { bdos_ = on; if (!on) bdosPending_.clear(); }
+    void setSmartPort(bool on) { sp_ = on; if (!on) spPending_.clear(); }
+    void setPascal(bool on) { pascal_ = on; }
     bool mli() const  { return mli_; }
     bool bdos() const { return bdos_; }
+    bool smartPort() const { return sp_; }
+    bool pascal() const { return pascal_; }
+    /// Anything traced off the 6502 — what keeps the Debugger's hook armed.
+    bool any6502() const { return mli_ || sp_ || pascal_; }
 
     /// Each finished line, as it is made (the headless frontend's stderr).
     using Sink = std::function<void(const std::string&)>;
@@ -69,8 +87,12 @@ public:
     /// The 6502 is about to run the instruction at `pc` (Debugger hook).
     void on6502Instruction(uint16_t pc)
     {
-        if (pc == 0xBF00 || (!mliPending_.empty() && pc == mliPending_.back().ret))
+        if (mli_ && (pc == 0xBF00 || (!mliPending_.empty() && pc == mliPending_.back().ret)))
             mliStep(pc);
+        if (sp_ && ((pc >= 0xC100 && pc < 0xC800) ||
+                    (!spPending_.empty() && pc == spPending_.back().ret)))
+            spStep(pc);
+        if (pascal_) pascalStep(pc);
     }
     void onZ80Instruction(const Z80& z80) override;
     void onCardLine(const char* line) override { emit(line); }
@@ -82,21 +104,28 @@ public:
     uint64_t emitted() const { return emitted_; }
     void clear() { lines_.clear(); }
     /// The machine jumped in time: open calls name a timeline that is gone.
-    void dropPending() { mliPending_.clear(); bdosPending_.clear(); }
+    void dropPending() { mliPending_.clear(); bdosPending_.clear(); spPending_.clear(); }
 
     static const char* mliName(uint8_t cmd);
     static const char* prodosError(uint8_t code);
     static const char* bdosName(uint8_t fn);
+    static const char* smartPortName(uint8_t cmd);     ///< bit 6 (extended) ignored
+    static const char* smartPortError(uint8_t code);
+    static const char* pascalName(uint8_t offset);     ///< nullptr off the table
 
 private:
     struct Pending {
         uint16_t ret;      // where the call comes back to
         uint16_t sp;       // the stack pointer it comes back with
         uint8_t  fn;
-        uint16_t arg;      // MLI parameter list / BDOS DE
+        uint16_t arg;      // MLI / SmartPort parameter list, BDOS DE
         std::string text;  // the call, decoded at entry
     };
     void mliStep(uint16_t pc);
+    void spStep(uint16_t pc);
+    void pascalStep(uint16_t pc);
+    std::string spCall(uint8_t cmd, uint32_t list) const;
+    std::string spResult(const Pending& p, uint8_t a, bool carry) const;
     std::string mliCall(uint8_t cmd, uint16_t params) const;
     std::string mliResult(const Pending& p, uint8_t a, bool carry) const;
     std::string bdosCall(const Z80& z, uint8_t fn, uint16_t de) const;
@@ -110,8 +139,8 @@ private:
 
     const M6502* cpu_ = nullptr;
     const Memory* mem_ = nullptr;
-    bool mli_ = false, bdos_ = false;
-    std::vector<Pending> mliPending_, bdosPending_;
+    bool mli_ = false, bdos_ = false, sp_ = false, pascal_ = false;
+    std::vector<Pending> mliPending_, bdosPending_, spPending_;
     std::deque<std::string> lines_;
     uint64_t emitted_ = 0;
     Sink sink_;

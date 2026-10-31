@@ -409,6 +409,17 @@ the historical completions.
 - [x] grep -c 'v0\.9' README.md == 0 — the last match was the bundled A2 File
       Cmd XL v0.9.8, now v1.0 *(2026-10-28)*
 
+### archive.org media — before EVERY release, and whenever they change
+
+- [ ] **`pom2_roms`** (`pom2_roms_202610`, `pom2_roms.zip`) re-uploaded with every dump
+      `RomCatalog.h` now lists (a new card ROM — CCS 7710 PROMs, Dan ][ EPROM, … — is
+      missing from the zip until someone uploads it, and RetroBIOS has no copy of most).
+      `kPom2RomArchiveUrl` (DEV.md) points at the item that holds it
+- [ ] **`pom2_media`** (`pom2_testmedia_20261029`) re-uploaded with every ROM and disk the
+      tests now open, and `tools/test_media.sha256` + `tools/fetch_test_media.py` updated to
+      match — a test that SKIPs in CI because its medium is missing verifies nothing
+- [ ] A fresh clone running `tools/fetch_test_media.py` gets every file, all hashes OK
+
 ### Build repeatability
 
 - [ ] Release rehearsal green within the last 7 days (attach a current run URL)

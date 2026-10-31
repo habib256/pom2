@@ -170,6 +170,18 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "Its own code: the timing of its loops is not the PROM's, so RNDL "
       "($4E/$4F) counts a different number of steps while input waits.",
       "Ccs7710Card.cpp" },
+    { "dan2", "Storage", "DAN ][ Controller — the card's EPROM", AbsLevel::L2,
+      "The real 512-byte EPROM executes (both pages, switched by the 8255's "
+      "port C bit 0) against an 8255 in mode 2 and the ATmega's command set "
+      "(izapple2 dan2.go): status, read, write, SAFEREAD, version",
+      "The ATmega is answered at the protocol, not executed; the line is "
+      "infinitely fast; one image per SD slot (the volume commands report 1) "
+      "and its boot-menu program is not served.", "Dan2Card.h/.cpp" },
+    { "dan2_pom2", "Storage", "DAN ][ Controller — POM2's firmware page", AbsLevel::H1,
+      "Same card and protocol; the $Cn00 page is POM2's: the EPROM's ID "
+      "bytes, a SAFEREAD boot of block 0 and a ProDOS driver at $CnFF. "
+      "dan2_card boots ProDOS on both and compares every driver call",
+      "No boot menu, one page only.", "Dan2Card.cpp" },
     { "ezcolor", "Video", "E-Z Color (TMS9918A VDP)", AbsLevel::L1,
       "MAME ezcgi decode ($C0n0 data, $C0n1 register, /INT = slot IRQ); "
       "POM1's TMS9918: four modes, sprites with 5th-sprite and collision "
@@ -490,6 +502,7 @@ AbstractionLevels_ImGui::render(bool* open, const Snapshot& snap)
             case AbsToggle::BlockStorage:   lo = "cffa";     hi = "hdv";         break;
             case AbsToggle::PrinterIface:   lo = "grappler"; hi = "printercard"; break;
             case AbsToggle::SerialFirmware: lo = "ccs7710";  hi = "ccs7710_pom2"; break;
+            case AbsToggle::Dan2Firmware:   lo = "dan2";     hi = "dan2_pom2";   break;
             case AbsToggle::CompositeVideo: lo = "oe";       hi = "lut";         break;
             case AbsToggle::None:           break;
         }

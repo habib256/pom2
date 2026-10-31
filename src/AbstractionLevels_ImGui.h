@@ -91,6 +91,7 @@ enum class AbsToggle {
     BlockStorage,    ///< `cffa` (L2, real firmware + ATA) / `hdv` (H1, synthetic)
     PrinterIface,    ///< `grappler` (L2, real EPROM) / `printer` (H1, synthetic)
     SerialFirmware,  ///< `ccs7710`: CCS's PROMs (L2) / POM2's page (H1)
+    Dan2Firmware,    ///< `dan2`: the card's EPROM (L2) / POM2's page (H1)
     CompositeVideo   ///< OpenEmulator signal demodulation (L1) / artifact LUT (H1)
 };
 

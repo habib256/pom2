@@ -31,6 +31,7 @@
 
 #include "MainWindow.h"
 #include "Ccs7710Card.h"
+#include "Dan2Card.h"
 #include "EzColorCard.h"
 
 #include "AudioCoordinator.h"
@@ -825,6 +826,14 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
             if (made && settings->getString("ccs7710_firmware", "ccs") == "pom2")
                 static_cast<Ccs7710Card*>(made.card.get())->useOwnFirmware();
+            if (made) st.memory().slotBus().plug(s, std::move(made.card));
+        }
+        else if (kind == "dan2") {
+            // The factory loads the card's EPROM when it is there;
+            // `dan2_firmware` = "pom2" keeps POM2's page.
+            auto made = slotCardFactory_->create({ kind, s, cpuIsCmosForSlots, activeProfile });
+            if (made && settings->getString("dan2_firmware", "eprom") == "pom2")
+                static_cast<Dan2Card*>(made.card.get())->useOwnFirmware();
             if (made) st.memory().slotBus().plug(s, std::move(made.card));
         }
         else if (kind == "applicard") {

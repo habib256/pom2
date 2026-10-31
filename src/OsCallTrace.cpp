@@ -284,6 +284,182 @@ void OsCallTrace::mliStep(uint16_t pc)
     mliPending_.pop_back();
 }
 
+// ── SmartPort ────────────────────────────────────────────────────────────
+
+const char* OsCallTrace::smartPortName(uint8_t cmd)
+{
+    static const char* const k[] = { "STATUS", "READBLOCK", "WRITEBLOCK", "FORMAT", "CONTROL",
+                                     "INIT", "OPEN", "CLOSE", "READ", "WRITE" };
+    cmd &= 0x3F;
+    return cmd < sizeof k / sizeof k[0] ? k[cmd] : nullptr;
+}
+
+const char* OsCallTrace::smartPortError(uint8_t code)
+{
+    switch (code) {
+        case 0x00: return "no error";
+        case 0x01: return "bad command";
+        case 0x04: return "bad parameter count";
+        case 0x06: return "bus error";
+        case 0x11: return "bad unit";
+        case 0x1F: return "interrupts not supported";
+        case 0x21: return "bad control code";
+        case 0x22: return "bad control parameter";
+        case 0x27: return "I/O error";
+        case 0x28: return "no device";
+        case 0x2B: return "write protected";
+        case 0x2D: return "bad block";
+        case 0x2E: return "disk switched";
+        case 0x2F: return "offline";
+        default:   return nullptr;
+    }
+}
+
+// The list: count, unit, then per command — 16-bit pointers and a 24-bit
+// block in the standard set, 32-bit pointers and block in the extended one.
+std::string OsCallTrace::spCall(uint8_t cmd, uint32_t list) const
+{
+    const bool ext = cmd & 0x40;
+    const char* name = smartPortName(cmd);
+    std::string s = (name ? std::string(name) : fmt("$%02X", cmd & 0x3F)) + (ext ? ".X" : "");
+    const uint16_t p = uint16_t(list);
+    auto b = [&](int o) { return peek(uint16_t(p + o)); };
+    auto w = [&](int o) { return unsigned(b(o) | b(o + 1) << 8); };
+    auto l = [&](int o) { return unsigned(w(o) | unsigned(w(o + 2)) << 16); };
+    const int ptr = ext ? 4 : 2;
+    s += fmt(" unit=%d", b(1));
+    switch (cmd & 0x3F) {
+        case 0x00: case 0x04:
+            return s + fmt(" code=$%02X list=$%0*X", b(2 + ptr), ext ? 8 : 4, ext ? l(2) : w(2));
+        case 0x01: case 0x02:
+            return s + fmt(" block=%u buf=$%0*X", ext ? l(2 + ptr) : unsigned(w(4) | b(6) << 16),
+                           ext ? 8 : 4, ext ? l(2) : w(2));
+        case 0x08: case 0x09:
+            return s + fmt(" count=%u addr=$%06X buf=$%0*X", w(2 + ptr),
+                           unsigned(w(4 + ptr) | b(6 + ptr) << 16), ext ? 8 : 4, ext ? l(2) : w(2));
+        default:
+            return s;
+    }
+}
+
+std::string OsCallTrace::spResult(const Pending& c, uint8_t a, bool carry) const
+{
+    if (carry || a) {
+        const char* e = smartPortError(a);
+        return fmt("ERR $%02X", a) + (e ? std::string(" ") + e : std::string());
+    }
+    const uint16_t count = uint16_t(cpu_->getXRegister() | cpu_->getYRegister() << 8);
+    const uint16_t p = c.arg;
+    if ((c.fn & 0x3F) == 0x00 && peek(uint16_t(p + 1)) == 0) {   // the bus itself
+        const uint16_t list = uint16_t(peek(uint16_t(p + 2)) | peek(uint16_t(p + 3)) << 8);
+        return fmt("ok, %d devices", peek(list));
+    }
+    if ((c.fn & 0x3F) == 0x00 && peek(uint16_t(p + (c.fn & 0x40 ? 6 : 4))) == 0x03) {   // DIB
+        const uint16_t list = uint16_t(peek(uint16_t(p + 2)) | peek(uint16_t(p + 3)) << 8);
+        std::string name;
+        for (int i = 0; i < (peek(uint16_t(list + 4)) & 0x1F) && i < 16; ++i)
+            name.push_back(char(peek(uint16_t(list + 5 + i)) & 0x7F));
+        return fmt("ok, \"%s\" %u blocks", name.c_str(),
+                   unsigned(peek(uint16_t(list + 1)) | peek(uint16_t(list + 2)) << 8 |
+                            peek(uint16_t(list + 3)) << 16));
+    }
+    return count ? fmt("ok, %u bytes", unsigned(count)) : std::string("ok");
+}
+
+void OsCallTrace::spStep(uint16_t pc)
+{
+    if (!cpu_) return;
+    const uint8_t s = cpu_->getStackPointer();
+    if (pc >= 0xC100 && pc < 0xC800) {
+        const uint16_t page = uint16_t(pc & 0xFF00);
+        // Only a SmartPort page's dispatch entry — read in the CPU's view, so
+        // INTCXROM and the //c's own $C500 count as they do for the fetch.
+        if (peek(uint16_t(page + 1)) != 0x20 || peek(uint16_t(page + 3)) != 0x00 ||
+            peek(uint16_t(page + 5)) != 0x03 || peek(uint16_t(page + 7)) != 0x00 ||
+            pc != uint16_t(page + peek(uint16_t(page + 0xFF)) + 3)) {
+            if (spPending_.empty() || pc != spPending_.back().ret) return;
+        } else {
+            const uint16_t jsrLast = uint16_t(peek(uint16_t(0x0101 + s)) | peek(uint16_t(0x0101 + uint8_t(s + 1))) << 8);
+            const uint16_t cmdAt = uint16_t(jsrLast + 1);
+            Pending c;
+            c.fn  = peek(cmdAt);
+            const bool ext = c.fn & 0x40;
+            c.ret = uint16_t(cmdAt + (ext ? 5 : 3));
+            c.sp  = uint8_t(s + 2);
+            const uint32_t list = uint32_t(peek(uint16_t(cmdAt + 1)) | peek(uint16_t(cmdAt + 2)) << 8) |
+                (ext ? uint32_t(peek(uint16_t(cmdAt + 3))) << 16 | uint32_t(peek(uint16_t(cmdAt + 4))) << 24 : 0u);
+            c.arg = uint16_t(list);
+            c.text = fmt("$%04X S%d ", uint16_t(jsrLast - 2), (page >> 8) & 7) + spCall(c.fn, list);
+            abandon(spPending_, c.sp, 0xFF, "SP  ");
+            if (spPending_.size() < 16) spPending_.push_back(std::move(c));
+            return;
+        }
+    }
+    const Pending& c = spPending_.back();
+    if (s != c.sp) {
+        if (s > c.sp) abandon(spPending_, s, 0xFF, "SP  ");
+        return;
+    }
+    const uint8_t p = cpu_->getStatusRegister();
+    emit("SP   " + c.text + " -> " + spResult(c, cpu_->getAccumulator(), (p & M6502::Status::C) != 0));
+    spPending_.pop_back();
+}
+
+// ── Apple Pascal BIOS ────────────────────────────────────────────────────
+
+const char* OsCallTrace::pascalName(uint8_t offset)
+{
+    static const char* const k[] = {
+        "CREAD", "CWRITE", "CINIT", "PWRITE", "PINIT", "DWRITE", "DREAD",
+        "DINIT", "RREAD", "RWRITE", "RINIT", "GWRITE", "GRINIT", "PREAD",
+        "CSTAT", "PSTAT", "DSTAT", "RSTAT", "CONCK", "UDRWI", "PSUBDRV",
+    };
+    if (offset % 3) return nullptr;
+    return offset / 3 < sizeof k / sizeof k[0] ? k[offset / 3] : nullptr;
+}
+
+void OsCallTrace::pascalStep(uint16_t pc)
+{
+    if (!cpu_ || !mem_) return;
+    const uint16_t bios = uint16_t(mem_->peekMainRam(0xEC) | mem_->peekMainRam(0xED) << 8);
+    if (bios < 0x0200 || pc < bios || pc - bios > 60) return;
+    // A table: its first three entries share a JMP (a BIOS that jumps) or a
+    // JSR (1.1's, at $FF00 in the language card: every entry is JSR $FF9E,
+    // which dispatches on the return address). Applesoft's or the power-on
+    // pattern's $EC/$ED points at nothing of the kind.
+    const uint8_t op = peek(bios);
+    if ((op != 0x4C && op != 0x20) || peek(uint16_t(bios + 3)) != op ||
+        peek(uint16_t(bios + 6)) != op || peek(pc) != op) return;
+    const uint8_t off = uint8_t(pc - bios);
+    const char* name = pascalName(off);
+    if (!name || off <= 3) return;               // console read / write: the noise
+    const uint8_t s = cpu_->getStackPointer();
+    auto param = [&](int i) {
+        return unsigned(peek(uint16_t(0x0100 + uint8_t(s + i))) |
+                        peek(uint16_t(0x0100 + uint8_t(s + i + 1))) << 8);
+    };
+    const uint8_t a = cpu_->getAccumulator();
+    std::string t = fmt("PASC $%04X %s", uint16_t(param(1) - 2), name);
+    switch (off) {
+        case 6:
+            t += fmt(" break=$%04X syscom=$%04X", param(3), param(5));
+            break;
+        case 9: case 27:
+            t += a >= 0x20 && a < 0x7F ? fmt(" '%c'", a) : fmt(" $%02X", a);
+            break;
+        case 15: case 18:
+            t += fmt(" unit=%d block=%u len=%u buf=$%04X drive=%u control=$%04X",
+                     a, param(3), param(5), param(7), param(9), param(11));
+            break;
+        case 21:
+            t += fmt(" drive=%d", a);
+            break;
+        default:
+            break;
+    }
+    emit(t);
+}
+
 // ── CP/M BDOS ────────────────────────────────────────────────────────────
 
 std::string OsCallTrace::bdosCall(const Z80& z, uint8_t fn, uint16_t de) const

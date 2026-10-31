@@ -32,7 +32,8 @@ void DriveRackFilePicker::browse(const std::string& directory) {
             auto ext = item.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
             if (ext != ".dsk" && ext != ".do" && ext != ".po" && ext != ".nib" &&
-                ext != ".woz" && ext != ".moof" && ext != ".2mg" && ext != ".hdv" && ext != ".d13" && ext != ".image") continue;
+                ext != ".woz" && ext != ".moof" && ext != ".2mg" && ext != ".hdv" && ext != ".d13" && ext != ".image" &&
+                ext != ".zip" && ext != ".gz") continue;
         }
         entries.push_back({name, item.path().string(), folder});
     }
@@ -68,7 +69,7 @@ std::optional<DriveRackSelection> DriveRackFilePicker::render() {
             std::string picked;
             const auto status = nativeFileDialog(false,
                 boot_ ? std::string("Insert disk and boot") : "Insert disk into " + target_.label,
-                "dsk,do,po,nib,woz,moof,2mg,hdv,d13,image", directory_, "", picked);
+                "dsk,do,po,nib,woz,moof,2mg,hdv,d13,image,zip,gz", directory_, "", picked);
             if (status == FileDialogResult::Cancelled) return {};
             ImGui::OpenPopup("Insert disk into drive");
             if (status == FileDialogResult::Selected) {

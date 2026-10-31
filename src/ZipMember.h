@@ -49,4 +49,11 @@ bool listZipMembers(const std::vector<std::uint8_t>& zip,
                     std::vector<std::string>& names,
                     std::string& err);
 
+/// A gzip stream (RFC 1952): one member, deflate, the optional FEXTRA /
+/// FNAME / FCOMMENT / FHCRC fields skipped. False with `err` set on a bad
+/// header, an ISIZE above `maxBytes`, a failed inflate or a CRC-32 mismatch.
+/// `name` gets the original file name (FNAME) when the stream carries one.
+bool gunzip(const std::vector<std::uint8_t>& gz, std::vector<std::uint8_t>& out,
+            std::string& err, std::size_t maxBytes, std::string* name = nullptr);
+
 }  // namespace pom2

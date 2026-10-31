@@ -565,6 +565,36 @@ the switch at "Card video". Pinned by `ezcolor_card` (ports, read-ahead, a
 Graphics I screen and its R7 border, the frame IRQ, reset, snapshot) and
 `card_snapshot_contract`.
 
+### DAN ][ Controller (`Dan2Card`)
+
+ThorstenBr's [Apple2Card](https://github.com/ThorstenBr/Apple2Card): an 8255
+PPI at `$C0n0-$C0n3` (mirrored over `$C0n4-$C0nF`) and an ATmega328P that
+serves two SD cards as ProDOS block devices. Catalog `dan2`; any slot.
+
+- **The 8255.** Port A (`$C0n0`) is the data byte both ways. Port C (`$C0n2`):
+  bit 7 = /OBF, always high here (the ATmega takes a byte the moment it is
+  written), bit 5 = IBF, high while a reply byte waits. The control register
+  (`$C0n3`) takes the mode word `$FA` (ignored) and the *bit set/reset* form
+  (bit 7 = 0), whose bit 0 is the EPROM's A8 — the slot page shown. Reset
+  clears it.
+- **The ATmega (HLE, izapple2 `dan2.go`).** `$AC`, then command, unit ($42/$43
+  in ProDOS's order), buffer (ignored), block. Unit bit 7 picks SD slot B. 0
+  STATUS / 3 FORMAT answer one code; 1 READ / 10 SAFEREAD a code + 512 bytes;
+  2 WRITE a code, then takes 512 bytes; 4-9 the volume commands (one image per
+  slot, volume 1); 11 the version (3.4.2). `$FF` (the EPROM's sync probe) and
+  everything else: `$27`. No medium → `$28`, protected → `$2B`.
+- **The page.** `roms/dan2_eprom.bin` (512 bytes, the project's own, zlib) is
+  the reference and is what Slot Config loads; without it, or with setting
+  `dan2_firmware` = `pom2` (Abstraction Levels toggle), POM2's page:
+  `E0 20 A0 00 E0 03 A2 3C`, a SAFEREAD of block 0 to `$0800` → `JMP $0801`
+  with X = `$n0` or on to `SLOOP`, the driver at `$CnFF` (`$CnFE` = `$B7`,
+  as the EPROM). No boot menu.
+- **Media.** The card holds a never-plugged `ProDOSHardDiskCard` for its two
+  backings and forwards the bays to it, so the generic `media_slotN_bayM` keys,
+  the Drive Rack and the block autosave all apply.
+- Pinned by `dan2_card` (protocol, snapshot, and ProDOS 2.4.3 on a //e through
+  both pages with the same driver results).
+
 ### CCS 7710 (`Ccs7710Card`)
 
 Catalog `ccs7710`, any slot. California Computer Systems' Model 7710: a
@@ -3948,6 +3978,24 @@ standard cell @ 2 MHz LSS = 8 LSS cyc/cell. `loadWoz` reads when
 `lssCyclesPerCell() = optimalBitTiming / 4`. `expandTrackFlux`
 emits each "1" cell at `i*cyc + cyc/2` (centre). Pinned:
 `woz_bit_timing_smoke` (obt 32/40/28 + WOZ1 fallback).
+
+### Disks from a URL or an archive (`MediaSource`)
+
+`resolveMediaSource(source, cacheDir)` runs before any mount and outside
+`stateMutex`: an http(s) URL is fetched with the host's curl (http allowed,
+a 34 MB cap, `--proto-redir =http,https`), a `.gz` is inflated
+(`ZipMember.h` `gunzip`: FEXTRA/FNAME/FCOMMENT/FHCRC skipped, ISIZE capped,
+CRC-32 checked), a `.zip` gives its first member whose extension a drive
+takes (`__MACOSX/._*` skipped). The result is a file in
+`<user data>/media_cache` named `<key>-<name>`; the key is the URL, or the
+archive's path + size + date — a changed archive is unpacked afresh, an
+unchanged one reuses the copy and keeps what the guest wrote. Callers: the
+CLI positional (before the window), `insertAndBootImage` (drops, Insert
+disk and boot), `mountEmptyDrive` (a drive's picker, a drop on a drive),
+and File ▸ Open disk from URL, whose download runs on a guarded thread and
+can be cancelled. A dropped zip with no disk falls through to the ROM
+import. Pinned by `media_source` (archives built in the test, an
+unreachable URL); checked by hand against Asimov.
 
 ### DiskIICard
 
@@ -10951,13 +10999,37 @@ BDOS $94C3 F_SFIRST ????????.??? -> A=$00
   boot-mode latch) override so a trace never takes a byte or stamps an
   access. The SoftCard II replays a stalled instruction; a second entry at
   the same depth with the same return address is ignored.
-- **Switches.** `EmulationController::setOsCallTrace(mli, bdos)` (under the
-  lock); the Debugger panel's "OS calls" section (copy to the clipboard);
-  `pom2_headless --trace-mli` / `--trace-bdos` print to stderr. 4000 lines
-  are kept. A time jump drops the open calls.
+- **SmartPort** (`SP`). Entry = a 6502 instruction at `$Cn00 + $CnFF + 3`
+  of a page whose ID bytes say SmartPort (`$Cn01/03/05/07` = `$20/00/03/00`),
+  read in the CPU's view — so INTCXROM and the //c's own `$C500` count as
+  they do for the fetch, and the ProDOS entry at `$CnFF` is not a call. Same
+  inline shape as the MLI (`JSR` / cmd / list), with a 4-byte list pointer
+  when the command has bit 6 (the extended set, printed `.X`). Result: A /
+  C, X/Y the byte count; a bus STATUS (unit 0) shows the device count, a DIB
+  (code 3) the name and size. The check runs only for PCs in `$C100-$C7FF`.
+- **Apple Pascal BIOS** (`PASC`). The system keeps the BIOS table's address
+  at `$EC/$ED`; a PC on an entry (offset a multiple of 3, up to 60) is logged
+  with its arguments — A for the character and unit, the stack for CINIT and
+  the block calls. Entries only: the BIOS goes back through the p-machine.
+  CREAD/CWRITE are left out (every keystroke and character), as izapple2's
+  `tracePascal.go` does, whose table this is. The table must look like one:
+  its first three entries the same `JMP` or `JSR` — Pascal 1.1's sits at
+  `$FF00` in the language card and is `JSR $FF9E` ×n, dispatching on the
+  return address. Without that test the power-on pattern (`$EC/$ED` =
+  `$FF00`, the Monitor ROM) logged a phantom PSUBDRV. On the 1.1 boot disk
+  the trace shows `DINIT drive=4`, then `DREAD … block=2 len=2048` — the
+  directory, blocks 2-5 — which confirms izapple2's block / length / buffer
+  layout; the unit (A) and drive words it marks as unsure read 0 there.
+- **Switches.** `EmulationController::setOsCallTrace(mli, bdos, smartPort,
+  pascal)` (under the lock); the Debugger panel's "OS calls" section (copy to
+  the clipboard); `pom2_headless --trace-mli` / `--trace-bdos` / `--trace-sp`
+  / `--trace-pascal` print to stderr. 4000 lines are kept. A time jump drops
+  the open calls. Any of the three 6502 traces arms the Debugger hook
+  (`OsCallTrace::any6502`).
 
-Pinned by `os_call_trace` (stub MLI and BDOS, no-return cases, observer
-propagation). Checked by hand on ProDOS 2.4.3 and SoftCard CP/M 2.2.
+Pinned by `os_call_trace` (stub MLI, BDOS, SmartPort dispatch and Pascal
+table, no-return cases, observer propagation). Checked by hand on ProDOS
+2.4.3, SoftCard CP/M 2.2 and Apple Pascal 1.1.
 
 ### Thread exception barrier (`ThreadGuard.h`)
 

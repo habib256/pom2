@@ -18,6 +18,7 @@
 #include "CliDispatcher.h"
 #include "Settings.h"
 #include "TnfsMedia.h"
+#include "MediaSource.h"
 #include "Pom2Build.h"
 #include "IconsFontAwesome6.h"
 #include "KeyChord.h"
@@ -754,6 +755,19 @@ int main(int argc, char* argv[])
                 pom2::log().error("CLI", "TNFS: " + got.error);
                 plan->bootDiskPath.clear();
             }
+        }
+    }
+
+    // An http(s) URL, a .zip or a .gz: its local image (MediaSource.h), like
+    // the TNFS fetch above — before the window, the lock or the classifier.
+    if (!plan->bootDiskPath.empty() && pom2::needsMediaResolve(plan->bootDiskPath)) {
+        const auto got = pom2::resolveMediaSource(plan->bootDiskPath, pom2::mediaCacheDir());
+        if (got.ok) {
+            pom2::log().info("CLI", plan->bootDiskPath + ": " + got.note + " -> " + got.localPath);
+            plan->bootDiskPath = got.localPath;
+        } else {
+            pom2::log().error("CLI", got.error);
+            plan->bootDiskPath.clear();
         }
     }
 

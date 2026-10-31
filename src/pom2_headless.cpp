@@ -142,6 +142,8 @@ void usage(const char* prog)
         "  --trace-mli           Print every ProDOS MLI call and its result\n"
         "                        to stderr (puts the CPU on its debugged loop).\n"
         "  --trace-bdos          Print every CP/M BDOS call a card Z80 makes.\n"
+        "  --trace-sp            Print every SmartPort call and its result.\n"
+        "  --trace-pascal        Print the Apple Pascal BIOS calls (entries).\n"
         "  --version             Print the version and exit.\n"
         "  -h, --help            Show this and exit.\n"
         "\n"
@@ -225,6 +227,8 @@ int main(int argc, char** argv)
     bool textDump    = false;
     bool traceMli    = false;
     bool traceBdos   = false;
+    bool traceSp     = false;
+    bool tracePascal = false;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
     int  sc2Slot      = 0;   // 0 = none
@@ -311,6 +315,8 @@ int main(int argc, char** argv)
         else if (a == "--text-dump") textDump = true;
         else if (a == "--trace-mli") traceMli = true;
         else if (a == "--trace-bdos") traceBdos = true;
+        else if (a == "--trace-sp") traceSp = true;
+        else if (a == "--trace-pascal") tracePascal = true;
         else if (a == "--frames" && i+1 < argc) {
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
@@ -531,11 +537,11 @@ int main(int argc, char** argv)
     };
 
     // Before the worker exists, like the rest of the setup.
-    if (traceMli || traceBdos) {
+    if (traceMli || traceBdos || traceSp || tracePascal) {
         controller.debugger().osCalls().setSink([](const std::string& line) {
             std::fprintf(stderr, "%s\n", line.c_str());
         });
-        controller.setOsCallTrace(traceMli, traceBdos);
+        controller.setOsCallTrace(traceMli, traceBdos, traceSp, tracePascal);
     }
 
     // ─── Capture mode ──────────────────────────────────────────────────────

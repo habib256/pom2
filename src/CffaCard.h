@@ -109,6 +109,8 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;       // read_c0nx
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override; // write_c0nx
     uint8_t slotRomRead (uint8_t low8) override;            // read_cnxx
+    bool    peekSlotRom(uint8_t low8, uint8_t& out) const override   // no side effect
+    { out = rom_[static_cast<size_t>(low8) + static_cast<size_t>(slot_) * 0x100]; return true; }
     uint8_t expansionRomRead (uint16_t offset) override;    // read_c800
     bool    takesC800() const override { return true; }     // MAME a2bus.h:145 take_c800
     void    expansionRomWrite(uint16_t offset, uint8_t v) override; // write_c800
