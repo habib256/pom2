@@ -220,7 +220,7 @@ bool reconstructSession(EmulationController& c, const SessionArchive& session,
         }
     }
     Blob env;
-    M6502::CpuMode mode;
+    M6502::CpuMode mode = M6502::CpuMode::NMOS;   // set by coreConfiguration; GCC -O2 cannot see it
     SystemProfile profile;
     if (!coreConfiguration(session, env, mode, profile, error)) return false;
     const auto& config = session.configuration;
