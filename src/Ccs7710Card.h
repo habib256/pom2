@@ -36,7 +36,7 @@
 // ACIA (MC6850 data sheet): control CR1:0 = 11 master reset; CR6:5 = 01
 // enables the transmit interrupt; CR7 the receive one. Status: b0 RDRF, b1
 // TDRE, b2 /DCD and b3 /CTS (both low: the cable is wired), b7 IRQ. The line
-// is infinitely fast: TDRE is always set. Bytes from the host wait in a
+// is infinitely fast: TDRE is always set outside master reset (clear in it). Bytes from the host wait in a
 // queue and arrive one at a time.
 
 #ifndef POM2_CCS7710_CARD_H

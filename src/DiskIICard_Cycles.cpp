@@ -27,9 +27,14 @@ void DiskIICard::advanceCycles(int cycles)
     // processes extra flux/PROM states, making later reads depend on the
     // caller's batch size (even after lssStart resets the read register).
     // The deadline in CPU cycles: motorOffDelay is stock time (setCpuClock).
-    const double ratio = motorClock_.ratio();          // <= 1 under an accelerator
+    // The ratio is bus ticks per CPU cycle: below 1 under an accelerator,
+    // ABOVE 1 under a FASTChip set below 1 MHz (0.2 MHz: 5). Only ratio 1
+    // means "the same count"; it used to be `ratio >= 1`, which put a slow
+    // CPU's deadline up to 5x late, and the batch ran the disk past the stop
+    // (bug hunt 2026-10-31).
+    const double ratio = motorClock_.ratio();
     if (motorOffDelay > 0) {
-        const int toDeadline = ratio >= 1.0 ? motorOffDelay
+        const int toDeadline = ratio == 1.0 ? motorOffDelay
             : static_cast<int>(std::ceil(motorOffDelay / ratio));
         if (cycles > toDeadline) {
             const int remaining = cycles - toDeadline;
@@ -74,49 +79,52 @@ void DiskIICard::advanceCycles(int cycles)
     // (active drops to MODE_IDLE).
     if (motorOffDelay > 0) {
         motorOffDelay -= static_cast<int>(stock);
-        if (motorOffDelay <= 0) {
-            motorOffDelay = 0;
-            motorOn       = false;
-            if (cardTrace()) {                   // the spindle really stops (DiskIICard.h)
-                flushSeekRun();
-                traceLine("DISK S" + std::to_string(busSlot()) + ",D" +
-                          std::to_string(activeDrive + 1) + " motor stopped");
-            }
-            if (active == MODE_DELAY) {
-                active = MODE_IDLE;
-                // Commit any in-flight write splice BEFORE invalidating
-                // the revolution anchor: the transitions in writeBuffer
-                // were captured under THIS spin's timeline, so they must
-                // be reduced with THIS spin's anchor (MAME mon_w(true)
-                // keeps writes and m_revolution_start_time coherent).
-                // Deferring to the eventual Q7L flush would pair the
-                // old-timeline buffer with kNeverRev — the exact
-                // mixed-anchor corruption the writeFlux anchor exists
-                // to eliminate.
-                DiskImage& img = images[activeDrive];
-                if (writeMode && writeBackEnabled && img.isLoaded()
-                    && writePosition > 0 && !writingInhibited()) {
-                    img.writeFlux(headQuarterTrack[activeDrive],
-                                  writeStartTime,
-                                  static_cast<int64_t>(lssCycle),
-                                  writePosition, writeBuffer,
-                                  revolutionStartLssCycle[activeDrive]);
-                    ++writeFlushCount;
-                }
-                // Whether or not it was spliced: a burst the gate refused
-                // (notch, phase 1, write-back off) is timed against the spin
-                // that just ended, and a later Q7L would splice it against
-                // the cleared anchor — onto a disk un-notched meanwhile.
-                writePosition  = 0;
-                writeStartTime = static_cast<int64_t>(lssCycle);
-                // MAME `floppy_image_device::mon_w(true)`: when the
-                // controller actually stops driving the spindle, the
-                // drive's revolution timestamp becomes `attotime::never`.
-                // POM2's equivalent: clear the anchor so a subsequent
-                // motor-on event re-zeros it from the new spin-up.
-                revolutionStartLssCycle[activeDrive] = kNeverRev;
-            }
-            if (sound_) sound_->motor(false, images[activeDrive].isLoaded());
-        }
+        if (motorOffDelay <= 0) stopSpindle();
     }
+}
+
+void DiskIICard::stopSpindle()
+{
+    motorOffDelay = 0;
+    motorOn       = false;
+    if (cardTrace()) {                   // the spindle really stops (DiskIICard.h)
+        flushSeekRun();
+        traceLine("DISK S" + std::to_string(busSlot()) + ",D" +
+                  std::to_string(activeDrive + 1) + " motor stopped");
+    }
+    if (active == MODE_DELAY) {
+        active = MODE_IDLE;
+        // Commit any in-flight write splice BEFORE invalidating
+        // the revolution anchor: the transitions in writeBuffer
+        // were captured under THIS spin's timeline, so they must
+        // be reduced with THIS spin's anchor (MAME mon_w(true)
+        // keeps writes and m_revolution_start_time coherent).
+        // Deferring to the eventual Q7L flush would pair the
+        // old-timeline buffer with kNeverRev — the exact
+        // mixed-anchor corruption the writeFlux anchor exists
+        // to eliminate.
+        DiskImage& img = images[activeDrive];
+        if (writeMode && writeBackEnabled && img.isLoaded()
+            && writePosition > 0 && !writingInhibited()) {
+            img.writeFlux(headQuarterTrack[activeDrive],
+                          writeStartTime,
+                          static_cast<int64_t>(lssCycle),
+                          writePosition, writeBuffer,
+                          revolutionStartLssCycle[activeDrive]);
+            ++writeFlushCount;
+        }
+        // Whether or not it was spliced: a burst the gate refused
+        // (notch, phase 1, write-back off) is timed against the spin
+        // that just ended, and a later Q7L would splice it against
+        // the cleared anchor — onto a disk un-notched meanwhile.
+        writePosition  = 0;
+        writeStartTime = static_cast<int64_t>(lssCycle);
+        // MAME `floppy_image_device::mon_w(true)`: when the
+        // controller actually stops driving the spindle, the
+        // drive's revolution timestamp becomes `attotime::never`.
+        // POM2's equivalent: clear the anchor so a subsequent
+        // motor-on event re-zeros it from the new spin-up.
+        revolutionStartLssCycle[activeDrive] = kNeverRev;
+    }
+    if (sound_) sound_->motor(false, images[activeDrive].isLoaded());
 }

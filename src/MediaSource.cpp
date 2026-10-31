@@ -64,10 +64,14 @@ std::string key(const std::string& s)
     return b;
 }
 
-// A file name safe on every host, from the last segment of a URL or member.
-std::string safeName(std::string s)
+// A file name safe on every host, from the last segment of a URL, a path or
+// a member. Only a URL has a query or a fragment to drop: in a local path,
+// a zip member or a gzip name, '#' and '?' are part of the name (cut there,
+// "a#b.dsk.gz" became "a" and the ".gz" erase below ran off its end).
+std::string safeName(std::string s, bool url = false)
 {
-    if (const auto q = s.find_first_of("?#"); q != std::string::npos) s.erase(q);
+    if (url)
+        if (const auto q = s.find_first_of("?#"); q != std::string::npos) s.erase(q);
     if (const auto slash = s.find_last_of("/\\"); slash != std::string::npos) s.erase(0, slash + 1);
     std::string out;
     for (char c : s) {
@@ -105,13 +109,22 @@ bool writeFile(const fs::path& p, const std::vector<uint8_t>& data, std::string&
     return true;
 }
 
+std::vector<uint8_t> head(const fs::path& p, std::size_t n = 512)
+{
+    std::vector<uint8_t> b(n);
+    std::ifstream f(p, std::ios::binary);
+    f.read(reinterpret_cast<char*>(b.data()), std::streamsize(n));
+    b.resize(static_cast<std::size_t>(std::max<std::streamsize>(0, f.gcount())));
+    return b;
+}
+
 // curl, as RomFetch runs it, but for disks: http allowed (Asimov mirrors,
 // old pages), a disk-sized cap, every redirect followed within http(s).
 bool download(const std::string& url, const fs::path& dest, std::string& err,
-              const std::atomic<bool>* abort)
+              const std::atomic<bool>* abort, fs::path& published)
 {
 #if !POM2_HAS_CHILD_PROCESS
-    (void)url; (void)dest; (void)abort;
+    (void)url; (void)dest; (void)abort; (void)published;
     err = "downloads need a helper program, not available in this build";
     return false;
 #else
@@ -135,7 +148,23 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
         err = "download failed (curl exit " + std::to_string(p.lastExitCode()) + "): " + url;
         return false;
     }
-    if (!replaceMediaFileAtomic(tmp, dest, ec)) { fs::remove(tmp, ec); err = dest.string() + ": " + ec.message(); return false; }
+    // A 200 is not a disk. A soft 404, a login wall or a "moved" page comes
+    // back with curl's exit 0: cached under the disk's name it was mounted —
+    // and refused — on every later try, with nothing in the UI to clear it.
+    const auto h = head(tmp);
+    if (mediaBodyIsWebPage(h)) {
+        fs::remove(tmp, ec);
+        err = "the server answered with a web page, not a disk image: " + url;
+        return false;
+    }
+    // A link with no archive extension (".../download?id=12") serving a zip
+    // or a gzip: name the copy so step 2 unpacks it.
+    fs::path to = dest;
+    const std::string low = lower(dest.filename().string());
+    if (const char* ext = mediaArchiveExtension(h); ext && !endsWith(low, ext))
+        to += ext;
+    if (!replaceMediaFileAtomic(tmp, to, ec)) { fs::remove(tmp, ec); err = to.string() + ": " + ec.message(); return false; }
+    published = to;
     return true;
 #endif
 }
@@ -176,6 +205,41 @@ bool isCompressedImage(const std::string& source)
     return endsWith(l, ".gz") || endsWith(l, ".zip");
 }
 
+fs::path mediaUrlCachePath(const std::string& url, const fs::path& cacheDir)
+{
+    return cacheDir / (key(url) + "-" + safeName(url, /*url=*/true));
+}
+
+bool mediaBodyIsWebPage(const std::vector<uint8_t>& h)
+{
+    std::size_t i = 0;
+    if (h.size() >= 3 && h[0] == 0xEF && h[1] == 0xBB && h[2] == 0xBF) i = 3;   // UTF-8 BOM
+    while (i < h.size() && (h[i] == ' ' || h[i] == '\t' || h[i] == '\r' || h[i] == '\n')) ++i;
+    std::string s;
+    for (; i < h.size() && s.size() < 9; ++i) s.push_back(char(std::tolower(h[i])));
+    // No Apple II image starts with '<': DOS / ProDOS boot code is $01, a
+    // NIB is $FF sync, WOZ / MOOF / 2IMG are their magic.
+    return s.rfind("<!doctype", 0) == 0 || s.rfind("<html", 0) == 0 || s.rfind("<?xml", 0) == 0;
+}
+
+const char* mediaArchiveExtension(const std::vector<uint8_t>& h)
+{
+    if (h.size() >= 4 && h[0] == 'P' && h[1] == 'K' && h[2] == 3 && h[3] == 4) return ".zip";
+    if (h.size() >= 3 && h[0] == 0x1F && h[1] == 0x8B && h[2] == 8) return ".gz";
+    return nullptr;
+}
+
+std::string explainMediaSourceRefusal(const std::string& archive, const std::string& error)
+{
+    const std::string name = isHttpUrl(archive) ? archive
+                                                : fs::path(archive).filename().string();
+    return "\"" + name + "\" could not be opened as a disk: " + error + ".\n\n"
+           "POM2 opens a .zip (stored or deflated members) and a .gz itself, and takes "
+           "the first .dsk, .do, .po, .nib, .woz, .moof, .2mg, .hdv, .d13 or .image "
+           "inside. A damaged archive has to be downloaded again; a .7z, .shk or an "
+           "encrypted zip has to be unpacked first.";
+}
+
 fs::path mediaCacheDir()
 {
     return userDataDir() / "media_cache";
@@ -189,14 +253,25 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
 
     // 1. A URL: into the cache, once.
     if (isHttpUrl(source)) {
-        const fs::path dest = cacheDir / (key(source) + "-" + safeName(source));
+        const fs::path dest = mediaUrlCachePath(source, cacheDir);
+        fs::path got;
         std::error_code ec;
-        if (fs::is_regular_file(dest, ec) && fs::file_size(dest, ec) > 0) {
+        // The copy keeps the archive extension the download sniffed.
+        for (const char* ext : { "", ".zip", ".gz" }) {
+            fs::path c = dest;
+            c += ext;
+            if (!fs::is_regular_file(c, ec) || fs::file_size(c, ec) == 0) continue;
+            // A page an older POM2 cached as a disk: drop it, fetch afresh.
+            if (mediaBodyIsWebPage(head(c))) { fs::remove(c, ec); continue; }
+            got = c;
+            break;
+        }
+        if (!got.empty()) {
             r.fromCache = true;
-        } else if (!download(source, dest, r.error, abort)) {
+        } else if (!download(source, dest, r.error, abort, got)) {
             return r;
         }
-        path = dest.string();
+        path = got.string();
         r.note = r.fromCache ? "from the download cache" : "downloaded";
     }
 
@@ -207,7 +282,12 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
         std::error_code ec;
         const auto size = fs::file_size(path, ec);
         const long long when = static_cast<long long>(fs::last_write_time(path, ec).time_since_epoch().count());
-        const std::string k = key(fs::absolute(path, ec).string() + "|" + std::to_string(size)
+        // The FILE, not the spelling: through a symlinked folder (macOS's
+        // /tmp is /private/tmp) or another case, `absolute` named a second
+        // cache copy and the guest's writes seemed gone.
+        fs::path canon = fs::weakly_canonical(path, ec);
+        if (ec || canon.empty()) { ec.clear(); canon = fs::absolute(path, ec).lexically_normal(); }
+        const std::string k = key(canon.string() + "|" + std::to_string(size)
                                   + "|" + std::to_string(when));
         std::vector<uint8_t> packed, image;
         if (!readFile(path, packed, r.error)) return r;
@@ -229,8 +309,9 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
             if (!gunzip(packed, image, r.error, kMaxImageBytes, &inner)) return r;
             std::string name = safeName(inner);
             if (inner.empty()) {
-                name = safeName(path);
-                name.erase(name.size() - 3);                  // drop ".gz"
+                name = safeName(fs::path(path).filename().string());
+                if (name.size() > 3 && endsWith(lower(name), ".gz"))
+                    name.erase(name.size() - 3);              // drop ".gz"
             }
             const fs::path dest = cacheDir / (k + "-" + name);
             if (fs::is_regular_file(dest, ec)) {

@@ -142,7 +142,7 @@ bool MainWindow::reconstructSessionMachine(const pom2::SessionArchive& session, 
         aiServer->detach();
         unregisterAllAudioSources();
         diskPanels.clear(); diskPanel = nullptr;
-        display->setChatMauveCard(nullptr); display->setCardVideoSource(nullptr);
+        display->setChatMauveCard(nullptr); clearCardVideoSources();
     };
     hooks.publish = [this, &previousMix](const pom2::StateAccess& state, pom2::SystemProfile profile) {
         activeProfile = profile; sessionMachineActive_ = true;

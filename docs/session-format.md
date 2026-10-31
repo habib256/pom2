@@ -173,7 +173,7 @@ browser //c uses supported built-in devices and Mockingboard 4c.
 
 | Refusal | Action |
 |---|---|
-| Unsupported card | Remove it before capture. Expansion SSC, parallel printer interfaces, Mouse Cards, Videx, VidHD, SoftCard Z80, network and Workstation cards have no session record. The //c IOU mouse is supported. |
+| Unsupported card | Remove it before capture. Expansion SSC, parallel printer interfaces, Mouse Cards, Videx (Videoterm and UltraTerm), VidHD, E-Z Color, the Z80 cards (SoftCard, SoftCard II, Applicard, ALS CP/M Card), Saturn 128K, CCS 7710, DAN ][, network and Workstation cards have no session record; neither has the Premium SoftCard //e in the //e auxiliary slot (switch it off in the Machine menu — the refusal names it). The //c IOU mouse is supported. |
 | Serial port not idle | Stop VSDrive/listeners/connections and drain queued transport bytes. Only built-in //c ports are supported, even when an expansion SSC is idle. |
 | Outgoing medium has unsaved changes or pending writes | Let host write-back finish or explicitly sync/save the outgoing medium before loading. Detached session disks can be rolled back without writing their contents to a host file. |
 | Streamed audio deck | Eject it; supported program tapes use embedded pulses. Save or clear an outgoing host cassette recording before replacing it. |

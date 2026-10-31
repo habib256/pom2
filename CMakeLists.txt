@@ -1931,6 +1931,10 @@ add_executable(pom2_headless
     src/MemoryProfile_IIcClass.cpp
     src/Mockingboard.cpp
     src/NoSlotClock.cpp
+    # --disk takes a .zip, a .gz or an http(s) URL like the GUI positional.
+    src/MediaSource.cpp
+    src/ZipMember.cpp
+    src/ChildProcess.cpp
     src/ResourcePaths.cpp
     src/RewindBuffer.cpp
     src/SlotBus.cpp

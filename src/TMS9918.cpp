@@ -161,6 +161,12 @@ void TMS9918::reset()
             vram[i] = (i & 1) ? 0x00 : 0xFF;
         }
     }
+    resetPin();
+    framebuffer.fill(kPalette[15]);            // start with all-white screen (matches Replica-1 silicon)
+}
+
+void TMS9918::resetPin()
+{
     regs.fill(0);
     // Power-on backdrop: white. Empirical observation on Claudio's Replica-1
     // 1:1 silicon (2026-05-12): hardReset boots into a white-on-white screen
@@ -185,11 +191,13 @@ void TMS9918::reset()
     beamRenderX      = 0;
     topBorderPainted    = false;
     bottomBorderPainted = false;
-    framebuffer.fill(kPalette[15]);            // start with all-white screen (matches Replica-1 silicon)
     droppedWrites = 0;
     droppedWriteTraceCount = 0;
     dropStats = DropDiagnostics{};
     snapshotDirty   = true;
+    // The display is blanked (R1 = 0): this paints the R7 backdrop, from
+    // live state, at once — reset() then lays its power-on white over it.
+    rebuildFramebufferFromVram();
 }
 
 void TMS9918::setSiliconStrictMode(bool enabled)

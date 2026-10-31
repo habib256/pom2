@@ -69,9 +69,12 @@ int main(int argc, char** argv)
 
     const auto& cat  = pom2::romFetchCatalog();
     const auto  plan = pom2::romsToFetch();
+    // Import-only entries (no source serves them) are never fetched.
+    std::size_t downloadable = 0;
+    for (const auto& e : cat) downloadable += pom2::romDownloadable(e) ? 1 : 0;
     std::printf("archive %s\nRetroBIOS commit %s\ncatalogue %zu entries, %zu to fetch\n",
                 pom2::kPom2RomArchiveUrl, pom2::kRetroBiosCommit, cat.size(), plan.size());
-    if (plan.size() != cat.size()) {
+    if (plan.size() != downloadable) {
         std::fprintf(stderr, "a ROM was found before the fetch — the scratch "
                              "tree is not empty\n");
         return 2;
@@ -99,9 +102,9 @@ int main(int argc, char** argv)
             {}, leg.src);
         std::printf("%s\n", r.summary.c_str());
         if (!r.error.empty()) std::printf("error: %s\n", r.error.c_str());
-        const bool ok = r.failed == 0 && r.saved == static_cast<int>(cat.size());
+        const bool ok = r.failed == 0 && r.saved == static_cast<int>(downloadable);
         std::printf("%s: %s, %d of %zu saved into %s\n", ok ? "PASS" : "FAIL",
-                    leg.name, r.saved, cat.size(), dest.string().c_str());
+                    leg.name, r.saved, downloadable, dest.string().c_str());
         allOk = allOk && ok;
     }
     return allOk ? 0 : 1;

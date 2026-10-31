@@ -489,15 +489,28 @@ private:
     /// C2 = 22 uF charges through R5 = 47 kOhm from 0 to the 2/3 Vcc
     /// threshold, T = R5 * C2 * ln 3 = 1.136 s. MAME's wozfdc uses a round
     /// 1 s. Nominal parts; a real card's electrolytic is +/-20 %. An IWM
-    /// host has the IWM's own timer instead: "about 1 second" (IWM device
-    /// specification rev 19, 1982, p. 6).
+    /// host has the IWM's own timer instead, "about 1 second" (IWM device
+    /// specification rev 19, 1982, p. 6): 2^23 ticks of its 7.16 MHz clock,
+    /// 1.172 s — MAME `iwm.cpp` `cycles_to_time(8388608)`, and POM2's own
+    /// IWMDevice (`kDriveDisableDelayCycles`). It was a round 1.0 s here,
+    /// so a //c's 5.25" stopped 0.17 s before its IWM did. With the IWM's
+    /// mode bit 2 set there is no timer at all (`iwmTimerOff()`).
+    /// Chosen when $C0n8 starts the countdown; the per-tick path only
+    /// counts it down.
     static constexpr double kMotorOffSeconds = 47e3 * 22e-6 * 1.0986122886681098;
-    static constexpr double kIwmMotorOffSeconds = 1.0;
+    static constexpr double kIwmMotorOffSeconds = 8388608.0 / 7159090.0;
     int motorOffCycles() const
     {
         return static_cast<int>((iwmHost_ ? kIwmMotorOffSeconds : kMotorOffSeconds)
                                 * motorClock_.busHz() + 0.5);
     }
+    /// IWM mode bit 2: "motor-off immediately" (MAME `iwm.cpp` control():
+    /// `if(m_mode & 0x04)` drops to MODE_IDLE with no timer). A Disk II has
+    /// no mode register, so only an IWM host honours it.
+    bool iwmTimerOff() const { return iwmHost_ && (iwmMode & 0x04) != 0; }
+    /// The spindle stops now: the end of the 556 / IWM countdown, or an
+    /// immediate stop (DiskIICard_Cycles.cpp).
+    void stopSpindle();
     pom2::SlotBusClock motorClock_;   // CPU cycles -> stock: LSS, delay, stepper
     bool writeMode = false;     // Q7 latch: false=read, true=write
     bool loadMode  = false;     // Q6 latch: false=shift, true=load

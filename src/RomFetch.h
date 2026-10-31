@@ -58,7 +58,7 @@ struct RomFetchEntry {
     const char* destRel;       ///< As probed everywhere else: "roms/apple2e.rom"
     const char* label;         ///< Shown in the panel while this item runs.
     std::size_t expectedSize;  ///< Reject the download on a mismatch. 0 = any.
-    const char* url;           ///< raw.githubusercontent.com file or zip.
+    const char* url;           ///< raw.githubusercontent.com file or zip; null = import-only.
     /// Single zip member to extract. Null when `url` is already the dump —
     /// which, since RetroBIOS PR #75 published loose copies, is every entry
     /// but nine: the mouse slot eprom, the Super Serial Card EPROM, the 1981
@@ -136,6 +136,10 @@ constexpr const char* kPom2RomArchiveUrl =
     "https://archive.org/download/pom2_roms_202610/pom2_roms.zip";
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
+
+/// False for an IMPORT-ONLY entry (`url` null): a dump a card probes that no
+/// source serves. RomImport still identifies it; romsToFetch() skips it.
+bool romDownloadable(const RomFetchEntry& e);
 
 /// The member of the POM2 archive that holds `e`: "roms/" + its file name.
 std::string romArchiveMember(const RomFetchEntry& e);
@@ -237,6 +241,11 @@ using RomFetchCancel = std::function<bool()>;
 struct RomFetchSources {
     bool archive   = true;
     bool retroBios = true;
+    /// Replaces curl: write `url`'s body to `dest`, or return false with
+    /// `err` set. Empty = curl. For tests, which play the servers (a dark
+    /// archive answering 403, or 200 with an HTML page).
+    std::function<bool(const std::string& url, const std::filesystem::path& dest,
+                       std::string& err)> download;
 };
 
 RomFetchResult fetchMissingRoms(const std::filesystem::path& destRoot,

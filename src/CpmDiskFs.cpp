@@ -42,6 +42,12 @@ bool unused(const uint8_t* e)
     return true;
 }
 
+// CP/M 3's two entries that hold no blocks: the directory label (user $20)
+// and an SFCB (user $21, date stamps for the three entries before it). Their
+// bytes 16-31 are a password / stamps, never allocation (CP/M 3 Programmer's
+// Guide, directory formats); the ALS card's CP/M Plus writes both.
+bool cpm3Meta(const uint8_t* e) { return e[0] == 0x20 || e[0] == 0x21; }
+
 int extentNumber(const uint8_t* e) { return (e[12] & 0x1F) + 32 * (e[14] & 0x3F); }
 
 std::string displayName(const uint8_t* e)
@@ -165,7 +171,7 @@ bool CpmDisk::open(std::vector<uint8_t> image, SectorOrder order, std::string& e
     // printable name bytes (attribute bits masked) and block numbers inside
     // the disk. A DOS 3.3 or ProDOS disk fails this on its first entry.
     for (const auto& e : dir_) {
-        if (unused(e)) continue;
+        if (unused(e) || cpm3Meta(e)) continue;
         bool ok = e[0] <= 31 && e[15] <= 0x80;
         for (int i = 1; ok && i <= 11; ++i) {
             const uint8_t c = e[i] & 0x7F;
@@ -186,7 +192,7 @@ std::vector<bool> CpmDisk::usedBlocks() const
     std::vector<bool> used(kMaxReadBlock + 1, false);
     for (int b = 0; b < kDirBlocks; ++b) used[size_t(b)] = true;
     for (const auto& e : dir_) {
-        if (unused(e)) continue;
+        if (unused(e) || cpm3Meta(e)) continue;
         for (int i = 16; i < 32; ++i)
             if (e[i]) used[e[i]] = true;
     }
@@ -300,7 +306,7 @@ bool CpmDisk::writeFile(int user, const std::string& name,
     std::vector<bool> used(kMaxReadBlock + 1, false);
     for (int b = 0; b < kDirBlocks; ++b) used[size_t(b)] = true;
     for (const auto& e : dir)
-        if (!unused(e))
+        if (!unused(e) && !cpm3Meta(e))
             for (int i = 16; i < 32; ++i) if (e[i]) used[e[i]] = true;
 
     const size_t records = (data.size() + 127) / 128;

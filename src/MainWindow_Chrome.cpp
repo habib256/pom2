@@ -795,6 +795,15 @@ void MainWindow::renderMenuBar()
             // aux RAM and 80 columns, with a Z80), so a machine option and
             // not a Slot Config row. Changing it rebuilds the cards.
             bool psc = settings->getBool("premium_softcard", false);
+            // A loaded session is the machine it describes, and a session
+            // never holds the aux-slot card (captureSession refuses it): the
+            // tick follows the hardware there, not the saved option, which
+            // used to read "installed" over a machine without the card.
+            // Ticking it rebuilds from the settings, which re-seats it.
+            if (psc && sessionMachineActive_) {
+                auto st = controller->lockState();
+                psc = st.memory().slotBus().peripheral(0) != nullptr;   // only it uses slot 0
+            }
             if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc)) {
                 settings->setBool("premium_softcard", psc);
                 settings->save();

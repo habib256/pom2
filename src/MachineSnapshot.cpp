@@ -82,8 +82,11 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
         mem.appendSnapshotState(mexScratch);
         w.writeSection("MEX", mexScratch.data(), mexScratch.size());
     }
-    // SLOT1..SLOT7: per-card volatile runtime state (e.g. DiskIICard's head
-    // position + LSS). Opt-in: only the rewind path wants these (the
+    // SLOT0..SLOT7: per-card volatile runtime state (e.g. DiskIICard's head
+    // position + LSS). Slot 0 is the //e auxiliary slot: the Premium
+    // SoftCard //e sits there (PremiumSoftCard::kAuxSlot), and leaving it out
+    // rolled the aux RAM back under a Z80 that kept its live PC, its $C07E
+    // register and the DRAM under the text page (bug hunt 2026-10-31). Opt-in: only the rewind path wants these (the
     // AI-control file snapshot keeps disk/slot state excluded — see header).
     // Cards with nothing rewindable append nothing → no section.
     if (includeSlots) {
@@ -91,7 +94,7 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
         // Reused for the reason mexScratch is: a writable Disk II's blob is
         // hundreds of KB, allocated and freed 60 times a second in the lock.
         static thread_local std::vector<uint8_t> blob;
-        for (int slot = 1; slot <= 7; ++slot) {
+        for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
             SlotPeripheral* card = bus.peripheral(slot);
             if (!card) continue;
             blob.clear();
@@ -105,13 +108,13 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
 }
 
 namespace {
-// "SLOTn" → n in 1..7, else 0 (not a per-slot section).
+// "SLOTn" → n in 0..7, else -1 (not a per-slot section).
 int parseSlotSection(const std::string& name)
 {
     if (name.size() == 5 && name.compare(0, 4, "SLOT") == 0 &&
-        name[4] >= '1' && name[4] <= '7')
+        name[4] >= '0' && name[4] <= '7')
         return name[4] - '0';
-    return 0;
+    return -1;
 }
 }  // namespace
 
@@ -228,7 +231,7 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             if (!mem.loadSnapshotState(buf.data(), len)) {
                 return { false, "snapshot MEX section truncated or malformed" };
             }
-        } else if (const int slot = parseSlotSection(name)) {
+        } else if (const int slot = parseSlotSection(name); slot >= 0) {
             if (!allowSlots)
                 return { false, "snapshot SLOT sections are rewind-only" };
             // Per-card state. Bound the alloc (nextSection already rejects
@@ -299,7 +302,7 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     std::vector<uint8_t> environment;
     std::vector<uint8_t> cpuPayload;
     while (r.nextSection(name, len)) {
-        if (parseSlotSection(name))
+        if (parseSlotSection(name) >= 0)
             return { false, "snapshot SLOT sections are rewind-only" };
         if (name == "ENV") {
             if (haveEnvironment)

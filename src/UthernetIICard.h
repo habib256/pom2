@@ -41,7 +41,7 @@
 // drivers rely on it, so the mask is applied rather than the range.
 //
 // No slot ROM: like the Uthernet I, the card has no boot PROM, so
-// `slotRomRead` keeps the SlotPeripheral default ($FF). Every driver is
+// `slotRomRead` keeps the SlotPeripheral default (the floating bus). Every driver is
 // loaded from disk.
 //
 // What runs on it

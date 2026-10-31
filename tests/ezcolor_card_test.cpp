@@ -121,6 +121,14 @@ int main()
     CHECK(!card->ownsScreen(true, true) && !card->ownsScreen(false, false));
     mem.slotBus().reset();
     CHECK(card->vdp().regsData()[1] == 0 && "bus reset resets the VDP");
+    // …its registers, not its DRAM: MAME tms9928a.cpp device_reset leaves
+    // VRAM alone, and a Ctrl-Reset used to wipe it (bug hunt 2026-10-31).
+    CHECK(card->vdp().vramData()[0x1234] == 0x11 && card->vdp().vramData()[0x1236] == 0x33
+          && "bus RESET keeps VRAM");
+    CHECK(card->vdp().vramData()[0x0800] == 0xF0 && "…the patterns too");
+    mem.slotBus().reset(/*powerCycle=*/true);
+    CHECK(card->vdp().vramData()[0x1235] == 0x00 && card->vdp().vramData()[0x1234] == 0xFF
+          && "power cycle: the power-on pattern");
 
     // 5. The window. Display on, Graphics I, the beam on an active line.
     card->vdp().setSiliconStrictMode(true);
@@ -162,6 +170,30 @@ int main()
         }
         CHECK(drops(modes[0], 7) > 0 && drops(modes[1], 7) > 0 && "7 is too close in Graphics I / II");
         CHECK(drops(modes[3], 7) == 0 && drops(modes[2], 3) == 0);
+    }
+
+    // 6. The VDP keeps its own crystal's time (bug hunt 2026-10-31). The card
+    // is told the CPU clock (setCpuClock: an accelerator, a PAL machine); the
+    // VDP's tables are in 1.022727 MHz cycles, so the card converts. Before,
+    // a 4x accelerator fired the frame flag 4x as often.
+    {
+        auto firstF = [](double hz) {
+            EzColorCard c;
+            c.vdp().setSiliconStrictMode(false);
+            c.setCpuClock(hz);
+            for (long n = 1; n < 10L * TMS9918::kCyclesPerFrame; ++n) {
+                c.advanceCycles(1);
+                if (c.vdp().statusRegister() & 0x80) return n;
+            }
+            return -1L;
+        };
+        const long k = TMS9918::kActiveDisplayCycles;
+        CHECK(firstF(1022727.0) == k && "NTSC, no accelerator: unchanged");
+        const long acc = firstF(4.0 * 1022727.0);
+        CHECK(acc >= 4 * k - 4 && acc <= 4 * k + 4 && "a 4x CPU: the frame takes 4x the cycles");
+        const long pal = firstF(1015625.0);
+        const long palWant = long(double(k) * 1015625.0 / 1022727.0 + 0.999);
+        CHECK(pal >= palWant - 1 && pal <= palWant + 1 && "PAL host: the VDP's own 59.94 Hz");
     }
 
     if (g_fail) {

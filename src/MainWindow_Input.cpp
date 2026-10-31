@@ -1103,13 +1103,22 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
     // the state lock itself and must run on the UI thread — the GLFW drop
     // callback fires inside glfwPollEvents(), which the render loop drives,
     // so we are on that thread here.
+    // The first archive that would not open, and why: a .gz that failed its
+    // CRC used to fall through to the ROM import and be refused as "not a
+    // disk image ... or one inside a .zip or a .gz", the reason lost.
+    std::string archivePath, archiveError;
     for (int i = 0; i < count; ++i) {
         if (!paths[i]) continue;
         const std::string path = paths[i];
         // A .zip may be a disk (POM2 opens it) or a MAME romset (the ROM
         // import below): a zip holding no disk image falls through.
         if (pom2::needsMediaResolve(path)) {
-            if (!pom2::resolveMediaSource(path, pom2::mediaCacheDir()).ok) continue;
+            const auto got = pom2::resolveMediaSource(path, pom2::mediaCacheDir());
+            if (!got.ok) {
+                if (archiveError.empty()) { archivePath = path; archiveError = got.error; }
+                pom2::log().info("Drop", path + ": not opened as a disk: " + got.error);
+                continue;
+            }
         } else if (classifyDiskForSlot(path) == DiskSlotClass::Unknown) {
             continue;
         }
@@ -1152,6 +1161,11 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
         "Dropped file is neither a disk image "
         "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg) nor a known ROM dump";
     tapeStatusUntil = lastFrameTime + 4.0;
+    if (!archiveError.empty()) {
+        tapeStatusMessage = "Drop failed: " + archiveError;
+        showDiskRefusal(archivePath, pom2::explainMediaSourceRefusal(archivePath, archiveError));
+        return;
+    }
     for (int i = 0; i < count; ++i)
         if (paths[i]) { showDiskRefusal(paths[i], pom2::explainUnknownDisk(paths[i])); break; }
 }

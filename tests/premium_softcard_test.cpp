@@ -30,8 +30,10 @@
 
 #include "DiskIICard.h"
 #include "M6502.h"
+#include "MachineSnapshot.h"
 #include "Memory.h"
 #include "PremiumSoftCard.h"
+#include "SnapshotIO.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -159,6 +161,43 @@ void testCall()
     CHECK(r.mem.auxSlotPort() == nullptr);
 }
 
+// The card sits on SlotBus slot 0 (the aux slot). The rewind ring used to
+// save slots 1-7 only, so a rewind rolled the aux RAM back under a Z80 that
+// kept its live PC, its $C07E register and the DRAM under the text page.
+void testRewindCapturesSlot0()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setIIEMode(true);
+    auto c = std::make_unique<PremiumSoftCard>();
+    c->setMemory(&mem);
+    PremiumSoftCard* card = c.get();
+    mem.slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(c));
+
+    mem.memWrite(0xC07E, 0x41);
+    pom2::Z80::State s = card->z80().getState();
+    s.pc = 0x1234; s.a = 0x5A;
+    card->z80().setState(s);
+    mem.auxPhysical(0x0400) = 0x77;              // the card's own DRAM cell
+
+    std::vector<uint8_t> blob;
+    {
+        pom2::SnapshotWriter w(blob);
+        pom2::captureMachineState(w, cpu, mem, /*includeSlots=*/true);
+    }
+    mem.memWrite(0xC07E, 0x05);
+    s.pc = 0x4321; s.a = 0x00;
+    card->z80().setState(s);
+    mem.auxPhysical(0x0400) = 0x00;
+
+    pom2::SnapshotReader r(blob.data(), blob.size());
+    const auto res = pom2::restoreMachineState(r, cpu, mem, /*transactional=*/false);
+    CHECK(res.ok);
+    CHECK(card->reg() == 0x41);
+    CHECK(card->z80().getState().pc == 0x1234 && card->z80().getState().a == 0x5A);
+    CHECK(mem.auxPhysical(0x0400) == 0x77);
+}
+
 uint16_t textRowBase(int row) { return uint16_t(0x0400 + (row % 8) * 0x80 + (row / 8) * 0x28); }
 
 std::vector<std::string> screen80(Memory& mem)
@@ -261,6 +300,7 @@ int main()
 {
     testFlip();
     testCall();
+    testRewindCapturesSlot0();
     // 2.26 (the Apple II Documentation Project's image) is in ProDOS order
     // whatever its name says: only sectors 0 and 15 match 2.25's.
     const int boot = testBoot("disks_5.4/dsk/premium_softcard_cpm225.dsk");

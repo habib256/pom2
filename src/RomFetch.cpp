@@ -331,6 +331,23 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "chs_5604.bin", nullptr, 0x3FB4E90Au, "MAME a2ultrme",
           "cbbfd3d07be729795d2b5a2bcdb1f1daf01af945f2f80430a5666bb7f0fedcd0", 0u },
 
+        // ── Import-only: probed by a card, no source to download from ──
+        // The CCS 7710's PROMs and the DAN ][ EPROM: neither RetroBIOS nor
+        // (as of 2026-10-31, the item being dark) POM2's archive serves
+        // them, and both cards run POM2's own page without them. Listed so
+        // a dropped dump is identified and installed under the name the
+        // card probes; `url` null keeps them out of romsToFetch(), so the
+        // first-launch offer and "Download missing" never count them.
+        { "roms/ccs7710_03h.u5", "CCS 7710 PROM 7710-03 (high, U5)", 256,
+          nullptr, nullptr, nullptr, 0xA2CDB6BDu, "CCS 7710-03",
+          "1e303244535c4f00f2c6758ab4c9416414e5228639921a5b1b3277ccea529bf3", 0u },
+        { "roms/ccs7710_03l.u6", "CCS 7710 PROM 7710-03 (low, U6)", 256,
+          nullptr, nullptr, nullptr, 0x18E3983Fu, "CCS 7710-03",
+          "1af47c6f8c45af30483fd84bae77994583753a0268ca43c2c8f5b45fa4b4a04e", 0u },
+        { "roms/dan2_eprom.bin", "DAN ][ Controller EPROM", 512,
+          nullptr, nullptr, nullptr, 0xB1C3860Fu, "ThorstenBr DAN ][",
+          "c64413319243ecab3e2a93a9f5e93702d372b32dd265fa13d45c38298a3a2130", 0u },
+
         // ── Reference dumps (no POM2 card reads them yet) ─────────────
         { "roms/341-0438-a.bin", "Apple 3.5\" SuperDrive controller", 32768,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/341-0438-a.bin",
@@ -481,6 +498,21 @@ bool downloadUrl(const std::string& url, const fs::path& dest, std::string& err,
     if (!runHostTool(curl, curlDownloadArgs(url, tmp.string()),
                      {}, 120000, err, cancelled)) {
         fs::remove(tmp, ec);
+        // "/usr/bin/curl exited 56" told the user nothing. With `-f` an HTTP
+        // status >= 400 is exit 22 — or 56 over HTTP/2: archive.org's dark
+        // item answers 403, which curl 8 reports as "(56) … returned error".
+        const auto at = err.rfind(" exited ");
+        if (at != std::string::npos) {
+            const int code = std::atoi(err.c_str() + at + 8);
+            const char* why =
+                code == 6  ? "the host name did not resolve" :
+                code == 7  ? "the server could not be reached" :
+                code == 22 || code == 56 ? "the server refused the download (an HTTP error such as 403 or 404) or broke it off" :
+                code == 28 ? "the download timed out" :
+                code == 35 || code == 60 ? "the secure connection failed" :
+                code == 63 ? "the file is larger than any ROM" : nullptr;
+            if (why) err = std::string(why) + " (curl exit " + std::to_string(code) + "): " + url;
+        }
         return false;
     }
     fs::rename(tmp, dest, ec);
@@ -912,12 +944,17 @@ std::string displayPath(const std::filesystem::path& p)
     return s;
 }
 
+bool romDownloadable(const RomFetchEntry& e)
+{
+    return e.url && *e.url;
+}
+
 std::vector<const RomFetchEntry*> romsToFetch(
     const std::function<bool(const char* destRel)>& present)
 {
     std::vector<const RomFetchEntry*> out;
     for (const auto& e : catalogStorage()) {
-        if (!present(e.destRel)) out.push_back(&e);
+        if (romDownloadable(e) && !present(e.destRel)) out.push_back(&e);
     }
     return out;
 }
@@ -926,6 +963,7 @@ std::vector<const RomFetchEntry*> romsToFetch()
 {
     std::vector<const RomFetchEntry*> out;
     for (const auto& e : catalogStorage()) {
+        if (!romDownloadable(e)) continue;     // import-only: nothing to fetch
         const std::string resolved = defaultPresent(e.destRel);
         if (resolved.empty()) { out.push_back(&e); continue; }
         // Present is not the same as CORRECT. The ROM Status panel already
@@ -1028,14 +1066,23 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     r.summary = r.error;
     return r;
 #else
-    if (ChildProcess::findOnPath("curl").empty()) {
+    if (!sources.download && ChildProcess::findOnPath("curl").empty()) {
         r.error   = "curl was not found on PATH — install it to fetch ROMs";
         r.summary = r.error;
         return r;
     }
+    // curl, unless a test plays the servers (RomFetchSources::download).
+    auto fetchUrl = [&](const std::string& url, const fs::path& dest, std::string& err) {
+        if (!sources.download) return downloadUrl(url, dest, err, cancelled);
+        std::error_code dec;
+        fs::create_directories(dest.parent_path(), dec);
+        return sources.download(url, dest, err);
+    };
 
     const auto missing = romsToFetch();
-    r.skipped = static_cast<int>(catalogStorage().size() - missing.size());
+    int downloadable = 0;
+    for (const auto& e : catalogStorage()) downloadable += romDownloadable(e) ? 1 : 0;
+    r.skipped = downloadable - static_cast<int>(missing.size());
     if (missing.empty()) {
         r.summary = "Every ROM POM2 can download is already present.";
         return r;
@@ -1076,7 +1123,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         auto it = zipCache.find(url);
         if (it != zipCache.end()) return it->second;
         fs::path zipPath = scratch / ("pack-" + std::to_string(zipCache.size()) + ".zip");
-        if (!downloadUrl(url, zipPath, err, cancelled)) return {};
+        if (!fetchUrl(url, zipPath, err)) return {};
         std::vector<std::uint8_t> zipBytes;
         std::uintmax_t unpacked = 0;
         if (!readAll(zipPath, zipBytes, err) ||
@@ -1093,13 +1140,18 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     // probes. Fetched once; a failure here only means every entry goes to
     // RetroBIOS, as it did before the archive existed.
     fs::path archiveZip;
+    std::string archiveDown;   // why the primary source was not used, for the summary
     if (sources.archive) {
         tick("POM2 ROM archive (archive.org)");
         std::string err;
         archiveZip = fetchZip(kPom2RomArchiveUrl, err);
-        if (archiveZip.empty())
-            log().warn("ROM", "the POM2 ROM archive could not be fetched (" + err +
-                       ") — falling back to RetroBIOS");
+        if (archiveZip.empty()) {
+            // A page served in place of the zip (HTTP 200 + HTML) fails the
+            // central-directory read in fetchZip and is deleted there; the
+            // scratch dir goes at the end of the run, so nothing is reused.
+            archiveDown = "POM2's ROM archive on archive.org is unavailable (" + err + ")";
+            log().warn("ROM", archiveDown + " — falling back to RetroBIOS");
+        }
     }
 
     for (const RomFetchEntry* e : missing) {
@@ -1132,7 +1184,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             backup.clear();
             if (!e->zipMember) {
                 const fs::path raw = scratch / fs::path(e->destRel).filename();
-                ok = downloadUrl(e->url, raw, err, cancelled);
+                ok = fetchUrl(e->url, raw, err);
                 if (ok) {
                     std::vector<std::uint8_t> bytes;
                     ok = readAll(raw, bytes, err) &&
@@ -1214,15 +1266,18 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             std::snprintf(more, sizeof(more),
                           " %d replaced a different file, kept in %s.",
                           r.replaced, displayPath(replacedRomsDir()).c_str());
-            r.summary = std::string(buf) + more;
-            return r;
+            r.summary = more;
         }
     } else {
         std::snprintf(buf, sizeof(buf),
                       "Saved %d, failed %d, skipped %d — %s",
                       r.saved, r.failed, r.skipped, r.error.c_str());
     }
-    r.summary = buf;
+    r.summary = buf + r.summary;
+    // Name the primary source when it was down: the panel otherwise reads
+    // as if RetroBIOS alone were the plan, or blames an entry's error.
+    if (!archiveDown.empty())
+        r.summary += " " + archiveDown + (sources.retroBios ? "; RetroBIOS was used instead." : ".");
     return r;
 #endif
 }

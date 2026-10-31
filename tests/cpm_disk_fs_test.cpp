@@ -154,6 +154,36 @@ void testZeroFilledDirectorySector()
     CHECK(d.list().size() == 64);
 }
 
+// CP/M 3 (the ALS card's CP/M Plus) writes two entries that are not files:
+// the directory label (user $20: SET [NAME=...], INITDIR) and, after INITDIR,
+// an SFCB (user $21) every fourth entry, whose bytes 1-31 are date stamps,
+// not block numbers. open() used to refuse such a disk outright.
+void testCpm3LabelAndStamps()
+{
+    auto img = blankImage();
+    uint8_t* dir = img.data() + (3 * 16 + kSkew[0]) * 256;
+    const uint8_t label[32] = { 0x20, 'A', 'L', 'S', 'D', 'I', 'S', 'K', '1', ' ', ' ', ' ',
+                                0x31, 0, 0, 0 };
+    std::memcpy(dir, label, 32);
+    std::memset(dir + 3 * 32, 0xC8, 32);            // an SFCB full of stamps
+    dir[3 * 32] = 0x21;
+    const std::vector<uint8_t> before(dir, dir + 4 * 32);
+    CpmDisk d;
+    std::string err;
+    CHECK(d.open(img, SectorOrder::Dos, err));
+    CHECK(d.list().empty());
+    CHECK(d.freeBlocks() == 126);                   // stamps are not blocks
+    const auto data = pattern(40000, 5);
+    CHECK(d.writeFile(0, "BIG.DAT", data, err));
+    std::vector<uint8_t> back;
+    CHECK(d.readFile(0, "BIG.DAT", back, err) && roundTrips(data, back));
+    CHECK(d.list().size() == 1);
+    CHECK(d.removeFile(0, "BIG.DAT", err));
+    const uint8_t* after = d.image().data() + (3 * 16 + kSkew[0]) * 256;
+    CHECK(std::memcmp(after, before.data(), 32) == 0);           // label kept
+    CHECK(std::memcmp(after + 96, before.data() + 96, 32) == 0); // SFCB kept
+}
+
 // The same disk in ProDOS order reads the same files.
 void testProdosOrder()
 {
@@ -233,6 +263,7 @@ int main()
     testBlank();
     testDirectoryFull();
     testZeroFilledDirectorySector();
+    testCpm3LabelAndStamps();
     testProdosOrder();
     testTracked();
     if (g_fail) { std::fprintf(stderr, "cpm_disk_fs: %d failure(s)\n", g_fail); return 1; }

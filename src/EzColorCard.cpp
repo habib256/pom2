@@ -32,11 +32,14 @@ EzColorCard::EzColorCard()
     vdp_.setIrqStrapped(true);   // the VDP's /INT drives the slot IRQ
     vdp_.setSiliconStrictMode(true);   // the access window, as the chip (header)
     vdp_.reset();
+    clk_.setBusClock(static_cast<double>(POM2_CPU_CLOCK_HZ));   // the VDP's tables' unit
 }
 
 int EzColorCard::inFlight() const
 {
-    return cpu_ ? cpu_->getCurrentInstructionCycles() : 0;
+    if (!cpu_) return 0;
+    const int c = cpu_->getCurrentInstructionCycles();
+    return c > 0 ? static_cast<int>(clk_.peekBusTicks(static_cast<uint64_t>(c))) : 0;
 }
 
 // MAME ezcgi.cpp read_c0nx: 0 = vram_read, 1 = register_read, else $FF.
@@ -67,12 +70,20 @@ void EzColorCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 void EzColorCard::advanceCycles(int cycles)
 {
     if (cycles <= 0) return;
-    vdp_.advanceCycles(cycles);
+    const int ticks = static_cast<int>(clk_.busTicks(static_cast<uint64_t>(cycles)));
+    if (ticks > 0) vdp_.advanceCycles(ticks);
     updateIrq();
 }
 
-// MAME reset_from_bus: m_tms->reset().
+// MAME reset_from_bus: m_tms->reset(), whose device_reset leaves VRAM alone.
 void EzColorCard::onReset()
+{
+    vdp_.resetPin();
+    updateIrq();
+}
+
+// Slot power off and on: the DRAM forgets.
+void EzColorCard::onPowerCycle()
 {
     vdp_.reset();
     updateIrq();

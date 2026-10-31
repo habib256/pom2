@@ -45,6 +45,7 @@
 #include <fstream>
 #include <memory>
 #include <set>
+#include <vector>
 
 namespace {
 
@@ -122,9 +123,14 @@ int main()
         assert(s.distinct >= 3);
     }
 
-    // 4. No cancel: the drive stops ~1 s after $C0E8 and the latch freezes.
+    // 4. No cancel: the drive stops after $C0E8 and the latch freezes. This
+    //    hand-built card is an IWM host (the default), so the delay is the
+    //    IWM's: 2^23 ticks of its 7.16 MHz clock, 1.172 s = 1'198'350 cycles
+    //    (MAME iwm.cpp, IWMDevice.cpp). It was a round 1.0 s.
     (void)mem.memRead(0xC0E8);
-    raw->advanceCycles(1'100'000);
+    raw->advanceCycles(1'150'000);
+    assert(raw->isMotorOn() && "the IWM's coast is 2^23 FCLK, not a round second");
+    raw->advanceCycles(60'000);                          // 1.21 M
     assert(!raw->isMotorOn() && "the coast must end");
     {
         const Sample s = sampleLatch(mem, *raw, 16, 64);
@@ -143,7 +149,7 @@ int main()
         (void)mem.memRead(0xC0E8);
         raw->advanceCycles(2'000'000);                  // ~0.5 s at 4x
         assert(raw->isMotorOn() && "under 4x the coast ended in CPU time");
-        raw->advanceCycles(2'300'000);                  // past 1 s of real time
+        raw->advanceCycles(2'900'000);                  // past the IWM's 1.172 s of real time
         assert(!raw->isMotorOn() && "…and it must still end");
         raw->setCpuClock(1022727.0);
     }
@@ -172,6 +178,86 @@ int main()
         assert(at1x > 100);
         assert(at4x * 3 < at1x && "an accelerator spun the disk faster");
         raw->setCpuClock(1022727.0);
+    }
+
+    // 7. The delay per controller, and the IWM's timer-off mode (bug hunt
+    //    2026-10-31). A Disk II's 556 coasts R5 47k x C2 22uF x ln 3 =
+    //    1.136 s = 1'161'820 cycles; an IWM with mode bit 2 set stops at once
+    //    (MAME iwm.cpp: `if(m_mode & 0x04)` -> MODE_IDLE, no timer).
+    {
+        auto fresh = [&](bool iwm) {
+            auto c = std::make_unique<DiskIICard>();
+            pom2test::loadDiskIIDefaults(*c);
+            c->setIwmHost(iwm);
+            c->setWriteBackEnabled(false);
+            assert(c->insertDisk(dsk.string()));
+            return c;
+        };
+        {
+            auto c = fresh(false);
+            c->deviceSelectRead(0x9); c->advanceCycles(50'000);
+            c->deviceSelectRead(0x8);
+            c->advanceCycles(1'150'000);
+            assert(c->isMotorOn() && "the 556 coasts 1.136 s");
+            c->advanceCycles(25'000);                     // 1.175 M
+            assert(!c->isMotorOn() && "the 556's coast must end by 1.175 M cycles");
+        }
+        {
+            auto c = fresh(true);
+            c->deviceSelectRead(0xD);                     // Q6 high
+            c->deviceSelectWrite(0xF, 0x0F);              // mode: timer OFF (bit 2)
+            c->deviceSelectRead(0xE);                     // back to Q7 low
+            c->deviceSelectRead(0xC);                     // Q6 low
+            c->deviceSelectRead(0x9); c->advanceCycles(50'000);
+            assert(c->isMotorOn());
+            c->deviceSelectRead(0x8);
+            assert(!c->isMotorOn() && "IWM mode bit 2: motor-off is immediate");
+            c->advanceCycles(10'000);
+            assert(!c->isMotorOn());
+            c->deviceSelectRead(0x9); c->advanceCycles(1'000);
+            assert(c->isMotorOn() && "a motor-on after an immediate stop starts again");
+        }
+        {   // A Disk II ignores that register: no mode, the 556 still coasts.
+            auto c = fresh(false);
+            c->deviceSelectRead(0xD);
+            c->deviceSelectWrite(0xF, 0x0F);
+            c->deviceSelectRead(0xE);
+            c->deviceSelectRead(0xC);
+            c->deviceSelectRead(0x9); c->advanceCycles(50'000);
+            c->deviceSelectRead(0x8);
+            assert(c->isMotorOn() && "a Disk II has no IWM mode register");
+        }
+    }
+
+    // 8. A CPU SLOWER than the bus (a FASTChip at 0.2 MHz: ratio 5 bus ticks
+    //    per CPU cycle). The motor stop splits a batch at the deadline, so
+    //    one 300 k-cycle batch and 300 k one-cycle steps across the stop
+    //    leave the disk in the same place. The split assumed ratio <= 1 and
+    //    put the deadline 5x late (bug hunt 2026-10-31).
+    {
+        auto run = [&](bool oneBatch) {
+            auto c = std::make_unique<DiskIICard>();
+            pom2test::loadDiskIIDefaults(*c);
+            c->setIwmHost(false);
+            c->setWriteBackEnabled(false);
+            assert(c->insertDisk(dsk.string()));
+            c->setStandardClock(1022727.0);
+            c->setCpuClock(0.2 * 1022727.0);
+            c->deviceSelectRead(0x9); c->advanceCycles(5'000);
+            c->deviceSelectRead(0x8);                     // ~232 k CPU cycles of coast
+            if (oneBatch) c->advanceCycles(300'000);
+            else for (int i = 0; i < 300'000; ++i) c->advanceCycles(1);
+            assert(!c->isMotorOn());
+            c->deviceSelectRead(0x9);
+            std::vector<uint8_t> stream;
+            for (int i = 0; i < 512; ++i) {
+                c->advanceCycles(3);
+                stream.push_back(c->deviceSelectRead(0xC));
+            }
+            return stream;
+        };
+        assert(run(true) == run(false) &&
+               "a slow CPU's batch ran the disk past the motor stop");
     }
 
     // ── The coast across a READ-GATE switch ─────────────────────────────

@@ -197,7 +197,7 @@ MainWindow::MainWindow(bool forceIIPlus)
                   display->setChatMauveCard(nullptr);
                   // Same rule for the card picture source (Videoterm, VidHD): the
                   // card is about to be destroyed with the rest of the bus.
-                  display->setCardVideoSource(nullptr);
+                  clearCardVideoSources();
               },
               [this] {
                   aiServer->attach(controller.get(), display.get(),

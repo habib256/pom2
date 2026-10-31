@@ -143,6 +143,7 @@ std::string runDriver(const std::string& rom, bool iie, int nscSlot,
     if (nscSlot >= 1) mem.slotBus().plug(nscSlot, std::make_unique<RomCard>(nscSlot));
 
     auto card = std::make_unique<DiskIICard>();
+    card->setIwmHost(false);          // a ][+ / //e Disk II has no IWM: the 556 coast
     const std::string prom = findFirst({ "roms/disk2.rom", "../roms/disk2.rom",
                                          "../../roms/disk2.rom" });
     if (!prom.empty() && !card->loadBootRom(prom)) { why = "PROM"; return {}; }
@@ -213,9 +214,22 @@ int main()
 
     const std::string iip = runDriver(romIIp, false, -1, bootPo, driversPo, why);
     if (iip.empty()) { std::printf("FAIL (II+): %s\n", why.c_str()); return 3; }
+    if (iip.find("NO-SLOT CLOCK - 9/7/26") != std::string::npos) {
+        // The invariant: a chip under the Monitor ROM is never read by this
+        // driver on a II+ (it probes $C300..$C700 only, DEV.md § No-Slot
+        // Clock). The fixed time on the screen would mean it was.
+        std::printf("FAIL: on the II+ the driver read the chip under the Monitor "
+                    "ROM.\nScreen:\n%s\n", iip.c_str());
+        return 4;
+    }
     if (iip.find("NO-SLOT CLOCK - NOT FOUND") == std::string::npos) {
         // Either the driver grew a Monitor-ROM probe or POM2 moved the II+
-        // window: both are behaviour changes DEV.md must record.
+        // window: both are behaviour changes DEV.md must record. One more
+        // way here: the probe of an EMPTY slot reads the floating bus, so
+        // the printed answer follows the machine's timing — with the Disk
+        // II's coast at the IWM's 1.172 s instead of the 556's 1.136 s the
+        // driver printed a phantom "8/0/0" (2026-10-31), which is why the
+        // card above runs without the IWM hooks a ][+ never had.
         std::printf("UNEXPECTED: on the II+ the driver's answer changed — update "
                     "DEV.md § No-Slot Clock.\nScreen:\n%s\n", iip.c_str());
         return 4;

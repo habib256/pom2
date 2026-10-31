@@ -128,6 +128,7 @@ public:
     const pom2::Z80& z80() const { return z80_; }
     pom2::Z80&       z80()       { return z80_; }
     uint8_t reg() const { return reg_; }
+    double cpuClockHz() const { return cpuHz_; }
     bool callPending() const { return callPending_; }
     bool z80Running() const
     {

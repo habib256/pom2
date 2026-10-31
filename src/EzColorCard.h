@@ -34,6 +34,18 @@
 // status read syncs the sprite scan to it (POM1's Étapes 0/1), with the
 // in-flight cycles of the CPU's current instruction.
 //
+// The VDP keeps its own crystal's time. Its tables (the frame, the access
+// slots, the beam) are in nominal NTSC CPU cycles — 1.022727 MHz, POM1's
+// host — so the card converts what the Apple's CPU runs through a
+// SlotBusClock: an accelerator (TransWarp, Zip, FASTChip) does not make the
+// VDP's frames come 3.5-4x as often, a PAL machine does not slow them to
+// 59.53 Hz (bug hunt 2026-10-31). On a stock NTSC machine — the SDK's
+// `attachEzColor` among them — the ratio is 1 and every cycle passes as is.
+//
+// RESET is the chip's pin, not a power cycle: Ctrl-Reset clears the VDP's
+// registers and keeps its 16 KB of DRAM (TMS9918::resetPin, MAME
+// tms9928a.cpp device_reset); a power cycle gives VRAM its power-on contents.
+//
 // The card's monitor is not the Apple's: the picture (288 × 216, the 256 ×
 // 192 image in its border) is a CardVideoSource that never takes the Apple's
 // screen by its own rule. It is shown in Display ▸ Card Monitor — Apple video
@@ -44,6 +56,7 @@
 #define POM2_EZCOLOR_CARD_H
 
 #include "CardVideoSource.h"
+#include "SlotBusClock.h"
 #include "SlotPeripheral.h"
 #include "TMS9918.h"
 
@@ -67,11 +80,16 @@ public:
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     void    advanceCycles(int cycles) override;
     void    onReset() override;
+    void    onPowerCycle() override;
+    /// The emulated CPU clock (accelerated, PAL…), for the conversion to the
+    /// VDP's own time (header).
+    void    setCpuClock(double hz) override { clk_.setCpuClock(hz); }
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 
     // ─── CardVideoSource ────────────────────────────────────────────────
     bool ownsScreen(bool, bool) const override { return false; }   // its own monitor
+    bool takesMonitor() const override { return false; }
     int  pictureWidth()  const override { return TMS9918::kFullWidth; }
     int  pictureHeight() const override { return TMS9918::kFullHeight; }
     void paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark,
@@ -83,6 +101,7 @@ private:
 
     TMS9918 vdp_;
     M6502* cpu_ = nullptr;
+    pom2::SlotBusClock clk_;   // CPU cycles → the VDP's nominal-NTSC cycles
 };
 
 #endif // POM2_EZCOLOR_CARD_H

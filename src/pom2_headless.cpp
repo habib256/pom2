@@ -43,6 +43,7 @@
 #include "ClockCard.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
+#include "MediaSource.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
 #include "SoftCardZ80.h"
@@ -106,7 +107,9 @@ void usage(const char* prog)
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
         "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
         "                        `--prom pom2` forces POM2's even with a dump\n"
-        "  --disk <path>         Disk II image. Default: probe disks_5.4/dos33_master.dsk\n"
+        "  --disk <path>         Disk II image, or a .zip / .gz holding one, or an\n"
+        "                        http(s) URL (unpacked / downloaded into the media\n"
+        "                        cache). Default: probe disks_5.4/dos33_master.dsk\n"
         "  --port <N>            SSC TCP port. Default 6502\n"
         "  --paste-after <sec>   Emulated seconds before autopasting\n"
         "                        the SSC setup sequence. Default 6.\n"
@@ -357,13 +360,25 @@ int main(int argc, char** argv)
     // This legacy DOS master probe resolves only in a development library.
     // Packages ship named curated images under bundled_disks/ instead;
     // pass --disk explicitly to select one of those for this frontend.
-    const std::string diskPath = !diskArg.empty() ? diskArg : findAsset(
+    std::string diskPath = !diskArg.empty() ? diskArg : findAsset(
         "disks_5.4/dos33_master.dsk", { "../disks_5.4/dos33_master.dsk",
                                         "../../disks_5.4/dos33_master.dsk" });
 
     if (romPath.empty()) {
         std::fprintf(stderr, "missing apple2.rom; try --help\n");
         return 1;
+    }
+    // A .zip, a .gz or a URL: its local image, as the GUI's positional does
+    // (MediaSource.h). It used to reach insertDisk raw and be refused by size.
+    if (!diskPath.empty() && pom2::needsMediaResolve(diskPath)) {
+        const auto got = pom2::resolveMediaSource(diskPath, pom2::mediaCacheDir());
+        if (!got.ok) {
+            std::fprintf(stderr, "--disk %s: %s\n", diskPath.c_str(), got.error.c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "[POM2 headless] %s: %s -> %s\n", diskPath.c_str(),
+                     got.note.c_str(), got.localPath.c_str());
+        diskPath = got.localPath;
     }
     // Outside capture mode the disk IS the point (the telnet console drives
     // DOS 3.3), so its absence stays fatal. In capture mode the machine boots

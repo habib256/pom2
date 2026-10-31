@@ -221,9 +221,40 @@ void testAcrWriteNeverMovesALiveT1()
     std::printf("OK acr write never moves a live T1\n");
 }
 
+
+// IFR bit 7 is the OR of the ENABLED flags — the same node that drives /IRQ
+// on the chip, so it rises with the flag. Only the pin is held one cycle
+// (irqOut(), the 6502's penultimate-cycle sampling); a register read at
+// N + 2 sees $C0 / $A0 (bug hunt 2026-10-31: bit 7 followed the held pin).
+void testIfrBit7RisesWithTheFlag()
+{
+    constexpr uint8_t IFR_REG = 0xD, IER_REG = 0xE;
+    for (const bool t2 : {false, true}) {
+        const uint8_t flag = t2 ? IFR_T2 : IFR_T1;
+        for (int n : {0, 10, 1000}) {
+            Via6522 via;
+            via.write(IER_REG, 0x80 | flag);
+            via.write(ACR, 0x00);
+            via.write(t2 ? T2CL : T1LL, n & 0xFF);
+            via.write(t2 ? T2CH : T1CH, (n >> 8) & 0xFF);
+            for (int c = 1; c < n + 2; ++c) via.advance(1);
+            assert(via.read(IFR_REG) == 0x00);
+            via.advance(1);                                  // N + 2: the edge
+            const uint8_t ifr = via.read(IFR_REG);
+            std::printf("  %s=%d: IFR at N+2 = $%02X, pin %d\n", t2 ? "T2" : "T1", n, ifr,
+                        via.irqOut() ? 1 : 0);
+            assert(ifr == (0x80 | flag) && "IFR bit 7 lags the enabled flag it summarises");
+            assert(!via.irqOut() && "the pin is still held on the flag's own cycle");
+            via.advance(1);
+            assert(via.irqOut() && "the pin follows one cycle later");
+        }
+    }
+}
+
 int main()
 {
     testAcrWriteNeverMovesALiveT1();
+    testIfrBit7RisesWithTheFlag();
     for (int n : {0, 1, 10, 100, 1000, 7479, 0x3FFF}) {
         const int c = t2FireCycle(n);
         const int p = t2FireCycle(n, true);
