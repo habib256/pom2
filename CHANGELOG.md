@@ -10,6 +10,8 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
+
 ## 2026-11-01 — Harvesting the Host File Transfer Card: one naming convention, a lost LOCK, Integer BASIC
 
 sbabcoc's [Host File Transfer Card design](https://github.com/sbabcoc/ReplicApple2Plus/blob/main/TRANSFER-CARD.md)
