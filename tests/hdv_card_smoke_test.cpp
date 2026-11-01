@@ -210,6 +210,55 @@ int main()
         std::filesystem::remove(second, rmEc);
     }
 
+    // ── A notch flipped mid-block finishes the block (bug hunt 2026-11-01) ─
+    // The ROM's WRITE asks $C0n3 about write-protect ONCE, before its
+    // 512-byte loop, and returns CLC after it without asking again. The card
+    // refused every byte while protected, so a notch ticked during the loop
+    // dropped the block's tail: k new bytes over the old ones, dirty (a notch
+    // never strands written blocks — isMediumLocked), committed to the file
+    // as a torn ProDOS block the driver had reported written. The decision is
+    // per block now, as the ROM makes it; the NEXT block sees the notch.
+    {
+        const std::string img =
+            (std::filesystem::temp_directory_path() / "pom2_hdv_notch_mid.hdv").string();
+        {
+            std::vector<uint8_t> zero(4 * 512u, 0x00);
+            std::ofstream f(img, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(zero.data()),
+                    static_cast<std::streamsize>(zero.size()));
+        }
+        Memory mem4;
+        auto c = std::make_unique<ProDOSHardDiskCard>(5);
+        ProDOSHardDiskCard* raw = c.get();
+        assert(raw->loadImage(img));
+        mem4.slotBus().plug(5, std::move(c));
+        mem4.memWrite(0xC0D0, 0x01);
+        mem4.memWrite(0xC0D1, 0x00);
+        assert((mem4.memRead(0xC0D3) & 0x40) == 0 && "writable when the loop starts");
+        for (int i = 0; i < 100; ++i) mem4.memWrite(0xC0D2, 0x33);
+        raw->setHostWriteProtected(true);              // the user ticks the box
+        for (int i = 0; i < 412; ++i) mem4.memWrite(0xC0D2, 0x33);
+        uint8_t blk[512]{};
+        assert(raw->backing(0).readBlock(1, blk));
+        for (size_t i = 0; i < 512; ++i) {
+            if (blk[i] != 0x33) {
+                std::printf("FAIL: notch mid-block tore block 1 at byte %zu "
+                            "($%02X) — the driver had already been told the "
+                            "write was allowed\n", i, blk[i]);
+                return 1;
+            }
+        }
+        // The next block is a new decision: protected now.
+        mem4.memWrite(0xC0D0, 0x02);
+        mem4.memWrite(0xC0D1, 0x00);
+        assert((mem4.memRead(0xC0D3) & 0x40) != 0);
+        for (int i = 0; i < 512; ++i) mem4.memWrite(0xC0D2, 0x44);
+        assert(raw->backing(0).readBlock(2, blk) && blk[0] == 0x00 &&
+               "a block begun under the notch is refused");
+        std::error_code rmEc;
+        std::filesystem::remove(img, rmEc);
+    }
+
     std::printf("HDV card smoke: OK\n");
     return 0;
 }

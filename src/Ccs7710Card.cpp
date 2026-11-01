@@ -18,6 +18,7 @@
 
 #include "Ccs7710Card.h"
 
+#include "Block512Backing.h"   // pom2::noteMediaWrite
 #include "SlotRomAsm.h"
 
 #include <algorithm>
@@ -236,7 +237,7 @@ uint8_t Ccs7710Card::deviceSelectRead(uint8_t low4)
 void Ccs7710Card::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     if (low4 & 1) {
-        if ((control_ & 0x03) != 0x03) spool_.push_back(v);
+        if ((control_ & 0x03) != 0x03) spoolByte(v);
         updateIrq();
         return;
     }
@@ -250,10 +251,31 @@ void Ccs7710Card::deviceSelectWrite(uint8_t low4, uint8_t v)
     updateIrq();
 }
 
+// Printed output: irreversible, so the rewind epoch moves at the leaf, as in
+// CentronicsPrinter / GrapplerCard / PrinterCard / the SSC tap / FujiNet
+// (PrinterCoordinator::notePrinted is only the belt). Missing here, a held F6
+// rewound past bytes the next drain printed while the guest sent them again.
+// Capped like its siblings: a CP/M `PIP LST:` loop grew it without bound.
+void Ccs7710Card::spoolByte(uint8_t v)
+{
+    if (spool_.size() == kMaxSpoolBytes) {
+        spool_.pop_front();
+        ++spoolBase_;
+    }
+    spool_.push_back(v);
+    pom2::noteMediaWrite();
+}
+
+// Same contract as CentronicsPrinter::drainSpoolFrom: absolute offsets, a
+// `from` below the base resumes at the oldest byte held, one past the end
+// hands back everything (the consumer resyncs).
 std::size_t Ccs7710Card::drainSpoolFrom(std::size_t from, std::vector<uint8_t>& out) const
 {
-    if (from < spool_.size()) out.insert(out.end(), spool_.begin() + std::ptrdiff_t(from), spool_.end());
-    return spool_.size();
+    const std::size_t total = spoolBase_ + spool_.size();
+    const std::size_t start =
+        ((from > total) ? spoolBase_ : std::max(from, spoolBase_)) - spoolBase_;
+    out.insert(out.end(), spool_.begin() + std::ptrdiff_t(start), spool_.end());
+    return total;
 }
 
 // The ACIA has no reset pin: Ctrl-Reset leaves it alone. Power-on holds it

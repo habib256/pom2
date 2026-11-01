@@ -408,6 +408,40 @@ void testIicC060IsNotTheDeck()
     }
 }
 
+// ── 6: a WRITE to $C060-$C06F never reads the comparator ─────────────────
+// The comparator reaches D7 through the read decode only: MAME maps the ][+
+// $C060-$C067 (mirror 8) `.nopw()` (apple2.cpp:657), and the //e c000_w sends
+// $C060/$C068 to do_io, whose only case is the IIgs STATE `break`
+// (apple2e.cpp:2039). POM2 ran the read for stores too, and
+// CassetteDevice::readTapeInput is what starts an armed PLAY — so `STA $C068`
+// (the STATE register ProDOS touches) started the tape before the LOAD.
+void testWritesDoNotReachTheComparator()
+{
+    CassetteDevice rec;
+    rec.armRecording();
+    for (int i = 0; i < 8; ++i) { rec.advanceCycles(500); rec.toggleOutput(); }
+    const std::string tape = tmpPath("pom2_ch_write.aci");
+    expect(rec.saveTape(tape), "could not build the write-fence tape");
+
+    for (int iie = 0; iie < 2; ++iie) {
+        const char* who = iie ? "//e" : "][+";
+        Memory mem;
+        mem.setIIEMode(iie != 0);
+        CassetteDevice deck;
+        deck.setAudioAvailable(false);
+        mem.setCassetteDevice(&deck);
+        expect(deck.loadTape(tape), "write-fence tape did not load");
+        deck.playTape();
+        for (uint16_t a = 0xC060; a <= 0xC06F; ++a) mem.memWrite(a, 0x00);
+        expect(deck.isPlaybackArmed() && !deck.isPlaybackActive(),
+               std::string(who) + ": a WRITE to $C060-$C06F started the cassette transport");
+        // Negative control: the READ still is the comparator.
+        (void)mem.memRead(0xC068);
+        expect(deck.isPlaybackActive(),
+               std::string(who) + ": a READ of $C068 no longer starts the transport");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -415,6 +449,7 @@ int main()
     testWavVariants();
     testRecordingPolarity();
     testIicC060IsNotTheDeck();
+    testWritesDoNotReachTheComparator();
     testRecordingFollowsRewind();
     if (failures) {
         std::printf("cassette_hostile FAILED (%d)\n", failures);

@@ -296,11 +296,43 @@ int testBoot(const char* disk)
 
 } // namespace
 
+// The //e has ONE auxiliary slot: a Premium SoftCard in it means no RamWorks,
+// and nothing decodes $C071/3/5/7 as a bank register (MAME apple2e.cpp:2665
+// hands $C07x to the aux card; only a2eramworks3 implements write_c07x).
+// POM2 let `ramworks_banks` and the card coexist, and a 6502 `STA $C073`
+// swapped another 64 KB in under the running Z80 (bug hunt 2026-11-01).
+void testNoRamWorksBesideTheCard()
+{
+    {   // RamWorks configured first, then the card seated: one bank.
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.setRamWorksBanks(4);
+        auto c = std::make_unique<PremiumSoftCard>();
+        c->setMemory(&mem);
+        mem.slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(c));
+        CHECK(mem.ramWorksBanks() == 1);
+    }
+    Rig r;
+    r.mem.setRamWorksBanks(4);                   // the settings re-applied after the plug
+    CHECK(r.mem.ramWorksBanks() == 1);
+    r.mem.auxPhysical(0x1234) = 0xA7;            // the Z80's RAM
+    r.mem.auxPhysical(0xE100) = 0x3B;            // and its top 16 KB (aux LC)
+    r.mem.memWrite(0xC073, 2);
+    r.mem.memWrite(0xC071, 1);
+    CHECK(r.mem.ramWorksBank() == 0);
+    CHECK(r.mem.auxPhysical(0x1234) == 0xA7 && r.mem.auxPhysical(0xE100) == 0x3B);
+    // Card out: RamWorks is allowed again.
+    r.mem.slotBus().unplug(PremiumSoftCard::kAuxSlot);
+    r.mem.setRamWorksBanks(4);
+    CHECK(r.mem.ramWorksBanks() == 4);
+}
+
 int main()
 {
     testFlip();
     testCall();
     testRewindCapturesSlot0();
+    testNoRamWorksBesideTheCard();
     // 2.26 (the Apple II Documentation Project's image) is in ProDOS order
     // whatever its name says: only sectors 0 and 15 match 2.25's.
     const int boot = testBoot("disks_5.4/dsk/premium_softcard_cpm225.dsk");

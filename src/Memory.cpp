@@ -798,24 +798,6 @@ void Memory::setIIEMode(bool on)
     }
 }
 
-void Memory::setRamWorksBanks(uint32_t banks)
-{
-    if (banks < 1) banks = 1;
-    if (banks > kRamWorksMaxBanks) banks = kRamWorksMaxBanks;
-    ramWorksBanks_ = banks;
-    ramWorksBank_  = 0;
-    // Backing holds ONE slot per bank (including bank 0 — we snapshot
-    // the visible buffers into it whenever leaving bank 0). When
-    // banks == 1 the backing is empty — stock IIe path, no swap.
-    if (banks > 1) {
-        ramWorksBacking_.assign(
-            static_cast<size_t>(banks) * kRamWorksBankStride, 0u);
-    } else {
-        ramWorksBacking_.clear();
-        ramWorksBacking_.shrink_to_fit();
-    }
-}
-
 // MAME `a2eramworks3.cpp:108-115 write_c07x`: bank index = data & 0x7F.
 // One backing slot per bank (including bank 0). Swap is symmetric:
 // snapshot visible → backing[prev], advance ramWorksBank_, load
@@ -824,7 +806,7 @@ void Memory::setRamWorksBanks(uint32_t banks)
 // reads them directly without bank-aware indexing.
 void Memory::ramWorksSwapToBank(uint8_t newBank)
 {
-    if (ramWorksBanks_ <= 1) return;
+    if (ramWorksBanks_ <= 1 || auxPort_) return;   // aux slot taken: setAuxSlotPort
     // Clamp to populated banks via modulo. MAME does not clamp (it
     // allocates a fixed 8 MB array and reads garbage for unpopulated
     // slots — UB-adjacent in C++); we wrap. On a real RamWorks III with
@@ -1300,6 +1282,9 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // cassette device fitted it returns `uFloatingBus7` alone. POM2 returned
     // a bare comparator byte with bits 0-6 clamped to 0, so the $C060 half
     // of the mirrored pair disagreed with its own $C068 twin below.
+    // $C060-$C06F are read-only (MAME apple2.cpp:657 `.nopw()`, apple2e.cpp:2039):
+    // a store ran readTapeInput(), which starts an armed PLAY (hunt 2026-11-01).
+    if (isWrite && low >= 0x60 && low <= 0x6F) return 0;
     if (low == 0x60) {
         // //c-class: no cassette port — $C060 is the keyboard's 40/80-column
         // switch, bit 7 set in the 40 position (MAME `apple2e.cpp:2321`,

@@ -57,6 +57,9 @@ public:
     static constexpr const char* kPromHiPath = "roms/ccs7710_03h.u5";
     static constexpr const char* kPromLoPath = "roms/ccs7710_03l.u6";
 
+    /// Printed output kept for the ImageWriter drain, as CentronicsPrinter.
+    static constexpr std::size_t kMaxSpoolBytes = 4u * 1024u * 1024u;
+
     explicit Ccs7710Card(int slot);
 
     /// The two 256-byte nibble PROMs (each byte's low nibble counts). False,
@@ -73,7 +76,7 @@ public:
     std::size_t pendingInput() const { return rx_.size() + (rdrf_ ? 1 : 0); }
 
     /// Everything the card has sent, and the ImageWriter's drain of it.
-    std::size_t bytesWritten() const { return spool_.size(); }
+    std::size_t bytesWritten() const { return spoolBase_ + spool_.size(); }
     std::size_t drainSpoolFrom(std::size_t from, std::vector<uint8_t>& out) const;
     bool drainPrinterSpool(std::size_t from, std::vector<uint8_t>& out,
                            std::size_t& next) const override
@@ -98,6 +101,7 @@ public:
 private:
     void buildOwnFirmware();
     void masterReset();
+    void spoolByte(uint8_t v);
     void updateIrq();
 
     int slot_;
@@ -110,7 +114,9 @@ private:
     bool    rdrf_ = false;
     bool    overrun_ = false;
     std::deque<uint8_t> rx_;
-    std::vector<uint8_t> spool_;
+    /// Absolute offsets: spoolBase_ bytes have been trimmed off the front.
+    std::deque<uint8_t> spool_;
+    std::size_t spoolBase_ = 0;
 };
 
 #endif // POM2_CCS7710_CARD_H

@@ -78,7 +78,11 @@ public:
     /// of the address (0..15). Reads and writes are dispatched separately
     /// so a card can implement asymmetric semantics (e.g. Disk II's $C0nE
     /// is "read mode" on read, "set Q6" on write — both legal accesses).
-    virtual uint8_t deviceSelectRead (uint8_t /*low4*/)              { return 0xFF; }
+    /// A card that decodes no read here drives nothing: the floating bus,
+    /// as MAME's base `read_c0nx` (`a2bus.cpp`, `return get_open_bus();`)
+    /// and an empty slot. It used to be a hard $FF (bug hunt 2026-11-01);
+    /// a bus with no floating-bus source still answers $FF.
+    virtual uint8_t deviceSelectRead (uint8_t /*low4*/)              { return openBus(); }
     virtual void    deviceSelectWrite(uint8_t /*low4*/, uint8_t /*v*/) {}
 
     /// $C(N)XX — 256-byte slot ROM. `low8` is the low byte of the address

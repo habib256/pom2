@@ -58,6 +58,7 @@ void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
         speech_.reset();
         pcm_.clear(); speechPhase_ = samplePhase_ = 0;
         lastSpeech_ = -1; lastWrite_ = 0;
+        for (auto& dc : psgDc_) { dc.setRate(rate_); dc.reset(); }
     }
     via_.reset(powerCycle);
     for (int i = 0; i < 2; ++i) { ay_[i].reset(); synth_[i] = {}; }
@@ -72,22 +73,30 @@ void EchoPlusTMS5220Card::setCpu(M6502* cpu) {
 }
 void EchoPlusTMS5220Card::setCpuClock(double hz) {
     std::lock_guard<std::mutex> lock(mtx_);
+    // No sync() here: the setters run BETWEEN instructions (setVideoStandard,
+    // applyAcceleratorClock per chunk, Slot Config Apply), where
+    // getCycleCountNow() still counts the last instruction, so a sync pushed
+    // the VIA, speech and PSG past "now" and the next advanceCycles re-counted
+    // the overlap (bug hunt 2026-11-01). advanceCycles has already brought the
+    // card to the instruction boundary; the new clock applies from there, as
+    // on the Mockingboard and the Phasor.
     if (std::isfinite(hz) && hz >= 100000 && hz <= 1000000000) {
-        sync(); cpuHz_ = hz; if (!busClockSet_) busHz_ = hz;
+        cpuHz_ = hz; if (!busClockSet_) busHz_ = hz;
     }
 }
 void EchoPlusTMS5220Card::setStandardClock(double hz) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (std::isfinite(hz) && hz >= 100000 && hz <= 10000000) {
-        sync(); busHz_ = hz; busClockSet_ = true;
+        busHz_ = hz; busClockSet_ = true;   // no sync(): see setCpuClock
     }
 }
 void EchoPlusTMS5220Card::setSampleRate(uint32_t hz) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (hz < 8000 || hz > 192000 || hz == rate_) return;
     rate_ = hz; samplePhase_ = 0; pcm_.clear();
+    for (auto& dc : psgDc_) { dc.setRate(rate_); dc.reset(); }
 }
-void EchoPlusTMS5220Card::setVolume(float v) { std::lock_guard<std::mutex> l(mtx_); volume_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0; }
+void EchoPlusTMS5220Card::setVolume(float v) { std::lock_guard<std::mutex> l(mtx_); volume_ = std::isfinite(v) ? std::clamp(v, 0.0f, 2.0f) : 0; }
 float EchoPlusTMS5220Card::getVolume() const { std::lock_guard<std::mutex> l(mtx_); return volume_; }
 void EchoPlusTMS5220Card::setMuted(bool v) { std::lock_guard<std::mutex> l(mtx_); muted_ = v; }
 bool EchoPlusTMS5220Card::isMuted() const { std::lock_guard<std::mutex> l(mtx_); return muted_; }
@@ -136,8 +145,11 @@ void EchoPlusTMS5220Card::advance(uint64_t cycles) {
             const float psgLeft = pom2::ay::renderChipSample(synth_[0], ay_[0].regs, step, 1 / step);
             const float psgRight = pom2::ay::renderChipSample(synth_[1], ay_[1].regs, step, 1 / step);
             const float speech = lastSpeech_ == -1 ? 0 : float(lastSpeech_) / 32768;
-            pcm_.push_back({std::clamp(speech * 0.7f + psgLeft / 6, -1.0f, 1.0f),
-                            std::clamp(speech * 0.7f + psgRight / 6, -1.0f, 1.0f)});
+            // The PSG side only: the TMS5220's own output is already bipolar.
+            const float acLeft  = psgDc_[0].process(psgLeft / 6);
+            const float acRight = psgDc_[1].process(psgRight / 6);
+            pcm_.push_back({std::clamp(speech * 0.7f + acLeft, -1.0f, 1.0f),
+                            std::clamp(speech * 0.7f + acRight, -1.0f, 1.0f)});
             if (pcm_.size() > 8192) pcm_.pop_front();
         }
     }
@@ -161,13 +173,21 @@ void EchoPlusTMS5220Card::slotRomWrite(uint8_t offset, uint8_t value) {
 }
 void EchoPlusTMS5220Card::applyPsgControl() {
     const auto pb = via_.readPortB(), pa = via_.readPortA();
+    // Only a READ drives the AY bus; after any other function (and with
+    // neither chip selected, or in reset) it floats back high at once —
+    // mb-audit TestAYReadHiZ, the rule MockingboardCard and PhasorCard
+    // follow. Holding the last READ forever made a later DDRA=0 port-A read
+    // return a stale register (bug hunt 2026-11-01). Both selected: the
+    // last one wins, as in MAME (its "fight for the latch" TODO).
+    uint8_t bus = 0xFF;
     for (int i = 0; i < 2; ++i) {
         if ((pb & 4) && !(pb & (8 << i))) continue;
         const auto result = ay_[i].applyControl(pa, pb);
         if (result == pom2::Ay3_8910::ResetOnly) synth_[i] = {};
         if (result == pom2::Ay3_8910::Wrote && ay_[i].latchedAddr == 13) synth_[i].envRetrigger = true;
-        if (result == pom2::Ay3_8910::Read) via_.setPortAInput(ay_[i].busOut);
+        if (result == pom2::Ay3_8910::Read) bus = ay_[i].busOut;
     }
+    via_.setPortAInput(bus);
 }
 EchoPlusTMS5220Card::Snap EchoPlusTMS5220Card::snapshot() const {
     std::lock_guard<std::mutex> lock(mtx_);

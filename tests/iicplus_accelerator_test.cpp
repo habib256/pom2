@@ -217,7 +217,7 @@ int main()
                "under the 4 MHz the IWM drive-disable delay ran out in CPU time");
         expect(crystal[2], "…and it must still end, at its crystal length");
         // The span itself: 1x inside the slow window, 4 MHz past it.
-        fastZip.ioRead(0xEC, 0, 0);          // a slot-6 access: 52 ms slow
+        fastZip.ioRead(0xEC, 0, 0, 0);          // a slot-6 access: 52 ms slow
         const uint64_t slowEnd = static_cast<uint64_t>(1022727.0 * 0.052);
         const uint64_t s = fastZip.stockCyclesBetween(0, slowEnd + 4000);
         expect(s + 2 >= slowEnd + 1000 && s <= slowEnd + 1024,

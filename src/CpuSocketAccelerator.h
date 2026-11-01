@@ -51,8 +51,12 @@ public:
 
     /// A read of $C000+`low` at CPU cycle `now`. `stateByte` is the
     /// STATEREG-like summary of the //e paging switches, only meaningful
-    /// for low == $5E (Memory computes it only then).
-    virtual ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte) = 0;
+    /// for low == $5E (Memory computes it only then). `stockNow` is the
+    /// same instant on the machine's CRYSTAL (Memory::videoAccessCycle):
+    /// what a chip register that taps PH0 counts, whatever the 6502's
+    /// speed — the Zip's $C05B bit 7.
+    virtual ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte,
+                              uint64_t stockNow) = 0;
 
     /// A write of `value` to $C000+`low`. Writes always reach the
     /// motherboard as well (MAME calls `do_io` on every one).

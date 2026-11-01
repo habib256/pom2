@@ -68,7 +68,7 @@ public:
     /// MHz for a speed register value (0 = off: the stock clock).
     static double speedMHz(uint8_t value);
 
-    ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte) override;
+    ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte, uint64_t stockNow) override;
     void   ioWrite(uint8_t low, uint8_t value, uint64_t now) override;
     double cpuSpeedMultiplier(uint64_t now) const override;
     uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const override;

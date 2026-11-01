@@ -315,6 +315,12 @@ private:
     std::array<uint16_t, kMaxUnits> readCacheBlock_{};
     std::array<std::array<uint8_t, kBlockBytes>, kMaxUnits> writeBuf_{};
     std::array<bool,     kMaxUnits> writeBufPrimed_{};
+    /// The medium a primed `writeBuf_` was filled from (unitMediaId). The
+    /// commit at the wrap refuses when the bay holds another medium by then:
+    /// a mount, eject or swap landing mid-stream — through this card or
+    /// straight on the unit (pom2::mountSmartPortUnit) — must not write the
+    /// outgoing disk's half-streamed block into the incoming one.
+    std::array<uint64_t, kMaxUnits> writeBufMedia_{};
     // Set when the active unit's readBlock/writeBlock fails (out-of-range /
     // rejected). Surfaced as $C0n4 bit 0; cleared at the start of each
     // transfer (unit-select / block-register write). See buildRom().

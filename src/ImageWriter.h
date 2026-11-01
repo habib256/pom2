@@ -348,6 +348,10 @@ public:
     void    setModel(IwModel m);
     IwModel model() const { return model_; }
     const IwModelProfile& modelProfile() const { return iwModelProfile(model_); }
+    /// The C. Itoh pitch command (`ESC n N E e q Q p P`) that selects the
+    /// pitch in effect now — what a host-built stream that changes pitch
+    /// (the screen dump) sends at its end to put it back.
+    char pitchCommand() const { return "nNEeqQpP"[printRes_ & 7]; }
     static const char* modelName(IwModel m) { return iwModelProfile(m).name; }
 
     // ── Custom paper, power and the front panel (printer plan phase D) ────

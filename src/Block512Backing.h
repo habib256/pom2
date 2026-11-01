@@ -369,6 +369,12 @@ public:
     /// or when WP, and marks the containing block dirty otherwise.
     uint8_t readByte (size_t absolute) const;
     void    writeByte(size_t absolute, uint8_t v);
+    /// `writeByte` for the rest of a block whose write was ALLOWED when it
+    /// began: the notch (`hostReadOnly_`) is not asked again, the medium's
+    /// own lock still is. The HDV card's ROM decides write-protect once per
+    /// block, so a notch flipped mid-loop must not tear the block it already
+    /// promised (ProDOSHardDiskCard::writeDataByte, bug hunt 2026-11-01).
+    void    writeByteLatched(size_t absolute, uint8_t v);
 
     /// Auto-turbo busy signal — any access bumps it; the UI bleeds it off one
     /// step per frame so a multi-block transfer stays in turbo end-to-end.

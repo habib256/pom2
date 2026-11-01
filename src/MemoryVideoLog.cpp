@@ -44,7 +44,6 @@
 
 namespace {
 constexpr uint64_t kLineCycles     = 65;   // NTSC and PAL alike
-constexpr uint64_t kFetchStart     = 25;   // first visible cycle of a line
 constexpr uint16_t kVisibleLines   = 192;
 
 // Byte column a video address is fetched at, on whatever line shows it: text
@@ -206,8 +205,9 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
         uint16_t cut = kVisibleLines;
         if (line < kVisibleLines) {
             cut = static_cast<uint16_t>(line);
-            if (h >= kFetchStart &&
-                static_cast<uint64_t>(fetchColumn(w.addr)) < h - kFetchStart)
+            // Already fetched on this line: the store first shows on the
+            // next one. Same column rule as a soft switch (CpuClock.h).
+            if (fetchColumn(w.addr) < static_cast<int>(h) - kVideoAccessColumnOffset)
                 ++cut;
         }
         vrCutOf_[i] = cut;

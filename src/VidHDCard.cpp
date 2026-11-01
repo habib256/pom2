@@ -104,9 +104,18 @@ void VidHDCard::paintPicture(uint32_t* dst, uint32_t /*lit*/, uint32_t dark,
         if (!(scb & 0x80)) {
             // 320 mode (pom2gs VGC.cpp drawShrLine): high nibble first, each
             // dot doubled. Colour fill (SCB bit 5): index 0 repeats the
-            // previous dot's colour; the line starts from palette entry 0.
+            // previous dot's colour. The colour a fill line STARTS from is the
+            // IIgs VGC's, measured by John Brooks — MAME apple2video.cpp,
+            // `fillmode_init[scb & 0x1f]` (SCB bits 0-4: the palette and the
+            // reserved bit 4) — entry 2 for palette 0 with bit 4 clear, else
+            // entry n of palette n. Brooks also wrote the VidHD's firmware; no
+            // VidHD capture exists, so this assumes the card follows the VGC.
+            static constexpr uint8_t kFillInit[32] = {
+                2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF,
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF,
+            };
             const bool fill = (scb & 0x20) != 0;
-            uint32_t last = color(0);
+            uint32_t last = color(kFillInit[scb & 0x1F]);
             for (int b = 0; b < kBytesPerLine; ++b) {
                 const uint8_t v = src[b];
                 for (int half = 0; half < 2; ++half) {

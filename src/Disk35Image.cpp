@@ -135,6 +135,14 @@ bool Disk35Image::loadPrepared(std::vector<uint8_t>&& bytes, const std::string& 
 {
     // loadFile without the file read: phase 2 of a two-phase mount, under the
     // machine lock, on bytes phase 1 read unlocked (MediaMount.h).
+    //
+    // Same file (any spelling): `bytes` were read BEFORE the flush below, so
+    // installing them would put the pre-write image back under the guest —
+    // and the next autosave would write that stale copy over the file. Flush,
+    // then read the file again here, as Block512Backing::adoptImage,
+    // DiskIICard::installDisk and EmulationController::mount35 already do.
+    // The rare remount pays the inline read (bug hunt 2026-11-01).
+    if (loaded_ && Block512Backing::sameFile(path_, imgPath)) return loadFile(imgPath);
     if (!saveDirty()) return false;
     Disk35Image replacement;
     replacement.writeBackEnabled_ = writeBackEnabled_;

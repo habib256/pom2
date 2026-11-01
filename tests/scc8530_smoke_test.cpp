@@ -1158,6 +1158,34 @@ void testSnapshotV3FifoRestores()
     std::printf("  ok: a v3 snapshot's 3-slot receive ring restores in order\n");
 }
 
+// Rx Overrun and Parity Error are LATCHED once their character is read
+// (Zilog SCC/ESCC User Manual, RR1 D5: "when that character is read, the
+// Error condition is latched until reset by the Error Reset command"; D4 the
+// same; D6 CRC/Framing is not latched). MAME — and POM2 — wiped both on the
+// NEXT data read, so a polled driver that checks RR1 once per block never saw
+// an overrun. The latch must not make every later character special either:
+// in mode 10 a clean character after the overrun is neither held nor a
+// Special Receive Condition.
+void testOverrunLatchedUntilErrorReset()
+{
+    for (const uint8_t wr1 : { uint8_t(0x00), uint8_t(0x10) }) {   // polled, all chars
+        Scc8530Device scc;
+        writeReg(scc, A, 3, 0xC1);
+        writeReg(scc, A, 1, wr1);
+        for (uint8_t b : { 0x10, 0x20, 0x30, 0x40 }) scc.receiveByte(A, b);
+        assert(scc.dataRead(A) == 0x10 && scc.dataRead(A) == 0x20);
+        assert(scc.dataRead(A) == 0x40);                 // the flagged one
+        assert(scc.rxFifoCount(A) == 0 && "modes 00/10 never hold");
+        scc.receiveByte(A, 0x50);
+        assert(scc.dataRead(A) == 0x50);
+        assert(scc.rxFifoCount(A) == 0 && "a clean character after the latch is not held");
+        assert((scc.peekRr(A, 1) & 0x20) != 0 && "the overrun stays latched");
+        scc.controlWrite(A, 0x30);                       // WR0 Error Reset
+        assert((scc.peekRr(A, 1) & 0x20) == 0 && "Error Reset clears the latch");
+    }
+    std::printf("  ok: RR1 overrun latched until Error Reset\n");
+}
+
 int main()
 {
     testHardwareResetValues();
@@ -1166,6 +1194,7 @@ int main()
     testBaudRateGenerator();
     testLoopbackTiming();
     testReceiveFifoOverrun();
+    testOverrunLatchedUntilErrorReset();
     testErrorResetStepsFifo();
     testInterruptVectorAndIus();
     testZeroCountInterrupt();

@@ -277,6 +277,7 @@ private:
     // pops its own return address and jumps). See onInstruction.
     std::vector<uint8_t> stepFrames_;
     bool    stepSkipFirst_ = false;   // the step-over's own JSR is not nested
+    uint16_t stepJsrPc_    = 0;       // ...and is the one at this PC and SP
     bool    stepOutMode_   = false;
     uint8_t stepStartSp_   = 0;
     /// Atomic, alone among this class's members, because Stop clears it from

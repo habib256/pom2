@@ -56,7 +56,7 @@ public:
 
     std::string_view name() const override { return "Saturn 128K"; }
 
-    uint8_t deviceSelectRead(uint8_t low4) override { access(low4, false); return 0xFF; }
+    uint8_t deviceSelectRead(uint8_t low4) override { access(low4, false); return openBus(); }   // drives no data: the floating bus
     void    deviceSelectWrite(uint8_t low4, uint8_t) override { access(low4, true); }
     /// Seats / unseats the card on Memory's INH hook (SlotBus calls both on
     /// every plug, unplug and clear).

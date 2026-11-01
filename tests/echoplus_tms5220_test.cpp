@@ -58,6 +58,10 @@ int main() {
     card.slotRomWrite(0, 0);
     assert(card.snapshot().ayRegs[0][8] == 0 && card.snapshot().ayRegs[1][11] == 0);
     card.onReset(); assert(card.deviceSelectRead(0) == 0x7F);
+    // Let each side's PSG DC blocker drain the step the reset just made
+    // (left had a tone, right none) before listening to the speech alone.
+    card.advanceCycles(500000);
+    card.audioSource()->fillAudioBuffer(discard.data(), int(discard.size()));
     // LPC voiced frame followed by repeats, packed LSB-first in the FIFO.
     const std::array<uint8_t, 16> voice = {69,9,33,34,34,146,84,165,42,85,169,74,85,170,82,149};
     card.deviceSelectWrite(0, 0x60);
@@ -66,7 +70,10 @@ int main() {
     card.advanceCycles(100000);
     std::vector<float> speechLeft(4410), speechRight(4410);
     card.audioSource()->fillAudioBufferStereo(speechLeft.data(), speechRight.data(), 4410);
-    assert(speechLeft == speechRight);
+    // Speech is centred. Not bit-equal any more: what is left of the PSG
+    // blockers' decay differs per side, far below the speech.
+    for (std::size_t i = 0; i < speechLeft.size(); ++i)
+        assert(std::abs(speechLeft[i] - speechRight[i]) < 1e-3f);
     assert(std::any_of(speechLeft.begin(), speechLeft.end(), [](float v) { return std::abs(v) > 0.01f; }));
     card.advanceCycles(1591);
     card.audioSource()->fillAudioBuffer(discard.data(), int(discard.size()));
@@ -126,4 +133,92 @@ int main() {
         talker.onPowerCycle();
         assert(!(talker.deviceSelectRead(0) & 0x80));
     }
+    // ── Bug hunt 2026-11-01 (audio and the sound chips) ─────────────────
+    // G1: the PSG is AC-coupled. MAME high-passes the speaker the two AYs
+    // route to (a2mockingboard.cpp single_via_devices; AyPsgSynth.h
+    // DcBlocker), as the Mockingboard and the Phasor here do. Without it a
+    // full-scale tone carried a DC term of ~0.058 and every R8 write stepped it.
+    {
+        EchoPlusTMS5220Card dc; dc.setCpuClock(1000000);
+        dc.slotRomWrite(3, 0xFF); dc.slotRomWrite(2, 0xFF);
+        writeAy(dc, 0, 0, 64); writeAy(dc, 0, 7, 0x3E); writeAy(dc, 0, 8, 15);
+        double sum = 0; int n = 0;
+        for (int k = 0; k < 20; ++k) {
+            dc.advanceCycles(50000);
+            std::vector<float> l(2205), r(2205);
+            dc.audioSource()->fillAudioBufferStereo(l.data(), r.data(), 2205);
+            if (k >= 10) for (float v : l) { sum += v; ++n; }   // past the settling
+        }
+        const double mean = sum / n;
+        std::printf("Echo+ PSG mean after settling: %.5f\n", mean);
+        assert(std::abs(mean) < 0.005 && "the Echo+ PSG must be AC-coupled");
+        // Silencing the channel: the blocker's tail decays to zero (no held
+        // offset, no ringing) within a quarter second.
+        writeAy(dc, 0, 8, 0);
+        float tail = 1.0f;
+        for (int k = 0; k < 5; ++k) {
+            dc.advanceCycles(50000);
+            std::vector<float> l(2205), r(2205);
+            dc.audioSource()->fillAudioBufferStereo(l.data(), r.data(), 2205);
+            tail = std::abs(l.back());
+        }
+        assert(tail < 0.005f && "a silenced channel decays to zero");
+    }
+    // G3: a clock setter runs between instructions, where getCycleCountNow()
+    // already counts the last instruction. Syncing there pushed the VIA past
+    // "now" and the next advanceCycles re-counted the overlap. The guest
+    // reads both T1s IN an instruction (the test's own reads would sit
+    // outside one, where both cards overshoot alike): LDA $C504 / STA $00 /
+    // LDA $C404 / STA $01 / JMP. Their difference is a constant (the 7
+    // cycles between the two LDAs) only if no setter call adds time.
+    {
+        auto ctl = std::make_unique<EmulationController>();
+        auto m = ctl->lockState();
+        auto e = std::make_unique<EchoPlusTMS5220Card>(5);
+        auto ref = std::make_unique<MockingboardCard>(4);
+        auto* ep = e.get(); auto* mbp = ref.get();
+        ep->setCpu(&m.cpu()); mbp->setCpu(&m.cpu());
+        m.memory().slotBus().plug(5, std::move(e));
+        m.memory().slotBus().plug(4, std::move(ref));
+        const uint8_t prog[] = { 0xAD, 0x04, 0xC5, 0x85, 0x00, 0xAD, 0x04, 0xC4,
+                                 0x85, 0x01, 0x4C, 0x00, 0x03 };
+        for (std::size_t i = 0; i < sizeof prog; ++i)
+            m.memory().writeRamUnchecked(uint16_t(0x300 + i), prog[i]);
+        m.cpu().setProgramCounter(0x300);
+        ep->slotRomWrite(4, 0xFF); ep->slotRomWrite(5, 0x7F);
+        mbp->slotRomWrite(4, 0xFF); mbp->slotRomWrite(5, 0x7F);
+        int expected = -1;
+        for (int loop = 0; loop < 20; ++loop) {
+            for (int k = 0; k < 5; ++k) {
+                m.cpu().step();
+                ep->setCpuClock(1022727.0);   // same clock: must cost no time
+                ep->setStandardClock(1022727.0);
+            }
+            const int d = (m.memory().peekMainRam(0x00) - m.memory().peekMainRam(0x01)) & 0xFF;
+            if (expected < 0) expected = d;
+            assert(d == expected && "a clock setter must not advance the VIA");
+        }
+    }
+    // G4: the AY bus floats high again after any command but READ
+    // (mb-audit TestAYReadHiZ, the Mockingboard/Phasor rule; MAME replaces
+    // m_porta1 at the next port-A output).
+    {
+        EchoPlusTMS5220Card hz; hz.setCpuClock(1000000);
+        hz.slotRomWrite(3, 0xFF); hz.slotRomWrite(2, 0xFF);
+        writeAy(hz, 1, 11, 0xC4);
+        hz.slotRomWrite(1, 11); hz.slotRomWrite(0, 0x17); hz.slotRomWrite(0, 0x14);
+        hz.slotRomWrite(3, 0); hz.slotRomWrite(0, 0x15);
+        assert(hz.slotRomRead(1) == 0xC4);
+        hz.slotRomWrite(0, 0x14);   // inactive: the chip drives nothing
+        assert(hz.slotRomRead(1) == 0xFF && "the AY bus floats high after READ ends");
+    }
+    // G5: the mixer slider runs 0..2, like every other source.
+    {
+        EchoPlusTMS5220Card vol;
+        vol.setVolume(1.5f);
+        assert(vol.getVolume() == 1.5f);
+        vol.setVolume(3.0f);
+        assert(vol.getVolume() == 2.0f);
+    }
+    std::printf("echoplus_tms5220: PASS\n");
 }

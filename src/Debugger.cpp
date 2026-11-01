@@ -209,6 +209,7 @@ void Debugger::setStepOver(M6502& cpu, const Memory& memory)
     stepReturning_ = false;
     stepFrames_.clear();
     stepSkipFirst_ = true;        // armed AT the JSR being stepped over
+    stepJsrPc_     = cpu.getProgramCounter();
     stepOutMode_   = false;
     stepStartSp_   = stepStack_;
     transientReason_ = Reason::StepOver;
@@ -247,6 +248,9 @@ void Debugger::clearMeasurements()
 
 void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
 {
+    // The stepped JSR has executed (an interrupt entry reports through
+    // onInterruptEntered instead): its callee's frame is the one to follow.
+    if (stepSkipFirst_ && pc == stepJsrPc_) stepSkipFirst_ = false;
     if (cycles <= 0) return;
     if (profiling_) {
         auto& entry = profile_[{pc, curBank_}];
@@ -365,8 +369,17 @@ bool Debugger::onInstruction(uint16_t pc)
             transientHit = stepReturning_ && sp == stepStack_;
             if (!transientHit) {
                 const uint8_t op = stepMemory_->peekCpuView(pc);
-                if (stepSkipFirst_) {
-                    stepSkipFirst_ = false;              // the stepped JSR
+                // The stepped JSR, at ITS pc and stack level, is not a
+                // nested call. The skip is RETIRED in onStepCompleted, once
+                // that JSR has really executed — not here: an IRQ/NMI taken
+                // at this boundary runs the handler first and the JSR is
+                // offered to this hook again after the RTI, and consuming the
+                // skip on the first offer counted the stepped JSR as nested
+                // the second time, so its RTS never ended the step and F8 ran
+                // away (bug hunt 2026-11-01). The handler's own instructions
+                // sit below `stepStack_` and cannot match.
+                if (stepSkipFirst_ && pc == stepJsrPc_ && sp == stepStack_) {
+                    // the stepped JSR — nothing to track yet
                 } else if (op == 0x20) {                 // JSR: a nested call
                     if (stepFrames_.size() < 256) stepFrames_.push_back(sp);
                 } else if (op == 0x60 && stepFrames_.empty()) {

@@ -1233,9 +1233,14 @@ void MainWindow::dumpScreenToPrinter()
                              : pom2::EpsonDumpCmd::K60;
         pom2::buildScreenDumpEpson(px.data(), w, h, w,
                                    printerDumpOptions_, stream, cmd);
-    } else
-        pom2::buildScreenDumpImageWriter(px.data(), w, h, w,
-                                         printerDumpOptions_, stream);
+    } else {
+        // Put the pitch back once the picture is out: the dump selects its
+        // own for the graphics density, and pitch persists into the next job.
+        pom2::ScreenDumpOptions opts = printerDumpOptions_;
+        if (head.lineage == pom2::IwLineage::CItoh)
+            opts.restorePitch = static_cast<uint8_t>(imageWriter->pitchCommand());
+        pom2::buildScreenDumpImageWriter(px.data(), w, h, w, opts, stream);
+    }
     if (stream.empty()) return;
 
     imageWriter->queueBytes(stream.data(), stream.size());

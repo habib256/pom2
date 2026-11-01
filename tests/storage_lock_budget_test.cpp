@@ -71,8 +71,14 @@ struct Contender {
 
 void dirtyUnit(pom2::SmartPortUnit* u, uint32_t blocks)
 {
-    std::vector<uint8_t> buf(512, 0xA5);
+    // A different byte every call. The cases share big.hdv, and case A's
+    // mount flushes its 0xA5 blocks into it: with a fixed fill every later
+    // case wrote bytes the file already held, nothing went dirty, and B and
+    // C measured an eject / mount with nothing to save (bug hunt 2026-11-01).
+    static uint8_t fill = 0xA5;
+    std::vector<uint8_t> buf(512, fill++);
     for (uint32_t i = 0; i < blocks; ++i) u->writeBlock(i, buf.data());
+    assert(u->hasUnsavedChanges() && "the case has something to save");
 }
 
 pom2::SmartPortCard* plugSmartPort(EmulationController& ctrl)
@@ -164,6 +170,40 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         (void)r;
         check("mountDisk35 over a dirty 8 MiB unit", con.maxWaitUs.load(), tot);
+    }
+    // D. The SmartPort panel's MOUNT over a dirty unit (bug hunt 2026-11-01):
+    // the deferred mount went straight to pom2::mountSmartPortUnit, whose
+    // locked adopt wrote the outgoing image back — the one mount entry point
+    // without flushOutgoingBay in front of it. 32 MiB, so the locked flush
+    // it used to do is well past the floor on a fast SSD too (~70 ms).
+    const std::string huge  = writeImage(dir, "huge.hdv", 32 * MiB);
+    const std::string huge2 = writeImage(dir, "huge2.hdv", 32 * MiB);
+    {
+        EmulationController controller; pom2::StorageCoordinator storage; pom2::Settings settings;
+        settings.setReadOnly(true);
+        auto* card = plugSmartPort(controller);
+        assert(storage.setMediaBayType(controller, settings, 5, 0, std::string(pom2::SmartPortHdvUnit::kKindKey)).ok);
+        assert(storage.mountMediaBay(controller, settings, 5, 0, huge).ok);
+        assert(storage.setMediaBayWriteBack(controller, settings, 5, 0, true).ok);
+        {
+            auto st = controller.lockState();
+            dirtyUnit(card->unit(0), 60'000);
+        }
+        Contender con(controller);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        con.maxWaitUs = 0;
+        pom2::SmartPort_ImGui::Result cmd;
+        cmd.units[0].mountPath = huge2;
+        const auto t0 = clk::now();
+        (void)storage.applySmartPortPanel(controller, settings, 5, cmd);
+        const auto tot = std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - t0).count();
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            auto st = controller.lockState();
+            assert(card->unit(0) && card->unit(0)->path() == huge2 && "the panel mount landed");
+            assert(!card->unit(0)->hasUnsavedChanges());
+        }
+        check("SmartPort panel mount over a dirty 32 MiB unit", con.maxWaitUs.load(), tot);
     }
     fs::remove_all(dir, ec);
     std::puts("storage_lock_budget OK");

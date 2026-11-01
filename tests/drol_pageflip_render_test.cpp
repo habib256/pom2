@@ -193,6 +193,37 @@ int main()
         assert(!row(f, fP1, 150) && "a line still ahead of the beam shows the write");
     }
 
+    // The write's own line, byte by byte (bug hunt 2026-11-01). The scanner
+    // fetches column c in phi1 of hpos 25+c, before the CPU's phi2: a store
+    // AT 25+c misses column c, exactly as a soft switch on that cycle does
+    // (Apple2Display::frameCycleToPos, the measured hpos-24 rule). The log
+    // used to show it, one cycle earlier than a switch.
+    {
+        Memory mem; populate(mem); hgrMode(mem); mem.memRead(SET_PAGE1);
+        mem.setCycleCounter(0);
+        advanceTo(mem, 50 * 65);
+        mem.memRead(SET_PAGE2); mem.memRead(SET_PAGE1);
+        advanceTo(mem, kFrame);
+        advanceTo(mem, kFrame + 10 * 65);
+        mem.memRead(SET_PAGE1);                            // keep it armed
+        constexpr int kLine = 100;
+        const uint16_t base = static_cast<uint16_t>(0x2000 + (kLine & 7) * 0x400 +
+                                                    ((kLine >> 3) & 7) * 0x80 + (kLine >> 6) * 0x28);
+        advanceTo(mem, kFrame + kLine * 65 + 25 + 3);      // hpos 28: column 3's fetch
+        mem.memWrite(static_cast<uint16_t>(base + 3), 0x00);   // already fetched
+        mem.memWrite(static_cast<uint16_t>(base + 4), 0x00);   // fetched next cycle
+        advanceTo(mem, 2 * kFrame);
+        const auto f = frameOf(mem);
+        auto same = [&](int x0, int x1) {
+            for (int x = x0; x < x1; ++x)
+                if (f[static_cast<size_t>(kLine) * W + x] != fP1[static_cast<size_t>(kLine) * W + x])
+                    return false;
+            return true;
+        };
+        assert(same(22, 26) && "a store at hpos 25+c misses column c on its line");
+        assert(!same(29, 33) && "a store at hpos 25+c reaches column c+1");
+    }
+
     // Stopped machine: a debugger poke (or a stepped store) is stamped after
     // the published frame. Rewound away, it stayed invisible until the
     // machine ran a whole frame again (bug hunt 2026-10-23).

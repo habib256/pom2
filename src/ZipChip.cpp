@@ -74,7 +74,7 @@ void ZipChip::onReset(uint64_t /*now*/)
 }
 
 CpuSocketAccelerator::ReadResult
-ZipChip::ioRead(uint8_t low, uint64_t now, uint8_t stateByte)
+ZipChip::ioRead(uint8_t low, uint64_t now, uint8_t stateByte, uint64_t stockNow)
 {
     ReadResult r;
     if ((low & 0xF0) == 0x30) {                       // speaker, :1914
@@ -100,7 +100,10 @@ ZipChip::ioRead(uint8_t low, uint64_t now, uint8_t stateByte)
         case 0x59: r.value = 0x20; break;
         case 0x5A: case 0x5D: case 0x5F: r.value = 0x00; break;
         case 0x5B: {
-            const uint8_t b7 = ((now >> 9) & 1) ? 0x80 : 0x00;   // PH0 / 1024
+            // PH0 / 1024 — the crystal's clock (MAME :2266 as_ticks at the
+            // 1 MHz clock / 512), not the 6502's: at 4 MHz the CPU count ran
+            // 3.9x fast and a loop timed against it measured 1 MHz.
+            const uint8_t b7 = ((stockNow >> 9) & 1) ? 0x80 : 0x00;
             const uint8_t b5 = (gameIo_ & 0x80) ? 0x20 : 0x00;   // LC cache off
             const uint8_t b4 = fast_ ? 0x00 : 0x10;              // Zip disabled
             const uint8_t b3 = now < slowUntil_ ? 0x08 : 0x00;   // delay active

@@ -475,12 +475,111 @@ bool testUnitAdoptsPreparedImage()
     // that would send the caller back to the locked inline read.
     pom2::Block512Backing::PreparedImage junk;
     junk.bytes.assign(1000, 0);
-    junk.path = p;
+    // Another file's name: the SAME file is re-read from disk instead of
+    // trusting phase 1's bytes (testUnitAdoptSameFileKeepsGuestWrites).
+    junk.path = p + ".junk";
     junk.valid = true;
     assert(!unit.adoptImage(std::move(junk)) && !unit.lastError().empty());
     assert(unit.isLoaded() && "a refused image leaves the mounted disk alone");
     fs::remove(p);
     std::printf("  ok: SmartPort35Unit adopts a phase-1 image (no locked read)\n");
+    return true;
+}
+
+// Bug hunt 2026-11-01 #1. Re-mounting the image ALREADY in a 3.5" unit
+// through the two-phase path: phase 1 read the file before the guest's
+// unsaved blocks reached it, phase 2 flushed them and then installed the
+// stale copy — RAM behind the file, and the next autosave wrote that copy
+// back. Block512Backing::adoptImage, DiskIICard::installDisk and mount35
+// re-read the file after the flush; Disk35Image::loadPrepared did not.
+bool testUnitAdoptSameFileKeepsGuestWrites()
+{
+    const std::string p = writeSyntheticPo("same", 0x5A);
+    const std::string other = (fs::path(p).parent_path() / "." /
+                               fs::path(p).filename()).string();
+    for (const std::string& spelling : { p, other }) {
+        { std::ofstream f(p, std::ios::binary | std::ios::in | std::ios::out); }
+        pom2::SmartPort35Unit unit;
+        unit.setWriteBackEnabled(true);
+        assert(unit.loadImage(p));
+        uint8_t mine[512];
+        std::memset(mine, 0xA5, sizeof mine);
+        assert(unit.writeBlock(3, mine) && unit.hasUnsavedChanges());
+        pom2::Block512Backing::PreparedImage prepared;   // read BEFORE the flush
+        std::string err;
+        assert(pom2::Block512Backing::readImageFile(spelling, prepared, err));
+        assert(unit.adoptImage(std::move(prepared)));
+        uint8_t back[512]{};
+        assert(unit.readBlock(3, back));
+        if (back[0] != 0xA5 || back[511] != 0xA5) {
+            std::printf("FAIL: same-file remount (%s) installed the pre-flush "
+                        "bytes: block 3 reads $%02X, the guest wrote $A5\n",
+                        spelling.c_str(), back[0]);
+            return false;
+        }
+        std::ifstream f(p, std::ios::binary);
+        f.seekg(3 * 512);
+        char c = 0;
+        f.read(&c, 1);
+        assert(static_cast<uint8_t>(c) == 0xA5 && "the flush reached the file");
+        // Restore the file for the next spelling.
+        std::fstream w(p, std::ios::binary | std::ios::in | std::ios::out);
+        w.seekp(3 * 512);
+        std::vector<char> orig(512, static_cast<char>(0x5A + 3));
+        w.write(orig.data(), 512);
+    }
+    fs::remove(p);
+    std::printf("  ok: same-file 3.5\" remount keeps the guest's writes\n");
+    return true;
+}
+
+// Bug hunt 2026-11-01 #2. A mount in a bay while a 512-byte write stream is
+// half-way through it: the primed buffer (pre-filled from the OUTGOING disk)
+// was committed into the INCOMING one at the old block number when the
+// stream wrapped. ProDOSHardDiskCard::mediumChanged and CffaCard::adoptImage
+// reset their transfer state on a media change; this card only did it in
+// setUnit() and in its snapshot loader.
+bool testMountMidWriteDoesNotTouchNewDisk()
+{
+    const std::string a = writeSyntheticPo("midA", 0x10);
+    const std::string b = writeSyntheticPo("midB", 0x40);
+    for (int how = 0; how < 3; ++how) {          // adoptBay, mountBay, eject+mount
+        pom2::SmartPortCard card(5);
+        auto u0 = std::make_unique<pom2::SmartPort35Unit>();
+        assert(u0->loadImage(a));
+        u0->setWriteBackEnabled(true);
+        card.setUnit(0, std::move(u0));
+        card.setUnit(1, std::make_unique<pom2::SmartPort35Unit>());
+        writeReg(card, 0x0, 0);
+        writeReg(card, 0x1, 5);
+        writeReg(card, 0x2, 0);
+        for (int i = 0; i < 200; ++i) writeReg(card, 0x3, 0x77);
+        std::string err;
+        if (how == 0) {
+            pom2::Block512Backing::PreparedImage prepared;
+            assert(pom2::Block512Backing::readImageFile(b, prepared, err));
+            assert(card.adoptBay(0, std::move(prepared), err));
+        } else if (how == 1) {
+            assert(card.mountBay(0, b, err));
+        } else {
+            assert(card.ejectBay(0));
+            assert(card.mountBay(0, b, err));
+        }
+        for (int i = 0; i < 312; ++i) writeReg(card, 0x3, 0x77);
+        uint8_t blk[512]{};
+        assert(card.unit(0)->readBlock(5, blk));
+        for (size_t i = 0; i < 512; ++i) {
+            if (blk[i] != static_cast<uint8_t>(0x40 + 5)) {
+                std::printf("FAIL: case %d — the outgoing disk's half-written "
+                            "block landed in the new disk (byte %zu = $%02X)\n",
+                            how, i, blk[i]);
+                return false;
+            }
+        }
+    }
+    fs::remove(a);
+    fs::remove(b);
+    std::printf("  ok: a media change mid-stream leaves the new disk alone\n");
     return true;
 }
 
@@ -495,5 +594,7 @@ int main() {
     ok &= testIoErrorSoundsOnce();
     ok &= testShrinkHidesSelectedUnit();
     ok &= testUnitAdoptsPreparedImage();
+    ok &= testUnitAdoptSameFileKeepsGuestWrites();
+    ok &= testMountMidWriteDoesNotTouchNewDisk();
     return ok ? 0 : 1;
 }

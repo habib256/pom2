@@ -2397,6 +2397,14 @@ StorageCoordinator::applySmartPortPanel(
     // the UI thread (same contract as pom2::mountDiskII — MediaMount.h).
     for (auto& mount : pendingMounts) {
         std::string mountError;
+        // The outgoing save first, unlocked, like every other mount: the adopt
+        // below did it under stateMutex (76 ms, 32 MiB HDV; bug hunt 2026-11-01).
+        if (!flushOutgoingBay(controller, slot, int(mount.unitIndex), mountError)) {
+            status.message = "SmartPort unit " + std::to_string(mount.unitIndex) +
+                             ": mount refused: " + mountError;
+            status.visibleSeconds = 5.0;
+            continue;
+        }
         if (mountSmartPortUnit(controller, *mount.unit, mount.path,
                                mountError)) {
             appendStringSetting(settingUpdates, mount.base + "_path",

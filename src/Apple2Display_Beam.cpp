@@ -152,6 +152,10 @@ void Apple2Display::renderInternalSegment(Memory& mem, const Memory::DisplayStat
         if (state.mixedMode && bandRows(scanY0, scanY1, 20, 24, &tLo, &tHi))
             renderText(mem, state, tLo, tHi, col0, col1, scanY0, scanY1);
     }
+    // The text tints (a VidHD's $C022), over the columns this segment owns —
+    // renderInternalBand runs them for a full-width band; this clipped path
+    // used to skip them, so a split line lost its colours (hunt 2026-11-01).
+    textTintPass(state, scanY0, scanY1, col0 * 7, col1 * 7);
 }
 
 // A mid-line soft switch's VISIBLE column depends on WHICH switch it is.

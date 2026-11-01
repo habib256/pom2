@@ -26,11 +26,13 @@
 // this test focuses on the bus glue.
 
 #include "EchoPlusCard.h"
+#include "SlotBus.h"
 #include "Ssi263.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -199,6 +201,24 @@ void testLatchedIrqAndRepeat()
     std::puts("  ok: latched IRQ mode and repeated requests reach the slot line");
 }
 
+// $C0nX is not decoded by this card: a read there is the FLOATING BUS, as
+// MAME's base `read_c0nx` (`a2bus.cpp`, `return get_open_bus();`) and an
+// empty slot give — not the $FF the SlotPeripheral default used to return
+// (bug hunt 2026-11-01). A counting source proves the bus was consulted.
+void testDevselFloatingBus()
+{
+    SlotBus bus;
+    int calls = 0;
+    bus.setFloatingBusSource([&calls]() { ++calls; return static_cast<uint8_t>(0x40 + calls); });
+    bus.plug(4, std::make_unique<EchoPlusCard>(4));
+    const int before = calls;
+    const uint8_t a = bus.deviceSelectRead(0xC0C0);
+    const uint8_t b = bus.deviceSelectRead(0xC0CF);
+    assert(calls > before);
+    assert(a != 0xFF && b != 0xFF && a != b);
+    std::printf("  ok: $C0nX reads the floating bus\n");
+}
+
 } // namespace
 
 int main()
@@ -209,6 +229,7 @@ int main()
     testReadAcknowledgement();
     testSnapshotRoundTrip();
     testLatchedIrqAndRepeat();
+    testDevselFloatingBus();
     std::printf("PASS\n");
     return 0;
 }

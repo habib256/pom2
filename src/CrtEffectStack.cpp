@@ -771,7 +771,9 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     // tube for as long as the drag lasts. There is no history: switch the
     // blend off for exactly that frame — max(rgb, -0.5/256) == rgb.
     if (uPersistence >= 0)
-        glUniform1f(uPersistence, firstFrame ? 0.0f : params.persistence);
+        glUniform1f(uPersistence, firstFrame ? 0.0f
+                                             : crtRetention(params.persistence,
+                                                            dtSeconds_, refreshHz_));
     if (uScanlines   >= 0) glUniform1f(uScanlines,   params.scanlines);
     if (uBarrel      >= 0) glUniform1f(uBarrel,      params.barrel);
     if (uShadowMask  >= 0) glUniform1i(uShadowMask,  static_cast<int>(params.shadowMask));

@@ -734,6 +734,23 @@ void testEzColor(const std::string& sourceDir)
     assert(!iic.attachEzColor(4));                   // no slots
 }
 
+// coldBoot() is a POWER cycle for the cards too, as the application's is:
+// the bus RESET it used to send kept a 6522's timer latches (power-on is
+// $FFFF, Via6522.h) and a Sound II's SSI263 talking (bug hunt 2026-11-01).
+void testColdBootPowerCyclesTheCards(const std::string& sourceDir)
+{
+    pom2::Core plus;
+    assert(plus.loadRom(sourceDir + "/roms/apple2.rom"));
+    assert(plus.attachMockingboard(2, pom2::MockingboardModel::SoundII));
+    plus.coldBoot();
+    plus.write(0xC206, 0x34);                        // VIA 1: T1 latch low
+    plus.write(0xC207, 0x12);                        // T1 latch high
+    assert(plus.read(0xC206) == 0x34 && plus.read(0xC207) == 0x12);
+    plus.coldBoot();
+    assert(plus.read(0xC206) == 0xFF && plus.read(0xC207) == 0xFF &&
+           "a cold boot left the 6522's timer latch at its pre-power-off value");
+}
+
 // Request 5: the unenhanced //e's ROM on Machine::AppleIIe — the NMOS //e a
 // "65C02 required" check has to be run on.
 void testUnenhancedIIe(const std::string& sourceDir)
@@ -855,6 +872,7 @@ int main()
     testDisplayState(POM2_TEST_SOURCE_DIR);
     testRgbCard(POM2_TEST_SOURCE_DIR);
     testEzColor(POM2_TEST_SOURCE_DIR);
+    testColdBootPowerCyclesTheCards(POM2_TEST_SOURCE_DIR);
     testUnenhancedIIe(POM2_TEST_SOURCE_DIR);
     testIIcPlus(POM2_TEST_SOURCE_DIR);
 

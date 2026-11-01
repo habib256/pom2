@@ -39,6 +39,13 @@
 //    a one-frame flash is a permanent bright halo around the tube while the
 //    user drags.
 //
+// 3. PERSISTENCE IS A PROPERTY OF TIME, NOT OF THE HOST'S PRESENT RATE. The
+//    pass runs once per host present (vsync); `persistence` is what one frame
+//    of the 60/50 Hz machine keeps. Applied raw per pass, a 120 Hz panel
+//    decayed the afterglow twice per emulated frame (0.16 instead of 0.4) and
+//    a 144 Hz one 2.4 times (bug hunt 2026-11-01). Two presents 1/120 s apart
+//    must leave what one present 1/60 s later leaves.
+//
 // Needs a real GL context; exits 77 (ctest SKIP) where none can be made.
 
 #include "CrtEffectStack.h"
@@ -48,7 +55,9 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <vector>
 
@@ -212,6 +221,54 @@ bool checkFirstFramePersistence(pom2::CrtEffectStack& fx)
     return ok;
 }
 
+// ── 3. persistence paced by host time × the machine's refresh ────────────
+// Centre pixel after a white -> black step: one present at dt = 1/60 against
+// two at dt = 1/120 (and 2.4 at 1/144 is the helper's arithmetic).
+int glowAfterStep(pom2::CrtEffectStack& fx, float dt, int blackPresents)
+{
+    pom2::NtscParams p = neutral();
+    p.persistence = 0.4f;
+    fx.setParams(p);
+    fx.setFramePacing(dt, 60.0f);
+    std::vector<uint8_t> white(static_cast<size_t>(560) * 192 * 4, 255);
+    std::vector<uint8_t> black(static_cast<size_t>(560) * 192 * 4, 0);
+    for (size_t i = 3; i < black.size(); i += 4) black[i] = 255;
+    const int dstW = 560, dstH = 384;
+    GLuint out = 0;
+    for (int f = 0; f < 4; ++f) { uploadSrc(white, 560, 192); out = fx.process(gTex, 560, 192, dstW, dstH); }
+    for (int f = 0; f < blackPresents; ++f) { uploadSrc(black, 560, 192); out = fx.process(gTex, 560, 192, dstW, dstH); }
+    return spanOf(readTex(out, dstW, dstH), dstW, dstH, 270, 182, 290, 202).hi;
+}
+
+bool checkPersistencePacing(pom2::CrtEffectStack& fx)
+{
+    bool ok = true;
+    const float r = pom2::crtRetention(0.4f, 1.0f / 144.0f, 60.0f);
+    if (std::fabs(std::pow(r, 2.4f) - 0.4f) > 1e-4f) {
+        std::printf("FAIL crtRetention(0.4, 1/144, 60)^2.4 = %f, not 0.4\n",
+                    double(std::pow(r, 2.4f)));
+        ok = false;
+    }
+    if (pom2::crtRetention(0.0f, 1.0f / 60.0f, 60.0f) != 0.0f ||
+        pom2::crtRetention(0.4f, 0.0f, 60.0f) != 0.0f) {
+        std::printf("FAIL crtRetention must be 0 with no persistence or no time\n");
+        ok = false;
+    }
+    const int at60  = glowAfterStep(fx, 1.0f / 60.0f, 1);
+    const int at120 = glowAfterStep(fx, 1.0f / 120.0f, 2);
+    std::printf("  glow 1/60 s later: 60 Hz present %d, 120 Hz presents %d\n", at60, at120);
+    if (at60 < 90 || at60 > 110) {
+        std::printf("FAIL one 60 Hz present should keep ~0.4 x 255, got %d\n", at60);
+        ok = false;
+    }
+    if (std::abs(at60 - at120) > 3) {
+        std::printf("FAIL the afterglow depends on the host present rate: "
+                    "%d at 60 Hz, %d at 120 Hz\n", at60, at120);
+        ok = false;
+    }
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -247,10 +304,12 @@ int main()
     const bool a = checkMinify(fx);
     std::printf("[2] no phosphor history on a (re)allocation frame\n");
     const bool b = checkFirstFramePersistence(fx);
+    std::printf("[3] persistence follows host time, not the present rate\n");
+    const bool c = checkPersistencePacing(fx);
 
     glfwDestroyWindow(win);
     glfwTerminate();
-    if (!a || !b) { std::printf("crt_glass_resample: FAILED\n"); return 1; }
+    if (!a || !b || !c) { std::printf("crt_glass_resample: FAILED\n"); return 1; }
     std::printf("crt_glass_resample: OK\n");
     return 0;
 }

@@ -235,9 +235,13 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             if (!allowSlots)
                 return { false, "snapshot SLOT sections are rewind-only" };
             // Per-card state. Bound the alloc (nextSection already rejects
-            // len > blob size; cap again so a crafted file can't OOM us — a
-            // real card blob is well under this).
-            constexpr uint32_t kMaxSlotBytes = 1u * 1024u * 1024u;
+            // len > blob size; cap again so a crafted file can't OOM us).
+            // NOT 1 MiB: a Slinky with every page written serialises to
+            // 1 056 801 bytes, and that cap skipped its section and reported
+            // success — main RAM rolled back, the RAM disk did not (bug hunt
+            // 2026-11-01). The largest card blob is that one; 4 MiB leaves
+            // room, and the ring is never fed from a file.
+            constexpr uint32_t kMaxSlotBytes = 4u * 1024u * 1024u;
             if (len > kMaxSlotBytes) { r.skipCurrentSection(); continue; }
             disarmDmaOnce();
             std::vector<uint8_t> buf(len);

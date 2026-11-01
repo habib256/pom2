@@ -312,7 +312,11 @@ public:
         /// (nullptr: the aux array's). Slow paths only.
         virtual uint8_t* ownCell(uint16_t /*phys*/) { return nullptr; }
     };
-    void setAuxSlotPort(AuxSlotPort* port) { auxPort_ = port; refreshAuxSlotPort(); }
+    /// The //e has ONE auxiliary slot, so a card seated here means no
+    /// RamWorks: the aux geometry drops to one bank (keeping bank 0, the one
+    /// the display reads), and setRamWorksBanks() keeps it there while the
+    /// card stays (bug hunt 2026-11-01). Memory.cpp.
+    void setAuxSlotPort(AuxSlotPort* port);
     AuxSlotPort* auxSlotPort() const { return auxPort_; }
     void refreshAuxSlotPort() {
         auxDivert_ = auxPort_ && auxPort_->divertsAux();
@@ -1375,7 +1379,8 @@ private:
     bool accelIoRead(pom2::CpuSocketAccelerator& a, uint16_t addr, uint8_t& v)
     {
         const uint8_t low = static_cast<uint8_t>(addr);
-        const auto r = a.ioRead(low, accelNow(), low == 0x5E ? zipStateByte() : 0);
+        const auto r = a.ioRead(low, accelNow(), low == 0x5E ? zipStateByte() : 0,
+                                videoAccessCycle());
         if (!r.answer) return false;
         if (!r.skipMotherboard) (void)softSwitchAccess(addr, false, 0);
         v = r.value;
