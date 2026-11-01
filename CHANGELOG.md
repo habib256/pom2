@@ -12,6 +12,54 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Z8530 Auto Enables and Local Loopback, and a MAME reset value the datasheet refutes
+
+The two divergences the `z80scc` audit had confirmed by probe but left latent,
+closed by porting `c80d0854` and the loopback half of `ee22203c` — and the
+port ran into a third thing on the way.
+
+**Auto Enables now GATES; it no longer rewrites the enable bits.** [B] AMD
+Am8530H/Am85C30 Technical Manual (1992): *"if Auto Enables is on and the DCD
+pin is HIGH the receiver will be disabled; while the DCD pin is LOW the
+receiver will be enabled. Note, however, that in all modes of operation, the
+Receiver Enable bit must be set before the DCD pin can be used in this
+manner."* Same wording for /CTS and the transmitter. POM2 did what MAME did
+before `c80d0854`: `ctsW`/`dcdW` set WR5 D3 / WR3 D0 themselves, so an enable
+a driver had deliberately cleared came back on its own, and the transmitter
+ran with /CTS inactive. Now `receiveAllowed()` / `transmitAllowed()` qualify
+the software enables with the pins, `resumeTransmit()` releases a held
+character when the pin goes active, and WR3/WR5 are never written by hardware.
+
+**Local Loopback ignores the external RxD pin.** Same manual: *"in Local
+Loopback Mode the internal transmit data is tied to the internal receive data
+and RxD is ignored (except to be echoed out through TxD)."* POM2 accepted an
+external `receiveByte` straight into the FIFO while looping back. Auto Echo is
+the documented exception — there the external line *is* the source.
+
+**And the WR14 hardware-reset value: `0x20`, not MAME's `0x30`.** Table 7-3
+and Figure 2-4 of the same manual clear WR14 bits **4-0** on a hardware reset,
+and bit 4 is Local Loopback. MAME *sets* it. With the loopback rule above in
+force that is not cosmetic: a freshly reset chip would ignore its own RxD pin
+until a driver happened to write WR14 — the receiver would simply be deaf.
+MAME also contradicts itself here, because its *channel* reset clears the same
+bit, which POM2 already mirrored. **`AMONT FAUX`**: the datasheet is grade B,
+an emulator is grade D, and the lower grade does not win. Bits 7-5 are the
+DPLL command field, left unspecified by the table, so MAME's `0x20` stands.
+
+**One porting hazard worth recording.** Upstream's `resume_transmit()` calls
+`tra_complete()`, because MAME splits the transmitter in two — `tra_callback()`
+puts bits on the wire, `tra_complete()` only reloads the shift register. This
+port is byte-granular and folds both into `traComplete`, which *emits* before
+reloading; calling it from `resumeTransmit` sent a stale byte. The reload is
+done directly instead, as `dataWrite` does it.
+
+Three tests, each verified by mutation: the Auto Enables gate in both
+directions (and that the pins never rewrite WR3/WR5), the loopback rule with
+its Auto Echo exception, and the reset value. Two existing tests had pinned
+the old behaviour and were corrected rather than accommodated — one asserted
+`/DCD low turns the receiver on`, which the manual refutes; the other used
+loopback incidentally while feeding the external pin.
+
 ## 2026-11-01 — Z8530: a flow-control write that stopped the transmitter dead
 
 Third parity slice (`docs/audits/parite-z80scc-2026-11-01.md`, 107 citations).

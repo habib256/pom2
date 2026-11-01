@@ -7347,7 +7347,16 @@ had drifted by two months before the parity audit caught it
 | `588eeb33` (the original pin) → `19d729b6` | 2026-08-29 → 10-11 | **Yes**, in full. `19d729b6` is receive-overrun reporting and special receive conditions. |
 | `2071f9aa` | 2026-10-12 | **Yes.** Rx-Int-on-First-Character arms on mode selection (`doWr1`). |
 | `17842be9` | 2026-10-12 | **Partly.** The WR5 fix is taken (a change confined to RTS / DTR / Send Break does not reset the transmitter, `doWr5`). **Not taken**: the per-slot receive-error FIFO that reports parity and framing errors with the character they belong to, and break/abort detection in `write_rx`. |
-| `c80d0854` | 2026-10-14 | **No.** Auto Enables gating the transmitter and receiver, and RR2B reporting no pending interrupt. The audit confirmed the Auto Enables divergence by probe; it is latent today because nothing drives this SCC from outside. |
+| `c80d0854` | 2026-10-14 | **Mostly.** Auto Enables now *gates* the transmitter and receiver (`receiveAllowed` / `transmitAllowed` / `resumeTransmit`) instead of rewriting WR3 D0 / WR5 D3 from the pins. **Not taken**: RR2B reporting no pending interrupt as a channel-B special receive condition. |
+| `ee22203c` | 2026-10-07 | **Yes** (the loopback half, taken late). In Local Loopback the external RxD pin is ignored; Auto Echo is the exception. |
+
+**One deliberate divergence, upward.** The WR14 **hardware**-reset value is
+`0x20` here, not MAME's `0x30`: [B] the Am8530H/Am85C30 Technical Manual
+(AMD, 1992), Table 7-3 and Figure 2-4, clears WR14 bits 4-0 on a hardware
+reset, and bit 4 is Local Loopback. MAME sets it, which would leave a freshly
+reset chip deaf to its own RxD pin — and MAME contradicts itself, since its
+*channel* reset clears the same bit. `AMONT FAUX`, pinned by
+`scc8530_smoke`.
 
 Anything upstream after `c80d0854` is unexamined. When you take another
 upstream fix, add its row — a pin that lists what it does **not** include is

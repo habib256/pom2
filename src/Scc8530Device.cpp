@@ -298,10 +298,23 @@ void Scc8530Device::reset()
     ch_[CHAN_B].wr10 = 0x00;
     ch_[CHAN_A].wr11 = 0x08;
     ch_[CHAN_B].wr11 = 0x08;
+    // [B] Am8530H/Am85C30 Technical Manual (AMD, 1992), Table 7-3 and
+    // Figure 2-4 "SCC Register Reset Values": a HARDWARE reset clears WR14
+    // bits **4-0**. Bit 4 is Local Loopback, so the chip comes up with
+    // loopback OFF. MAME does `m_wr14 &= 0xf0; m_wr14 |= 0x30` — it SETS
+    // bit 4, which the manual says is cleared, and a receiver would then
+    // ignore its own RxD pin until a driver happened to write WR14 (same
+    // manual, "in Local Loopback Mode ... RxD is ignored"). **AMONT FAUX**:
+    // POM2 follows the manual. Corroborated inside this very file: the
+    // CHANNEL reset above already clears D4 (`wr14 &= 0xc3`), so upstream
+    // contradicts itself — a channel reset left loopback off while a
+    // hardware reset turned it on. Bits 7-5 are the DPLL command field and
+    // the table leaves them unspecified at reset; MAME's `0x20` (Enter
+    // Search Mode) is kept for parity, since nothing contradicts it.
     ch_[CHAN_A].wr14 &= 0xf0;
-    ch_[CHAN_A].wr14 |= 0x30;
+    ch_[CHAN_A].wr14 |= 0x20;
     ch_[CHAN_B].wr14 &= 0xf0;
-    ch_[CHAN_B].wr14 |= 0x30;
+    ch_[CHAN_B].wr14 |= 0x20;
 
     wr0PtrBits_ = 0;
 
@@ -892,6 +905,7 @@ void Scc8530Device::doWr3(int index, uint8_t data)
     updateSerial(index);
     // MAME also calls receive_register_reset() here; the byte-granular
     // receiver has no partial state to throw away.
+    resumeTransmit(index);  // [D] z80scc.cpp:2016 @ `c80d0854`
 }
 
 /// MAME `z80scc_channel::do_sccreg_wr4` (z80scc.cpp:1951).
@@ -931,6 +945,7 @@ void Scc8530Device::doWr5(int index, uint8_t data)
         c.txHalfBits = 0;   // safe_transmit_register_reset()
     }
     updateRts(index);       // also updates DTR
+    resumeTransmit(index);  // [D] z80scc.cpp:2067 @ `c80d0854`
     checkDmaRequest(index);
 }
 
@@ -984,6 +999,9 @@ void Scc8530Device::doWr14(int index, uint8_t data)
 
     c.wr14 = data;
     updateSerial(index);
+    // [D] z80scc.cpp:2345-2347 @ `c80d0854`: WR14 carries Local Loopback and
+    // Auto Echo, so it can itself unblock a transmitter held by Auto Enables.
+    resumeTransmit(index);
     if (brgChange)
         updateBaudTimer(index);
 }
@@ -1108,7 +1126,10 @@ void Scc8530Device::dataWrite(int channel, uint8_t data)
     // no longer applies.
     c.txIntDisarm = 0;
 
-    if (c.wr5 & WR5_TX_ENABLE) {
+    // [D] z80scc.cpp:2623 @ `c80d0854`: `transmit_allowed()`, not WR5 D3
+    // alone — under Auto Enables an inactive /CTS holds the byte in the
+    // buffer until `resumeTransmit` picks it up.
+    if (transmitAllowed(index)) {
         if (c.txHalfBits == 0) {    // is_transmit_register_empty()
             c.txShiftData = c.txData[c.txFifoRp];
             c.txHalfBits = frameHalfBits(index);
@@ -1186,11 +1207,23 @@ void Scc8530Device::receiveData(int index, uint8_t data)
 }
 
 /// MAME `z80scc_channel::rcv_callback` + `rcv_complete`
-/// (z80scc.cpp:1286 / 1303): the receiver only shifts while WR3 D0 is set.
+/// (z80scc.cpp:1286 / 1303): the receiver only shifts while it is allowed to.
 void Scc8530Device::receiveByte(int channel, uint8_t data)
 {
-    const int index = channel & 1;
-    if (!(ch_[index].wr3 & WR3_RX_ENABLE))
+    receiveByteFrom(channel & 1, data, /*loopback=*/false);
+}
+
+void Scc8530Device::receiveByteFrom(int index, uint8_t data, bool loopback)
+{
+    const Channel& c = ch_[index];
+    // [D] MAME `write_rx`, z80scc.cpp:3013-3017 @ `ee22203c`: "Local loopback
+    // selects the transmitter output as the receiver input. Changes on the
+    // external RxD pin must not disturb that internal path." Auto Echo is the
+    // exception — there the external line IS the source.
+    if (!loopback &&
+        (c.wr14 & (WR14_AUTO_ECHO | WR14_LOCAL_LOOPBACK)) == WR14_LOCAL_LOOPBACK)
+        return;
+    if (!receiveAllowed(index))
         return;     // MAME logs "Received data bit but receiver is disabled"
     receiveData(index, data);
 }
@@ -1240,17 +1273,67 @@ void Scc8530Device::checkDmaRequest(int index)
 // ─────────────────────────────────────────────────────────────────────────
 
 /// MAME `z80scc_channel::cts_w` (z80scc.cpp:2604).
+/// [D] MAME `z80scc_channel::receive_allowed`, z80scc.cpp:2712-2716
+/// @ `c80d0854`.
+bool Scc8530Device::receiveAllowed(int index) const
+{
+    const Channel& c = ch_[index];
+    return (c.wr3 & WR3_RX_ENABLE) &&
+           (!(c.wr3 & WR3_AUTO_ENABLES) || (c.rr0 & RR0_DCD) ||
+            (c.wr14 & WR14_LOCAL_LOOPBACK));
+}
+
+/// [D] MAME `z80scc_channel::transmit_allowed`, z80scc.cpp:2718-2722
+/// @ `c80d0854`.
+bool Scc8530Device::transmitAllowed(int index) const
+{
+    const Channel& c = ch_[index];
+    return (c.wr5 & WR5_TX_ENABLE) &&
+           (!(c.wr3 & WR3_AUTO_ENABLES) || (c.rr0 & RR0_CTS) ||
+            (c.wr14 & (WR14_LOCAL_LOOPBACK | WR14_AUTO_ECHO)));
+}
+
+/// [D] MAME `z80scc_channel::resume_transmit`, z80scc.cpp:2725-2730
+/// @ `c80d0854`: start sending queued data once the transmitter is enabled
+/// and idle. `txHalfBits == 0` is this port's `is_transmit_register_empty()`.
+///
+/// **It does NOT call `traComplete`, although upstream's calls
+/// `tra_complete()`.** MAME splits the two halves — `tra_callback()` puts the
+/// bits on the wire, `tra_complete()` only reloads the shift register — while
+/// this byte-granular port folds both into `traComplete`, which *emits*
+/// `txShiftData` before reloading. Calling it with an idle shifter would send
+/// a stale byte. So the reload is done here directly, the same way
+/// `dataWrite` does it.
+void Scc8530Device::resumeTransmit(int index)
+{
+    Channel& c = ch_[index];
+    if (!transmitAllowed(index) || (c.wr5 & WR5_SEND_BREAK) || c.txHalfBits != 0)
+        return;
+    if ((c.rr0 & RR0_TX_BUFFER_EMPTY) && c.txFifoRp == c.txFifoWp)
+        return;     // nothing queued
+    c.txShiftData = c.txData[c.txFifoRp];
+    c.txHalfBits  = frameHalfBits(index);
+    txFifoRpStep(index);
+    c.rr1 &= static_cast<uint8_t>(~RR1_ALL_SENT);
+    c.rr0 |= RR0_TX_BUFFER_EMPTY;   // a slot is free again
+    checkDmaRequest(index);
+    if ((c.wr1 & WR1_TX_INT_ENABLE) && c.txIntDisarm == 0)
+        triggerInterrupt(index, INT_TRANSMIT);
+}
+
 void Scc8530Device::ctsW(int channel, bool state)
 {
     const int index = channel & 1;
     Channel& c = ch_[index];
 
     if ((c.rr0 & RR0_CTS) != (state ? 0 : RR0_CTS)) {   // change detection
-        if (!state && (c.wr3 & WR3_AUTO_ENABLES))
-            c.wr5 |= WR5_TX_ENABLE;
-
         if (state) c.rr0 &= static_cast<uint8_t>(~RR0_CTS);
         else       c.rr0 |= RR0_CTS;
+
+        // [D] z80scc.cpp:2740-2744 @ `c80d0854`: in Auto Enables mode /CTS
+        // GATES the transmitter instead of setting WR5 D3. A character
+        // already in the shift register finishes; the next one is held back.
+        resumeTransmit(index);
 
         if (c.extIntLatch == 0 && (c.wr1 & WR1_EXT_INT_ENABLE) && (c.wr15 & WR15_CTS)) {
             triggerInterrupt(index, INT_EXTERNAL);
@@ -1267,9 +1350,11 @@ void Scc8530Device::dcdW(int channel, bool state)
     Channel& c = ch_[index];
 
     if ((c.rr0 & RR0_DCD) != (state ? 0 : RR0_DCD)) {
-        if (!state && (c.wr3 & WR3_AUTO_ENABLES))
-            c.wr3 |= WR3_RX_ENABLE;
-
+        // [D] z80scc.cpp:2770-2776 @ `c80d0854`: /DCD GATES the receiver in
+        // Auto Enables mode instead of setting WR3 D0. Upstream also drops
+        // the character being assembled; POM2 receives whole bytes
+        // (`receiveByte` is the seam), so there is no partial character to
+        // lose — the FIFO is kept either way, as upstream keeps it.
         if (state) c.rr0 &= static_cast<uint8_t>(~RR0_DCD);
         else       c.rr0 |= RR0_DCD;
 
@@ -1498,14 +1583,20 @@ void Scc8530Device::traComplete(int index)
         else if (txCb_) txCb_(index, sent);
 
         if (c.wr14 & WR14_LOCAL_LOOPBACK)
-            receiveByte(index, sent);
+            receiveByteFrom(index, sent, /*loopback=*/true);
 
         if ((c.rr0 & RR0_TX_BUFFER_EMPTY) == 0 || c.txFifoRp != c.txFifoWp) {
-            // Reload the shift register from the transmit buffer.
-            c.txShiftData = c.txData[c.txFifoRp];
-            c.txHalfBits = frameHalfBits(index);
-            txFifoRpStep(index);
-            c.rr0 |= RR0_TX_BUFFER_EMPTY;
+            // [D] z80scc.cpp:1244-1252 @ `c80d0854`: in Auto Enables mode
+            // /CTS going inactive holds back the NEXT character. The test is
+            // NESTED, not folded into the condition above: a held-back
+            // transmitter has data pending, so it must not fall through to
+            // the All Sent / SDLC-underrun branch below.
+            if (transmitAllowed(index)) {
+                c.txShiftData = c.txData[c.txFifoRp];
+                c.txHalfBits = frameHalfBits(index);
+                txFifoRpStep(index);
+                c.rr0 |= RR0_TX_BUFFER_EMPTY;
+            }
         } else {
             c.rr1 |= RR1_ALL_SENT;
             // SDLC (datasheet, not MAME): the transmitter has underrun. If

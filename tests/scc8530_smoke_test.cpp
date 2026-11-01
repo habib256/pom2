@@ -120,14 +120,22 @@ void testHardwareResetValues()
     assert(scc.peekRr(B, 3) == 0x00);
     // WR9 hardware reset: (wr9 & 0x3c) | 0xc0 — z80scc.cpp:508.
     assert(scc.peekWr(A, 9) == 0xC0);
-    // WR11 = 0x08 and WR14 = 0x30 are hardware-only values that a channel
+    // WR11 = 0x08 and WR14 = 0x20 are hardware-only values that a channel
     // reset does not produce — z80scc.cpp:509-515.
     assert(scc.peekWr(A, 11) == 0x08);
     assert(scc.peekWr(B, 11) == 0x08);
-    assert(scc.peekWr(A, 14) == 0x30);
+    // [B] Am8530H/Am85C30 Technical Manual (AMD, 1992) Table 7-3: a hardware
+    // reset clears WR14 bits 4-0. **Bit 4 is Local Loopback, so it comes up
+    // OFF.** MAME sets it (`|= 0x30`) and is wrong — with loopback armed the
+    // receiver ignores its own RxD pin, so a freshly reset chip would be
+    // deaf. AMONT FAUX; POM2 follows the manual. Bits 7-5 are the DPLL
+    // command field, left unspecified by the table, so MAME's `0x20` stands.
+    assert(scc.peekWr(A, 14) == 0x20 &&
+           "WR14 D4 (Local Loopback) is CLEARED by a hardware reset");
+    assert(scc.peekWr(B, 14) == 0x20);
     assert(scc.peekWr(A, 15) == 0xF8);
     assert(!scc.intAsserted());
-    std::printf("  ok: hardware reset values match MAME z80scc.cpp:502 + 1123\n");
+    std::printf("  ok: hardware reset values (AMD Table 7-3; MAME wrong on WR14 D4)\n");
 }
 
 void testRegisterPointerProtocol()
@@ -451,14 +459,60 @@ void testModemPinsAndExtStatusLatch()
     assert((scc1.peekRr(A, 3) & 0x08) == 0);
     assert(!scc1.intAsserted());
 
-    // Auto Enables: /DCD low turns the receiver on, /CTS low the transmitter.
+    // [B] Am8530H/Am85C30 Technical Manual (AMD, 1992) § DCD and § CTS:
+    // "if Auto Enables is on and the DCD pin is HIGH the receiver will be
+    // disabled; while the DCD pin is LOW the receiver will be enabled. Note,
+    // however, that in all modes of operation, the Receiver Enable bit must
+    // be set before the DCD pin can be used in this manner." Same wording
+    // for CTS and the transmitter. So the pins **gate** the software
+    // enables; they do not set them. POM2 used to set WR3 D0 / WR5 D3 from
+    // the pin, as MAME did before `c80d0854` — an enable a driver had
+    // cleared came back on its own. `parite-z80scc-2026-11-01.md`.
     Scc8530Device scc2;
-    writeReg(scc2, A, 3, 0x20);     // WR3 Auto Enables, Rx disabled
-    assert((scc2.peekWr(A, 3) & 0x01) == 0);
-    scc2.dcdW(A, false);
-    assert((scc2.peekWr(A, 3) & 0x01) != 0);    // Rx enabled by DCD
-    scc2.ctsW(A, false);
-    assert((scc2.peekWr(A, 5) & 0x08) != 0);    // Tx enabled by CTS
+    writeReg(scc2, A, 3, 0x20);     // Auto Enables, Rx DISABLED
+    scc2.dcdW(A, false);            // /DCD active
+    assert((scc2.peekWr(A, 3) & 0x01) == 0 &&
+           "an active /DCD must not set the Rx Enable bit by itself");
+    scc2.receiveByte(A, 0x11);
+    assert(scc2.rxFifoCount(A) == 0 && "Rx Enable was never set: nothing is received");
+
+    // With Rx Enable set, the pin gates: inactive /DCD closes the receiver,
+    // active /DCD opens it, and neither touches WR3.
+    writeReg(scc2, A, 3, 0x21);     // Auto Enables + Rx Enable
+    scc2.dcdW(A, true);             // /DCD inactive
+    scc2.receiveByte(A, 0x22);
+    assert(scc2.rxFifoCount(A) == 0 && "inactive /DCD gates the receiver off");
+    scc2.dcdW(A, false);            // /DCD active again
+    scc2.receiveByte(A, 0x33);
+    assert(scc2.rxFifoCount(A) == 1 && scc2.dataRead(A) == 0x33);
+    assert((scc2.peekWr(A, 3) & 0x21) == 0x21 && "the pin never rewrites WR3");
+
+    // Transmitter, same rule: an inactive /CTS holds the character back, and
+    // /CTS going active releases it without WR5 ever being rewritten.
+    Scc8530Device scc2b;
+    scc2b.setPclk(Scc8530Device::kDefaultPclk);
+    const uint16_t tc2 = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+    writeReg(scc2b, A, 4, 0x44);
+    writeReg(scc2b, A, 11, 0x50);
+    writeReg(scc2b, A, 12, static_cast<uint8_t>(tc2 & 0xFF));
+    writeReg(scc2b, A, 13, static_cast<uint8_t>(tc2 >> 8));
+    writeReg(scc2b, A, 14, 0x03);   // BRG on, no loopback, no auto echo
+    writeReg(scc2b, A, 3, 0x20);    // Auto Enables
+    writeReg(scc2b, A, 5, 0x68);    // Tx Enable, 8 bits
+    std::vector<uint8_t> out2;
+    scc2b.setTxCallback([&](int, uint8_t d) { out2.push_back(d); });
+    const uint64_t frame2 = (10ull * Scc8530Device::kDefaultPclk) / 9600ull;
+
+    scc2b.ctsW(A, true);            // /CTS inactive
+    scc2b.dataWrite(A, 0x44);
+    scc2b.tick(3 * frame2);
+    assert(out2.empty() && "an inactive /CTS holds the transmitter under Auto Enables");
+    assert((scc2b.peekWr(A, 5) & 0x08) != 0 && "WR5 D3 was set by the driver, not the pin");
+
+    scc2b.ctsW(A, false);           // /CTS active — resume_transmit()
+    scc2b.tick(2 * frame2);
+    assert(out2.size() == 1 && out2[0] == 0x44 &&
+           "/CTS going active releases the held character");
 
     // /SYNC drives RR0 D4 unless WR11 D7 has claimed the pin for the crystal.
     Scc8530Device scc3;
@@ -888,7 +942,12 @@ void testSnapshotRoundTrip()
     writeReg(scc, A, 11, 0x50);
     writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
     writeReg(scc, A, 13, 0x00);
-    writeReg(scc, A, 14, 0x13);     // local loopback + BRG
+    // BRG only. Local loopback used to be set here incidentally; it cannot
+    // be, because `receiveByte` below is the EXTERNAL pin and local loopback
+    // ignores it ([B] AMD Am8530H manual: "in Local Loopback Mode ... RxD is
+    // ignored"). Nothing in this test is about loopback — it only needs a
+    // populated FIFO and a running BRG.
+    writeReg(scc, A, 14, 0x03);
     writeReg(scc, A, 5, 0x68);
     writeReg(scc, A, 9, 0x09);      // MIE + VIS
     writeReg(scc, A, 2, 0x30);
@@ -1290,6 +1349,54 @@ void testWr1FirstCharModeArmsItself()
     std::printf("  ok: WR1 mode 01 arms its own first character\n");
 }
 
+
+/// [B] Am8530H/Am85C30 Technical Manual (AMD, 1992), Auto Echo and Local
+/// Loopback: "in Local Loopback Mode the internal transmit data is tied to
+/// the internal receive data and **RxD is ignored** (except to be echoed out
+/// through TxD). The CTS and DCD inputs are also ignored as transmit and
+/// receive enables." Upstream enforces it in `write_rx` since `ee22203c`;
+/// POM2 accepted an external byte straight into the FIFO
+/// (`docs/audits/parite-z80scc-2026-11-01.md`). Auto Echo is the exception —
+/// there the external line IS the source.
+void testLocalLoopbackIgnoresTheExternalPin()
+{
+    Scc8530Device scc;
+    scc.setPclk(Scc8530Device::kDefaultPclk);
+    const uint16_t tc = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+    writeReg(scc, A, 4, 0x44);
+    writeReg(scc, A, 3, 0xC1);      // Rx enable, 8 bits
+    writeReg(scc, A, 11, 0x50);
+    writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
+    writeReg(scc, A, 13, static_cast<uint8_t>(tc >> 8));
+    writeReg(scc, A, 5, 0x68);
+
+    // No loopback yet: the external pin feeds the receiver.
+    writeReg(scc, A, 14, 0x03);
+    scc.receiveByte(A, 0x11);
+    assert(scc.rxFifoCount(A) == 1 && scc.dataRead(A) == 0x11);
+
+    // Local loopback on: the external pin is ignored...
+    writeReg(scc, A, 14, 0x13);
+    scc.receiveByte(A, 0x22);
+    assert(scc.rxFifoCount(A) == 0 &&
+           "local loopback ignores RxD; the external byte must be dropped");
+
+    // ...while the internal path still delivers the transmitter's own byte.
+    const uint64_t frameCycles = (10ull * Scc8530Device::kDefaultPclk) / 9600ull;
+    scc.dataWrite(A, 0x33);
+    scc.tick(2 * frameCycles);
+    assert(scc.rxFifoCount(A) == 1 && scc.dataRead(A) == 0x33 &&
+           "the internal transmit-to-receive path is unaffected");
+
+    // Auto Echo (D3) alongside loopback: the external line is the source
+    // again, so the byte gets through.
+    writeReg(scc, A, 14, 0x1B);
+    scc.receiveByte(A, 0x44);
+    assert(scc.rxFifoCount(A) == 1 && scc.dataRead(A) == 0x44 &&
+           "Auto Echo takes its data from the external pin");
+    std::printf("  ok: local loopback ignores the external RxD pin\n");
+}
+
 int main()
 {
     testHardwareResetValues();
@@ -1320,6 +1427,7 @@ int main()
     testSnapshotV3FifoRestores();
     testWr5PinOnlyChangeKeepsTransmitting();
     testWr1FirstCharModeArmsItself();
+    testLocalLoopbackIgnoresTheExternalPin();
     std::printf("OK scc8530_smoke\n");
     return 0;
 }

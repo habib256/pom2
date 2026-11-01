@@ -400,6 +400,22 @@ private:
     void setRts(int index, int state);                ///< z80scc.cpp:1346
     void setDtr(int index, int state);                ///< z80scc.cpp:2967
     void traComplete(int index);                      ///< z80scc.cpp:1218
+    /// [D] MAME `receive_allowed` / `transmit_allowed` / `resume_transmit`,
+    /// z80scc.cpp:2706-2730 @ `c80d0854`. WR3 Auto Enables qualifies the
+    /// software enables with the active-low modem pins — Zilog: "/CTS becomes
+    /// the transmitter enable and /DCD becomes the receiver enable when this
+    /// bit is set to 1. However, the Receiver Enable and Transmit Enable bits
+    /// must be set before the /DCD and /CTS pins can be used in this manner."
+    /// /DCD is ignored in Local Loopback, /CTS in both Auto Echo and Local
+    /// Loopback. Before `c80d0854` upstream *rewrote* WR3/WR5 from `cts_w` /
+    /// `dcd_w`, which POM2 ported: the enable bit a driver had cleared came
+    /// back on its own, and the transmitter ran with /CTS inactive.
+    bool receiveAllowed(int index) const;
+    bool transmitAllowed(int index) const;
+    void resumeTransmit(int index);
+    /// `receiveByte`'s inner form. `loopback` marks the byte as coming from
+    /// this channel's own transmitter rather than the external pin.
+    void receiveByteFrom(int index, uint8_t data, bool loopback);
     /// SDLC (datasheet, not MAME): close the frame in flight and hand it
     /// over. Called from the transmit underrun.
     void closeTxFrame(int index);
