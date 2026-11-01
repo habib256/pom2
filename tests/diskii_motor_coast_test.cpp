@@ -39,6 +39,7 @@
 #include "ResourcePaths.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -266,6 +267,47 @@ int main()
             c->deviceSelectRead(0x8);
             assert(c->isMotorOn() && "a Disk II has no IWM mode register");
         }
+    }
+
+    // 7b. The platter resumes where it stopped. [D] MAME `bc9aec5a`
+    //     (2026-10-03, "Resume the disk at its stopped angular position when
+    //     the motor restarts"); until then upstream — and POM2 — re-anchored
+    //     the revolution on the motor-on instant, so every spin-up read the
+    //     disk at angular ZERO: a platter teleporting to index. Observable as
+    //     a deterministic first sector after any motor restart.
+    //     `docs/audits/parite-floppy-2026-11-01.md`, constat 1.
+    {
+        // Bit-level LSS: that is the path where motor-on runs `lssStart()`
+        // and anchors the revolution, so `getFluxPosition` reports an angle.
+        // (The legacy gate never anchors and reads 0 throughout.)
+        auto c = std::make_unique<DiskIICard>();
+        assert(c->loadBootRom(pom2test::diskIIRomPath("disk2.rom")));
+        assert(c->loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"), /*selectBitLss=*/true));
+        c->setIwmHost(false);
+        c->setWriteBackEnabled(false);
+        assert(c->insertDisk(dsk.string()));
+        assert(c->usingBitLss());
+        c->deviceSelectRead(0x9); c->advanceCycles(300'000);  // spinning, mid-track
+        c->deviceSelectRead(0x8);                             // motor-off: the 556 coasts
+        // Walk the coast one cycle at a time and keep the last angle read
+        // while the spindle still turned: that is where the platter stopped.
+        int stoppedAt = -1;
+        for (int i = 0; i < 1'300'000 && c->isMotorOn(); ++i) {
+            stoppedAt = c->getFluxPosition(0);
+            c->advanceCycles(1);
+        }
+        assert(!c->isMotorOn() && "the 556 coast must have ended");
+        assert(stoppedAt > 0 && "the angle was readable while it turned");
+        assert(c->getFluxPosition(0) == 0 && "stopped: no anchor, position reads 0");
+
+        c->deviceSelectRead(0x9); c->advanceCycles(100);      // restart, 100 cycles = 200 LSS
+        const int resumed = c->getFluxPosition(0);
+        // Old model: ~200 (index + 100 cycles). New: the stopped angle + 200.
+        // The stop is captured within one cycle of `stoppedAt`, hence ±4.
+        const int expected = stoppedAt + 200;
+        assert(std::abs(resumed - expected) <= 4 &&
+               "the platter resumes at the angle where it stopped, not at index");
+        assert(resumed > 1000 && "and certainly not back at index");
     }
 
     // 8. A CPU SLOWER than the bus (a FASTChip at 0.2 MHz: ratio 5 bus ticks

@@ -122,8 +122,18 @@ void DiskIICard::stopSpindle()
         // MAME `floppy_image_device::mon_w(true)`: when the
         // controller actually stops driving the spindle, the
         // drive's revolution timestamp becomes `attotime::never`.
-        // POM2's equivalent: clear the anchor so a subsequent
-        // motor-on event re-zeros it from the new spin-up.
+        // POM2's equivalent: clear the anchor — after remembering
+        // WHERE the platter stopped ([D] MAME `bc9aec5a`, 2026-10-03):
+        // a spindle resumes where it stopped, it does not snap back
+        // to index. `docs/audits/parite-floppy-2026-11-01.md`.
+        if (revolutionStartLssCycle[activeDrive] != kNeverRev) {
+            const int period =
+                images[activeDrive].trackPeriod(headQuarterTrack[activeDrive]);
+            stoppedPosition[activeDrive] = period > 0
+                ? static_cast<int64_t>((lssCycle - static_cast<uint64_t>(
+                      revolutionStartLssCycle[activeDrive])) % static_cast<uint64_t>(period))
+                : 0;
+        }
         revolutionStartLssCycle[activeDrive] = kNeverRev;
     }
     if (sound_) sound_->motor(false, images[activeDrive].isLoaded());

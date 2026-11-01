@@ -74,13 +74,32 @@ matériel ne l'est pas, et une protection qui mesure la rotation à travers un
 arrêt moteur voit une valeur impossible. Je n'ai pas identifié de titre du
 corpus qui le fasse — d'où la gravité MINEURE et la portée PLAUSIBLE.
 
-**Correction suggérée (non appliquée).** Mémoriser
-`(lssCycle - revolutionStartLssCycle[d]) mod period` à l'arrêt du moteur, et
-re-ancrer `revolutionStartLssCycle[d] = lssCycle - stoppedPosition` au
-démarrage. **Pas appliqué délibérément** : c'est la partie la plus sensible du
-chronométrage de POM2 (le corpus DIX, `diskii_lss_smoke`, le boot DOS 3.3 et
-l'autosave en dépendent), la portée réelle est inconnue, et le gain est de la
-fidélité théorique. À faire avec un titre qui le démontre, ou pas du tout.
+**Corrigé le même jour** (`stoppedPosition[d]`, capturé à l'arrêt du moteur
+dans `DiskIICard_Cycles.cpp`, consommé par `lssStart` / `selectDrive`, remis à
+zéro au reset comme `device_reset` amont, sauvegardé dans l'instantané D2S1).
+Épinglé par `diskii_motor_coast` § 7b, vérifié par mutation : le modèle à
+l'index donne ~200 cycles LSS après redémarrage, le modèle corrigé donne
+l'angle d'arrêt + 200.
+
+**Ce que le portage a appris en chemin — deux choses, aucune n'était le
+constat.**
+
+1. *Le test `iic_printer_port` a cassé, et ce n'était pas le //c.* Son
+   critère « PC gelé » comparait le PC à deux instants fixes ; une machine
+   inactive est dans la boucle clavier (`$FD20`) aux deux, et le décalage de
+   quelques cycles du planning DOS après `PR#1` a suffi à faire coïncider les
+   deux échantillons — pendant que `HI` arrivait bien à l'imprimante. Le
+   boot //c n'a jamais été en cause. L'heuristique est remplacée par
+   l'observable (le spool), et le rapport précédent de ce fichier, qui parlait
+   d'une « dépendance à l'alignement sur l'index », était faux : il décrivait
+   un artefact de test.
+2. *`DiskIICard_Session.cpp` portait `size_t pos = 83;`* — la taille de
+   l'en-tête fixe D2S1 recopiée en littéral. Ajouter 16 octets d'état a fait
+   pointer ce décalage au milieu du corps et refusé toute restauration de
+   session (« invalid or unsupported session Disk II state »). La taille est
+   maintenant `DiskIICard::kSnapFixedBytes`, dérivée de la même somme que le
+   lecteur. C'est un bug latent indépendant du constat : n'importe quel champ
+   ajouté l'aurait déclenché.
 
 ## Piste ouverte, non instruite
 
@@ -98,13 +117,14 @@ premier endroit à regarder si quelqu'un reprend cette tranche.
   et **OK (rev X)** contre leur propre époque — voir le tableau. Aucune
   INEXACTE : ce que les commentaires affirment est exact, c'est leur adresse
   qui ne l'est pas.
-- **Constats** : CRITIQUE 0 · MAJEUR 0 · MINEUR 1 (position angulaire) ·
-  AMONT FAUX 0.
+- **Constats** : CRITIQUE 0 · MAJEUR 0 · MINEUR 1 (position angulaire,
+  **corrigé**) · AMONT FAUX 0 · plus un défaut latent hors périmètre trouvé en
+  corrigeant (le `83` littéral de `DiskIICard_Session.cpp`, corrigé).
 - **Révision de référence** : `master` = `6272d014` (2026-11-01), faute de pin
   et faute de repère commun à `mame0287`.
 - **Non vérifié** :
   - `b523fac5` (capteur WPT pendant un changement de disquette), ci-dessus ;
   - les écritures de flux par lots (`c690a9ed`) au-delà des citations, déjà
     portées mais non re-vérifiées ligne à ligne ;
-  - aucune sonde exécutée dans cette tranche : les deux constats sont lus,
-    pas mesurés. C'est en-dessous du standard des tranches 1 à 8.
+  - le constat 1 a été mesuré après coup par le test § 7b ; `b523fac5`
+    (capteur WPT pendant un changement de disquette) reste lu, non mesuré.

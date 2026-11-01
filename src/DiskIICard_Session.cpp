@@ -47,7 +47,7 @@ bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& erro
     appendSnapshotState(runtime);
     // D2S1 v4's fixed controller header is followed by two optional nibble
     // captures. Bind their path hashes to the private session medium name.
-    size_t pos = 83;
+    size_t pos = kSnapFixedBytes;   // never a literal: see the header
     uint64_t identity = 14695981039346656037ULL;
     for (unsigned char c : std::string("(session disk)")) { identity ^= c; identity *= 1099511628211ULL; }
     for (int d = 0; d < kDriveCount; ++d) {

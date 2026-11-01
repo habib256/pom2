@@ -240,11 +240,13 @@ int testIIcPrintsThroughPR1(const char* tag, const std::string& romPath,
     }
 
     typeLine("PRINT \"HI\"\r");
-    if (cpu.getProgramCounter() == pcAfterPr) {
-        std::printf("FAIL [%s]: PC frozen at $%04X across two commands\n",
-                    tag, pcAfterPr);
-        return 1;
-    }
+    // No "PC frozen" heuristic here any more. It sampled the PC at two fixed
+    // instants and called equality a hang — but an idle machine sits in the
+    // keyboard loop ($FD20) at BOTH instants once the command has run, so the
+    // check tripped on 2026-11-01 when a Disk II timing change shifted DOS's
+    // post-PR#1 schedule by a few cycles, while "HI" had reached the printer.
+    // The spool below is the observable; `pcAfterPr` stays for the message.
+    (void)pcAfterPr;
 
     std::vector<uint8_t> spooled;
     tap->drainPrinterSpoolFrom(0, spooled);

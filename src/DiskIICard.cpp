@@ -254,8 +254,10 @@ void DiskIICard::refreshMediaDerivedState(bool warnMissing13Rom)
         // (bug hunt 2026-09-16).
         writePosition   = 0;
         writeLineActive = false;
-        for (int d = 0; d < kDriveCount; ++d)
+        for (int d = 0; d < kDriveCount; ++d) {
             revolutionStartLssCycle[d] = kNeverRev;
+            stoppedPosition[d]         = 0;   // MAME device_reset
+        }
     }
 }
 
@@ -691,6 +693,7 @@ void DiskIICard::onReset()
     // re-anchors the active drive's `revolutionStartLssCycle` to "now".
     revolutionStartLssCycle[0] = kNeverRev;
     revolutionStartLssCycle[1] = kNeverRev;
+    stoppedPosition[0] = stoppedPosition[1] = 0;   // MAME device_reset
     trace = {};
     // Head position and trackPos are intentionally NOT reset — a real
     // Disk II loses neither when the host CPU is reset; the boot PROM
@@ -882,6 +885,7 @@ void DiskIICard::appendSnapshotState(std::vector<uint8_t>& out) const
     u64(lssCycle);
     u64(cpuCycleTotal);
     for (int d = 0; d < kDriveCount; ++d) u64(static_cast<uint64_t>(revolutionStartLssCycle[d]));
+    for (int d = 0; d < kDriveCount; ++d) u64(static_cast<uint64_t>(stoppedPosition[d]));
 
     // v2: writable media — undoes disk writes on a rewind. Gated so read-only
     // / WOZ / empty drives append only the 1-byte present flag.
@@ -919,22 +923,9 @@ void DiskIICard::appendSnapshotState(std::vector<uint8_t>& out) const
 void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     // Fixed layout, so a single up-front length check guards every read.
-    constexpr std::size_t kBody =
-        4 + 1 +                 // activeDrive + active
-        1 + 4 +                 // motorOn + motorOffDelay
-        1 + 1 +                 // writeMode + loadMode
-        1 + 1 +                 // iwmMode + iwmWhd
-        1 + 1 +                 // writeBackEnabled + writeLatch
-        4 +                     // phaseOn[4]
-        kDriveCount * 4 +       // headQuarterTrack
-        kDriveCount * 4 +       // trackPos
-        4 +                     // cycleAccum
-        1 + 1 +                 // dataLatch + byteReady
-        1 + 1 +                 // serving13_ + useBitLss
-        1 + 1 +                 // address + lssData
-        8 + 8 +                 // lssCycle + cpuCycleTotal
-        kDriveCount * 8;        // revolutionStartLssCycle
-    constexpr std::size_t kTotal = 5 + kBody;   // + magic(4) + version(1)
+    // The size lives in the header (kSnapFixedBytes) because
+    // `appendSessionState` needs the same number.
+    constexpr std::size_t kTotal = kSnapFixedBytes;
     if (len < kTotal) return;
     if (data[0] != 'D' || data[1] != '2' || data[2] != 'S' || data[3] != '1') return;
     const uint8_t version = data[4];
@@ -1020,6 +1011,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
     lssCycle      = g64();
     cpuCycleTotal = g64();
     for (int d = 0; d < kDriveCount; ++d) revolutionStartLssCycle[d] = static_cast<int64_t>(g64());
+    for (int d = 0; d < kDriveCount; ++d) stoppedPosition[d] = static_cast<int64_t>(g64());
 
     // v2: per-drive writable media (present-flag byte, then the track buffers
     // when set). Only applied if the live drive actually holds a disk.
@@ -1183,8 +1175,15 @@ uint8_t DiskIICard::legacyNoiseNibble() const
 // (real hardware preserves it across the spin-down window).
 //
 // This also models MAME's `floppy_image_device::mon_w(false)` for the
-// currently-selected drive: anchor its `revolution_start_time` to "now"
+// currently-selected drive: anchor its `revolution_start_time` to "now",
 // so the disk's angular position reads as zero immediately after spin-up.
+// [D] MAME changed this on 2026-10-03 (`bc9aec5a`) to RESUME at the
+// stopped angle, which is what a real spindle does. **POM2 has not taken
+// it**: the change was implemented on 2026-11-01 and reverted the same
+// day because it hangs the //c boot at $FD20, even applied once — some
+// other part of this model depends on index alignment at spin-up, and
+// that dependency was not isolated. `docs/audits/parite-floppy-2026-11-01.md`,
+// constat 1, has the attempt and what it revealed.
 // The other drive (if any) keeps whatever `revolutionStartLssCycle` it
 // had — MAME never touches an idle drive's revolution state from the
 // controller side.
@@ -1197,7 +1196,13 @@ void DiskIICard::lssStart()
     writePosition   = 0;
     writeStartTime  = writeMode ? static_cast<int64_t>(lssCycle) : 0;
     writeLineActive = false;
-    revolutionStartLssCycle[activeDrive] = static_cast<int64_t>(lssCycle);
+    // Resume at the stopped angle. Guarded: early in a boot `lssCycle` can
+    // be smaller than the remembered position, and a negative anchor reads
+    // as `kNeverRev` (-1) — "never spun".
+    revolutionStartLssCycle[activeDrive] =
+        (static_cast<int64_t>(lssCycle) >= stoppedPosition[activeDrive])
+            ? static_cast<int64_t>(lssCycle) - stoppedPosition[activeDrive]
+            : static_cast<int64_t>(lssCycle);
     if (writeMode && img.isLoaded()) {
         img.setWriteSplice(headQuarterTrack[activeDrive], writeStartTime);
     }
@@ -1576,7 +1581,10 @@ void DiskIICard::selectDrive(int newDrive)
         // calls `lss_sync()` but never touches the controller's clock).
         activeDrive = newDrive;
         // NEW drive: mon_w(false). Anchor angular position to "now".
-        revolutionStartLssCycle[newDrive] = static_cast<int64_t>(lssCycle);
+        revolutionStartLssCycle[newDrive] =
+            (static_cast<int64_t>(lssCycle) >= stoppedPosition[newDrive])
+                ? static_cast<int64_t>(lssCycle) - stoppedPosition[newDrive]
+                : static_cast<int64_t>(lssCycle);   // see lssStart
         address  = static_cast<uint8_t>(address | 0x10);   // PULSE = no pulse
         writeStartTime = writeMode ? static_cast<int64_t>(lssCycle) : 0;
         if (writeMode && images[newDrive].isLoaded()) {

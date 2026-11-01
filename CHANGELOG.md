@@ -12,6 +12,41 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — The platter resumes where it stopped; a test that cried "hang"; a literal 83
+
+`floppy.cpp` parity slice (24 citations, dated across the file's 190 upstream
+revisions: **eight epochs, two of them in July 2023**, none landing on
+`mame0287`). One behavioural finding, and two things learned by fixing it.
+
+**A Disk II platter now resumes at the angle where it stopped.** [D] MAME
+`bc9aec5a` (2026-10-03, "Resume the disk at its stopped angular position when
+the motor restarts"). Until then upstream re-anchored the revolution on the
+motor-on instant, and POM2 ported that faithfully — `lssStart` said so: *"so
+the disk's angular position reads as zero immediately after spin-up"*. A
+spindle that stops does not snap back to index; POM2's did, which made the
+first sector after any motor restart deterministic where the hardware's is
+not. `stoppedPosition[d]` is captured when the 556/IWM coast ends, consumed
+by `lssStart` and `selectDrive` (guarded: a negative anchor is `kNeverRev`),
+zeroed on reset like upstream's `device_reset`, and part of the D2S1 snapshot.
+Pinned by `diskii_motor_coast` § 7b, verified by mutation.
+
+**The //c did not hang; a test heuristic did.** `iic_printer_port` compared the
+PC at two fixed instants and called equality a freeze. An idle machine is in
+the keyboard loop (`$FD20`) at both instants once a command has run, and the
+few-cycle shift in DOS's post-`PR#1` schedule made both samples land there —
+while `HI` had reached the printer spool, which the very next assertion
+checks. The heuristic is gone; the spool is the observable. Recorded because
+the first reading of that failure was "some other part of the model depends on
+index alignment", which was wrong, and nearly cost the fix.
+
+**`DiskIICard_Session.cpp` carried `size_t pos = 83;`** — the D2S1 fixed-header
+size retyped as a literal, pointing at the optional nibble captures. Adding
+16 bytes of state moved the target and every session restore failed its
+byte-identical round-trip ("invalid or unsupported session Disk II state").
+The size is now `DiskIICard::kSnapFixedBytes`, the one sum both the reader
+and the session writer use. Any added field would have tripped it; this one
+happened to be first.
+
 ## 2026-11-01 — ImageWriter: five power-on defaults, all inherited from the reference and all wrong
 
 `imagewriter` parity slice. The citations were almost clean (22 of 24 exact

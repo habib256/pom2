@@ -447,6 +447,28 @@ public:
     // mounted media and the boot/P6 PROMs are NOT captured — they're
     // reconstructed identically on the restored machine. See DiskIICard.cpp.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
+    /// Size of the D2S1 FIXED header (magic + version + the scalar body),
+    /// before the optional per-drive nibble captures. `appendSessionState`
+    /// used to carry it as a literal `83`, which silently pointed into the
+    /// middle of the body the day a field was added — that is how adding
+    /// it, never retype it.
+    static constexpr std::size_t kSnapFixedBytes =
+        5 +                     // magic(4) + version(1)
+        4 + 1 +                 // activeDrive + active
+        1 + 4 +                 // motorOn + motorOffDelay
+        1 + 1 +                 // writeMode + loadMode
+        1 + 1 +                 // iwmMode + iwmWhd
+        1 + 1 +                 // writeBackEnabled + writeLatch
+        4 +                     // phaseOn[4]
+        kDriveCount * 4 +       // headQuarterTrack
+        kDriveCount * 4 +       // trackPos
+        4 +                     // cycleAccum
+        1 + 1 +                 // dataLatch + byteReady
+        1 + 1 +                 // serving13_ + useBitLss
+        1 + 1 +                 // address + lssData
+        8 + 8 +                 // lssCycle + cpuCycleTotal
+        kDriveCount * 8 +       // revolutionStartLssCycle
+        kDriveCount * 8;        // stoppedPosition
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
 
 private:
@@ -690,6 +712,17 @@ private:
     // the angular-position computation.
     static constexpr int64_t kNeverRev = -1;
     int64_t revolutionStartLssCycle[kDriveCount] = { kNeverRev, kNeverRev };
+
+    /// [D] MAME `floppy_image_device::m_stopped_position`, added by
+    /// `bc9aec5a` (2026-10-03, "Resume the disk at its stopped angular
+    /// position when the motor restarts"). Until then upstream re-anchored
+    /// the revolution on the motor-on instant, and POM2 ported that: the
+    /// disk TELEPORTED to angular zero on every spin-up, which no spindle
+    /// does. Per drive, like the anchor; captured when the motor stops,
+    /// consumed when it starts, zeroed by a reset (upstream `device_reset`).
+    /// `docs/audits/parite-floppy-2026-11-01.md`, constat 1.
+    int64_t stoppedPosition[kDriveCount] = { 0, 0 };
+
 
     // MAME `write_buffer[32]` — flux event timestamps (LSS cycles)
     // captured from WRITE_DATA edge transitions during the active write
