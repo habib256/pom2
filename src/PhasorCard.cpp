@@ -128,7 +128,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
 
     /// Two-pole 20 Hz Butterworth high-pass per side (`ay::DcBlocker`,
     /// shared with the Mockingboard since 2026-08-02) — MAME's per-speaker
-    /// filter (`src/emu/audio_effects/filter.cpp:39-44`), and MAME really
+    /// filter ([D] `src/emu/audio_effects/filter.cpp:39-44` @ a2b6ba2d,
+    /// `:37-42` @ mame0287), and MAME really
     /// does put one on each of the Phasor's two speakers.
     /// Implementation in AyPsgSynth.h.
     pom2::ay::DcBlocker dcL;
@@ -892,10 +893,17 @@ void PhasorCard::onViaPortBChange(int viaIdx)
     const uint8_t pb = v.readPortB();
 
     // PB2 directly drives BOTH AY /RESET pins, independently of mode and
-    // chip select. AppleWin 6c579da5bd94 Mockingboard.cpp:253,331-335 and
-    // GH#1197 document the hardware correction to MAME's native-only reset
-    // of the secondary chip. In compatibility mode it is hidden, not immune
-    // to reset: otherwise its old tone returns when native mode is restored.
+    // chip select.
+    // [A] (by report) a real Phasor under mb-audit: /RESET resets both AYs
+    //     of a 6522 whatever the mode and the selects (AppleWin GH#1197; the
+    //     raw capture is not in the issue).
+    // [D] AppleWin Mockingboard.cpp:253, :331-335 @ 6c579da5 — the same.
+    //     MAME a2mockingboard.cpp:474-483, :519-532 @ a2b6ba2d is WRONG
+    //     (AMONT FAUX, audit parite-queue-audio 2026-11-01): in compatible
+    //     mode VIA2's PB2 resets m_ay2, which VIA1 drives, and leaves m_ay3
+    //     — the chip VIA2 actually plays — running. Do not align on it.
+    // In compatibility mode the second chip is hidden, not immune to reset:
+    // otherwise its old tone returns when native mode is restored.
     if ((pb & pom2::Ay3_8910::kPbBitReset) == 0) {
         // Stamp only the FALLING edge, exactly as MockingboardCard's
         // ResetOnly branch does with `ayResetHeld_`. `onViaPortBChange` runs

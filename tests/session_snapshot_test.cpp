@@ -14,6 +14,7 @@
 #include "TestTempPath.h"
 #include "ByteIO.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
@@ -524,7 +525,22 @@ void writableWozSessions()
         const int64_t ticks[] = {16, 32, 48};
         f.disk->driveImage(0).writeFlux(qt, 0, 64, 3, ticks, 0);
         pom2::SessionArchive saved, again;
-        const auto expected = f.disk->driveImage(0).fluxEvents(qt);
+        // On a FLUX track the window, starting at 0, overwrites the
+        // transition at angular position 0 — and a FLUX stream must CLOSE on
+        // a transition ([B] WOZ 2.1 TRKS: every byte is one, the last
+        // included), so the saved track comes back rotated onto its first
+        // remaining transition (woz_writeback_smoke::
+        // testFluxStreamEndsOnTransition pins it). Rotate the expectation
+        // the same way: the surface is a loop and no Apple drive has an
+        // index sensor, so the guest cannot tell. A bit-cell track keeps
+        // its origin and round-trips as is.
+        auto expected = f.disk->driveImage(0).fluxEvents(qt);
+        if (flux && !expected.empty() && expected.front() != 0) {
+            const int period = f.disk->driveImage(0).trackPeriod(qt);
+            const int shift = expected.front();
+            for (auto& e : expected) e = (e - shift + period) % period;
+            std::sort(expected.begin(), expected.end());
+        }
         assert(pom2::captureSession(saved, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
         assert(f.disk->driveImage(0).hasUnsavedChanges());
         f.disk->driveImage(0).eject();
@@ -533,7 +549,14 @@ void writableWozSessions()
             std::fprintf(stderr, "writable WOZ: %s\n", f.error.c_str()); assert(false);
         }
         assert(!f.disk->driveImage(0).isWriteProtected());
-        assert(f.disk->driveImage(0).fluxEvents(qt) == expected);
+        if (f.disk->driveImage(0).fluxEvents(qt) != expected) {
+            std::fprintf(stderr, "writable WOZ flux=%d period=%d\n  expected:", int(flux), f.disk->driveImage(0).trackPeriod(qt));
+            for (int e : expected) std::fprintf(stderr, " %d", e);
+            std::fprintf(stderr, "\n  got:     ");
+            for (int e : f.disk->driveImage(0).fluxEvents(qt)) std::fprintf(stderr, " %d", e);
+            std::fprintf(stderr, "\n");
+            assert(false);
+        }
         assert(pom2::captureSession(again, state.cpu(), state.memory(), f.ctrl.machineId(), f.error));
         Blob a, b; assert(pom2::encodeSessionArchive(saved, a, f.error));
         assert(pom2::encodeSessionArchive(again, b, f.error) && a == b);

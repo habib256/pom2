@@ -129,8 +129,8 @@ private:
     static constexpr size_t kMaxEvents    = 16384;     // ~750 ms at 22 kHz toggles
     // 4× oversampling × 64-tap Blackman-windowed sinc.
     // RATE_MULTIPLIER must divide FILTER_LENGTH evenly.
-    static constexpr int    kRateMultiplier = 4;       // MAME `spkrdev.cpp:74`
-    static constexpr int    kFilterLength   = 64;      // MAME `spkrdev_h.txt:28`
+    static constexpr int    kRateMultiplier = 4;       // [D] MAME spkrdev.cpp:85 @ a2b6ba2d
+    static constexpr int    kFilterLength   = 64;      // [D] MAME spkrdev.h:39 @ a2b6ba2d
 
     mutable std::mutex   eventMutex;
     std::deque<uint64_t> events;

@@ -285,8 +285,12 @@ decrement) the Z80 re-derives **X/Y from the rewound PC's high byte** (the
 LDIR/CPIR rule), **H from B's low nibble** when carry is set, and **P/V from
 the parity of B±1 (or B) xored against the incoming P/V** — plus `WZ = PC+1`.
 MAME calls this `block_io_interrupted_flags()` (`z80.cpp:580-604`, invoked by
-the inir/otir/indr/otdr macros in `z80.lst:769-880`). POM2 used the
-non-repeating formula for all eight opcodes.
+the inir/otir/indr/otdr macros in `z80.lst:769-880`) — **except the `WZ =
+PC + 1` term**: [A] Visual Z80 (transistor-level die simulation, via
+hoglet67/Z80Decoder#2) is the evidence for it, MAME added it in
+`580447173e` (2023-12-03) and **lost it again** in `0c42667cf0` (2024-06-03);
+POM2 keeps it (AMONT FAUX, audit `parite-queue-storage-bus-cpu`). POM2 used
+the non-repeating formula for all eight opcodes.
 
 **zexdoc/zexall are structurally blind to this**: they run under CP/M and never
 execute an I/O block instruction, so both stayed 100 % green while all four
@@ -2514,10 +2518,16 @@ pass, reset tests included.
 * **Ports are read from the pins.** Port changes are detected on, and
   handed over as, `readPortB()` / `readPortA()` (MAME `output_pb()` =
   `(out & ddr) | ~ddr`), so an undriven PB2 (the AY's /RESET) floats high
-  and a DDR write that moves a pin is an edge. An ORB store is reported
-  whenever DDRB is non-zero, changed or not (2026-10-03, MAME
-  `6522via.cpp:847-853`): a held AY WRITE must re-strobe R13. The Phasor's
-  active-low chip selects PB3/PB4 follow the same rule.
+  and a DDR write that moves a pin is an edge. **An ORB store is reported
+  only when a pin moves** — a same-value store is invisible to the AY
+  (R6522 pin logic; AppleWin GH#320, measured on a real Mockingboard), so
+  a held WRITE does NOT re-strobe R13. POM2 followed MAME
+  `6522via.cpp:847-853`'s every-store dispatch from 2026-10-03 to
+  2026-11-01; that is an AMONT FAUX (audit `parite-queue-audio`), pinned
+  the right way round by `mockingboard_bus_edges`. What the AY does when
+  PA changes under a *held* WRITE is an admitted unknown (`Ay3_8910.h`,
+  `[F]`). The Phasor's active-low chip selects PB3/PB4 follow the same
+  pin-edge rule.
 * **`$C0(8+n)X` is the floating bus** — MAME's ayboard base ends
   `read_c0nx` on `return get_open_bus();`, and AppleWin agrees — on the
   Mockingboard and the Phasor.
@@ -2547,7 +2557,7 @@ Sweet Microsystems: two 6522 VIAs each driving an AY-3-8910. No ROM
 — VIAs decoded in slot ROM window (`$Cn00-$Cn0F` VIA#1,
 `$Cn80-$Cn8F` VIA#2) via `slotRomWrite`.
 
-VIA → AY (Sweet, AppleWin `Mockingboard.cpp:193`):
+VIA → AY (Sweet; [D] AppleWin `Mockingboard.cpp:350-353`, `:253` @ 6c579da5):
 ```
 Port A       → AY data bus (D0..D7)
 Port B bit 0 → AY BC1

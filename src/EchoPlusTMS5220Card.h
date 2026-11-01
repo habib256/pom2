@@ -1,6 +1,7 @@
 // POM2 — GPL-3.0-or-later
-// Street Electronics Echo+: MAME a2mockingboard.cpp:210-219,307-310,
-// 360-363,453-474,585-607. One VIA drives two AY8913s; TSP5220C at C0n0.
+// Street Electronics Echo+: [D] MAME a2mockingboard.cpp:210-219,307-310,
+// 360-363,453-474,585-607 @ a2b6ba2d (the last two ranges are :582-604 @
+// mame0287). One VIA drives two AY8913s; TSP5220C at C0n0.
 #pragma once
 #include "SlotPeripheral.h"
 #include "AudioSource.h"

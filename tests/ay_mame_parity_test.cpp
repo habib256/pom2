@@ -141,14 +141,19 @@ void portReadBack()
     }
 }
 
+// The one place this file pins a DIVERGENCE from MAME. [B] R6522: an ORB
+// store of the byte already there moves no pin, so nothing downstream can
+// see it; [D] MAME 6522via.cpp:847-853 @ a2b6ba2d dispatches it anyway and
+// its ayboard re-strobes the AY — AMONT FAUX (Via6522.h, audit
+// parite-queue-audio 2026-11-01). A pin edge still reports.
 void repeatedPortB()
 {
     pom2::Via6522 via;
     via.write(2, 7);
-    via.write(0, 6);
-    assert((via.write(0, 6) & 1) && "MAME dispatches identical ORB stores");
+    assert((via.write(0, 6) & 1) && "pins moved");
+    assert(!(via.write(0, 6) & 1) && "a same-value store moves no pin");
     via.write(2, 0);
-    assert(!(via.write(0, 6) & 1)); // no outputs to dispatch
+    assert(!(via.write(0, 6) & 1)); // no outputs: nothing moves
 }
 }
 int main(int argc, char** argv)

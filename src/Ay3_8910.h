@@ -170,11 +170,19 @@ struct Ay3_8910
         const uint8_t cmd = static_cast<uint8_t>(
             ((pb & kPbBitBdir) ? 0x02 : 0) |
             ((pb & kPbBitBc1)  ? 0x01 : 0));
-        // MAME `mockingboard.cpp:391-410 via_psg_ctrl` fires on every PB
-        // write — no edge debounce. A music driver holding BDIR through
-        // multiple PA changes legitimately re-strobes the same AY
-        // register with each new data byte. Edge tracking is for
-        // diagnostic counters only.
+        // [B] R6522 pin logic: the card calls this only on a PA or PB PIN
+        //     edge (Via6522::write), so a same-value ORB store never gets
+        //     here (audit parite-queue-audio, 2026-11-01).
+        // [D] MAME a2mockingboard.cpp:391-410 @ a2b6ba2d — via_psg_ctrl runs
+        //     on every ORB store (6522via.cpp:847-853); a PA store only
+        //     parks m_porta1 (:436-439). AppleWin Mockingboard.cpp:366-437
+        //     @ 6c579da5 — a function executes only from INACTIVE (GH#320).
+        // [F] Unknown: what the AY does when PA changes under a HELD LATCH
+        //     or WRITE. POM2 re-strobes the latched register with each new
+        //     data byte (the level-sensitive reading); MAME parks the byte,
+        //     AppleWin ignores it. Settled by: a logic-analyser capture of
+        //     DA0-7 against BDIR/BC1 on a real AY-3-8913. The edge tracking
+        //     below feeds the diagnostic counters only.
         ApplyResult result = ApplyResult::NoChange;
         const bool edge = (cmd != prevCommand);
         switch (cmd) {

@@ -44,11 +44,13 @@ namespace pom2 {
 namespace sony35 {
 
 /// Sectors on 3.5" track `t` (0..79) — the 5 zones, 12/11/10/9/8.
-/// MAME `ap_dsk35.cpp:apple35_sectors_per_track[]`.
+/// [D] MAME ap_dsk35.cpp:368 @ mame0287 — `int ns = 12 - (track/16);`
+/// (the `apple35_sectors_per_track[]` table went in dc57db5ceb, 2022-09-25).
 constexpr int sectorsForTrack(int track) { return 12 - (track / 16); }
 
 /// Block index of (track, head, logical sector) in the flat 1600-block
-/// ProDOS payload. MAME `apple_gcr_format::load` (ap_dsk35.cpp:366-386):
+/// ProDOS payload. [D] MAME `apple_gcr_format::load` (ap_dsk35.cpp:366-386
+/// @ mame0287):
 /// linear by track, then head, then sector.
 int blockIndexFor(int track, int head, int sector);
 

@@ -12,6 +12,37 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — A held AY WRITE re-strobed R13 on a same-value ORB store
+
+The last queue slice of the parity audit (`docs/audits/parite-queue-audio-
+2026-11-01.md`), audio and speech, one MINEUR. Since 2026-10-03 a second
+`STA ORB` of the byte already there, WRITE held, rewrote the latched AY
+register — and when that register was R13 the envelope restarted. The
+Mockingboard, the Phasor and the Echo+ share the path.
+
+[B] R6522 pin logic: a store of the same byte moves no PB pin, and the only
+write strobe a 6522 can emit is CB2 in handshake mode, which no card wires to
+the AY. [A] (by report) AppleWin GH#320, a test on a real Mockingboard by
+Grouik / French Touch: "functions only work from inactive state". [D] MAME
+`6522via.cpp:847-853` dispatches EVERY ORB store with outputs enabled and its
+ayboard re-runs `via_psg_ctrl` on each — a port-callback artefact, not a bus
+event, which POM2 had adopted as a "confirmed defect corrected". AMONT FAUX;
+`docs/mockingboard_mame_audit.md` carries the reversal. `Via6522::write`
+now reports port B on a PIN change, the same rule ORA and the DDRs already
+followed; what the AY does when PA changes under a *held* WRITE stays an
+admitted `[F]` in `Ay3_8910.h`. `mockingboard_bus_edges` pinned the
+behaviour the wrong way round; it now asserts the held store is silent
+against a card that stored nothing, with the pulsed edge as the positive
+control. Same slice, no code change: MAME's Phasor reset hits the wrong AY in
+compatible mode (`PhasorCard.cpp` says so, graded).
+
+The storage/bus/CPU slice found a credit error of ours: `WZ = PC + 1` on
+INIR/INDR/OTIR/OTDR is Visual Z80 evidence, and MAME, which `DEV.md` and the
+test header credited, added it in 2023 and lost it in 2024. The
+`session_snapshot` test also learned the FLUX rule landed just before: a
+write window that covers angular position 0 saves the track rotated onto its
+first remaining transition, so the expectation rotates with it.
+
 ## 2026-11-01 — A FLUX track lost one transition per revolution
 
 Slice 20 (`flopimg` + `as_dsk` + `wozfdc`), the one MAJEUR of the last wave,

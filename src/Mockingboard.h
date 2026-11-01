@@ -30,7 +30,9 @@
 //                           $Cn90..$CnFF)
 //
 // 6522 → AY wiring (Sweet Microsystems Mockingboard A/C schematic;
-// AppleWin `Mockingboard.cpp:193` matches MAME `mockingboard.cpp`):
+// [D] AppleWin Mockingboard.cpp:350-353 (BDIR = b1, BC1 = b0, BC2 = +5 V)
+// and :253 (b2 = /RESET) @ 6c579da5; MAME a2mockingboard.cpp:391-410,
+// :441-451 @ a2b6ba2d):
 //
 //   VIA Port A (8 bits)  → AY data bus  D0..D7
 //   VIA Port B bit 0     → AY BC1

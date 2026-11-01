@@ -153,10 +153,14 @@ public:
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
     void    onUnplug() override;
-    /// The 68705 has its own crystal (MAME mouse.cpp:148, 2043600 Hz), so it
-    /// is paced on the bus clock, never the accelerated CPU clock: under a
-    /// TransWarp or a Zip it ran 3.6-4x fast and its 60 Hz VBL interrupt
-    /// with it. Same split as MockingboardCard (SlotBusClock.h).
+    /// [B] Apple schematic 050-0101-A (A// Mouse Board): there is NO crystal
+    ///     — X1/X2 are jumper pads; the 6805's EXT input (pin 4) takes the
+    ///     "2 MHZ CLOCK" from the PAL16R4 U2A (pin 18), which is fed Q3
+    ///     (P1-37). So the MCU follows the BUS clock (PAL included), never
+    ///     an accelerator: under a TransWarp or a Zip it ran 3.6-4x fast and
+    ///     its 60 Hz VBL interrupt with it. Same split as MockingboardCard
+    ///     (SlotBusClock.h).
+    /// [D] MAME mouse.cpp:188 @ mame0287 — M68705P3(config, m_mcu, 2043600).
     void    setCpuClock(double hz) override { busClock_.setCpuClock(hz); }
     void    setStandardClock(double hz) override { busClock_.setBusClock(hz); }
 

@@ -390,7 +390,7 @@ inline float renderChipSample(ChipSynthState& cs, const uint8_t* r,
 /// runs ONE such filter per speaker CHANNEL (`filter.cpp apply` loops
 /// `channel` over `m_history[channel]`), and its Mockingboard puts AY1
 /// on channel 0 and AY2 on channel 1 of a single 2-channel speaker
-/// (`a2mockingboard.cpp:128-132`). POM2's dcL/dcR are the same
+/// ([D] `a2mockingboard.cpp:159-165` @ a2b6ba2d). POM2's dcL/dcR are the same
 /// one-per-channel arrangement — the two are in PARALLEL on independent
 /// signals, never cascaded, so the high-pass order is not multiplied and
 /// the mono fold-down (both sides at +0.5) cannot cancel anything.

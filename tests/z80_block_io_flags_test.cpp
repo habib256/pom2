@@ -25,8 +25,12 @@
 //   * P/V  from the parity of B±1 (or B) xored against the incoming P/V
 //   * WZ   = PC + 1
 //
-// MAME calls this `block_io_interrupted_flags()` (`z80.cpp:580-604`), invoked
-// by the inir/otir/indr/otdr macros right after `PC -= 2` (`z80.lst:769-880`).
+// [D] MAME calls this `block_io_interrupted_flags()` (`z80.cpp:580-604`),
+// invoked by the inir/otir/indr/otdr macros right after `PC -= 2`
+// (`z80.lst:769-880`) — but WITHOUT the WZ term: MAME added `WZ = PC + 1` in
+// 580447173e (2023-12-03) and dropped it in 0c42667cf0 (2024-06-03).
+// [A] Visual Z80 (transistor-level die simulation, hoglet67/Z80Decoder#2) is
+// what backs `WZ = PC + 1`; POM2 keeps it against MAME.
 //
 // Why this needed its own pin: zexdoc and zexall run under CP/M and never
 // execute an I/O block instruction, so they cannot see this at all — POM2 used

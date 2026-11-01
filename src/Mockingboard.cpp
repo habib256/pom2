@@ -867,7 +867,7 @@ void MockingboardCard::resetCard(bool powerCycle)
     ay_[0]->reset();
     ay_[1]->reset();
     // Mockingboard-C RESET is not connected to SSI263 !PD/!RST pin 18.
-    // AppleWin 6c579da5bd94 SSI263.cpp:40-44,930-956 documents continued
+    // [D] AppleWin SSI263.cpp:38,930-956 @ 6c579da5 documents continued
     // speech on Ctrl-Reset. Only removing power resets this chip here.
     if (ssi_ && powerCycle) ssi_->reset();
     assertIrq(false);

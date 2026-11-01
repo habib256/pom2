@@ -16,6 +16,7 @@
 #include "Mockingboard.h"
 #include "SlotBus.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -173,11 +174,17 @@ void testRewindKeepsTheEnvelopeWhereItWas()
 // MAME 6522via.cpp:847-853 dispatches every ORB store; the AY receives
 // two R13 writes even with BDIR held high and unchanged data. Test both
 // PSGs through the real card path, including the queued audio retrigger.
-void testHeldWriteRetriggersEnvelope()
+// A same-value ORB store moves no pin, so the AY cannot see it: a held WRITE
+// must NOT re-strobe R13 ([B] R6522 pin logic; [A] AppleWin GH#320, a real
+// Mockingboard). POM2 followed MAME's every-store dispatch from 2026-10-03
+// to 2026-11-01 and this test pinned it the wrong way round. `quiet` is the
+// reference (no further store at all); `pulsed` is the positive control —
+// the INACTIVE→WRITE edge still restarts the envelope, audibly.
+void testHeldWriteDoesNotRetrigger()
 {
-    MockingboardCard held(4), pulsed(4);
-    held.setSampleRate(44100); pulsed.setSampleRate(44100);
-    for (auto* card : {&held, &pulsed}) {
+    MockingboardCard held(4), pulsed(4), quiet(4);
+    for (auto* card : {&held, &pulsed, &quiet}) {
+        card->setSampleRate(44100);
         for (uint8_t base : {uint8_t{0}, uint8_t{0x80}}) {
             auto wr = [&](uint8_t reg, uint8_t value) { card->slotRomWrite(base | reg, value); };
             wr(3, 0xff); wr(2, 7);
@@ -190,27 +197,37 @@ void testHeldWriteRetriggersEnvelope()
             wr(1, 8); wr(0, kPbWrite); // leave the write command held
         }
     }
-    std::vector<float> a(512), b(512);
+    std::vector<float> a(512), b(512), c(512);
     held.audioSource()->fillAudioBuffer(a.data(), 512);
     pulsed.audioSource()->fillAudioBuffer(b.data(), 512);
+    quiet.audioSource()->fillAudioBuffer(c.data(), 512);
     for (int chip = 0; chip < 2; ++chip) {
         const uint8_t base = chip ? 0x80 : 0;
         const auto before = held.getAyWriteCount(chip);
-        held.slotRomWrite(base, kPbWrite); // same-value ORB store
+        const auto beforePulsed = pulsed.getAyWriteCount(chip);
+        held.slotRomWrite(base, kPbWrite); // same-value ORB store: no pin moves
         pulsed.slotRomWrite(base, kPbInactive);
         pulsed.slotRomWrite(base, kPbWrite);
-        assert(held.getAyWriteCount(chip) == before + 1);
+        assert(held.getAyWriteCount(chip) == before);
+        assert(pulsed.getAyWriteCount(chip) == beforePulsed + 1);
     }
     held.audioSource()->fillAudioBuffer(a.data(), 512);
     pulsed.audioSource()->fillAudioBuffer(b.data(), 512);
-    for (size_t i = 0; i < a.size(); ++i) assert(std::abs(a[i] - b[i]) < 1e-6f);
+    quiet.audioSource()->fillAudioBuffer(c.data(), 512);
+    float heldVsQuiet = 0.f, pulsedVsQuiet = 0.f;
+    for (size_t i = 0; i < a.size(); ++i) {
+        heldVsQuiet   = std::max(heldVsQuiet,   std::abs(a[i] - c[i]));
+        pulsedVsQuiet = std::max(pulsedVsQuiet, std::abs(b[i] - c[i]));
+    }
+    assert(heldVsQuiet < 1e-6f);    // the held store changed nothing
+    assert(pulsedVsQuiet > 1e-3f);  // the real edge restarted the envelope
 }
 
 }  // namespace
 
 int main()
 {
-    testHeldWriteRetriggersEnvelope();
+    testHeldWriteDoesNotRetrigger();
     testDdrWriteDeliversTheResetEdge();
     testPeekMatchesTheGuestReadback();
     testDeviceSelectIsOpenBus();

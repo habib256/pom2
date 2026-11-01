@@ -382,18 +382,34 @@ struct Via6522
     }
 
     // 6522 write. Returns a bit-pattern of which "events" happened so
-    // the caller can react: bit 0 = Port B output dispatched (including
-    // repeated ORB stores), bit 1 = Port A output changed.
+    // the caller can react: bit 0 = Port B pins changed, bit 1 = Port A
+    // output changed. Both are PIN edges: a store that moves no pin is
+    // invisible to whatever hangs off the port.
     inline uint8_t write(uint8_t reg, uint8_t v)
     {
         uint8_t events = 0;
         switch (reg & 0x0F) {
         case VIA_ORB: {
+            // [B] R6522 / W65C22 datasheet: an ORB store drives the output
+            //     pins from the new latch; a store of the SAME byte moves
+            //     no pin, and the only write strobe the chip can emit is
+            //     CB2 in handshake / pulse mode — which no card here wires
+            //     to the AY (MAME a2mockingboard.cpp:184 @ a2b6ba2d routes
+            //     CB2 to the SC-01A alone). The AY cannot see such a store.
+            // [A] (by report) AppleWin Mockingboard.cpp:366-437 @ 6c579da5
+            //     — "functions only work from inactive state", from a test
+            //     on a real Mockingboard (GH#320, Grouik / French Touch,
+            //     2016): a held WRITE does NOT re-strobe R13.
+            // [D] MAME 6522via.cpp:847-853 @ a2b6ba2d dispatches EVERY ORB
+            //     store with outputs enabled and its ayboard re-runs
+            //     via_psg_ctrl on each — an artefact of the port callback,
+            //     not a bus event. POM2 adopted it on 2026-10-03 and
+            //     reverted on 2026-11-01 (audit parite-queue-audio):
+            //     AMONT FAUX, do not re-align. Pinned by
+            //     mockingboard_bus_edges.
+            const uint8_t prev = readPortB();
             portBOut = v;
-            // MAME 6522via.cpp:847-853 (a2b6ba2d4be7) dispatches EVERY
-            // ORB store when outputs are enabled. A held AY WRITE command
-            // must re-strobe R13 even if neither the command nor data moves.
-            if (ddrB != 0) events |= 0x01;
+            if (readPortB() != prev) events |= 0x01;
             break;
         }
         case VIA_ORA: {

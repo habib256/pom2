@@ -65,7 +65,8 @@ int Tms5220::read_bits(int count)
     return value;
 }
 // zpar/uv_zpar + OLDE/OLDP and the "new frame" indices of silence: what both
-// speech starts (SPEAK at :1430-1448, the FIFO's SPEN edge at :688-712) set.
+// speech starts set ([D] MAME tms5220.cpp @ a2b6ba2d: SPEAK at :1474-1506,
+// the FIFO's SPEN edge at :688-712).
 void Tms5220::zeroNewFrame()
 {
     s_.m_zpar = s_.m_uv_zpar = s_.m_OLDE = s_.m_OLDP = true;

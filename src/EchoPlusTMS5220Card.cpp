@@ -1,4 +1,4 @@
-// POM2 — GPL-3.0-or-later. Hardware map: MAME a2mockingboard.cpp:453-474,585-607.
+// POM2 — GPL-3.0-or-later. Hardware map: [D] MAME a2mockingboard.cpp:453-474,585-607 @ a2b6ba2d.
 #include "EchoPlusTMS5220Card.h"
 #include "M6502.h"
 #include "ByteIO.h"

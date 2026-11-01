@@ -229,8 +229,9 @@ void MouseCard::advanceCycles(int cycles)
     // `cycles_running - m_icount`, i.e. by what actually ran.
     // advanceCycles is called per 6502 instruction, so budgets are 4-14
     // MCU cycles here; dropping the overshoot instead ran the 68705 at
-    // 1.26-1.50× its 2043600 Hz (MAME mouse.cpp:148
-    // `M68705P3(config, m_mcu, 2043600);`).
+    // 1.26-1.50× its 2043600 Hz ([D] MAME mouse.cpp:188 @ mame0287
+    // `M68705P3(config, m_mcu, 2043600);`; [B] MC68705P5 Advance
+    // Information, Motorola 1983 — internal clock = fOSC ÷ 4).
     const int ticks = static_cast<int>(busClock_.busTicks(static_cast<uint64_t>(cycles)));
     mcuCycleAccum += ticks * MCU_CLOCK_NUMERATOR;
     const int mcuCycles = mcuCycleAccum / MCU_CLOCK_DENOMINATOR;

@@ -13,7 +13,7 @@ contract and later speech work, see [DEV](../DEV.md#mockingboard),
 | Trigger | Before | After / reference |
 |---|---|---|
 | Reduce a tone period below the elapsed counter | Counter discarded; output toggled once | Preserve remainder and transition parity; `sound/ay8910.cpp:1073-1084` |
-| Write the same ORB byte again with AY WRITE held | No dispatch, losing a repeated envelope trigger | Dispatch each store with enabled outputs; `machine/6522via.cpp:847-853`, `bus/a2bus/a2mockingboard.cpp:391-410` |
+| Write the same ORB byte again with AY WRITE held | No dispatch, losing a repeated envelope trigger | Dispatch each store with enabled outputs; `machine/6522via.cpp:847-853`, `bus/a2bus/a2mockingboard.cpp:391-410` — **REVERTED 2026-11-01**: a same-value store moves no pin, so the AY cannot see it (R6522 pin logic; AppleWin GH#320 on a real Mockingboard). MAME's dispatch is a port-callback artefact: AMONT FAUX, `docs/audits/parite-queue-audio-2026-11-01.md` |
 | Access AY data immediately after reset, without latching an address | Register 0 accepted writes and answered reads | Deselected: writes ignored, reads $FF; `sound/ay8910.cpp:1305-1308,1356-1393` |
 
 The tone fix collapses MAME's subtraction loop into quotient parity and

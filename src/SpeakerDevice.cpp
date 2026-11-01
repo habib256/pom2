@@ -307,7 +307,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         // Convolve the 64-sample ring with the sinc kernel. We walk
         // starting one slot AFTER the most-recently-written index, so
         // c=0 corresponds to the oldest sample and c=63 to the newest
-        // — matches MAME `spkrdev.cpp:319-322`.
+        // — [D] MAME spkrdev.cpp:382-398 @ a2b6ba2d (get_filtered_volume).
         double filtered = 0.0;
         int i = (composedIdx + 1) & (kFilterLength - 1);
         for (int c = 0; c < kFilterLength; ++c) {
