@@ -665,9 +665,31 @@ void Memory::resetSoftSwitches(bool warm)
     std::lock_guard<std::mutex> lk(stateMutex);
     const DisplayState kept = display;
     display = DisplayState{};
-    // Ctrl-Reset clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3 only (MAME
-    // `apple2e.cpp:1459-1471`, Sather Fig 7.1): TEXT, MIXED, DHGR survive it.
-    if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; display.dhgr = kept.dhgr; }
+    // Ctrl-Reset clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3: **TEXT and
+    // MIXED survive, the DHGR (AN3) latch does NOT.**
+    //
+    // This line used to keep `dhgr` too, citing MAME `apple2e.cpp:1459-1471`
+    // and Sather Fig 7.1 — and BOTH of those say the opposite. Sather,
+    // `Understanding the Apple IIe`, **p. 7-3**, explanation 1 of Figure 7.1
+    // (the IOU functional diagram), read off a render of the page and not
+    // just its OCR: "All soft switches except KEYSTROBE, TEXT, and MIXED are
+    // reset when the RESET' line drops low. All soft switches appear to be
+    // cleared at power up." Three names, and AN3 — one of the IOU's "four
+    // annunciator soft switches", which is what drives DHGR on a //e — is
+    // not among them. MAME agrees with its own citation: `reset_w` carries
+    // the comment "Certain IOU switches off (80STORE, 80COL, ALTCHR, PAGE2,
+    // HIRES, AN0, AN1, AN2, AN3) // Sather, Fig 7.1" and then does
+    // `m_an0 = m_an1 = m_an2 = m_an3 = false;`.
+    //
+    // Effect of the bug: Ctrl-Reset out of a double-hi-res program left POM2
+    // in DHGR where the hardware drops to plain HGR until something sets AN3
+    // again, so the first frame after a reset was shredded.
+    //
+    // Sather's own hedge, kept here because it bounds the claim: Figure 7.1
+    // is "only a functional representation resulting primarily from my
+    // investigations of Apple IIe operational features". It is a very good
+    // one, and it agrees with MAME, but it is not a die shot.
+    if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; }
     // A reset wipes the beam-racing timeline: drop the logged events (stale
     // ones would paint ghost segments) and resync the frame-start snapshots.
     videoEvents_.clear();
@@ -1595,7 +1617,17 @@ uint8_t Memory::floatingBus() const
 
 uint8_t Memory::floatingBus(uint64_t absCycle) const
 {
-    // Verbatim port of MAME `apple2video.cpp:124-201 scanner_address`.
+    // Verbatim port of MAME `apple2video.cpp:124-201 scanner_address` —
+    // and since 2026-11-01 checked against the PRINTED map rather than
+    // against MAME alone. Jim Sather, `Understanding the Apple II` (Quality
+    // Software, 1983), Figure 5.6 (p. 5-11, TEXT/LORES: HBL base + display
+    // base of all 32 character rows) and Figure 5.9 (p. 5-45, HIRES, per
+    // scanline). Every value in both matches, as do the five rules p. 5-11
+    // states and the figure's 8x/14x row-scan footnote. Pinned
+    // `video_scanner_sather`; the rules are quoted in that file and in
+    // DEV.md § Soft switches. NOTE the erratum recorded there: the book's own
+    // Applesoft sequence says `+1024` where its prose and its table both
+    // require `+4096` — this code's `| 0x1000` is the right reading.
     // Input: h_clock [0..64] (active video from 25), v_clock [0..261]
     // (active video from 0). Output: 16-bit DRAM address the video
     // scanner is currently fetching. Used by reads of unimplemented

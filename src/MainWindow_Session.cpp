@@ -391,8 +391,9 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setBool ("voxel_percolor_depth", voxel3d_->perColorDepth);
     }
     settings->setString("aspect_mode",
-        aspectMode == AspectMode::Crt43   ? "crt43" :
-        aspectMode == AspectMode::Integer ? "integer" : "square");
+        aspectMode == AspectMode::Crt43    ? "crt43" :
+        aspectMode == AspectMode::Integer  ? "integer" :
+        aspectMode == AspectMode::Measured ? "measured" : "square");
     settings->setString("ui_accent", pom2::accentKey(uiAccent_));
     settings->setFloat ("ui_scale",  uiScale_);
     settings->setBool  ("ui_dock_seeded", dockSeeded_);

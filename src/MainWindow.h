@@ -588,10 +588,16 @@ private:
     ImVec2 driveRackDropPosition_{};
 
     // Presentation aspect (Phase 6). The Apple II's 280×192 active area was
-    // shown on a 4:3 CRT → its pixels are NOT square. Square = 1:1 logical
-    // pixels (crisp emulator default); Crt43 = true 4:3 monitor shape;
-    // Integer = square snapped to an integer multiple (no scaling shimmer).
-    enum class AspectMode { Square, Crt43, Integer };
+    // shown on a 4:3 CRT → its pixels are NOT square.
+    //   Square   — 1:1 logical pixels (the crisp emulator default)
+    //   Crt43    — the raster's 4:3 monitor shape
+    //   Integer  — Square snapped to an integer multiple (no scaling shimmer)
+    //   Measured — the shape a ruler finds on a correctly adjusted monitor,
+    //              which is none of the other three: 1.225:1 on NTSC and
+    //              ~1.507 on PAL, because the Apple fills only part of the
+    //              raster. See `measuredWindowAspect` (CpuClock.h) for the
+    //              derivation and the switch in `MainWindow_Screen.cpp`.
+    enum class AspectMode { Square, Crt43, Integer, Measured };
     AspectMode   aspectMode = AspectMode::Square;
 
     // ── Docking layout (View ▸ Layout) ───────────────────────────────────

@@ -399,6 +399,17 @@ void MainWindow::drawScreenImage()
             size = ImVec2(h * 4.0f / 3.0f, h);
             break;
         }
+        case AspectMode::Measured: {
+            // Same shape as Crt43, but at the ratio a ruler finds on a
+            // correctly adjusted monitor instead of the raster's 4:3 — see
+            // `measuredWindowAspect` for the derivation and for which
+            // half of it is Sather's and which is POM2's.
+            const float r = measuredWindowAspect(controller->getVideoStandard());
+            float h = std::min(pictureAvail.y, pictureAvail.x / r);
+            h = std::max(h, H);
+            size = ImVec2(h * r, h);
+            break;
+        }
         case AspectMode::Integer: {
             float s = std::max(1.0f, std::floor(std::min(pictureAvail.x / W, pictureAvail.y / H)));
             size = ImVec2(W * s, H * s);
@@ -563,6 +574,28 @@ void MainWindow::drawScreenImage()
     //             shape); fills the region, letterboxed.
     //   Integer — Square snapped to an integer multiple (no fractional-scale
     //             shimmer); never < 1×.
+    //
+    // NONE OF THE THREE IS THE SHAPE SATHER MEASURES, and that is worth
+    // saying rather than leaving `Crt43` to imply otherwise. The 4:3 is the
+    // CRT's whole raster; the Apple does not fill it. `Understanding the
+    // Apple II` (1983) § ASPECT RATIO IN THE APPLE DISPLAY, ch. 8: NTSC
+    // displays 53.6 µs of a 63.6 µs line (84.3 %) and 242.5 of 262.5 lines
+    // (92.4 %), so a 4:3 raster means HD/VD = 1.46; the Apple displays "560
+    // out of 912 14M periods" (61.4 %) and 192 of 262 lines (73.3 %), giving
+    //     (.614 HD)/(.733 VD) = .888 × 1.46 = 1.225
+    // — "the display window is 1.225 times as wide as it is high". So the lit
+    // rectangle on a correctly adjusted monitor is NARROWER than 4:3, and its
+    // pixels are about 0.84 as wide as they are tall. `Crt43` over-stretches
+    // it by ~8.8 % and `Square` by ~19 %.
+    //
+    // Hence the fourth mode, `Measured`, added 2026-11-01. It is NOT the
+    // default: 4:3 is what every other emulator and every screenshot people
+    // compare against uses, so the shape stays an explicit choice. And it
+    // follows the video standard rather than being a constant, because on
+    // PAL the same derivation gives ~1.51 — a PAL Apple puts 192 lines in a
+    // 312-line field, which is why European machines showed those deep top
+    // and bottom borders. See `measuredWindowAspect` for which half of that
+    // is Sather's and which is POM2's own.
     ImVec2 cur = ImGui::GetCursorPos();
     const ImVec2 bodySize = bezel
         ? ImVec2(size.x * 690.0f / 608.0f, size.y * 512.0f / 432.0f) : size;

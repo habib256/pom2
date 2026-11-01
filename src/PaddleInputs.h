@@ -118,10 +118,46 @@ public:
         return !(idx == 2 ? shift_ : ctrl_).load(std::memory_order_relaxed);
     }
 
-    // ── Paddle read ($C064-$C067 bit 7) ───────────────────────────────────
+    // ── The 558 timer, from Sather's formula ──────────────────────────────
+    //
+    // `Understanding the Apple II` (1983) ch. 7: the paddle knobs are on
+    // 150 kOhm pots, each part of an R/C network feeding one output of a
+    // quad timer, "designed so that the pulse width in microseconds will be
+    // equal to (RP + 100) X .022 where RP is the resistance of a paddle.
+    // Since the paddles are 150,000 ohm pots, the timer outputs can be
+    // varied from 2 (100 X .022) to 3300 (150100 X .022) microseconds."
+    //
+    // Two constants come straight out of that sentence.
+    //
+    // `kCyclesPerCount` — what one unit of `value_` is worth. The monitor's
+    // PREAD loop (`LDA $C064,X` / `BPL` / `INY` / `BNE`) is 11 cycles, so a
+    // pulse of `n * 11` cycles makes PREAD return n. At the machine's real
+    // composite 1.0205 MHz that is 10.78 us, which is MAME's 10 800 ns
+    // (`apple2e.cpp:1007`) to three figures. Sather's formula turns it into
+    // a resistance: one count is 10.8/.022 = ~491 ohms of pot.
+    //
+    // `kFloorCycles` — the `+ 100` term, which POM2 and MAME both used to
+    // drop. The network emits a ~2.2 us pulse even with the pot at zero, so
+    // the shortest pulse is not zero-length. PREAD cannot see the difference
+    // (its first sample is 10 cycles after the strobe, by which time a 2-cycle
+    // pulse is long gone, so PDL(0) is still 0), but a guest timing the line
+    // with its own tighter loop can.
+    //
+    // WHAT `value_` IS, AND WHAT IT IS NOT. It is the PREAD count of a
+    // CORRECTLY ADJUSTED controller — which is what Apple's own setup
+    // instructions produce, what every game assumes, and what MAME models
+    // too. It is NOT a raw pot angle. A raw, untrimmed 150 kOhm pot runs to
+    // 3300 us, i.e. 3300/10.8 = ~306 counts, and PREAD saturates at 255
+    // (`INY` wraps, `BNE` falls through, `DEY` leaves $FF), so the top ~17 %
+    // of such a pot's travel all reads 255. Mapping POM2's 0..255 axis onto
+    // the full electrical sweep instead would reproduce that dead zone AND
+    // move the stick centre from 128 counts to 154 — faithful to an
+    // unadjusted paddle, and a regression for every program that centres on
+    // 128. The adjusted-controller convention is kept deliberately; the full
+    // sweep is recorded here so the choice is visible.
+    //
     // The RC network is still charging — bit 7 high — while fewer than
-    // `value * 11` STOCK cycles (~10.8 us a count, MAME apple2e.cpp:1007)
-    // have elapsed since that axis's timer was last triggered. The 558 is an
+    // `armed_` STOCK cycles The 558 is an
     // RC timer: real time, not CPU cycles — the caller converts
     // (Memory::stockCyclesBetween), or under a Zip with its paddle slow-down
     // off the paddles read 3-4x low. The count is the value AT the trigger,
@@ -130,18 +166,41 @@ public:
         return !connected() || stockElapsed < armed_[idx];
     }
 
+    /// One PREAD loop: 11 CPU cycles, ~10.78 us, ~491 ohms of pot.
+    static constexpr uint32_t kCyclesPerCount = 11;
+    /// Sather's `+ 100` ohms: ~2.2 us of pulse even at RP = 0.
+    static constexpr uint32_t kFloorCycles    = 2;
+    /// The pulse an axis value is worth, in stock CPU cycles.
+    static constexpr uint32_t pulseCycles(uint8_t value) {
+        return static_cast<uint32_t>(value) * kCyclesPerCount + kFloorCycles;
+    }
+    /// Where a RAW 150 kOhm pot would run to, in the same units — 3300 us.
+    /// Not used by the model (see the note above); here so the divergence
+    /// is a number in the code rather than a claim in a comment.
+    static constexpr uint32_t kUntrimmedFullScaleCounts = 306;
+
     // $C070 (mirrored $C070-$C07F). The 558 is four monostables, and a
     // running one cannot be retriggered: only an axis whose count has run out
     // restarts (MAME apple2e.cpp:2053-2056, apple2.cpp controller_strobe_w).
     // So PDL(1) read straight after PDL(0) still sees the first strobe's
     // count — the "add a delay between PDL reads" artifact of the hardware.
+    //
+    // Sather says the same in his own words, which is a stronger claim than
+    // MAME parity — `Understanding the Apple II` (1983), ch. 7, on exactly
+    // this Applesoft symptom: "the timer pulse may still be high from the
+    // previous PREAD routine which read Timer 0, and the timers are not
+    // retriggered by C07X if they have not yet reset from the previous
+    // trigger." He also notes the 558's RESET input "is not utilized in the
+    // Apple" and that all four triggers are tied to the one $C07X line, which
+    // is why POM2 re-arms all four axes here rather than the addressed one.
+
     // `stockSince(latch)` converts a latch cycle to stock cycles elapsed.
     template <class StockSince>
     void rearm(uint64_t cycleCounter, StockSince stockSince) {
         for (int i = 0; i < 4; ++i) {
             if (discharging(i, stockSince(latch_[i]))) continue;
             latch_[i] = cycleCounter;
-            armed_[i] = static_cast<uint32_t>(value_[i]) * 11;
+            armed_[i] = pulseCycles(value_[i]);
         }
     }
 
@@ -153,7 +212,7 @@ public:
     void setLatchCycle(uint64_t c) {
         for (int i = 0; i < 4; ++i) {
             latch_[i] = c;
-            armed_[i] = static_cast<uint32_t>(value_[i]) * 11;
+            armed_[i] = pulseCycles(value_[i]);
         }
     }
     void setAxis(int idx, uint64_t latch, uint32_t armed) {
@@ -178,7 +237,7 @@ private:
     // Memory member's rationale.)
     std::array<uint64_t, 4> latch_{ ~uint64_t(0) - 0xFFFFu, ~uint64_t(0) - 0xFFFFu,
                                     ~uint64_t(0) - 0xFFFFu, ~uint64_t(0) - 0xFFFFu };
-    std::array<uint32_t, 4> armed_{ 0, 0, 0, 0 };   // value * 11 at the trigger
+    std::array<uint32_t, 4> armed_{ 0, 0, 0, 0 };   // pulseCycles(value) at the trigger
 };
 
 } // namespace pom2

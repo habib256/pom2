@@ -295,6 +295,58 @@ void testPaddleTiming()
     std::printf("[ OK ] paddle RC discharge timing + $C070 re-arm\n");
 }
 
+// ── 3b. Sather's `(RP + 100) x .022`: the pulse has a FLOOR ──────────────
+//
+// `Understanding the Apple II` (1983) ch. 7: the knobs are 150 kOhm pots in
+// an R/C network "designed so that the pulse width in microseconds will be
+// equal to (RP + 100) X .022 where RP is the resistance of a paddle. Since
+// the paddles are 150,000 ohm pots, the timer outputs can be varied from
+// 2 (100 X .022) to 3300 (150100 X .022) microseconds."
+//
+// POM2 (and MAME, `apple2e.cpp:1007`, 10 800 ns a count with no offset)
+// dropped the `+ 100` term, so a paddle at 0 emitted a ZERO-length pulse.
+// The real network still gives ~2.2 us — about two cycles — with the pot at
+// its stop. PREAD cannot tell the difference (its first sample is 10 cycles
+// after the strobe), which is why this went unnoticed and why the fix must
+// not move PDL(n): both halves are asserted here.
+void testPaddlePulseFloor()
+{
+    Memory mem;
+
+    // A paddle at 0 is high for ~2 cycles, not 0.
+    mem.setPaddle(0, 0);
+    (void)mem.memRead(kPdlRst);
+    assert((mem.memRead(kPdl0) & 0x80) != 0 &&
+           "a paddle at its stop still emits Sather's ~2.2 us pulse");
+    mem.advanceCycles(1);
+    assert((mem.memRead(kPdl0) & 0x80) != 0 && "the floor is 2 cycles, not 1");
+    mem.advanceCycles(1);                       // now 2 cycles elapsed
+    assert((mem.memRead(kPdl0) & 0x80) == 0 &&
+           "the floor pulse must end after ~2 cycles");
+
+    // ...and PDL(n) still returns n. PREAD samples 10 cycles after the
+    // strobe and every 11 after that; the floor must not push a boundary
+    // value up a count. Walked here the way PREAD walks it.
+    for (uint8_t v : { uint8_t(0), uint8_t(1), uint8_t(2), uint8_t(127),
+                       uint8_t(128), uint8_t(254), uint8_t(255) }) {
+        Memory m;
+        m.setPaddle(0, v);
+        (void)m.memRead(kPdlRst);
+        m.advanceCycles(10);                    // PREAD's LDY/NOP/NOP/LDA
+        int count = 0;
+        while (count < 256 && (m.memRead(kPdl0) & 0x80) != 0) {
+            ++count;
+            m.advanceCycles(11);                // one PREAD loop
+        }
+        if (count != static_cast<int>(v)) {
+            std::printf("FAIL: PREAD on a paddle of %u returned %d\n",
+                        static_cast<unsigned>(v), count);
+            std::abort();
+        }
+    }
+    std::printf("[ OK ] paddle pulse floor (Sather's +100 ohms), PDL(n) == n\n");
+}
+
 // ── 4. The 558 one-shots are not retriggered while they run ──────────────
 // MAME apple2e.cpp:2053-2056: each axis reloads on $C070 only if its count
 // has run out. PDL(0) then PDL(1) at once: the second strobe lands while
@@ -345,6 +397,7 @@ int main()
     testEmptyGamePort();
     testPaddleMouse();
     testPaddleTiming();
+    testPaddlePulseFloor();
     testPaddleNoRetrigger();
     std::printf("input_io_smoke_test: OK\n");
     return 0;

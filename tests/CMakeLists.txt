@@ -5121,6 +5121,30 @@ endif()
 add_test(NAME floatingbus_page2_smoke COMMAND test_floatingbus_page2)
 set_tests_properties(floatingbus_page2_smoke PROPERTIES TIMEOUT 5)
 
+# ─── Video scanner vs Sather's printed scanning map ───────────────────────
+# Pins Memory::floatingBus to Understanding the Apple II, Fig. 5.6 (p. 5-11):
+# all 32 character rows x (HBL base, display base) plus the page's five
+# stated rules. See video_scanner_sather_test.cpp — including the erratum in
+# the book's own Applesoft sequence, which its table settles against it.
+add_executable(test_video_scanner_sather
+    video_scanner_sather_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_video_scanner_sather PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_video_scanner_sather PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_video_scanner_sather PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_video_scanner_sather PRIVATE winmm)
+endif()
+add_test(NAME video_scanner_sather COMMAND test_video_scanner_sather)
+set_tests_properties(video_scanner_sather PROPERTIES TIMEOUT 15)
+
 # ─── Sony 3.5" head step-direction regression ─────────────────────────────
 add_executable(test_sony_seek_direction
     sony_seek_direction_test.cpp

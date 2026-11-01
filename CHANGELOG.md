@@ -129,6 +129,112 @@ POM2, bump `mediaWriteEpoch()` and drop the rewind ring; the notch
 in-memory image and only then be refused by `commit`, which still asks again
 because the bit can change in between.
 
+## 2026-11-01 — Bug hunt round 6: Sather, and the floating bus gets a printed oracle
+
+Round 4 listed *"Sather in full text"* among the documents nobody verifying
+this code had read — the scan found then was a 136 MB image PDF with no text
+layer. Archive.org item **`utaii`** carries *Understanding the Apple II*
+(Jim Sather, Quality Software, 1983) as a 35 MB PDF **with a 1 MB OCR text
+layer**, searchable, with the figures rendered from the PDF where OCR mangles
+a table. (*Understanding the Apple **IIe*** is a different book and is still in
+print, so it was not hunted; everything here is the II/II+.) Ledger:
+[docs/audits/bug-hunt-2026-11-01-round2.md](docs/audits/bug-hunt-2026-11-01-round2.md)
+§ Round 6.
+
+**The floating bus had no address pin at all.** `Memory::floatingBus` is a
+verbatim port of MAME's `scanner_address` — a port of a port — and the one
+test on it checked the PAGE2 / 80STORE gating, not a single address. Yet the
+addresses are the whole point: every vapor lock and every floating-bus RNG
+depends on them. Sather prints the answer twice, in **Figure 5.6** (p. 5-11,
+TEXT/LORES: HBL base and display base of all 32 character rows, hex and
+decimal) and **Figure 5.9** (p. 5-45, HIRES, per scanline). POM2 reproduces
+**every value in both**, plus the five rules p. 5-11 states above its table —
+HBL is A12 in TEXT/LORES but *not* in HIRES, where the two overlap; HBL memory
+starts `$18` before display memory plus `$1000` with a 128-byte wraparound;
+*"the first address of HBL is always addressed twice consecutively"*; the VBL
+offset sum is H5-H4-H3 minus 0100 (*"$400 minus $8 gives $478; not $3F8"*);
+and the address before `$400` is `$47F` in VBL, `$147F` outside — and the
+figure's footnote that each row is scanned 8 times except the last, scanned 14.
+Pinned `video_scanner_sather`, which recovers the scanner's address by walking
+a marker through RAM rather than reimplementing the formula it checks, with
+four mutation controls.
+
+**An erratum in Sather, recorded so nobody "corrects" POM2 toward it.** Rule
+2's printed Applesoft sequence ends `30 HBL = HBL+1024`; it must be **+4096**.
+The prose one line above says "plus `$1000`", and the table settles it against
+the program: row 0 has BASE `$400` and HBL `$1468`, where `+1024` would give
+`$868`. POM2 and MAME set A12 and are right.
+
+**And `CpuClock.h`'s long-cycle argument — the one the PAL clock rests on —
+stops being POM2's own derivation.** Sather, ch. 3: *"The normal 6502 machine
+cycle lasts 14 PERIODS... The long cycle lasts 16 PERIODS... the primary
+frequency at which the 6502 is operated for 64 out of 65 cycles, 1.0227 MHz;
+the secondary frequency... .8949 MHz; and the composite frequency which
+actually is the number of machine cycles per second, 1.0205 MHz."* Ch. 8 says
+912 again from the other side. He also gives the long cycle its reason — 3.5
+colour cycles per scanner cycle, 65 being odd — which is why POM2 need not
+model the stretch: its renderer restarts each line at the same phase, which
+*is* that effect, and a 6502 counting cycles sees 65 either way.
+
+**Then the IIe and IIc books too**, and the second of them produced a defect.
+archive.org `Understanding_the_Apple_IIe` is open and carries both a 1.46 MB
+OCR layer and a 29 MB searchable PDF. (Sather never wrote a IIc book — the //c
+oracle is Apple's own *IIc Technical Reference*, also fetched.)
+
+**A //e RESET clears the DHGR (AN3) latch, and POM2 kept it.** The citation
+was the giveaway: `resetSoftSwitches(warm)` preserved `display.dhgr` citing
+MAME `apple2e.cpp:1459-1471` **and** Sather Fig. 7.1, and both say the
+opposite. Sather, p. 7-3, note 1 to Figure 7.1: *"All soft switches except
+KEYSTROBE, TEXT, and MIXED are reset when the RESET' line drops low."* Three
+names, and AN3 — one of the IOU's four annunciator soft switches, which drives
+DHGR on a //e — is not one. MAME clears `m_an3` citing the same figure. So
+Ctrl-Reset out of a double-hi-res program left POM2 in DHGR where the hardware
+drops to plain HGR, shredding the first frame after the reset. Fixed and
+pinned, with TEXT and MIXED asserted to still survive so the fix is not a
+blanket wipe. **This book's OCR is noisy** ("lOU", "ail", "occur.s."), so the
+page was rendered and read rather than trusted: the sentence survived verbatim
+but the page number did not, and the render carried Sather's own hedge —
+Figure 7.1 is *"only a functional representation... from my investigations"*,
+not a die shot.
+
+The IIe book also settles POM2's **//e HBL phantom row** (p. 5-11: *"In
+TEXT/LORES, A15, A14, A13, and A12 equivalents are false"*), which had been
+MAME's word alone and is now asserted.
+
+**A fourth aspect mode**, `Measured`. The Apple's lit rectangle is 1.225 times
+as wide as it is high, not 4:3, so `Crt43` over-stretches by ~8.8 % and
+`Square` by ~19 %. It is not the default — 4:3 is what every comparison
+screenshot uses — and it follows the **video standard**, because the same
+derivation on PAL gives ~1.507: a PAL Apple puts 192 lines in a 312-line
+field, which is why European machines showed those deep top and bottom
+borders. The PAL figure is POM2's own application of Sather's method, not his,
+and the raster numbers behind it are written down so it can be checked.
+
+**The paddle pulse now has Sather's floor.** `(RP + 100) × .022` µs: the
+`+ 100` is a series term, so the network emits a ~2.2 µs pulse even with the
+pot at its stop. POM2 and MAME both dropped it, so a paddle at 0 produced a
+zero-length pulse; PREAD cannot tell (its first sample is 10 cycles after the
+strobe), which is why it went unnoticed and why the fix is safe. What was
+deliberately NOT done: mapping the 0..255 axis onto the pot's full 3300 µs
+sweep would be exact for an *unadjusted* paddle and would move the stick
+centre from 128 counts to 154 while killing the top ~17 % of travel, because
+PREAD saturates at 255. Apple's own setup instructions, every game and MAME
+all assume a trimmed controller, so the axis stays the adjusted-controller
+count — with the untrimmed 306 now a named constant rather than a claim in a
+comment.
+
+Still stated rather than fixed: POM2's **NTSC and PAL clock constants are not
+the same kind of number** — NTSC ships Sather's *primary* 1 022 727, PAL the
+long-cycle *average* 1 015 625 — so NTSC cycles→seconds conversions run 0.22 %
+fast where PAL's do not. Left alone: inaudible, pinned by a dozen tests, and
+the emulated beam takes its scanline from 17 030 cycles, not from this.
+
+Confirmed and left alone: the paddle 558's no-retrigger rule, which POM2
+modelled on MAME's authority and Sather states in his own words; and two POM2
+citations into these books that were checked while here and are correct —
+`DEV.md`'s "Sather Fig 5.13" for the language-card reset state, and
+`CpuClock.h`'s `$18` HBL offset.
+
 ## 2026-11-01 — Bug hunt round 5: the three documents, found and read
 
 Round 4 closed with a list headed *"documents nobody verifying this code has

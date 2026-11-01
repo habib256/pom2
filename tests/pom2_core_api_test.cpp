@@ -920,6 +920,15 @@ int main()
     // the core. A $C070 strobe starts both timers at the same CPU cycle.
     inputCore.setJoystickAxes(-1.0f, 1.0f);
     (void)inputCore.read(0xC070);
+    // The clock has to move before the low endpoint is sampled, because the
+    // 558's pulse has a FLOOR: Sather's `(RP + 100) x .022` us gives ~2.2 us
+    // even with the pot at its stop (PaddleInputs.h `kFloorCycles`). `Core`
+    // reads cost no emulated time, so without this the strobe and the sample
+    // are the same cycle -- a situation no 6502 can be in, since the `LDA
+    // $C070` / `LDA $C064` pair a real program uses already spends 4 cycles
+    // between them. Eight is comfortably past the floor and nowhere near the
+    // 255-paddle on $C065 (2807 cycles).
+    assert(inputCore.run(8) >= 8);
     assert((inputCore.read(0xC064) & 0x80) == 0);
     assert((inputCore.read(0xC065) & 0x80) != 0);
 

@@ -199,6 +199,8 @@ void MainWindow::renderCommandPalette()
             aspectMode == AspectMode::Crt43);
         add("disp.aspect.integer", "Display", "Aspect: integer scale", "", true,
             aspectMode == AspectMode::Integer);
+        add("disp.aspect.measured", "Display", "Aspect: measured window (Sather)", "", true,
+            aspectMode == AspectMode::Measured);
         add("disp.crttoggle", "Display", "Toggle CRT effects", "", true,
             crtEffectsEnabled);
         add("disp.monitor", "Display", "Monitor II frame", "", true,
@@ -297,6 +299,7 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "disp.aspect.square")  { aspectMode = AspectMode::Square;  return; }
     if (id == "disp.aspect.crt43")   { aspectMode = AspectMode::Crt43;   return; }
     if (id == "disp.aspect.integer") { aspectMode = AspectMode::Integer; return; }
+    if (id == "disp.aspect.measured"){ aspectMode = AspectMode::Measured;return; }
     if (id == "disp.crttoggle")      { toggle(crtEffectsEnabled);        return; }
     if (id == "disp.monitor")        { toggle(monitorArtworkEnabled);    return; }
 
@@ -861,6 +864,30 @@ void MainWindow::renderMenuBar()
             if (ImGui::MenuItem("Integer scale (crisp)", nullptr,
                                 aspectMode == AspectMode::Integer))
                 aspectMode = AspectMode::Integer;
+            {
+                // The shape a ruler finds on a correctly adjusted monitor,
+                // which is none of the three above. Labelled with the live
+                // number because it follows the video standard: 1.225 on
+                // NTSC (Sather's own figure) and ~1.51 on PAL, where the
+                // Apple fills only 192 of 312 lines.
+                const float r = measuredWindowAspect(
+                    controller->getVideoStandard());
+                char label[64];
+                std::snprintf(label, sizeof(label),
+                              "Measured window (%.3f:1)", static_cast<double>(r));
+                if (ImGui::MenuItem(label, nullptr,
+                                    aspectMode == AspectMode::Measured))
+                    aspectMode = AspectMode::Measured;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "The lit rectangle on a correctly adjusted CRT.\n"
+                        "Sather, Understanding the Apple II, ch. 8: the Apple\n"
+                        "displays 560 of 912 dot periods and 192 of %d lines,\n"
+                        "so the window is %.3f times as wide as it is high.\n"
+                        "4:3 is the whole raster, which the Apple never fills.",
+                        pom2VideoTiming(controller->getVideoStandard()).scanlinesPerFrame,
+                        static_cast<double>(r));
+            }
             ImGui::EndMenu();
         }
 

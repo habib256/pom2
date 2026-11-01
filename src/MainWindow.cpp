@@ -735,9 +735,10 @@ MainWindow::MainWindow(bool forceIIPlus)
         voxel3d_->mono          = settings->getBool("voxel_mono",          voxel3d_->mono);
         voxel3d_->perColorDepth = settings->getBool("voxel_percolor_depth", voxel3d_->perColorDepth);
         const std::string asp = settings->getString("aspect_mode", "");
-        if      (asp == "crt43")   aspectMode = AspectMode::Crt43;
-        else if (asp == "integer") aspectMode = AspectMode::Integer;
-        else if (asp == "square")  aspectMode = AspectMode::Square;
+        if      (asp == "crt43")    aspectMode = AspectMode::Crt43;
+        else if (asp == "integer")  aspectMode = AspectMode::Integer;
+        else if (asp == "measured") aspectMode = AspectMode::Measured;
+        else if (asp == "square")   aspectMode = AspectMode::Square;
 
         // Interface appearance. Only stored here — the theme is applied by
         // `setDpiScale()`, which main() calls right after construction with

@@ -811,6 +811,90 @@ the floating bus, fixed here 2026-06-10 (pinned `vapor_lock` §(d)).
 `$C061-$C067` are paddles + buttons on II/II+ — NOT cassette aliases
 (only `$C020`/`$C060` are).
 
+**The scanner address is now checked against the PRINTED map, not just
+against MAME** *(2026-11-01)*. `Memory::floatingBus` is a verbatim port of
+MAME's `apple2video.cpp` `scanner_address`, and that was the whole of its
+provenance: a port of a port, pinned only for its PAGE2 / 80STORE gating.
+Jim Sather, *Understanding the Apple II* (Quality Software, 1983) prints the
+answer twice — **Figure 5.6, p. 5-11** (TEXT/LORES: the HBL base and display
+base of all 32 character rows, pages 1 and 2, hex and decimal) and **Figure
+5.9, p. 5-45** (HIRES, per scanline). POM2 reproduces **every value in both**,
+plus the five rules p. 5-11 states above its table:
+
+1. HBL is A12 in TEXT/LORES, so HBL and HBL' memory are disjoint — *"this is
+   not true in HIRES mode"*, and Figure 5.9 shows the overlap (HBL base
+   `$2068` against display base `$2000`, inside the same page).
+2. HBL scanned memory begins **`$18` bytes before** display scanned memory
+   **plus `$1000`**, with a 128-byte-segment wraparound.
+3. *"The first address of HBL is always addressed twice consecutively,
+   because H0-H5 is in the all zero state for two consecutive scans"* —
+   MAME's `h_clock - (h_clock > 0)`, and the long cycle's second LD194 pulse.
+4. In VBL, V3 and V4 are both true and the horizontal offset sum becomes
+   H5-H4-H3 **minus 0100** (against H4-H3-H2 **minus 0011** at the top of the
+   screen): *"$400 minus $8 gives $478; not $3F8."*
+5. Horizontal scanning wraps at the 128-byte boundary: the address before
+   `$400` is `$47F` in VBL and **`$147F`** outside it.
+
+Plus the figure's footnote — 32 rows per frame, each scanned 8 consecutive
+times except the last, scanned **14** (24x8 + 7x8 + 14 = 262). Pinned
+`video_scanner_sather`, which probes the bus by walking a marker through RAM
+rather than reimplementing the formula.
+
+**An erratum in Sather, recorded so nobody "corrects" POM2 toward it.** Rule
+2's printed Applesoft sequence ends `30 HBL = HBL+1024`. It must be **+4096**:
+the prose one line above says "plus `$1000`", and the table settles it — row 0
+has BASE `$400` and HBL `$1468`, and `$400 - 24` wrapped to `$468` plus 1024
+would be `$868` (text page 2), which is not what is printed. POM2 and MAME set
+A12 and are right.
+
+**And the //e is different, which Sather also settles — twice over.** POM2
+suppresses the HBL A12 bit on a //e (`if (!iieMode && h_clock < 25)`), MAME's
+word alone until *Understanding the Apple IIe* (1985) was fetched on
+2026-11-01. Its § TEXT/LORES Scanning, **p. 5-10**: *"In TEXT/LORES, A15, A14,
+A13, and A12 equivalents are false (low, ground, zip). The A10 equivalent is
+(80STORE' . PAGE2)', and the A11 equivalent is 80STORE' . PAGE2."* No A12
+term — and that A10/A11 pair is exactly POM2's `Page2 = page2 && !80store`
+base select, which the table at the foot of the same page spells out
+(`PAGE 1` → `$0400-$07FF`, `PAGE 2, 80STORE` → `$0400-$07FF`,
+`PAGE 2, 80STORE'` → `$0800-$0BFF`).
+
+**The two editions differ exactly as the hardware does**, which is the second
+confirmation and the better one. The 1983 book's rule 1 reads *"HBL scanned
+memory begins `$18` bytes before display scanned memory **plus `$1000`**"* and
+its Applesoft sequence has three steps; the 1985 //e book's reads *"HBL
+scanned memory begins `$18` bytes before display scanned memory"* and its
+sequence has **two** — `30 HBL = HBL+1024` is simply gone, because on a //e
+there is no A12 image to add. Asserted by `video_scanner_sather`.
+
+**A //e RESET clears the DHGR (AN3) latch, and POM2 kept it** *(fixed
+2026-11-01)*. `resetSoftSwitches(warm)` preserved `display.dhgr`, citing MAME
+`apple2e.cpp:1459-1471` and Sather Fig. 7.1 — **both of which say the
+opposite**. Sather, **p. 7-3**, note 1 to Figure 7.1 (read off a render of the
+page, because this book's OCR is noisy): *"All soft switches except
+KEYSTROBE, TEXT, and MIXED are reset when the RESET' line drops low. All soft
+switches appear to be cleared at power up."* Three names, and AN3 — one of
+the IOU's four annunciator soft switches, which is what drives DHGR on a //e
+— is not among them. MAME agrees with its own citation and clears `m_an3`.
+So Ctrl-Reset out of a double-hi-res program used to leave POM2 in DHGR where
+the hardware drops to plain HGR, shredding the first frame after the reset.
+Sather's own hedge is worth keeping in view: Figure 7.1 is *"only a functional
+representation resulting primarily from my investigations"* — a very good one
+that agrees with MAME, not a die shot.
+
+**The vapor lock POM2 models is on that same //e page, in Sather's own code.**
+*"If you zero out all scanned memory except for the bytes in the blanking
+period preceding a given horizontal display line, you can detect the beginning
+of that horizontal scan with the following loop"* —
+
+```
+PAGE1  EQU  $C054
+WAIT   LDA  PAGE1
+       BPL  WAIT
+```
+
+— which is the shape `vapor_lock` and DROL's `LDA $C050 / CMP #$80` both take,
+and the reason an undriven `$C0xx` read must return the scanner byte.
+
 **Open-Apple/Solid-Apple** OR'd into $C061/$C062 bit 7 alongside
 joystick buttons (MAME `apple2e.cpp:2157-2169`); wired to host
 Left/Right Alt (`Memory::setOpenAppleKey/setSolidAppleKey`, two sources
