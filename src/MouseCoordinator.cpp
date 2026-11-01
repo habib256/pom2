@@ -124,6 +124,26 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
                 return int(memory.peekCpuView(
                     static_cast<std::uint16_t>(base + 5)));
             };
+            // Apple II Mouse Technical Note #7, "Mouse Clamping" (Nov 1988),
+            // § Apple IIc — the authoritative map, fetched and read
+            // 2026-11-01 from the Technical Notes archive:
+            //     $47D MinXL   $67D MaxXL
+            //     $4FD MinYL   $6FD MaxYL
+            //     $57D MinXH   $77D MaxXH
+            //     $5FD MinYH   $7FD MaxYH
+            // (the note's own table prints the two Max high bytes as $67D /
+            // $6FD, which duplicates the low-byte column; $77D / $7FD is the
+            // only reading consistent with four 16-bit values.) These are the
+            // four pairs below, at index 5, exactly.
+            //
+            // Do NOT "correct" this against the Csa2 FAQ's clamp description
+            // or Apple's $0478/$04F8 pair: those are the APPLEMOUSE CARD's
+            // holes, which TN #7 documents in a SEPARATE section — the card
+            // has no clamp-read call at all and uses the $Cn1A entry point
+            // with a $578 byte window. A 2026-11-01 sweep flagged this as
+            // POM2's single highest-value unknown on the strength of that
+            // comparison; the note settles it in POM2's favour and no
+            // hardware capture is needed.
             snapshot.iic.clampKnown = true;
             snapshot.iic.minX = hole(0x0478) | (hole(0x0578) << 8);
             snapshot.iic.minY = hole(0x04F8) | (hole(0x05F8) << 8);

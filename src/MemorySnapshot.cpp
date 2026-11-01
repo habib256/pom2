@@ -165,8 +165,12 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         // expansion-window OWNER (`SlotBus::activeExpansionSlot`). It is the
         // slot-side partner of `intC8Rom` five bytes up — that flag says the
         // MOTHERBOARD holds the window, this byte says WHICH CARD holds it
-        // otherwise. Seven cards take it (ClockCard, GrapplerCard, LironCard,
-        // WorkstationCard, CffaCard, SmartPortCard, SuperSerialCard) and no
+        // otherwise. ELEVEN card classes take it — the four this comment used
+        // to omit are GrapplerClassicCard, SlinkyCard, VidexVideotermCard and
+        // VidexUltratermCard, on top of ClockCard, GrapplerCard, LironCard,
+        // WorkstationCard, CffaCard, SmartPortCard and SuperSerialCard (plus
+        // Cffa3000Card, which inherits SmartPortCard's override). Ask
+        // `takesC800()` rather than trusting this list. No
         // section carried it, so a restore whose PC sat inside a card's
         // expansion ROM — a SmartPort/Liron driver, the SSC firmware — fetched
         // the FLOATING BUS for the whole 2 KB window instead of the card's

@@ -641,7 +641,26 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
         return false;
     }
     const uint8_t diskType = buf[infoOff + 1];
-    const bool singleSide = moof && diskType == 1;
+    // WOZ's Disk Type says ONLY the form factor. From the spec's INFO table
+    // (applesaucefdc.com/woz/reference2/, fetched 2026-11-01): offset +1
+    // "1 = 5.25, 2 = 3.5", and sidedness is a SEPARATE field — offset +37
+    // "Disk Sides" (INFO version 2), "The number of disk sides contained
+    // within this image. A 5.25 disk will always be 1. A 3.5 disk can be 1
+    // or 2."
+    //
+    // MOOF is different and POM2 reads it right: there the disk type DOES
+    // carry it (1 = SSDD GCR 400K, 2 = DSDD GCR 800K, 3 = DSHD MFM). But
+    // `moof && diskType == 1` left `singleSide` FALSE for every WOZ, so a
+    // 400K single-sided 3.5" capture came up as 1600 blocks with
+    // `headCount() == 2` — and `blockIndexFor` then doubled every track's
+    // base. Track 0 (blocks 0-11) is right, so the ProDOS volume directory
+    // and bitmap read fine and the volume mounts with its real name and
+    // catalogue; track 1 sector 0 lands at block 24 instead of 12 and track
+    // 79 sector 0 at 1584 instead of 792. Silent read corruption on an image
+    // that looks healthy.
+    const bool singleSide = moof ? diskType == 1
+                                 : (infoLen >= 38 && buf[infoOff] >= 2 &&
+                                    buf[infoOff + 37] == 1);
     const bool mfm = moof && diskType == 3;
     if (mfm && !mfmCapable_) {
         lastError_ = "Disk35Image: 1.44M MFM requires an Apple IIe SuperDrive controller";

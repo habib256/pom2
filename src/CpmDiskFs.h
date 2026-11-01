@@ -73,6 +73,37 @@ inline constexpr uint8_t kDosToCpm[16] = {
 /// `.po` → ProDOS order, `.cpm` → CP/M order; anything else (.dsk, .do) → DOS.
 SectorOrder orderForPath(const std::string& path);
 
+// ---- What is text, and what the host file is called
+//
+// A CP/M file carries NO type — not a tag, not an aux value, nothing (so
+// `HostFileTag.h`'s `#TTAAAA` never appears on a CP/M file). The extension
+// is all there is, so it supplies the default and the user overrides it.
+
+/// Whether `name`'s extension means text by default: ASM, MAC, LIB (sources
+/// and macro libraries), PRN, SYM (listings, symbol tables), HEX (Intel
+/// HEX), SUB (SUBMIT files), DOC, TXT, ME (`READ.ME`), FOR, COB, PAS, C, H
+/// (compiler sources), BAK (ED's backup). Everything else is binary —
+/// `BAS` included, because BASIC-80 saves tokenized unless told `,A`.
+bool extensionMeansText(const std::string& name);
+
+/// The host name for a CP/M file taken off a disk: `asText` adds `.TXT`,
+/// which is what marks a converted file on the way back, unless the CP/M
+/// extension is already TXT (`README.TXT` is not doubled). `READ.ME` →
+/// `READ.ME.TXT`, `PROG.ASM` → `PROG.ASM.TXT`, `BTERM.COM` → `BTERM.COM`.
+std::string hostNameForCpm(const std::string& cpmName, bool asText);
+
+/// The inverse: the CP/M name a host file should take, and whether its name
+/// marks it as converted text. A trailing `.TXT` is the marker and comes off
+/// when what remains has an extension of its own (`PROG.ASM.TXT` →
+/// `PROG.ASM`, text); otherwise it stays as the CP/M extension
+/// (`README.TXT` → `README.TXT`, text), so a file round-trips under its own
+/// name either way.
+///
+/// The one name that cannot round-trip: a CP/M file with NO extension
+/// exported as text by override. `NOTES` → `NOTES.TXT` → `NOTES.TXT`; the
+/// host name cannot say which it was.
+std::string cpmNameFromHost(const std::string& hostName, bool& isText);
+
 struct FileInfo {
     int         user = 0;
     std::string name;          // "NAME.EXT", upper case, no padding
@@ -111,6 +142,18 @@ public:
     /// "bterm.com" → "BTERM   COM" (11 bytes). False for a name CP/M
     /// cannot hold: empty, > 8.3, or a character CCP treats as a delimiter.
     static bool toDirName(const std::string& name, std::string& out11);
+
+    // ---- Text exchange. CP/M text is CR LF, ends at a ^Z ($1A), and is
+    // stored in whole 128-byte records — CP/M 2.2 keeps no byte count, so
+    // the pad IS the end marker and an exact length cannot be preserved.
+
+    /// Host text → CP/M text: '\n', "\r\n" and a lone '\r' all become
+    /// CR LF, then one ^Z ends it. `writeFile` pads the last record with ^Z
+    /// as well, which is what CP/M itself leaves there.
+    static std::vector<uint8_t> textToCpm(const std::vector<uint8_t>& host);
+    /// CP/M text → host text: the bytes up to the first ^Z, with CR LF (and
+    /// a lone CR) as '\n'. The record padding goes with it.
+    static std::vector<uint8_t> textFromCpm(const std::vector<uint8_t>& cpm);
 
 private:
     uint8_t* sector(int track, int dosSector);

@@ -35,6 +35,41 @@ both Klaus suites, and `display_golden_hash`; the existing fast core keeps
 is retired under the new core with a mutation control (first candidate: the
 Mockingboard's `syncToCpuCycle()+1`).
 
+**Why this is the entry worth doing — the French Touch / DIX demos.**
+`docs/test_corpus.md` makes DIX the priority gold-standard benchmark, and the
+DIX demos are *beam-raced* and PAL-timed: they place a store or a soft-switch
+write on a chosen **cycle within a scanline** and read the result off the
+screen. The Apple II's video scanner presents one address per 1 MHz cycle
+(Sather, *Understanding the Apple IIe*, ch. 3 and the floating-bus tables), so
+"which cycle of the instruction did that write land on" is a question the
+hardware answers and POM2 currently cannot: `step()` charges an instruction's
+cycles in one lump, so every bus access inside an instruction is attributed to
+the same instant. A cycle-stepped core is what makes "cycle exact" mean the
+cycle rather than the instruction, and it is the only way to CALIBRATE a
+raster effect against the real machine instead of tuning a per-device offset
+until the picture looks right.
+
+The present state is exactly that tuning, device by device, and each shim is
+a place where a DIX effect could be a cycle out:
+`getCurrentInstructionCycles()` for the Disk II, `syncToCpuCycle()+1` for the
+Mockingboard T1 IRQ phase (bug hunt 2026-09-02 — OLDSKOOL's free-running
+T1 handler read `$C404` one too high and wrapped the phase), and the 6522 T1
+read-back bias of −1 chosen over MAME's because TRIBU's release-tuned re-arm
+chain was the oracle. Three independent fudge factors, three different
+oracles, no common cycle model underneath them.
+
+**What is NOT known, and must not be asserted:** nobody has measured which —
+if any — DIX effects POM2 currently mis-times. The 2026-09-02 "DIX raster
+offset" turned out to be the 6522 read-back bias, not the CPU, and
+`dix_menu_raster_probe` is a probe, not a pinned expectation. So this entry's
+value is argued from the *mechanism* (an instruction-granular model cannot
+express a per-cycle placement), not from a measured failure. What would settle
+it: VALIDATION-006's headless corpus giving DIX a recorded per-frame screen
+hash, then the same corpus under the cycle-stepped core — a differential, which
+is the only honest way to claim an improvement. Until then the correct
+statement in any report is "POM2 is instruction-accurate with per-device
+compensation", not "cycle exact".
+
 **Evidence:** DEV.md § CPU: `step()` charges an instruction's cycles in one
 lump, so the penultimate-cycle IRQ sample cannot be modelled and the Harte
 gate checks final state only. The gap is papered over per device —
@@ -47,7 +82,12 @@ Mockingboard T1 IRQ phase, the 6522 T1 read-back bias tuned on TRIBU.
   §§ 8.2/8.5 measured a branch there at 13-16 % and a flag test at 7.2 %.
   Select it at the frame or worker level.
 - Default it on the PAL / DIX profiles only after VALIDATION-006 shows no
-  corpus regression.
+  corpus regression — and record the DIX differential (same corpus, both
+  cores) in `docs/audits/`, since that differential is the only evidence that
+  the new core actually buys demo accuracy rather than just cycle purity.
+- Sequence note: **VALIDATION-006 comes first**. Without a recorded per-frame
+  expectation for DIX there is no way to tell an improvement from a
+  regression, and a cycle-stepped core will move timings everywhere at once.
 
 <a id="memory-002"></a>
 

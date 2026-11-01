@@ -438,10 +438,70 @@ void testSetTime()
     std::printf("  set-time round-trips through the chip: OK\n");
 }
 
+// ── The hours register carries the 12/24-hour MODE, not a reserved bit ──
+//
+// Dallas's own `DS1216E SmartWatch ROM 64/256K` data sheet — the one in the
+// `1992 Dallas Semiconductor Product Data Book`, pp. 5-22..5-25 (fetched
+// 2026-11-01 from bitsavers, components/dallasSemiconductor/_dataBooks),
+// § AM-PM/12-24 MODE:
+//
+//   "Bit 7 of the hours register is defined as the 12- or 24-hour mode
+//    select bit. When high, the 12-hour mode is selected. In the 12-hour
+//    mode, bit 5 is the AM/PM bit with logic high being PM. In the 24-hour
+//    mode, bit 5 is the second 10-hour bit (20-23 hours)."
+//
+// POM2 masked the hours register with 0x3F and called bits 7-6 reserved. In
+// 24-hour mode that is right. In 12-hour mode it silently dropped the mode
+// bit and then read the AM/PM bit as the 20-hour bit: a driver that set
+// "3 PM" (0xA3) got 23:00 — eight hours out, and only for PM.
+void testTwelveHourMode()
+{
+    auto bcd = [](int v) { return static_cast<uint64_t>(((v / 10) << 4) | (v % 10)); };
+    // Write the 8 registers, then read them back and return the hour byte.
+    auto roundTrip = [&](uint8_t hoursReg) {
+        pom2::NoSlotClock nsc(&fixedHostTime);
+        walkMagicKey(nsc);
+        const uint64_t reg = (bcd(0) << 8) | (bcd(30) << 16) |
+                             (static_cast<uint64_t>(hoursReg) << 24) |
+                             (bcd(6) << 32) | (bcd(2) << 40) | (bcd(1) << 48) |
+                             (bcd(26) << 56);
+        for (int i = 0; i < 64; ++i)
+            (void)nsc.interceptRead(static_cast<uint16_t>(0xF800 | ((reg >> i) & 1)), 0xEA);
+        walkMagicKey(nsc);
+        const uint64_t back = readClockRegister(nsc);
+        return static_cast<uint8_t>((back >> 24) & 0xFF);
+    };
+    struct Case { uint8_t reg; uint8_t want; const char* what; };
+    const Case cases[] = {
+        // 24-hour mode (bit 7 clear) is unchanged — the positive control that
+        // keeps this from being a one-sided fix.
+        { 0x23, 0x23, "24-hour 23:00" },
+        { 0x09, 0x09, "24-hour 09:00" },
+        // 12-hour mode: bit 7 set, bit 5 = PM.
+        { 0x83, 0x03, "12-hour 3 AM" },
+        { 0xA3, 0x15, "12-hour 3 PM" },
+        // The two that make 12/24 wrap: 12 AM is midnight, 12 PM is noon.
+        { 0x92, 0x00, "12-hour 12 AM (midnight)" },
+        { 0xB2, 0x12, "12-hour 12 PM (noon)" },
+        { 0xB1, 0x23, "12-hour 11 PM" },
+    };
+    for (const Case& c : cases) {
+        const uint8_t got = roundTrip(c.reg);
+        if (got != c.want) {
+            std::fprintf(stderr,
+                "12/24 mode: %s wrote hours reg 0x%02X, read back 0x%02X "
+                "(want 0x%02X)\n", c.what, c.reg, got, c.want);
+            std::abort();
+        }
+    }
+    std::printf("  hours register 12/24-hour mode bit honoured: OK\n");
+}
+
 int main()
 {
     std::printf("NoSlotClock smoke test\n");
     testSetTime();
+    testTwelveHourMode();
     testPassThrough();
     testDisabled();
     testKeyWalkThenReadout();

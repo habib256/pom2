@@ -184,9 +184,51 @@ void ClockCard::latchTimeToShiftReg()
     shiftReg[1] = toBcd(lt.tm_min);
     shiftReg[2] = toBcd(lt.tm_hour);
     shiftReg[3] = toBcd(lt.tm_mday);
-    // shiftReg[4]: high nibble = month (4-bit binary, NOT BCD — MAME
-    // upd1990a.cpp:95 stores month as plain 1..12 in the high 4 bits),
-    // low nibble = day-of-week. Months 1..12 all fit in 4 bits.
+    // shiftReg[4]: high nibble = month (4-bit binary, NOT BCD), low
+    // nibble = day-of-week. Months 1..12 all fit in 4 bits. MAME
+    // upd1990a.cpp:95 does the same, and NEC says why in its own words —
+    // `uPD1990AC Serial I/O Calendar & Clock CMOS LSI`, pp. 792-805 of the
+    // `1983 NEC Integrated Circuits for Consumer Use` data book (fetched
+    // 2026-11-01 from bitsavers, components/nec/_dataBooks):
+    //
+    //   FUNCTION SPECIFICATIONS / Data format:
+    //     "Binary Coded Decimal (except 'Month' which is Hexa-Decimal Code)"
+    //   Fig. 1, the register map, MSB→LSB:
+    //     Month (hex) | Day of Week | Ten's of days | Unit of days |
+    //     Ten's of hours | Unit of hours | Ten's of minutes |
+    //     Unit of minutes | Ten's of seconds | Unit of seconds
+    //     — ten nibbles, and "DATA of 40 Bit Shift Register appears on
+    //     DATA OUT terminal from LSB of Second."
+    //   Data: "'Hours' 24 hour form", "Automatic adjustment of long and
+    //     short months", and under Leap year: "the correction for length
+    //     of the month is automatically performed and leap year is not
+    //     automatically performed. But it is possible to set calendar
+    //     FEB. 29, and the day after, it will be Mar. 1."
+    //
+    // The command table on p. 796 is the one POM2's mode decode follows,
+    // and it matches MAME's enum exactly: C2 C1 C0 = 000 Register Hold
+    // (DATA OUT = 1 Hz, TEST MODE released), 001 Register Shift (DATA OUT
+    // = LSB), 010 Time Set & Counter Hold (DATA OUT = LSB), 011 Time Read
+    // (DATA OUT = 0.5 Hz), 100/101/110 TP = 64 / 256 / 2048 Hz (each
+    // releasing TEST MODE), 111 TEST MODE. The data sheet also states the
+    // group rule POM2 models: "Groups '0' and '1' hold their functions
+    // independently" — a group-0 command cannot change the TP rate, which
+    // is why a TEST → SHIFT sequence leaves the TP where TEST put it.
+    //
+    // KNOWN DIVERGENCE, in POM2's favour and stated so it is not mistaken
+    // for fidelity: POM2 synthesises these nibbles from the HOST clock on
+    // every read, so its calendar is Gregorian. The chip's is not — it
+    // corrects month lengths but "leap year is not automatically
+    // performed", so a real ThunderClock+ left running across a 29 February
+    // in a non-leap year rolls to 1 March while POM2 would not. Modelling
+    // that would mean carrying the chip's own counter instead of the host's,
+    // which is the one thing that makes POM2's clock survive a rewind.
+    //
+    // NOT in the data sheet, and so a convention rather than silicon: the
+    // TP rate a chip comes up in. NEC documents no power-on default for
+    // group 1; POM2 takes MAME's (`device_start`: m_c = 0, with the
+    // REGISTER_HOLD divider), and a guest that cares must latch a TP
+    // command of its own.
     shiftReg[4] = static_cast<uint8_t>((month << 4) | (dow & 0x0F));
     // No year byte: the uPD1990A(C) has no year counter and the
     // ThunderClock firmware never clocks a 6th byte (see the 40-bit note
@@ -276,10 +318,14 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 
     // STB rising edge — latch the mode on C0/C1/C2.
     //   MODE_TIME_READ: load host time (+ optional user offset) into
-    //                   shiftReg so the next 48 CLK pulses serialise it.
+    //                   shiftReg so the next 40 CLK pulses serialise it.
     //   MODE_TIME_SET : commit the shift register (loaded by the prior
-    //                   48 CLK pulses in MODE_SHIFT) as the user-set
+    //                   40 CLK pulses in MODE_SHIFT) as the user-set
     //                   time. MAME `upd1990a.cpp:194-225`.
+    //                   (40, not 48: NEC's own data sheet calls it a
+    //                   "40 Bit Shift Register" — see latchTimeToShiftReg.
+    //                   The CLK handler and the generated firmware both
+    //                   always used 40; only these two lines said 48.)
     //   MODE_SHIFT / MODE_REGISTER_HOLD: no per-edge action — the chip
     //                   just remembers the mode.
     if (stbNow && !stbPrev) {

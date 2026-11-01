@@ -256,6 +256,99 @@ void testTracked()
     CHECK(std::memcmp(d60.image().data(), img60.data(), 3 * 16 * 256) == 0);
 }
 
+
+// ---- Text exchange (2026-11-01). CP/M text is CR LF, ends at a ^Z and is
+// stored in whole 128-byte records; pom2_cpm used to copy bytes both ways,
+// so a `get` of a source file handed the host CR LF, a ^Z and the record
+// padding, and a `put` left CP/M bare LF with no end marker.
+void testTextExchange()
+{
+    const std::string host = "LDA 1\nSTA 2\nEND\n";
+    const std::vector<uint8_t> hostBytes(host.begin(), host.end());
+
+    const auto cpm = CpmDisk::textToCpm(hostBytes);
+    // CR LF line ends, and a ^Z where the text stops.
+    CHECK(cpm.size() == host.size() + 3 + 1);          // 3 LFs gain a CR, + ^Z
+    CHECK(cpm[5] == '\r' && cpm[6] == '\n');
+    CHECK(cpm.back() == 0x1A);
+    // Every LF is preceded by a CR: no bare LF reaches a CP/M file.
+    for (std::size_t i = 0; i < cpm.size(); ++i)
+        CHECK(cpm[i] != '\n' || (i > 0 && cpm[i - 1] == '\r'));
+
+    // And back, byte for byte.
+    const auto back = CpmDisk::textFromCpm(cpm);
+    CHECK(std::string(back.begin(), back.end()) == host);
+
+    // The record padding goes with the end marker: what a real CP/M file
+    // looks like after `writeFile` pads it.
+    std::vector<uint8_t> padded = cpm;
+    padded.resize(128, 0x1A);
+    const auto unpadded = CpmDisk::textFromCpm(padded);
+    CHECK(std::string(unpadded.begin(), unpadded.end()) == host);
+
+    // CRLF in, and a lone CR (old Mac), both normalise.
+    for (const char* src : { "A\r\nB\r\n", "A\rB\r", "A\nB\n" }) {
+        const std::string s = src;
+        const auto round = CpmDisk::textFromCpm(
+            CpmDisk::textToCpm({ s.begin(), s.end() }));
+        CHECK(std::string(round.begin(), round.end()) == "A\nB\n");
+    }
+
+    // Empty text is a lone ^Z, and comes back empty.
+    CHECK(CpmDisk::textToCpm({}).size() == 1);
+    CHECK(CpmDisk::textFromCpm(CpmDisk::textToCpm({})).empty());
+
+    // A ^Z inside the text truncates there — CP/M 2.2 has no byte count, so
+    // this is a property of the format, not a choice.
+    const std::vector<uint8_t> cut = { 'A', 0x1A, 'B' };
+    CHECK(CpmDisk::textFromCpm(cut).size() == 1);
+}
+
+// Which files are text, and the host name that says so.
+void testTextNaming()
+{
+    CHECK(extensionMeansText("PROG.ASM"));
+    CHECK(extensionMeansText("read.me"));              // case-insensitive
+    CHECK(extensionMeansText("NOTES.TXT"));
+    CHECK(extensionMeansText("HELLO.C") && extensionMeansText("HELLO.H"));
+    CHECK(extensionMeansText("OLD.BAK"));
+    CHECK(!extensionMeansText("BTERM.COM"));
+    CHECK(!extensionMeansText("NOTES"));               // no extension at all
+    // BASIC-80 tokenizes unless told `,A`, so BAS is NOT text by default.
+    CHECK(!extensionMeansText("GAME.BAS"));
+
+    // Export: `.TXT` marks a converted file, and is never doubled.
+    CHECK(hostNameForCpm("PROG.ASM", true)  == "PROG.ASM.TXT");
+    CHECK(hostNameForCpm("READ.ME",  true)  == "READ.ME.TXT");
+    CHECK(hostNameForCpm("README.TXT", true) == "README.TXT");
+    CHECK(hostNameForCpm("BTERM.COM", false) == "BTERM.COM");
+
+    // Import: the marker comes off when what is left has its own extension.
+    bool isText = false;
+    CHECK(cpmNameFromHost("PROG.ASM.TXT", isText) == "PROG.ASM" && isText);
+    CHECK(cpmNameFromHost("README.TXT", isText) == "README.TXT" && isText);
+    CHECK(cpmNameFromHost("BTERM.COM", isText) == "BTERM.COM" && !isText);
+    CHECK(cpmNameFromHost("PROG.ASM", isText) == "PROG.ASM" && isText);
+    CHECK(cpmNameFromHost("GAME.BAS", isText) == "GAME.BAS" && !isText);
+    // A path is accepted; only the leaf is the name.
+    CHECK(cpmNameFromHost("some/dir/PROG.ASM.TXT", isText) == "PROG.ASM");
+
+    // Every CP/M name that round-trips must come back as itself.
+    for (const char* n : { "PROG.ASM", "READ.ME", "README.TXT", "BTERM.COM",
+                           "GAME.BAS", "LETTER.DOC" }) {
+        const bool text = extensionMeansText(n);
+        bool backText = false;
+        CHECK(cpmNameFromHost(hostNameForCpm(n, text), backText) == n);
+        CHECK(backText == text);
+    }
+
+    // The one documented loss: an extensionless file taken off AS TEXT by
+    // override cannot say it was extensionless.
+    bool t2 = false;
+    CHECK(hostNameForCpm("NOTES", true) == "NOTES.TXT");
+    CHECK(cpmNameFromHost("NOTES.TXT", t2) == "NOTES.TXT");   // not "NOTES"
+}
+
 } // namespace
 
 int main()
@@ -266,6 +359,8 @@ int main()
     testCpm3LabelAndStamps();
     testProdosOrder();
     testTracked();
+    testTextExchange();
+    testTextNaming();
     if (g_fail) { std::fprintf(stderr, "cpm_disk_fs: %d failure(s)\n", g_fail); return 1; }
     std::printf("cpm_disk_fs: PASS\n");
     return 0;

@@ -23,9 +23,15 @@
 // "clock without using a slot" solution for the Apple //c (which has
 // no expansion slots) and for any //e/II+ owner short on slot count.
 //
-// Protocol (verified against AppleWin's `NoSlotClock.cpp`, which is
-// itself derived from Nick Westgate's csa2 post + the Dallas DS1216
-// datasheet):
+// Protocol — read off Dallas's OWN `DS1216E SmartWatch ROM 64/256K` data
+// sheet, pp. 5-22..5-25 of the `1992 Dallas Semiconductor Product Data Book`
+// (fetched 2026-11-01 from bitsavers, components/dallasSemiconductor/
+// _dataBooks), and cross-checked against AppleWin's `NoSlotClock.cpp` (itself
+// from Nick Westgate's csa2 post). Where the two differ the data sheet wins:
+// AppleWin drops the write path entirely, and `NoSlotClock.cpp` says where
+// POM2 follows the silicon instead. The register layout, the 12/24-hour mode
+// bit and the one divergence POM2 keeps on purpose (the DAY register's
+// oscillator / RESET control bits) are all quoted at `endTransfer`.
 //
 //   The host CPU drives the chip via reads to the protected address
 //   range ($F800-$FFFF when sat under the Monitor ROM). Address bit
@@ -42,8 +48,12 @@
 //
 //   Mismatch behaviour: a single wrong A0 bit DISABLES further
 //   writes — the matcher stays "dead" until the host issues an A2=1
-//   read (or until system reset clears state). This is the Dallas
-//   datasheet pattern-recognition spec: a bad pattern is sticky.
+//   read (or until system reset clears state). The data sheet's own
+//   words, under OPERATION: "If a match is not found, the pointer does
+//   not advance and all subsequent write cycles are ignored", and "if a
+//   read cycle occurs at any time during pattern recognition, the
+//   present sequence is aborted and the comparison register pointer is
+//   reset". A bad pattern is sticky; a read is the way out.
 //
 // Where the chip is probed depends on the machine, because it hides
 // under whichever ROM the era's drivers walk:
@@ -129,10 +139,13 @@ public:
     /// keeps state across resets.
     void    onReset();
 
-    /// AppleWin-parity magic key — `CNoSlotClock::kClockInitSequence`
-    /// in `AppleWin/source/NoSlotClock.h`. The 64 bits are LSB-first
-    /// transmission of the Dallas DS1216E datasheet's 8-byte canonical
-    /// sequence  C5 3A A3 5C C5 3A A3 5C  packed little-endian.
+    /// The comparison register, from Figure 1 of the DS1216E data sheet
+    /// (p. 5-24): BYTE 0..7 = C5 3A A3 5C C5 3A A3 5C, "sent to the
+    /// SmartWatch LSB to MSB", so packed little-endian here and shifted out
+    /// from bit 0. Matches AppleWin's `CNoSlotClock::kClockInitSequence`.
+    /// Read the FIGURE, not the prose NOTE under it: that sentence lists
+    /// only seven bytes ("C5, 3A, 5C, C5, 3A, A3, 5C") — it drops the first
+    /// A3, and the bit table is the authority.
     static constexpr uint64_t kMagicKey = 0x5CA33AC55CA33AC5ULL;
 
     /// Snapshot / rewind. The chip is a bit-serial state machine walked

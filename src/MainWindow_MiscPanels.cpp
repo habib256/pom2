@@ -59,6 +59,7 @@
 #include "Pom2GL.h"
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
+#include "KeyChord.h"
 #include "Settings.h"
 #include "SettingRebuild.h"
 #include "SystemProfile.h"
@@ -704,8 +705,23 @@ void MainWindow::renderKeyboardPanel()
             // Ctrl-A..Ctrl-Z = $01..$1A, on either case of the letter.
             const char up = (c >= 'a' && c <= 'z')
                                 ? static_cast<char>(c - 'a' + 'A') : c;
-            if (up >= 'A' && up <= 'Z')
+            if (up >= 'A' && up <= 'Z') {
                 code = static_cast<uint8_t>(up - 'A' + 1);
+            } else {
+                // ...and Ctrl+punctuation through the SAME table the host
+                // path uses (Apple IIe Technical Reference Table 2-3): `2 @`
+                // -> $00, `6 ^` -> $1E, `- _` -> $1F, `[` -> $1B, `\` ->
+                // $1C, `]` -> $1D. Only A-Z was mapped here, so the panel
+                // sent the plain character for those six caps — and $00,
+                // $1E and $1F were unreachable from it at all. That matters:
+                // the panel IS the documented route when
+                // `keyboard_alt_apple_keys` is off or the host layout cannot
+                // form the chord, i.e. exactly for the users with no other
+                // way to type them.
+                const char one[2] = { c, '\0' };
+                const int punct = pom2::keychord::ctrlPunctCode(one, 0);
+                if (punct >= 0) code = static_cast<uint8_t>(punct);
+            }
         }
         injectAscii(code);
         consumedOneShots = true;

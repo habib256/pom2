@@ -81,7 +81,51 @@ int fromBcd(uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); }
 // The 64th bit of a data transfer: a transfer that wrote anything sets the
 // clock — kept as an offset from host time, as MAME's ds1215 `set_time`.
 // Reserved bits read 0 (data sheet register map): seconds/minutes bit 7,
-// hours bits 7-6 (24-hour mode), date bits 7-6, month bits 7-5.
+// hours bit 6 (24-hour mode), date bits 7-6, month bits 7-5. Bit 7 of the
+// hours register is NOT reserved — it is the 12/24-hour mode select, decoded
+// in `hourFromRegister` below.
+//
+// Register map and bit meanings are Dallas's own, from the `DS1216E
+// SmartWatch ROM 64/256K` data sheet in the `1992 Dallas Semiconductor
+// Product Data Book`, pp. 5-22..5-25 (fetched 2026-11-01 from bitsavers,
+// components/dallasSemiconductor/_dataBooks). The same pages confirm, for
+// the record, what POM2 already did: the 64-bit comparison pattern is
+// C5 3A A3 5C C5 3A A3 5C sent "LSB to MSB" (Figure 1 — note the prose
+// NOTE under that figure drops a byte, the table is the authority); a
+// mismatch means "the pointer does not advance and all subsequent write
+// cycles are ignored" (the sticky disable); "if a read cycle occurs at any
+// time during pattern recognition, the present sequence is aborted and the
+// comparison register pointer is reset"; and the eight registers are
+// 0.01 s / seconds / minutes / hour / day / date / month / year, stepped
+// "starting with bit 0 of register 0 and ending with bit 7 of register 7".
+//
+// NOT modelled, and stated rather than guessed: bits 4 and 5 of the DAY
+// register are the RESET-pin enable and the oscillator control ("when set
+// to logic 1, the oscillator is turned off"), and the data sheet says both
+// ship as 1. POM2 reads them back as 0 — which is the state of a running
+// clock whose RESET pin is live — and ignores them on a write, so a guest
+// cannot stop POM2's clock the way it could stop the chip's. Honouring the
+// oscillator bit would mean a driver that writes the day register with bit 5
+// set freezes the host clock, and no Apple II NSC driver POM2 has been able
+// to read does that deliberately; the risk of freezing a user's clock
+// outweighs the fidelity until one is found that needs it.
+
+namespace {
+/// The hours register, per the data sheet's "AM-PM/12-24 MODE" section:
+/// "Bit 7 ... is the 12- or 24-hour mode select bit. When high, the 12-hour
+/// mode is selected. In the 12-hour mode, bit 5 is the AM/PM bit with logic
+/// high being PM. In the 24-hour mode, bit 5 is the second 10-hour bit
+/// (20-23 hours)." Returns the hour in the 0-23 the C library wants.
+int hourFromRegister(uint8_t reg)
+{
+    if ((reg & 0x80) == 0) return fromBcd(reg & 0x3F);   // 24-hour, 00-23
+    int h = fromBcd(static_cast<uint8_t>(reg & 0x1F));   // 12-hour, 01-12
+    if (h == 12) h = 0;                                  // 12 AM is midnight
+    if (reg & 0x20) h += 12;                             // PM
+    return h;
+}
+}  // namespace
+
 void NoSlotClock::endTransfer()
 {
     if (written_) {
@@ -89,7 +133,7 @@ void NoSlotClock::endTransfer()
         std::tm set{};
         set.tm_sec  = fromBcd(byte(1) & 0x7F);
         set.tm_min  = fromBcd(byte(2) & 0x7F);
-        set.tm_hour = fromBcd(byte(3) & 0x3F);
+        set.tm_hour = hourFromRegister(byte(3));
         set.tm_mday = fromBcd(byte(5) & 0x3F);
         set.tm_mon  = fromBcd(byte(6) & 0x1F) - 1;
         const std::tm now = timeFn_();

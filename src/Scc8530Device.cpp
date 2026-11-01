@@ -766,6 +766,36 @@ void Scc8530Device::doWr0(int index, uint8_t data)
 
     case WR0_ENABLE_INT_NEXT_RX:
         c.rxFirst = 1;
+        // ...and a character ALREADY WAITING must interrupt now. The Zilog
+        // SCC/ESCC User Manual (1992), WR0 command descriptions, fetched and
+        // quoted verbatim: "Enable Interrupt On Next Rx Character Command
+        // (100). If the interrupt on First Received Character mode is
+        // selected, this command is used to reactivate that mode after each
+        // message is received. The next character to enter the Receive FIFO
+        // causes a Receive interrupt. ALTERNATIVELY, THE FIRST PREVIOUSLY
+        // STORED CHARACTER IN THE FIFO CAUSES A RECEIVE INTERRUPT."
+        //
+        // Only the first sentence was implemented — and MAME master has the
+        // same gap (`case WR0_ENABLE_INT_NEXT_RX: m_rx_first = 1; break;`),
+        // so this is a datasheet-over-MAME call, the kind this file already
+        // makes deliberately for SDLC.
+        //
+        // It matters on the Workstation Card. Its ROM issues this command
+        // immediately after re-enabling the receiver (WR3 $DD then WR0 $20,
+        // at $C3D8 and $DF82), running in mode 01 (WR1 = $08, from the
+        // LocalTalk init table). At 230.4 kbit/s a byte is 34.7 us — about
+        // 35 cycles of the card's 1 MHz 65C02 — so the next frame's first
+        // byte is essentially always in the FIFO by the time the ISR gets
+        // here, which is precisely why the manual has the "Alternatively"
+        // clause. `pumpRxPending` makes it certain. Without this the first
+        // frame interrupted and every frame after it did not: the best
+        // candidate explanation for the open note in DEV.md § SCC and
+        // CARDS-002, "answering lapENQ with lapACK does not move the card
+        // off $0B — the frame is accepted but the driver keeps enquiring".
+        //
+        // `checkReceiveInterrupt` already gates on RR0 D0 (Rx Char
+        // Available) and clears `rxFirst` itself, so nothing else changes.
+        checkReceiveInterrupt(index);
         break;
 
     case WR0_RESET_TX_INT:

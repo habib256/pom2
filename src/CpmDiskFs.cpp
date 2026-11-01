@@ -351,4 +351,104 @@ bool CpmDisk::writeFile(int user, const std::string& name,
     return true;
 }
 
+// ---------------------------------------------------------- text exchange
+
+std::vector<uint8_t> CpmDisk::textToCpm(const std::vector<uint8_t>& host)
+{
+    std::vector<uint8_t> out;
+    out.reserve(host.size() + host.size() / 16 + 1);
+    for (size_t i = 0; i < host.size(); ++i) {
+        const uint8_t c = host[i];
+        if (c == '\r') {
+            if (i + 1 < host.size() && host[i + 1] == '\n') ++i;   // CRLF
+            out.push_back('\r'); out.push_back('\n');
+        } else if (c == '\n') {
+            out.push_back('\r'); out.push_back('\n');
+        } else {
+            out.push_back(c);
+        }
+    }
+    out.push_back(0x1A);   // ^Z: where the text ends, since CP/M 2.2 keeps
+                           // no byte count. writeFile pads the rest.
+    return out;
+}
+
+std::vector<uint8_t> CpmDisk::textFromCpm(const std::vector<uint8_t>& cpm)
+{
+    size_t end = cpm.size();
+    for (size_t i = 0; i < cpm.size(); ++i)
+        if (cpm[i] == 0x1A) { end = i; break; }
+    std::vector<uint8_t> out;
+    out.reserve(end);
+    for (size_t i = 0; i < end; ++i) {
+        if (cpm[i] == '\r') {
+            if (i + 1 < end && cpm[i + 1] == '\n') ++i;
+            out.push_back('\n');
+        } else {
+            out.push_back(cpm[i]);
+        }
+    }
+    return out;
+}
+
+// ------------------------------------------- what is text, and its name
+
+namespace {
+
+/// The part of `name` after its last '.', upper-cased; empty when none.
+std::string extensionOf(const std::string& name)
+{
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos) return {};
+    std::string e = name.substr(dot + 1);
+    for (auto& c : e) c = char(std::toupper(static_cast<unsigned char>(c)));
+    return e;
+}
+
+} // namespace
+
+bool extensionMeansText(const std::string& name)
+{
+    static const char* const kTextExts[] = {
+        "ASM", "MAC", "LIB",            // sources, macro libraries
+        "PRN", "SYM",                   // listings, symbol tables
+        "HEX",                          // Intel HEX
+        "SUB",                          // SUBMIT command files
+        "DOC", "TXT", "ME",             // documents (READ.ME)
+        "FOR", "COB", "PAS", "C", "H",  // compiler sources
+        "BAK",                          // ED's backup of a text file
+    };
+    const std::string e = extensionOf(name);
+    if (e.empty()) return false;
+    for (const char* k : kTextExts)
+        if (e == k) return true;
+    return false;
+}
+
+std::string hostNameForCpm(const std::string& cpmName, bool asText)
+{
+    if (!asText) return cpmName;
+    if (extensionOf(cpmName) == "TXT") return cpmName;   // never doubled
+    return cpmName + ".TXT";
+}
+
+std::string cpmNameFromHost(const std::string& hostName, bool& isText)
+{
+    // Only the leaf matters; a caller may hand a path.
+    std::string leaf = hostName;
+    const size_t slash = leaf.find_last_of("/\\");
+    if (slash != std::string::npos) leaf.erase(0, slash + 1);
+
+    if (extensionOf(leaf) != "TXT") {
+        isText = extensionMeansText(leaf);
+        return leaf;
+    }
+    isText = true;
+    // `PROG.ASM.TXT` → `PROG.ASM`: the marker comes off because what is
+    // left has an extension of its own. `README.TXT` keeps it, because
+    // stripping it would leave CP/M a name with none.
+    const std::string without = leaf.substr(0, leaf.size() - 4);
+    return extensionOf(without).empty() ? leaf : without;
+}
+
 } // namespace pom2::cpmfs

@@ -53,6 +53,14 @@
 class Apple2Display
 {
 public:
+    // Address of the first byte of text/lo-res row `y` in the active page —
+    // PUBLIC since 2026-11-01 so `text_screen_capture` can assert that
+    // `TextScreenCapture.cpp`'s copy of the interleave agrees with the
+    // renderer's. The renderer is the oracle for what is on screen, and a
+    // formula written twice is a formula that drifts.
+    static uint16_t textRowAddress(int y, bool page2);
+
+public:
     static constexpr int kWidth   = 280;
     static constexpr int kHeight  = 192;
     static constexpr int kWidth80 = 560;
@@ -858,8 +866,6 @@ private:
     static void applyVideoEvent(Memory::DisplayState& state, Memory::VideoEventKind kind,
                                 bool value);
 
-    // Address of the first byte of text/lo-res row `y` in the active page.
-    static uint16_t textRowAddress(int y, bool page2);
     // Address of the first byte of HGR scanline `y` in the active page.
     static uint16_t hgrRowAddress(int y, bool page2);
 

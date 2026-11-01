@@ -98,11 +98,43 @@ inline constexpr int POM2_IWM_TICKS_PER_CPU_CYCLE = 7;
 //   CPU W65C02 @ 1 016 966 Hz (= pixclock/14). Use that machine for
 //   like-for-like DIX / French Touch captures; `apple2ee` is NTSC-only.
 //
-// Consequence worth knowing: POM2's PAL clock is right to 0.003 %, while
-// POM2's NTSC clock (14.31818/14, the naive divider) is 0.22 % FAST — a
-// guest sees 60.05 Hz where a real NTSC Apple II gives 59.92 Hz. The two
-// standards are therefore NOT derived on the same basis; PAL is the
-// accurate one. Left as-is because every NTSC-era timing constant, test
+// ── WHICH PAL CLOCK IS RIGHT? Four candidates, no settled answer ────────
+// This matters because DIX / French Touch is PAL-timed and beam-raced, so a
+// 0.1 % clock error walks a raster effect across the frame. Checked against
+// primary sources 2026-11-01 (do not "correct" POM2 toward MAME here):
+//
+//   1 015 625 Hz  POM2. The PAL LINE RATE derived exactly: 15 625 Hz
+//                 (625 lines x 25 Hz) x 65 cycles per line. No rounding.
+//   1 016 966 Hz  MAME `A2PAL_1M_CLOCK` — and MAME carries
+//                 `// FIXME: some of these values are probably wrong`
+//                 DIRECTLY ABOVE IT (src/mame/apple/apple2e.cpp, verified on
+//                 master). Its NTSC sibling there is 1 021 800, not the
+//                 1 022 727 POM2 and everyone else use, which is a second
+//                 reason not to treat that block as an oracle.
+//   1 017 889 Hz  The crystal divided by 14 (14.250 450 MHz / 14), i.e. the
+//                 NTSC board's divider applied to the PAL part.
+//   ~1 015 300 Hz MEASURED on a real PAL //e — "1.0153 MHz on a good 12
+//                 digit counter using a 100 ms gating time"
+//                 (applefritter, "PAL IIe cassette interface").
+//
+// Distance from that measurement: POM2 +0.032 %, MAME +0.164 %, crystal/14
+// +0.255 %. So the one piece of real-hardware evidence anyone has found
+// favours POM2's figure, by 5x over the MAME value this file cites as its
+// oracle above — and it also says the PAL board does NOT simply divide its
+// crystal by 14, since 14.250 450/14 misses the measurement by the most.
+//
+// WHAT WE DO NOT KNOW: that is ONE hobbyist reading of ONE machine, not a
+// controlled capture, and no source for the PAL board's actual divider chain
+// was found. So POM2's value is the best-founded of the four, not proven.
+// What would settle it: a frequency counter on phi0 of two different
+// European //e boards, or the PAL //e schematic's divider chain. Until then,
+// expect ~0.13 % drift when diffing a DIX capture against `apple2eefr`, and
+// do not move POM2's constant on the strength of that diff.
+//
+// Separately: POM2's NTSC clock (14.31818/14, the naive divider) is 0.22 %
+// FAST — a guest sees 60.05 Hz where a real NTSC Apple II gives 59.92 Hz. The
+// two standards are therefore NOT derived on the same basis; PAL is the
+// better-founded one. Left as-is because every NTSC-era timing constant, test
 // and golden capture in the tree is calibrated against 1 022 727.
 //
 // `cyclesPerFrame` mirrors the NTSC convention (round(clock / refresh)); it is
@@ -133,6 +165,38 @@ inline constexpr VideoTiming POM2_TIMING_PAL{
 // 25 + c is one column late — measured on MAD EFFECT, offsets 21..24 valid,
 // 25 not (Apple2Display::frameCycleToPos). One constant, so the two consumers
 // cannot drift apart again (bug hunt 2026-11-01: the log used 25).
+//
+// PRIMARY SOURCE, 2026-11-01. The value is not just a calibration that
+// happened to land: Sather, *Understanding the Apple IIe*, p. 5-10
+// ("TEXT/LORES Scanning", the numbered considerations), states it outright —
+//
+//     "HBL scanned memory begins $18 bytes before display scanned memory.
+//      The HBL base address can be computed from the displayed base address
+//      using this Applesoft program sequence:
+//          10 HBL = BASE-24
+//          20 IF INT(HBL/128)<>INT(BASE/128) THEN HBL = HBL+128"
+//
+// $18 = 24, this constant exactly. The same page gives the two other rules
+// POM2's scanner implements and had only second-hand through MAME/AppleWin
+// comments until now:
+//
+//   * the 128-byte wraparound (step 20 above, and p. 5-11: "Horizontal
+//     scanning wraps around at the 128-byte segment boundaries. Example: the
+//     address scanned before address $400 is $47F") — `Memory::floatingBus`;
+//   * "The first address of HBL is always addressed twice consecutively,
+//     because H0-H5 is in the all zero state for two consecutive scans" —
+//     which is exactly what `h_state = h_clock - (h_clock > 0)` encodes,
+//     mapping h_clock 0 and 1 both to h_state 0;
+//   * "During VBL, V3 and V4 are both true... The VBL base addresses are
+//     equal to the FIRST 40 base addresses minus eight."
+//
+// And p. 5-11 confirms the two HIRES address equivalences POM2 ports from
+// MAME: "A13 is equivalent to (PAGE2 . 80STORE')'", "A14 is equivalent to
+// PAGE2 . 80STORE'", and "VA, VB, and VC are equivalent to A10, A11, and A12
+// in HIRES". The book is at /Users/gistair/src/scrapling/work/dl (fetched
+// with scrapling; the asimov copy is a 375-page image scan with no text
+// layer, so render the page and read it — Table 5.1 and Figure 5.5 are PDF
+// pages 116-117).
 inline constexpr int kVideoAccessColumnOffset = 24;
 
 inline constexpr const VideoTiming& pom2VideoTiming(VideoStandard s)

@@ -667,7 +667,7 @@ static void testHostNewerFilePreserved()
     // The filename must round-trip through the ProDOS name normalisation
     // UNCHANGED, or the skip cannot match the on-disk file. sanitiseProDOSName
     // uppercases the base and strips a known extension into the file_type;
-    // decode re-adds it via extFromFileType, which is LOWERCASE (".txt"). So
+    // decode re-adds it via extensionForProdosType, which is LOWERCASE (".txt"). So
     // "NOTES.TXT" comes back as "NOTES.txt" — a no-op on a case-insensitive FS
     // (macOS), but on a case-sensitive one (Linux CI) `last_write_time(dest)`
     // then misses the file, sets its error_code, and the newer-file skip never
@@ -1726,6 +1726,88 @@ static void testMountNamesSurviveHostDeletes()
     std::printf("prodos_volume_smoke: mount-time names survive host deletes OK\n");
 }
 
+// A guest LOCK / UNLOCK reaches the host file's read-only bit.
+//
+// The build has always read the bit INBOUND (a read-only host file is served
+// with access $01). Outbound, the write-back took the entry's file_type and
+// aux and never its access byte (+$1E), so `LOCK HELLO` was dropped at every
+// flush; and since `writeFileAtomic` carries the original's mode onto the
+// replacement, `UNLOCK` could not take effect either. Fixed 2026-11-01, after
+// the sbabcoc Host File Transfer Card's `,attr` field pointed at the gap.
+//
+// The sharp part: a LOCK writes no file data at all, so the bit has to be
+// applied on the path where the write-back decides the bytes are unchanged.
+static void testLockFollowsTheHostReadOnlyBit()
+{
+    const fs::path dir = makeTempDir("accessbit");
+    writeFile(dir / "NOTES.txt", {'o', 'n', 'e'});
+
+    auto findEntry = [](std::vector<std::uint8_t>& img, const char* name)
+        -> std::uint8_t* {
+        for (int blk = 2; blk <= 5; ++blk)
+            for (int e = 0; e < 13; ++e) {
+                std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+                const int nl = ent[0] & 0x0F;
+                if (nl == static_cast<int>(std::strlen(name)) &&
+                    std::memcmp(ent + 1, name, nl) == 0)
+                    return ent;
+            }
+        return nullptr;
+    };
+    constexpr fs::perms kWriteBits = fs::perms::owner_write |
+                                     fs::perms::group_write |
+                                     fs::perms::others_write;
+    auto hostIsReadOnly = [&](const fs::path& f) {
+        return (fs::status(f).permissions() & kWriteBits) == fs::perms::none;
+    };
+
+    // A writable host file is served unlocked: W set.
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    std::uint8_t* ent = findEntry(img, "NOTES");
+    assert(ent && "NOTES must be in the volume directory");
+    assert((ent[0x1E] & 0x02) != 0 && "a writable host file is served unlocked");
+    assert(!hostIsReadOnly(dir / "NOTES.txt"));
+
+    // The guest locks it: ProDOS clears W (and D, RN) — access $01.
+    ent[0x1E] = 0x01;
+    auto r = pom2::decodeVolumeToFolder(img, dir.string(), nullptr);
+    assert(r.ok);
+    // Nothing was written: the bytes are the same ones the host already has.
+    // The lock still has to land, which is the whole point.
+    assert(r.filesWritten == 0 && "a LOCK changes no file data");
+    assert(hostIsReadOnly(dir / "NOTES.txt") &&
+           "a guest LOCK must reach the host read-only bit");
+    assert(slurp(dir / "NOTES.txt") == "one" && "the bytes are untouched");
+
+    // And the inbound half still agrees, so the state survives a remount.
+    std::vector<std::uint8_t> again;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", again).ok);
+    std::uint8_t* ent2 = findEntry(again, "NOTES");
+    assert(ent2 && (ent2[0x1E] & 0x02) == 0 &&
+           "a read-only host file must come back locked");
+
+    // The guest unlocks it: $E3, what ProDOS writes for a normal file.
+    ent2[0x1E] = 0xE3;
+    auto r2 = pom2::decodeVolumeToFolder(again, dir.string(), nullptr);
+    assert(r2.ok);
+    assert(!hostIsReadOnly(dir / "NOTES.txt") &&
+           "a guest UNLOCK must clear the host read-only bit");
+    // The read bits are untouched — only write moved.
+    assert((fs::status(dir / "NOTES.txt").permissions() &
+            fs::perms::owner_read) != fs::perms::none);
+
+    // Idempotent: a flush with the bits already in agreement changes nothing.
+    const auto before = fs::status(dir / "NOTES.txt").permissions();
+    assert(pom2::decodeVolumeToFolder(again, dir.string(), nullptr).ok);
+    assert(fs::status(dir / "NOTES.txt").permissions() == before);
+
+    std::error_code ec;
+    fs::permissions(dir / "NOTES.txt", kWriteBits, fs::perm_options::add, ec);
+    fs::remove_all(dir, ec);
+    std::printf("prodos_volume_smoke: LOCK follows the host read-only bit OK\n");
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
@@ -1756,6 +1838,7 @@ int main()
     testWriteBackCarriesFileMode();
     testLossyHostNamesRoundTripInPlace();
     testMountNamesSurviveHostDeletes();
+    testLockFollowsTheHostReadOnlyBit();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

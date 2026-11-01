@@ -14,38 +14,76 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// File ▸ Save BASIC listing: the Applesoft program in memory, as text, in
+// File ▸ Save BASIC listing: the BASIC program in memory, as text, in
 // `<user data>/listings/` and on the clipboard — the program's source,
 // exactly, the way sbabcoc's ReplicApple2Plus captures it through PR#n.
-// Read straight from RAM (TXTTAB $67/$68 up to VARTAB $69/$6A), so it works
-// whatever the program has done to the screen or the output hooks.
+// Read straight from RAM, so it works whatever the program has done to the
+// screen or the output hooks.
+//
+// Both BASICs, since 2026-11-01. POM2 ships an `Apple ][ Original (1977)`
+// profile whose BASIC *is* Integer BASIC, and this menu item had nothing to
+// offer it:
+//
+//   * **Applesoft** — TXTTAB `$67/$68` up to VARTAB `$69/$6A`, stored
+//     UPWARD from the bottom.
+//   * **Integer BASIC** — PP `$CA/$CB` up to HIMEM `$4C/$4D`, stored
+//     DOWNWARD from the top (Woz, "Apple II Basic Structure").
+//
+// Applesoft is tried first, so nothing about the existing behaviour moves.
+// Both pointer pairs are ordinary zero-page bytes that hold something else
+// on a machine running the other BASIC, so the Integer attempt is gated on
+// `looksLikeProgram`, which requires the chain of line lengths to land
+// exactly on HIMEM. Reading the screen is not an option POM2 needs: the
+// capture-the-LIST-output route the transfer card takes has to keep the
+// cursor still, because LIST breaks its lines on the cursor column.
 
 #include "MainWindow.h"
 #include "ApplesoftListing.h"
+#include "IntegerBasicListing.h"
 #include "EmulationController.h"
 #include "Logger.h"
 #include "ResourcePaths.h"
 
 #include "imgui.h"
 
+#include <cstddef>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 void MainWindow::saveBasicListing()
 {
     std::string text;
+    const char* which = "";
     {
         auto st = controller->lockState();
         Memory& mem = st.memory();
-        const uint16_t txttab = uint16_t(mem.peekMainRam(0x67) | mem.peekMainRam(0x68) << 8);
-        const uint16_t vartab = uint16_t(mem.peekMainRam(0x69) | mem.peekMainRam(0x6A) << 8);
-        if (vartab > txttab && txttab >= 0x0200)
-            text = pom2::applesoft::list(txttab, [&](uint16_t a) { return mem.peekMainRam(a); },
+        const auto peek = [&](uint16_t a) { return mem.peekMainRam(a); };
+
+        const uint16_t txttab = uint16_t(peek(0x67) | peek(0x68) << 8);
+        const uint16_t vartab = uint16_t(peek(0x69) | peek(0x6A) << 8);
+        if (vartab > txttab && txttab >= 0x0200) {
+            text = pom2::applesoft::list(txttab, peek,
                                          std::size_t(vartab - txttab));
+            if (!text.empty()) which = "Applesoft";
+        }
+        if (text.empty()) {
+            // Integer BASIC: [PP, HIMEM). The program sits high in memory,
+            // so a PP below the text page is not one.
+            const uint16_t pp    = uint16_t(peek(0xCA) | peek(0xCB) << 8);
+            const uint16_t himem = uint16_t(peek(0x4C) | peek(0x4D) << 8);
+            if (himem > pp && pp >= 0x0800 &&
+                pom2::integerbasic::looksLikeProgram(
+                    pp, peek, std::size_t(himem - pp))) {
+                text = pom2::integerbasic::list(pp, peek,
+                                                std::size_t(himem - pp));
+                if (!text.empty()) which = "Integer BASIC";
+            }
+        }
     }
     if (text.empty()) {
-        basicListingStatus_ = "No Applesoft program in memory.";
+        basicListingStatus_ = "No BASIC program in memory.";
         return;
     }
     char stamp[32];
@@ -62,6 +100,7 @@ void MainWindow::saveBasicListing()
         return;
     }
     ImGui::SetClipboardText(text.c_str());
-    basicListingStatus_ = "Saved " + file.string() + " (and copied)";
+    basicListingStatus_ = std::string("Saved ") + which + " listing to " +
+                          file.string() + " (and copied)";
     pom2::log().info("Listing", basicListingStatus_);
 }

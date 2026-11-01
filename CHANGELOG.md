@@ -10,6 +10,298 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — Harvesting the Host File Transfer Card: one naming convention, a lost LOCK, Integer BASIC
+
+sbabcoc's [Host File Transfer Card design](https://github.com/sbabcoc/ReplicApple2Plus/blob/main/TRANSFER-CARD.md)
+specifies an invented card down to register level. POM2 does not need the
+card — its ProDOS host folder covers the common case and its host-side file
+system tools are better for CI, because they need no guest and no 6502 clock
+— but five of its ideas landed here, and reading it found two real defects.
+What was deliberately **not** taken: the 10-second silence timeout and the
+1.5-second print-spool flush, both measured in host time, which is what
+*emuCycles everywhere* exists to forbid (a paused machine would be declared
+dead); the 6850/Communications-Card reader bootstrap, which exists only
+because that emulator has no host-side file system writer; and the trim
+routine, which has no landing site here — POM2 captures no screen text.
+
+**`pom2_dos33` relocated files it round-tripped.** `get` called
+`Dos33Disk::payload`, which strips a B file's address-and-length header, and
+threw the address away; `put` then guessed the type from the extension
+(`.txt → T`, else `B`) and the load address from `-a`, **defaulting to
+`$2000`**. So `get GAME` followed by `put GAME` moved a binary to `$2000`
+whatever it was built for, silently. `ProDOSVolume.cpp` had learned this
+exact lesson in 2026-10 — "every type it had no extension for became
+`.bin`, and every aux_type became 0" — and fixed it with the CiderPress
+`NAME#TTAAAA` tag, but the fix lived in one file's private statics. That
+convention is now **`HostFileTag.h`**, shared by the ProDOS host folder,
+`pom2_dos33` and the HGR Paint editor, with the DOS 3.3 ↔ ProDOS type map
+beside it (T/I/A/B ↔ TXT/INT/BAS/BIN are ProDOS CONVERT's own equivalences;
+S/R/new-A/new-B are given user-defined types that **no source was checked
+for**, and the comment says so). Giving the convention a test of its own
+immediately caught a third case the private copy had wrong: a BAS file of
+aux 0 went out `HELLO.bas` and came back `$0801`, because the import side
+assigns the Applesoft load address to any untagged `.bas`. `host_file_tag`
+now checks that *every* composed name parses back to the pair it came from,
+over every type and a sweep of aux values.
+
+**A guest `LOCK` never reached the host file, and `UNLOCK` could not
+either.** The host folder has always read the host read-only bit *inbound* —
+a read-only file is served with ProDOS access `$01` — and the write-back
+read the entry's file_type (`+$10`) and aux (`+$1F`) and **never its access
+byte (`+$1E`)**. So a `LOCK HELLO` was dropped at every flush and the next
+mount served the file unlocked; and because `writeFileAtomic` carries the
+original's mode onto the replacement (a 2026-10 fix), a guest `UNLOCK` of a
+read-only host file could not take effect. Both directions, silently. The
+card's answer is a `,attr` field in the host name; POM2's is better suited
+to it: **write-protection is the host read-only bit**, the rule
+`MediaNotch.h` sets for a medium, applied one level down to a file inside a
+served folder — so the state follows the file out of POM2 and into any other
+tool, and nothing new is invented in the name. The sharp part, and what the
+test pins: a `LOCK` writes no file data at all, so the bit has to be applied
+on the path where the write-back has decided the bytes are unchanged.
+`prodos_volume_smoke` ▸ `testLockFollowsTheHostReadOnlyBit`.
+
+**`pom2_cpm` copied bytes where CP/M wanted text.** CP/M text is CR LF, ends
+at a `^Z` and fills whole 128-byte records. `get` therefore handed the host
+CR LF, a `^Z` and the record padding; `put` left CP/M bare LF with no end
+marker. A CP/M file carries **no type at all**, so the extension decides —
+the card's § 8.4 list (`ASM MAC LIB PRN SYM HEX SUB DOC TXT ME FOR COB PAS
+C H BAK`, and `BAS` deliberately binary because BASIC-80 tokenizes unless
+told `,A`) — with `--text` / `--binary` to override. A file taken off as
+text is named `.TXT`, which marks it on the way back and comes off when what
+remains has an extension of its own (`PROG.ASM.TXT` → `PROG.ASM`,
+`README.TXT` stays). The one name that cannot round-trip is an
+extensionless file exported as text by override, and the test says so.
+
+**Integer BASIC can be listed at all.** POM2 ships an `Apple ][ Original
+(1977)` profile whose BASIC *is* Integer BASIC, and nothing could read one:
+`pom2_dos33 list` refused anything but an `A` file and File ▸ Save BASIC
+listing only knew TXTTAB. `IntegerBasicListing.h` is the sibling of
+`ApplesoftListing.h`. The format and the token table agree across
+CiderPress's `reformat/BASIC.cpp` and a2kit's `lang/integer/tokenizer.rs`,
+and were then checked byte for byte against the two Integer programs on
+`disks_5.4/dsk/saturn128k_software.dsk` — which corrected a first reading:
+in `09 05 00 | 4D 36 B9 A8 03 | 01` the `03` is the high byte of 936, not a
+`:` token, so line 5 is `CALL -936`. The three byte ranges **overlap**, and
+each overlap is a way to produce noise: `$B1` is the digit 1 inside a
+variable name (`A1` is `C1 B1`), the character `1` inside a string or after
+REM, and the marker of an integer constant everywhere else. Writing the test
+found a real bug in the new code, too — in a REM the end-of-line `$01` was
+appended as a literal control character, because `appendChar` keeps control
+characters on purpose and the REM path ran before the EOL check.
+
+The GUI reads Integer BASIC from PP `$CA/$CB` up to HIMEM `$4C/$4D` (Woz,
+"Apple II Basic Structure": Integer BASIC stores program text **downward**
+from the top, so PP decreases as the program grows, while Applesoft stores
+upward). Those are plain zero-page bytes that hold something else on a
+machine running Applesoft, so the attempt is gated on `looksLikeProgram`,
+which requires the chain of line lengths to walk from PP and land **exactly**
+on HIMEM — a check random bytes almost never pass. Applesoft is still tried
+first, so nothing about the existing behaviour moved. Reading the screen
+instead was never an option: the card's own § 7 records that capturing
+`LIST` output requires never moving the cursor, because `LIST` breaks its
+lines on the cursor column — Applesoft mid-string past column 33, Integer
+BASIC with real spaces inside string literals.
+
+**The HDV card now has a written contract.** `ProDOSHardDiskCard` is POM2's
+own invention: no MAME file, no datasheet, so the specification *is* the
+reference, and a behaviour nobody wrote down is one nobody can reproduce.
+DEV.md § Register-level contract spells out what the card does including
+where it does nothing, after the card doc's § 5.3 — whose negative clauses
+("RESET does not clear the stash, rewind the reader or empty the print
+spool") are the part worth copying. The clauses a reimplementation would get
+wrong: a write to `$0`/`$1` resets the byte cursor **even when the selected
+block does not change**, a write to `$6` does **not** reset it (a drive
+switch mid-block keeps the cursor), the cursor does not move on an access
+the card declines, an empty bay's status is **exactly** `$80` because the
+ROM reads a clear bit 5 as "the bay is empty", the block count clamps at
+`$FFFF` rather than truncating to 0, and RESET moves the cursors and the
+latch and nothing else — no eject, no flush, no dirty block cleared.
+`hdv_register_contract` pins all of it and passed on its first run, which is
+what makes the document worth trusting.
+
+**Both host tools check the destination before doing the work.** That is the
+card's `CHECK_WRITABLE` (§ 4.1), which checks before it even asks which
+files to transfer — but not its implementation, which probes by writing a
+block back unchanged. A real write to answer a read-only question would, in
+POM2, bump `mediaWriteEpoch()` and drop the rewind ring; the notch
+(`MediaNotch.h`) answers for free. `put` and `rm` used to mutate the
+in-memory image and only then be refused by `commit`, which still asks again
+because the bit can change in between.
+
+## 2026-11-01 — Bug hunt round 5: the three documents, found and read
+
+Round 4 closed with a list headed *"documents nobody verifying this code has
+read"*. Three of them were hunted down the same day — `scrapling` walking
+bitsavers' **directory indexes** rather than guessing file URLs — and two
+POM2 defects fell out of reading them. Ledger:
+[docs/audits/bug-hunt-2026-11-01-round2.md](docs/audits/bug-hunt-2026-11-01-round2.md)
+§ Round 5, which also records the dead ends so the next search skips them
+(Dallas is `components/dallasSemiconductor/`, has **no** per-part datasheet
+directory, and analog.com no longer serves the DS1216 at any obvious URL;
+NEC files its clock/calendar LSIs as *consumer* ICs, so they are in neither
+Microcomputer Catalog).
+
+- **Diablo 630 / 630ECS API Interface Manual** 90440-00A Rev A (12/82) —
+  `pdf/diablo/printer/630/`, plus the Maintenance Manual beside it.
+- **DS1216E SmartWatch ROM 64/256K** data sheet — inside the
+  `1992 Dallas Semiconductor Product Data Book`, pp. 5-22..5-25.
+- **uPD1990AC Serial I/O Calendar & Clock CMOS LSI** data sheet — inside
+  `1983 NEC Integrated Circuits for Consumer Use`, pp. 792-805.
+
+**The DS1216E's hours register carries the 12/24-hour mode, and POM2 called
+bit 7 reserved.** The data sheet's § AM-PM/12-24 MODE: *"Bit 7 of the hours
+register is defined as the 12- or 24-hour mode select bit. When high, the
+12-hour mode is selected. In the 12-hour mode, bit 5 is the AM/PM bit with
+logic high being PM. In the 24-hour mode, bit 5 is the second 10-hour bit."*
+POM2 masked the register with `0x3F` and read BCD. In 24-hour mode that is
+right; in 12-hour mode it dropped the mode bit and then read the AM/PM bit as
+the 20-hour bit, so a `SET TIME` of **3 PM (`$A3`) landed as 23:00** — eight
+hours out, and only ever for PM. Now decoded per the section, including the two
+wraps the mode needs (12 AM is midnight, 12 PM is noon). Pinned
+`no_slot_clock_smoke` → `testTwelveHourMode`: seven cases, two of them 24-hour
+positive controls, watched failing on exactly the 3 PM case first.
+
+**The Diablo 630's `ESC S` and `ESC X` were dropped on the floor.** § 3.9.4.1:
+*"While the terminal is in remote HMI mode, the SPACING switch is ignored. An
+ESC S sequence will return control of HMI to the SPACING switch."* Without it a
+driver that tightened the HMI for one passage printed **the whole rest of the
+job** at that HMI. And § 3.24.11 lists what `ESC X` cancels, closing with
+*"Increased carriage settling time and proportional space mode are **not**
+cancelled by ESC X"* — the one thing a naive implementation gets wrong. Both
+decoded, proportional space deliberately spared. Pinned `imagewriter_escape` →
+`testDiabloEscSandX`, two mutation controls, and a **non-degenerate** HMI: the
+first draft used 12/120" = 0.1", which *is* this head's own 10 cpi cell, so it
+passed with `ESC S` neutered.
+
+**And the 630's remote reset did nothing at all.** § 3.23.1 has `ESC SUB I`
+*"default to the same conditions that exist at power-up"* and calls `ESC CR P`
+*"the corresponding remote reset sequence... queued along with other
+commands"*; § 3.9.4 has it *"cancel all optional format factors"*. POM2
+consumed the parameter byte of both and threw it away, so a driver that opened
+its job with a remote reset — the normal way to clear whatever the last job
+left — **inherited the previous job's HMI, VMI, tab racks and styles**. POM2's
+input stream *is* the queue, so both now land on `resetPrinter()`, the power-up
+path `ESC c` takes on the Epson head; `ESC SUB`'s other sub-commands stay
+untouched, with the reason in the source. Pinned `imagewriter_escape` →
+`testDiabloRemoteReset`.
+
+**And a pile of things POM2 had right on someone else's authority now rests on
+the silicon's own data sheet**, which is a different claim. The DS1216E's
+`C5 3A A3 5C C5 3A A3 5C` pattern is Figure 1's, *"sent to the SmartWatch LSB
+to MSB"* — and the **prose NOTE under that figure drops a byte**, listing only
+seven, which `NoSlotClock.h` now says out loud so nobody "fixes" the constant
+from the sentence. The sticky mismatch and the read-aborts-recognition escape
+are quoted verbatim where round 4 had them down as AppleWin's word. NEC
+specifies POM2's month-as-4-bit-binary itself — *"Binary Coded Decimal (except
+'Month' which is Hexa-Decimal Code)"* — where round 4 had flagged it as a
+POM2-internal inference from the ThunderClock's firmware; Fig. 1 says **"40 Bit
+Shift Register"** in so many words, and two comments in `ClockCard.cpp` that
+said 48 are corrected (the code always used 40). The uPD1990AC command table
+matches POM2's mode decode exactly, including `011` Time Read → DATA OUT
+**0.5 Hz** and the rule that *"groups '0' and '1' hold their functions
+independently"*. Every Diablo parameter count POM2 had called undecidable is
+documented — and a comment block claiming `ESC FF n` and `ESC L` were left
+undecoded *because* of that uncertainty was doubly wrong, since the code
+decoded both anyway.
+
+**Three divergences are now stated instead of guessed.** The DS1216E's day
+register bits 4-5 are the RESET enable and the oscillator control (*"when set
+to logic 1, the oscillator is turned off"*, both shipping as 1) — POM2 reads
+them as 0 and ignores them on a write, because honouring the oscillator bit
+would let any driver freeze the user's clock and no NSC driver POM2 has read
+does it deliberately. The uPD1990AC's power-on TP rate is undocumented; POM2
+takes MAME's. And POM2's calendar is **Gregorian where the chip's is not** —
+NEC: *"leap year is not automatically performed"* — because POM2 synthesises
+the nibbles from the host clock, which is the one thing that makes its clock
+survive a rewind.
+
+## 2026-11-01 — Bug hunt round 4, and the method written down
+
+Seven more domains — documentation drift, video post-processing, the slot bus,
+the pointing devices and clocks, the Workstation Card + Z8530, the disk-image
+FORMAT layer, the beam/video timebase. Mid-round the owner restated the
+project's method, and it is now standing guidance: **aim at the real silicon,
+fetch the primary document rather than recalling it (re-checking POM2's own
+`file:line` citations, since upstream moves), and report what is NOT known as a
+deliverable.** Every brief was reissued with it, and the difference in what came
+back is the round's most useful result. Ledger, including ~20 further verified
+defects deferred for size and a long § *What we do not know*:
+[docs/audits/bug-hunt-2026-11-01-round2.md](docs/audits/bug-hunt-2026-11-01-round2.md)
+§ Round 4.
+
+- **The CRT scanlines were a half-row out of phase: the dark notch fell through
+  the CENTRE of every scanline the Apple drew**, and the bright ridge straddled
+  the gap between two rows. Single-row HGR detail and the horizontal strokes of
+  glyphs were notched out while the empty interlines were lit. Invisible at
+  exactly 2×, where `fwidth(outRow) == 1` zeroes the anti-aliasing term — which
+  is why eyeballing never caught it. OpenEmulator's own glass shader, fetched:
+  `float scanline = sin(PI * textureSize.y * q.y); c *= mix(1.0, scanline*scanline, …)`
+  — `sin²` is **1 at the row centre**, which by the half-angle identity is
+  exactly `0.5 − 0.5·cos(π·outRow)` in POM2's coordinate (verified equal to
+  1e-12 at rows 0, 1, 5, 97). A sign.
+- **A single-sided 400K WOZ 2 3.5" image mounted as a scrambled 800K volume.**
+  `singleSide` came from the MOOF rule (`moof && diskType == 1`), never true for
+  a WOZ, so a 400K capture got 1600 blocks, `headCount() == 2`, and
+  `blockIndexFor` doubled every track's base. Track 0 is unaffected, so **the
+  volume mounted with its real name and catalogue** while track 1 sector 0
+  landed at block 24 instead of 12: silent read corruption on a healthy-looking
+  image. The WOZ 2 spec, fetched: INFO **+1 Disk Type** is *"1 = 5.25, 2 = 3.5"*
+  and nothing else; sidedness is **+37 Disk Sides**. Pinned `woz35_load` (the
+  fixture gained a `sides` knob).
+- **`README.md` told every downloader the packages contain firmware.** They
+  contain none — the manifest says so, its only `roms/` lines are `wasm`
+  entries, and `stage_data.sh --verify` actively *fails* a package that has
+  any — so an offline machine could not boot at all, and the README
+  contradicted itself 30 lines later. The **"Known problem in v1.0.0"** box was
+  shipping into 1.1 saying "the regular packages, which ship every ROM" and
+  "all **49** dumps" (the catalogue is **57**).
+- **The on-screen //e keyboard's CONTROL latch produced no control code for
+  `@ ^ _ [ \ ]`**, and `Ctrl-@` (`$00`), `Ctrl-^` (`$1E`) and `Ctrl-_` (`$1F`)
+  were **unreachable from the panel at all** — while the correct table,
+  `pom2::keychord::ctrlPunctCode`, sat one include away. The panel is POM2's
+  documented route when `keyboard_alt_apple_keys` is off or the host layout
+  cannot form the chord, i.e. for exactly the users with no other way to type
+  them. Both paste paths also **reported truncation against the cap instead of
+  the free room**, so a second Ctrl-V while 4000 bytes were still draining
+  dropped most of the clipboard and still said "N chars queued".
+- **Two bus-arbitration comments cited MAME for a rule MAME does not have**
+  (`set_dma_line` is three lines with no per-slot mask and no arbitration,
+  unlike `set_irq_line`), and the **`takesC800()` roster was wrong in two
+  places** — `CLAUDE.md` omitted `VidexUltratermCard`, and
+  `MemorySnapshot.cpp`, whose comment *is* the justification for the snapshot
+  byte, said "Seven cards take it" when **eleven** classes override it. Both
+  comments now own their convention and say what would settle it.
+- `DEV.md` described AppleWin's **Tv sub-mode** as a 50 % blend with the
+  previous frame's same scanline. It blends with the previous Apple scanline
+  **of this frame**, at 3/4 + 1/4, and the symbol it named no longer exists.
+  The code was the faithful one.
+
+**And three pieces of host↔guest file exchange landed with it.**
+
+- **`HostFileTag.h/.cpp`** — the `NAME#TTAAAA` convention (CiderPress /
+  SD-CARD-OS) now lives in one file instead of privately inside
+  `ProDOSVolume.cpp`, because three POM2 paths exchange files with the host and
+  all three must spell a type the same way. The hazard is `SettingRebuild.h`'s:
+  policy that lives at one call site drifts at the others. Pinned
+  `host_file_tag`.
+- **`pom2_dos33 list`** writes an A or I BASIC program out as a text listing,
+  and both `pom2_dos33` and `pom2_cpm` gained the text conversions their file
+  systems actually need — CP/M text is CR LF, ends at a `^Z`, and is stored in
+  whole 128-byte records, so **the pad IS the end marker** and an exact length
+  cannot be preserved (CP/M 2.2 keeps no byte count). What counts as text comes
+  from the extension, `BAS` included as *binary* because BASIC-80 saves
+  tokenized unless told `,A`.
+- **File ▸ Save BASIC listing now covers Integer BASIC.** POM2 ships an
+  `Apple ][ Original (1977)` profile whose BASIC *is* Integer BASIC, and the
+  menu item had nothing to offer it. Applesoft is TXTTAB `$67/$68` → VARTAB,
+  stored upward; Integer is PP `$CA/$CB` → HIMEM `$4C/$4D`, stored
+  **downward** (Woz, *Apple II Basic Structure*). Applesoft is tried first, so
+  nothing about the existing behaviour moves, and the Integer attempt is gated
+  on the chain of line lengths landing exactly on HIMEM — both pointer pairs
+  are ordinary zero-page bytes holding something else on a machine running the
+  other BASIC. Pinned `integer_basic_listing`.
+
 ## 2026-11-01 — Bug hunt round 3: the release machinery, the browser, and a scanline
 
 Seven domains no earlier hunt had touched, chosen with a v1.1 release next:

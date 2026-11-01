@@ -525,3 +525,420 @@ today.
 | `printer_grain_pileup_test.cpp:94` | ceilings only (`maxStep`, `peak`), and `drain()` answers `{0,0}` for silence — a printer making no sound at all certified as crackle-free, which is the regression *next to* the one the file pins | a floor as well: `peak > 0.01` |
 | `mouse_card_applewin_smoke_test.cpp:590` | `FirmwareRig::ok` conflated "dump absent" with "`loadAppleIIRom`/`loadRom` refused it", so a regression in the loaders silently disabled the four firmware cases that would have caught it | present-but-unloadable now asserts; absent prints `SKIP` and `main` returns 77 |
 | `key_chord_policy_test.cpp:179` | a source scanner with **no positive control**: a broken `PpFrame` model would inspect zero lines and pass — the state in which a newly added unguarded call ships and `abort()`s the module | two fixtures with a known answer (reachable → caught, `#ifndef __EMSCRIPTEN__` → not), a `g_linesInspected` assertion, and the thread-spawn scan above |
+
+---
+
+# Round 4 — seven more domains, and the method changed what came back
+
+Seven domains no earlier round had touched: documentation drift, the video
+post-processing, the slot bus, the pointing devices and clocks, the Workstation
+Card + Z8530, the disk image FORMAT layer, and the beam/video timebase.
+
+Mid-round the owner restated the project's method, and it is now standing
+guidance (`[[feedback-silicon-is-reference]]`): **aim at the real silicon,
+fetch the primary document from the net rather than recalling it — including
+re-checking POM2's own `file:line` citations, since upstream moves — and
+report what is NOT known as a deliverable.** Every brief was reissued with it,
+and the difference in what came back is the most useful result of the round.
+
+Primary sources actually fetched and quoted this round: MAME `apple2e.cpp`,
+`a2bus.h/.cpp`, `a2ultraterm.cpp`, `a2videoterm.cpp`, `a2ssc.cpp`,
+`a2thunderclock.cpp`, `grappler.cpp`, `ds1215.cpp`; OpenEmulator
+`libemulation` `OEVector.cpp`, `OpenGLCanvas.cpp`, `AppleIIVideo.cpp`,
+`CanvasInterface.h` and the *AppleColor Composite Monitor IIe* XML; AppleWin
+`NTSC.cpp`, `MouseInterface.cpp`; the **WOZ 1, WOZ 2 and MOOF specs** and the
+**2IMG spec**; the **Apple II Reference Manual (1979)** § EXPANSION ROM and
+Table 33; **ProDOS 8 Technical Note #20**; the Csa2 FAQ R034 mouse
+programming notes; cc65's `a2.stdmou.s`; applefritter threads on the PAL
+crystal and clock.
+
+## Landed
+
+| # | Defect | Oracle that settled it | Pin |
+|---|---|---|---|
+| DOC-1 | **`README.md` told every downloader the packages contain firmware.** They contain none: the manifest says "Desktop packages carry NO firmware dump", its only `roms/` lines are `wasm` entries, `git ls-files roms/` outside `floppy_samples/` is empty, and `stage_data.sh --verify` actively *fails* a package that has any. An offline machine could not boot at all, and the README contradicted itself 30 lines later. | the manifest + the tree | — |
+| DOC-2 | The **"Known problem in v1.0.0"** box was shipping into 1.1 saying "the regular packages, which ship every ROM" (they ship none) and "all **49** dumps" (the catalogue is **57**), with a forward-looking sentence about a fix that already landed. | `src/RomFetch.cpp` (57 entries), `POM2_RETROBIOS_COMMIT` | — |
+| VID-1 | **The CRT scanlines were a half-row out of phase: the dark notch fell through the CENTRE of every scanline the Apple drew**, and the bright ridge straddled the gap between two rows. Single-row HGR detail and the horizontal strokes of glyphs were notched out while the empty interlines were lit. Invisible at exactly 2× (`fwidth(outRow) == 1` zeroes `scanAA`), which is why eyeballing never caught it. | OpenEmulator's own glass shader, fetched: `float scanline = sin(PI * textureSize.y * q.y); c *= mix(1.0, scanline*scanline, scanlineLevel);` — `sin²` is **1 at the row centre**. By the half-angle identity that is exactly `0.5 − 0.5·cos(π·outRow)` for POM2's coordinate; verified equal to 1e-12 at rows 0, 1, 5, 97. A sign. | needs a GL context (`crt_glass_resample` returns 77 without one) — recorded, not added |
+| FMT-1 | **A single-sided 400K WOZ 2 3.5" image mounted as a scrambled 800K volume.** `singleSide` was derived from the MOOF rule (`moof && diskType == 1`), never true for a WOZ, so a 400K capture got 1600 blocks and `headCount() == 2` and `blockIndexFor` doubled every track's base. Track 0 is unaffected, so **the volume mounted with its real name and catalogue** while track 1 sector 0 landed at block 24 instead of 12. Silent read corruption on a healthy-looking image. | WOZ 2 spec, fetched: INFO **+1 Disk Type** is *"1 = 5.25, 2 = 3.5"* and nothing else; sidedness is **+37 Disk Sides** (INFO v2), *"A 3.5 disk can be 1 or 2."* | `woz35_load` (the fixture gained a `sides` knob) |
+| BUS-1 | **Two bus-arbitration comments cited MAME for a rule MAME does not have.** `dmaClaimant()` claimed "the DMA daisy chain gives priority to the lowest slot; MAME a2bus does the same". MAME's `set_dma_line` is three lines that forward the signal with **no per-slot mask and no arbitration** — unlike `set_irq_line`, which does keep one — and the 1979 manual documents only "higher/lower priority" over pins 24/27 that are *"usually connected"* card-to-card. Both comments now own the convention and say what would settle it. | MAME `a2bus.cpp`; Apple II Reference Manual Table 33 | — (comment) |
+| BUS-2 | The **`takesC800()` roster was wrong in two places**: `CLAUDE.md` omitted `VidexUltratermCard`, and `MemorySnapshot.cpp` — whose comment is the *justification for the snapshot byte* — said "Seven cards take it" and named seven when **eleven** card classes override it (twelve counting `Cffa3000Card`). The open UltraTerm question is settled in the card's favour. | MAME `a2ultraterm.cpp:135` `take_c800() → true`, serving 4 KB of firmware through the window; the 1979 manual's § EXPANSION ROM is written for exactly that class of card | — (a roster test is recorded as the right pin) |
+| INP-1 | **The on-screen //e keyboard's CONTROL latch produced no control code for `@ ^ _ [ \ ]`**, and `Ctrl-@` ($00), `Ctrl-^` ($1E) and `Ctrl-_` ($1F) were **unreachable from the panel at all** — while the correct table, `pom2::keychord::ctrlPunctCode`, already sat one include away, cited to IIe Tech Ref Table 2-3. The panel is POM2's documented route when `keyboard_alt_apple_keys` is off or the host layout cannot form the chord, i.e. for exactly the users with no other way to type them. | POM2's own already-pinned table | the table is pinned by `key_chord_policy`; the panel branch now calls it |
+| INP-2 | Both paste paths **reported truncation against the cap instead of the free room**. `Keyboard::pushChars` caps on the LIVE queue, so a second Ctrl-V while 4000 bytes were still draining dropped most of the clipboard and still said "N chars queued" with no note. The dropping is the documented DoS guard; only the message lied. | the code's own cap arithmetic | — |
+| DOC-3 | `DEV.md` described the AppleWin **Tv sub-mode** as "+ 50 % blend with the previous frame's same scanline (`appleWinPrev80`)". It blends with the previous Apple scanline **of this frame**, at 3/4 + 1/4, and `appleWinPrev80` no longer exists. The code is the faithful one. | AppleWin `NTSC.cpp`'s `updateFramebufferTVDoubleScanline`, whose two-line mean is exactly 3/4 + 1/4 | — |
+
+## Verified, deferred — round 4
+
+Highest first. Full detail in the agents' reports; the short form:
+
+- **`NoSlotClock` drops the DS1216's 12/24-hour mode and PM bits**, so a
+  12-hour set-time of 9 PM (`$A9`) masks to `$29`, decodes as hour **29**, and
+  `mktime` rolls the date forward a day — `offsetSec_` then wrong by 8 hours
+  *and* a date. The read path never re-emits bit 7 either. MAME's `ds1215.cpp`
+  (fetched) masks reg 3 with `0xBF` and does `(hour + 12) % 24` on the PM flag.
+  Certain divergence; **unverified** whether any Apple II SmartWatch utility
+  uses 12-hour mode.
+- **The //c clamp screen holes POM2 reads conflict with Apple's documented
+  convention**, and index 5 on a //c is the **built-in SmartPort's** screen-hole
+  column, which the disk firmware also writes. Csa2 R034 says `$04F8/$05F8` is
+  a *max*, not `minY`, and the `$0678/$0778/$06F8/$07F8` POM2 reads are not
+  clamp holes in any document found. If the measurement behind the comment is
+  stale, the //c absolute cursor sync projects onto garbage. **The single
+  highest-value hardware capture in that domain** — see the unknowns below.
+- **"Apple IIe SuperDrive" is offered on four profiles where the factory
+  refuses it**, and the refusal is silent: `unavailableReason` has no case for
+  it, `resolve()` does not drop it, `plugSmartPort35` discards the factory's
+  warning, so the badge shows "1 staged change" for ever and every Apply
+  re-arms a cold boot. Same shape as hunt #21.
+- **A Ctrl-Reset can permanently disconnect a card's IRQ from the CPU.**
+  `SlotBus::reset()` never re-publishes a card's contribution while
+  `M6502::softReset/hardReset` zero the wire-OR mask, and `assertIrq`'s
+  idempotence makes the desync permanent. The CCS 7710's 6850 — which has no
+  reset pin, deliberately — is the documented counter-example to the invariant
+  `M6502.cpp`'s own comment asserts. MAME's `reset_w`, read in full, never
+  touches its IRQ mask. (Same root cause as round 2's CPU-2.)
+- **The ESC/P `ESC D NUL`, Diablo bottom-margin, WOZ `boot_sector_format`,
+  FLUX `block_count` bound and TMAP 0..159 range** findings — four more
+  format-layer items, each with a fetched spec line, including one where a
+  crafted TMAP entry of 200 reads 8 bytes of *bit data* as a TRK header.
+- **Four live demodulation controls are greyed out when "CRT effects" is off**
+  — including **PAL composite**, which has no other UI anywhere, so a PAL user
+  who wants clean pixels cannot tick the one control that describes their
+  machine rather than a look.
+- **The Triad/Dot mask's vertical gap is neither anti-aliased nor faded** where
+  every other high-frequency pattern in that shader is; **barrel and vignette
+  are elliptical** where OE's are circular (OE divides the vertical axis by the
+  display aspect) — the second changes the shipped look and wants a decision.
+- **The OE demod kernel lives in four hand-typed copies** and the GLSL one is
+  checked only by a hand transcription in a test; a typo inside the shader
+  string ships with all 425 cases green.
+- **`SlotBus`'s active-card-cache staleness guard never executes in any
+  configured build** (`#ifndef NDEBUG`, and every documented build is Release
+  or RelWithDebInfo), so the regression it exists to make loud would ship.
+- `ClockCard`'s free-running DATA_OUT pulse phase is not in the snapshot;
+  `IIcMouse`'s `releasedFor_` is not either; `~SlotBus` is `= default`, the one
+  teardown path that skips `onUnplug()`; window focus loss releases held keys
+  but never a held mouse button; `Sony35Drive::ensureCacheFor` omits
+  `Woz35` from a three-kind list two siblings include; the MacBinary envelope
+  is stripped only by the 5.25" loader; `lle_vs_hle.md` calls four firmware
+  dumps "in-repo" when the repo tracks none; the LLE/HLE panel has six rows the
+  Markdown master table does not; the ProDOS block-device signature is cited to
+  a manual that predates ProDOS by four years (it is **ProDOS 8 TN #20**).
+
+## What we do not know — the round's real deliverable
+
+### Measured, and the evidence favours POM2 over its own cited oracle
+
+**The European PAL CPU clock.** Four candidates, and POM2's was the least
+sourced while being the best founded. Recorded in `CpuClock.h` with the
+numbers: POM2 1 015 625 Hz (the PAL line rate, 15 625 × 65, exact); MAME
+1 016 966 Hz **under a `// FIXME: some of these values are probably wrong`
+that sits directly above it** (verified on master — and its NTSC sibling there
+is 1 021 800, not the 1 022 727 everyone uses, a second reason not to treat
+that block as an oracle); crystal ÷ 14 = 1 017 889 Hz; and **~1 015 300 Hz
+measured on a real PAL //e** ("1.0153 MHz on a good 12 digit counter using a
+100 ms gating time", applefritter). Distances from the measurement: POM2
++0.032 %, MAME +0.164 %, crystal/14 +0.255 %. So POM2 is **5× closer** than
+the figure it deferred to, and the measurement also says the PAL board does
+*not* simply divide its crystal by 14. **Still unknown:** that is one hobbyist
+reading of one machine, and no source for the PAL divider chain was found.
+*Settled by:* a frequency counter on φ0 of two different European //e boards,
+or the schematic. Until then, expect ~0.13 % drift when diffing a DIX capture
+against `apple2eefr` — **and do not move the constant on the strength of that
+diff.**
+
+### Derived vs taste, in the video pipeline
+
+**Derived, and now proven:** the 17-tap `lumaK` / `chromaSoft` kernels. The
+agent fetched OE's `OEVector.cpp`, re-implemented
+`chebyshev(17,50) → normalise → × lanczos(17,fc) → normalise` in Python at
+fs = 4·315/88 MHz, and reproduced POM2's hard-coded coefficients **to all five
+printed decimals**. The monitor XML confirms Y'UV at 2.0 MHz luma / 0.6 MHz
+chroma, so a single chroma kernel for U and V is right. The YUV→RGB matrix is
+verbatim OE. The NTSC master-clock figures are exact.
+
+**Taste, and now written down as such:** `chromaSharp` (= 2 × luma, no hardware
+analogue — and the lower half of that slider is a documented no-op while the
+tooltip claims "more composite bleed"); `persistence = 0.4` (OE's Apple II XML
+says persistence **0**); `phosphorGamma` (POM2-only, OE runs the glass in
+gamma space with no curve); `scanlines`, mask strength, barrel, centre
+lighting (OE's XML is 0.05/0.05/0.05/1/1, and POM2's barrel *number* is on a
+different scale from OE's because the radius normalisation differs); the mask's
+0.5/1.5 and `kMaskUnitsX = 1120` (a convention, where a real tube's pitch is a
+millimetre figure); `rgbBandwidthMHz` for the Péritel cable (a brickwall where
+the real cable is a 1st-order RC).
+
+**And the AppleWin IIR path is tuned by its own authors with provenance
+unknown** — `NTSC.cpp` itself carries *"Should this be 7.15909 MHz ?"* and
+*"What filter is this ??"*. POM2 ports it faithfully; nobody knows what it
+models. *Settled by:* a frequency sweep of the real filters, or the mkfilter
+parameters AppleWin's author used.
+
+**The biggest gap: PAL composite is a look, not a model.** POM2 generates the
+signal at 4·fsc(NTSC) = 14.31818 MHz *always* and demodulates at fs/4, then
+flips the V tap on odd lines. That flip *is* verbatim OE, but it is only
+meaningful on a 4×fsc grid — and PAL fsc is 4.43361875 MHz, so fsc/fs ≈ 0.311,
+not 0.25. European machines' composite colour was genuinely marginal for this
+reason. *Settled by:* a composite capture of a French //e or //c into a
+Péritel-era monitor, plus the PAL encoder schematic.
+
+### Silicon vs contract, in the disk formats
+
+**The real magnetic surface:** WOZ 1/2 (5.25") keeps all 160 quarter-track
+slots, scales cells by `optimal_bit_timing`, models weak bits on MAME's
+amplifier rule deterministically in (revolution, zone, interval), and **fully
+honours the WOZ 2.1 FLUX chunk** — 125 ns tick positions per quarter-track,
+read, spliced on write, and re-emitted as a delta stream including growing the
+TRKS allocation. MOOF / WOZ 2 (3.5") likewise keeps cells at 125 ns.
+
+**An idealisation, and here is the cost.** `.dsk` / `.do` / `.po` / `.d13` /
+2IMG-sector images are **synthesised** from sectors at mount — a fixed 14-byte
+sync gap, `D5 AA 96`, `D5 AA AD`, `DE AA EB`, 6112 of 6656 nibbles. Nothing of
+the original surface survives, so these containers cannot represent *at all*:
+non-standard prologues/epilogues, altered volume/track/sector/checksum bytes,
+nibble-count timing (spiral/track-arc), half- and quarter-tracks, weak or
+unformatted-sector checks, synchronised tracks, mixed 13/16-sector disks, or
+any sector count but 13 and 16. **And the reconstruction's one constant is
+fitted to POM2's own encoder, not to hardware**: `kSyncMinRun = 5` decides
+which `$FF` run is self-sync, so it is wrong in both directions by
+construction. *Settled by:* an Applesauce flux capture of a disk written by
+real DOS 3.3 RWTS and one by real ProDOS, re-deriving the threshold instead of
+fitting it.
+
+Also written down: the 3.5" GCR is decoded to blocks **at load**, and the 12
+tag bytes of every 524-byte sector are decoded and **discarded**, so a
+MOOF→`.po` export loses them irrecoverably (unknown whether any Apple II-side
+software reads them); 1.44 MB MFM is sector-level and cannot be formatted from
+inside the emulator; `.nib`/CNib2 infer sync position and CNib2 has a
+272-nibble per-track write black hole POM2 refuses rather than loses.
+
+**Does POM2's write path produce flux a real Disk II would read back?** The
+repo's claim is narrower than yes, and the honest answer is now recorded: the
+whole 5.25" timeline runs **~2.2 % fast**, deliberately —
+`lssCyclesPerCell()` is an integer, so a 4 µs cell is laid at 8 LSS cycles
+where MAME's 2 043 600 Hz makes it 8.17; a revolution is 195.6 ms instead of
+200. Any protection measuring absolute rotational time rather than relative
+byte counts reads ~2 % off. And POM2 **ignores the WRIT chunk entirely** while
+mutating BITS — WRIT is exactly the chunk that tells an imager how to lay a
+track on physical media, including the BITS checksum that says whether BITS
+changed since WRIT was made. *Settled by:* writing a POM2-modified WOZ back to
+a floppy with an Applesauce and booting it on real hardware.
+
+### Silicon vs contract, in the input devices
+
+`MouseCard` + `M68705P3` + `MC6821` is the card: the real mask ROM executed at
+510 900 machine cycles/s. `IIcMouse` is the IOU circuit at the latch/edge
+level, with one deliberate divergence (back-pressure, because a host pointer
+moves faster than any physical mouse and MAME's unconditional emission loses
+edges). `ClockCard` and `NoSlotClock` are bit-level.
+
+`MouseCardAppleWin` is an HLE **of the 68705's firmware**, not of the 68705,
+and what that cannot reproduce is now written down: the timing of a
+command/reply (POM2 answers in zero emulated time, so firmware that races the
+handshake sees the wrong answer); the undocumented commands and MCU RAM (`$F0`
+answers the eight clamp bytes and **0 for every other MCU address**);
+quadrature at all (no X0/X1/Y0/Y1, no sub-unit motion, no direction-bit phase);
+the VBL phase, which POM2 *reconstructs* from the cycle counter and, on a //c,
+**patches three ROM bytes** to skip INITMOUSE's `$C019` calibration loop
+entirely; the clamp-window edge case where `setClampX/Y` clamps the live
+position though Csa2 R034 says the real //c and AppleMouse card do not; and the
+PIA-side interrupts, wired in MAME and dead here. `MouseSync`'s absolute closed
+loop is not hardware at all.
+
+### Documents nobody verifying this code has read
+
+**Apple II Mouse Technical Notes #2, #3 and #7.** Every mirror tried returned
+404, 402 or an expired certificate. So POM2's citations to them — the default
+60 Hz rate on a European machine, TIMEDATA latching only at the next INIT,
+TN #3's "the position retains its last values", TN #7's `$47-$4E` clamp map —
+rest on code comments, cc65's comments and developer slides. *Settled by:* a
+readable copy (the Asimov `technotes/mouse/` tree, or the Technical Notes CD).
+
+~~Also unreachable: the **uPD1990AC** datasheet ... the **DS1216/DS1216E**
+datasheet ...~~ **Both were found on 2026-11-01** — see *Round 5* below. What
+is still unread: **Sather** in full text (the scan has no text layer; the two
+pages that mattered were rendered and read), and the **Apple IIe Technical
+Reference Table 2-3** that `ctrlPunctCode` is cited to — if that table actually
+requires Shift for `@`/`^`/`_`, POM2 emits control codes on three unshifted
+keys it should not.
+
+### Bus questions the documents cannot settle
+
+Whether **/RESET clears a card's own `$C800` enable flip-flop** is *per-card*:
+the 1979 manual's Figure 9 shows the `$CFxx` decode driving the flip-flop's
+reset input, not bus pin 31, so a 74LS74 with /RESET unconnected keeps it
+(POM2's model, which matches MAME exactly) and one with it wired drops it.
+Whether the window is claimed by /IOSEL or /DEVSEL is **self-contradictory in
+the primary source**: § EXPANSION ROM says the flip-flop "should be turned on
+by the DEVICE SELECT signal (the one which enables the 256-byte PROM)" — but
+Table 33 defines DEVICE SELECT as pin 41 (`$C0nX`) while the signal that
+enables the PROM is I/O SELECT, pin 1 (`$CnXX`). And two cards both touched is
+electrically indeterminate on real hardware; MAME's own comment calls
+first-one-wins a modelling choice, which POM2 copies and says so.
+
+### Citations that had rotted
+
+POM2 cites MAME by line number with **no MAME version pinned anywhere in the
+tree**. Most citations verified exact this round, but two had moved:
+`a2bus.h`'s `take_c800()` is at ~142 on master, not the 145 `CLAUDE.md` gives,
+and `ow65c02.lst`'s `reset_c` is at ~886, not 814. Both *claims* are true —
+only the coordinates rotted. The convention should cite the **symbol** and pin
+one MAME tag.
+
+
+# Round 5 — the three documents the method said to go and get
+
+Round 4 closed with a list of documents "nobody verifying this code has read".
+Three of them were hunted down the same day, with `scrapling` walking directory
+indexes rather than guessing file URLs. All three are on **bitsavers** (mirror
+`ftp.mirrorservice.org/sites/www.bitsavers.org`), none of them where a search
+engine points:
+
+| Document | Where it actually is | Pages that matter |
+|---|---|---|
+| **Diablo 630 / 630ECS API Interface Manual**, 90440-00A Rev A (12/82) | `pdf/diablo/printer/630/` | § 3.5 command summary (3-12/3-13), § 3.9.4, § 3.13, § 3.24 |
+| **Diablo 630 / 630ECS Maintenance Manual**, 90443-02A (3/83) | same directory | reference, not yet mined |
+| **DS1216E SmartWatch ROM 64/256K** data sheet | inside `components/dallasSemiconductor/_dataBooks/1992_Dallas_Semiconductor_Product_Data_Book.pdf` | **pp. 5-22..5-25** |
+| **uPD1990AC Serial I/O Calendar & Clock CMOS LSI** data sheet | inside `components/nec/_dataBooks/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf` | **pp. 792-805** (+ app. note p. 1106) |
+
+Three dead ends worth recording so the next search skips them: Dallas lives
+under `components/dallasSemiconductor/`, **not** `components/dallas/`, and has
+no per-part datasheet directory at all — only the three data books. NEC's
+`components/nec/_dataSheets/` has twenty-odd parts and **not** the 1990A; the
+clock/calendar LSIs are filed as *consumer* ICs, so neither the Microcomputer
+Catalogs (1982, 1984) nor the Intelligent Peripheral Devices book contain it.
+And analog.com / maximintegrated.com no longer serve the DS1216 datasheet at
+any of the four obvious URL shapes (404/522); the data book is the way in.
+
+## Landed — round 5
+
+**The Diablo 630's hours of `ESC S` and `ESC X` were dropped on the floor**
+(`src/ImageWriter.cpp`). § 3.9.4.1: *"While the terminal is in remote HMI mode,
+the SPACING switch is ignored. An ESC S sequence will return control of HMI to
+the SPACING switch."* POM2 dropped `ESC S`, so a driver that tightened the HMI
+for one passage printed **the whole rest of the job** at that HMI. And
+§ 3.24.11 lists what `ESC X` cancels — Auto Underscore, Bold Overprint, Shadow
+Print, Program Mode, Offset Selection, Auto Justify, Auto Center — closing with
+*"Increased carriage settling time and proportional space mode are **not**
+cancelled by ESC X"*, which is the one thing a naive implementation gets wrong.
+Both decoded now, proportional space deliberately spared. Pinned
+`imagewriter_escape` → `testDiabloEscSandX`, with two mutation controls (each
+`case` neutered separately, each kills the test) and a non-degenerate HMI: the
+first draft used 12/120" = 0.1", which **is** this head's own 10 cpi cell, so
+it passed with `ESC S` neutered.
+
+**The Diablo 630's remote reset did nothing at all.** § 3.23.1: *"This command
+[`ESC SUB I`] will cause the Model 630 to unconditionally execute an initialize
+sequence regardless of any error conditions... unlike the corresponding remote
+reset sequence `ESC CR P` which is queued along with other commands. The Model
+630 will default to the same conditions that exist at power-up."* And § 3.9.4:
+`ESC CR P` *"may also be used here to cancel all optional format factors and
+return to the format selected by the SPACING switch."* POM2 consumed the
+parameter byte of both and threw it away, so a driver that opened its job with
+a remote reset — the normal way to clear whatever the last job left behind —
+**inherited the previous job's HMI, VMI, tab racks and styles**. POM2's input
+stream *is* the queue, so the immediate/queued distinction has no analogue
+here and both now land on `resetPrinter()`, the power-up path `ESC c` takes on
+the Epson head. `ESC SUB`'s other sub-commands stay untouched and the reason is
+in the source: `R` resets error conditions POM2 has none of, `SO` is a memory
+test, and `1` / `3` request a status byte back over the serial line, for which
+this head has no return path. Pinned `imagewriter_escape` →
+`testDiabloRemoteReset`, both spellings, measured against an undisturbed head
+so the test never has to predict where `resetPrinter()` leaves the paper.
+
+**The DS1216E's hours register carries the 12/24-hour mode, and POM2 called
+bit 7 reserved** (`src/NoSlotClock.cpp`). Data sheet, § AM-PM/12-24 MODE:
+*"Bit 7 of the hours register is defined as the 12- or 24-hour mode select bit.
+When high, the 12-hour mode is selected. In the 12-hour mode, bit 5 is the
+AM/PM bit with logic high being PM. In the 24-hour mode, bit 5 is the second
+10-hour bit (20-23 hours)."* POM2 masked the register with `0x3F` and decoded
+BCD. In 24-hour mode that is right; in 12-hour mode it dropped the mode bit and
+then read the AM/PM bit as the 20-hour bit — a `SET TIME` of **3 PM (0xA3)
+landed as 23:00**, eight hours out, and only ever for PM. Now decoded per the
+section, including the two wraps the mode needs (12 AM is midnight, 12 PM is
+noon). Pinned `no_slot_clock_smoke` → `testTwelveHourMode`, seven cases, two of them
+24-hour positive controls; it was watched failing on exactly the 3 PM case
+before the fix.
+
+## Confirmed, not changed — round 5
+
+The documents also settled a pile of things POM2 had right on someone else's
+authority. Recorded because "verified against the silicon's own data sheet" is
+a different claim from "matches AppleWin":
+
+**DS1216E.** The 64-bit comparison pattern is `C5 3A A3 5C C5 3A A3 5C` sent
+*"LSB to MSB"* (Figure 1, p. 5-24 — and the **prose NOTE under that figure
+drops a byte**, listing only seven; the bit table is the authority, which is
+now said in `NoSlotClock.h` so nobody "fixes" the constant from the sentence).
+A2 low = write with data on A0, A2 high = read on DQ0. *"Prior to executing the
+first of 64 write cycles, a read cycle should be executed"* — the pointer
+reset POM2 does. *"If a match is not found, the pointer does not advance and
+all subsequent write cycles are ignored"* — the sticky disable. *"If a read
+cycle occurs at any time during pattern recognition, the present sequence is
+aborted and the comparison register pointer is reset"* — the way out, which
+round 4 had down as "AppleWin's word". The eight registers are 0.01 s /
+seconds / minutes / hour / day / date / month / year, BCD, stepped *"starting
+with bit 0 of register 0 and ending with bit 7 of register 7"*. All as POM2
+had them.
+
+**uPD1990AC.** *"Binary Coded Decimal (except 'Month' which is Hexa-Decimal
+Code)"* — POM2's month-as-4-bit-binary in the high nibble, which round 4 had
+flagged as resting on a POM2-internal inference from the ThunderClock's own
+firmware, is NEC's own specification. Fig. 1 is the register map and says
+**"40 Bit Shift Register"** in so many words, with output *"from LSB of
+Second"*; two comment lines in `ClockCard.cpp` said 48 and are corrected (the
+code always used 40). The command table on p. 796 matches POM2's mode decode
+and MAME's enum exactly — `000` Register Hold / DATA OUT = 1 Hz / TEST
+released, `001` Shift / DATA OUT = LSB, `010` Time Set & Counter Hold / LSB,
+`011` Time Read / **0.5 Hz**, `100`/`101`/`110` TP = 64 / 256 / 2048 Hz each
+releasing TEST, `111` TEST — and it states the group rule POM2 models:
+*"Groups '0' and '1' hold their functions independently"*, so a group-0 command
+cannot move the TP rate. There is no 4096 Hz mode, confirming POM2's note that
+`MODE_TP_4096HZ` is uPD4990A-only.
+
+**Diablo 630.** Every parameter count POM2 had guessed is in § 3.5 and § 3.9.4:
+HMI = (n − 1) × 1/120" via `ESC US`, VMI = (n − 1) × 1/48" via `ESC RS` (so
+round 2's swap fix was right, now on the primary source rather than on a
+recollection of it); `ESC FF n` sets lines per page to **n itself**, 1..126;
+`ESC HT n` → *"Horizontal Position = (ASCII character − 1) × HMI"*, leftmost
+position = 1; `ESC VT n` → *"Vertical Position = (ASCII character − 1) × VMI"*,
+top line = 1; `ESC L` and `ESC T` take **no** parameter. A comment block in
+`ImageWriter.cpp` claiming `ESC FF n` and `ESC L` were left undecoded *because*
+their parameter counts were uncertain was doubly wrong — the counts are
+documented and the code decoded both anyway — and is replaced by the citations.
+`ESC O` for bold and `ESC &` to clear it are § 3.24.4's (the summary table's
+"ESC a" and "ESC de" are OCR damage; the prose section is clean).
+
+## What we still do not know — round 5
+
+**The DS1216E's day-register control bits, deliberately not modelled.** Bits 4
+and 5 of the day register are the RESET-pin enable and the oscillator control
+— *"when set to logic 1, the oscillator is turned off"* — and the data sheet
+says both **ship as 1**. POM2 reads them back as 0, which is the state of a
+running clock whose RESET pin is live, and ignores them on a write, so a guest
+cannot stop POM2's clock the way it could stop the chip's. Honouring the
+oscillator bit would mean any driver that writes the day register with bit 5
+set freezes the user's clock, and no Apple II NSC driver POM2 has read does
+that deliberately. *Settled by:* a disassembly of one shipped `NS.CLOCK`
+set-time driver showing what it puts in register 4.
+
+**The uPD1990AC's power-on TP rate.** NEC documents no default for group 1;
+POM2 takes MAME's. *Settled by:* a scope on TP of a cold ThunderClock+ before
+the firmware's first `STB`.
+
+**The uPD1990AC's leap year, where POM2 is deliberately better than the
+chip.** *"The correction for length of the month is automatically performed and
+leap year is not automatically performed. But it is possible to set calendar
+FEB. 29, and the day after, it will be Mar. 1."* POM2 synthesises the nibbles
+from the host clock on every read, so its calendar is Gregorian: a real
+ThunderClock+ left running across 29 February in a non-leap year rolls to
+1 March and POM2 does not. Modelling that would mean carrying the chip's own
+counter instead of the host's, which is the one thing that makes POM2's clock
+survive a rewind. Stated in `ClockCard.cpp` so it is not mistaken for fidelity.
+
+**Diablo `ESC W` (shadow print) and `ESC % / ESC N` (carriage settling
+time).** § 3.24.5 and § 3.24.6 describe both precisely — shadow is a second
+strike 1/120" over, settling time goes to 20 ms — and POM2 models neither,
+because its page model has no shadow bit and no settling time to spend.
+Dropped with their `ESC`, which is what the LaserWriter's subset did with
+commands it did not carry, and now said out loud instead of hidden in "only
+the unambiguous commands are decoded".

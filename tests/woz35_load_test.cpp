@@ -205,6 +205,63 @@ void testConvertToPo()
     std::printf("  ok: WOZ converts to an identical, writable .po\n");
 }
 
+// A SINGLE-SIDED 400K WOZ 2 must mount as 800 blocks with one head.
+//
+// WOZ's Disk Type (INFO+1) says only "1 = 5.25, 2 = 3.5"; sidedness is INFO+37
+// "Disk Sides" — "A 3.5 disk can be 1 or 2" (applesaucefdc.com/woz/reference2/).
+// POM2 derived `singleSide` from the MOOF rule (`moof && diskType == 1`), which
+// is never true for a WOZ, so a 400K capture came up as 1600 blocks with
+// `headCount() == 2` and `blockIndexFor` doubled every track's base. Track 0
+// is unaffected, so the ProDOS volume directory and bitmap read fine and the
+// volume mounted with its real name — while track 1 sector 0 landed at block
+// 24 instead of 12. Silent read corruption on a healthy-looking image.
+void testWozSingleSided400k()
+{
+    const int kTracks[] = { 0, 1, 16 };
+    std::vector<std::vector<uint8_t>> tracks(160);
+    std::vector<std::pair<int, std::vector<uint8_t>>> expect;
+
+    for (int t : kTracks) {
+        const int n = sectorsFor(t);
+        std::vector<uint8_t> payload(size_t(n) * 512);
+        // Head 0 only, and the block index is the SINGLE-SIDED one: the sum of
+        // the sector counts of the tracks below, with no x2.
+        int base = 0;
+        for (int u = 0; u < t; ++u) base += sectorsFor(u);
+        for (int s = 0; s < n; ++s) {
+            fillBlock(payload.data() + s * 512, base + s);
+            expect.push_back({ base + s, std::vector<uint8_t>(
+                payload.begin() + s * 512, payload.begin() + (s + 1) * 512) });
+        }
+        // TMAP is still slot = 2t + head, so a one-sided disk fills the even
+        // slots and leaves the odd ones blank.
+        tracks[size_t(t * 2)] = encodeTrack(t, 0, payload.data());
+    }
+
+    const fs::path p = writeTemp("pom2_woz35_400k.woz",
+                                 buildWoz(tracks, /*diskType=*/2, /*version=*/'2',
+                                          /*sides=*/1));
+    pom2::Disk35Image img;
+    assert(img.loadFile(p.string()) && "a single-sided 3.5\" WOZ2 must mount");
+    assert(img.kind() == pom2::Disk35Image::ImageKind::Woz35);
+    assert(img.blockCount() == 800 &&
+           "INFO+37 Disk Sides = 1 means 800 blocks, not 1600");
+    assert(img.headCount() == 1);
+
+    for (const auto& [bi, want] : expect) {
+        uint8_t got[512];
+        assert(img.readBlock(uint32_t(bi), got));
+        assert(std::memcmp(got, want.data(), 512) == 0 &&
+               "a single-sided track must decode at its un-doubled block index");
+    }
+    // The telling one: track 1 sector 0 is block 12 (zone 0 has 12 sectors),
+    // which is where the doubled index put nothing at all.
+    uint8_t got[512], want[512];
+    fillBlock(want, 12);
+    assert(img.readBlock(12, got) && std::memcmp(got, want, 512) == 0);
+    std::printf("  ok: a single-sided 400K WOZ2 mounts as 800 blocks, 1 head\n");
+}
+
 void testRefusals()
 {
     std::vector<std::vector<uint8_t>> tracks(160);
@@ -264,6 +321,7 @@ int main()
     testWriteProtected();
     testConvertToPo();
     testRefusals();
+    testWozSingleSided400k();
     std::printf("PASS\n");
     return 0;
 }

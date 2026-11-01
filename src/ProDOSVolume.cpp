@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "ProDOSVolume.h"
+#include "HostFileTag.h"
 #include "ProDOSHostNameMap.h"
 #include "AtomicFileReplace.h"
 #include "Logger.h"
@@ -183,30 +184,6 @@ struct PreparedDir {
     std::uint8_t  parentEntrySlot = 0;   // 1-based, ProDOS convention; 0 = vol.
 };
 
-std::uint8_t fileTypeFromExtension(const std::string& ext)
-{
-    // Common ProDOS file types (cf. Apple ProDOS Tech Ref):
-    //   $00 typeless / unknown
-    //   $04 TXT
-    //   $06 BIN
-    //   $FA INT (Integer BASIC)
-    //   $FC BAS (Applesoft)
-    //   $FF SYS
-    std::string e = ext;
-    for (auto& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (e == ".bas") return 0xFC;
-    if (e == ".bin") return 0x06;
-    if (e == ".sys") return 0xFF;
-    if (e == ".txt") return 0x04;
-    if (e == ".int") return 0xFA;
-    // Extensionless host files → typeless (0x00) so the decode adds NO
-    // extension and the name round-trips verbatim ("GAME" → "GAME", not
-    // "GAME.bin"). Unknown extensions keep their dot in the ProDOS name, so
-    // their type is informational → plain BIN.
-    if (e.empty() || e == ".") return 0x00;
-    return 0x06;
-}
-
 /// Windows DOS-device names: `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
 /// `LPT1`-`LPT9` are reserved in EVERY directory and with ANY extension —
 /// `AUX.txt` opens the serial port, not a file. `stem` is the part of a name
@@ -224,42 +201,6 @@ bool isDosDeviceStem(const std::string& stem)
 /// spelling a file falls back to when stripping it would collide with a
 /// sibling (`hello.bas` + `hello.txt` → `HELLO` + `HELLO.TXT`). See the
 /// collision note in `scanHostFolder`.
-/// CiderPress / SD-CARD-OS metadata tag: "NAME#TTAAAA" carries the ProDOS
-/// file type (TT) and aux type / load address (AAAA) in the host filename —
-/// e.g. the HGR Paint editor saves pages as "PIC#062000" (BIN at $2000), so
-/// a BLOAD needs no ,A override. Strips the tag off `name` and returns true
-/// when one was found, leaving `type` / `aux` untouched otherwise.
-bool stripMetadataTag(std::string& name, std::uint8_t& type, std::uint16_t& aux)
-{
-    const std::size_t hash = name.rfind('#');
-    if (hash == std::string::npos || name.size() - hash != 7) return false;
-    for (std::size_t i = hash + 1; i < name.size(); ++i)
-        if (!std::isxdigit(static_cast<unsigned char>(name[i]))) return false;
-    type = static_cast<std::uint8_t>(std::stoul(name.substr(hash + 1, 2), nullptr, 16));
-    aux  = static_cast<std::uint16_t>(std::stoul(name.substr(hash + 3, 4), nullptr, 16));
-    name.erase(hash);
-    return true;
-}
-
-// Host extensions the build strips off a name (the type comes from them).
-const char* const kStripExts[] = {
-    ".bas", ".bin", ".sys", ".txt", ".int",
-    ".dsk", ".po",  ".do",  ".hdv", ".2mg"
-};
-
-// Length of the stripped extension `name` ends in, 0 when none.
-std::size_t strippedExtLength(const std::string& name)
-{
-    for (const char* xe : kStripExts) {
-        const std::size_t xn = std::strlen(xe);
-        if (name.size() <= xn) continue;
-        std::string tail = name.substr(name.size() - xn);
-        for (auto& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (tail == xe) return xn;
-    }
-    return 0;
-}
-
 std::string sanitiseProDOSName(const std::string& hostName,
                                bool stripKnownExt = true)
 {
@@ -269,7 +210,7 @@ std::string sanitiseProDOSName(const std::string& hostName,
     // Strip well-known extensions so they don't eat into the 15-char ProDOS
     // name budget (e.g. "HELLO.BAS" → "HELLO" with file_type=BAS). Other
     // extensions stay; the dot is allowed in ProDOS names.
-    if (stripKnownExt) raw.resize(raw.size() - strippedExtLength(raw));
+    if (stripKnownExt) raw.resize(raw.size() - strippedExtensionLength(raw));
 
     // Restrict to A-Z 0-9 . — replace anything else with '.'.
     std::string out;
@@ -574,10 +515,10 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
             out.push_back(std::move(he));
             continue;
         }
-        // A `NAME#TTAAAA` tag (stripMetadataTag) overrides both; without
+        // A `NAME#TTAAAA` tag (stripHostFileTag) overrides both; without
         // one, the extension picks the type.
         std::string hostName = path.filename().string();
-        he.fileType = fileTypeFromExtension(path.extension().string());
+        he.fileType = prodosTypeFromExtension(path.extension().string());
         // BASIC.SYSTEM writes every Applesoft program with aux_type $0801 —
         // the load address — and re-SAVEs one it LOADed the same way. With
         // aux 0 here, the guest's re-SAVE of `hello.bas` changed the entry's
@@ -587,8 +528,8 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
         he.auxType  = (he.fileType == 0xFC) ? 0x0801 : 0;
         // A tagged name keeps any extension it has: the tag carries the type,
         // and `HELLO.BAS#FC0801` is how a guest's own `HELLO.BAS` comes back
-        // (hostNameFor) — stripping it renamed the file to HELLO on remount.
-        const bool tagged = stripMetadataTag(hostName, he.fileType, he.auxType);
+        // (hostNameForType) — stripping it renamed the file to HELLO on remount.
+        const bool tagged = stripHostFileTag(hostName, he.fileType, he.auxType);
         if (tagged && hostName.empty())
             hostName = "FILE";
         he.prodosName = uniqueName(sanitiseProDOSName(hostName, !tagged), usedNames,
@@ -1054,63 +995,6 @@ ProDOSBuildResult buildVolumeFromFolder(const std::string& hostFolder,
 
 namespace {
 
-// Inverse of fileTypeFromExtension: nullptr when no extension names the type.
-const char* extFromFileType(std::uint8_t t)
-{
-    switch (t) {
-        case 0x00: return "";       // typeless → no extension (extensionless host file)
-        case 0x04: return ".txt";
-        case 0x06: return ".bin";
-        case 0xFA: return ".int";
-        case 0xFC: return ".bas";
-        case 0xFF: return ".sys";
-        default:   return nullptr;
-    }
-}
-
-// The host filename for a decoded entry.
-//
-// An extension names a file TYPE and nothing else, so `PIC.bin` can only
-// carry BIN with aux_type 0 back into the next mount. The decode used to
-// compose that regardless — every type it had no extension for became
-// `.bin`, and every aux_type became 0 — and the loss was not even confined
-// to files the guest changed: a host `PIC#062000` (the tag the build parses,
-// and the name the HGR Paint editor saves under) came back out as a SECOND
-// file `PIC.bin` on every flush, because nothing on disk was called that.
-// The next mount then served `PIC` and `PIC.1`. A guest `BSAVE X,A$2000`
-// lost its load address the same way, and an AppleWorks document ($1A)
-// came back as BIN, which AppleWorks then no longer listed.
-//
-// So the extension is used only when the build would derive exactly this
-// (type, aux) pair back from it, and the CiderPress `NAME#TTAAAA` tag —
-// already parsed on the way in — carries everything else. A dotted ProDOS
-// name keeps its own suffix and the build reads the type off that suffix;
-// `.bas` is exchangeable with aux $0801 because that is what the build now
-// assigns and what BASIC.SYSTEM writes.
-std::string hostNameFor(const std::string& name, std::uint8_t type,
-                        std::uint16_t aux)
-{
-    const bool auxPlain = (aux == 0) || (type == 0xFC && aux == 0x0801);
-    // A guest name ending in an extension the build strips (`HELLO.BAS`,
-    // `NOTES.TXT`) goes out TAGGED, so the next mount keeps the whole name;
-    // written plain it came back as HELLO and `RUN HELLO.BAS` failed.
-    if (strippedExtLength(name) != 0) {
-        char keep[8];
-        std::snprintf(keep, sizeof keep, "#%02X%04X", type, aux);
-        return name + keep;
-    }
-    if (name.find('.') != std::string::npos) {
-        if (auxPlain &&
-            fileTypeFromExtension(fs::path(name).extension().string()) == type)
-            return name;
-    } else if (const char* ext = extFromFileType(type); ext && auxPlain) {
-        return name + ext;
-    }
-    char tag[8];
-    std::snprintf(tag, sizeof tag, "#%02X%04X", type, aux);
-    return name + tag;
-}
-
 inline std::uint16_t rd16(const std::uint8_t* p)
 {
     return static_cast<std::uint16_t>(p[0]) |
@@ -1206,6 +1090,68 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
         return FileWriteResult::Error;
     }
     return FileWriteResult::Written;
+}
+
+// The guest's ProDOS access byte, carried onto the host file as its
+// read-only bit.
+//
+// The build already reads the host bit INBOUND — a read-only host file is
+// served with access $01 (`pf.access`) — and until 2026-11-01 nothing read
+// it back out: the write-back took the entry's file_type (+$10) and aux
+// (+$1F) and never its access (+$1E). So a guest `LOCK HELLO` was dropped
+// at every flush and the next mount served the file unlocked; and because
+// `writeFileAtomic` carries the original's mode onto the replacement, a
+// guest `UNLOCK` of a read-only host file could not take effect either.
+// Both directions, silently.
+//
+// Write-protection is the host read-only bit. That is the rule
+// `MediaNotch.h` sets for a whole medium ("the write-protect is the notch
+// ON THE DISK", 2026-09-08), and a file inside a served folder is the same
+// question one level down — which is why this does NOT invent a `,attr`
+// field in the host name: the state lives where the host already keeps it,
+// so it follows the file out of POM2 and into any other tool.
+//
+// ProDOS access bits (ProDOS 8 Technical Reference, directory entry +$1E):
+// bit 7 D(estroy), bit 6 R(e)N(ame), bit 5 B(ackup needed), bit 1 W(rite),
+// bit 0 R(ead). W clear is what LOCK leaves and what CATALOG shows as `*`.
+// $E3 and $C3 are unlocked, $01 is read-only. Only W is modelled: the host
+// has no separate rename or destroy bit, and ProDOS's own LOCK/UNLOCK move
+// D, RN and W together.
+//
+// Nothing is changed when the bits already agree — the common case, since
+// the build derives the entry from these very permissions.
+void applyAccessByteToHost(const fs::path& dest, std::uint8_t access)
+{
+    constexpr fs::perms kWriteBits = fs::perms::owner_write |
+                                     fs::perms::group_write |
+                                     fs::perms::others_write;
+    const bool guestLocked = (access & 0x02) == 0;
+
+    std::error_code pec;
+    const auto perms = fs::status(dest, pec).permissions();
+    if (pec) return;                       // gone or unreadable: not ours to fix
+    const bool hostLocked = (perms & kWriteBits) == fs::perms::none;
+    if (hostLocked == guestLocked) return;
+
+    std::error_code sec;
+    if (guestLocked) {
+        fs::permissions(dest, kWriteBits, fs::perm_options::remove, sec);
+    } else {
+        // Give back only what the host's own read bits justify: a 0400 file
+        // becomes 0600, not 0666. `owner_write` alone would strip a group's
+        // write access on a shared folder, so each class gets its write bit
+        // back iff it can read.
+        fs::perms grant = fs::perms::none;
+        if ((perms & fs::perms::owner_read)  != fs::perms::none) grant |= fs::perms::owner_write;
+        if ((perms & fs::perms::group_read)  != fs::perms::none) grant |= fs::perms::group_write;
+        if ((perms & fs::perms::others_read) != fs::perms::none) grant |= fs::perms::others_write;
+        if (grant == fs::perms::none) grant = fs::perms::owner_write;
+        fs::permissions(dest, grant, fs::perm_options::add, sec);
+    }
+    if (sec) {
+        pom2::log().warn("ProDOSVol", "decode: cannot set the read-only bit on " +
+                         dest.string() + " (" + sec.message() + ")");
+    }
 }
 
 // Mark `p` as "written by this decode, at `stamp`".
@@ -1780,7 +1726,7 @@ void decodeOneDir(DecodeWalk& w,
                 continue;
             }
             const std::uint16_t auxType = rd16(e + 0x1F);
-            const std::string wanted = hostNameFor(name, fileType, auxType);
+            const std::string wanted = hostNameForType(name, fileType, auxType);
             bool onDisk = false;
             std::string spelled = reuseExistingSpelling(wanted, onDisk);
             // The host file this entry came from, if the replay knows one.
@@ -1993,6 +1939,10 @@ void decodeOneDir(DecodeWalk& w,
             } else if (renamed) {
                 ++r.filesWritten;          // same bytes, new metadata
             }
+            // Whatever the bytes did, the entry's access byte is metadata the
+            // guest may have changed on its own: a LOCK writes no data at all,
+            // so this has to run on the Unchanged path too.
+            applyAccessByteToHost(dest, e[0x1E]);
         }
         // Next directory block pointer is at offset 2 of every dir block.
         curBlock = rd16(blk + 2);

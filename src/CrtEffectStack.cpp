@@ -301,7 +301,22 @@ void main()
     float outRow = uv.y * (uSrcSize.y * 2.0);
     float rowFw  = max(fwidth(outRow), 1e-4);
     float scanAA = clamp(1.0 - (rowFw - 0.5) / 0.5, 0.0, 1.0); // 1 crisp → 0 alias
-    float beam   = 0.5 + 0.5 * cos(3.14159265 * outRow);       // period 2, smooth
+    // MINUS, not plus. `outRow` is 2k+1 at the CENTRE of source row k and 2k
+    // at the seam between rows, so `0.5 + 0.5*cos(pi*outRow)` put beam = 0 —
+    // maximum darkening — through the middle of every scanline the Apple
+    // actually drew, and beam = 1 on the empty gap between two rows. Single-row
+    // HGR detail and the horizontal strokes of text glyphs were notched out
+    // while the gaps were lit. Invisible at exactly 2x (fwidth(outRow) == 1
+    // makes scanAA 0), which is why eyeballing never caught it.
+    //
+    // OpenEmulator's own glass shader is the oracle
+    // (libemulation/src/libemulation-hal/OpenGLCanvas.cpp, fetched and quoted
+    // 2026-11-01): `float scanline = sin(PI * textureSize.y * q.y);
+    // c *= mix(1.0, scanline * scanline, scanlineLevel);`. sin^2(pi*H*y) is 1
+    // at the row centre and 0 at the seams, and by the half-angle identity it
+    // is exactly `0.5 - 0.5*cos(pi*outRow)` for POM2's outRow = y*2H —
+    // verified equal to 1e-12 at rows 0, 1, 5 and 97.
+    float beam   = 0.5 - 0.5 * cos(3.14159265 * outRow);       // period 2, smooth
     rgb *= 1.0 - uScanlines * (1.0 - beam) * scanAA;
 
     // ── Shadow mask (procedural, analytic anti-alias) ─────────────

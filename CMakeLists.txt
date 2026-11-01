@@ -307,6 +307,7 @@ set(SOURCES
     src/PrinterPortControl.cpp
     src/PrinterRender.cpp
     src/Apple2Display.cpp
+    src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
     src/AppleWinNtsc.cpp
@@ -387,6 +388,7 @@ set(SOURCES
     src/MainWindow_BasicListing.cpp
     src/MainWindow_OpenUrl.cpp
     src/ApplesoftListing.cpp
+    src/IntegerBasicListing.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Slots.cpp
     src/MainWindow_Kiosk.cpp
@@ -459,6 +461,7 @@ set(SOURCES
     src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
+    src/HostFileTag.cpp
     src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
@@ -885,6 +888,7 @@ set(POM2_MEDIA_SOURCES
     src/CpmDiskFs.cpp
     src/Dos33DiskFs.cpp
     src/ApplesoftListing.cpp
+    src/IntegerBasicListing.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
     src/AtaBlockDevice.cpp
@@ -897,6 +901,7 @@ set(POM2_MEDIA_SOURCES
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
     src/ProDOSVolume.cpp
+    src/HostFileTag.cpp
     src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/SnapshotIO.cpp
@@ -958,6 +963,7 @@ set(POM2_RUNTIME_SOURCES
     src/TnfsMedia.cpp
     src/MediaSource.cpp
     src/Apple2Display.cpp
+    src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
     src/AudioDevice.cpp
@@ -1615,6 +1621,7 @@ set(POM2_CORE_SOURCES
     src/W5100NameResolver.cpp
     src/Pom2Core.cpp
     src/Apple2Display.cpp
+    src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
     src/AppleWinNtsc.cpp
@@ -1709,6 +1716,7 @@ set(POM2_CORE_SOURCES
     src/Block512Backing_Session.cpp
     src/ProDOSHardDiskCard.cpp
     src/ProDOSVolume.cpp
+    src/HostFileTag.cpp
     src/ProDOSHostNameMap.cpp
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
@@ -1894,6 +1902,7 @@ add_executable(pom2_headless
     # into: --frames/--screenshot renders a real frame (the release packages'
     # boot smoke). No GL anywhere — Apple2Display decodes into a CPU buffer.
     src/Apple2Display.cpp
+    src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
     src/AppleWinNtsc.cpp
@@ -1922,6 +1931,7 @@ add_executable(pom2_headless
     src/Block512Backing_WriteBack.cpp
     src/Block512Backing_Session.cpp
     src/ProDOSVolume.cpp
+    src/HostFileTag.cpp
     src/ProDOSHostNameMap.cpp
     src/IIcExternalSmartPort.cpp
     src/SmartPortBusDevice.cpp
@@ -2019,6 +2029,8 @@ add_executable(pom2_dos33
     src/pom2_dos33.cpp
     src/Dos33DiskFs.cpp
     src/ApplesoftListing.cpp
+    src/IntegerBasicListing.cpp
+    src/HostFileTag.cpp
 )
 target_include_directories(pom2_dos33 PRIVATE ${POM2_SRC_DIR})
 endif()
@@ -2037,6 +2049,7 @@ if(NOT EMSCRIPTEN)
 add_executable(pom2_bench
     src/pom2_bench.cpp
     src/Apple2Display.cpp
+    src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
     src/AppleWinNtsc.cpp

@@ -468,8 +468,15 @@ void MainWindow::pasteFromClipboard()
     // has said "(file truncated)" all along, and a half-pasted BASIC listing
     // that stops mid-line with no word about why is a bug report waiting to
     // happen.
-    const bool truncated = text.size() > Memory::kPasteMaxChars;
+    // Measured AFTER the push, against the FREE ROOM rather than the cap:
+    // `Keyboard::pushChars` caps on the LIVE queue
+    // (`kPasteMaxChars - (queue + keyReady)`), so while a long paste is still
+    // draining — 4000 bytes in flight is ordinary for a BASIC listing at the
+    // ROM's poll rate — a second Ctrl-V dropped most of its characters and
+    // still reported "N chars queued" with no truncation note. The dropping
+    // is the documented DoS guard; only the message was wrong.
     const size_t queued = controller->memory().pasteText(text);
+    const bool truncated = queued < text.size();
     char buf[128];
     std::snprintf(buf, sizeof(buf), "Paste: %zu chars queued from clipboard%s",
                   queued, truncated ? " (clipboard truncated)" : "");
@@ -513,9 +520,13 @@ void MainWindow::pasteFromFile(const std::string& path)
         }
     }
     const size_t queued = controller->memory().pasteText(text);
+    // Two independent truncations: the file was longer than the cap (above),
+    // or the live queue had no room for what we read (same reason as the
+    // clipboard path). Either one has to be reported.
+    const bool queueFull = queued < text.size();
     char buf[160];
     std::snprintf(buf, sizeof(buf), "Paste: %zu chars%s from %s", queued,
-                  truncated ? " (file truncated)" : "", path.c_str());
+                  (truncated || queueFull) ? " (truncated)" : "", path.c_str());
     tapeStatusMessage = buf;
     tapeStatusUntil   = lastFrameTime + 4.0;
 }

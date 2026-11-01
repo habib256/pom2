@@ -20,20 +20,30 @@
 //   pom2_dos33 disk.dsk ls
 //   pom2_dos33 disk.dsk get HELLO [host-file]      text converted, A/B/I
 //                                                  without their header
-//   pom2_dos33 disk.dsk list HELLO [host-file]     an A file as a listing
-//   pom2_dos33 disk.dsk put host.txt [NAME]        .txt → T, else B at -a
+//   pom2_dos33 disk.dsk list HELLO [host-file]     an A or I program listed
+//   pom2_dos33 disk.dsk put HELLO.bas [NAME]       type from the host name
 //   pom2_dos33 disk.dsk rm NAME
 //
-// `-t T|A|B|I` forces the type on put; `-a ADDR` gives a B file's load
-// address (hex, default 2000); `--raw` on get keeps the file's own bytes
-// (header and DOS text included). The image is committed through the same
+// **The host name carries the type** (`HostFileTag.h`, the convention the
+// ProDOS host folder already uses): `get` names the file it writes
+// `HELLO.bas`, `NOTES.txt`, or `GAME#062000` when no extension can say it,
+// and `put` reads the type and a B file's load address back off that name.
+// Before 2026-11-01 `get` dropped a B file's load address on the floor and
+// `put` guessed `.txt → T, else B at $2000`, so `get GAME` then `put GAME`
+// silently relocated the file to $2000.
+//
+// `-t T|A|B|I` and `-a ADDR` override what the name says; an explicit
+// HOSTFILE / NAME argument is taken verbatim. `--raw` on get keeps the
+// file's own bytes (header and DOS text included). The image is committed through the same
 // durable temp + rename as every POM2 write-back; a write-protected image
 // (host read-only bit, the notch — MediaNotch.h) is refused. Do not edit an
 // image a running POM2 has mounted: its autosave would write over yours.
 
 #include "ApplesoftListing.h"
+#include "IntegerBasicListing.h"
 #include "AtomicFileReplace.h"
 #include "Dos33DiskFs.h"
+#include "HostFileTag.h"
 #include "MediaNotch.h"
 
 #include <cctype>
@@ -58,13 +68,17 @@ void usage()
         "\n"
         "  ls                         catalog\n"
         "  get NAME [HOSTFILE]        extract (text converted; A/B/I without header)\n"
-        "  list NAME [HOSTFILE]       an Applesoft (A) file as a text listing\n"
-        "  put HOSTFILE [NAME]        add or replace (.txt -> T, else B)\n"
+        "  list NAME [HOSTFILE]       an A or I BASIC program as a text listing\n"
+        "  put HOSTFILE [NAME]        add or replace (type from the host name)\n"
         "  rm NAME                    delete\n"
         "\n"
-        "  -t T|A|B|I                 type for put\n"
-        "  -a ADDR                    B file load address, hex (default 2000)\n"
-        "  --raw                      get: the file's own bytes, header included\n");
+        "  -t T|A|B|I                 type for put, overriding the host name\n"
+        "  -a ADDR                    B file load address, hex, overriding it too\n"
+        "  --raw                      get: the file's own bytes, header included\n"
+        "\n"
+        "Without HOSTFILE, get names the file after the type: HELLO.bas,\n"
+        "NOTES.txt, or GAME#062000 when no extension can carry it. put reads\n"
+        "that back, so a B file keeps its load address across a round trip.\n");
 }
 
 bool readHostFile(const std::string& path, std::vector<uint8_t>& out)
@@ -82,16 +96,23 @@ bool writeHostFile(const std::string& path, const std::vector<uint8_t>& data)
     return bool(f);
 }
 
-uint8_t typeOf(const std::vector<FileInfo>& files, const std::string& name)
+/// The catalog entry for `name`, case-insensitively; nullptr when absent.
+const FileInfo* infoOf(const std::vector<FileInfo>& files, const std::string& name)
 {
     std::string up = name;
     for (auto& c : up) c = char(std::toupper(static_cast<unsigned char>(c)));
     for (const auto& f : files) {
         std::string n = f.name;
         for (auto& c : n) c = char(std::toupper(static_cast<unsigned char>(c)));
-        if (n == up) return f.type;
+        if (n == up) return &f;
     }
-    return 0xFF;
+    return nullptr;
+}
+
+uint8_t typeOf(const std::vector<FileInfo>& files, const std::string& name)
+{
+    const FileInfo* f = infoOf(files, name);
+    return f ? f->type : uint8_t(0xFF);
 }
 
 } // namespace
@@ -100,6 +121,7 @@ int main(int argc, char** argv)
 {
     char typeArg = 0;
     long addr = 0x2000;
+    bool addrGiven = false;
     bool raw = false;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
@@ -122,6 +144,7 @@ int main(int argc, char** argv)
                     std::fprintf(stderr, "-a expects a hex address\n");
                     return 1;
                 }
+                addrGiven = true;
             }
             continue;
         }
@@ -143,9 +166,22 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Say the destination cannot take a write BEFORE doing the work, not
+    // after. The idea is `CHECK_WRITABLE` from the Host File Transfer Card
+    // (sbabcoc/ReplicApple2Plus, § 4.1), which checks the destination before
+    // it even asks which files to transfer — but NOT its implementation,
+    // which probes by writing a block back unchanged. POM2 already knows the
+    // answer without touching the medium: the notch is the host read-only
+    // bit (MediaNotch.h). `commit` asks again, because the bit can change in
+    // between and that last gate is the one that matters.
+    auto writable = [&]() -> bool {
+        if (!pom2::mediaFileIsReadOnly(imagePath)) return true;
+        std::fprintf(stderr, "%s: write-protected\n", imagePath.c_str());
+        return false;
+    };
+
     auto commit = [&]() -> int {
-        if (pom2::mediaFileIsReadOnly(imagePath)) {
-            std::fprintf(stderr, "%s: write-protected\n", imagePath.c_str());
+        if (!writable()) {
             return 1;
         }
         const std::filesystem::path target(imagePath);
@@ -182,57 +218,99 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
-        const uint8_t type = typeOf(disk.list(), args[2]);
+        const std::vector<FileInfo> catalog = disk.list();
+        const FileInfo* info = infoOf(catalog, args[2]);
+        const uint8_t type = info ? info->type : uint8_t(0xFF);
+        uint16_t loadAddress = 0;
         std::vector<uint8_t> out;
         if (cmd == "list") {
-            if (type != 0x02) {
-                std::fprintf(stderr, "%s: not an Applesoft (A) file\n", args[2].c_str());
+            // A (Applesoft) and I (Integer BASIC) — the ][ Original's BASIC
+            // is Integer, and `list` used to refuse it.
+            if (type != 0x02 && type != 0x01) {
+                std::fprintf(stderr,
+                    "%s: not a BASIC program (A or I)\n", args[2].c_str());
                 return 1;
             }
             const std::vector<uint8_t> prog = Dos33Disk::payload(type, file);
-            const std::string text = pom2::applesoft::list(0, [&](uint16_t a) {
+            const auto peek = [&](uint16_t a) {
                 return a < prog.size() ? prog[a] : uint8_t(0);
-            }, prog.size());
+            };
+            const std::string text = type == 0x02
+                ? pom2::applesoft::list(0, peek, prog.size())
+                : pom2::integerbasic::list(0, peek, prog.size());
             out.assign(text.begin(), text.end());
         } else if (raw) {
             out = file;
         } else {
-            out = Dos33Disk::payload(type, file);
+            out = Dos33Disk::payload(type, file, &loadAddress);
             if (type == 0x00) out = Dos33Disk::textFromDos(out);
         }
         if (args.size() == 3 && cmd == "list") {
             std::fwrite(out.data(), 1, out.size(), stdout);
             return 0;
         }
-        const std::string dst = args.size() == 4 ? args[3] : args[2];
+        // The host name carries the type, so a `put` of what `get` wrote
+        // restores it — a B file's load address included (HostFileTag.h).
+        // `--raw` keeps the file's own bytes, header and all, so tagging it
+        // would make `put` build a SECOND header over the first.
+        std::string dst;
+        if (args.size() == 4)            dst = args[3];
+        else if (raw || cmd == "list")   dst = args[2];
+        else dst = pom2::hostNameForType(info ? info->name : args[2],
+                                         pom2::prodosTypeFromDos33(type),
+                                         loadAddress);
         if (!writeHostFile(dst, out)) { std::fprintf(stderr, "%s: write failed\n", dst.c_str()); return 1; }
+        if (args.size() == 3 && dst != args[2]) std::printf("%s\n", dst.c_str());
         return 0;
     }
     if (cmd == "put" && (args.size() == 3 || args.size() == 4)) {
+        if (!writable()) return 1;
         std::vector<uint8_t> data;
         if (!readHostFile(args[2], data)) {
             std::fprintf(stderr, "%s: cannot read\n", args[2].c_str());
             return 1;
         }
         const std::filesystem::path host(args[2]);
-        std::string name = args.size() == 4 ? args[3] : host.stem().string();
-        char t = typeArg;
-        if (!t) {
-            std::string ext = host.extension().string();
-            for (auto& c : ext) c = char(std::toupper(static_cast<unsigned char>(c)));
-            t = ext == ".TXT" ? 'T' : 'B';
+        // The host name says the type and, for a B file, the load address:
+        // a `#TTAAAA` tag first, else the extension (HostFileTag.h). A
+        // tagged name keeps its extension — `HELLO.BAS#FC0801` is the DOS
+        // file `HELLO.BAS`, not `HELLO` — exactly as the ProDOS host folder
+        // reads it.
+        std::string base = host.filename().string();
+        uint8_t  prodosType = 0;
+        uint16_t prodosAux  = 0;
+        const bool tagged = pom2::stripHostFileTag(base, prodosType, prodosAux);
+        if (!tagged) {
+            prodosType = pom2::prodosTypeFromExtension(host.extension().string());
+            base.resize(base.size() - pom2::strippedExtensionLength(base));
         }
+        std::string name = args.size() == 4 ? args[3] : base;
+        // The DOS type: -t wins, else what the host name said. A ProDOS type
+        // with no DOS equivalent (and a typeless host file) is binary, as
+        // before. S / R / new-A / new-B survive a round trip here although
+        // -t cannot ask for them.
         FileType type = FileType::Binary;
-        if (t == 'T') { type = FileType::Text; data = Dos33Disk::textToDos(data); }
-        if (t == 'A') type = FileType::Applesoft;
-        if (t == 'I') type = FileType::Integer;
-        if (!disk.writeFile(name, type, data, uint16_t(addr), error)) {
+        if (typeArg == 'T') type = FileType::Text;
+        else if (typeArg == 'A') type = FileType::Applesoft;
+        else if (typeArg == 'I') type = FileType::Integer;
+        else if (typeArg == 'B') type = FileType::Binary;
+        else {
+            uint8_t dosType = 0;
+            if (pom2::dos33TypeFromProdos(prodosType, dosType))
+                type = static_cast<FileType>(dosType);
+        }
+        if (type == FileType::Text) data = Dos33Disk::textToDos(data);
+        // -a wins; otherwise the tag's aux is a B file's load address, and
+        // an untagged `.bin` means $0000, which is what the tag would say.
+        const uint16_t loadAddress = addrGiven ? uint16_t(addr) : prodosAux;
+        if (!disk.writeFile(name, type, data, loadAddress, error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
         return commit();
     }
     if (cmd == "rm" && args.size() == 3) {
+        if (!writable()) return 1;
         if (!disk.removeFile(args[2], error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;

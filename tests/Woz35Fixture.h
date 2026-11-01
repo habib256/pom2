@@ -138,8 +138,11 @@ inline void put32(std::vector<uint8_t>& v, uint32_t x)
 { for (int i = 0; i < 4; ++i) v.push_back(uint8_t(x >> (8 * i))); }
 
 /// Wrap per-(track,head) cell streams in a WOZ2 container.
+// `sides` writes INFO+37, the field the WOZ 2 spec uses for sidedness ("A 3.5
+// disk can be 1 or 2") — Disk Type at +1 says only 5.25 vs 3.5.
 inline std::vector<uint8_t> buildWoz(const std::vector<std::vector<uint8_t>>& tracks,
-                              uint8_t diskType = 2, char version = '2')
+                              uint8_t diskType = 2, char version = '2',
+                              uint8_t sides = 2)
 {
     std::vector<uint8_t> woz = { 'W', 'O', 'Z', uint8_t(version),
                                  0xFF, 0x0A, 0x0D, 0x0A };
@@ -148,7 +151,7 @@ inline std::vector<uint8_t> buildWoz(const std::vector<std::vector<uint8_t>>& tr
     std::vector<uint8_t> info(60, 0);
     info[0] = 2;                                     // INFO version
     info[1] = diskType;
-    info[37] = 2;                                    // sides
+    info[37] = sides;                                // WOZ 2 INFO+37 Disk Sides
     woz.insert(woz.end(), { 'I','N','F','O' }); put32(woz, uint32_t(info.size()));
     woz.insert(woz.end(), info.begin(), info.end());
 

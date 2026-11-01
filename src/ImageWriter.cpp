@@ -2120,10 +2120,28 @@ bool ImageWriter::processCommandChar(uint8_t ch)
 // LaserWriter's emulation was a subset of the real 630 anyway, so a
 // conservative subset is closer to the machine than an eager one.
 //
-// Not decoded, and why: ESC FF n (form length) and ESC L (bottom margin) —
-// their parameter counts differ between the 630 and its clones, and a wrong
-// guess desynchronises. ESC 3 / ESC 4 (HyPlot graphics) — the LaserWriter had
-// no such hardware.
+// The parameter counts are no longer guessed. Diablo's own
+// `90440-00A Model 630/630ECS API Interface Manual, Rev A (12/82)` settles
+// every one of them (fetched 2026-11-01 from bitsavers, pdf/diablo/printer/630;
+// § 3.5 is the command summary, p. 3-12/3-13):
+//
+//   § 3.9.4.1  HMI = (ASCII character - 1) x 1/120"  via ESC US n
+//   § 3.9.4.2  VMI = (ASCII character - 1) x 1/48"   via ESC RS n
+//   § 3.9.4.3  ESC FF n sets lines per page to n ITSELF (not n-1), 1..126
+//   § 3.13.1   ESC HT n: Horizontal Position = (n - 1) x HMI, leftmost = 1
+//   § 3.13.2   ESC VT n: Vertical Position   = (n - 1) x VMI, top line = 1
+//   p. 3-13    ESC L / ESC T take NO parameter (lower / top page margin here)
+//   § 3.24.4   bold overprint is ESC O, cleared by CR, ESC & or ESC X
+//   § 3.24.11  ESC X cancels the WP modes but NOT proportional space
+//
+// so an older comment here that called ESC FF n and ESC L undecidable is gone:
+// both are decoded, the way the manual writes them.
+//
+// Still not decoded, and why: ESC 3 / ESC 4 (HyPlot graphics, API-2 only) —
+// the LaserWriter had no such hardware. ESC W (shadow print, § 3.24.5: a second
+// strike 1/120" over) and ESC % / ESC N (carriage settling time, § 3.24.6) —
+// POM2's page model has no shadow bit and no settling time to spend, and
+// inventing one would print something the machine does not.
 
 bool ImageWriter::processDiabloChar(uint8_t ch)
 {
@@ -2214,6 +2232,29 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
                   definedUnit_ = modelProfile().defaultUnit;
                   updateMetrics();                           return true;
 
+        // ESC S — "Set HMI to value defined by setting of SPACING switch"
+        // (API § 3.5, p. 3-13). § 3.9.4.1 says what that means: "While the
+        // terminal is in remote HMI mode, the SPACING switch is ignored. An
+        // ESC S sequence will return control of HMI to the SPACING switch."
+        // POM2's SPACING switch is the model profile's pitch, which is what
+        // hmi_ == 0 selects. The table also lists proportional space as
+        // "cleared by ESC S", so this is ESC Q's job plus the HMI release.
+        // It used to be dropped, which left a driver that tightened the HMI
+        // for one passage printing the whole rest of the job at that HMI.
+        case 'S': hmi_ = 0.0;
+                  style_ &= ~kStyleProp;
+                  definedUnit_ = modelProfile().defaultUnit;
+                  updateMetrics();                           return true;
+
+        // ESC X — "Cancel all WP modes except Proportional Space"
+        // (§ 3.24.11): Auto Underscore, Bold Overprint, Shadow Print, Program
+        // Mode, Offset Selection, Auto Justify and Auto Center go; increased
+        // carriage settling time and proportional space stay. Of those, POM2
+        // models underline and bold, so those two are what it clears — and
+        // note it does NOT touch kStyleProp, which is the whole point of the
+        // section's last sentence.
+        case 'X': style_ &= ~(kStyleUnderline | kStyleBold); return true;
+
         // ── Fractional and reverse motion ──────────────────────────────
         case 'U':                                        // half line feed
             curY_ += lineSpacing_ / 2.0;
@@ -2232,9 +2273,15 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         case 0x09:   // ESC HT n — absolute horizontal tab
         case 0x0B:   // ESC VT n — absolute vertical tab
         case 0x0C:   // ESC FF n — lines per page
+        // ESC CR P (Remote RESET) and ESC SUB I (Initialize) — the parameter
+        // decides, and `execDiabloEscape` acts on it.
+        case 0x0D: case 0x1A:
         // One byte, consumed, not modelled (630 SPI / ECS): it used to print.
-        case 0x11: case 0x16: case 0x1A: case 0x0E: case 0x19:
-        case 0x0D: case 0x18: case '.':
+        // DC1 offset selection (§ 3.24.2), SYN, SO print-wheel download /
+        // program mode (§ 3.24.8), EM feeder control (§ 3.26, API-2 only),
+        // CAN print-speed timing (§ 3.28), and `.` the HyPlot plot character.
+        case 0x11: case 0x16: case 0x0E: case 0x19:
+        case 0x18: case '.':
             diabloNeed_ = 1;
             return true;
 
@@ -2265,7 +2312,12 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
     }
     case 0x0D:                                               // CR
         curX_ = leftMargin_;
-        style_ &= ~kStyleBold;          // ESC O bold / ESC W shadow end at CR
+        // § 3.24.4: bold overprint ends at CR (as does shadow print, which
+        // POM2 does not model). Auto Underscore does NOT — § 3.24.3 has CR
+        // draw the underscore and return the carriage, and says the mode is
+        // "cancelled by either sequence ESC R or ESC X", so kStyleUnderline
+        // deliberately survives this line.
+        style_ &= ~kStyleBold;
         if (!autoFeedActive()) return true;
         lineFeed();
         crJustFed_ = true;
@@ -2337,6 +2389,32 @@ void ImageWriter::execDiabloEscape()
     }
     case 0x0C:                                     // ESC FF n: n lines per page (66 at reset)
         if (p0 > 0) bottomMargin_ = std::min(pageHeightIn_, p0 * lineSpacing_);
+        break;
+    case 0x0D:                                     // ESC CR P — Remote RESET
+    case 0x1A:                                     // ESC SUB I — Initialize
+        // § 3.23.1: ESC SUB I "will cause the Model 630 to unconditionally
+        // execute an initialize sequence regardless of any error conditions
+        // that may exist within the printer. This command is executed
+        // immediately when received over the interface, unlike the
+        // corresponding remote reset sequence ESC CR P which is queued along
+        // with other commands. The Model 630 will default to the same
+        // conditions that exist at power-up." And § 3.9.4: ESC CR P "may also
+        // be used here to cancel all optional format factors and return to
+        // the format selected by the SPACING switch."
+        //
+        // POM2's input stream IS the queue, so the immediate/queued
+        // distinction has no analogue and the two land on the same power-up
+        // path `ESC c` takes on the Epson head. Both used to consume their
+        // parameter and do nothing, so a driver that opened its job with a
+        // remote reset — the normal way to clear whatever the last job left
+        // — inherited the previous job's HMI, VMI, tab racks and styles.
+        //
+        // ESC SUB's other sub-commands are deliberately untouched: R resets
+        // error conditions POM2 has none of, SO is a memory test, and 1 / 3
+        // request a status byte back over the serial line, which this head
+        // has no return path for.
+        if ((diabloCmd_ == 0x0D && p0 == 'P') || (diabloCmd_ == 0x1A && p0 == 'I'))
+            resetPrinter();
         break;
     default:
         break;

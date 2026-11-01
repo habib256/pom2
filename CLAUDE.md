@@ -81,6 +81,24 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   the disk it protected gets the notch and the flag reverts. The one opt-in
   left is the ProDOS host folder sync (a real directory, a different hazard).
   Pinned by `media_notch`, `media_write_default` and `storage_coordinator`.
+- **A file leaving a guest volume says its own type** *(2026-11-01)*. One
+  convention, `HostFileTag.h`: `NAME[#TTAAAA]` (CiderPress / SD-CARD-OS —
+  `TT` the ProDOS type, `AAAA` the aux / load address), used only when an
+  extension cannot carry the same pair back. It lives in its own file
+  because three paths exchange files with the host and all three must spell
+  a type the same way — the ProDOS host folder, `pom2_dos33` and the HGR
+  Paint editor's `PIC#062000`. **The convention does not change**: files
+  already exported must keep importing faithfully. Drift is the hazard
+  `SettingRebuild.h` records, and it had already happened —
+  `pom2_dos33 get` dropped a B file's load address and `put` guessed
+  `$2000`, silently relocating a file that round-tripped. CP/M is the
+  exception the convention names: a CP/M file carries NO type, so the
+  extension decides and only the `.TXT` text marker appears
+  (`CpmDiskFs.h`). **Attributes are NOT in the name** — write-protection is
+  the host read-only bit, the same rule as the notch above, one level down:
+  the host folder maps it both ways, so a guest `LOCK` follows the file out
+  of POM2. Pinned by `host_file_tag`, `cpm_disk_fs` and
+  `prodos_volume_smoke`.
 - **HDV/CFFA/SmartPort block images autosave** *(2026-09-10)*. The controller
   injects `BlockWriteBackExecutor` and polls even when paused; media captures
   immutable batches, the runtime commits off `stateMutex`. Per-block versions
@@ -213,8 +231,8 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | DAN ][ Controller (8255 + ATmega serving two SD images as ProDOS volumes; izapple2 `dan2.go`) — its EPROM `roms/dan2_eprom.bin` when present (LLE reference), else POM2's page; switch `dan2_firmware` — catalog `dan2` | `Dan2Card.h/.cpp` | [§ DAN ][](DEV.md#dan--controller-dan2card) |
 | Saturn 128K — eight language cards in any slot, over the bus INH line (`Memory::LcInhibitor`) — catalog `saturn` | `SaturnCard.h/.cpp` | [§ Saturn 128K](DEV.md#saturn-128k-saturncard) |
 | Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
-| CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm) | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
-| DOS 3.3 file system on a 140 KB image + host tool `pom2_dos33` (ls/get/put/rm, `list` = an A file as text); File ▸ Save BASIC listing (the Applesoft program in RAM, as text) | `Dos33DiskFs.h/.cpp`, `ApplesoftListing.h/.cpp`, `pom2_dos33.cpp`, `MainWindow_BasicListing.cpp` | — |
+| CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm). **Text is converted** — CP/M text is CR LF, ends at `^Z` and fills whole 128-byte records; a CP/M file carries no type, so the extension decides (`--text`/`--binary` override) and a file taken off as text is named `.TXT` | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
+| DOS 3.3 file system on a 140 KB image + host tool `pom2_dos33` (ls/get/put/rm, `list` = an **A or I** program as text); File ▸ Save BASIC listing (the **Applesoft or Integer BASIC** program in RAM, as text — Applesoft from TXTTAB `$67/$68`, Integer from PP `$CA/$CB` up to HIMEM `$4C/$4D`, gated on `looksLikeProgram`) | `Dos33DiskFs.h/.cpp`, `ApplesoftListing.h/.cpp`, `IntegerBasicListing.h/.cpp`, `pom2_dos33.cpp`, `MainWindow_BasicListing.cpp` | — |
 | Memory + IIe paging + RamWorks | `Memory.h/.cpp` (keyboard latch + paste FIFO → `Keyboard.h/.cpp`; game port → `PaddleInputs.h`; write/read watchpoints → `MemoryWatch.cpp`; beam-time video RAM for the display → `MemoryVideoLog.cpp`) | [§ Memory](DEV.md#memory) |
 | Display (HGR / DHGR / 80-col) | `Apple2Display.h/.cpp` | [§ Display](DEV.md#display) |
 | Composite NTSC shader (OpenEmulator-style) | `NtscPostProcessor.*`, `OpenGLShader.*` | [§ Composite NTSC shader](DEV.md#composite-ntsc-shader-colorcompositeoe) |
@@ -251,6 +269,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | 3D voxel view (MicroM8-style) + camera math | `Voxel3DRenderer.*`, `Mat4.h` | [§ 3D voxel](DEV.md#3d-voxel-view) |
 | ProDOS block backing + HDV cards (the `hdv` card: drive 1 + drive 2) | `Block512Backing.*`, `ProDOSHardDiskCard.*`, `CffaCard.*`, `AtaBlockDevice.*` | [§ HDV](DEV.md#prodosharddiskcard-hdv--synthetic-block-model), [§ CFFA](DEV.md#cffacard-cffa-20--mame-faithful-ide) |
 | ProDOS host folder (a directory served as a volume) | `ProDOSVolume.*`, `ProDOSBlockCard.h` | [§ ProDOS host folder](DEV.md#prodos-host-folder) |
+| **The host exchange convention** — `NAME[#TTAAAA]` (CiderPress), the extension↔type tables and the DOS 3.3↔ProDOS type map, in ONE file shared by the ProDOS host folder, `pom2_dos33` and the HGR Paint editor's `PIC#062000` | `HostFileTag.h/.cpp` | — |
 | TNFS media (fetch a disk image from a TNFS server into a local cache) | `TnfsClient.*`, `TnfsMedia.*` | [§ FujiNet](DEV.md#fujinet-sp-over-slip-relay) |
 | IWM (//c, //c+, Mac, IIgs) | `IWMDevice.*` | [§ IWM](DEV.md#iwm-c-on-board) |
 | SmartPort 3.5" //c+ on-board (`.po`/`.2mg`/`.woz`) | `Disk35Image.*`, `Sony35Drive.*`, `Sony35Gcr.*`, `SmartPortHub.*` | [§ SmartPort 3.5"](DEV.md#smartport-35-stack) |
@@ -380,7 +399,9 @@ Chat Mauve) must not latch the window and starve the card that serves it — on
 the fresh-install map the //e autostart scans `$C700` first and used to hand
 slot 7 a window slot 5's SmartPort ROM needed. The overriding cards are:
 `LironCard`, `WorkstationCard`, `CffaCard`, `SmartPortCard`,
-`VidexVideotermCard` and `SuperSerialCard` return true; `ClockCard`,
+`VidexVideotermCard`, `VidexUltratermCard` and `SuperSerialCard` return true
+(**eleven** card classes override `takesC800()` in all — twelve counting
+`Cffa3000Card`, which inherits `SmartPortCard`'s); `ClockCard`,
 `GrapplerCard`, `GrapplerClassicCard` and `SlinkyCard` only while their
 expansion ROM is loaded (`SuperSerialCard` claims for parity
 with `a2ssc.cpp:50`, and serves Apple's EPROM there when
@@ -422,7 +443,7 @@ The map lives in `kDefaultCards[]` in `SlotConfigurationCoordinator.cpp`; `MainW
 
 **//c-class CPU + Chat Mauve rules.** The //c/+/enhanced-//e (NTSC + PAL) and //c PAL profiles have a **65C02 soldered** (`defaultCpu = CMOS`); an `cpu_mode_override = nmos` is *ignored* there (`resolveCpuMode` clamp) — forcing NMOS made their 65C02 ROMs hit KIL opcodes and freeze. The **Unenhanced PAL //e** ships NMOS (like its NTSC sibling) and accepts overrides both ways. The **Le Chat Mauve RGB** card is one of two peripherals allowed on a `noPhysicalSlots` //c (it's the rear DB-15 "Adaptateur IIc", not a slot card; the other is the CPU-socket **Mockingboard 4c** on virtual slot 3, stored under its own key `iic_expansion_card` via `pom2::slotCardSettingKey`, and dormant at $C400 until a program writes there): user-pluggable on plain //c/+ via a `{empty, Le Chat Mauve}` Slot-Config combo, and a **fixed sl7 built-in on the //c PAL profile**. Profile-forced slots are no longer persisted to `slot_N_card` on exit (quitting on //c used to clobber the user's //e card config).
 
-**Video standard (NTSC/PAL).** Each profile carries a `VideoStandard` (`CpuClock.h`): NTSC (262 lines, 60 Hz, 1.0227 MHz) for US machines, **PAL (312 lines, ~50 Hz, ~1.0156 MHz)** for the three PAL profiles (//e Unenhanced PAL, //e Enhanced PAL, //c PAL). The European //c PAL is the machine that took the **Le Chat Mauve** RGB Péritel adapter on its DB-15 port; French Touch / DIX demos are PAL-timed, so their beam-raced effects and Mockingboard-T2 frame sync only land correctly under PAL. MAME oracles for European PAL: **`apple2eefr`** (//e enhanced France) and **`apple2cfr`** / **`apple2c0fr`** (//c France, UniDisk variant) — all 312 vtotal, 50.146 Hz, 14.2375 MHz pixclock. Not the US `apple2ee` / `apple2c`. Note: MAME's //c FR still has no usable 3.5" media path for an 800K `.po`; DIX on MAME stays on `apple2eefr -sl5 superdrive`. `applyProfile` calls `controller->setVideoStandard()`, which sets the worker's 50/60 Hz pacing (`frameIntervalUs`) and the 262/312-line geometry in `Memory` (`pushVideoEventLocked`) + `Apple2Display::frameCycleToPos`. The CPU budget `defaultCyclesPerFrame` (17045 NTSC / 20313 PAL) × refresh = the effective clock. `setVideoStandard` calls `setCpuClock` on **every slot card plus speaker and cassette** — their emuCycles replay cursors and cycles→samples queues starve under a wrong clock, which is audible — and `setStandardClock` with the UN-accelerated bus clock: the Mockingboard / Phasor AYs and 6522s run from that one (`SlotBusClock.h`), so they follow PAL but never an accelerator (a TransWarp or the //c+ 4× used to make every note 3.5-4× sharp; bug hunt 2026-09-29). SSI263 phoneme lengths follow the live CPU clock; the IWM stays at its own 7.16 MHz. Pinned by `pal_timing`. CLI: `--preset iie-u-pal|iie-pal|iic-pal` (aliases `frenchtouch`, `chatmauve`).
+**Video standard (NTSC/PAL).** Each profile carries a `VideoStandard` (`CpuClock.h`): NTSC (262 lines, 60 Hz, 1.0227 MHz) for US machines, **PAL (312 lines, ~50 Hz, ~1.0156 MHz)** for the three PAL profiles (//e Unenhanced PAL, //e Enhanced PAL, //c PAL). The European //c PAL is the machine that took the **Le Chat Mauve** RGB Péritel adapter on its DB-15 port; French Touch / DIX demos are PAL-timed, so their beam-raced effects and Mockingboard-T2 frame sync only land correctly under PAL. MAME oracles for European PAL: **`apple2eefr`** (//e enhanced France) and **`apple2cfr`** / **`apple2c0fr`** (//c France, UniDisk variant) — all 312 vtotal, 50.146 Hz, 14.2375 MHz pixclock. Not the US `apple2ee` / `apple2c`. **But MAME is not the oracle for the PAL CPU clock**: it carries `// FIXME: some of these values are probably wrong` directly above `A2PAL_1M_CLOCK = 1016966`, and POM2's 1 015 625 (the PAL line rate, 15 625 × 65, exact) is **5× closer** to the only real-hardware measurement anyone has found (~1.0153 MHz on a European //e). Expect ~0.13 % drift when diffing a DIX capture against `apple2eefr`, and do not move POM2's constant on the strength of it — the four candidates and what would settle them are in `CpuClock.h`. Note: MAME's //c FR still has no usable 3.5" media path for an 800K `.po`; DIX on MAME stays on `apple2eefr -sl5 superdrive`. `applyProfile` calls `controller->setVideoStandard()`, which sets the worker's 50/60 Hz pacing (`frameIntervalUs`) and the 262/312-line geometry in `Memory` (`pushVideoEventLocked`) + `Apple2Display::frameCycleToPos`. The CPU budget `defaultCyclesPerFrame` (17045 NTSC / 20313 PAL) × refresh = the effective clock. `setVideoStandard` calls `setCpuClock` on **every slot card plus speaker and cassette** — their emuCycles replay cursors and cycles→samples queues starve under a wrong clock, which is audible — and `setStandardClock` with the UN-accelerated bus clock: the Mockingboard / Phasor AYs and 6522s run from that one (`SlotBusClock.h`), so they follow PAL but never an accelerator (a TransWarp or the //c+ 4× used to make every note 3.5-4× sharp; bug hunt 2026-09-29). SSI263 phoneme lengths follow the live CPU clock; the IWM stays at its own 7.16 MHz. Pinned by `pal_timing`. CLI: `--preset iie-u-pal|iie-pal|iic-pal` (aliases `frenchtouch`, `chatmauve`).
 
 **ROM identity check**: when the generic `apple2.rom` fallback resolves (no profile-specific dump present), the loader warns the ROM may not match the selected machine.
 

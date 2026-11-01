@@ -198,9 +198,20 @@ public:
 
     /// The card currently claiming DMA bus mastery (SoftCard Z80), or
     /// nullptr when the 6502 owns the bus — consulted by
-    /// EmulationController before each CPU budget slice. Lowest slot
-    /// wins if several claim (real hardware: the DMA daisy chain gives
-    /// priority to the lowest slot; MAME a2bus does the same).
+    /// EmulationController before each CPU budget slice.
+    ///
+    /// Lowest slot wins if several claim — and that is POM2'S CONVENTION, not
+    /// an upstream match. Checked 2026-11-01: MAME's `a2bus.cpp set_dma_line`
+    /// is three lines that just forward the line, with no per-slot mask and no
+    /// arbitration at all (unlike `set_irq_line`, which does keep one). The
+    /// Apple II Reference Manual (1979) Table 33 documents pin 24 DMA OUT
+    /// "daisy-chained DMA output to lower priority devices... usually
+    /// connected to pin 22" and pin 27 DMA IN likewise — i.e. the chain is
+    /// formed by the CARDS, and the manual nowhere says which slot heads it.
+    /// So the rule is a choice; the comment used to cite MAME for it, which
+    /// was false. What would settle it: a motherboard schematic showing
+    /// whether DMA IN of slot n is tied to anything on the board (if not,
+    /// there is no board-imposed order), or Sather ch. 7.
     SlotPeripheral* dmaClaimant() const {
         for (const auto& c : slots)
             if (c && c->dmaActive()) return c.get();
@@ -208,8 +219,11 @@ public:
     }
 
     /// The CPU clock multiplier imposed by a plugged ACCELERATOR, or 1.0
-    /// when nothing is accelerating. Lowest slot wins, same rule as the DMA
-    /// daisy chain. Read once per frame by EmulationController.
+    /// when nothing is accelerating. Lowest slot wins — POM2's convention,
+    /// same choice as `dmaClaimant()` above and with no more upstream backing:
+    /// MAME handles accelerators at the motherboard level (`m_accel_*` in
+    /// apple2e.cpp), not as slot arbitration. Read once per frame by
+    /// EmulationController.
     double cpuSpeedMultiplier() const {
         for (const auto& c : slots) {
             if (!c) continue;

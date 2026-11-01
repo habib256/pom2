@@ -41,8 +41,10 @@ Save a session or enable Automatic resume to keep supported disks and changes;
 see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for limits.
 
 **On your computer:** [download a package](https://github.com/habib256/pom2/releases/latest),
-unpack it and launch POM2. Firmware, fonts and artwork are included. Keep the
-executable and its accompanying folders together.
+unpack it and launch POM2. Fonts, artwork and the bundled disks are included;
+Apple's firmware is **not** — the first launch offers to download the ROMs in
+one click (see [Missing ROMs and the ROM download](#missing-roms-and-the-rom-download)).
+Keep the executable and its accompanying folders together.
 
 | Platform | Package |
 |---|---|
@@ -71,9 +73,9 @@ and press Return.
 
 ### Missing ROMs and the ROM download
 
-From the next release, POM2 redistributes no copyrighted firmware: desktop
-packages carry no ROM at all, and the first time it starts the desktop
-version offers to download them in one click. The browser demo, which
+POM2 redistributes no copyrighted firmware: desktop packages carry no ROM at
+all, and the first time it starts the desktop version offers to download them
+in one click. The browser demo, which
 cannot download them, keeps the //c and //e ROMs that run the disks POM2
 ships. The source repository has no ROM either (see [Build it](#build-it)).
 
@@ -90,15 +92,15 @@ recognises it by its SHA-256, installs it under the name it looks for, and
 loads it at the next machine switch or restart. A file it cannot identify
 is left alone.
 
-> **Known problem in v1.0.0:** on 20–22 October 2026 RetroBIOS reorganised
-> its collection and removed many of the files POM2 points to. From a
-> folder with no ROM, the v1.0.0 button now installs only 19 of 45 dumps:
-> enough for the //e and the ][, but not for the //c, the //c Plus, the
-> mouse, the Super Serial Card, the Liron or the international character
-> sets. This does not affect the regular packages, which ship every ROM.
-> If you deleted `roms/` or use a ROM-free build, copy your own dumps into
-> the folder ROM Status shows. The next release reads RetroBIOS at a fixed
-> revision instead, and downloads all 49 dumps POM2 uses.
+> **Fixed since v1.0.0:** on 20–22 October 2026 RetroBIOS reorganised its
+> collection and removed many of the files v1.0.0's Download button pointed
+> at, so from a ROM-free folder it installed only 19 of the 45 dumps it knew
+> about — enough for the //e and the ][, but not for the //c, the //c Plus,
+> the mouse, the Super Serial Card, the Liron or the international character
+> sets. POM2 now asks its own archive.org item first and reads RetroBIOS at a
+> **pinned commit** for whatever that cannot supply, so all 57 catalogued
+> dumps resolve. Every file is still size- and SHA-256-checked whatever its
+> origin.
 
 ## Technical overview
 
@@ -110,7 +112,11 @@ is left alone.
   (CP/M 2.2) and the ALS CP/M Card (CP/M Plus 3.01C, 6 MHz, its own 64 KB,
   booting from a floppy or from ProDOS on a hard disk, with a RAM disk).
   The `pom2_cpm` tool lists, extracts, adds and deletes files on CP/M disk
-  images without cpmtools.
+  images without cpmtools, converting text between CP/M's CR LF and the
+  host's; `pom2_dos33` does the same for DOS 3.3 disks and lists an
+  Applesoft or Integer BASIC program as text. Both carry a file's type in
+  the host file's name, so a binary keeps its load address across a round
+  trip.
 - **Video.** Text 40/80, lo-res, hi-res and their double-resolution modes
   follow mode changes during a scanline. Choose composite NTSC, AppleWin,
   monochrome or CRT rendering; Le Chat Mauve/Video-7 RGB, Videx Videoterm,

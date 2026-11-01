@@ -22,6 +22,15 @@
 //   pom2_cpm disk.dsk put host/BTERM.COM [CPMNAME.EXT]
 //   pom2_cpm disk.dsk rm BTERM.COM
 //
+// **Text is converted** (CpmDiskFs.h): CP/M text is CR LF, ends at a ^Z
+// ($1A) and is stored in whole 128-byte records, so a `get` of a source
+// file used to hand the host CR LF, a ^Z and the record padding, and a
+// `put` of a host file left CP/M bare LF with no end marker. A CP/M file
+// carries NO type, so the extension decides (`ASM`, `TXT`, `DOC`, … text;
+// `COM`, and `BAS` because BASIC-80 tokenizes, binary) and `--text` /
+// `--binary` override it. A file taken off as text is named `.TXT` on the
+// host, which is what marks it on the way back.
+//
 // `-u N` selects user area N (default 0). The image is rewritten through
 // the same durable temp + rename commit as every POM2 write-back, keeping
 // its permissions; a write-protected image (host read-only bit, the notch
@@ -55,7 +64,14 @@ void usage()
         "  put HOSTFILE [NAME]        add or replace (default: host file name)\n"
         "  rm NAME                    delete\n"
         "\n"
-        "  -u USER                    user area 0-15 (default 0)\n");
+        "  -u USER                    user area 0-15 (default 0)\n"
+        "  --text                     convert: CR LF <-> LF, ^Z ends the text\n"
+        "  --binary                   no conversion, byte for byte\n"
+        "\n"
+        "CP/M files carry no type, so the extension decides: ASM MAC LIB PRN\n"
+        "SYM HEX SUB DOC TXT ME FOR COB PAS C H BAK are text, everything else\n"
+        "(COM, and BAS, which BASIC-80 tokenizes) is binary. A file taken off\n"
+        "as text is named .TXT on the host, and that marks it on the way back.\n");
 }
 
 bool readHostFile(const std::string& path, std::vector<uint8_t>& out)
@@ -71,10 +87,14 @@ bool readHostFile(const std::string& path, std::vector<uint8_t>& out)
 int main(int argc, char** argv)
 {
     int user = 0;
+    enum class TextMode { Auto, Text, Binary };
+    TextMode textMode = TextMode::Auto;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-h" || a == "--help") { usage(); return 0; }
+        if (a == "--text")   { textMode = TextMode::Text;   continue; }
+        if (a == "--binary") { textMode = TextMode::Binary; continue; }
         if (a == "-u") {
             if (i + 1 >= argc) { usage(); return 1; }
             char* end = nullptr;
@@ -104,9 +124,18 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Checked BEFORE the work, not after — `CHECK_WRITABLE` from the Host
+    // File Transfer Card (sbabcoc/ReplicApple2Plus, § 4.1), without its
+    // write-a-block-back probe: the notch is the host read-only bit
+    // (MediaNotch.h), which costs nothing to read. `commit` asks again.
+    auto writable = [&]() -> bool {
+        if (!pom2::mediaFileIsReadOnly(imagePath)) return true;
+        std::fprintf(stderr, "%s: write-protected\n", imagePath.c_str());
+        return false;
+    };
+
     auto commit = [&]() -> int {
-        if (pom2::mediaFileIsReadOnly(imagePath)) {
-            std::fprintf(stderr, "%s: write-protected\n", imagePath.c_str());
+        if (!writable()) {
             return 1;
         }
         const std::filesystem::path target(imagePath);
@@ -149,20 +178,34 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
-        const std::string out = args.size() == 4 ? args[3] : args[2];
+        const bool asText = textMode == TextMode::Auto
+            ? pom2::cpmfs::extensionMeansText(args[2])
+            : textMode == TextMode::Text;
+        if (asText) data = pom2::cpmfs::CpmDisk::textFromCpm(data);
+        // An explicit HOSTFILE is taken verbatim; otherwise the `.TXT` that
+        // marks a converted file on the way back.
+        const std::string out = args.size() == 4
+            ? args[3] : pom2::cpmfs::hostNameForCpm(args[2], asText);
         std::ofstream f(out, std::ios::binary | std::ios::trunc);
         f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
         if (!f) { std::fprintf(stderr, "%s: write failed\n", out.c_str()); return 1; }
+        if (args.size() == 3 && out != args[2]) std::printf("%s\n", out.c_str());
         return 0;
     }
     if (cmd == "put" && (args.size() == 3 || args.size() == 4)) {
+        if (!writable()) return 1;
         std::vector<uint8_t> data;
         if (!readHostFile(args[2], data)) {
             std::fprintf(stderr, "%s: cannot read\n", args[2].c_str());
             return 1;
         }
-        const std::string name = args.size() == 4
-            ? args[3] : std::filesystem::path(args[2]).filename().string();
+        bool nameSaysText = false;
+        const std::string derived =
+            pom2::cpmfs::cpmNameFromHost(args[2], nameSaysText);
+        const bool asText = textMode == TextMode::Auto
+            ? nameSaysText : textMode == TextMode::Text;
+        if (asText) data = pom2::cpmfs::CpmDisk::textToCpm(data);
+        const std::string name = args.size() == 4 ? args[3] : derived;
         if (!disk.writeFile(user, name, data, error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;
@@ -170,6 +213,7 @@ int main(int argc, char** argv)
         return commit();
     }
     if (cmd == "rm" && args.size() == 3) {
+        if (!writable()) return 1;
         if (!disk.removeFile(user, args[2], error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return 1;

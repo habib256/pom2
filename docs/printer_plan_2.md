@@ -130,13 +130,36 @@ needed.
 printed the character, backed up one HMI and printed it again. The page model
 ORs ink, so the overstrike simply emerges.
 
-**Deliberately conservative on the grammar.** Only unambiguous encodings are
-decoded; everything else falls through to "unknown ESC, dropped with its ESC",
-which is what the firmware did. Guessing a parameter COUNT wrong does not lose
-one command — it desynchronises the rest of the job. And the LaserWriter's
-emulation was a subset of the real 630 anyway, so a conservative subset is
-closer to the machine than an eager one. `ESC FF` (form length) and `ESC L`
-(bottom margin) are named in the source as the two left out, with the reason.
+**Conservative on the grammar, and since 2026-11-01 no longer guessing.**
+Everything the parser does not decode falls through to "unknown ESC, dropped
+with its ESC", which is what the firmware did; guessing a parameter COUNT wrong
+does not lose one command, it desynchronises the rest of the job. That caution
+was the right default while the manual was unread — but **Diablo's own
+`90440-00A Model 630/630ECS API Interface Manual, Rev A (12/82)` was found on
+bitsavers** (`pdf/diablo/printer/630/`, with the Maintenance Manual beside it),
+and it settles every count:
+
+| Sequence | Manual | POM2 |
+|---|---|---|
+| `ESC US n` | § 3.9.4.1 — HMI = (n − 1) × 1/120", min 0, max 125 | ✅ |
+| `ESC RS n` | § 3.9.4.2 — VMI = (n − 1) × 1/48" | ✅ (round 2 fixed a swap; now on the primary source) |
+| `ESC FF n` | § 3.9.4.3 — lines per page = **n itself**, 1..126 | ✅ decoded |
+| `ESC HT n` | § 3.13.1 — Horizontal Position = (n − 1) × HMI, leftmost = 1 | ✅ |
+| `ESC VT n` | § 3.13.2 — Vertical Position = (n − 1) × VMI, top line = 1 | ✅ |
+| `ESC L` / `ESC T` | p. 3-13 — lower / top page margin, **no parameter** | ✅ decoded |
+| `ESC O` / `ESC &` | § 3.24.4 — bold overprint on / off, also cleared by CR | ✅ |
+| `ESC S` | § 3.9.4.1 — returns HMI control to the SPACING switch; p. 3-13 — also clears proportional space | ✅ **landed 2026-11-01** |
+| `ESC X` | § 3.24.11 — cancels the WP modes, **but not** proportional space or settling time | ✅ **landed 2026-11-01** |
+| `ESC CR P` / `ESC SUB I` | § 3.9.4, § 3.23.1 — remote reset / initialize, *"the same conditions that exist at power-up"* | ✅ **landed 2026-11-01** (POM2's stream is the queue, so both take `resetPrinter()`) |
+| `ESC SUB R` / `1` / `3` / `SO` | § 3.23 — error reset, status bytes 1 and 3, memory test | ❌ consumed: POM2 has no error conditions to reset, no memory to test, and this head has no return path for a status byte |
+| `ESC W`, `ESC %` / `ESC N` | § 3.24.5, § 3.24.6 — shadow print (a second strike 1/120" over), carriage settling time to 20 ms | ❌ no shadow bit and no settling time in POM2's page model; dropped, and said so |
+| `ESC 3` / `ESC 4`, `ESC G`, `ESC V`, `ESC ,` | § 3.5, § 3.25 — HyPlot, API-2 only | ❌ the LaserWriter had no such hardware |
+
+So the source comment that named `ESC FF` and `ESC L` as "left out because the
+counts are uncertain" is gone: the counts are documented, and the code decoded
+both anyway. The two commands that really were missing — `ESC S` and `ESC X` —
+are now in, each with a mutation control. A driver that tightened the HMI for
+one passage used to print **the whole rest of the job** at that HMI.
 
 **The face is a substitute and says so.** A real LaserWriter set Courier from
 its own font ROM, which POM2 has no dump of. Same honesty as the CP437 fallback

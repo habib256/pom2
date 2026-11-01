@@ -2025,9 +2025,15 @@ generates for `ColorCompositeOE`. Decoding happens through static
 Three sub-modes via `Apple2Display::AppleWinSubMode`:
 
 - **Monitor** — `g_hueMonitor` (luma y0). Sharp, full composite artifacts.
-- **TV** — `g_hueColorTV` (comb luma y1) + 50% blend with the previous
-  frame's same scanline (`appleWinPrev80`), approximating phosphor
-  persistence + comb-filter blur of a consumer TV.
+- **TV** — `g_hueColorTV` (comb luma y1) + a **3/4 + 1/4** blend with the
+  previous Apple scanline **of this frame** — no history, and no
+  `appleWinPrev80` (that buffer no longer exists): `AppleWinNtsc.cpp`'s
+  `(3u*c + p + 2) >> 2` over `renderFrame`'s in-frame `prev` vector. The code
+  is the faithful one: AppleWin's `updateFramebufferTVDoubleScanline` writes
+  the unblended colour to the Apple line and 50/50 with the previous Apple
+  line to the one between, whose mean is exactly 3/4 + 1/4. It models the
+  comb-filter blur of a consumer TV, not phosphor persistence (that is the
+  CRT stack's own `persistence`).
 - **Idealized** — POM2-only (no AppleWin equivalent): Monitor luma with
   chroma boost ×1.6 for a punchy flat-panel look.
 
@@ -4549,6 +4555,102 @@ the Unenhanced //e boots it; ProDOS 8 only treats `$00` as SmartPort, so
 the card stays a plain block device driven through `$CnFF`. JSR trio
 `$Cn01/03/05 = $20/$00/$03`. Pinned by `hdv_boot_scan`.
 
+#### Register-level contract
+
+*(2026-11-01)* The protocol table above says what the registers are **for**.
+This says what the card **does**, including the cases where it does nothing
+— which is what another implementation has to match for POM2's own
+hand-assembled ROM (`buildRom`) to run against it unchanged.
+
+It is written out because this card is POM2's **invention**: there is no MAME
+file and no datasheet to cite, so the specification *is* the reference, and a
+behaviour nobody wrote down is a behaviour nobody can reproduce. The model is
+§ 5.3 of the Host File Transfer Card design in
+[sbabcoc/ReplicApple2Plus](https://github.com/sbabcoc/ReplicApple2Plus/blob/main/TRANSFER-CARD.md),
+which specifies an invented card to that depth; its negative clauses ("RESET
+does not clear the stash, rewind the reader or empty the print spool") are
+the part worth copying.
+
+**State.** Four pieces, all of them per-card except the medium: the selected
+block (16 bits), the byte cursor into it (`streamOffset`, 0-511), the
+per-block write latch, and the selected drive (0 or 1). Each drive's medium
+is a `Block512Backing` of its own.
+
+**`$C0n0`-`$C0nF`, device select.** Reads:
+
+| Off | Read |
+|---|---|
+| `$2` | the next byte of the selected block |
+| `$3` | status (below) |
+| `$4` / `$5` | the medium's block count, low / high byte |
+| `$6` | the selected drive in bit 7; bits 6-0 are 0 |
+| others | `$FF` |
+
+Writes: `$0` the block's low byte, `$1` its high byte, `$2` the next byte
+into the block, `$6` the drive (bit 7; every other bit of the value is
+ignored). **Every other offset is a write the card discards**, and no write
+to any offset has an effect beyond those listed.
+
+**The byte cursor.**
+
+- It advances on each `$2` read or accepted `$2` write, modulo 512, so a
+  transfer that runs past the end of a block wraps to its first byte — it
+  does not step into the next block.
+- A write to `$0` or `$1` resets it to 0, **even when the value does not
+  change the selected block**: it is the write that resets, not the change.
+- A write to `$6` does **not** reset it. Switching drive mid-block keeps the
+  cursor where it was, and the next `$2` continues at that offset on the
+  other medium.
+- It does **not** advance on a read or a write the card declines — an empty
+  bay, or a write refused by the latch below. A declined read is `$FF`.
+- RESET sets it to 0.
+
+**The write latch.** The ROM decides write-protection once per block, so the
+card does too: at `streamOffset == 0`, or on the first accepted write of a
+block, the latch takes the medium's current protection; the rest of that
+block is governed by the latch and **the notch is not asked again**, so a
+medium protected mid-block does not tear the block already promised
+(`Block512Backing::writeByteLatched`, bug hunt 2026-11-01). The latch clears
+when the cursor wraps back to 0, and on a write to `$0`, `$1` or `$6`.
+
+**Status, `$3` read.** With no medium in the latched bay it is exactly
+`$80` — bits 6 and 5 are **never** set on an empty bay, because the ROM's
+error tail reads a clear bit 5 as "the bay is empty". With a medium:
+
+| Bit | Meaning |
+|---|---|
+| 7 | always 0 (set means NO medium — the original encoding, kept) |
+| 6 | the medium is write-protected |
+| 5 | the **selected block** is past the end of the medium |
+| 4-0 | always 0 |
+
+Bit 5 is what lets the driver fail an out-of-range transfer at all. Without
+it a read past the end streamed 512 × `$FF` and a write dropped its bytes,
+and **both returned CLC "success"** — so a truncated `.hdv`, or a 2IMG whose
+header claims more blocks than the file holds, looked to ProDOS like a
+healthy volume full of `$FF` (bug hunt 4 #5). The card still answers such a
+transfer rather than refusing it: a read gives `$FF` per byte and a write is
+dropped. Bit 5 is what the ROM consults; the data path is deliberately
+forgiving so a firmware that ignores bit 5 cannot hang.
+
+**Block count, `$4`/`$5` read.** The medium's block count, or 0 when the bay
+is empty. **Clamped to `$FFFF`**: an exactly-65536-block (32 MiB) image must
+report `$FFFF`, not truncate to 0, which ProDOS reads as an empty volume —
+the same lesson, and the same fix, as `SmartPortCard::blockCountByte`.
+
+**Slot ROM.** `$Cn00`-`$CnFF` reads the fabricated page; a read has no side
+effect of any kind, so a debugger may read it freely. The card **takes no
+`$C800` window** (`takesC800()` stays false — it has no expansion ROM, and
+claiming the window would starve the card that serves one, see CLAUDE.md
+§ Memory map) and ignores writes to its ROM page.
+
+**RESET** (`onReset`, the slot's RESET line; power-cycle does the same) sets
+the selected block to 0, the cursor to 0, the drive to 1 and clears the write
+latch. It does **not** eject a medium, clear a dirty block, flush anything to
+the host, or change a write-protect state. A mounted volume survives RESET
+with its unsaved writes intact, which is what lets the background autosave
+own the decision of when they reach the file.
+
 #### HDV / SmartPort synthetic firmware: boot failure
 
 *(2026-10-16)* Both synthetic `$Cn20` boot routines (`ProDOSHardDiskCard`,
@@ -6376,12 +6478,39 @@ read  bit 5 = IRQ asserted; bit 7 = DATA_OUT (LSB of shift register)
 ```
 
 Mode `0b011` = `MODE_TIME_READ`: arm via `$C0C0=$18`, pulse STB
-(`$1C`) to latch host time into 48-bit shift register, drop STB,
-read bit 7 + pulse CLK (`$1A`/`$18`) 48 times → 6 BCD bytes (sec,
-min, hour, day, (month<<4)|dow, year). Mode `0b010` = `MODE_TIME_SET`:
-load 48 bits via DATA_IN + 48 CLK, then STB-in-TIME_SET commits via
-`commitTimeSetFromShiftReg()` (`std::mktime`, delta captured as
-`userOffsetSeconds`).
+(`$1C`) to latch host time into the **40-bit** shift register, drop
+STB, read bit 7 + pulse CLK (`$1A`/`$18`) **40** times → **5** bytes
+(sec, min, hour, day, `(month<<4)|dow`) — **there is no year byte**.
+Mode `0b010` = `MODE_TIME_SET`: load 40 bits via DATA_IN + 40 CLK,
+then STB-in-TIME_SET commits via `commitTimeSetFromShiftReg()`
+(`std::mktime`, delta captured as `userOffsetSeconds`); the year comes
+from the host clock, as it must, since the chip has no year counter.
+
+*This paragraph said 48 bits, 6 bytes and a year until 2026-11-01; the
+code always did 40/5/none.* NEC's own data sheet settles it — `uPD1990AC
+Serial I/O Calendar & Clock CMOS LSI`, pp. 792-805 of the `1983 NEC
+Integrated Circuits for Consumer Use` data book (bitsavers,
+`components/nec/_dataBooks/`). Fig. 1 is headed **"40 Bit Shift
+Register"** and lays out ten nibbles — month (**hexadecimal**, not BCD:
+*"Binary Coded Decimal (except 'Month' which is Hexa-Decimal Code)"*),
+day of week, ten's/unit of days, of hours, of minutes, of seconds —
+output *"from LSB of Second"*. The command table on p. 796 is POM2's
+mode decode byte for byte: `000` Register Hold (DATA OUT = 1 Hz, TEST
+released), `001` Shift (DATA OUT = LSB), `010` Time Set & Counter Hold
+(LSB), `011` Time Read (**0.5 Hz**), `100`/`101`/`110` TP = 64/256/2048
+Hz (each releasing TEST), `111` TEST. It also states the rule POM2
+models: *"Groups '0' and '1' hold their functions independently"*, so a
+group-0 command cannot move the TP rate.
+
+**Two divergences, stated rather than guessed.** The power-on TP rate is
+**not in the data sheet** — POM2 takes MAME's (`device_start`: `m_c = 0`,
+REGISTER_HOLD divider), and a guest that cares must latch a TP command.
+And POM2's calendar is **Gregorian where the chip's is not**: NEC says
+*"the correction for length of the month is automatically performed and
+leap year is not automatically performed. But it is possible to set
+calendar FEB. 29, and the day after, it will be Mar. 1."* POM2
+synthesises the nibbles from the host clock on every read, which is the
+one thing that makes its clock survive a rewind.
 
 **TP interrupts** (POM2-original — MAME's `a2thunderclock.cpp` never
 binds `tp_callback`). Wiring per ThunderClock Plus manual ch. V:
@@ -6572,9 +6701,12 @@ redefinition errors.
 The DS1216E is a 28-pin socket that physically sits *under* a ROM chip and
 intercepts reads to it — the canonical "clock without using a slot" for a //c
 (no expansion slots) or for any //e / II+ owner out of slots. POM2 models the
-full chip: `src/NoSlotClock.h/.cpp`, MAME ref `ds1216.cpp`, protocol verified
-against AppleWin's `NoSlotClock.cpp`. On by default (`nsclock_enable`), and a
-no-op for software that never walks the magic key.
+full chip: `src/NoSlotClock.h/.cpp`, MAME ref `ds1215.cpp`, protocol read off
+**Dallas's own data sheet** — `DS1216E SmartWatch ROM 64/256K`, pp. 5-22..5-25
+of the `1992 Dallas Semiconductor Product Data Book` (bitsavers,
+`components/dallasSemiconductor/_dataBooks/`) — and cross-checked against
+AppleWin's `NoSlotClock.cpp`. On by default (`nsclock_enable`), and a no-op for
+software that never walks the magic key.
 
 **Protocol.** The host drives the chip through *addresses*, not data. A2
 selects the operation and A0 carries the payload bit:
@@ -6585,8 +6717,33 @@ selects the operation and A0 carries the payload bit:
 - **A2 = 1** — "read" cycle: emit the next clock-register bit on D0. During
   pattern-matching a read instead **resets** the matcher.
 - A single wrong A0 bit **disables further writes** and the matcher stays dead
-  until a read (or a reset) clears it — the Dallas datasheet's sticky
-  bad-pattern rule.
+  until a read (or a reset) clears it. The data sheet's own words, under
+  OPERATION: *"If a match is not found, the pointer does not advance and all
+  subsequent write cycles are ignored"*, and *"if a read cycle occurs at any
+  time during pattern recognition, the present sequence is aborted and the
+  comparison register pointer is reset"*.
+
+The key itself is Figure 1's `C5 3A A3 5C C5 3A A3 5C`, *"sent to the
+SmartWatch LSB to MSB"* — **read the figure, not the prose NOTE under it**,
+which lists only seven bytes (it drops the first `A3`).
+
+**The eight registers**, stepped *"starting with bit 0 of register 0 and ending
+with bit 7 of register 7"*, BCD: `0` hundredths of a second, `1` seconds, `2`
+minutes, `3` hour, `4` day of week, `5` date, `6` month, `7` year. Register 3
+carries the **12/24-hour mode in bit 7** (high = 12-hour, and then bit 5 is
+AM/PM with high = PM; in 24-hour mode bit 5 is the second 10-hour bit). POM2
+masked that register with `0x3F` and called bits 7-6 reserved until
+2026-11-01, so a 12-hour `SET TIME` of 3 PM (`$A3`) landed as 23:00. Pinned
+`no_slot_clock_smoke` → `testTwelveHourMode`.
+
+**One divergence POM2 keeps on purpose:** bits 4 and 5 of the DAY register are
+the RESET-pin enable and the oscillator control (*"when set to logic 1, the
+oscillator is turned off"*), and the data sheet says both ship as 1. POM2 reads
+them back as 0 — the state of a running clock whose RESET pin is live — and
+ignores them on a write, so a guest cannot stop POM2's clock the way it could
+stop the chip's. Honouring the oscillator bit would let any driver that writes
+the day register with bit 5 set freeze the user's clock, and no Apple II NSC
+driver POM2 has read does that deliberately.
 
 Reads and writes drive the *same* matcher, because the key bit rides on the
 address and R/W is irrelevant to it (AppleWin's `CNoSlotClock::Write(address)`

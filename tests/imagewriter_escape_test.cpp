@@ -123,6 +123,118 @@ void testDiablo630()
     std::printf("  ok: Diablo 630 RS/US, ESC HT and silent control codes\n");
 }
 
+// ── ESC S hands the HMI back, ESC X cancels the WP modes ────────────────
+//
+// Both come from Diablo's own `90440-00A Model 630/630ECS API Interface
+// Manual, Rev A (12/82)` (fetched 2026-11-01 from bitsavers,
+// pdf/diablo/printer/630):
+//
+//   § 3.9.4.1  "While the terminal is in remote HMI mode, the SPACING switch
+//              is ignored. An ESC S sequence will return control of HMI to
+//              the SPACING switch."
+//   p. 3-13    "ESC P  Proportional Space ON (cleared by ESC S)"
+//   § 3.24.11  "The sequence ESC X will cancel the following features: Auto
+//              Underscore, Bold Overprint, Shadow Print, Program Mode,
+//              Offset Selection, Auto Justify, Auto Center. Increased
+//              carriage settling time and proportional space mode are not
+//              cancelled by ESC X."
+//
+// POM2 dropped both, so a driver that tightened the HMI for one passage
+// printed the whole rest of the job at that HMI, and ESC X left bold and
+// underline standing.
+void testDiabloEscSandX()
+{
+    auto run = [](const std::vector<uint8_t>& job) {
+        auto iw = std::make_unique<ImageWriter>(144, ImageWriter::PaperSize::Letter);
+        iw->setModel(pom2::IwModel::LaserWriterDiablo);
+        iw->queueBytes(job.data(), job.size());
+        for (int i = 0; i < 4000 && iw->pendingBytes(); ++i) iw->tick(0.05);
+        return iw;
+    };
+    auto near = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
+    const double home = ImageWriter::kHomeX;
+    // The profile's own pitch, measured with no HMI ever set: the "SPACING
+    // switch" position this head powers up in. The HMI the test sets below
+    // is deliberately NOT equal to it — an earlier draft picked 12/120 =
+    // 0.1", which is this head's own 10 cpi cell, so the assertion held
+    // whether ESC S worked or not.
+    const double cell = run({ 'A' })->status().headX - home;
+    assert(cell > 0.0);
+    // ESC US 25 sets HMI = 24/120 = 0.2", twice the cell.
+    assert(!near(0.2, cell));
+    // Without ESC S every character after it advances by that HMI.
+    assert(near(run({ 0x1B, 0x1F, 25, 'A', 'B' })->status().headX, home + 0.4));
+    // With ESC S the second character is back on the switch's pitch.
+    assert(near(run({ 0x1B, 0x1F, 25, 'A', 0x1B, 'S', 'B' })->status().headX,
+                home + 0.2 + cell));
+    // ESC P is cleared by ESC S too (p. 3-13), so the advance after it is the
+    // fixed cell again and not a proportional escapement.
+    assert(near(run({ 0x1B, 'P', 0x1B, 'S', 'A' })->status().headX, home + cell));
+
+    // ESC X cancels Auto Underscore and Bold Overprint...
+    assert(run({ 0x1B, 'E', 0x1B, 'O' })->status().styleText.find("bold")
+           != std::string::npos);
+    const std::string afterX = run({ 0x1B, 'E', 0x1B, 'O', 0x1B, 'X' })->status().styleText;
+    assert(afterX.find("bold")      == std::string::npos);
+    assert(afterX.find("underline") == std::string::npos);
+    // ...but NOT proportional space, which is § 3.24.11's last sentence and
+    // the control that keeps a too-eager ESC X from clearing kStyleProp with
+    // the rest.
+    const std::string propAfterX = run({ 0x1B, 'P', 0x1B, 'X' })->status().styleText;
+    assert(propAfterX.find("prop") != std::string::npos);
+    std::printf("  ok: Diablo ESC S returns the HMI, ESC X spares prop space\n");
+}
+
+// ── ESC CR P and ESC SUB I really do re-initialise the head ─────────────
+//
+// API manual § 3.23.1: *"This command [ESC SUB I] will cause the Model 630 to
+// unconditionally execute an initialize sequence regardless of any error
+// conditions... This command is executed immediately when received over the
+// interface, unlike the corresponding remote reset sequence ESC CR P which is
+// queued along with other commands. The Model 630 will default to the same
+// conditions that exist at power-up."* And § 3.9.4: *"The ESC CR P (Remote
+// Reset) sequence may also be used here to cancel all optional format factors
+// and return to the format selected by the SPACING switch."*
+//
+// POM2 consumed the parameter byte of both and did nothing with it, so a
+// driver that opened its job with a remote reset — the normal way to clear
+// whatever the last job left — inherited the previous job's HMI, VMI, tabs
+// and styles. POM2's input stream IS the queue, so the immediate/queued
+// distinction has no analogue here and both land on `resetPrinter()`, the
+// same power-up path `ESC c` takes on the Epson head.
+void testDiabloRemoteReset()
+{
+    auto run = [](const std::vector<uint8_t>& job) {
+        auto iw = std::make_unique<ImageWriter>(144, ImageWriter::PaperSize::Letter);
+        iw->setModel(pom2::IwModel::LaserWriterDiablo);
+        iw->queueBytes(job.data(), job.size());
+        for (int i = 0; i < 4000 && iw->pendingBytes(); ++i) iw->tick(0.05);
+        return iw;
+    };
+    auto near = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
+    // Measured against a head that was never disturbed, so the test never has
+    // to predict where `resetPrinter()` leaves the paper.
+    const double cleanX  = run({ 'B', 'C' })->status().headX;
+    const double cleanLs = run({ 'B', 'C' })->status().lineSpacing;
+    for (const std::vector<uint8_t>& reset :
+         { std::vector<uint8_t>{ 0x1B, 0x0D, 'P' },      // ESC CR P
+           std::vector<uint8_t>{ 0x1B, 0x1A, 'I' } }) {  // ESC SUB I
+        // Disturb every format factor the manual names, then reset.
+        std::vector<uint8_t> job = { 0x1B, 0x1F, 25,     // HMI 24/120"
+                                     0x1B, 0x1E, 13,     // VMI 12/48"
+                                     0x1B, 'E', 0x1B, 'O' };  // underline + bold
+        job.insert(job.end(), reset.begin(), reset.end());
+        job.push_back('B');
+        job.push_back('C');
+        const auto iw = run(job);
+        assert(near(iw->status().headX, cleanX));
+        assert(near(iw->status().lineSpacing, cleanLs));
+        assert(iw->status().styleText == "normal");
+        assert(iw->diabloTabStops() == 0);
+    }
+    std::printf("  ok: Diablo ESC CR P / ESC SUB I re-initialise the head\n");
+}
+
 int main()
 {
     // ── The Diablo 630 tab racks are BOUNDED ─────────────────────────────
@@ -147,6 +259,8 @@ int main()
         assert(iw->diabloTabStops() <= 32);
     }
     testDiablo630();
+    testDiabloEscSandX();
+    testDiabloRemoteReset();
     testEpsonControlsAndLists();
     testRepeatCountAcceptsHighBitDigits();
     testEpsonOneLineExpanded();
