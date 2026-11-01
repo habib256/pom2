@@ -58,7 +58,7 @@ Conséquences pratiques :
 | 3 | `z80scc.cpp` | 107 | MAME | ✅ `parite-z80scc-2026-11-01.md` — 1 MAJEUR + 1 MINEUR confirmés, pin périmé |
 | 4 | `cs8900a.cpp` | 38 | MAME | ⬜ |
 | 5 | `mos6551.cpp` | 33 | MAME | ⬜ |
-| 6 | `grappler.cpp` | 32 | MAME | ⬜ |
+| 6 | `grappler.cpp` | 32 | MAME | ✅ `parite-grappler-2026-11-01.md` — 1 MINEUR (BUSY hors ligne), Grappler 1981 citée sur deux époques amont |
 | 7 | `Uthernet2.cpp` | 46 | **AppleWin** | ⬜ `source/`, pas `src/devices/` |
 | 8 | `imagewriter.cpp` | 24 | MAME | ⬜ |
 | 9 | `floppy.cpp` | 24 | MAME | ⬜ |
@@ -99,6 +99,17 @@ Donc :
 
 1. Cherche un pin dans l'en-tête du fichier POM2 et dans `DEV.md` (commit, tag,
    date). Note-le.
+
+   **Un pin peut avoir vieilli, et c'est pire qu'une absence de pin** : il
+   inspire confiance et personne ne le rouvre. La tranche 3 a trouvé exactement
+   ça — `DEV.md` épinglait `588eeb33` (2026-08-29) alors que le code suivait
+   `master` jusqu'au 2026-10-11. **Ne te contente donc pas de lire le pin :
+   vérifie qu'il décrit encore le code**, en datant les citations comme
+   ci-dessous. Si le code a dépassé son pin, dis **jusqu'où** il est allé et
+   **quels correctifs postérieurs sont pris ou non** — un commit amont peut
+   être multi-parties et n'avoir été pris qu'à moitié. Le résultat va dans le
+   rapport, et le pin de `DEV.md` doit devenir un tableau, pas un hash
+   (modèle : `DEV.md` § Zilog Z8530 SCC).
 2. Rends le verdict contre le tag **`mame0287`** (ou le `master` d'AppleWin)
    quand aucun pin n'existe.
 3. **Quand une citation ne tombe pas juste sur la révision de référence,

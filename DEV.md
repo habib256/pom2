@@ -7337,8 +7337,22 @@ bookkeeping on every instruction of a machine that has no beam.
 
 ### Zilog Z8530 SCC (`Scc8530Device`)
 
-Port of MAME `src/devices/machine/z80scc.{h,cpp}` at commit
-`588eeb33707f8d392701716c41b0420a48c41f28` (2026-08-29). The 8530 is the
+Port of MAME `src/devices/machine/z80scc.{h,cpp}`. **Upstream state, as of
+2026-11-01** — a pin is only useful while it describes the code, and this one
+had drifted by two months before the parity audit caught it
+(`docs/audits/parite-z80scc-2026-11-01.md`):
+
+| Upstream | Date | Taken here? |
+|---|---|---|
+| `588eeb33` (the original pin) → `19d729b6` | 2026-08-29 → 10-11 | **Yes**, in full. `19d729b6` is receive-overrun reporting and special receive conditions. |
+| `2071f9aa` | 2026-10-12 | **Yes.** Rx-Int-on-First-Character arms on mode selection (`doWr1`). |
+| `17842be9` | 2026-10-12 | **Partly.** The WR5 fix is taken (a change confined to RTS / DTR / Send Break does not reset the transmitter, `doWr5`). **Not taken**: the per-slot receive-error FIFO that reports parity and framing errors with the character they belong to, and break/abort detection in `write_rx`. |
+| `c80d0854` | 2026-10-14 | **No.** Auto Enables gating the transmitter and receiver, and RR2B reporting no pending interrupt. The audit confirmed the Auto Enables divergence by probe; it is latent today because nothing drives this SCC from outside. |
+
+Anything upstream after `c80d0854` is unexamined. When you take another
+upstream fix, add its row — a pin that lists what it does **not** include is
+worth more than a bare commit hash, which only says where someone once
+looked. The 8530 is the
 two-channel USART behind the Macintosh and IIgs serial ports and behind the
 **Apple II Workstation Card**, which is why it landed: the card's firmware
 drives it at `$7500-$7503` in the card's own address space. **Two SDLC

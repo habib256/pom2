@@ -63,7 +63,11 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   Three rules follow. **A grade-D citation names its revision** (tag or
   commit) — upstream line numbers move on every commit, so `iwm.cpp:248-253`
   alone designates nothing; the IWM audit found 48 of 55 citations wrong
-  because POM2's mix **at least three** upstream revisions with no pin.
+  because POM2's mix **at least three** upstream revisions with no pin. A pin
+  also **ages**, and a stale one is worse than none because it inspires
+  confidence: `z80scc`'s named a commit two months behind the code. So a
+  subsystem's pin is a *table* — what is taken, and what is deliberately not,
+  upstream commit by upstream commit (model: `DEV.md` § Zilog Z8530 SCC).
   **A lower grade never overrules a higher one**: where POM2 diverges from
   MAME because a datasheet, a ROM or a measurement says otherwise, that is
   correct, and the comment says so — it protects the code from a future
