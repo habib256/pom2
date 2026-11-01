@@ -462,10 +462,26 @@ void W5100Device::setSocketStatus(size_t i, uint8_t status)
     }
 }
 
-// Datasheet §5.2.3 "Sn_IR". The chip has no interrupt LINE on the Uthernet II
-// (the card leaves INTn unconnected), but the register is not decoration: the
-// stock WIZnet driver's `send()` polls Sn_IR for SEND_OK and loops forever
-// without it, and `connect()` waits on CON or TIMEOUT rather than on Sn_SR.
+// Datasheet §5.2.3 "Sn_IR". The register is not decoration even when nothing
+// polls the line: the stock WIZnet driver's `send()` polls Sn_IR for SEND_OK
+// and loops forever without it, and `connect()` waits on CON or TIMEOUT
+// rather than on Sn_SR.
+//
+// **POM2 does not drive a slot IRQ from it, and that is a gap, not a fact
+// about the card.** This comment used to assert "the card leaves INTn
+// unconnected" with no source — a grade E contradicted by a grade B: the
+// Uthernet II manual's schematic (PDF pp. 50-51) runs the W5100's pin 56
+// /INT through IC3 (a 1G07 open-drain buffer) to the connector's IRQ pin,
+// and p. 9 lists "Interrupts (IRQ)" among the card's functions; datasheet
+// §4.1 adds that "/INT signal retain low as long as any masked signal is
+// set". So IMR almost certainly does interrupt on real hardware.
+//
+// Not wired here yet, deliberately. The schematic was read on a 150 dpi
+// scan, no Apple II software is known to arm IMR, and the failure mode of
+// getting it wrong is the one just fixed on the SSC: a program that arms
+// the mask with no handler would hang ProDOS on an unclaimed interrupt. A
+// sharper scan or one program that uses it settles it.
+// `docs/audits/parite-uthernet2-2026-11-01.md`, constat 4 (PLAUSIBLE).
 void W5100Device::raiseSocketIrq(size_t i, uint8_t bits)
 {
     sockets_[i].interrupt = static_cast<uint8_t>(sockets_[i].interrupt | bits);
@@ -726,6 +742,15 @@ void W5100Device::setCommandRegister(size_t i, uint8_t value)
             setSocketStatus(i, kW5100SnSrFinWait);
         } else {
             closeSocket(i);
+            // [B] W5100 datasheet § 4.2, Sn_IR bit 1: DISCON "is set as '1'
+            // if connection termination is requested or finished" — the
+            // guest's own DISCON counts, not only a FIN from the peer. The
+            // datasheet's "First method" (§ 5.2.1.1) has the driver wait on
+            // that bit to reach the CLOSED stage, and POM2 cleared Sn_IR on
+            // the way through `clearSocket`, so such a driver looped
+            // forever. Raised after the close so it survives the clear.
+            // `docs/audits/parite-uthernet2-2026-11-01.md`, constat 3.
+            raiseSocketIrq(i, kW5100SnIrDiscon);
         }
         break;
     case kW5100SnCrSend:
@@ -745,7 +770,19 @@ void W5100Device::setCommandRegister(size_t i, uint8_t value)
             sockets_[i].status == kW5100SnSrCloseWait)
             raiseSocketIrq(i, kW5100SnIrSendOk);
         break;
-    case kW5100SnCrRecv:    updateRsr(i);    break;
+    case kW5100SnCrRecv:
+        updateRsr(i);
+        // [B] W5100 datasheet v1.1.6 § 4.2, Sn_IR bit 2: RECV "is set as '1'
+        // whenever W5100 receives data. And it is also set as '1' if received
+        // data remains after execute CMD_RECV command." POM2 raised it on
+        // arrival only, so a driver written to the datasheet's own "First
+        // method" (§ 5.2.1.1: `If (Sn_IR(RECV bit) == '1') goto Receiving
+        // Process`) stalled on data already sitting in the ring whenever it
+        // consumed less than it had been given.
+        // `docs/audits/parite-uthernet2-2026-11-01.md`, constat 2.
+        if (sockets_[i].rxSize > 0)   // updateRsr() just recomputed it
+            raiseSocketIrq(i, kW5100SnIrRecv);
+        break;
     default: break;
     }
 }

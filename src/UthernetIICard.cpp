@@ -77,14 +77,25 @@ void UthernetIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
 
 void UthernetIICard::onReset()
 {
-    // Ctrl-Reset pulls the slot RESET line: sockets close, buffers clear —
-    // but it is not a power cycle. The indirect data address and the ARP /
-    // virtual-DNS caches survive it (Uthernet II manual p.10; AppleWin's
-    // CtrlReset → Uthernet2::Reset(false)); this used to power-cycle the
-    // chip, and $C0n5/6 read back 0 after a Ctrl-Reset. The MAC is re-seeded
-    // because SHAR is part of what gets cleared either way, and a card with
-    // an all-zero source address is useless.
-    resetChip(false);
+    // Ctrl-Reset pulls the slot RESET line, and on this card that line goes
+    // straight to the chip's /RESET pin. [B] Uthernet II manual, schematic
+    // pp. 50-51: the connector's RST pin is on the RESET net, which reaches
+    // the W5100's pin 59 /RESET. So Ctrl-Reset is a HARDWARE reset of the
+    // chip, and manual p. 10 is explicit about what that means: "After a
+    // hardware reset the address pointer is initialized to 0", as against
+    // "a software reset does not reset the address pointer".
+    //
+    // POM2 did keep the pointer from 2026-10-27 to 2026-11-01, citing that
+    // same p. 10 — but reading the software-reset half of it, and matching
+    // [D] AppleWin, whose CtrlReset calls `Uthernet2::Reset(false)`. A
+    // lower grade does not overrule a higher one: the manual wins.
+    // `docs/audits/parite-uthernet2-2026-11-01.md`, constat 1.
+    //
+    // It matters because manual p. 12 lets a driver rewrite only the LOW
+    // byte of the address: after a reset it assumes the high byte is $00,
+    // and with a stale $04 up there it would write socket-0 registers
+    // instead of the common ones.
+    resetChip(true);
 }
 
 void UthernetIICard::onPowerCycle()

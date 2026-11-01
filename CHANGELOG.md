@@ -12,6 +12,50 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Uthernet II: Ctrl-Reset is a hardware reset, and two Sn_IR bits that never rose
+
+`Uthernet2` parity slice. The citations were perfect — 46 of 46 exact, one
+upstream epoch, no drift — and the findings are all against the **datasheet**,
+not against AppleWin.
+
+**Ctrl-Reset clears the indirect address pointer again.** [B] The Uthernet II
+manual's schematic (pp. 50-51) takes the slot RESET line through to the
+W5100's pin 59 /RESET, so Ctrl-Reset is a *hardware* reset of the chip, and
+p. 10 is explicit: "After a hardware reset the address pointer is initialized
+to 0", as against "a software reset does not reset the address pointer". POM2
+kept the pointer from 2026-10-27, citing that same page — but the
+software-reset half of it — and matching [D] AppleWin, whose `CtrlReset` calls
+`Uthernet2::Reset(false)`. A regression of exactly the shape the new evidence
+hierarchy exists to prevent: a grade-D source overruling a grade-B one, with a
+test pinning the result. It matters because manual p. 12 lets a driver rewrite
+only the LOW byte of the address after a reset; with a stale high byte it
+would write socket-0 registers instead of the common ones.
+
+**RECV is raised again when data remains after a CMD_RECV.** [B] Datasheet
+§ 4.2, Sn_IR bit 2: it "is set as '1' whenever W5100 receives data. And it is
+also set as '1' if received data remains after execute CMD_RECV command."
+POM2 raised it on arrival only, so a driver written to the datasheet's own
+"First method" (§ 5.2.1.1) stalled on data already sitting in its ring
+whenever it consumed less than it had been given.
+
+**A guest DISCON raises Sn_IR.DISCON.** Same section, bit 1: set "if
+connection termination is requested or finished" — the guest's own request
+counts, not only a FIN from the peer. POM2 cleared Sn_IR on the way to CLOSED,
+so a driver waiting on that bit looped forever.
+
+**And one claim removed rather than acted on.** The code asserted that "the
+card leaves INTn unconnected" with no source — a grade E, contradicted by the
+manual's schematic (pin 56 /INT → a 1G07 open-drain buffer → the connector's
+IRQ pin) and by p. 9 listing "Interrupts (IRQ)" among the card's functions.
+The comment now says what is known and what is not. The line is deliberately
+still not wired: the schematic was read on a 150 dpi scan, no Apple II
+software is known to arm IMR, and arming it with no handler would hang ProDOS
+on an unclaimed interrupt — the failure fixed on the SSC the same day. A
+sharper scan, or one program that uses it, settles it.
+
+Three fixes, three mutations, and the test that pinned the Ctrl-Reset
+regression was turned round.
+
 ## 2026-11-01 — The 6551's IRD bit: the cable was innocent, and ProDOS died for nothing
 
 `mos6551` parity slice. Two divergences, both settled by the datasheet rather

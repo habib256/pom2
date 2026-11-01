@@ -307,10 +307,17 @@ void testIndirectWindowDecode()
     (void)card.deviceSelectRead(kData);
     assert(card.chip().dataAddress() == pom2::kW5100Rtr0);
 
-    // Ctrl-Reset is not a power cycle: the indirect address survives it
-    // (manual p.10); only a power cycle clears it. Both re-seed the MAC.
+    // [B] Uthernet II manual, schematic pp. 50-51: the slot RESET line
+    // reaches the W5100's /RESET pin, so Ctrl-Reset is a HARDWARE reset of
+    // the chip — and p. 10: "After a hardware reset the address pointer is
+    // initialized to 0". (It is the SOFTWARE reset, MR bit 7, that leaves
+    // the pointer alone.) This test asserted the opposite between
+    // 2026-10-27 and 2026-11-01, pinning AppleWin's behaviour against the
+    // manual. `docs/audits/parite-uthernet2-2026-11-01.md`.
     card.onReset();
-    assert(card.chip().dataAddress() == pom2::kW5100Rtr0);
+    assert(card.chip().dataAddress() == 0 &&
+           "Ctrl-Reset is a hardware reset: the address pointer returns to 0");
+    setAddress(card, pom2::kW5100Rtr0);
     card.onPowerCycle();
     assert(card.chip().dataAddress() == 0);
 
@@ -1047,6 +1054,29 @@ void testSocketInterruptRegister()
     assert(pending == 2);
     assert(readAt(card, ir) & pom2::kW5100SnIrRecv);
 
+    // [B] W5100 datasheet v1.1.6 § 4.2, Sn_IR bit 2: RECV "is set as '1'
+    // whenever W5100 receives data. And it is also set as '1' if received
+    // data remains after execute CMD_RECV command." Consume ONE of the two
+    // bytes and issue RECV: the bit must come back, because one byte is
+    // still in the ring. POM2 raised it on arrival only, so a driver using
+    // the datasheet's own "First method" (§ 5.2.1.1) stalled on data it
+    // already had. `docs/audits/parite-uthernet2-2026-11-01.md`, constat 2.
+    writeAt(card, ir, pom2::kW5100SnIrRecv);
+    assert((readAt(card, ir) & pom2::kW5100SnIrRecv) == 0);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRd0), 1);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrRecv);
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRsr0)) == 1);
+    assert((readAt(card, ir) & pom2::kW5100SnIrRecv) != 0 &&
+           "RECV is re-raised while data remains in the ring");
+
+    // Drain the last byte: now RECV must stay down.
+    writeAt(card, ir, pom2::kW5100SnIrRecv);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRd0), 2);
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrRecv);
+    assert(readWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRsr0)) == 0);
+    assert((readAt(card, ir) & pom2::kW5100SnIrRecv) == 0 &&
+           "an empty ring does not re-raise RECV");
+
     // CLOSE clears the register with the socket.
     writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrClose);
     assert(readAt(card, ir) == 0);
@@ -1265,6 +1295,30 @@ void testRestoreClearsRingPointersAndKeepsTheDnsSetting()
     std::printf("  CLOSED demotion clears the rings, DNS setting kept\n");
 }
 
+
+/// [B] W5100 datasheet v1.1.6 § 4.2, Sn_IR bit 1: DISCON "is set as '1' if
+/// connection termination is requested or finished" — the guest's own DISCON
+/// counts, not only a FIN from the peer. § 5.2.1.1's "First method" has the
+/// driver wait on that bit to reach the CLOSED stage, and POM2 cleared Sn_IR
+/// on the way through, so such a driver looped forever.
+/// `docs/audits/parite-uthernet2-2026-11-01.md`, constat 3.
+void testGuestDisconRaisesTheDisconBit()
+{
+    LocalListener listener;
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
+    const uint16_t base = connectSocket0(card, listener);
+    const uint16_t ir   = static_cast<uint16_t>(base + pom2::kW5100SnIr);
+
+    writeAt(card, ir, 0xFF);        // acknowledge everything the connect left
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr),
+            pom2::kW5100SnCrDiscon);
+    assert((readAt(card, ir) & pom2::kW5100SnIrDiscon) != 0 &&
+           "the guest's own DISCON raises Sn_IR.DISCON");
+    std::printf("  DISCON raises Sn_IR.DISCON\n");
+}
+
 int main()
 {
     std::printf("Uthernet II / W5100 smoke test\n");
@@ -1286,6 +1340,7 @@ int main()
     testSendOfExactlyTheWholeRing();
     testSendInSockInitKeepsTheRing();
     testSocketInterruptRegister();
+    testGuestDisconRaisesTheDisconBit();
     testListenIsAnHonestFailure();
     testListenAcceptsLocalConnection();
     testFixedLocalPortReconnects();
