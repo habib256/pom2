@@ -193,6 +193,25 @@ int main(int argc, char** argv) {
         return 5;
     }
 
+    // RWTS's write entry is `LDA $C08D,X` (Q6 high) / `LDA $C08E,X` (Q7 low,
+    // write-protect sense) / `STA $C08F,X` with the first $FF sync byte, motor
+    // running. On an IWM host that address pair is the mode/data register, and
+    // the chip takes a MODE only while idle — running, the byte is DATA. The
+    // shadow in DiskIICard used to skip that check, so this very SAVE latched
+    // $FF as a mode, arming mode bit 2 and killing the 1.17 s motor coast for
+    // the rest of the session (nothing clears iwmMode). This assert is what
+    // makes the audit's scenario real rather than hypothetical: it is a stock
+    // DOS 3.3 RWTS doing the writing, not a replayed access sequence.
+    // `docs/audits/parite-iwm-2026-11-01.md`, constat 1.
+    if (cardRaw->iwmModeRegister() != 0) {
+        std::fprintf(stderr,
+            "FAIL: DOS 3.3's RWTS write reached the IWM mode register "
+            "(iwmMode = $%02X, expected $00). A data byte was latched as a "
+            "mode: the $C0nF write must be gated on the IWM being idle.\n",
+            cardRaw->iwmModeRegister());
+        return 1;
+    }
+
     std::printf("SAVE OK: %llu nibble flushes, head at half-track %d\n",
                 static_cast<unsigned long long>(cardRaw->getWriteFlushCount()),
                 cardRaw->getHalfTrack());

@@ -801,8 +801,10 @@ void DiskIICard::confirmLastStep()
 
 void DiskIICard::pushIwmFloppy()
 {
-    // Mirror 5.25-inch image/head changes into the on-board IWM (MAME
-    // apple2e.cpp:1180-1185). The //c+ forwards IWM switches to this shadow
+    // Mirror 5.25-inch image/head changes into the on-board IWM. POM2
+    // construct, not a port: see the note on `iwm_` in DiskIICard.h —
+    // upstream never pushes the floppy on a head step.
+    // The //c+ forwards IWM switches to this shadow
     // too: setFloppy clears sony_, even for an empty Disk II drive. Do not
     // steal the MIG-selected Sony source. The hub releases it when firmware
     // selects 5.25-inch hardware; only then may this mirror rebind the IWM.
@@ -2032,11 +2034,21 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
         lssSync(0);
         const bool wasQ6 = loadMode;
         handleSwitchAccess(low4);
-        // IWM mode_w hook (MAME `iwm.cpp:248-253`): writes to $C0nF when
-        // Q6 was already high latch the mode register. Real wozfdc has
-        // no such register so the //c+ alt-firmware probe at $E512-$E522
-        // (in bank 1) spins forever without this.
-        if (iwmHost_ && low4 == 0xF && wasQ6) {
+        // IWM mode_w hook (MAME `iwm.cpp:283` dispatch + `mode_w` 289-302,
+        // tag `mame0287`): a write to an odd address with Q6=Q7=1 reaches
+        // the mode register ONLY while the IWM is idle —
+        // `if(m_active) data_w(data); else mode_w(data);`. With the motor
+        // running the byte is write DATA, never a mode. `IWMDevice::write`
+        // applies the rule (`IWMDevice.cpp:534`); this shadow did not
+        // (audit `docs/audits/parite-iwm-2026-11-01.md`, constat 1), so the
+        // first $FF sync byte of a 5.25" write on a //c landed in `iwmMode`,
+        // arming mode bit 2 (`iwmTimerOff()`) and killing the 1.17 s motor
+        // coast for the rest of the session — nothing ever clears iwmMode.
+        // `spinning()` is this class's `m_active`: true through MODE_DELAY,
+        // false once `stopSpindle()` has run. Real wozfdc has no mode
+        // register at all, so the hook itself stays: without it the //c+
+        // alt-firmware probe at $E512-$E522 (bank 1) spins forever.
+        if (iwmHost_ && low4 == 0xF && wasQ6 && !spinning()) {
             iwmMode = v;
         }
         writeLatch = v;
@@ -2051,9 +2063,10 @@ void DiskIICard::deviceSelectWrite(uint8_t low4, uint8_t v)
     // unconditional latching is harmless in read mode.
     const bool wasQ6LegacyW = loadMode;
     handleSwitchAccess(low4);
-    // IWM mode_w shadow (matches the bit-LSS branch above). Required
-    // for the //c+ alt-firmware probe before any disk is mounted.
-    if (iwmHost_ && low4 == 0xF && wasQ6LegacyW) {
+    // IWM mode_w shadow (matches the bit-LSS branch above, same idle
+    // gate and same reason). Required for the //c+ alt-firmware probe
+    // before any disk is mounted.
+    if (iwmHost_ && low4 == 0xF && wasQ6LegacyW && !spinning()) {
         iwmMode = v;
     }
     writeLatch = v;

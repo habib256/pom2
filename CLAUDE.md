@@ -32,7 +32,46 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 **Conventions**:
 
 - **One concern per file** — each `.cpp/.h` pair owns one subsystem.
-- **MAME = source of truth** — when porting hardware, cite the MAME file + line range in a comment and pin with a smoke test under `tests/`.
+- **THE SILICON IS THE REFERENCE — and every claim about it is GRADED.**
+  POM2's goal is to behave exactly like the real machine. MAME is *not* the
+  oracle: it is one reading of the hardware among several, and it is wrong
+  often enough to matter (its own `A2PAL_1M_CLOCK` carries a `FIXME`; the
+  2026-11-01 IWM audit found two places where POM2 is right and MAME is not).
+  Evidence ranks, and the rank is written in the code:
+
+  | Grade | Evidence |
+  |---|---|
+  | **A** | Measured on **real hardware** — scope, capture, run on the iron. |
+  | **B** | **Primary document** — chip datasheet, Sather, Apple technical reference, a specification (IWM rev 19, WOZ/MOOF/2IMG), a patent, an Apple TIL note. |
+  | **C** | **ROM disassembly** — //c/+ firmware, RWTS, a card ROM. Proof of what the software *expects*: the contract, not the silicon. |
+  | **D** | **Another emulator** — MAME, AppleWin, izapple2, OpenEmulator, Virtual ][, all equal. Useful, fallible. |
+  | **E** | **Asserted with no source.** |
+  | **F** | **Admitted unknown** — guessed, tuned, approximate, unverified. |
+
+  **Every citation carries its grade and its source**, in one bracket at the
+  head of the comment, so a reader and a `grep` agree on what backs the code:
+
+  ```
+  // [B] MC6845 datasheet (Motorola) § 4.2 — R1 reloads at the line end.
+  // [D] MAME mc6845.cpp:237-252 @ mame0287 — same, as MAME reads it.
+  // [C] //c+ ROM $E603 — the firmware expects CE40/CE60 INVERTED vs MAME.
+  // [A] Measured on a European //e: 1.0153 MHz (DEV.md § PAL clock).
+  // [F] Unknown: tuned until DIX's raster lined up. Settled by: a scope
+  //     capture of PH0 on a real //c.
+  ```
+
+  Three rules follow. **A grade-D citation names its revision** (tag or
+  commit) — upstream line numbers move on every commit, so `iwm.cpp:248-253`
+  alone designates nothing; the IWM audit found 48 of 55 citations wrong
+  because POM2's mix **at least three** upstream revisions with no pin.
+  **A lower grade never overrules a higher one**: where POM2 diverges from
+  MAME because a datasheet, a ROM or a measurement says otherwise, that is
+  correct, and the comment says so — it protects the code from a future
+  "alignment on MAME" that would be a regression. **An F is kept, not
+  hidden**: state what would settle it. Pin every port with a smoke test
+  under `tests/`. Standing audits:
+  `docs/audits/BRIEF-parite-amont.md` (citations) and
+  `docs/audits/BRIEF-provenance.md` (claims with no citation).
 - **`emuCycles` everywhere** — CPU → audio/UI events carry a CPU-cycle stamp, not wall-clock. Disk-turbo (~60×) collapses wall-clock gaps to zero across an audio-buffer tick. Example: `FloppySoundDevice::drainCommands` consumes the stamp from `DiskIICard::seekPhaseW`.
 - **Never hold `stateMutex` across file I/O** — the lock is taken by the CPU
   worker every 4096-cycle chunk *and* by the UI thread to paint every frame, so

@@ -706,8 +706,14 @@ void Memory::resetSoftSwitches(bool warm)
     // it here keeps $C015 (RDCXROM) consistent with what real //c
     // firmware sees when probing the switch.
     if (iicProfile_ && iicProfile_->forcesIntCxRom()) iieMemMode |= MF_INTCXROM;
-    // IOUDIS resets to true on every reset (MAME `apple2e.cpp:1224`),
-    // gating the IOU/mouse softswitches off until the firmware clears
+    // IOUDIS = true. Upstream sets it ONLY in `machine_reset`
+    // (`apple2e.cpp:1215` @ tag `mame0287`): `reset_w`, the Ctrl-Reset
+    // path, leaves it alone (1440-1511, unchanged on master). POM2
+    // applies it on EVERY reset, which is a deliberate divergence still
+    // unverified against the IIc Technical Reference (CHANGELOG, "//c
+    // reset"). The comment here used to claim upstream did the same —
+    // caught by `docs/audits/parite-apple2e-2026-11-01.md`.
+    // It gates the IOU/mouse softswitches off until the firmware clears
     // it via $C07F. Shared by IIe, IIc, IIc+ even though IIe ignores
     // SET/CLR — the read at $C07E still returns the bit.
     ioudis = true;

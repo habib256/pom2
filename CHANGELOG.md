@@ -12,6 +12,57 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Graded evidence, and a DOS 3.3 SAVE that disarmed the //c's motor timer
+
+**The convention was wrong, and it hid a bug.** `CLAUDE.md` said *MAME = source
+of truth*. The goal is behaving like the silicon; MAME is one reading of the
+hardware among several, and POM2 already knew better in at least two places —
+the IWM's Q3 ticks, and the MIG `$CE40`/`$CE60` polarity read off the //c+ ROM
+at `$E603`, where MAME is wrong and POM2 is right. MAME's own
+`A2PAL_1M_CLOCK` carries a `FIXME`. The convention is now a **graded
+hierarchy** — A measured on real hardware, B a primary document, C a ROM
+disassembly, D another emulator (MAME *and* AppleWin, equal), E asserted with
+no source, F an admitted unknown — and **every citation carries its grade and
+its source in one bracket**, `// [D] MAME iwm.cpp:289-302 @ mame0287 — …`. The
+format is greppable, a grade-D citation must name its revision, a lower grade
+never overrules a higher one, and an F is kept with a note on what would settle
+it. The same table now heads all seven emulators in the family.
+
+**The 5.25" write on a //c latched its first sync byte as an IWM mode.** On an
+IWM host, a write to `$C0nF` with Q6 already high reaches the mode register
+**only while the chip is idle** — motor running, the byte is write DATA
+(`iwm.cpp:283` dispatch, `mode_w` 289-302 @ `mame0287`). `IWMDevice::write`
+applied the rule; the IWM shadow in `DiskIICard` checked Q6 and not the motor,
+on *both* decode paths. RWTS opens a write with `LDA $C08D,X` / `LDA $C08E,X` /
+`STA $C08F,X` carrying `$FF`, so a stock DOS 3.3 `SAVE` wrote `$FF` into
+`iwmMode` — arming mode bit 2 (`iwmTimerOff()`), which drops the spindle the
+instant `$C0E8` arrives instead of coasting 1.17 s. Nothing clears `iwmMode`,
+so every later RWTS call found the disk stopped and paid the full spin-up:
+the same shape as the 115-second DOS boot of 2026-09. Fixed with `!spinning()`
+— this class's own mirror of MAME's `m_active`, true through MODE_DELAY — on
+both sites. Pinned twice, each verified by mutation: `diskii_motor_coast` § 7
+(synthetic, both decode paths) and `dos33_save_smoke` (end to end, real RWTS,
+asserting `iwmModeRegister() == 0`). The first version of the synthetic test
+**passed against the bug** — it exercised the legacy gate while the mutation
+was on the bit-LSS path; a test that has never failed has not been tested.
+
+**Where it came from, and what else it found.** Two audit campaigns, run by
+Opus agents against the upstream sources and reported in `docs/audits/`:
+`parite-iwm-2026-11-01.md` (55 citations, this bug) and
+`parite-apple2e-2026-11-01.md` (82 citations, **zero** bugs — the machine core
+is faithful). Both found the same structural defect: **POM2's citations mix at
+least nine upstream revisions, from 2022 to October 2026**, with no pin to tell
+them apart, so 48 of 55 and 19 of 82 point at the wrong lines — and 19 match no
+revision that ever existed. Line numbers alone designate nothing; hence the
+revision rule above. Three comments asserted things upstream does not do and
+were corrected: `Memory.cpp` claimed MAME resets IOUDIS on *every* reset (it
+does so only in `machine_reset` — POM2's choice there is deliberate and still
+unverified against the IIc Technical Reference), and `DiskIICard` attributed to
+`phases_w` a `set_floppy` call that exists only in `recalc_active_device`, on a
+drive change, never on a head step. The standing briefs are
+`docs/audits/BRIEF-parite-amont.md` (citations) and
+`docs/audits/BRIEF-provenance.md` (the ~1700 claims that cite no line at all).
+
 ## 2026-11-01 — Harvesting the Host File Transfer Card: one naming convention, a lost LOCK, Integer BASIC
 
 sbabcoc's [Host File Transfer Card design](https://github.com/sbabcoc/ReplicApple2Plus/blob/main/TRANSFER-CARD.md)

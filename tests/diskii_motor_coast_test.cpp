@@ -217,6 +217,45 @@ int main()
             c->deviceSelectRead(0x9); c->advanceCycles(1'000);
             assert(c->isMotorOn() && "a motor-on after an immediate stop starts again");
         }
+        {   // The SAME write with the motor running is write DATA, not a
+            // mode: the IWM takes a mode only while idle (MAME iwm.cpp:283
+            // dispatch, `if(m_active) data_w(data); else mode_w(data);`,
+            // tag mame0287). A 5.25" write opens with an $FF sync byte sent
+            // through $C0nF with Q6 already high; latching it as a mode
+            // armed bit 2 and killed the coast for the rest of the session,
+            // because nothing ever clears iwmMode
+            // (docs/audits/parite-iwm-2026-11-01.md, constat 1).
+            // Both decode paths own a copy of the hook, so both are pinned:
+            // the legacy 32-cycle gate and the bit-level LSS.
+            for (const bool bitLss : { false, true }) {
+                auto c = std::make_unique<DiskIICard>();
+                assert(c->loadBootRom(pom2test::diskIIRomPath("disk2.rom")));
+                assert(c->loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"), bitLss));
+                c->setIwmHost(true);
+                c->setWriteBackEnabled(false);
+                assert(c->insertDisk(dsk.string()));
+                assert(c->usingBitLss() == bitLss);
+
+                c->deviceSelectRead(0x9); c->advanceCycles(50'000);   // motor ON
+                assert(c->isMotorOn());
+                c->deviceSelectRead(0xD);                             // Q6 high
+                const uint8_t stBefore = c->deviceSelectRead(0xE);
+                c->deviceSelectWrite(0xF, 0xFF);                      // DATA, not a mode
+                c->deviceSelectRead(0xC);
+                c->deviceSelectRead(0xD);
+                const uint8_t stAfter = c->deviceSelectRead(0xE);
+                assert(stBefore == stAfter &&
+                       "a $C0nF write with the motor on must not reach the mode register");
+                c->deviceSelectRead(0xC);
+                c->deviceSelectRead(0x8);                             // motor-off command
+                assert(c->isMotorOn() &&
+                       "mode bit 2 must NOT be armed: the IWM timer still coasts");
+                c->advanceCycles(1'190'000);                          // IWM coast = 1'198'372
+                assert(c->isMotorOn() && "the IWM coasts 1.172 s");
+                c->advanceCycles(20'000);
+                assert(!c->isMotorOn() && "and ends there");
+            }
+        }
         {   // A Disk II ignores that register: no mode, the 556 still coasts.
             auto c = fresh(false);
             c->deviceSelectRead(0xD);

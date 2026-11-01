@@ -508,6 +508,14 @@ private:
     /// `if(m_mode & 0x04)` drops to MODE_IDLE with no timer). A Disk II has
     /// no mode register, so only an IWM host honours it.
     bool iwmTimerOff() const { return iwmHost_ && (iwmMode & 0x04) != 0; }
+public:
+    /// The IWM shadow's mode register, for tests that need to prove a guest
+    /// never reached it. A real 5.25" write sends its first sync byte to
+    /// $C0nF with Q6 already high, so the idle gate on that write is the
+    /// only thing keeping this at 0 across an RWTS write
+    /// (`dos33_save_smoke`, `docs/audits/parite-iwm-2026-11-01.md`).
+    uint8_t iwmModeRegister() const { return iwmMode; }
+private:
     /// The spindle stops now: the end of the 556 / IWM countdown, or an
     /// immediate stop (DiskIICard_Cycles.cpp).
     void stopSpindle();
@@ -758,8 +766,13 @@ private:
     // //c / //c+ on-board IWM. Non-owning. When set, DiskIICard
     // forwards floppy + head-position changes via `iwm_->setFloppy`
     // so the IWM state machine stays in lock-step with the active
-    // drive (matches MAME `apple2e.cpp:1180-1185 phases_w` chain,
-    // which calls `m_iwm->set_floppy(...)` on every reseat).
+    // drive. This mirroring has NO upstream counterpart: MAME's
+    // `phases_w` (`apple2e.cpp:701-707` @ tag `mame0287`) only calls
+    // `seek_phase_w`, and `set_floppy` happens solely in
+    // `recalc_active_device` (754) on a DRIVE change, never on a head
+    // step. POM2 needs it because it splits the 5.25" path
+    // (DiskIICard) from the IWM, which upstream does not
+    // (`docs/audits/parite-apple2e-2026-11-01.md`).
     pom2::IWMDevice* iwm_ = nullptr;
     void pushIwmFloppy();
 
