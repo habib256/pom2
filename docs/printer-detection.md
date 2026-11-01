@@ -190,8 +190,11 @@ unverified on hardware.
 as `ssc_cable_slotN`: `auto` (POM2's historical model — lines active while a
 telnet peer is connected or the printer tap is armed, CTS always active),
 `none`, `printer`, `printer-offline`, `modem` (carrier = the telnet
-connection), `null-modem`. A line change raises the DCD/DSR interrupt when DTR
-is asserted. On a //c port only DCD comes from the cable (§6). Pinned by
+connection), `null-modem`. A line change raises the DCD/DSR interrupt only when DTR is
+asserted **and IRD (command bit 1) is clear** — [B] WDC W65C51N p. 13,
+Rockwell R6551 and R65C51 say the same. Command `$0B`, which the Apple
+341-0065-A firmware and the //c ROM both write, sets IRD: those ports take
+no line interrupt at all. On a //c port only DCD comes from the cable (§6). Pinned by
 `ssc_firmware` (per-cable status bits; a printer going off line mid-job and
 back, through the real firmware) and `iic_printer_port`.
 

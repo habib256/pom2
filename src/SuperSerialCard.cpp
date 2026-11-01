@@ -713,7 +713,20 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     // (setModemLinesTied): the peer going away is silence, not NO CARRIER.
     // An explicit cable decides for itself: only a modem's carrier follows
     // the connection, and every other cable ignores it.
-    if (!dtrAsserted_) return;
+    // [B] WDC W65C51N datasheet (2024) p. 13, "Data Carrier Detect (Bit 5)
+    // and Data Set Ready (Bit 6)": "Whenever either of these inputs change
+    // state, an immediate processor interrupt (IRQ) occurs, **unless bit 1 of
+    // the Command Register (IRD) is set to a 1 to disable IRQB**." Same
+    // sentence in the Rockwell R6551 and R65C51. So the edge needs DTR
+    // asserted AND IRD clear — exactly `rxIrqEnable_`. MAME tests only
+    // `m_dtr` ([D] mos6551.cpp:534-555 @ mame0287) and POM2 copied it, so a
+    // driver using command $0B (DTR on, IRD=1 — what the Apple 341-0065-A
+    // firmware, the //c ROM and every polling driver write) took an IRQ no
+    // 6551 would raise, with no handler to clear it: ProDOS died with
+    // RESTART SYSTEM - $01. That failure was blamed on the cable in
+    // 2026-09-08 and worked around on both sides; the datasheet says the
+    // cable was innocent. `docs/audits/parite-mos6551-2026-11-01.md`.
+    if (!rxIrqEnable_) return;
     if (cable_ == Cable::Modem) {
         raiseIrqSource(IRQ_DCD);
     } else if (cable_ == Cable::Auto &&
@@ -745,13 +758,41 @@ void SuperSerialCard::clearIrqSource(uint8_t mask)
     pushIrqLine();
 }
 
-void SuperSerialCard::advanceCycles(int /*cycles*/)
+void SuperSerialCard::setCpuClock(double hz)
+{
+    if (hz > 0.0) cpuClockHz_ = hz;
+}
+
+void SuperSerialCard::advanceCycles(int cycles)
 {
     // Drive the CPU IRQ line from a worker-thread-pending change. Runs on the
     // CPU thread (Memory::advanceCycles → SlotBus fan-out), so assertIrq() is
     // CPU-thread-only across the whole card.
     if (irqLineDirty_.exchange(false, std::memory_order_acquire)) {
         pushIrqLine();
+    }
+
+    // [B] R6551 "Continuous Data Transmit", figure 7: with the transmit
+    // interrupt armed and nothing to send, "IRQ interrupts continue to occur
+    // at the same rate as previously, except no data is transmitted". The
+    // empty transmit register re-interrupts once per character time, so a
+    // driver whose queue ran dry is woken again as soon as it refills it.
+    // ([D] MAME models it by cycling through STATE_START, mos6551.cpp:725-762
+    // @ mame0287; AppleWin raises nothing, and diverges the other way.)
+    // Held behind an inactive CTS the byte is not sent and TDRE stays 0, so
+    // there is nothing to re-announce.
+    if (txIrqEnable_ && !tdrHeld_ && bytesPerSecond_ > 0.0 && cycles > 0) {
+        txIdleAcc_ += cycles;
+        const double cyclesPerChar = cpuClockHz_ / bytesPerSecond_;
+        if (txIdleAcc_ >= cyclesPerChar) {
+            txIdleAcc_ = 0.0;
+            if (!(irqState_ & IRQ_TDRE)) {
+                irqState_ |= uint8_t{IRQ_TDRE};
+                pushIrqLine();
+            }
+        }
+    } else {
+        txIdleAcc_ = 0.0;
     }
 }
 
@@ -884,7 +925,7 @@ void SuperSerialCard::setCable(Cable c)
     uint8_t edges = 0;
     if (before.dcd != after.dcd) edges |= IRQ_DCD;
     if (before.dsr != after.dsr) edges |= IRQ_DSR;
-    if (edges && dtrAsserted_) raiseIrqSource(edges);
+    if (edges && rxIrqEnable_) raiseIrqSource(edges);   // IRD gates it too
     // CTS back: the byte parked in TDR goes out now.
     if (after.cts && tdrHeld_) {
         tdrHeld_ = false;

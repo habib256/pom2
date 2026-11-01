@@ -663,14 +663,32 @@ void testStatusReadDcdDsr()
 void testTiedModemLinesSilenceThePeerEdge()
 {
     {
+        // [B] WDC W65C51N datasheet p. 13: a DCD/DSR edge interrupts "unless
+        // bit 1 of the Command Register (IRD) is set to a 1 to disable IRQB".
+        // Command $09 leaves IRD clear, so the edge DOES interrupt.
         SuperSerialCard ssc(2);
-        ssc.deviceSelectWrite(kCommandAddr, 0x0B);   // DTR on, RX IRQ off
+        ssc.deviceSelectWrite(kCommandAddr, 0x09);   // DTR on, IRD clear
         ssc.onTransportConnected();
         (void)ssc.deviceSelectRead(kStatusAddr);     // the connect edge, seen
         ssc.onTransportDisconnected();
-        assert((ssc.irqState() & 0x03) != 0 && "a modem drop interrupts");
+        assert((ssc.irqState() & 0x03) != 0 && "a modem drop interrupts when IRD is clear");
         const uint8_t s = ssc.deviceSelectRead(kStatusAddr);
         assert((s & (SR_DCD | SR_DSR)) == (SR_DCD | SR_DSR));
+    }
+    {
+        // The counter-proof, and the whole point: command $0B sets IRD, so
+        // the same edge raises NOTHING. This test used to assert the
+        // opposite, pinning MAME's `if (!m_dtr)` — which killed ProDOS under
+        // every polling driver, $0B being what the Apple 341-0065-A
+        // firmware, the //c ROM and A2 File Cmd's VDrive all write.
+        // `docs/audits/parite-mos6551-2026-11-01.md`, constat 1.
+        SuperSerialCard ssc(2);
+        ssc.deviceSelectWrite(kCommandAddr, 0x0B);   // DTR on, IRD SET
+        ssc.onTransportConnected();
+        (void)ssc.deviceSelectRead(kStatusAddr);
+        ssc.onTransportDisconnected();
+        assert((ssc.irqState() & 0x03) == 0 &&
+               "IRD=1 disables the DCD/DSR interrupt (W65C51N p. 13)");
     }
     {
         SuperSerialCard ssc(2);
@@ -1103,9 +1121,56 @@ void testResetKeepsTransmitRing()
     std::printf("  ok: reset keeps the TX ring, power-off clears it\n");
 }
 
+
+/// [B] Rockwell R6551, "Continuous Data Transmit" and figure 7 (*Transmit
+/// Data Register Not Loaded by Processor*): "IRQ interrupts continue to occur
+/// at the same rate as previously, except no data is transmitted" — caption:
+/// "interrupts continue at character rate, even though no data is
+/// transmitted". POM2 raised TDRE once on arming and once per byte written,
+/// so an interrupt-driven driver whose queue ran dry, and that left the
+/// transmit interrupt armed, was never woken again and its transmission
+/// stalled until some other interrupt happened.
+/// `docs/audits/parite-mos6551-2026-11-01.md`, constat 2.
+void testEmptyTransmitRegisterKeepsInterrupting()
+{
+    SuperSerialCard ssc(2);
+    ssc.setCpuClock(1022727.0);
+    ssc.deviceSelectWrite(kControlAddr, 0x1E);   // 9600 baud, 8N1
+    ssc.deviceSelectWrite(kCommandAddr, 0x05);   // DTR on, IRD clear, TIC=01
+
+    // Arming raises the first one; the driver takes it and acknowledges.
+    assert(ssc.irqState() != 0 && "arming raises the first transmit interrupt");
+    (void)ssc.deviceSelectRead(kStatusAddr);   // the driver acknowledges
+    assert(ssc.irqState() == 0);
+
+    // 960 characters/s at 1.0227 MHz is ~1065 cycles per character.
+    ssc.advanceCycles(200);
+    assert(ssc.irqState() == 0 && "well inside one character time: still quiet");
+
+    ssc.advanceCycles(1200);
+    assert(ssc.irqState() != 0 &&
+           "an empty transmit register re-interrupts at character rate");
+
+    // And it keeps doing so, acknowledgement after acknowledgement.
+    (void)ssc.deviceSelectRead(kStatusAddr);
+    ssc.advanceCycles(1200);
+    assert(ssc.irqState() != 0 && "and again, every character time");
+
+    // With the transmit interrupt disarmed (TIC=00) nothing repeats.
+    SuperSerialCard quiet(2);
+    quiet.setCpuClock(1022727.0);
+    quiet.deviceSelectWrite(kControlAddr, 0x1E);
+    quiet.deviceSelectWrite(kCommandAddr, 0x01);  // DTR on, TIC=00
+    (void)quiet.deviceSelectRead(kStatusAddr);
+    quiet.advanceCycles(10000);
+    assert(quiet.irqState() == 0 && "a disarmed transmit interrupt stays silent");
+    std::printf("  ok: an empty TDR keeps interrupting at character rate\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
+    testEmptyTransmitRegisterKeepsInterrupting();
     testTdrWhileDtrDeasserted();
     testClosingPortDiscardsParkedTdr();
     testEchoLoopback();

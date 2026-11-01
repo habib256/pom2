@@ -6535,13 +6535,24 @@ Pinned in `ssc_acia_smoke`.
 **Tied modem lines** *(2026-09-08)*. `setModemLinesTied(true)` models a
 null-modem / USB-serial cable with DCD and DSR strapped: the status pins
 read active whatever the peer does and a connect/disconnect raises no
-DCD/DSR interrupt. The default stays the modem (MAME parity: with DTR
-asserted, a peer edge toggles the bits and interrupts). It exists for A2
-File Cmd's VDrive bench: the harness `pom2_playtest --ssc PORT` (in
-pomadventure) plugs the card raw and tied, and without it the bench's
-"host gone" case killed ProDOS with `RESTART SYSTEM - $01` — the driver
-owns no interrupt handler, and the peer closing was a carrier drop. Pinned
-in `ssc_acia_smoke`.
+DCD/DSR interrupt. It exists for A2 File Cmd's VDrive bench: the harness
+`pom2_playtest --ssc PORT` (in pomadventure) plugs the card raw and tied,
+and without it the bench's "host gone" case killed ProDOS with
+`RESTART SYSTEM - $01`. Pinned in `ssc_acia_smoke`.
+
+**That diagnosis was wrong, and the cable was innocent** *(2026-11-01)*. The
+VDrive driver programs command `$0B`, which sets IRD, and [B] the WDC
+W65C51N datasheet p. 13 (same sentence in the Rockwell R6551 and R65C51)
+says a DCD/DSR edge interrupts "unless bit 1 of the Command Register (IRD)
+is set to a 1 to disable IRQB". No 6551 would have interrupted. POM2
+interrupted because MAME tests `m_dtr` alone ([D] `mos6551.cpp:534-555`
+@ `mame0287`) and the port copied it. The gate is now `rxIrqEnable_`
+(DTR asserted **and** IRD clear) at both sites. Tied lines remain a real
+cable property and keep their switch; they are no longer the fix for
+`RESTART SYSTEM - $01`. The VDrive driver's own IRQ handler, added the same
+day on the belief that "a 6551 raises IRQ when DCD or DSR changes, whatever
+its registers say", is likewise unnecessary.
+`docs/audits/parite-mos6551-2026-11-01.md`.
 
 ### ProDOS clock card (slot 4)
 

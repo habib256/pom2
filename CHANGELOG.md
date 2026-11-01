@@ -12,6 +12,50 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — The 6551's IRD bit: the cable was innocent, and ProDOS died for nothing
+
+`mos6551` parity slice. Two divergences, both settled by the datasheet rather
+than by MAME.
+
+**A DCD or DSR edge interrupted although the command register forbade it.**
+[B] WDC W65C51N p. 13, word for word in the Rockwell R6551 and R65C51:
+*"Whenever either of these inputs change state, an immediate processor
+interrupt (IRQ) occurs, unless bit 1 of the Command Register (IRD) is set to a
+1 to disable IRQB."* MAME tests DTR alone ([D] `mos6551.cpp:534-555`
+@ `mame0287`) and POM2 copied it. Command `$0B` — DTR on, **IRD set** — is
+what the Apple 341-0065-A firmware writes at `$C894`, what the //c ROM puts in
+both ports, what POM2's own synthetic page writes, and what A2 File Cmd's
+VDrive driver has written since its first commit. Every one of them took an
+interrupt no 6551 would raise, with no handler to claim it, and ProDOS died:
+`RESTART SYSTEM - $01`.
+
+**That failure is already in this file, dated 2026-09-08, blamed on the
+cable.** It was worked around twice — `setModemLinesTied` here, and an IRQ
+handler added to the VDrive driver the same day whose comment reads *"A 6551
+raises IRQ when DCD or DSR changes, whatever its registers say"*. Three
+datasheets say the opposite. The gate is now `rxIrqEnable_` (DTR asserted
+**and** IRD clear) at both sites; tied lines remain a real cable property but
+are no longer the fix for anything. An interrupt-driven terminal programs
+IRD = 0 and keeps its NO CARRIER.
+
+**And an empty transmit register now keeps interrupting.** [B] R6551
+"Continuous Data Transmit", figure 7: *"IRQ interrupts continue to occur at
+the same rate as previously, except no data is transmitted"* — caption:
+*"interrupts continue at character rate, even though no data is
+transmitted"*. POM2 raised TDRE once on arming and once per byte written, so a
+driver whose queue ran dry, and which left the transmit interrupt armed, was
+never woken again: its transmission stalled until some unrelated interrupt
+happened. `advanceCycles` now re-raises it once per character time at the
+programmed baud. MAME models this by cycling through `STATE_START`; AppleWin
+raises nothing at all and diverges the other way.
+
+Both pinned in `ssc_acia_smoke`, each verified by mutation, with the
+counter-proofs: `$0B` must raise nothing, and a disarmed transmit interrupt
+must stay silent. The test that asserted *"a modem drop interrupts"* under
+`$0B` pinned the defect and was corrected. `docs/printer-detection.md` § 5,
+`SuperSerialCard.h` and the DEV.md narrative of 2026-09-08 now tell the
+corrected story.
+
 ## 2026-11-01 — Z8530 Auto Enables and Local Loopback, and a MAME reset value the datasheet refutes
 
 The two divergences the `z80scc` audit had confirmed by probe but left latent,

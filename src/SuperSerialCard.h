@@ -230,8 +230,12 @@ public:
 
     /// The cable's modem-control lines. By default the TCP peer IS the
     /// carrier: a connect/disconnect toggles DCD and DSR and, with DTR
-    /// asserted, raises the 6551's DCD/DSR interrupt (MAME parity) — a
-    /// terminal program sees NO CARRIER when the far end hangs up. A
+    /// asserted **and IRD clear**, raises the 6551's DCD/DSR interrupt — a
+    /// terminal program sees NO CARRIER when the far end hangs up. [B] WDC
+    /// W65C51N p. 13: the edge interrupts "unless bit 1 of the Command
+    /// Register (IRD) is set to a 1". A polling driver writes `$0B`, so it
+    /// is never interrupted; MAME tests DTR alone and POM2 followed it,
+    /// which is what killed ProDOS below. A
     /// null-modem or USB-serial cable has those pins strapped active (or
     /// not wired), so a VDrive / VSDrive host going away is only silence:
     /// the driver's read times out and reports an I/O error. With the
@@ -412,6 +416,7 @@ public:
     // assertIrq() (which mutates non-atomic SlotPeripheral state) is only
     // ever called from the CPU thread. See raiseIrqSource()/pushIrqLine().
     void    advanceCycles(int cycles) override;
+    void    setCpuClock(double hz) override;
 
     /// Snapshot/rewind: 'SSC1'-tagged blob with the guest-visible ACIA
     /// register state (command/control decode + sticky status errors).
@@ -556,6 +561,16 @@ private:
     uint8_t  wordLength_     = 8;
     bool     extraStop_      = false;
     uint8_t  baudIndex_      = 0;       // ctl[3:0]
+    /// [B] Rockwell R6551 "Continuous Data Transmit", figure 7 (*Transmit
+    /// Data Register Not Loaded by Processor*): "IRQ interrupts continue to
+    /// occur at the same rate as previously, except no data is transmitted",
+    /// and the caption — "interrupts continue at character rate, even though
+    /// no data is transmitted". POM2 raised TDRE once on arming and once per
+    /// byte written, so an interrupt-driven driver whose queue ran dry, and
+    /// which left the transmit interrupt armed, was never woken again.
+    /// `docs/audits/parite-mos6551-2026-11-01.md`, constat 2.
+    double   cpuClockHz_     = 1022727.0;
+    double   txIdleAcc_      = 0.0;     ///< cycles since the last idle TDRE
     double   bytesPerSecond_ = 0.0;     // 0 → unconstrained (16x ext clk)
 
     // Persistent status flags (RDRF/TDRE/DCD/DSR computed dynamically at
