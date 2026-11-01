@@ -192,14 +192,38 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
             col -= 1;                       // display-side: effect one col left
             if (col < 0) col = 0;
             break;
+        // TEXT ($C050/$C051) and MIXED ($C052/$C053) reach the screen ONE
+        // cycle after a PAGE2 flip made on the same cycle, so they land one
+        // column RIGHT of the page-calibrated -24 (i.e. hpos - 23).
+        // [A] tomcw, AppleWin GH#656 (2019), real //e PAL photos: after
+        //     Sather's VBL sync, `LDA $C055/$C054` on line 0 and
+        //     `LDA $C050/$C051` on line 7 at the same phase — the GR box is
+        //     one column right of the PAGE2 box; AppleWin Video.cpp
+        //     "Only 1-cycle delay for VF_TEXT & VF_MIXED mode changes
+        //     (GH#656)" @ master 2026-11-01. sosaria7 (appleinpc#9): "There
+        //     is no delay except TXTCLR, TXTSET, MIXEDCLR, MIXEDSET".
+        // [A] arekkusu42, "VIDMODE LATENCY" photos, MAME PR #15247 (//e,
+        //     ][+, IIgs, //c PAL): TEXT and MIXED 3 PH0 cycles vs PAGE2 2
+        //     (marked "glitching, approximate") — MAME apple2video.cpp
+        //     txt_w/mix_w delayed_update(3) vs scr_w delayed_update(2).
+        // [B] Sather, Understanding the Apple IIe p. 8-12: GR+2 (GR delayed
+        //     two scanner clocks) selects GRAPHICS vs TEXT patterns in the
+        //     video ROM; a page flip only changes the next fetch's address.
+        // Computed from hpos (not col+1) so a switch at the last HBL cycle
+        // (hpos 24) lands at column 1 and one at hpos 23 still at column 0.
+        // Audit: docs/audits/parite-apple2video-2026-11-01.md, Rapport 2.
+        case Memory::VideoEventKind::TextMode:
+        case Memory::VideoEventKind::MixedMode: {
+            const VideoTiming& t = pom2VideoTiming(vstd);
+            const int hpos = static_cast<int>(
+                e.emuCycle % static_cast<uint64_t>(t.cyclesPerScanline));
+            col = std::clamp(hpos - (kVideoAccessColumnOffset - 1), 0, 40);
+            break;
+        }
         default:
             // Everything else stays on the page-calibrated -24. Page2 /
             // 80Store are fetch-side (addressing) and MAD EFFECT / DROL / DIX
-            // pin them there. TextMode / MixedMode are left at -24 too: no
-            // measured title exercises a mid-line text/graphics flip, and
-            // $C050/$C051 changes the fetch REGION (text $0400 vs HGR $2000)
-            // as well as the interpretation, so its side is genuinely
-            // ambiguous — revisit only with a measured case, like this one.
+            // pin them there.
             break;
     }
     return col;

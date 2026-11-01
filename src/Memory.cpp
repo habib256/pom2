@@ -1179,8 +1179,23 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // (three consecutive scanner reads of $80) — a hard 0 here spins it
     // forever (the same hang LinApple had; AppleWin fixed it in 1.13.0 by
     // implementing the floating bus). NB: floatingBus() takes stateMutex,
-    // so the switch work is scoped before the return.
+    // so it is sampled outside the switch work's lock.
+    //
+    // The byte is sampled BEFORE the switch flips: the scanner fetches in
+    // PHASE 1 and the MPU reads that motherboard byte, while the switch
+    // only changes during the PHASE 0 access of the same cycle, so the
+    // access that flips a mode returns the byte of the mode BEFORE it.
+    // [A] Ryan Schmidt, real unenhanced //e (TomHarte/CLK#1204, 2023): in
+    //     TEXT + HIRES, `LDX $C050` returns a text-page byte, the next
+    //     `LDY $C050` an HGR byte.
+    // [B] Sather, Understanding the Apple IIe p. 7-26: "the MPU will read
+    //     the motherboard video data from PHASE 1 video scanning".
+    // [D] MAME apple2e.cpp / apple2.cpp `read_floatingbus(); // video
+    //     side-effects latch after reading` (PR #14590, 67b96bf9). AppleWin
+    //     Video.cpp reads it after NTSC_SetVideoMode, like POM2 used to.
+    // Audit: docs/audits/parite-apple2video-2026-11-01.md, Rapport 2.
     if (low >= 0x50 && low <= 0x57) {
+        const uint8_t bus = isWrite ? 0 : floatingBus();
         {
             std::lock_guard<std::mutex> lk(stateMutex);
             switch (low) {
@@ -1220,7 +1235,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
                 pom2::log().warn("IIE", oss.str());
             }
         }
-        return isWrite ? 0 : floatingBus();
+        return bus;
     }
 
     // (The II/II+ 80COL / Le Chat Mauve FIFO hook for $C00C/$C00D lives

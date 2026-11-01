@@ -12,6 +12,78 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Two video timings, both measured on real machines
+
+Slice 18 (`apple2video.cpp`), fixed by an Opus agent against the published
+measurements and Sather, reviewed and landed here. Both findings are grade A.
+
+**A mid-line TEXT or MIXED flip lands one column later than a PAGE2 flip.**
+[A] tomcw, AppleWin GH#656 (2019), photographs of a real //e PAL: after
+Sather's VBL sync, `$C055/$C054` on line 0 and `$C050/$C051` on line 7 at the
+same phase — the GR box sits one column right of the PAGE2 box; sosaria7:
+*"There is no delay except TXTCLR, TXTSET, MIXEDCLR, MIXEDSET"*; AppleWin's
+`Video.cpp` adds the one-cycle delay to those two alone. [A] arekkusu42's
+"VIDMODE LATENCY" photographs in MAME PR #15247 (//e, ][+, IIgs, //c PAL):
+TEXT and MIXED 3 PH0 cycles against PAGE2's 2. [B] Sather p. 8-12: GR
+reaches the video ROM two scanner clocks late, a page flip only changes the
+next fetch's address. POM2 placed every switch but AN3 at `hpos − 24`;
+`TextMode` and `MixedMode` are now `hpos − 23`. PAGE2, HIRES, 80STORE, the
+AN3 −1, the VBL edge and the `$C05A/$C05B` overlay are untouched. The three
+`horizontal_split*` tests failed exactly as the audit predicted — they throw
+`$C051` at hpos 45 and asserted the split at column 21 — and their TEXT split
+moved to 22 with the citation; `display_golden_hash` did not change, and
+`dix_modpage_split`, `beam_race_composite` and `drol_pageflip_render` pass.
+
+**The access that flips a mode returns the bus of the mode BEFORE it.** [A]
+Ryan Schmidt on a real unenhanced //e (TomHarte/CLK#1204): in TEXT + HIRES,
+`LDX $C050` returns a text-page byte and the next `LDY $C050` an HGR byte.
+[B] Sather p. 7-26: *"the MPU will read the motherboard video data from
+PHASE 1 video scanning"* — the scanner fetched before the switch changed in
+PHASE 0. POM2 read the floating bus after the switch work; it is sampled
+before it now, for `$C050-$C057`. MAME does the same (*"video side-effects
+latch after reading"*, PR #14590); AppleWin reads after, as POM2 did.
+
+Two fixes, two mutations, one new test (`video_switch_latency`). Not done:
+the PR #15247 latency table is an image the agent could not read itself, and
+the French Touch demos were not run end to end — `dix_modpage_split` is the
+direct check and passes.
+
+## 2026-11-01 — HD6845S: a reset that kept the cursor, blink counted in fields; and a debugger that showed opcodes the CPU does not run
+
+Slices 16 and 17, fixed by an Opus agent against the Hitachi data books and
+the NCR data sheet, reviewed and landed here.
+
+**HD6845S (Videx Videoterm / UltraTerm).** [B] Hitachi U70 data book (1985),
+p. 451 "Reset (RES)": *"Control registers in the CRTC are not affected and
+remain unchanged"*, and p. 463: R0-R17 *"are not affected by RES"*. POM2's
+reset zeroed R14/R15, the cursor address; it now clears only the address
+register — which is not in R0-R17 and on which the sheet is silent, so that
+part is marked [F]. In **interlace sync & video** each field shows only the
+even or only the odd raster lines (pp. 456-457, Fig. 8 / Table 9, Fig. 13),
+so the blink must count *fields*; POM2 counted frames and blinked at half
+speed there. New `fieldRateHz()`; both cards clock the blink from it. And the
+**blink period**: three Hitachi drawings — U70 Table 7, HLN014 Table 6-1
+note 5 and Table 6-3, checked as page images — put one brace "16 or 32 Field
+Period" over light *plus* dark; POM2 made it the light phase alone. The
+counter bits move from 4/5 to 3/4. Phase unknown and no HD6845S measured —
+said in the code.
+
+**The debugger decoded a Rockwell/WDC 65C02 on the NCR part Apple shipped.**
+[B] Apple IIc Technical Reference, Appendix A (NCR 65C02 data sheet): the
+`$x3/$x7/$xB/$xF` opcodes are *"NOPs (reserved for future use)"*, one byte,
+one cycle — which the core already runs; the disassembler and assembler
+showed RMB/BBR/WAI/STP there, so a listing's length disagreed with the PC's
+advance. A `Cpu6502Set` {NMOS, NCR 65C02, superset} derived from the core's
+own dispatch condition (`ncrDispatch()`, the one `applyDispatch` uses — not a
+second copy) now drives the disassembler, the assembler, the Debugger panel
+and the Memory viewer. The core's table is untouched; a TransWarp's 65C02
+still decodes the superset. Pinned by `disasm_cmos`, `assembler6502` and a
+`debugger_test` case that checks, for all 34 opcodes, that listing length
+equals the core's advance.
+
+Four fixes, four mutations. The agent's worktree had no ROMs, so
+`videx_lowercase_char_rom` and `videx_videoterm_boot` ran here instead.
+
 ## 2026-11-01 — ThunderClock and Slinky: six fixes from the data sheet and the card manuals
 
 Slices 15 and 19, fixed by an Opus agent in its own worktree against the

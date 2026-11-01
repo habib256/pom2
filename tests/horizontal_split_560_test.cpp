@@ -45,7 +45,10 @@ constexpr uint16_t IIE_80COL_ON = 0xC00D;
 constexpr uint16_t DHIRES_ON    = 0xC05E;
 
 constexpr int W         = 560;
-constexpr int kSplitDot = 21 * 14;     // 294 — hpos 45 → col 21 (`hpos - 24`)
+constexpr int kSplitDot = 21 * 14;     // 294 — hpos 45 → col 21 (`hpos - 24`), the 80COL split
+// The TEXT split at the same hpos lands one column later, col 22: TEXT lands one column right of the `hpos - 24` page mapping — AppleWin GH#656 / MAME PR #15247 photos
+// (Apple2Display_Beam.cpp beamColForEvent).
+constexpr int kTextSplitDot = 22 * 14; // 308
 constexpr int kBandTop  = 96;          // row-aligned (12 * 8)
 
 // Fill main + aux text page ($0400-$07FF) and HGR page ($2000-$3FFF) with
@@ -88,7 +91,7 @@ void makeBeam(Memory& m)
     for (int y = kBandTop; y < 192; ++y) {
         m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → col 0
         m.memRead(CLR_TEXT);              // DHGR from column 0
-        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → col 21 (mapping is `hpos - 24`)
+        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 22 (`hpos - 23`)
         m.memRead(SET_TEXT);              // 80-col text from column 20
     }
 }
@@ -132,18 +135,18 @@ void checkSplit(const std::vector<T>& dhgr, const std::vector<T>& text,
 {
     // Sanity: the two images/waveforms differ in both windows.
     for (int y : {100, 150}) {
-        assert(!spanEqual(dhgr, text, y, 0, kSplitDot));
-        assert(!spanEqual(dhgr, text, y, kSplitDot, W));
+        assert(!spanEqual(dhgr, text, y, 0, kTextSplitDot));
+        assert(!spanEqual(dhgr, text, y, kTextSplitDot, W));
     }
     // Top band: full-width DHGR.
     for (int y : {8, 40, 88})
         assert(spanEqual(beam, dhgr, y, 0, W) && what);
     // Split band: left DHGR, right 80-col text — same line.
     for (int y : {kBandTop, 104, 150, 191}) {
-        assert(spanEqual(beam, dhgr, y, 0, kSplitDot) && what);
-        assert(spanEqual(beam, text, y, kSplitDot, W) && what);
-        assert(!spanEqual(beam, text, y, 0, kSplitDot) && what);
-        assert(!spanEqual(beam, dhgr, y, kSplitDot, W) && what);
+        assert(spanEqual(beam, dhgr, y, 0, kTextSplitDot) && what);
+        assert(spanEqual(beam, text, y, kTextSplitDot, W) && what);
+        assert(!spanEqual(beam, text, y, 0, kTextSplitDot) && what);
+        assert(!spanEqual(beam, dhgr, y, kTextSplitDot, W) && what);
     }
 }
 
