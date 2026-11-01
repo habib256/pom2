@@ -80,7 +80,11 @@ void testStatusBits()
     const Row rows[] = {
         { "ready",       false, true,  false, true,  0x03 },
         { "busy",        true,  true,  false, true,  0x0A },
-        { "offline",     false, false, false, true,  0x01 },
+        // [B] Epson FX manual Table K-1: BUSY "goes HIGH ... 3) When
+        // Off-Line". 0x01 pinned the opposite (BUSY low off line), which
+        // contradicted `CentronicsPrinter::busyLine` one file over.
+        // `docs/audits/parite-grappler-2026-11-01.md`.
+        { "offline",     false, false, false, true,  0x09 },
         { "paper out",   false, true,  true,  true,  0x0F },
         { "paper out + offline", false, false, true, true, 0x0D },
         { "no printer",  false, true,  false, false, 0x0F },

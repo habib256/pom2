@@ -113,7 +113,20 @@ uint8_t GrapplerCard::lineBits() const
     // (ctronics.cpp:56-73).
     if (!printerConnected()) return 0x08 | 0x04 | 0x02;
     const bool out = paperOut();
-    return static_cast<uint8_t>(((printerBusy() || out) ? 0x08 : 0x00) |
+    // [B] Epson FX manual, Table K-1: BUSY "goes HIGH ... 3) When Off-Line",
+    // and Table K-2 (OFF-LINE -> ERROR low, BUSY high, no ACKNLG). BUSY is
+    // therefore raised by being off line, not only by being busy or out of
+    // paper — otherwise a driver following Epson's own note 4 ("transfer
+    // only ... when the level of the BUSY signal is LOW") decides an
+    // off-line printer is ready, sends the byte and waits forever for an
+    // /ACK that never comes. The repo already had it right one file over:
+    // `CentronicsPrinter::busyLine` (the Grappler 1981 and the PIC) reads
+    // `!connected || busy || paperOut || !online`, so the same
+    // `--printer-port N:online=off` gave two different BUSY levels
+    // depending on which card was plugged.
+    // `docs/audits/parite-grappler-2026-11-01.md`. The Grappler+ 3.1
+    // firmware is unaffected: it tests SELECT at $CD8C, never BUSY.
+    return static_cast<uint8_t>(((printerBusy() || out || !online()) ? 0x08 : 0x00) |
                                 (out ? 0x04 : 0x00) |
                                 (online() ? 0x02 : 0x00));
 }
