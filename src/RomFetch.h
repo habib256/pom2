@@ -58,7 +58,7 @@ struct RomFetchEntry {
     const char* destRel;       ///< As probed everywhere else: "roms/apple2e.rom"
     const char* label;         ///< Shown in the panel while this item runs.
     std::size_t expectedSize;  ///< Reject the download on a mismatch. 0 = any.
-    const char* url;           ///< raw.githubusercontent.com file or zip; null = import-only.
+    const char* url;           ///< raw.githubusercontent.com file or zip, or kPom2RomArchiveUrl (archive-only); null = import-only.
     /// Single zip member to extract. Null when `url` is already the dump —
     /// which, since RetroBIOS PR #75 published loose copies, is every entry
     /// but nine: the mouse slot eprom, the Super Serial Card EPROM, the 1981
@@ -125,21 +125,29 @@ constexpr const char* kRetroBiosRawPrefix = POM2_RETROBIOS_RAW;
 
 /// The PRIMARY source since 2026-10-29: POM2's own archive on archive.org,
 /// one zip holding every catalogued dump as `roms/<the name POM2 probes>`
-/// (`romArchiveMember`). Fetched once per run; each member passes the same
+/// (`romArchiveMember`). Item `pom2_firm` since 2026-11-01: the first item
+/// (`pom2_roms_202610`) went dark on 2026-10-31. Fetched once per run; each member passes the same
 /// size / CRC32 / SHA-256 gate as a RetroBIOS download, so the archive does
 /// not have to be trusted — only to be right. Any entry it cannot supply
 /// (archive unreachable, member absent or not the expected dump) is fetched
 /// from RetroBIOS at the pinned commit, the SECONDARY source.
 constexpr const char* kPom2RomArchivePage =
-    "https://archive.org/details/pom2_roms_202610";
+    "https://archive.org/details/pom2_firm";
 constexpr const char* kPom2RomArchiveUrl =
-    "https://archive.org/download/pom2_roms_202610/pom2_roms.zip";
+    "https://archive.org/download/pom2_firm/pom2_firm.zip";
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
 
 /// False for an IMPORT-ONLY entry (`url` null): a dump a card probes that no
 /// source serves. RomImport still identifies it; romsToFetch() skips it.
+/// (No entry is import-only since 2026-11-01; the predicate stays for one.)
 bool romDownloadable(const RomFetchEntry& e);
+
+/// True when `e.url` IS the POM2 archive: a dump RetroBIOS has no copy of
+/// (the CCS 7710 PROMs, the DAN ][ EPROM). Served from the archive's member
+/// like every other entry, but with no fallback — when the archive is down
+/// its error is the archive's, and RetroBIOS is not asked.
+bool romArchiveOnly(const RomFetchEntry& e);
 
 /// The member of the POM2 archive that holds `e`: "roms/" + its file name.
 std::string romArchiveMember(const RomFetchEntry& e);

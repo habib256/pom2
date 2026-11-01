@@ -10277,7 +10277,11 @@ on demand (open / Rescan) rather than per frame.
 
 **Download missing ROMs.** The button fetches the Apple II dumps POM2
 actually probes. **Primary source** *(2026-10-29)*: POM2's own archive,
-`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_roms_202610/pom2_roms.zip>
+`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_firm/pom2_firm.zip>
+(item `pom2_firm` since 2026-11-01 — the first item, `pom2_roms_202610`, and
+the test-media item `pom2_testmedia_20261029` both went dark on 2026-10-31;
+both were rebuilt from the tree, `tools/fetch_test_media.py` now reads
+`pom2_media_202611`)
 — one zip, downloaded once per run, each dump at `roms/<probed name>`
 (`romArchiveMember`). It is not trusted, only checked: every member passes
 the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per
@@ -10291,7 +10295,7 @@ was used instead" — and a page served as the zip is deleted with the run's
 scratch dir, never reused (pinned by `rom_fetch_archive_down`, whose
 `RomFetchSources::download` plays the servers). `fetchMissingRoms(...,
 RomFetchSources)` can restrict a run to one source; `rom_fetch_live_probe` downloads the whole catalogue
-from each ALONE (2026-10-29: 49/49 from each). Entries with a null `url` are **import-only** (`romDownloadable` false: the
+from each ALONE (2026-10-29: 49/49 from each). Entries whose `url` IS the archive are **archive-only** (`romArchiveOnly`: the CCS 7710 PROMs and the DAN ][ EPROM, which RetroBIOS has no copy of — the archive's member serves them and no fallback is asked). Entries with a null `url` would be **import-only** (`romDownloadable` false — none since 2026-11-01: the
 CCS 7710 PROMs, the DAN ][ EPROM): identified by RomImport, listed in ROM
 Status, never planned by `romsToFetch()`. The mapping lives in `romFetchCatalog()` — every
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`

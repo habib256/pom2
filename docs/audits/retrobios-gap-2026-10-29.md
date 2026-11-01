@@ -56,7 +56,8 @@ the pinned URLs die with it, and `main` cannot replace them.
 ## Decision (2026-10-29)
 
 POM2's own archive, <https://archive.org/details/pom2_roms_202610> (`pom2_roms.zip`,
-all 49 catalogue entries as `roms/<probed name>`), is the **primary** source;
+all 49 catalogue entries as `roms/<probed name>`), is the **primary** source
+(2026-11-01: that item went dark; the archive is now `pom2_firm`, same layout);
 RetroBIOS at the pin is the per-entry **fallback**. `rom_fetch_live_probe`
 downloads the whole catalogue from each source alone: 49/49 from both.
 

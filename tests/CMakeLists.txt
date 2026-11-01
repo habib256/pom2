@@ -9741,7 +9741,8 @@ target_include_directories(test_rom_fetch_archive_down PRIVATE ${CMAKE_SOURCE_DI
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_rom_fetch_archive_down PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
-add_test(NAME rom_fetch_archive_down COMMAND test_rom_fetch_archive_down)
+add_test(NAME rom_fetch_archive_down COMMAND test_rom_fetch_archive_down
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})   # builds the archive's zip from roms/
 set_tests_properties(rom_fetch_archive_down PROPERTIES TIMEOUT 30)
 
 # ROM import by content: a dump the user has, whatever its name or a MAME

@@ -22,23 +22,14 @@ ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
-  $'videx_videoterm_boot\t*' \
-  $'softcard2_card\t*' \
-  $'applicard_card\t*' \
-  $'videx_ultraterm\t*' \
-  $'premium_softcard\t*' \
-  $'a2audit\t*' \
-  $'mb_audit\t*' \
-  $'saturn_card\t*' )
-# softcard2_card's boot half needs Microsoft's CP/M 2.28B for the SoftCard II
-# (disks_5.4/dsk/softcard2_cpm228b.dsk), which is not in the test-media
-# archive yet; its unit half (latches, boot mode, pace, snapshot) still runs.
-# Same for applicard_card (PCPI's boot disk + roms/applicard_v9.bin),
-# videx_ultraterm (its two ROMs) and premium_softcard (Microsoft's CP/M 2.25
-# and 2.26), a2audit and mb_audit (the a2audit and mb-audit v1.61 disks),
-# saturn_card (Saturn's 1982 software disk, for RAMTEST128K).
-# The ROMs are in RetroBIOS (the app downloads them) but not in
-# the test-media archive. Drop each line when its media join the archive.
+  $'videx_videoterm_boot\t*' )
+# Since 2026-11-01 the test-media archive (pom2_media_202611) carries every disk and
+# ROM the suite opens — the SoftCard II's CP/M 2.28B, the Applicard's boot
+# disk and ROM, the UltraTerm's ROMs, the Premium SoftCard's CP/M 2.25 and
+# 2.26, the a2audit and mb-audit disks, Saturn's software disk — so
+# softcard2_card, applicard_card, videx_ultraterm, premium_softcard, a2audit,
+# mb_audit and saturn_card may not skip any more. A new medium goes into the
+# archive AND tools/test_media.sha256, not into this list.
 # videx_videoterm_boot is the one ROM-gated test whose dumps are deliberately
 # NOT in the tree: the Videoterm firmware and character ROMs are third-party
 # and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending

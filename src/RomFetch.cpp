@@ -331,21 +331,23 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "chs_5604.bin", nullptr, 0x3FB4E90Au, "MAME a2ultrme",
           "cbbfd3d07be729795d2b5a2bcdb1f1daf01af945f2f80430a5666bb7f0fedcd0", 0u },
 
-        // ── Import-only: probed by a card, no source to download from ──
-        // The CCS 7710's PROMs and the DAN ][ EPROM: neither RetroBIOS nor
-        // (as of 2026-10-31, the item being dark) POM2's archive serves
-        // them, and both cards run POM2's own page without them. Listed so
-        // a dropped dump is identified and installed under the name the
-        // card probes; `url` null keeps them out of romsToFetch(), so the
-        // first-launch offer and "Download missing" never count them.
+        // ── Archive-only: probed by a card, RetroBIOS has no copy ──────
+        // The CCS 7710's PROMs and the DAN ][ EPROM come from POM2's
+        // archive alone (pom2_firm, 2026-11-01): `url` is the archive and
+        // `zipMember` the member romArchiveMember() names, so the primary
+        // path serves them like any entry and the fetch loop asks nothing
+        // else for them (romArchiveOnly). Both cards run POM2's own page
+        // without them, and a dropped dump is still identified and
+        // installed under the name the card probes. From 2026-10-31 to
+        // 2026-11-01 (the first item dark) they were import-only, url null.
         { "roms/ccs7710_03h.u5", "CCS 7710 PROM 7710-03 (high, U5)", 256,
-          nullptr, nullptr, nullptr, 0xA2CDB6BDu, "CCS 7710-03",
+          kPom2RomArchiveUrl, "roms/ccs7710_03h.u5", nullptr, 0xA2CDB6BDu, "CCS 7710-03",
           "1e303244535c4f00f2c6758ab4c9416414e5228639921a5b1b3277ccea529bf3", 0u },
         { "roms/ccs7710_03l.u6", "CCS 7710 PROM 7710-03 (low, U6)", 256,
-          nullptr, nullptr, nullptr, 0x18E3983Fu, "CCS 7710-03",
+          kPom2RomArchiveUrl, "roms/ccs7710_03l.u6", nullptr, 0x18E3983Fu, "CCS 7710-03",
           "1af47c6f8c45af30483fd84bae77994583753a0268ca43c2c8f5b45fa4b4a04e", 0u },
         { "roms/dan2_eprom.bin", "DAN ][ Controller EPROM", 512,
-          nullptr, nullptr, nullptr, 0xB1C3860Fu, "ThorstenBr DAN ][",
+          kPom2RomArchiveUrl, "roms/dan2_eprom.bin", nullptr, 0xB1C3860Fu, "ThorstenBr DAN ][",
           "c64413319243ecab3e2a93a9f5e93702d372b32dd265fa13d45c38298a3a2130", 0u },
 
         // ── Reference dumps (no POM2 card reads them yet) ─────────────
@@ -949,6 +951,11 @@ bool romDownloadable(const RomFetchEntry& e)
     return e.url && *e.url;
 }
 
+bool romArchiveOnly(const RomFetchEntry& e)
+{
+    return e.url && std::strcmp(e.url, kPom2RomArchiveUrl) == 0;
+}
+
 std::vector<const RomFetchEntry*> romsToFetch(
     const std::function<bool(const char* destRel)>& present)
 {
@@ -1167,6 +1174,10 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
 
         bool ok = false;
         const char* from = "the POM2 archive";
+        // An archive-only entry has no second source: with the archive down
+        // its error is the archive's, and RetroBIOS is not asked for it.
+        const bool archiveOnly = romArchiveOnly(*e);
+        if (archiveZip.empty() && archiveOnly) err = archiveDown;
         if (!archiveZip.empty()) {
             // Same gates as a RetroBIOS download: a member that is absent, or
             // is not the dump the catalogue names, is fetched from RetroBIOS.
@@ -1178,7 +1189,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                 log().warn("ROM", std::string("POM2 archive: ") + e->destRel +
                            ": " + err + " — trying RetroBIOS");
         }
-        if (!ok && sources.retroBios) {
+        if (!ok && sources.retroBios && !archiveOnly) {
             from = "RetroBIOS";
             err.clear();
             backup.clear();

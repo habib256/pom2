@@ -10,6 +10,43 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — Both archive.org items dark: `pom2_firm` and `pom2_media_202611` rebuilt from the tree
+
+On 2026-10-31 archive.org darkened `pom2_roms_202610` (the zip the ROM
+download fetches) and, hours later, `pom2_testmedia_20261029` (the zip
+`tools/fetch_test_media.py` restores a clone's ROMs and test disks from):
+both answer 403 with an HTML page, so "Download missing ROMs" ran on
+RetroBIOS alone and every CI job was about to fail its fetch step. Two new
+items replace them, built from the tree and verified before upload:
+
+- **`pom2_firm.zip`** — every file of `roms/` as `roms/<probed name>`, the
+  archive's layout (`romArchiveMember`). 63 dumps; the 57 catalogue entries
+  are checked against the catalogue's SHA-256 before the zip is called done.
+  `kPom2RomArchiveUrl` now names it.
+- **`pom2_media.zip`** — the 72 files of the previous manifest, the 63 ROMs,
+  and the **seven disks the suite opened but CI never had**: the SoftCard
+  II's CP/M 2.28B, the Applicard's CP/M 2.2, the Premium SoftCard's CP/M
+  2.25 and 2.26, a2audit, mb-audit v1.61 and Saturn's 1982 software disk.
+  `tools/test_media.sha256` lists all 91; `fetch_test_media.py --zip` restores
+  an empty tree from it with 0 problems. `softcard2_card`, `applicard_card`,
+  `videx_ultraterm`, `premium_softcard`, `a2audit`, `mb_audit` and
+  `saturn_card` left `check_ctest_skips.sh`'s allow-list: all seven pass
+  with no SKIP line where the media are, so a skip in CI is a finding again.
+- **The CCS 7710 PROMs and the DAN ][ EPROM are archive-only, not
+  import-only.** Hunt D (2026-10-31) made them import-only because no source
+  served them; `pom2_firm` does. Their `url` is the archive itself and their
+  `zipMember` the member the archive holds, so the primary path serves them
+  like any entry; `romArchiveOnly()` keeps the fetch loop from asking
+  RetroBIOS — or the archive again, as its own "fallback" — when the archive
+  is down. Pinned by `rom_fetch_archive_down`, which gained an **up** shape:
+  it builds the archive's zip from the tree's `roms/` and expects all 57 to
+  install from it, the three included, with RetroBIOS never asked (and the
+  "asked once per run" check fails, 4 asks, if the fallback skip is removed).
+
+Reading an archive.org item: `https://archive.org/metadata/<item>` returns
+`{}` for one that does not exist and `is_dark: true` for one taken down; the
+zip URL alone cannot tell the two apart (403 both ways).
+
 ## 2026-11-01 — The nightly, again: a `~uint8_t` shifted left in the TMS9918's sprite-clone mask
 
 The ASan/UBSan leg on 29370d30 failed `ezcolor_card` with

@@ -28,8 +28,9 @@ import time
 import urllib.request
 import zipfile
 
-DEFAULT_URL = ("https://archive.org/download/pom2_testmedia_20261029/"
-               "pom2_testmedia.zip")
+# Item pom2_media_202611 since 2026-11-01: pom2_testmedia_20261029 went dark.
+DEFAULT_URL = ("https://archive.org/download/pom2_media_202611/"
+               "pom2_media.zip")
 
 
 def read_manifest(path):

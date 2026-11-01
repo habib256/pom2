@@ -79,7 +79,7 @@ ships. The source repository has no ROM either (see [Build it](#build-it)).
 
 If a ROM is missing or damaged, **Help → ROM Status** says which one, and
 **Download missing ROMs** fetches it from POM2's
-[ROM archive](https://archive.org/details/pom2_roms_202610) on archive.org, with
+[ROM archive](https://archive.org/details/pom2_firm) on archive.org, with
 the [RetroBIOS](https://github.com/Abdess/retrobios) collection as a
 fallback. POM2 checks every downloaded file's size and SHA-256 before
 installing it.
@@ -194,7 +194,7 @@ cmake --build build --parallel 3
 
 The repository carries no copyrighted ROM or third-party disk image.
 `tools/fetch_test_media.py` downloads the ROMs and the disks the tests use
-from POM2's [test-media archive](https://archive.org/details/pom2_testmedia_20261029),
+from POM2's [test-media archive](https://archive.org/details/pom2_media_202611),
 checking every file against `tools/test_media.sha256`; skip it and the
 first launch offers the ROM download instead.
 

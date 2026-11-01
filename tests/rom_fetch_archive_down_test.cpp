@@ -1,24 +1,34 @@
 // POM2 — GPL-3.0-or-later
-// rom_fetch_archive_down — "Download missing ROMs" when POM2's archive on
-// archive.org is gone (2026-10-31: both items dark; the zip URL answers 403
-// with a 4.8 KB HTML page — curl -f reports it as exit 56 over HTTP/2). No
-// network: RomFetchSources::download plays the servers, in two shapes —
+// rom_fetch_archive_down — "Download missing ROMs" against POM2's archive
+// on archive.org, with no network: RomFetchSources::download plays the
+// servers, in three shapes —
 //
-//   403   the archive refuses (the error curl's wrapper reports);
-//   html  the archive answers 200 with a web page, saved as pom2_roms.zip.
+//   403   the archive refuses (2026-10-31: both items dark; the zip URL
+//         answers 403 with a 4.8 KB HTML page — curl -f reports it as exit
+//         56 over HTTP/2), the error curl's wrapper reports;
+//   html  the archive answers 200 with a web page, saved as pom2_firm.zip;
+//   up    the archive serves pom2_firm.zip, built here from the tree's
+//         roms/ in the archive's layout (every catalogue entry at
+//         "roms/<probed name>"), when the tree holds every dump.
 //
-// RetroBIOS answers 404 to everything, so nothing installs. Checked: every
-// downloadable entry is attempted on its own (the fallback runs per entry),
-// the summary names the archive as unavailable — not only the first entry's
-// error — and no page is kept as a zip to be reused by the next run.
+// Down, RetroBIOS answers 404 to everything, so nothing installs. Checked:
+// every downloadable entry is attempted on its own (the fallback runs per
+// entry), the summary names the archive as unavailable — not only the first
+// entry's error — no page is kept as a zip to be reused by the next run, and
+// an archive-only entry (the CCS 7710 PROMs, the DAN ][ EPROM) does not ask
+// the archive again as its own "fallback". Up, every entry installs from the
+// archive, the archive-only ones included, and RetroBIOS is never asked.
 
 #include "RomFetch.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -29,6 +39,63 @@ int g_fail = 0;
 void expect(bool ok, const std::string& what)
 {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", what.c_str()); ++g_fail; }
+}
+
+std::vector<std::uint8_t> readFile(const fs::path& p)
+{
+    std::ifstream f(p, std::ios::binary);
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+}
+
+std::uint32_t crc32Of(const std::vector<std::uint8_t>& b)
+{
+    std::uint32_t c = 0xFFFFFFFFu;
+    for (std::uint8_t x : b) {
+        c ^= x;
+        for (int k = 0; k < 8; ++k) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+/// A stored-only PKZIP archive in pom2_firm.zip's layout (rom_import builds
+/// the same shape; RomFetch's reader takes stored and deflated members).
+std::vector<std::uint8_t> buildZip(
+    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>>& entries)
+{
+    std::vector<std::uint8_t> out, cdir;
+    auto p16 = [](std::vector<std::uint8_t>& v, std::uint32_t x) {
+        v.push_back(static_cast<std::uint8_t>(x));
+        v.push_back(static_cast<std::uint8_t>(x >> 8));
+    };
+    auto p32 = [&](std::vector<std::uint8_t>& v, std::uint32_t x) {
+        p16(v, x & 0xFFFF); p16(v, x >> 16);
+    };
+    for (const auto& [name, plain] : entries) {
+        const std::uint32_t off = static_cast<std::uint32_t>(out.size());
+        const std::uint32_t crc = crc32Of(plain);
+        const auto sz = static_cast<std::uint32_t>(plain.size());
+        p32(out, 0x04034B50u); p16(out, 20); p16(out, 0); p16(out, 0);
+        p16(out, 0); p16(out, 0); p32(out, crc); p32(out, sz); p32(out, sz);
+        p16(out, static_cast<std::uint32_t>(name.size())); p16(out, 0);
+        out.insert(out.end(), name.begin(), name.end());
+        out.insert(out.end(), plain.begin(), plain.end());
+
+        p32(cdir, 0x02014B50u); p16(cdir, 20); p16(cdir, 20); p16(cdir, 0);
+        p16(cdir, 0); p16(cdir, 0); p16(cdir, 0); p32(cdir, crc);
+        p32(cdir, sz); p32(cdir, sz);
+        p16(cdir, static_cast<std::uint32_t>(name.size()));
+        p16(cdir, 0); p16(cdir, 0); p16(cdir, 0); p16(cdir, 0); p32(cdir, 0);
+        p32(cdir, off);
+        cdir.insert(cdir.end(), name.begin(), name.end());
+    }
+    const std::uint32_t cdOff = static_cast<std::uint32_t>(out.size());
+    out.insert(out.end(), cdir.begin(), cdir.end());
+    p32(out, 0x06054B50u); p16(out, 0); p16(out, 0);
+    p16(out, static_cast<std::uint32_t>(entries.size()));
+    p16(out, static_cast<std::uint32_t>(entries.size()));
+    p32(out, static_cast<std::uint32_t>(cdir.size())); p32(out, cdOff); p16(out, 0);
+    return out;
 }
 
 bool anyFile(const fs::path& dir)
@@ -43,6 +110,18 @@ bool anyFile(const fs::path& dir)
 
 int main()
 {
+    // The archive's zip, from the tree the test runs in (ctest: the source
+    // dir), before the sandbox moves away from it. Missing dumps leave the
+    // "up" shape out, with a line saying so; CI's tree holds them all.
+    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> members;
+    std::vector<std::string> absent;
+    for (const auto& e : pom2::romFetchCatalog()) {
+        const fs::path p = fs::path(e.destRel);
+        if (fs::exists(p)) members.emplace_back(pom2::romArchiveMember(e), readFile(p));
+        else absent.push_back(e.destRel);
+    }
+    const std::vector<std::uint8_t> archiveZip = buildZip(members);
+
     const fs::path root = fs::temp_directory_path() / "pom2_rom_fetch_archive_down";
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -64,11 +143,17 @@ int main()
     }
 
     std::vector<std::string> asked;
-    bool html = false;
+    bool html = false, up = false;
     pom2::RomFetchSources src;
     src.download = [&](const std::string& url, const fs::path& dest, std::string& err) {
         asked.push_back(url);
         if (url.find("archive.org") != std::string::npos) {
+            if (up) {
+                std::ofstream f(dest, std::ios::binary);
+                f.write(reinterpret_cast<const char*>(archiveZip.data()),
+                        static_cast<std::streamsize>(archiveZip.size()));
+                return true;
+            }
             if (html) {
                 std::ofstream(dest) << "<!DOCTYPE html><html><body>Item not available</body></html>";
                 return true;                       // curl -f: a 200 is a success
@@ -104,6 +189,36 @@ int main()
         expect(archive == 1, std::string(mode) + ": the archive asked once per run (" +
                                  std::to_string(archive) + ")");
         expect(retro >= 1, std::string(mode) + ": the RetroBIOS fallback ran");
+    }
+
+    // The archive up: every entry from it, the archive-only ones included,
+    // RetroBIOS never asked. (A member absent from the zip would go to
+    // RetroBIOS — hence the whole catalogue or nothing.)
+    if (absent.empty()) {
+        html = false; up = true;
+        asked.clear();
+        const fs::path dest = root / "roms-up";
+        const auto r = pom2::fetchMissingRoms(dest, {}, {}, src);
+        std::printf("[up] %s\n", r.summary.c_str());
+        expect(r.failed == 0 && r.saved == static_cast<int>(downloadable),
+               "up: every entry installed from the archive (" + std::to_string(r.saved) + "/" +
+                   std::to_string(downloadable) + ", " + std::to_string(r.failed) + " failed)");
+        expect(r.fromArchive == r.saved && r.fromRetroBios == 0,
+               "up: all counted as from the archive, none from RetroBIOS");
+        expect(r.summary.find("unavailable") == std::string::npos, "up: the summary does not call the archive down");
+        int archive = 0, retro = 0;
+        for (const auto& u : asked) (u.find("archive.org") != std::string::npos ? archive : retro) += 1;
+        expect(archive == 1, "up: the archive asked once (" + std::to_string(archive) + ")");
+        expect(retro == 0, "up: RetroBIOS never asked (" + std::to_string(retro) + ")");
+        for (const auto& e : pom2::romFetchCatalog()) {
+            if (!pom2::romArchiveOnly(e)) continue;
+            const fs::path f = dest / fs::path(e.destRel).filename();
+            expect(fs::exists(f) && fs::file_size(f) == e.expectedSize,
+                   std::string("up: archive-only dump installed: ") + e.destRel);
+        }
+    } else {
+        std::printf("rom_fetch_archive_down: 'up' shape left out, %zu dump(s) absent from the tree (first: %s)\n",
+                    absent.size(), absent.front().c_str());
     }
 
     fs::current_path(fs::temp_directory_path(), ec);

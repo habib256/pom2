@@ -289,8 +289,8 @@ int main()
 
     expect(!cat.empty(), "catalog is not empty");
     // The primary source: an HTTPS archive.org download, and every entry's
-    // member is "roms/" + the name POM2 probes — the layout of pom2_roms.zip.
-    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_roms_202610/", 0) == 0,
+    // member is "roms/" + the name POM2 probes — the layout of pom2_firm.zip.
+    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_firm/", 0) == 0,
            "the POM2 archive is an HTTPS archive.org download");
     for (const auto& e : pom2::romFetchCatalog()) {
         const std::string m = pom2::romArchiveMember(e);
@@ -306,13 +306,18 @@ int main()
         expect(e.destRel && *e.destRel, "every entry has a destRel");
         expect(e.label && *e.label, std::string("label for ") +
                (e.destRel ? e.destRel : "?"));
-        // Import-only entries (no source serves them) are named here, so an
-        // entry cannot lose its URL by accident.
-        static const std::set<std::string> importOnly = {
+        // Archive-only entries (RetroBIOS has no copy) are named here, so an
+        // entry cannot lose its URL by accident, nor gain a RetroBIOS one
+        // that 404s; their member is the one the archive serves.
+        static const std::set<std::string> archiveOnly = {
             "roms/ccs7710_03h.u5", "roms/ccs7710_03l.u6", "roms/dan2_eprom.bin" };
-        const bool noSource = e.destRel && importOnly.count(e.destRel);
-        expect(noSource ? !pom2::romDownloadable(e) : (e.url && *e.url),
-               std::string("url for ") + (e.destRel ? e.destRel : "?"));
+        const bool fromArchiveOnly = e.destRel && archiveOnly.count(e.destRel) != 0;
+        expect(e.url && *e.url, std::string("url for ") + (e.destRel ? e.destRel : "?"));
+        expect(pom2::romArchiveOnly(e) == fromArchiveOnly,
+               std::string("archive-only iff listed: ") + (e.destRel ? e.destRel : "?"));
+        if (fromArchiveOnly)
+            expect(e.zipMember && pom2::romArchiveMember(e) == e.zipMember,
+                   std::string("archive-only member is the archive's: ") + e.destRel);
         expect(e.expectedSize > 0, std::string("size for ") +
                (e.destRel ? e.destRel : "?"));
         if (e.destRel) {
@@ -324,7 +329,7 @@ int main()
             expect(std::string(e.destRel).rfind("roms/", 0) == 0,
                    std::string(e.destRel) + " lives under roms/");
         }
-        if (e.url) {
+        if (e.url && !pom2::romArchiveOnly(e)) {
             const std::string url(e.url);
             expect(url.rfind(pom2::kRetroBiosRawPrefix, 0) == 0,
                    std::string("url is under the RetroBIOS raw prefix: ") +
@@ -423,6 +428,7 @@ int main()
         int zipped = 0;
         for (const auto& e : cat) {
             if (!e.zipMember) continue;
+            if (pom2::romArchiveOnly(e)) continue;   // its zip IS the archive, by construction
             ++zipped;
             const std::string d(e.destRel);
             expect(d == "roms/mouse_341-0270-c.bin" ||
@@ -446,7 +452,7 @@ int main()
                                "Videoterm dumps, the Slinky, the Applicard "
                                "and the four UltraTerm dumps, not ") + d);
         }
-        expect(zipped == 15, "exactly fifteen entries unpack a zip");
+        expect(zipped == 15, "exactly fifteen entries unpack a RetroBIOS zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +
@@ -587,8 +593,8 @@ int main()
         const auto all = pom2::romsToFetch([](const char*) { return false; });
         std::size_t downloadable = 0;
         for (const auto& e : cat) downloadable += pom2::romDownloadable(e) ? 1 : 0;
-        expect(all.size() == downloadable && downloadable + 3 == cat.size(),
-               "missing-everything queues the downloadable catalog, not the 3 import-only dumps");
+        expect(all.size() == downloadable && downloadable == cat.size(),
+               "missing-everything queues the whole catalog (the archive-only dumps included)");
         for (const auto* e : all) expect(pom2::romDownloadable(*e), "no import-only entry is fetched");
     }
     {
