@@ -37,6 +37,8 @@
 #include <mutex>
 #include <utility>
 #include <vector>
+#include <cstdint>
+#include <map>
 
 namespace pom2 {
 
@@ -410,6 +412,66 @@ bool mountSmartPortUnit(EmulationController& ctrl, SmartPortUnit& unit,
         },
         [&unit] { return unit.lastError(); },
         [&unit](const std::string& p) { return unit.loadImage(p); });
+}
+
+namespace {
+
+/// Slack for the blocks the guest dirties between phase 0 and the capture;
+/// 1 MiB, touched unlocked, is cheap. A capture that still outgrows it
+/// reallocates, as every capture used to.
+constexpr std::uint32_t kPrefaultSlackBlocks = 2048;
+
+std::vector<std::uint8_t> touchedBuffer(std::uint32_t blocks)
+{
+    if (blocks == 0) return {};
+    const std::size_t bytes =
+        (static_cast<std::size_t>(blocks) + kPrefaultSlackBlocks) *
+        Block512Backing::kBlockBytes;
+    // resize() writes every byte, which is the point: the pages fault in
+    // here, with no lock held, and the capture under the lock only copies.
+    std::vector<std::uint8_t> buffer;
+    buffer.resize(bytes);
+    return buffer;
+}
+
+}  // namespace
+
+std::vector<std::uint8_t> prefaultCaptureBuffer(EmulationController& ctrl,
+                                                int slot, int bay)
+{
+    std::uint32_t blocks = 0;
+    {
+        auto st = ctrl.lockState();
+        auto* media = dynamic_cast<MountableMediaCard*>(
+            st.memory().slotBus().peripheral(slot));
+        if (!media || bay < 0 || bay >= media->bayCount()) return {};
+        const MediaBayInfo info = media->bayInfo(bay);
+        if (!info.hasUnsavedChanges) return {};
+        blocks = info.unsavedBlocks;
+    }
+    return touchedBuffer(blocks);
+}
+
+std::map<std::pair<int, int>, std::vector<std::uint8_t>>
+prefaultCaptureBuffers(EmulationController& ctrl)
+{
+    std::vector<std::pair<std::pair<int, int>, std::uint32_t>> dirty;
+    {
+        auto st = ctrl.lockState();
+        auto& bus = st.memory().slotBus();
+        for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
+            auto* media = dynamic_cast<MountableMediaCard*>(bus.peripheral(slot));
+            if (!media) continue;
+            for (int bay = 0; bay < media->bayCount(); ++bay) {
+                const MediaBayInfo info = media->bayInfo(bay);
+                if (info.hasUnsavedChanges && info.unsavedBlocks)
+                    dirty.push_back({{slot, bay}, info.unsavedBlocks});
+            }
+        }
+    }
+    std::map<std::pair<int, int>, std::vector<std::uint8_t>> buffers;
+    for (const auto& [key, blocks] : dirty) buffers[key] = touchedBuffer(blocks);
+    return buffers;
 }
 
 } // namespace pom2

@@ -114,6 +114,7 @@ public:
         info.hasUnsavedChanges = hasUnsavedChanges();
         info.supportsWriteBack = canWriteBack();
         if (auto* backing = blockBacking()) {
+            info.unsavedBlocks    = backing->dirtyBlockCount();
             info.persistenceState = backing->persistenceState();
             info.persistenceError = backing->persistenceError();
             info.mountId          = backing->mountId();

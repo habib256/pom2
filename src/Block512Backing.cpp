@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <utility>
 
 namespace pom2 {
 
@@ -446,9 +447,10 @@ bool Block512Backing::saveDirty()
     return true;
 }
 
-Block512Backing::PendingWriteBack Block512Backing::takeDetachWriteBack()
+Block512Backing::PendingWriteBack
+Block512Backing::takeDetachWriteBack(std::vector<uint8_t> scratch)
 {
-    PendingWriteBack out = takeWriteBack();
+    PendingWriteBack out = takeWriteBack(std::move(scratch));
     if (out.valid) {
         out.reservation    = std::make_shared<const int>(0);
         detachReservation_ = out.reservation;
@@ -456,7 +458,8 @@ Block512Backing::PendingWriteBack Block512Backing::takeDetachWriteBack()
     return out;
 }
 
-Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
+Block512Backing::PendingWriteBack
+Block512Backing::takeWriteBack(std::vector<uint8_t> scratch)
 {
     PendingWriteBack out;
     // `isMediumLocked()`, not `isWriteProtected()`: the notch can be flipped
@@ -499,12 +502,35 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
         out.nameMap      = nameMap_;
     } else {
         // The file case only needs the blocks that actually changed, which
-        // is normally a handful even on a 32 MiB image.
-        out.dirtyBytes.resize(out.dirtyIndices.size() * kBlockBytes);
-        for (size_t i = 0; i < out.dirtyIndices.size(); ++i) {
-            std::memcpy(out.dirtyBytes.data() + i * kBlockBytes,
-                        image_.data() + out.dirtyIndices[i] * kBlockBytes,
-                        kBlockBytes);
+        // is normally a handful even on a 32 MiB image. When it is NOT a
+        // handful — a volume copy or a format dirties most of the 65536 —
+        // the cost here is not the memcpy but the FRESH allocation it used
+        // to land in: 30 MiB of pages first touched with `stateMutex` held,
+        // 3-5 ms on a desktop and 33 ms on a CI virtual machine
+        // (storage_lock_budget D, 2026-11-01). A caller with an unlocked
+        // phase 0 hands in a buffer it already sized and touched
+        // (`pom2::prefaultCaptureBuffer`, MediaMount.h): used as is when it
+        // is large enough — a shrink frees nothing and faults nothing. Too
+        // small (the guest dirtied more blocks since phase 0), or absent,
+        // it grows here, which is the old cost for the rare case.
+        out.dirtyBytes = std::move(scratch);
+        const size_t needed = out.dirtyIndices.size() * kBlockBytes;
+        if (out.dirtyBytes.size() != needed) out.dirtyBytes.resize(needed);
+        // Contiguous runs copy in one memcpy each: a whole-volume dirty
+        // set is one call, not 60000.
+        size_t i = 0, off = 0;
+        while (i < out.dirtyIndices.size()) {
+            size_t j = i + 1;
+            while (j < out.dirtyIndices.size() &&
+                   out.dirtyIndices[j] == out.dirtyIndices[j - 1] + 1)
+                ++j;
+            const size_t bytes = (j - i) * kBlockBytes;
+            std::memcpy(out.dirtyBytes.data() + off,
+                        image_.data() +
+                            static_cast<size_t>(out.dirtyIndices[i]) * kBlockBytes,
+                        bytes);
+            off += bytes;
+            i = j;
         }
     }
 
@@ -515,6 +541,13 @@ Block512Backing::PendingWriteBack Block512Backing::takeWriteBack()
     std::fill(dirtyBlocks_.begin(), dirtyBlocks_.end(), false);
     anyDirty_ = false;
     return out;
+}
+
+uint32_t Block512Backing::dirtyBlockCount() const
+{
+    if (!anyDirty_) return 0;
+    return static_cast<uint32_t>(
+        std::count(dirtyBlocks_.begin(), dirtyBlocks_.end(), true));
 }
 
 void Block512Backing::restoreDirty(const std::vector<uint32_t>& indices)

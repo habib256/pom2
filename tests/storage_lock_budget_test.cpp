@@ -176,6 +176,12 @@ int main()
     // locked adopt wrote the outgoing image back — the one mount entry point
     // without flushOutgoingBay in front of it. 32 MiB, so the locked flush
     // it used to do is well past the floor on a fast SSD too (~70 ms).
+    // The 60 000 dirty blocks pin a second thing: the capture itself. Into a
+    // fresh 30 MiB vector, its page faults alone held the lock 3-5 ms here
+    // and 33 ms on a CI runner (the first red run); phase 0 now sizes and
+    // touches that buffer unlocked (`pom2::prefaultCaptureBuffer`), and the
+    // locked part is the memcpy. The exact reuse is pinned by
+    // two_phase_block_mount.
     const std::string huge  = writeImage(dir, "huge.hdv", 32 * MiB);
     const std::string huge2 = writeImage(dir, "huge2.hdv", 32 * MiB);
     {

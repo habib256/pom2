@@ -86,7 +86,7 @@ public:
         if (!(backing_.isLoaded() && backing_.hasUnsavedChanges() &&
               backing_.isWriteBackEnabled() && !backing_.isMediumLocked()))
             return true;                 // nothing to write: out stays invalid
-        out = backing_.takeDetachWriteBack();
+        out = backing_.takeDetachWriteBack(std::move(out.dirtyBytes));   // phase 0's buffer
         return true;
     }
     void     restoreDirtyBlocks(const std::vector<uint32_t>& indices) override

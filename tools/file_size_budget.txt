@@ -481,7 +481,11 @@ src/Memory.cpp                           2260
 # image is no longer saved under stateMutex (storage_lock_budget D). It
 # needs the file's own anonymous-namespace helper, so it lives here.
 #   src/StorageCoordinator.cpp: 2425 -> 2433 (+8)
-src/StorageCoordinator.cpp               2433
+# 2026-11-01 (CI): the five flush/eject drivers gain a phase 0 that hands
+# the capture a buffer touched off the lock (prefaultCaptureBuffer lives in
+# MediaMount.cpp; only the one-line hand-over per driver is here).
+#   src/StorageCoordinator.cpp: 2433 -> 2449 (+16)
+src/StorageCoordinator.cpp               2449
 # 2026-10-31: src/TMS9918.cpp is POM1's TMS9918 VDP (the same author's
 # Apple-1 emulator), imported nearly verbatim for the E-Z Color card so the
 # two copies can be kept in sync. Splitting it here would break that diff;

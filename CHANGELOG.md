@@ -10,6 +10,40 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — The flush capture lands in a buffer touched off the lock
+
+The first CI run of the day's six hunts was red on `storage_lock_budget`
+alone, on the macOS runner, the coverage leg and the ASan leg: the new
+32 MiB case — a SmartPort panel mount over a unit with 60 000 dirty blocks —
+measured **33 ms** of `stateMutex` against the 20 ms floor, where this
+machine measures 3-5 ms. No file I/O was left under the lock; what was left
+was the capture. `Block512Backing::takeWriteBack` copies the dirty blocks
+into a fresh `std::vector`, and for a volume copy or a format that is
+30 MiB of pages first touched with the lock held — the memcpy itself is a
+fraction of it (a micro-benchmark: 3.6 ms into a fresh buffer, 0.08 ms into
+a touched one). A CI virtual machine pays several times a desktop's price
+per page fault, which is why only the runners saw it.
+
+- **Phase 0, unlocked.** `pom2::prefaultCaptureBuffer(ctrl, slot, bay)`
+  (`MediaMount.h`) reads the bay's new `MediaBayInfo::unsavedBlocks`
+  (`Block512Backing::dirtyBlockCount()`) under a short lock, then sizes and
+  **touches** a buffer with none held, plus 1 MiB of slack for blocks the
+  guest dirties meanwhile. The five flush/eject drivers in
+  `StorageCoordinator` (`flushOutgoingBay`, the host-folder mount,
+  `ejectMediaBay`, `setMediaBayType`, `ejectAllMedia` through
+  `prefaultCaptureBuffers`) put it in `pending.dirtyBytes` before phase 1.
+- **The capture uses it.** `takeWriteBack` / `takeDetachWriteBack` take a
+  `scratch` vector; every `detachImage` / Liron capture hands
+  `out.dirtyBytes` through. Large enough, the payload IS that storage,
+  shrunk to the dirty set (no allocation, no faults); contiguous runs copy
+  as one memcpy. Too small or absent — the autosave on the CPU worker has
+  no unlocked phase and keeps the old shape — it grows, the old cost for
+  the rare case.
+- Pinned by `two_phase_block_mount` (`testCaptureReusesPrefaultedBuffer`:
+  the payload's `data()` is the handed-in buffer's, a too-small one is
+  grown correctly, the no-scratch path round-trips through the commit) and
+  the 32 MiB case of `storage_lock_budget`.
+
 ## 2026-11-01 — Bug hunt: audio and the sound chips
 
 mb-audit v1.61 still passes everything (Mockingboard A/C, Sound II + SSI263,

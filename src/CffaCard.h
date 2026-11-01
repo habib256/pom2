@@ -82,7 +82,7 @@ public:
         if (!(b.isLoaded() && b.hasUnsavedChanges() &&
               b.isWriteBackEnabled() && !b.isMediumLocked()))
             return true;
-        out = b.takeDetachWriteBack();
+        out = b.takeDetachWriteBack(std::move(out.dirtyBytes));   // phase 0's buffer
         return true;
     }
     void restoreDirtyBlocks(const std::vector<uint32_t>& indices) override

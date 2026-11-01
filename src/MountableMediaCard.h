@@ -73,6 +73,12 @@ struct MediaBayInfo
     /// warning about before pulling a bay — so the status bar's eject menu
     /// asks for it. Cards whose backing cannot report it leave it false.
     bool        hasUnsavedChanges = false;
+    /// How many 512-byte blocks `hasUnsavedChanges` stands for, on a bay
+    /// with a block backing (0 elsewhere): the size of the payload
+    /// `prepareEjectBay` will capture. An UNLOCKED phase 0 sizes and
+    /// touches that buffer from it (`pom2::prefaultCaptureBuffer`), so the
+    /// locked capture allocates nothing.
+    uint32_t    unsavedBlocks     = 0;
     std::string persistenceState, persistenceError;
     // True when the user may CHOOSE the media kind for this bay (SmartPort
     // units: empty / 3.5" / HDV). Block cards have a fixed kind → false.

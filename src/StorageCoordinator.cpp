@@ -413,6 +413,9 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
+    // Phase 0, unlocked: the capture's buffer, sized and touched here so
+    // the locked phase 1 allocates nothing (MediaMount.h).
+    pending.dirtyBytes = prefaultCaptureBuffer(controller, slot, bay);
     {
         auto state = controller.lockState();
         auto* media = dynamic_cast<MountableMediaCard*>(
@@ -765,6 +768,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
     {
         Block512Backing::PendingWriteBack pending;
         bool twoPhase = false;
+        // Phase 0, unlocked (MediaMount.h).
+        pending.dirtyBytes = prefaultCaptureBuffer(controller, slot, bay);
         {
             auto state = controller.lockState();
             auto* media = dynamic_cast<MountableMediaCard*>(
@@ -887,6 +892,9 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
+    // Phase 0, unlocked: the capture's buffer, sized and touched here so
+    // the locked phase 1 allocates nothing (MediaMount.h).
+    pending.dirtyBytes = prefaultCaptureBuffer(controller, slot, bay);
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -1044,6 +1052,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
     // Same three critical sections as `ejectMediaBay` — the flush is a
     // whole-file rewrite plus an fsync, and CLAUDE.md forbids that under
     // `stateMutex`:
+    //   0. unlocked — size and touch the capture's buffer (MediaMount.h)
     //   1. locked   — validate, and MOVE the payload out (medium stays)
     //   2. unlocked — commit it; on failure put the captured dirty set back
     //                 and abort the type change entirely
@@ -1051,6 +1060,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
+    pending.dirtyBytes = prefaultCaptureBuffer(controller, slot, bay);
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -1587,6 +1597,10 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
     std::vector<PendingDiskII> diskII;
     std::vector<PendingBay>    bays;
 
+    // Phase 0, unlocked: a touched capture buffer per dirty block bay, so the
+    // one locked walk below allocates nothing (MediaMount.h).
+    auto prefaulted = prefaultCaptureBuffers(controller);
+
     {
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
@@ -1622,6 +1636,8 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
                 entry.is35  = bayHolds35(info);
                 entry.label = ejectAllBayLabel(peripheral, slot, bay);
                 std::string prepareError;
+                if (auto hit = prefaulted.find({slot, bay}); hit != prefaulted.end())
+                    entry.pending.dirtyBytes = std::move(hit->second);
                 entry.twoPhase =
                     media->prepareEjectBay(bay, entry.pending, prepareError);
                 if (!entry.twoPhase && !prepareError.empty()) {

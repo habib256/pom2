@@ -1418,6 +1418,7 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
     info.writeBackEnabled  = u->isWriteBackEnabled();
     info.hasUnsavedChanges = u->hasUnsavedChanges();
     if (auto* b = u->blockBacking()) {
+        info.unsavedBlocks    = b->dirtyBlockCount();
         info.persistenceState = b->persistenceState();
         info.persistenceError = b->persistenceError();
         info.mountId          = b->mountId();

@@ -496,6 +496,79 @@ void testRestoreDirtyAfterFailedCommit()
 
 }  // namespace
 
+// ── 7. The capture lands in the buffer phase 0 handed in ─────────────────
+// A flush or an eject captures the dirty blocks under `stateMutex`. The cost
+// of that capture was never the memcpy: it was the page faults of the fresh
+// vector it landed in — 30 MiB of them after a volume copy, 33 ms of the lock
+// on a CI runner (storage_lock_budget D, 2026-11-01). The unlocked phase 0
+// (`pom2::prefaultCaptureBuffer`) sizes and touches that buffer from
+// `dirtyBlockCount()` and hands it through `PendingWriteBack::dirtyBytes`;
+// this pins that the capture USES it — same storage, no allocation — when it
+// is large enough, and still captures correctly when it is not.
+void testCaptureReusesPrefaultedBuffer()
+{
+    const fs::path p = tmpPath("pom2_2pb_prefault.hdv");
+    writeFile(p, std::vector<uint8_t>(16 * kBlk, 0x00));
+
+    pom2::Block512Backing b;
+    assert(b.loadImage(p.string()));
+    b.setWriteBackEnabled(true);
+    assert(b.dirtyBlockCount() == 0);
+    const std::vector<uint32_t> written{3, 4, 5, 9};
+    for (uint32_t blk : written) {
+        std::vector<uint8_t> block(kBlk, static_cast<uint8_t>(0x10 + blk));
+        assert(b.writeBlock(blk, block.data()));
+    }
+    assert(b.dirtyBlockCount() == written.size());
+
+    const auto checkPayload = [&](const pom2::Block512Backing::PendingWriteBack& pending) {
+        assert(pending.valid);
+        assert(pending.dirtyIndices == written);
+        assert(pending.dirtyBytes.size() == written.size() * kBlk);
+        for (std::size_t k = 0; k < written.size(); ++k) {
+            const uint8_t fill = static_cast<uint8_t>(0x10 + written[k]);
+            for (std::size_t i = 0; i < kBlk; ++i)
+                assert(pending.dirtyBytes[k * kBlk + i] == fill);
+        }
+    };
+
+    // Large enough: the payload IS phase 0's buffer, shrunk to the dirty set.
+    {
+        std::vector<uint8_t> prefaulted(8 * kBlk, 0xEE);
+        const uint8_t* storage = prefaulted.data();
+        auto pending = b.takeDetachWriteBack(std::move(prefaulted));
+        checkPayload(pending);
+        assert(pending.dirtyBytes.data() == storage &&
+               "the capture allocated instead of using phase 0's buffer");
+        assert(b.dirtyBlockCount() == 0 && !b.hasUnsavedChanges());
+        b.restoreDirty(pending.dirtyIndices);   // as a failed commit would
+        assert(b.dirtyBlockCount() == written.size());
+    }
+    // Too small (the guest dirtied more since phase 0): grown, still right.
+    {
+        auto pending = b.takeDetachWriteBack(std::vector<uint8_t>(1 * kBlk));
+        checkPayload(pending);
+        b.restoreDirty(pending.dirtyIndices);
+    }
+    // None (the autosave, the inline save): the old behaviour, and the file
+    // round-trips through the normal commit.
+    {
+        auto pending = b.takeWriteBack();
+        checkPayload(pending);
+        std::string error;
+        assert(pom2::Block512Backing::commitWriteBack(std::move(pending), error));
+        const auto bytes = readFile(p);
+        for (uint32_t blk : written)
+            assert(bytes[blk * kBlk] == static_cast<uint8_t>(0x10 + blk) &&
+                   bytes[blk * kBlk + kBlk - 1] == static_cast<uint8_t>(0x10 + blk));
+        assert(bytes[2 * kBlk] == 0x00 && bytes[6 * kBlk] == 0x00);
+    }
+
+    std::printf("[ OK ] the capture lands in the buffer phase 0 handed in\n");
+    std::error_code ec;
+    fs::remove(p, ec);
+}
+
 int main()
 {
     testRawImageMatchesInlineLoad();
@@ -508,6 +581,7 @@ int main()
     testFailurePaths();
     testWritesDuringPendingWriteBackSurvive();
     testRestoreDirtyAfterFailedCommit();
+    testCaptureReusesPrefaultedBuffer();
     std::printf("two_phase_block_mount: all assertions passed\n");
     return 0;
 }

@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 namespace pom2 {
 
@@ -527,6 +528,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
         info.fileWriteProtected = blk.isWriteProtected();
         info.writeBackEnabled  = blk.isWriteBackEnabled();
         info.hasUnsavedChanges = blk.hasUnsavedChanges();
+        info.unsavedBlocks     = blk.dirtyBlockCount();
         info.supportsWriteBack = blk.canWriteBack();
         info.persistenceState  = blk.persistenceState();
         info.persistenceError  = blk.persistenceError();
@@ -687,7 +689,7 @@ bool LironCard::prepareEjectBay(int bay, Block512Backing::PendingWriteBack& out,
     Block512Backing& blk = blocks_[static_cast<std::size_t>(bay)];
     if (!blk.isLoaded()) return false;   // a 3.5" (or nothing): one-phase
     if (blk.hasUnsavedChanges() && blk.isWriteBackEnabled() && !blk.isMediumLocked())
-        out = blk.takeDetachWriteBack();
+        out = blk.takeDetachWriteBack(std::move(out.dirtyBytes));   // phase 0's buffer
     return true;
 }
 

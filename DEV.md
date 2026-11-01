@@ -3738,6 +3738,26 @@ because a failure has to be undoable:
   `DiskIICard::restoreEjected`, `restoreFlushBayDirty`. **A failed commit leaves
   the disk loaded and dirty**, so a retry loses nothing — it used to only log a
   line about a disk that was already gone.
+* **Phase 0, unlocked — the capture's buffer** *(2026-11-01)*. Phase 1's
+  capture copies the dirty blocks into `PendingWriteBack::dirtyBytes`, and
+  the cost of that copy was never the memcpy: it was the page faults of the
+  fresh vector it landed in. After a volume copy or a format most of a
+  32 MiB HDV is dirty, so that is 30 MiB of first-touched pages with
+  `stateMutex` held — 3-5 ms on a desktop, **33 ms on a CI virtual machine**
+  (`storage_lock_budget` D went red on the first run of the 2026-11-01
+  hunts). `pom2::prefaultCaptureBuffer(ctrl, slot, bay)` (`MediaMount.h`)
+  reads `MediaBayInfo::unsavedBlocks` under a short lock, then sizes and
+  **touches** a buffer with none held (1 MiB of slack for blocks the guest
+  dirties meanwhile); the driver puts it in `pending.dirtyBytes` before
+  phase 1 and `Block512Backing::takeWriteBack(scratch)` captures into it —
+  a shrink frees and faults nothing, and contiguous runs copy as one
+  memcpy. Too small or absent, the capture grows it, the old cost for the
+  rare case. `prefaultCaptureBuffers(ctrl)` does it for every dirty bay at
+  once for `ejectAllMedia`'s single locked walk. The autosave
+  (`pollWriteBack`, on the CPU worker) still captures into a fresh vector:
+  it has no unlocked phase to prepare one in. Pinned by
+  `two_phase_block_mount` (the payload IS the handed-in storage) and the
+  32 MiB case of `storage_lock_budget`.
 * **The drive is reserved while the payload lives** *(2026-09-16)*. Nothing
   stops another thread (the AI control server) from mounting into the drive
   between phases 1 and 3, and then a failed commit had nowhere to go and the

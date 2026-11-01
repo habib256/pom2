@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 
 namespace {
 
@@ -160,7 +161,7 @@ bool ProDOSHardDiskCard::detachDrive(int drive,
     if (!(b.isLoaded() && b.hasUnsavedChanges() &&
           b.isWriteBackEnabled() && !b.isMediumLocked()))
         return true;                     // nothing to write: out stays invalid
-    out = b.takeDetachWriteBack();
+    out = b.takeDetachWriteBack(std::move(out.dirtyBytes));   // phase 0's buffer
     return true;
 }
 
@@ -196,6 +197,7 @@ pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
     info.fileWriteProtected = b.isWriteProtected();
     info.writeBackEnabled  = b.isWriteBackEnabled();
     info.hasUnsavedChanges = b.hasUnsavedChanges();
+    info.unsavedBlocks     = b.dirtyBlockCount();
     info.supportsWriteBack = b.canWriteBack();
     info.persistenceState  = b.persistenceState();
     info.persistenceError  = b.persistenceError();

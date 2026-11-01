@@ -43,6 +43,9 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <map>
+#include <utility>
 
 class DiskIICard;
 class SlotBus;
@@ -181,6 +184,26 @@ bool mountBlockCard(EmulationController& ctrl, ProDOSBlockCard& card,
 /// inline `loadImage` for them rather than failing the mount.
 bool mountSmartPortUnit(EmulationController& ctrl, SmartPortUnit& unit,
                         const std::string& path, std::string& error);
+
+/// Phase 0 of a two-phase flush or eject, with NO lock held: the buffer the
+/// locked capture (`MountableMediaCard::prepareEjectBay` →
+/// `Block512Backing::takeWriteBack`) will fill, sized from the bay's
+/// `MediaBayInfo::unsavedBlocks` plus some slack and TOUCHED here, so its
+/// page faults happen while the machine runs. The capture into a fresh
+/// vector — 30 MiB of it after a volume copy or a format of a 32 MiB HDV —
+/// held `stateMutex` for 3-5 ms on a desktop and 33 ms on a CI virtual
+/// machine, the memcpy itself a fraction of that (storage_lock_budget D,
+/// 2026-11-01). Hand the result to phase 1 through
+/// `PendingWriteBack::dirtyBytes`. Empty when the bay has nothing to write
+/// or is not block-backed; a bay that dirtied more blocks meanwhile makes
+/// the capture grow it, which is the old cost for the rare case.
+std::vector<std::uint8_t> prefaultCaptureBuffer(EmulationController& ctrl,
+                                                int slot, int bay);
+
+/// The same for EVERY dirty block bay on the bus, keyed by (slot, bay) — for
+/// `StorageCoordinator::ejectAllMedia`, whose phase 1 is one locked walk.
+std::map<std::pair<int, int>, std::vector<std::uint8_t>>
+prefaultCaptureBuffers(EmulationController& ctrl);
 
 } // namespace pom2
 

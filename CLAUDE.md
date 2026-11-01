@@ -51,7 +51,10 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   `prepareFlushBay`), phase 2 commits the file unlocked, phase 3 takes the lock
   again to finish — either retiring the bay or, on failure, putting the medium
   back (`DiskIICard::restoreEjected`, `restoreFlushBayDirty`). A failed commit
-  therefore leaves the disk **loaded and dirty** instead of gone. The firmware
+  therefore leaves the disk **loaded and dirty** instead of gone. A phase 0
+  before it sizes and *touches* the capture buffer with no lock held
+  (`pom2::prefaultCaptureBuffer`, `MediaMount.h`): the page faults of a
+  fresh 30 MiB payload were 33 ms of the lock on a CI runner. The firmware
   3.5" eject (`Sony35Drive::ejectPending_`) hands its payload to
   `EmulationController`'s `WriteBackQueue` and only retires the medium when the
   sink reports the file landed. `StorageCoordinator::ejectAllMedia`, the Liron

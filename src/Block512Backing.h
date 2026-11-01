@@ -244,7 +244,16 @@ public:
     /// pending payload and still needs a later flush. A blanket phase-3
     /// clear instead silently dropped exactly those writes. A failed commit
     /// calls `restoreDirty(pending.dirtyIndices)` so a retry re-captures.
-    PendingWriteBack takeWriteBack();
+    ///
+    /// `scratch` is the buffer the dirty bytes land in when it is large
+    /// enough — handed in by a caller that sized and TOUCHED it with no lock
+    /// held (`pom2::prefaultCaptureBuffer`, MediaMount.h). The cost of a
+    /// capture is not the memcpy but the page faults of a fresh allocation:
+    /// 30 MiB of them, for a volume copy that dirtied most of a 32 MiB HDV,
+    /// were 3-5 ms of `stateMutex` on a desktop and 33 ms on a CI virtual
+    /// machine (storage_lock_budget, 2026-11-01). Too small, it is grown —
+    /// the old cost, for the rare case; empty, it is the old behaviour.
+    PendingWriteBack takeWriteBack(std::vector<uint8_t> scratch = {});
 
     /// `takeWriteBack` for an explicit EJECT, which retires the flags for
     /// good: the backing then refuses to adopt or load another image for as
@@ -253,7 +262,7 @@ public:
     /// commit nothing to hand its blocks back to, and the caller then dropped
     /// the only copy of the guest's writes (bug hunt 2026-09-16). The
     /// autosave needs no such thing: it keeps the flags until the file lands.
-    PendingWriteBack takeDetachWriteBack();
+    PendingWriteBack takeDetachWriteBack(std::vector<uint8_t> scratch = {});
 
     struct WriteBackResult { bool ok = true; std::string error; };
     // Called under the machine lock; copies bytes and starts file work on a
@@ -357,6 +366,10 @@ public:
     void setWriteBackEnabled(bool on) { writeBack_ = on; }
     bool canWriteBack()       const { return supportsWriteBack_ && !isWriteProtected(); }
     bool hasUnsavedChanges()  const { return anyDirty_; }
+    /// How many blocks `hasUnsavedChanges` stands for — the size of the
+    /// payload the next `takeWriteBack` captures, which is what an unlocked
+    /// phase 0 sizes its buffer from (`MediaBayInfo::unsavedBlocks`).
+    uint32_t dirtyBlockCount() const;
 
     /// Block-level access (ATA path). Returns false when blk is out of range.
     /// readBlock copies 512 bytes into dst512; writeBlock copies from src512
