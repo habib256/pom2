@@ -207,13 +207,21 @@ jobs:
           tools/check_includes.sh --self-test
           tools/check_includes.sh
 
+      # ghostscript and the fr_FR locale are TEST dependencies: the skip guard
+      # below refuses a host-dependent skip on this leg, so postscript_render's
+      # bounded-raster jobs and imagewriter_pdf's decimal-comma case must RUN
+      # here (2026-11-02: both skipped on the first complete run after the
+      # guard was widened). Same rule as libslirp for slirp_loopback_fence.
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
-            libslirp-dev libglib2.0-dev ccache
+            libslirp-dev libglib2.0-dev ccache ghostscript locales
+          sudo locale-gen fr_FR.UTF-8
           pkg-config --exists slirp
+          gs --version
+          locale -a | grep -i '^fr_FR.utf-\?8$'
 
       # Measured 2026-10-31: this leg's "Build everything" took 95 minutes on
       # 41d72da7 and over two hours on dc4c5dfe, with no timeout set (the
