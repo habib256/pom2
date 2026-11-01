@@ -147,6 +147,30 @@ void testInterlaceAndVideoRasterAdjust()
     CHECK(pic[std::size_t(8 * w) + 0] != dark);   // raster 8 — the lost one
     CHECK(pic[std::size_t(9 * w) + 0] == dark);   // row 1 starts at y = 9
 
+    // The cursor blink counts FIELDS (Hitachi HD6845S, U70 p. 454 Table 7,
+    // "Blink 16 / 32 Field Period"), and in interlace sync & video a field
+    // shows only half of each row's rasters (p. 456-457, Fig. 8, Table 9):
+    // 58 × 9 / 2 + R5 1 + ½ = 262.5 lines at 17.43 MHz / 9 / 123 = 59.98 Hz,
+    // the NTSC field rate — not MAME's 30.1 Hz two-field frame.
+    {
+        const double charHz = VidexUltratermCard::kLowClockHz / VidexUltratermCard::kCellWidth;
+        const double field = c.crtc().fieldRateHz(charHz);
+        const double frame = c.crtc().frameRateHz(charHz);
+        CHECK(field > 59.9 && field < 60.05);
+        CHECK(frame > 30.0 && frame < 30.2);
+        // Fast blink (R10 = $40, 16-field period: 8 dark, 8 lit) on a cursor
+        // over cell 0, rasters 0-8. Field 9.5 is lit; at the old 30.1 Hz
+        // count it was frame ~4.7, dark.
+        reg(10, 0x40); reg(11, 8); reg(14, 0); reg(15, 0);
+        c.deviceSelectWrite(2, VidexUltratermCard::kPages256);   // low clock
+        const auto at = [&](double f) { return uint64_t(f * 1022727.0 / field); };
+        c.paintPicture(pic.data(), lit, dark, at(9.5), 1022727.0);
+        CHECK(pic[std::size_t(1 * w) + 4] != dark);   // cursor block lit
+        c.paintPicture(pic.data(), lit, dark, at(4.5), 1022727.0);
+        CHECK(pic[std::size_t(1 * w) + 4] == dark);   // dark half of the period
+        reg(10, 0x20);
+    }
+
     // And a non-interlaced table is unchanged: R8 = 0 keeps R9 + 1.
     reg(8, 0); reg(9, 8); reg(6, 24);
     CHECK(!c.crtc().interlaceAndVideo());

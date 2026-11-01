@@ -43,6 +43,7 @@
 #include "CassetteDevice.h"
 #include "Debugger.h"
 #include "DebuggerSymbols.h"
+#include "Disassembler6502.h"
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -1628,6 +1629,52 @@ static void testBreakpointAfterDmaRelease()
     assert(!ctrl.cpu().getDebugHook());
 }
 
+// The debugger's listing decodes the instruction set the CORE dispatches,
+// not one it assumes (audit parite-ow65c02-2026-11-01, MINEUR). The Apple's
+// own CPU is an NCR65C02 — [B] Apple IIc Technical Reference Manual (1984),
+// Appendix A, NCR65C02 data sheet: invalid op codes "are NOPs ... X3, X7,
+// XB, XF 1 [byte] 1 [cycle]" — so for every one of the 34 Rockwell/WDC
+// slots the listing's length must be the PC advance of a real step. A
+// TransWarp's own 65C02 (setCmosSubstitute) runs the superset, and the
+// listing must follow that too.
+void testDisassemblerFollowsTheCoreInstructionSet()
+{
+    EmulationController ctrl;
+    std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+    Memory& mem = ctrl.memory();
+    M6502& cpu = ctrl.cpu();
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+    assert(cpu.instructionSet() == pom2::Cpu6502Set::Ncr65C02 &&
+           "the controller's CPU is the Apple's NCR65C02");
+    std::vector<uint8_t> view(0x10000, 0);
+    for (int op = 0; op < 256; ++op) {
+        const bool rockwell = (op & 0x0F) == 0x07 || (op & 0x0F) == 0x0F ||
+                              op == 0xCB || op == 0xDB;
+        if (!rockwell) continue;
+        mem.memWrite(0x0300, uint8_t(op));
+        mem.memWrite(0x0301, 0x40);    // RTI if the CPU lands here
+        mem.memWrite(0x0302, 0x05);
+        for (uint16_t a = 0x0300; a < 0x0303; ++a) view[a] = mem.memRead(a);
+        int len = 0;
+        const std::string text =
+            pom2::disassemble6502(view.data(), 0x0300, len, cpu.instructionSet());
+        cpu.setProgramCounter(0x0300);
+        cpu.step();
+        const int advance = int(cpu.getProgramCounter()) - 0x0300;
+        if (len != advance || text != "NOP") {
+            std::printf("FAIL: NCR $%02X listed \"%s\" (%d B), core advanced %d\n",
+                        op, text.c_str(), len, advance);
+            assert(false);
+        }
+    }
+    cpu.setCmosSubstitute(true);
+    assert(cpu.instructionSet() == pom2::Cpu6502Set::Superset65C02);
+    cpu.setCmosSubstitute(false);
+    cpu.setCpuMode(M6502::CpuMode::NMOS);
+    assert(cpu.instructionSet() == pom2::Cpu6502Set::Nmos6502);
+    cpu.setCpuMode(M6502::CpuMode::CMOS);
+}
+
 int main()
 {
     testBreakpointAfterDmaRelease();
@@ -1669,6 +1716,7 @@ int main()
     testInterruptEntryIsNotAStep();
     testInterruptEntryUsesTheHandlersBank();
     testWatchpointResumeKeepsNextBreakpoint();
+    testDisassemblerFollowsTheCoreInstructionSet();
     std::printf("debugger: all assertions passed\n");
     return 0;
 }

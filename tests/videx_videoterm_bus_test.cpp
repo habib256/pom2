@@ -194,7 +194,10 @@ int main()
     mem.slotBus().reset();
     expect(card->vramBank() == 0, "reset: window back on bank 0");
     expect(card->crtc().latch() == 0, "reset: 6845 address latch cleared");
-    expect(card->crtc().cursorAddress() == 0, "reset: 6845 cursor address cleared");
+    // Hitachi HD6845S, U70 p. 451: on RES "Control registers in the CRTC are
+    // not affected and remain unchanged" (p. 463: "R0-R17"). MAME zeroes the
+    // cursor address; the chip on the card keeps it.
+    expect(card->crtc().cursorAddress() == 0x0123, "reset: 6845 cursor address R14/R15 survives (HD6845S p. 451)");
     expect(card->crtc().reg(0) == 0x7B, "reset: timing registers survive (mc6845.cpp:1036)");
     expect(card->crtc().reg(1) == 80, "reset: R1 survives");
     expect(card->vram()[512] == 0xA1, "reset: VRAM survives");

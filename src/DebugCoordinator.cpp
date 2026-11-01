@@ -72,8 +72,7 @@ void DebugCoordinator::renderMemoryViewer(bool& open)
     if (ImGui::Begin("Memory viewer", &open)) {
         {
             auto state = controller_.lockState();
-            memoryViewer_->setCmosMode(
-                state.cpu().effectiveCpuMode() == M6502::CpuMode::CMOS);
+            memoryViewer_->setInstructionSet(state.cpu().instructionSet());
             memoryViewer_->render();
         }
         // The write callback re-enters the non-recursive state lock, so the

@@ -410,7 +410,7 @@ void MemoryViewer_ImGui::renderDisasmView()
         if (address > 0xFFFF) break;
         int len = 1;
         const std::string mnem =
-            pom2::disassemble6502(mem, static_cast<uint16_t>(address), len, cmosDisasm_);
+            pom2::disassemble6502(mem, static_cast<uint16_t>(address), len, disasmSet_);
 
         if (colorizeRegions)
             ImGui::PushStyleColor(ImGuiCol_Text, regionColour(address));

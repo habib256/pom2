@@ -40,6 +40,7 @@
 #include "Debugger.h"
 #include "DebuggerSymbols.h"
 #include "DebuggerSourceMap.h"
+#include "Opcode6502.h"
 
 #include <cstdint>
 #include <string>
@@ -65,7 +66,9 @@ private:
     struct Snapshot {
         uint8_t  a = 0, x = 0, y = 0, p = 0, sp = 0;
         uint16_t pc = 0;
-        bool     cmos    = false;
+        /// The core's instruction set (`M6502::instructionSet()`), NCR
+        /// included — the listing and the assembler decode this.
+        Cpu6502Set isa   = Cpu6502Set::Nmos6502;
         bool     running = false;
         bool     halted  = false;
         Debugger::Hit hit{};

@@ -26,12 +26,12 @@ bool number(std::string_view text, unsigned& value, bool& wide)
     wide = wide || value > 255;
     return true;
 }
-bool opcode(const std::string& mnemonic, AddrMode mode, bool cmos, uint8_t& result)
+bool opcode(const std::string& mnemonic, AddrMode mode, Cpu6502Set set, uint8_t& result)
 {
     // Prefer the documented $EA NOP over CMOS reserved NOP encodings.
     if (mnemonic == "NOP" && mode == AM_IMP) { result = 0xEA; return true; }
     for (unsigned op = 0; op < 256; ++op) {
-        const auto info = describeOpcode6502(uint8_t(op), cmos);
+        const auto info = describeOpcode6502(uint8_t(op), set);
         if (info.mnemonic == mnemonic && info.mode == mode) { result = uint8_t(op); return true; }
     }
     return false;
@@ -39,6 +39,14 @@ bool opcode(const std::string& mnemonic, AddrMode mode, bool cmos, uint8_t& resu
 }
 
 bool assemble6502(const std::string& source, uint16_t pc, bool cmos,
+                  std::vector<uint8_t>& bytes, std::string& error)
+{
+    return assemble6502(source, pc,
+                        cmos ? Cpu6502Set::Superset65C02 : Cpu6502Set::Nmos6502,
+                        bytes, error);
+}
+
+bool assemble6502(const std::string& source, uint16_t pc, Cpu6502Set set,
                   std::vector<uint8_t>& bytes, std::string& error)
 {
     error.clear();
@@ -62,17 +70,17 @@ bool assemble6502(const std::string& source, uint16_t pc, bool cmos,
     uint8_t op = 0;
     if (operand.empty()) {
         if (mnemonic == "BRK") mode = AM_BRK;
-        else if (!opcode(mnemonic, mode, cmos, op)) mode = AM_ACC;
+        else if (!opcode(mnemonic, mode, set, op)) mode = AM_ACC;
     } else if (operand == "A") {
         mode = AM_ACC;
-        if (!opcode(mnemonic, mode, cmos, op)) mode = AM_IMP; // NMOS ASL A, etc.
+        if (!opcode(mnemonic, mode, set, op)) mode = AM_IMP; // NMOS ASL A, etc.
         if (mnemonic != "ASL" && mnemonic != "LSR" && mnemonic != "ROL" &&
             mnemonic != "ROR" && mnemonic != "INC" && mnemonic != "DEC")
             return fail("This instruction has no accumulator operand.");
     } else if (operand.front() == '#') {
         mode = AM_IMM; n.remove_prefix(1);
         if (!number(n, value, wide) || value > 255) return fail("Immediate operand must fit in one byte.");
-    } else if (opcode(mnemonic, AM_ZPR, cmos, op)) {
+    } else if (opcode(mnemonic, AM_ZPR, set, op)) {
         const auto comma = n.find(',');
         if (comma == std::string_view::npos || !number(n.substr(0, comma), value, wide) || value > 255 ||
             !number(n.substr(comma + 1), target, wide)) return fail("Use a zero-page address and a branch target.");
@@ -92,10 +100,10 @@ bool assemble6502(const std::string& source, uint16_t pc, bool cmos,
             n.remove_suffix(2); mode = AM_ZPY; fallback = AM_ABY;
         } else { mode = AM_ZP; fallback = AM_ABS; }
         if (!number(n, value, wide)) return fail("Invalid numeric operand ($hex, %binary or decimal).");
-        if (mode == AM_ZP && opcode(mnemonic, AM_REL, cmos, op)) { mode = AM_REL; target = value; }
-        else if ((wide || !opcode(mnemonic, mode, cmos, op)) && fallback != AM_IMP) mode = fallback;
+        if (mode == AM_ZP && opcode(mnemonic, AM_REL, set, op)) { mode = AM_REL; target = value; }
+        else if ((wide || !opcode(mnemonic, mode, set, op)) && fallback != AM_IMP) mode = fallback;
     }
-    if (!opcode(mnemonic, mode, cmos, op)) return fail("Mnemonic/addressing mode unavailable on this CPU.");
+    if (!opcode(mnemonic, mode, set, op)) return fail("Mnemonic/addressing mode unavailable on this CPU.");
     int length = 1;
     switch (mode) {
     case AM_IMP: case AM_ACC: break;

@@ -1575,6 +1575,28 @@ ROM; no-op against the built-in fallback.
 
 ### Videx Videoterm (`VidexVideotermCard`)
 
+**Upstream state of the HD6845S model (`Hd6845Crtc`), as of 2026-11-01** —
+`docs/audits/parite-mc6845-2026-11-01.md`, 12 citations, no pin. MAME's
+`mc6845.cpp` since `mame0287`:
+
+| Upstream commit | Date | What | Taken by POM2? |
+|---|---|---|---|
+| `200b348f59` (= `mame0287`) | 2025-08-22 | Stops resetting the line counter on a parameter change | Not applicable — no raster timer here |
+| `63f4974686` … `11aba59d10` | 2026-07 → 09 | Reorganisation, `started()`, attotime, `map()` | Not applicable (no effect on the model) |
+| `0b45ad90c8` | 2026-10-12 | Interlaced half-frames for the `mos8563` (opt-in) | **Done for the HD6845S** on 2026-11-01 — `fieldRateHz()`, see below |
+| `f284e97683` | 2026-10-29 | R1/R6 = 0: black screen, sync kept | Equivalent already: `paintPicture` paints black when `cols <= 0 \|\| rows <= 0` |
+
+Three behaviours were corrected from the Hitachi documents, not from MAME:
+[B] U70 data book (1985) p. 451 and p. 463, a RES leaves R0-R17 unchanged,
+so the cursor address R14/R15 survives a reset (`reset()` now clears only
+the address register, which is not in R0-R17 — that part is [F]); pp.
+456-457, in interlace sync & video each field shows only the even or only
+the odd rasters, so the blink counts **fields** (`fieldRateHz()`, both Videx
+cards clock from it; frames before, blinking at half speed); and p. 454
+Table 7 with HLN014 Tables 6-1/6-3 put the "16 or 32 field period" over
+light **plus** dark, so the blink bit is 3 or 4 of the field counter, not
+4 or 5. No HD6845S was measured; phase unknown.
+
 **Card Monitor** *(2026-10-31)*. What reaches the screen when a card has
 its own picture is `Apple2Display::CardMonitor`: `Auto` (the card's rule —
 the Videoterm's Soft Video Switch, TEXT + AN0, from Videx's SVS-000
@@ -11288,6 +11310,21 @@ overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
 `controller_mode_races`.
 
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
+
+**The listing follows the CPU's instruction set** *(2026-11-01)*. Apple's
+65C02 is the NCR part: [B] //c Technical Reference, Appendix A (NCR 65C02
+data sheet), the `$x3/$x7/$xB/$xF` opcodes are "NOPs (reserved for future
+use)", one byte, one cycle — which `M6502` already runs. The disassembler
+and the assembler decoded the Rockwell/WDC superset (RMB/BBR/WAI/STP)
+regardless, so a listing's length disagreed with the PC's advance on every
+such byte. `pom2::Cpu6502Set` {`Nmos6502`, `Ncr65C02`, `Superset65C02`}
+comes from `M6502::instructionSet()`, which derives it from `ncrDispatch()`
+— the same condition `applyDispatch` uses, so the rule exists once; a
+TransWarp's own 65C02 (`cmosSubstitute_`) still decodes the superset. The
+Debugger panel and the Memory viewer pass `cpu.instructionSet()`; the old
+`bool` overloads keep meaning the superset. Pinned by `disasm_cmos`,
+`assembler6502` and `debugger_test` (listing length == PC advance for all
+34 opcodes). `docs/audits/parite-ow65c02-2026-11-01.md`.
 
 Breakpoints, register predicates, single-step, frame-aware step-over/out,
 run-to-cursor, bank-qualified symbols, per-bank/PC cycle profiling and a

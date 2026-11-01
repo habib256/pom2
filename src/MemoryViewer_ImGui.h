@@ -23,6 +23,7 @@
 #define POM2_MEMORY_VIEWER_IMGUI_H
 
 #include "imgui.h"
+#include "Opcode6502.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -87,14 +88,16 @@ public:
         writeCallback = std::move(cb);
     }
 
-    // Push the live CPU mode so the Disasm view decodes 65C02 opcodes
-    // correctly (and doesn't desync on 3-byte BBR/BBS). Set each frame.
-    void setCmosMode(bool on) { cmosDisasm_ = on; }
+    // Push the core's instruction set (M6502::instructionSet()) so the
+    // Disasm view decodes what the CPU runs: 65C02 opcodes, 3-byte BBR/BBS
+    // on a Rockwell/WDC part, one-byte NOPs in their place on the Apple's
+    // NCR65C02. Set each frame.
+    void setInstructionSet(pom2::Cpu6502Set set) { disasmSet_ = set; }
 
 private:
     Memory* memory;
     std::function<uint8_t(uint16_t, uint8_t)> writeCallback;
-    bool cmosDisasm_ = false;
+    pom2::Cpu6502Set disasmSet_ = pom2::Cpu6502Set::Nmos6502;
 
     // Per-frame PAGED copy of what the CPU would fetch (Memory::
     // snapshotCpuView). The hex grid used to index Memory::data(), the flat

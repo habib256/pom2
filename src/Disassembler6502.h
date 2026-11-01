@@ -22,6 +22,8 @@
 #ifndef DISASSEMBLER6502_H
 #define DISASSEMBLER6502_H
 
+#include "Opcode6502.h"
+
 #include <cstdint>
 #include <string>
 
@@ -36,6 +38,11 @@ namespace pom2 {
 /// the Disasm panel doesn't desync on 65C02 code.
 std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen,
                             bool cmos = false);
+/// Same, decoding the instruction set `set` — the debugger passes
+/// `M6502::instructionSet()`, so an NCR65C02's $x7/$xF/$CB/$DB come out as
+/// the one-byte NOPs the core executes, not Rockwell/WDC instructions.
+std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen,
+                            Cpu6502Set set);
 
 } // namespace pom2
 

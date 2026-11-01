@@ -208,7 +208,10 @@ int main()
         p = paint(*card);
         expect(px(p, cx, cy + 8) == kBlack, "cursor start > R9: no cursor (HD6845S)");
 
-        // Fast blink: on while bit 4 of the CRTC frame index is set.
+        // Fast blink: a 16-FIELD period, light + dark (Hitachi HD6845S, U70
+        // p. 454, Table 7: one brace over "light" and "dark", "16 or 32 Field
+        // Period") — 8 fields off, 8 on: bit 3 of the field index. The
+        // Videoterm runs non-interlaced, so a field is a frame here.
         crtcWrite(mem, 10, 0x40 | 0);
         const double hz = card->crtc().frameRateHz(VidexVideotermCard::kCharClockHz);
         expect(hz > 59.9 && hz < 60.2, "60 Hz table: 17.43 MHz / 1116 / 260 = 60.07 Hz");
@@ -217,16 +220,18 @@ int main()
         };
         expect(card->crtcFrameAt(cyclesFor(20), 1022727.0) == 20, "frame index from emuCycles");
         p = paint(*card, cyclesFor(3));
-        expect(px(p, cx, cy) == kBlack, "fast blink, frame 3: off");
+        expect(px(p, cx, cy) == kBlack, "fast blink, field 3: off");
+        p = paint(*card, cyclesFor(11));
+        expect(px(p, cx, cy) == kWhite, "fast blink, field 11: on (8 fields after going dark)");
         p = paint(*card, cyclesFor(17));
-        expect(px(p, cx, cy) == kWhite, "fast blink, frame 17: on");
-        p = paint(*card, cyclesFor(33));
-        expect(px(p, cx, cy) == kBlack, "fast blink, frame 33: off again");
-        crtcWrite(mem, 10, 0x60 | 0);   // slow: bit 5
+        expect(px(p, cx, cy) == kBlack, "fast blink, field 17: off again (period 16 fields)");
+        crtcWrite(mem, 10, 0x60 | 0);   // slow: 32-field period, bit 4
+        p = paint(*card, cyclesFor(11));
+        expect(px(p, cx, cy) == kBlack, "slow blink, field 11: off");
         p = paint(*card, cyclesFor(17));
-        expect(px(p, cx, cy) == kBlack, "slow blink, frame 17: off");
+        expect(px(p, cx, cy) == kWhite, "slow blink, field 17: on");
         p = paint(*card, cyclesFor(40));
-        expect(px(p, cx, cy) == kWhite, "slow blink, frame 40: on");
+        expect(px(p, cx, cy) == kBlack, "slow blink, field 40: off again (period 32 fields)");
         crtcWrite(mem, 10, 0x20);
     }
 

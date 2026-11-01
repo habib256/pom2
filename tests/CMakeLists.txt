@@ -3974,6 +3974,36 @@ endif()
 add_test(NAME horizontal_split_560 COMMAND test_horizontal_split_560)
 set_tests_properties(horizontal_split_560 PROPERTIES TIMEOUT 5)
 
+# $C050-$C057 timings measured on real hardware (audit apple2video
+# 2026-11-01, Rapport 2): a mid-line TEXT/MIXED flip lands one column right
+# of a PAGE2 flip (AppleWin GH#656, MAME PR #15247 photos), and the read
+# that flips a mode returns the floating bus of the mode BEFORE it
+# (TomHarte/CLK#1204, real //e). See video_switch_latency_test.cpp.
+add_executable(test_video_switch_latency
+    video_switch_latency_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_video_switch_latency PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_video_switch_latency PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_video_switch_latency PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_video_switch_latency PRIVATE winmm)
+endif()
+
+add_test(NAME video_switch_latency COMMAND test_video_switch_latency)
+set_tests_properties(video_switch_latency PROPERTIES TIMEOUT 5)
+
 # DIX "MODPAGE" technique probe: per-scanline mid-line $C054/$C055 page flip →
 # HGR page 1 left, HGR page 2 right on the same line (the French Touch DIX
 # beam-raced effect). Validates the *rendering* half of DIX validation.
@@ -8962,6 +8992,7 @@ set_tests_properties(thread_guard PROPERTIES TIMEOUT 30)
 add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
     ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp

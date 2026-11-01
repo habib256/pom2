@@ -82,7 +82,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.p        = cpu.getStatusRegister();
         snap.sp       = cpu.getStackPointer();
         snap.pc       = cpu.getProgramCounter();
-        snap.cmos     = cpu.effectiveCpuMode() == M6502::CpuMode::CMOS;
+        snap.isa      = cpu.instructionSet();
         snap.halted   = cpu.isHalted();
         snap.hit      = ctrl.debugger().lastHit();
         snap.breakpoints = ctrl.debugger().bankBreakpoints();
@@ -375,7 +375,9 @@ void Debugger_ImGui::drawRegisters(const Snapshot& snap)
                 snap.pc, snap.a, snap.x, snap.y, snap.sp, snap.p,
                 flagsText(snap.p).c_str());
     ImGui::TextColored(kDimColour, "%s",
-                       snap.cmos ? "65C02 (CMOS) decoding" : "6502 (NMOS) decoding");
+                       snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR) decoding" :
+                       snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC) decoding" :
+                                                               "6502 (NMOS) decoding");
 }
 
 // ── Disassembly, with a clickable breakpoint gutter ─────────────────────
@@ -398,7 +400,7 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
     for (int i = 0; i < rows; ++i) {
         int len = 1;
         const std::string mnem =
-            disassemble6502(snap.memory.data(), addr, len, snap.cmos);
+            disassemble6502(snap.memory.data(), addr, len, snap.isa);
         const bool isPc = (addr == snap.pc);
         const DebugAddress location{addr,snap.banks[addr]};
         const bool wildcard = std::binary_search(snap.breakpoints.begin(),snap.breakpoints.end(),DebugAddress{addr,{}});

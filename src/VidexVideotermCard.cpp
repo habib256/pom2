@@ -116,7 +116,9 @@ void VidexVideotermCard::onReset()
 
 uint64_t VidexVideotermCard::crtcFrameAt(uint64_t emuCycles, double cpuHz) const
 {
-    double hz = crtc_.frameRateHz(kCharClockHz);
+    // Fields, the blink's clock (Hd6845Crtc::fieldRateHz). The Videoterm's
+    // firmware runs the chip non-interlaced (R8 = 0): a field is a frame.
+    double hz = crtc_.fieldRateHz(kCharClockHz);
     if (!(hz > 0.0)) hz = 60.0;   // registers not programmed yet
     if (!(cpuHz > 0.0)) return 0;
     const double frames = std::floor(static_cast<double>(emuCycles) * hz / cpuHz);

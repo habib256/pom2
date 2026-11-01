@@ -26,7 +26,7 @@ void Debugger_ImGui::drawAssembler(EmulationController& ctrl, const Snapshot& sn
     const bool validAddress = parsed.ec == std::errc{} && *parsed.ptr == '\0' && address <= 0xFFFF;
     std::vector<uint8_t> bytes;
     std::string error;
-    const bool valid = validAddress && assemble6502(assemblySource_, uint16_t(address), snap.cmos, bytes, error);
+    const bool valid = validAddress && assemble6502(assemblySource_, uint16_t(address), snap.isa, bytes, error);
     if (valid) {
         ImGui::TextUnformatted("Bytes:"); ImGui::SameLine();
         for (uint8_t byte : bytes) { ImGui::Text("%02X", byte); ImGui::SameLine(); }
@@ -37,7 +37,7 @@ void Debugger_ImGui::drawAssembler(EmulationController& ctrl, const Snapshot& sn
     if (ImGui::Button("Assemble and advance") || (enter && !snap.running && valid && address + bytes.size() <= 0xC000)) {
         auto state = ctrl.lockState();
         if (ctrl.getMode() == EmulationController::Mode::Stopped &&
-            (state.cpu().effectiveCpuMode() == M6502::CpuMode::CMOS) == snap.cmos) {
+            state.cpu().instructionSet() == snap.isa) {
             for (size_t i = 0; i < bytes.size(); ++i) state.memory().memWrite(uint16_t(address + i), bytes[i]);
             ctrl.noteTimeJump();
             ctrl.rewind().clear();

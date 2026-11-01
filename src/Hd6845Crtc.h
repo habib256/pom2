@@ -32,8 +32,10 @@
 //   register_w           215-270 (the masks)
 //   HD check_cursor_visible 546-569 (no wrap, unlike the MC6845's 507-543)
 //   update_cursor_state  784-813 (R10 bits 6-5: on / off / 16 / 32 frames)
-//   device_reset         1029-1054 (cursor address, latch, light pen cleared;
-//                        the other registers survive)
+//   device_reset         1029-1054 — NOT followed for R14-R17: the Hitachi
+//                        datasheet keeps every register across RES (reset())
+// The cursor blink counts FIELDS with the Hitachi period (cursorBlinkOn),
+// not MAME's frames and toggle-every-16/32.
 
 #ifndef POM2_HD6845_CRTC_H
 #define POM2_HD6845_CRTC_H
@@ -52,8 +54,9 @@ public:
     /// here — no Apple II card wires LPSTB).
     static constexpr int kRegisters = 18;
 
-    /// MAME `mc6845.cpp:1029-1054`: cursor address, address latch and light
-    /// pen go to zero; the timing registers are untouched.
+    /// RES: R0-R17 untouched (Hitachi HD6845S, U70 p. 451/463 — the cursor
+    /// address survives, unlike MAME's device_reset); the address latch
+    /// goes to zero.
     void reset();
 
     /// $C0n0 write on the Videoterm — MAME `address_w` (143-146).
@@ -97,7 +100,7 @@ public:
     int rasterCount()    const { return maxRaster() + (interlaceAndVideo() ? 2 : 1); }
     int cursorStart()    const { return r_[10] & 0x1F; }
     int cursorEnd()      const { return r_[11]; }
-    /// R10 bits 6-5: 0 steady, 1 off, 2 blink every 16 frames, 3 every 32.
+    /// R10 bits 6-5: 0 steady, 1 off, 2 blink period 16 fields, 3 32 fields.
     int cursorMode()     const { return (r_[10] >> 5) & 3; }
     uint16_t startAddress()  const
     {
@@ -112,12 +115,16 @@ public:
     /// for a character clock of `charClockHz`. 0 when the registers do not
     /// describe a frame yet (all zero before the firmware's init).
     double frameRateHz(double charClockHz) const;
+    /// FIELDS per second — the clock of the cursor blink. Equal to
+    /// frameRateHz() unless interlaced; in interlace sync & video a field
+    /// shows half the rasters of each row, so it runs at ~2× the frame.
+    double fieldRateHz(double charClockHz) const;
 
-    /// Cursor blink state for CRTC frame `frameIndex` — MAME
-    /// `update_cursor_state` (784-813) as a pure function: the state starts
-    /// off (974-975) and toggles each time bit 4 (fast) or bit 5 (slow) of
-    /// the frame counter changes, so it is simply that bit.
-    bool cursorBlinkOn(uint64_t frameIndex) const;
+    /// Cursor blink state for CRTC field `fieldIndex` (count fields at
+    /// fieldRateHz()), as a pure function: the blink PERIOD is 16 or 32
+    /// fields, light + dark (Hitachi Table 7), so the state is bit 3 (fast)
+    /// or bit 4 (slow) of the field counter, off first as MAME starts.
+    bool cursorBlinkOn(uint64_t fieldIndex) const;
 
     /// HD6845S `check_cursor_visible` (546-569): is the cursor lit on raster
     /// `ra` of the character row whose first address is `lineAddr`, given

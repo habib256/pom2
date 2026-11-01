@@ -123,6 +123,38 @@ int main()
     put(0x0300, {0xA9, 0x42});       assert(dis(0x0300, true,  len) == "LDA #$42" && len == 2);
     put(0x0300, {0x4C, 0x00, 0xFF}); assert(dis(0x0300, false, len) == "JMP $FF00" && len == 3);
 
+    // The NCR65C02 the enhanced //e and the //c carry (M6502::setNcr65C02):
+    // [B] Apple IIc Technical Reference Manual (1984), Appendix A, NCR65C02
+    //     data sheet — invalid op codes "are NOPs ... X3, X7, XB, XF 1 [byte]
+    //     1 [cycle]". The listing used to show the audit's case — $07 $40 $05
+    //     as "RMB0 $40" (2 B) — while the CPU ran a NOP and then RTI at $40.
+    using pom2::Cpu6502Set;
+    auto disSet = [&](uint16_t pc, Cpu6502Set set, int& l) {
+        return pom2::disassemble6502(mem.data(), pc, l, set);
+    };
+    put(0x0300, {0x07, 0x40, 0x05});
+    assert(disSet(0x0300, Cpu6502Set::Ncr65C02, len) == "NOP" && len == 1);
+    assert(disSet(0x0301, Cpu6502Set::Ncr65C02, len) == "RTI" && len == 1);
+    put(0x0300, {0x0F, 0x40, 0x05});
+    assert(disSet(0x0300, Cpu6502Set::Ncr65C02, len) == "NOP" && len == 1);
+    for (int op = 0; op < 256; ++op) {
+        put(0x0300, {static_cast<uint8_t>(op), 0x12, 0x34});
+        int lNcr = 0, lSup = 0;
+        const std::string ncr = disSet(0x0300, Cpu6502Set::Ncr65C02, lNcr);
+        const std::string sup = disSet(0x0300, Cpu6502Set::Superset65C02, lSup);
+        const bool gone = (op & 0x0F) == 0x07 || (op & 0x0F) == 0x0F ||
+                          op == 0xCB || op == 0xDB;
+        if (gone ? !(ncr == "NOP" && lNcr == 1) : !(ncr == sup && lNcr == lSup)) {
+            std::printf("FAIL: NCR $%02X decoded as \"%s\" (%d B), superset \"%s\" (%d B)\n",
+                        op, ncr.c_str(), lNcr, sup.c_str(), lSup);
+            return 1;
+        }
+    }
+    // The bool overload keeps meaning the superset (card coprocessors, the
+    // TransWarp's own 65C02, the probes).
+    put(0x0300, {0x07, 0x40});
+    assert(dis(0x0300, true, len) == "RMB0 $40" && len == 2);
+
     std::printf("OK disasm_cmos (65C02 decode + lengths, NMOS fallback)\n");
     return 0;
 }

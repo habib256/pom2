@@ -120,11 +120,13 @@ void VidexUltratermCard::paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark
     // Grey levels of crtc_update_row: 0 dark, 1 lowlight, 3 highlight.
     const uint32_t level[4] = { dark, scaled(lit, 3, 4), scaled(lit, 3, 4), lit };
     const double charHz = ((ctrl1_ & kClkSel) ? kHighClockHz : kLowClockHz) / kCellWidth;
-    double hz = crtc_.frameRateHz(charHz);
+    // The blink counts FIELDS: 59.98 Hz in the interlace-and-video tables,
+    // not the 30.1 Hz two-field frame (Hd6845Crtc::fieldRateHz).
+    double hz = crtc_.fieldRateHz(charHz);
     if (!(hz > 0.0)) hz = 60.0;
-    const uint64_t frame = cpuHz > 0.0
+    const uint64_t field = cpuHz > 0.0
         ? uint64_t(std::floor(double(emuCycles) * hz / cpuHz)) : 0;
-    const bool blink = crtc_.cursorBlinkOn(frame);
+    const bool blink = crtc_.cursorBlinkOn(field);
     const uint16_t mask = displayMask();
     const std::size_t charBase = (ctrl2_ & 0x04) ? 0 : 0x800;
 

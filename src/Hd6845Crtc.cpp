@@ -34,13 +34,18 @@ uint8_t Hd6845Crtc::writeMask(int n)
 
 void Hd6845Crtc::reset()
 {
-    // MAME mc6845.cpp:1036-1054 (device_reset): "internal registers other
-    // than status remain unchanged" — except the cursor address, the address
-    // latch and the light-pen address, which it zeroes.
-    r_[14] = 0;
-    r_[15] = 0;
-    r_[16] = 0;
-    r_[17] = 0;
+    // [B] Hitachi HD6845S, U70 data book (1985) p. 451, "Reset (RES)": "All
+    //     the counters in the CRTC are cleared ... 3) Control registers in
+    //     the CRTC are not affected and remain unchanged"; p. 463: "internal
+    //     registers shown in Table 1 (R0-R17) are not affected by RES and
+    //     remain unchanged". So the cursor address R14/R15 SURVIVES (and
+    //     R16/R17, never strobed here). This class has no counters to clear.
+    // [D] MAME mc6845.cpp:1265-1291 @ mame0287 zeroes the cursor, latch and
+    //     light pen under its own "TODO: none of these should reset unless
+    //     otherwise proven" — contradicted by the datasheet, not followed.
+    // [F] The address register (AR) is not in R0-R17 and the datasheet does
+    //     not say what RES does to it; it is cleared as MAME does. Nothing
+    //     observes it: both Videx firmwares write AR before every access.
     latch_ = 0;
 }
 
@@ -68,6 +73,35 @@ void Hd6845Crtc::registerWrite(uint8_t v)
     r_[latch_] = static_cast<uint8_t>(v & mask);
 }
 
+double Hd6845Crtc::fieldRateHz(double charClockHz) const
+{
+    // [B] Hitachi HD6845S, U70 p. 456-457 (Fig. 8, Table 9) — in interlace
+    //     sync & video mode the even field outputs the even raster addresses
+    //     and the odd field the odd ones, so a field carries rasterCount()/2
+    //     rasters of each character row; p. 460, Fig. 13 — each field has its
+    //     own R5 adjust rasters, and an interlaced frame its half (dummy)
+    //     raster. Interlace sync alone (R8 = x1, V = 0) scans every raster in
+    //     each field. A field is therefore, in lines:
+    //       non-interlace           (R4+1)·RN     + R5
+    //       interlace sync          (R4+1)·RN     + R5 + 1/2
+    //       interlace sync & video  (R4+1)·RN / 2 + R5 + 1/2
+    //     The UltraTerm's 80x48 table (R0=122, R4=57, R5=1, R9=7, R8=3) gives
+    //     262.5 lines, 59.98 Hz — the NTSC field rate a monitor locks to —
+    //     where frameRateHz() gives MAME's 30.1 Hz two-field frame.
+    // [D] MAME mc6845.cpp:674-776 @ mame0287 calls update_cursor_state once
+    //     per vertical cycle, i.e. once per FRAME in this mode; its opt-in
+    //     m_interlace_fields (0b45ad90c8, mos8563 only) is the field count.
+    const bool interlaced = (r_[8] & 0x01) != 0;
+    const double rows = static_cast<double>((vertTotal() + 1) * rasterCount());
+    const double lines = (interlaceAndVideo() ? rows / 2.0 : rows)
+                       + static_cast<double>(vertAdjust())
+                       + (interlaced ? 0.5 : 0.0);
+    const double chars = static_cast<double>(horizTotal() + 1);
+    if (horizTotal() == 0 || vertTotal() == 0 || lines <= 0.0 || chars <= 0.0)
+        return 0.0;
+    return charClockHz / (chars * lines);
+}
+
 double Hd6845Crtc::frameRateHz(double charClockHz) const
 {
     // One frame = (R0+1) characters per line × ((R4+1) rows × rasterCount()
@@ -83,13 +117,25 @@ double Hd6845Crtc::frameRateHz(double charClockHz) const
     return charClockHz / (chars * lines);
 }
 
-bool Hd6845Crtc::cursorBlinkOn(uint64_t frameIndex) const
+bool Hd6845Crtc::cursorBlinkOn(uint64_t fieldIndex) const
 {
+    // [B] Hitachi HD6845S, U70 p. 454, Table 7 and its figure: "Blink Period"
+    //     = light + dark under ONE brace, "16 or 32 Field Period"; the same
+    //     drawing in HLN014 (HD46505R) Table 6-1 note 5 and Table 6-3. So a
+    //     16-field blink is 8 fields lit and 8 dark: bit 3 (16) or bit 4 (32)
+    //     of the FIELD counter.
+    // [D] MAME mc6845.cpp:885-913 @ mame0287 toggles every 16/32 frames
+    //     (the Motorola MC6845 sheet's Fig. 15 puts "16 or 32 Times Field
+    //     Period" on the lit phase alone) — a different chip's drawing.
+    // [F] Hitachi's own Fig. 15 note (p. 461), "changed into display or
+    //     non-display mode when field period is 16 or 32-time period", can be
+    //     read either way, and no HD6845S has been measured. The phase at
+    //     field 0 (dark first, as MAME starts) is unknown and unobservable.
     switch (cursorMode()) {
         case 0:  return true;                              // steady
         case 1:  return false;                             // off
-        case 2:  return ((frameIndex >> 4) & 1u) != 0;     // 1/16 field rate
-        default: return ((frameIndex >> 5) & 1u) != 0;     // 1/32 field rate
+        case 2:  return ((fieldIndex >> 3) & 1u) != 0;     // 16-field period
+        default: return ((fieldIndex >> 4) & 1u) != 0;     // 32-field period
     }
 }
 

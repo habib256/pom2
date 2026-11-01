@@ -51,5 +51,25 @@ int main()
         if (text == "BRK") assert(bytes[0] == 0 && bytes[1] == 0);
         else if (text != "NOP") for (int i = 0; i < length; ++i) assert(bytes[i] == memory[0x300 + i] || (i == 0 && text.compare(0, 3, "NOP") == 0));
     }
+    // The Apple's NCR65C02 has no Rockwell bit ops and no WAI/STP — its core
+    // runs those bytes as one-byte NOPs ([B] Apple IIc Technical Reference
+    // Manual, Appendix A, NCR65C02 data sheet: "X3, X7, XB, XF 1 1"), so
+    // the debugger's assembler must refuse them there, and keep the rest of
+    // the 65C02.
+    using pom2::Cpu6502Set;
+    for (const char* rockwell : {"BBR0 $12,$0300", "BBS7 $12,$0300", "RMB0 $12", "SMB3 $12", "WAI", "STP"}) {
+        assert(!assemble6502(rockwell, 0x300, Cpu6502Set::Ncr65C02, bytes, error));
+        assert(assemble6502(rockwell, 0x300, Cpu6502Set::Superset65C02, bytes, error));
+    }
+    for (const char* ncrOk : {"STZ $12", "BRA $0300", "PHX", "INC A", "JMP ($1234,X)", "TSB $12", "NOP"})
+        assert(assemble6502(ncrOk, 0x300, Cpu6502Set::Ncr65C02, bytes, error));
+    for (unsigned op = 0; op < 256; ++op) {
+        memory[0x300] = uint8_t(op); memory[0x301] = 0x12; memory[0x302] = 0x34;
+        int length = 0;
+        const auto text = pom2::disassemble6502(memory.data(), 0x300, length, Cpu6502Set::Ncr65C02);
+        if (text.compare(0, 3, "???") == 0) continue;
+        assert(assemble6502(text, 0x300, Cpu6502Set::Ncr65C02, bytes, error));
+        assert(bytes.size() == size_t(length));
+    }
     std::cout << "assembler6502: OK\n";
 }

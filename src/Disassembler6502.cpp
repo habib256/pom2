@@ -169,17 +169,45 @@ OpcodeInfo cmosInfo(uint8_t op)
     }
 }
 
+// The NCR65C02 Apple shipped: the superset minus the Rockwell bit ops and
+// WDC's WAI/STP, which are one-byte NOPs on it — the exact opcodes
+// M6502::applyDispatch replaces with `Unoff` under `ncr_`.
+// [B] Apple IIc Technical Reference Manual (1984), Appendix A, NCR65C02 data
+//     sheet: invalid op codes "are NOPs ... X3, X7, XB, XF 1 [byte] 1 [cycle]".
+OpcodeInfo ncrInfo(uint8_t op)
+{
+    if ((op & 0x0F) == 0x07 || (op & 0x0F) == 0x0F || op == 0xCB || op == 0xDB)
+        return {"NOP", AM_IMP};
+    return cmosInfo(op);
+}
+
 } // namespace
+
+OpcodeInfo describeOpcode6502(uint8_t opcode, Cpu6502Set set)
+{
+    switch (set) {
+        case Cpu6502Set::Nmos6502: return opcodeInfo[opcode];
+        case Cpu6502Set::Ncr65C02: return ncrInfo(opcode);
+        default:                   return cmosInfo(opcode);
+    }
+}
 
 OpcodeInfo describeOpcode6502(uint8_t opcode, bool cmos)
 {
-    return cmos ? cmosInfo(opcode) : opcodeInfo[opcode];
+    return describeOpcode6502(opcode, cmos ? Cpu6502Set::Superset65C02
+                                           : Cpu6502Set::Nmos6502);
 }
 
 std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen, bool cmos)
 {
+    return disassemble6502(mem, pc, instrLen,
+                           cmos ? Cpu6502Set::Superset65C02 : Cpu6502Set::Nmos6502);
+}
+
+std::string disassemble6502(const uint8_t* mem, uint16_t pc, int& instrLen, Cpu6502Set set)
+{
     uint8_t opcode = mem[pc];
-    const OpcodeInfo info = cmos ? cmosInfo(opcode) : opcodeInfo[opcode];
+    const OpcodeInfo info = describeOpcode6502(opcode, set);
     uint8_t lo = mem[(pc + 1) & 0xFFFF];
     uint8_t hi = mem[(pc + 2) & 0xFFFF];
     char buf[32];

@@ -22,6 +22,7 @@
 #define M6502_H
 
 #include "Memory.h"
+#include "Opcode6502.h"
 
 #include <atomic>
 
@@ -147,6 +148,15 @@ public:
     bool    ncr65C02() const { return ncr_; }
     /// The core the program runs on right now — what a disassembler wants.
     CpuMode effectiveCpuMode() const { return cpuMode; }
+    /// The instruction set `opcodeTable` dispatches right now, NCR included:
+    /// the debugger's disassembler and assembler decode THIS, so a listing
+    /// never shows RMB/BBR/WAI/STP the core runs as one-byte NOPs. Same
+    /// condition as `applyDispatch` (`ncrDispatch`), not a second copy.
+    pom2::Cpu6502Set instructionSet() const
+    {
+        if (cpuMode != CpuMode::CMOS) return pom2::Cpu6502Set::Nmos6502;
+        return ncrDispatch() ? pom2::Cpu6502Set::Ncr65C02 : pom2::Cpu6502Set::Superset65C02;
+    }
 
     /// Debug: when true, BRK logs a full CPU+stack dump + recent control-flow
     /// trace + bus state on every execution. Off by default. The `dumpPcTrace`
@@ -449,6 +459,9 @@ private :
     CpuMode     ownCpuMode = CpuMode::CMOS;   // the machine's own chip
     bool        cmosSubstitute_ = false;
     bool        ncr_ = false;   // see setNcr65C02
+    /// A CMOS dispatch drops the Rockwell/WDC opcodes: the machine's own NCR
+    /// part, not while a TransWarp's 65C02 runs the program.
+    bool        ncrDispatch() const { return ncr_ && !cmosSubstitute_; }
     void        applyDispatch(CpuMode mode);
 
     /// Set by `STP` ($DB on 65C02 / W65C02). When true, `step()` skips
