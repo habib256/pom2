@@ -56,17 +56,17 @@ Conséquences pratiques :
 | 1 | `iwm.cpp` | 55 | MAME | ✅ `parite-iwm-2026-11-01.md` — 1 MAJEUR confirmé |
 | 2 | `apple2e.cpp` | 82 | MAME | ✅ `parite-apple2e-2026-11-01.md` — 0 constat, 3 INEXACTES, 9+ époques amont mêlées |
 | 3 | `z80scc.cpp` | 107 | MAME | ✅ `parite-z80scc-2026-11-01.md` — 1 MAJEUR + 1 MINEUR confirmés, pin périmé |
-| 4 | `cs8900a.cpp` | 38 | MAME | ⬜ |
-| 5 | `mos6551.cpp` | 33 | MAME | ⬜ |
+| 4 | `cs8900a.cpp` | 38 | MAME | ✅ `parite-cs8900a-2026-11-01.md` — 38/38 OK, 0 constat, 6 AMONT FAUX (fiche Cirrus) |
+| 5 | `mos6551.cpp` | 33 | MAME | ✅ `parite-mos6551-2026-11-01.md` — 1 MAJEUR (IRQ DCD/DSR malgré IRD), 2 AMONT FAUX, numérotation sans lignes vides |
 | 6 | `grappler.cpp` | 32 | MAME | ✅ `parite-grappler-2026-11-01.md` — 1 MINEUR (BUSY hors ligne), Grappler 1981 citée sur deux époques amont |
-| 7 | `Uthernet2.cpp` | 46 | **AppleWin** | ⬜ `source/`, pas `src/devices/` |
-| 8 | `imagewriter.cpp` | 24 | MAME | ⬜ |
-| 9 | `floppy.cpp` | 24 | MAME | ⬜ |
-| 10 | `NTSC.cpp` | 23 | **AppleWin** | ⬜ |
-| 11 | `6522via.cpp` | 20 | MAME | ⬜ attention : biais T1 voulu, voir plus bas |
-| 12 | `ay8910.cpp` | 17 | MAME | ⬜ |
-| 13 | `apple2.cpp` | 14 | MAME | ⬜ |
-| 14 | `a2ssc.cpp` | 14 | MAME | ⬜ |
+| 7 | `Uthernet2.cpp` | 46 | **AppleWin** | ✅ `parite-uthernet2-2026-11-01.md` — 4 MINEURS (Ctrl-Reset, Sn_IR, IRQ), 46 OK, 7 AMONT FAUX |
+| 8 | `imagewriter.cpp` | 24 | **GSport** (pas MAME) | ✅ `parite-imagewriter-2026-11-01.md` — amont GSport, pas MAME ; 5 MINEUR hérités, 4 AMONT FAUX |
+| 9 | `floppy.cpp` | 24 | MAME | ✅ `parite-floppy-2026-11-01.md` — 1 MINEUR (moteur Sony arrêté), 16 citations sur commit révoqué |
+| 10 | `NTSC.cpp` | 23 | **AppleWin** | ✅ `parite-NTSC-2026-11-01.md` — 0 constat ; 17 citations numérotées sans lignes vides, port fidèle |
+| 11 | `6522via.cpp` | 20 | MAME | ✅ `parite-6522via-2026-11-01.md` — 0 constat, 5 AMONT FAUX, master a adopté le biais T1 |
+| 12 | `ay8910.cpp` | 17 | MAME | ✅ `parite-ay8910-2026-11-01.md` — 2 MINEUR (relecture R7/R14/R15 8913, ports), 1 AMONT FAUX, pin à jour |
+| 13 | `apple2.cpp` | 14 | MAME | ✅ `parite-apple2-2026-11-01.md` — 2 MINEURS (PB2 flottant, clavier au reset ][+), 2 AMONT FAUX |
+| 14 | `a2ssc.cpp` | 14 | MAME | ✅ `parite-a2ssc-2026-11-01.md` — 3 MINEURS (port vide, miroir ACIA, DIP //c), 2 AMONT FAUX |
 | 15 | `upd1990a.cpp` | 13 | MAME | ⬜ |
 | 16+ | 67 autres fichiers | ~260 | mixte | ⬜ par paquets de 3-4 |
 
