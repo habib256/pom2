@@ -2121,6 +2121,59 @@ so a never-clocked canvas or a paused machine can darken. Pinned by
 (`kChannels = 2`). **OS-negotiated sample rate** (often 48 kHz on Apple
 Silicon) — cycle-driven sources MUST query `getActualSampleRate()`.
 
+### Device buffer: a ladder, climbed on late callbacks (2026-11-01)
+
+Two crackles with one cause. The Raspberry Pi build crackled unless the
+user raised scheduler priorities by hand; the WASM build crackled on a
+phone. Neither was a source: the per-source click meters read 0, and the
+sources' own jitter buffers (the speaker's 100 ms lead, the Mockingboard's
+two frames + callback span) cover a late *producer*. What they cannot cover
+is a late *consumer* — the host's audio thread (in the browser, the main
+thread's ScriptProcessorNode) not being scheduled before the device buffer
+runs dry. POM2 opened that device with **3 × 256 frames = 16 ms** at 48 kHz
+everywhere, `ma_performance_profile_low_latency`. A Pi's audio thread
+shares four cores with the CPU worker, the GL thread and the compositor,
+and Raspberry Pi OS's PipeWire runs a 1024-frame quantum (21 ms) above it;
+a phone's browser runs the whole emulated frame between two callbacks.
+16 ms underruns on every hitch.
+
+`AudioBufferPolicy.h` (pure, pinned by `audio_buffer_policy`):
+
+* **A ladder** of periods, powers of two from 256 (the browser's
+  ScriptProcessorNode accepts nothing else) to 2048 on a desktop (128 ms)
+  and 8192 in the browser. `kPeriods` stays 3.
+* **A first rung per platform** (`AudioDevice::detectPlatform`, compile-time
+  plus the browser's user agent): desktop 256 — unchanged; Linux ARM 1024,
+  above PipeWire's quantum; browser 2048 (the 2026-10-23 measurement);
+  a phone 4096.
+* **A late callback** is the device's own underrun detector, with no help
+  from the backend (miniaudio logs ALSA's EPIPE at DEBUG only, Pulse and
+  CoreAudio say nothing): a wall-clock gap between two data callbacks
+  longer than `1.25 ×` the whole buffer can only mean it emptied before the
+  next request came. Anything past a second is a lid or a background tab,
+  not a rung's worth. Counted in `AudioDevice::audioDataCallback`
+  (`lateCallbacks()`), shown in the Audio panel.
+* **The climb**: `AudioCoordinator::tick()` (once per UI frame, from
+  `MainWindow::render`) moves one rung when three late callbacks land
+  inside one ten-second window, through `AudioDevice::reconfigurePeriod` —
+  a hot re-open that keeps the source list (`initAudio` no longer clears
+  it; `shutdownAudio` still does) and tells every `RateAware` source the
+  rate again, since a re-opened device may negotiate another. Logged as
+  `Audio: device buffer: 256 -> 512 frames (16 -> 32 ms), 3 late callbacks
+  in the last 7 s …`, so a report carries the number.
+* **Remembered**: the rung reached is `audio_buffer_learned`, applied at
+  the next launch when it is above the platform default, so a Pi does not
+  crackle through the climb again. **Pinnable**: Audio panel ▸ Device
+  buffer, `audio_buffer_frames` (0 = automatic); a pinned rung never moves.
+
+What it costs: latency, one rung at a time, only on the machines that
+needed it — a desktop that never underruns stays at 5.3 ms. What it does
+not fix: a host that cannot keep real time at all (the counter keeps
+growing at the top rung; the panel says so), and the browser's
+fundamental shape — audio on the main thread. An `AudioWorklet`
+(`-sAUDIO_WORKLET` + pthreads, hence cross-origin isolation GitHub Pages
+cannot serve without a service-worker shim) is WASM-003's territory.
+
 ### The crackle detector (2026-09-09)
 
 `AudioSource::clicksPerSecond`: `AudioDevice::mixSources` counts, in each

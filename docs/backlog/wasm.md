@@ -74,3 +74,10 @@ session archive. The same smoke has since passed in CI (2026-10-23); see
 - 🧊 **Audio worklet tuning** — miniaudio Web Audio works but
   latency ~150 ms is audible on speaker click. Explore a custom
   `AudioWorkletNode` or shrink the buffer.
+- 2026-11-01: the buffer is now a ladder (`AudioBufferPolicy.h`): the
+  browser starts at 2048 frames, a phone at 4096, and three late callbacks
+  in ten seconds double it, up to 8192 — so a slow Android stops crackling
+  at the price of latency, and the Audio panel shows which rung it is on.
+  The worklet remains the only way to take the callback off the main
+  thread; it needs `-sAUDIO_WORKLET` + pthreads, hence cross-origin
+  isolation, which GitHub Pages serves only through a service-worker shim.

@@ -158,6 +158,15 @@ POM2 has kiosk mode built in (`--kiosk`; F10 toggles fullscreen), and a session 
 with `--kiosk` is settings-read-only for its whole life, so it cannot disturb
 a desktop setup.
 
+Audio crackle needs none of this since 2026-11-01: on a Linux ARM build the
+host device opens with a 1024-frame buffer (64 ms at 48 kHz, above
+PipeWire's quantum) and doubles it, up to 2048, whenever three data
+callbacks in ten seconds arrive after the buffer ran dry; the rung reached
+is remembered for the next launch, and Audio panel ▸ **Device buffer** shows
+it, with the late-callback count, and lets you pin one. A count that keeps
+growing at 2048 frames means the Pi is not keeping real time at all — that
+is what the governor and the IRQ pinning above are for.
+
 ---
 
 ## 3. Measure

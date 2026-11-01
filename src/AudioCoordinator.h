@@ -26,6 +26,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class AudioDevice;
@@ -180,6 +181,28 @@ public:
                                         CardKind kind, int slot,
                                         float defaultVolume) const;
 
+    // ── Device buffer (AudioBufferPolicy.h) ────────────────────────────
+    struct BufferSnapshot {
+        std::uint32_t periodFrames   = 0;   ///< the rung the device is open with
+        std::uint32_t periods        = 0;
+        std::uint32_t sampleRate     = 0;
+        double        bufferMs       = 0.0;
+        std::uint64_t lateCallbacks  = 0;   ///< since launch
+        std::uint32_t pinnedFrames   = 0;   ///< 0 = automatic (the ladder)
+        std::uint32_t minFrames      = 0;
+        std::uint32_t maxFrames      = 0;   ///< the platform's top rung
+        bool          available      = false;
+    };
+    BufferSnapshot captureBuffer() const;
+    /// Pin the device to one rung (`frames`), or 0 to let the ladder decide
+    /// again from the current rung. Re-opens the device at once.
+    void pinBuffer(std::uint32_t frames);
+    /// Once per UI frame: climbs one rung when the device reported
+    /// `AudioBufferPolicy::kLateToEscalate` late callbacks inside one
+    /// window (`kWindowSec`), unless a rung is pinned. The climb is
+    /// remembered (`audio_buffer_learned`) so the next launch starts there.
+    void tick();
+
     /// Restore host-only mixer policy. Persist writes both host controls and
     /// the live slot-card levels captured through the locked topology.
     void restore(Settings& settings,
@@ -199,6 +222,13 @@ private:
     AudioDevice&               device_;
     EmulationController*       controller_ = nullptr;
     std::vector<AudioSource*>  sources_;
+
+    // The ladder's state (AudioBufferPolicy.h). UI thread only.
+    std::uint32_t pinnedFrames_  = 0;   ///< 0 = automatic
+    std::uint32_t learnedFrames_ = 0;   ///< highest rung the ladder reached
+    std::uint64_t lateAtWindowStart_ = 0;
+    double        windowStartSec_    = -1.0;
+    void applyLadderRung(std::uint32_t frames, const std::string& why);
 };
 
 } // namespace pom2

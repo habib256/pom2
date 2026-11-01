@@ -671,6 +671,7 @@ set(POM2_FOUNDATION_HEADERS
     src/MediaWritePolicy.h
     src/MediaNotch.h
     src/TwoImgHeader.h
+    src/AudioBufferPolicy.h
     src/AudioSource.h
     src/ByteIO.h
     src/CharRomDump.h

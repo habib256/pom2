@@ -2047,6 +2047,35 @@ add_test(NAME audio_mixer_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(audio_mixer_smoke PROPERTIES TIMEOUT 10)
 
+# ─── Host audio device buffer ladder ──────────────────────────────────────
+# AudioBufferPolicy.h (the rungs, the late-callback rule, the climb) and
+# AudioDevice::reconfigurePeriod (a hot re-open that keeps the sources and
+# re-tells them the rate). The Raspberry Pi and the phone-browser crackle of
+# 2026-11-01: a 16 ms device buffer the host could not keep fed.
+add_executable(test_audio_buffer_policy
+    audio_buffer_policy_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
+)
+target_include_directories(test_audio_buffer_policy PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_audio_buffer_policy PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_audio_buffer_policy PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_audio_buffer_policy PRIVATE winmm)
+endif()
+add_test(NAME audio_buffer_policy
+    COMMAND test_audio_buffer_policy
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(audio_buffer_policy PROPERTIES TIMEOUT 20)
+
 
 # ─── HGR NTSC artifact rendering smoke test ───────────────────────────────
 # Pins the LUT corners (black byte, all-on byte, isolated bit per palette

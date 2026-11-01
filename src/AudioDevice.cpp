@@ -23,6 +23,9 @@
 #include <cmath>     // std::fabs — libstdc++ leaks it via other headers,
                      // MSVC does not (caught by the Windows release build)
 #include <cstring>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>   // EM_ASM_INT: the user agent, for the platform
+#endif
 
 // Vorbis backend for miniaudio: including stb_vorbis.c in this TU defines
 // STB_VORBIS_INCLUDE_STB_VORBIS_H, which lets miniaudio find its decoder.
@@ -131,7 +134,40 @@ void AudioDevice::audioDataCallback(ma_device* pDevice, void* pOutput,
         std::fill(output, output + frameCount * kChannels, 0.0f);
         return;
     }
+    // The late-callback tally (AudioBufferPolicy.h). A gap longer than the
+    // whole buffer means the device ran dry before it asked again; the
+    // coordinator climbs the buffer ladder on these. Wall clock, not
+    // frames: it is the host's scheduling that is being measured.
+    const auto now = std::chrono::steady_clock::now();
+    if (self->haveLastCallback_) {
+        const double gap =
+            std::chrono::duration<double>(now - self->lastCallback_).count();
+        if (pom2::AudioBufferPolicy::callbackIsLate(
+                gap, self->periodFrames_.load(std::memory_order_relaxed),
+                self->actualSampleRate))
+            self->lateCallbacks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    self->lastCallback_     = now;
+    self->haveLastCallback_ = true;
+    self->callbacks_.fetch_add(1, std::memory_order_relaxed);
     self->mixSources(output, static_cast<int>(frameCount));
+}
+
+AudioDevice::Platform AudioDevice::detectPlatform()
+{
+#if defined(__EMSCRIPTEN__)
+    // A phone's browser runs the emulated frame AND the audio callback on
+    // one thread, and the frame is slower there: start a rung higher.
+    const int mobile = EM_ASM_INT({
+        return (typeof navigator !== 'undefined' &&
+                /Android|Mobi|iPhone|iPad|iPod/i.test(navigator.userAgent)) ? 1 : 0;
+    });
+    return mobile ? Platform::BrowserMobile : Platform::Browser;
+#elif defined(__linux__) && (defined(__aarch64__) || defined(__arm__))
+    return Platform::LinuxArm;
+#else
+    return Platform::Desktop;
+#endif
 }
 
 AudioDevice::AudioDevice() : AudioDevice(OutputMode::Host)
@@ -139,8 +175,41 @@ AudioDevice::AudioDevice() : AudioDevice(OutputMode::Host)
 }
 
 AudioDevice::AudioDevice(OutputMode mode)
+    : platform_(detectPlatform())
 {
-    if (mode == OutputMode::Host) initAudio();
+    periodFrames_.store(pom2::AudioBufferPolicy::defaultPeriodFrames(platform_),
+                        std::memory_order_relaxed);
+    if (mode == OutputMode::Host) initAudio(periodFrames());
+}
+
+bool AudioDevice::reconfigurePeriod(uint32_t periodFrames)
+{
+    if (!pom2::AudioBufferPolicy::isRung(periodFrames, platform_)) return false;
+    if (periodFrames == this->periodFrames() && device) return true;
+    if (!device) {
+        // Offline, or a first open that failed: nothing to re-open. Record
+        // the rung so a later open uses it.
+        periodFrames_.store(periodFrames, std::memory_order_relaxed);
+        return true;
+    }
+    // Stop the old device first — the deleter's ma_device_uninit joins the
+    // audio thread — so the fields below are written with no reader alive.
+    device.reset();
+    audioAvailable    = false;
+    haveLastCallback_ = false;
+    periodFrames_.store(periodFrames, std::memory_order_relaxed);
+    const uint32_t rateBefore = actualSampleRate;
+    const bool ok = initAudio(periodFrames);
+    // The sources outlive the device. Tell the RateAware ones the rate again:
+    // a re-opened device may negotiate another one, and a source that kept
+    // synthesising on the old grid would drift by the ratio (bug hunt #19).
+    if (ok && actualSampleRate != rateBefore) {
+        std::lock_guard<std::mutex> lock(sourcesMutex);
+        for (AudioSource* s : sources)
+            if (auto* ra = dynamic_cast<RateAware*>(s))
+                ra->setSampleRate(actualSampleRate);
+    }
+    return ok;
 }
 
 AudioDevice::~AudioDevice()
@@ -148,9 +217,13 @@ AudioDevice::~AudioDevice()
     shutdownAudio();
 }
 
-bool AudioDevice::initAudio()
+bool AudioDevice::initAudio(uint32_t periodFrames)
 {
-    shutdownAudio();
+    // Not shutdownAudio(): that clears the source list, and reconfigurePeriod
+    // re-opens the device UNDER a live list. The caller guarantees no device
+    // is open here (the constructor has none; reconfigurePeriod reset it).
+    device.reset();
+    audioAvailable = false;
 
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format    = ma_format_f32;
@@ -174,22 +247,20 @@ bool AudioDevice::initAudio()
     // Now the sources are told the real rate and synthesise straight to it
     // (`AudioSource.h`'s RateAware contract, which `addSource` applies).
     config.sampleRate         = 0;
-#ifdef __EMSCRIPTEN__
-    // The browser build has no audio thread: without -sAUDIO_WORKLET
+    // The period is a rung of AudioBufferPolicy's ladder: 256 frames
+    // (5.3 ms at 48 kHz) on a desktop, 1024 on a Linux ARM board, 2048 in
+    // the browser — which has no audio thread: without -sAUDIO_WORKLET
     // miniaudio plays through a ScriptProcessorNode whose `onaudioprocess`
     // runs on the MAIN thread, queued behind the rAF frame that runs the
-    // CPU and paints ImGui (`miniaudio.h`, ma_device_init__webaudio). A
-    // 256-frame period is 5.3 ms at 48 kHz — shorter than one emulated
-    // frame — so the callback missed its deadline almost every frame and
-    // the output crackled. 2048 frames (~43 ms) rides out a slow frame;
-    // the sources' jitter buffers size themselves from the frameCount
-    // they are asked for (Mockingboard / Phasor `targetLag`), so the
-    // larger callback does not make them re-anchor.
-    config.periodSizeInFrames = 2048;
-#else
-    config.periodSizeInFrames = 256;
-#endif
-    config.periods            = 3;
+    // CPU and paints ImGui (`miniaudio.h`, ma_device_init__webaudio), so a
+    // 5.3 ms period missed its deadline almost every frame (2026-10-23) —
+    // and 4096 on a phone. The coordinator climbs a rung whenever the
+    // callbacks above come late. The sources' jitter buffers size
+    // themselves from the frameCount they are asked for (Mockingboard /
+    // Phasor `targetLag`), so a larger callback does not make them
+    // re-anchor.
+    config.periodSizeInFrames = periodFrames;
+    config.periods            = pom2::AudioBufferPolicy::kPeriods;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.dataCallback       = &AudioDevice::audioDataCallback;
     config.pUserData          = this;
@@ -226,7 +297,12 @@ bool AudioDevice::initAudio()
         (actualSampleRate == kSampleRate
              ? std::string(" (POM2's nominal rate)")
              : std::string(" — every source synthesises straight to it, so "
-                           "miniaudio inserts no conversion of its own")));
+                           "miniaudio inserts no conversion of its own")) +
+        "; buffer " + std::to_string(pom2::AudioBufferPolicy::kPeriods) +
+        " x " + std::to_string(periodFrames) + " frames (" +
+        std::to_string(static_cast<int>(
+            pom2::AudioBufferPolicy::bufferSeconds(periodFrames, actualSampleRate) *
+            1000.0 + 0.5)) + " ms)");
 
     // Forward miniaudio's internal log (warnings, underruns, device drops…)
     // into pom2::log so they show up next to our own audio diagnostics.

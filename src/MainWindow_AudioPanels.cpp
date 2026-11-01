@@ -436,6 +436,60 @@ void MainWindow::renderAudioMixerWindow()
         if (mute != printerSound->muted()) printerSound->setMuted(mute);
     }
 
+    // ── Device buffer (AudioBufferPolicy.h) ─────────────────────────────
+    // The one knob against a crackle the sources did not make: the host's
+    // audio thread arriving after the device ran dry. Automatic climbs a
+    // rung on late callbacks; a pinned rung is for the user who knows the
+    // machine (a Pi behind PipeWire wants 1024 or 2048 and no climb).
+    {
+        ImGui::Spacing();
+        ImGui::Separator();
+        const auto buf = audioCoordinator_->captureBuffer();
+        char current[64];
+        if (buf.pinnedFrames == 0)
+            std::snprintf(current, sizeof current, "Automatic (now %u frames, %.0f ms)",
+                          buf.periodFrames, buf.bufferMs);
+        else
+            std::snprintf(current, sizeof current, "%u frames (%.0f ms)",
+                          buf.periodFrames, buf.bufferMs);
+        ImGui::SetNextItemWidth(14.0f * ImGui::GetFontSize());
+        if (ImGui::BeginCombo("Device buffer", current)) {
+            if (ImGui::Selectable("Automatic", buf.pinnedFrames == 0))
+                audioCoordinator_->pinBuffer(0);
+            for (uint32_t f = buf.minFrames; f && f <= buf.maxFrames; f *= 2) {
+                char label[48];
+                std::snprintf(label, sizeof label, "%u frames (%.0f ms)", f,
+                              buf.sampleRate ? 1000.0 * f * buf.periods / buf.sampleRate : 0.0);
+                if (ImGui::Selectable(label, buf.pinnedFrames == f))
+                    audioCoordinator_->pinBuffer(f);
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "How much audio the host device holds ahead of the speakers.\n"
+                "Too small for this machine and the device runs dry before its\n"
+                "thread is scheduled again: a crackle no source row explains.\n"
+                "Automatic starts small and doubles the buffer after three late\n"
+                "callbacks in ten seconds, and remembers the result for the next\n"
+                "launch. Pin a size to stop it moving (more buffer = more delay\n"
+                "between a key press and its click).");
+        }
+        ImGui::SameLine();
+        if (buf.lateCallbacks > 0) {
+            ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.20f, 1.0f),
+                               "%llu late callbacks",
+                               static_cast<unsigned long long>(buf.lateCallbacks));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Data callbacks that came later than the whole buffer\n"
+                                  "could last, since launch — each one was a hole in the\n"
+                                  "sound. A number that keeps growing at the top size means\n"
+                                  "the machine itself cannot keep real time.");
+        } else {
+            ImGui::TextDisabled("no late callback");
+        }
+    }
+
     ImGui::Spacing();
     ImGui::TextDisabled("Master is post-mix; per-channel knobs are pre-mix.");
     ImGui::TextDisabled("Bars show last-buffer peak with ~100 ms release.");

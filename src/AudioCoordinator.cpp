@@ -30,7 +30,11 @@
 #include "SlotBus.h"
 #include "SpeakerDevice.h"
 
+#include "AudioBufferPolicy.h"
+#include "Logger.h"
+
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <string>
 
@@ -402,6 +406,26 @@ void AudioCoordinator::restore(Settings& settings,
     device_.setMasterMuted(settings.getBool("master_muted", false));
     device_.setMonoDownmix(settings.getBool("audio_mono_downmix", false));
 
+    // The device buffer (AudioBufferPolicy.h): a pinned rung wins; otherwise
+    // the rung the ladder reached last time, so a Raspberry Pi that climbed
+    // to 2048 frames yesterday does not crackle through the climb again
+    // today. A learned value below the platform default is stale (the
+    // default moved) and is ignored.
+    pinnedFrames_  = static_cast<std::uint32_t>(
+        std::max(0, settings.getInt("audio_buffer_frames", 0)));
+    learnedFrames_ = static_cast<std::uint32_t>(
+        std::max(0, settings.getInt("audio_buffer_learned", 0)));
+    {
+        using P = pom2::AudioBufferPolicy;
+        const auto platform = device_.platform();
+        if (!P::isRung(pinnedFrames_, platform)) pinnedFrames_ = 0;
+        if (!P::isRung(learnedFrames_, platform)) learnedFrames_ = 0;
+        if (pinnedFrames_)
+            applyLadderRung(pinnedFrames_, "pinned in the settings");
+        else if (learnedFrames_ > device_.periodFrames())
+            applyLadderRung(learnedFrames_, "learned on an earlier run");
+    }
+
     speaker.setVolume(settings.getFloat("speaker_volume", 1.0f));
     speaker.setMuted(settings.getBool("speaker_muted", false));
     cassette.setVolume(settings.getFloat("cassette_volume", 0.6f));
@@ -453,6 +477,8 @@ void AudioCoordinator::persist(Settings& settings,
     settings.setFloat("master_volume", device_.getMasterVolume());
     settings.setBool("master_muted", device_.isMasterMuted());
     settings.setBool("audio_mono_downmix", device_.isMonoDownmix());
+    settings.setInt("audio_buffer_frames", static_cast<int>(pinnedFrames_));
+    settings.setInt("audio_buffer_learned", static_cast<int>(learnedFrames_));
     settings.setFloat("speaker_pan", speaker.pan.load());
     settings.setFloat("cassette_pan", cassette.pan.load());
     settings.setFloat("floppy_sound_pan", floppy525.pan.load());
@@ -492,6 +518,85 @@ void AudioCoordinator::persist(Settings& settings,
         settings.setBool(std::string(settingsStem(card->kind)) + "_muted",
                          card->muted);
     }
+}
+
+AudioCoordinator::BufferSnapshot AudioCoordinator::captureBuffer() const
+{
+    using P = pom2::AudioBufferPolicy;
+    BufferSnapshot s;
+    s.periodFrames  = device_.periodFrames();
+    s.periods       = P::kPeriods;
+    s.sampleRate    = device_.getActualSampleRate();
+    s.bufferMs      = device_.bufferSeconds() * 1000.0;
+    s.lateCallbacks = device_.lateCallbacks();
+    s.pinnedFrames  = pinnedFrames_;
+    s.minFrames     = P::kMinPeriodFrames;
+    s.maxFrames     = P::maxPeriodFrames(device_.platform());
+    s.available     = device_.isAvailable();
+    return s;
+}
+
+void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& why)
+{
+    const std::uint32_t before = device_.periodFrames();
+    const double beforeMs = device_.bufferSeconds() * 1000.0;
+    if (!device_.reconfigurePeriod(frames)) {
+        log().warn("Audio", "device buffer: could not re-open at " +
+                            std::to_string(frames) + " frames (" + why + ")");
+        return;
+    }
+    if (device_.periodFrames() != before) {
+        log().info("Audio", "device buffer: " + std::to_string(before) +
+                            " -> " + std::to_string(frames) + " frames (" +
+                            std::to_string(static_cast<int>(beforeMs + 0.5)) +
+                            " -> " +
+                            std::to_string(static_cast<int>(
+                                device_.bufferSeconds() * 1000.0 + 0.5)) +
+                            " ms), " + why);
+    }
+    // A new window: the old device's late callbacks are not the new one's.
+    lateAtWindowStart_ = device_.lateCallbacks();
+    windowStartSec_    = -1.0;
+}
+
+void AudioCoordinator::pinBuffer(std::uint32_t frames)
+{
+    using P = pom2::AudioBufferPolicy;
+    if (frames != 0 && !P::isRung(frames, device_.platform())) return;
+    pinnedFrames_ = frames;
+    if (frames != 0) {
+        applyLadderRung(frames, "pinned in the Audio panel");
+    } else {
+        // Back to automatic: keep the current rung as the ladder's start.
+        learnedFrames_     = std::max(learnedFrames_, device_.periodFrames());
+        lateAtWindowStart_ = device_.lateCallbacks();
+        windowStartSec_    = -1.0;
+    }
+}
+
+void AudioCoordinator::tick()
+{
+    using P = pom2::AudioBufferPolicy;
+    if (pinnedFrames_ != 0 || !device_.isAvailable()) return;
+    using clock = std::chrono::steady_clock;
+    static const auto t0 = clock::now();
+    const double now = std::chrono::duration<double>(clock::now() - t0).count();
+    const std::uint64_t late = device_.lateCallbacks();
+    if (windowStartSec_ < 0.0 || now - windowStartSec_ > P::kWindowSec) {
+        windowStartSec_    = now;
+        lateAtWindowStart_ = late;
+        return;
+    }
+    const std::uint64_t lateInWindow = late - lateAtWindowStart_;
+    const std::uint32_t current = device_.periodFrames();
+    const std::uint32_t next =
+        P::escalatedPeriodFrames(current, lateInWindow, device_.platform());
+    if (next == current) return;
+    learnedFrames_ = std::max(learnedFrames_, next);
+    applyLadderRung(next, std::to_string(lateInWindow) +
+                              " late callbacks in the last " +
+                              std::to_string(static_cast<int>(now - windowStartSec_ + 0.5)) +
+                              " s — the host could not keep the smaller buffer fed");
 }
 
 } // namespace pom2

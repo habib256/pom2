@@ -1379,6 +1379,10 @@ void MainWindow::render()
     const double now = std::chrono::duration<double>(clock::now() - t0).count();
     const float deltaSeconds = static_cast<float>(std::max(0.0, now - lastFrameTime));
     lastFrameTime = now;
+    // The audio device's buffer ladder (AudioBufferPolicy.h): climbs a rung
+    // when the host let the device run dry. UI thread, like every other
+    // device re-open.
+    audioCoordinator_->tick();
 
     // Screen-widget hover is re-established by renderScreenWindow() further
     // down, if it draws at all. Clearing it here is what makes "the screen

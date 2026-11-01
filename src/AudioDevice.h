@@ -42,8 +42,12 @@
 #include <mutex>
 #include <vector>
 
+#include "AudioBufferPolicy.h"
 #include "AudioMix.h"
 #include "AudioSource.h"
+
+#include <atomic>
+#include <chrono>
 
 struct ma_device;
 
@@ -137,9 +141,36 @@ public:
     /// STEREO and must hold `frameCount * kChannels` floats.
     void mixSources(float* output, int frameCount);
 
+    // ── Device buffer (AudioBufferPolicy.h) ────────────────────────────
+    using Platform = pom2::AudioBufferPolicy::Platform;
+    /// What this build runs on, as the policy sees it: decided once at
+    /// construction (compile-time, plus the browser's user agent).
+    Platform platform() const { return platform_; }
+    /// The period the device is open with, in frames; `kPeriods` of them
+    /// make the buffer. Offline mode reports the platform default.
+    uint32_t periodFrames() const { return periodFrames_.load(std::memory_order_relaxed); }
+    double   bufferSeconds() const
+    {
+        return pom2::AudioBufferPolicy::bufferSeconds(periodFrames(), actualSampleRate);
+    }
+    /// Data callbacks that arrived later than the whole buffer could have
+    /// lasted (`AudioBufferPolicy::callbackIsLate`): each one is a hole the
+    /// listener heard. Counted on the audio thread, read by the UI; the
+    /// coordinator climbs the ladder on them.
+    uint64_t lateCallbacks() const { return lateCallbacks_.load(std::memory_order_relaxed); }
+    uint64_t callbacks() const { return callbacks_.load(std::memory_order_relaxed); }
+    /// Re-open the device with another period, keeping every registered
+    /// source (each RateAware one is told the rate again, which may have
+    /// changed with the device). UI thread: miniaudio stops and joins the
+    /// audio thread inside, so nothing races the source list. False when
+    /// the new device could not be opened — audio is then disabled, as a
+    /// failed first open leaves it.
+    bool reconfigurePeriod(uint32_t periodFrames);
+
 private:
-    bool initAudio();
+    bool initAudio(uint32_t periodFrames);
     void shutdownAudio();
+    static Platform detectPlatform();
 
     std::vector<AudioSource*> sources;
     mutable std::mutex sourcesMutex;
@@ -154,6 +185,15 @@ private:
     // Default FALSE: a bare AudioDevice (tests, headless composition) must
     // behave exactly as before. Only an explicit setMode(Stopped) mutes it.
     std::atomic<bool>  suspended_{false};
+
+    Platform platform_ = Platform::Desktop;
+    std::atomic<uint32_t> periodFrames_{pom2::AudioBufferPolicy::kMinPeriodFrames};
+    std::atomic<uint64_t> lateCallbacks_{0};
+    std::atomic<uint64_t> callbacks_{0};
+    // Audio thread only. Reset by the UI thread in `reconfigurePeriod`,
+    // between the old thread's join and the new one's start.
+    bool haveLastCallback_ = false;
+    std::chrono::steady_clock::time_point lastCallback_{};
 
     struct MaDeviceDeleter { void operator()(ma_device* d) const noexcept; };
     std::unique_ptr<ma_device, MaDeviceDeleter> device;
