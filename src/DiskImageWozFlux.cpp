@@ -321,8 +321,21 @@ bool DiskImage::applyWozFluxWriteBack()
             bytes.push_back(static_cast<uint8_t>(gap));
             previous = next;
         };
-        for (int tick : ticks) appendGap(tick);
-        appendGap(wozQtFluxPeriodTicks[qt]); // terminal wrap, no pulse
+        // [B] WOZ 2.1 reference, TRKS: every non-255 byte is a transition,
+        // the last one included (it closes the loop). So the stream must
+        // END on one: start after the first transition and close on it,
+        // one period later. A track loaded from a file keeps its closing
+        // transition at 0, so it rewrites byte for byte; one whose
+        // transition at 0 was overwritten comes out rotated by ticks[0]
+        // (the Disk II has no index sensor). An empty track cannot be
+        // written without a transition: it keeps one at the seam.
+        if (!ticks.empty()) {
+            previous = ticks.front();
+            for (size_t i = 1; i < ticks.size(); ++i) appendGap(ticks[i]);
+            appendGap(wozQtFluxPeriodTicks[qt] + ticks.front());
+        } else {
+            appendGap(wozQtFluxPeriodTicks[qt]);
+        }
         if (bytes.size() > wozQtByteLen[qt] &&
             !growWozFluxSlot(qt, bytes.size())) {
             lastError = "WOZ FLUX track " + std::to_string(qt / 4.0) +

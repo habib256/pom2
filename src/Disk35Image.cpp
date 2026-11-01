@@ -746,10 +746,21 @@ bool Disk35Image::loadBitstream(const std::vector<uint8_t>& buf,
             for (uint32_t j = 0; j < bitCount; ++j) {
                 const uint8_t delta = buf[off + j];
                 tick += delta;
-                // The final delta closes the circular track at its index.
-                if (delta == 255 || j + 1 == bitCount) continue;
-                if (tick < totalTicks) backing->transitions[slot].push_back(uint32_t(tick));
-                const uint64_t cell = (tick + bitTiming / 2) / bitTiming;
+                // [B] MOOF / WOZ 2.1 references (applesaucefdc.com, fetched
+                // 2026-11-01): every non-255 byte is a transition, the last
+                // one included — it closes the loop at tick == period, i.e.
+                // angular position 0. [D] MAME as_dsk.cpp:81-102 @ mame0287
+                // pushes it as MG_F|0. Dropping it lost one transition per
+                // revolution (audit parite-flopimg-as_dsk-wozfdc, constat 1).
+                if (delta == 255) continue;
+                const uint64_t at = j + 1 == bitCount ? 0 : tick;
+                auto& list = backing->transitions[slot];
+                if (at == 0) {
+                    if (list.empty() || list.front() != 0) list.insert(list.begin(), 0u);
+                } else if (at < totalTicks) {
+                    list.push_back(uint32_t(at));
+                }
+                const uint64_t cell = (at + bitTiming / 2) / bitTiming;
                 if (cell < cellCount) cells[static_cast<std::size_t>(cell)] = 1;
             }
         } else {

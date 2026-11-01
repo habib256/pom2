@@ -527,3 +527,18 @@ fixes. Écart réel mais latent : je n'ai pas de titre qui échoue aujourd'hui.
   - le chemin de lecture 3,5" en flux (`Sony35Drive` à partir des
     transitions de `Disk35Image`) : non sondé séparément. Il lit la même liste
     de transitions, donc la même transition manquante.
+
+---
+
+## Suite donnée (2026-11-01)
+
+Constat 1 **corrigé** dans les deux chargeurs (`DiskImage.cpp`, `Disk35Image.cpp`)
+et les deux écrivains (`DiskImageWozFlux.cpp`, `Disk35Image_Bitstream.cpp`),
+par un agent qui a relu les références WOZ 2.1 et MOOF. Le mutant confirme le
+symptôme : « decoded 11 of 1600 blocks » au montage 3,5". Épinglé par
+`moof35_load` (couture dans un champ de données), `woz_writeback` (réécriture
+octet pour octet, rotation si la transition en 0 est effacée),
+`woz_bit_timing` (cinq transitions). Les trois `AMONT FAUX` (CRC nul, 141
+quarts de piste, `$FF` sur adresse impaire) restent tels quels. Non vérifié :
+une capture Applesauce FLUX réelle ; que ni le Disk II ni le Sony ne lisent
+un index (ce qui rend la rotation invisible).

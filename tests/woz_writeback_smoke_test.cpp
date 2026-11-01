@@ -531,7 +531,8 @@ bool testFluxWriteBackRoundTrip()
     img.writeFlux(0, 100, 120, 1, &pulse);
     pulse = 149;
     img.writeFlux(1, 140, 160, 1, &pulse);
-    const std::vector<int> expected{8, 16, 24, 109, 149};
+    // 0 = the stream's closing transition (its last byte, 228).
+    const std::vector<int> expected{0, 8, 16, 24, 109, 149};
     if (img.fluxEvents(0) != expected || img.fluxEvents(1) != expected) {
         std::printf("FAIL: FLUX aliases diverged before save\n"); return false;
     }
@@ -563,6 +564,45 @@ bool testFluxWriteBackRoundTrip()
     fs::remove(path, ec);
     fs::remove(wp, ec);
     std::printf("  ok: FLUX ticks, alias, save/reload, and INFO protection\n");
+    return true;
+}
+
+// [B] WOZ 2.1 reference, TRKS: every non-255 byte of a flux stream is a
+// transition, the LAST one included — it closes the loop at position 0
+// (audit parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1). So (a) an
+// unchanged track rewrites byte for byte, and (b) a track whose transition
+// at 0 was overwritten must still END its stream on a real transition —
+// rotated, not padded with a pulse the surface never had.
+bool testFluxStreamEndsOnTransition()
+{
+    const auto path = writeTempFile(buildFluxWoz(), "flux_close");
+    const auto original = readWholeFile(path);
+    DiskImage img;
+    if (!img.loadFile(path)) { std::printf("FAIL: load FLUX (close)\n"); return false; }
+    img.setWriteBackEnabled(true);
+    int64_t pulse = 109;
+    img.writeFlux(0, 100, 120, 1, &pulse);
+    img.writeFlux(0, 100, 120, 0, nullptr);    // back to the loaded surface
+    if (!img.saveDirty()) { std::printf("FAIL: save FLUX (close)\n"); return false; }
+    auto saved = readWholeFile(path);
+    if (!std::equal(original.begin() + 1536, original.begin() + 1545, saved.begin() + 1536) ||
+        saved[260] != 9) {
+        std::printf("FAIL: unchanged FLUX track did not rewrite byte for byte\n");
+        return false;
+    }
+    img.writeFlux(0, 0, 4, 0, nullptr);        // erase the closing transition
+    if (!img.saveDirty()) { std::printf("FAIL: save FLUX (erase)\n"); return false; }
+    DiskImage reloaded;
+    if (!reloaded.loadFile(path) || reloaded.trackPeriod(0) != 400 ||
+        reloaded.fluxEvents(0) != std::vector<int>{0, 8, 16}) {
+        std::printf("FAIL: FLUX stream without its seam transition reloaded "
+                    "%zu events (want 3, rotated: 0 8 16)\n",
+                    reloaded.fluxEvents(0).size());
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: a FLUX stream closes on a transition (rewrite + rotate)\n");
     return true;
 }
 
@@ -615,7 +655,11 @@ bool testFluxSlotGrowth()
     }
     const auto saved = readWholeFile(path);
     if (saved[256] != 4 || saved[258] != 2 ||
-        saved[260] != 2 || saved[261] != 2 ||
+        // 513 transitions → 512 deltas + the closing one (on the pulse at
+        // 0) = 513 bytes. The writer used to open with a 0-tick byte for
+        // that pulse and close on a padding byte: 514, one transition too
+        // many under the WOZ 2.1 reading (every non-255 byte is one).
+        saved[260] != 1 || saved[261] != 2 ||
         saved[66] != 6 || saved[3072] != 'F') {
         std::printf("FAIL: grown TRKS/INFO/FLUX offsets\n"); return false;
     }
@@ -685,6 +729,7 @@ int main()
 {
     if (!testFluxWriteBackRoundTrip()) return 1;
     if (!testFluxLongWindowKeepsLastRevolution()) return 1;
+    if (!testFluxStreamEndsOnTransition()) return 1;
     if (!testFluxSlotGrowth()) return 1;
     if (!testFluxSlotGrowthInMacBinary()) return 1;
     if (!testSharedTrkQuarterTracksAlias()) return 1;

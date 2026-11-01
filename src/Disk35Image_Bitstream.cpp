@@ -219,9 +219,19 @@ bool Disk35Image::serializeBitstreamOf(const Disk35Bitstream& bs, std::vector<ui
             while (ticks >= 255) { encoded.push_back(255); ticks -= 255; }
             encoded.push_back(uint8_t(ticks));
         };
-        uint32_t previous = 0;
-        for (auto tick : bs.transitions[slot]) { delta(tick - previous); previous = tick; }
-        delta(bs.periods[slot] - previous);
+        // [B] MOOF / WOZ 2.1 references: every non-255 byte is a transition,
+        // the last one included — the stream must END on one. Start after
+        // the first transition and close on it one period later: a track
+        // loaded from a file (closing transition stored at 0) rewrites byte
+        // for byte; otherwise the loop comes out rotated by its first tick.
+        const auto& list = bs.transitions[slot];
+        if (!list.empty()) {
+            uint32_t previous = list.front();
+            for (size_t i = 1; i < list.size(); ++i) { delta(list[i] - previous); previous = list[i]; }
+            delta(bs.periods[slot] + list.front() - previous);
+        } else {
+            delta(bs.periods[slot]);
+        }
         const size_t blocks = (encoded.size() + 511) / 512;
         if (encoded.size() > (1u << 20) || blocks > 65535 || out.size() / 512 > 65535)
             return fail("Capture rewrite exceeds the 16 MiB limit.");

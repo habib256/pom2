@@ -4273,6 +4273,29 @@ Pinned: `woz_unmapped_track_write` (WOZ2, WOZ1, save + reload, a chunk
 after TRKS, write protection) and `diskii_format_woz_unmapped` (DOS 3.3
 INIT, CATALOG and SAVE/LOAD on a WOZ that carried track 0 only).
 
+### FLUX tracks: the last byte is the transition that closes the loop *(2026-11-01)*
+
+[B] WOZ 2.1 reference (TRKS) and MOOF reference, applesaucefdc.com: *"Each
+byte represents a single flux transition and its value is the number of
+ticks since the previous flux transition"*; 255 continues the delta; the
+streams *"are properly looped so there is no time warp when wrapping"*. So
+the **last** non-255 byte is a transition — at cumulative tick == period,
+i.e. angular position 0 — and [D] MAME `as_dsk.cpp:81-102` @ `mame0287`
+pushes a pulse there (*"There is always a pulse at index, and it's the last
+one in the stream"*). Both POM2 loaders (`DiskImage.cpp`, `Disk35Image.cpp`)
+treated it as a time marker and dropped it until 2026-11-01: one transition
+lost per revolution, a 1 read as 0 at the seam, and on a 3.5" image the
+sector under the seam undecodable (*"decoded 11 of 1600 blocks"* on the
+mutant). The writers (`DiskImageWozFlux.cpp`, `Disk35Image_Bitstream.cpp`)
+now start after the first transition and end on it one period later, so a
+track as loaded rewrites byte for byte. Consequences: a track whose
+transition at 0 was overwritten saves **rotated** onto its first remaining
+transition (no Apple drive has an index sensor; not measured on a capture);
+a track with no transition cannot exist in this format and reloads as a
+single pulse at 0. Pinned by `moof35_load` (seam inside a data field),
+`woz_writeback` (byte-for-byte rewrite, rotation) and `woz_bit_timing`.
+`docs/audits/parite-flopimg-as_dsk-wozfdc-2026-11-01.md`.
+
 ### WOZ2 `optimal_bit_timing`
 
 INFO+39 (units of 125 ns) — bit-cell duration. Default 32 = 4 µs =

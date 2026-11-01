@@ -59,7 +59,17 @@ void test(bool moof) {
     assert(saved != bytes && std::search(saved.begin(), saved.end(), metadata.begin(), metadata.end()) != saved.end());
     pom2::Disk35Image loaded;
     assert(loaded.loadFile(path.string())); loaded.setWriteBackEnabled(true);
-    assert(*loaded.originalFluxTicks(0, 0) == expected && loaded.trackPeriod125ns(0, 0) == period);
+    // [B] MOOF / WOZ 2.1: every non-255 byte is a transition, the last one
+    // included — a stream always closes on a transition at position 0. The
+    // write erased the one at 0, so the saved loop is ROTATED to start on
+    // its first transition (7): same intervals, same sub-cell times, and no
+    // pulse invented at the seam (audit parite-flopimg-as_dsk-wozfdc,
+    // constat 1). The IWM sees no index, so the rotation is invisible.
+    const uint32_t shift = expected.front();
+    auto rotated = expected;
+    for (auto& t : rotated) t -= shift;
+    assert(shift == 7 && rotated.front() == 0);
+    assert(*loaded.originalFluxTicks(0, 0) == rotated && loaded.trackPeriod125ns(0, 0) == period);
     assert(*loaded.originalFluxTicks(0, 1) == farSide && *loaded.originalFluxTicks(1, 0) == neighbor);
     // A second save/reload preserves sub-cell times from the first capture.
     const int64_t more[] = {333};
@@ -67,14 +77,16 @@ void test(bool moof) {
     assert(loaded.saveDirty());
     assert(std::filesystem::file_size(path) == saved.size()); // reuse the existing FLUX allocation
     pom2::Disk35Image again; assert(again.loadFile(path.string())); again.setWriteBackEnabled(true);
-    assert(std::binary_search(again.originalFluxTicks(0, 0)->begin(), again.originalFluxTicks(0, 0)->end(), 7));
+    assert(std::binary_search(again.originalFluxTicks(0, 0)->begin(), again.originalFluxTicks(0, 0)->end(), 7 - shift));
     assert(std::binary_search(again.originalFluxTicks(0, 0)->begin(), again.originalFluxTicks(0, 0)->end(), 333));
     const int64_t newTrack[] = {123};
     assert(again.writeFlux125ns(2, 1, 0, 1000, newTrack, 1, 1000000));
     assert(again.saveDirty());
     pom2::Disk35Image formatted; assert(formatted.loadFile(path.string()));
     assert(formatted.trackPeriod125ns(2, 1) == 1000000);
-    assert(*formatted.originalFluxTicks(2, 1) == std::vector<uint32_t>{123});
+    // One transition per revolution: the stream closes on it, so it reloads
+    // at the seam (rotated from 123 to 0), one period apart as written.
+    assert(*formatted.originalFluxTicks(2, 1) == std::vector<uint32_t>{0});
     // Entire-track rewrite refreshes the block projection from actual GCR.
     std::fill(payload.begin(), payload.end(), 0x5A);
     const auto newCells = encodeTrack(0, 0, payload.data()); const auto newTicks = ticks(newCells);
@@ -89,7 +101,10 @@ void test(bool moof) {
     assert(again.originalFluxTicks(0, 0)->empty());
     assert(again.saveDirty());
     pom2::Disk35Image erased; assert(erased.loadFile(path.string()));
-    assert(erased.originalFluxTicks(0, 0)->empty() && *erased.originalFluxTicks(0, 1) == farSide);
+    // A track with NO transition cannot be written as a flux stream (its last
+    // byte is always one): it comes back with the single closing pulse.
+    assert(*erased.originalFluxTicks(0, 0) == std::vector<uint32_t>{0} &&
+           *erased.originalFluxTicks(0, 1) == farSide);
     // Header and host notches still refuse physical writes.
     erased.setWriteBackEnabled(true); erased.setHostWriteProtected(true);
     assert(!erased.writeFlux125ns(0, 0, 0, 100, more, 1, period));

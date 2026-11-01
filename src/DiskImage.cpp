@@ -1157,7 +1157,15 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
 
     // Helper: parse one flux track into bitStream[qt] + fluxStream[qt].
     //
-    // Flux delta encoding (MAME `as_dsk.cpp:61-81`):
+    // Flux delta encoding:
+    // [B] WOZ 2.1 reference, TRKS (applesaucefdc.com/woz/reference2/,
+    //     fetched 2026-11-01) — "Each byte represents a single flux
+    //     transition and its value is the number of ticks since the
+    //     previous flux transition"; 255 continues the delta; the streams
+    //     "are properly looped so there is no time warp when wrapping".
+    // [D] MAME as_dsk.cpp:81-102 @ mame0287 — load_flux_track pushes
+    //     MG_F|0 ("There is always a pulse at index, and it's the last one
+    //     in the stream"; MG_F is a flux orientation change, flopimg.h:471).
     //   - The TRK header at trks_off + fidx*8 has the same layout as
     //     bit-cell tracks: u16 starting_block, u16 block_count, u32
     //     track_size — but `track_size` here is the byte count of the
@@ -1165,12 +1173,12 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     //   - Walk bytes; each byte is a tick count (1 tick = 125 ns).
     //   - A byte == 0xFF means "no flux this step" (continuation).
     //   - Otherwise emit one flux event at cumulative cpos ticks.
-    //   - The LAST byte never emits a flux event (it represents the
-    //     wrap to the index pulse).
-    //   - There's an implicit pulse at position 0 too (the index
-    //     pulse), but MAME emits MG_F|0 which is the floppy_image
-    //     time-zero marker — for our LSS model we skip the explicit
-    //     index pulse (the LSS doesn't read an index line).
+    //   - The LAST byte is a transition too: the one that closes the
+    //     loop, at cumulative tick == period, i.e. angular position 0.
+    //     It is stored at 0 (front of the sorted list). POM2 used to drop
+    //     it, reading MG_F|0 as a time marker: one transition lost per
+    //     revolution, a "1" turned into a "0" at the seam (audit
+    //     parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1).
     //
     // POM2 storage: LSS-cycle timestamps in fluxStream[qt] (1 LSS
     // cycle = 4 ticks = 500 ns). Synthesise bitStream[qt] sized to
@@ -1233,6 +1241,13 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
                 const size_t cell = static_cast<size_t>(lssCycle / cyc);
                 if (cell < bits.size()) bits[cell] = 1;
             }
+        }
+        // The closing transition (last byte, non-255) sits at position 0.
+        if (buf[dataOff + trackSize - 1] != 0xFF &&
+            (ticks.empty() || ticks.front() != 0)) {
+            ticks.insert(ticks.begin(), 0);
+            flux.insert(flux.begin(), 0);
+            bits[0] = 1;
         }
         bitStreamValid[qt]  = true;
         fluxStreamValid[qt] = true;        // populated directly, skip expand

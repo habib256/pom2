@@ -248,9 +248,12 @@ bool checkFluxTrackPeriod(uint8_t obt) {
     const std::vector<uint8_t> deltas = { 100, 100, 0xFF, 55, 100, 45 };
     // totalTicks = 655 → periodLss = ceil(655/4) = 164.
     // Events at cumulative ticks 100, 200, 510, 610 → LSS 25, 50, 127, 152
-    // (0xFF = no-flux continuation; the final byte never emits).
+    // (0xFF = no-flux continuation), PLUS the final byte: [B] WOZ 2.1
+    // reference, TRKS — "Each byte represents a single flux transition";
+    // the last one closes the loop at 655 ≡ 0. Five transitions, not four
+    // (audit parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1).
     const int expectedPeriod = 164;
-    const std::vector<int> expectedFlux = { 25, 50, 127, 152 };
+    const std::vector<int> expectedFlux = { 0, 25, 50, 127, 152 };
 
     std::vector<uint8_t> woz;
     woz.insert(woz.end(), {'W', 'O', 'Z', '2', 0xFF, 0x0A, 0x0D, 0x0A});

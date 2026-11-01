@@ -170,6 +170,97 @@ void testFluxOverridesTmap()
     std::error_code ec; fs::remove(path, ec);
 }
 
+// [B] MOOF / WOZ 2.1 references (applesaucefdc.com): every non-255 byte of
+// a flux stream is a transition and the stream is a closed loop, so the LAST
+// byte is the transition at angular position 0. Put that seam inside a data
+// field: a loader that drops the last byte loses a "1" there and the sector
+// fails its checksum (audit parite-flopimg-as_dsk-wozfdc-2026-11-01,
+// constat 1). Then rewrite a block and check the stream still closes on a
+// transition: same transition count, same cells after a reload.
+void testFluxSeamInsideField()
+{
+    std::vector<uint8_t> payload(12 * 512);
+    for (int s = 0; s < 12; ++s) fillBlock(payload.data() + size_t(s) * 512, s);
+    const auto cells = encodeTrack(0, 0, payload.data());
+    // Middle of sector 4's data field, moved forward to a "1" cell so the
+    // closing transition at position 0 is a real one of the surface.
+    size_t seam = 4 * 6208 + 3000;
+    while (!cells[seam]) ++seam;
+    std::vector<uint8_t> rotated(cells.begin() + long(seam), cells.end());
+    rotated.insert(rotated.end(), cells.begin(), cells.begin() + long(seam));
+    assert(rotated[0]);
+    std::vector<uint8_t> flux;
+    uint64_t previous = 0, transitions = 0;
+    for (size_t i = 1; i < rotated.size(); ++i) {
+        if (!rotated[i]) continue;
+        emitDelta(flux, i * 16 - previous);
+        previous = i * 16;
+        ++transitions;
+    }
+    emitDelta(flux, rotated.size() * 16 - previous);   // closes on cell 0
+    ++transitions;
+
+    std::vector<std::vector<uint8_t>> tracks(160);
+    tracks[0] = std::vector<uint8_t>(rotated.size(), 0);
+    auto bytes = makeMoof(tracks);
+    bytes.resize((bytes.size() + 511) & ~size_t(511));
+    const size_t fluxData = bytes.size();
+    bytes.insert(bytes.end(), flux.begin(), flux.end());
+    bytes.resize((bytes.size() + 511) & ~size_t(511));
+    const size_t fluxChunk = bytes.size();
+    bytes.insert(bytes.end(), {'F','L','U','X'});
+    put32(bytes, 160);
+    bytes.insert(bytes.end(), 160, 0xFF);
+    bytes[fluxChunk + 8] = 1;
+    set16(bytes, 20 + 40, uint16_t(fluxChunk / 512));
+    set16(bytes, 20 + 42, uint16_t((flux.size() + 511) / 512));
+    const size_t trksChunk = 12 + 68 + 168;
+    set32(bytes, trksChunk + 4, uint32_t(fluxChunk - trksChunk - 8));
+    const size_t secondEntry = trksChunk + 8 + 8;
+    set16(bytes, secondEntry, uint16_t(fluxData / 512));
+    set16(bytes, secondEntry + 2, uint16_t((flux.size() + 511) / 512));
+    set32(bytes, secondEntry + 4, uint32_t(flux.size()));
+
+    const auto path = writeTemp("pom2_moof35_flux_seam.moof", bytes);
+    pom2::Disk35Image image;
+    image.setWriteBackEnabled(true);
+    assert(image.loadFile(path.string()));
+    assert(image.originalFluxTicks(0, 0)->size() == transitions);
+    assert(*image.originalBitCells(0, 0) == rotated);
+    uint8_t got[512], want[512];
+    for (int s = 0; s < 12; ++s) {
+        fillBlock(want, s);
+        assert(image.readBlock(uint32_t(s), got));
+        assert(std::memcmp(got, want, 512) == 0);
+    }
+    // Rewrite: lay a pulse between cells 0 and 1, then erase it again. The
+    // surface is back to what was loaded, so the saved stream must reload
+    // with the same transitions and cells (it closes on the cell-0 one).
+    const uint32_t period = image.trackPeriod125ns(0, 0);
+    const int64_t extra = 8;
+    assert(image.writeFlux125ns(0, 0, 4, 12, &extra, 1, period));
+    assert(image.writeFlux125ns(0, 0, 4, 12, nullptr, 0, period));
+    assert(image.saveDirty());
+    {
+        pom2::Disk35Image reloaded;
+        assert(reloaded.loadFile(path.string()));
+        assert(reloaded.originalFluxTicks(0, 0)->size() == transitions);
+        assert(*reloaded.originalBitCells(0, 0) == rotated);
+    }
+    // Erase the transition at 0 itself: the stream must still END on a
+    // real transition (rotated by its first tick), not invent one at 0.
+    pom2::Disk35Image again;
+    again.setWriteBackEnabled(true);
+    assert(again.loadFile(path.string()));
+    assert(again.writeFlux125ns(0, 0, 0, 4, nullptr, 0, period));
+    assert(again.saveDirty());
+    pom2::Disk35Image rotatedBack;
+    assert(rotatedBack.loadFile(path.string()));
+    assert(rotatedBack.originalFluxTicks(0, 0)->size() == transitions - 1);
+    assert(rotatedBack.trackPeriod125ns(0, 0) == period);
+    std::error_code ec; fs::remove(path, ec);
+}
+
 void testUnsupportedDiskTypes()
 {
     std::vector<std::vector<uint8_t>> tracks(160);
@@ -524,6 +615,7 @@ int main()
 {
     testBitstreamAndExport();
     testFluxOverridesTmap();
+    testFluxSeamInsideField();
     testUnsupportedDiskTypes();
     testSingleSided400k();
     testMfm1440k();
