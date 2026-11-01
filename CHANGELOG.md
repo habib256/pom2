@@ -12,6 +12,41 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — ThunderClock and Slinky: six fixes from the data sheet and the card manuals
+
+Slices 15 and 19, fixed by an Opus agent in its own worktree against the
+primary documents, reviewed and landed here. All six held.
+
+**ThunderClock Plus (µPD1990AC)** — [B] NEC *1983 Integrated Circuits for
+Consumer Use*, data sheet pp. 792-804 and application note pp. 1106-1127
+(bitsavers `components/nec/_dataBooks/`). A **Time Set holds the counter**
+(p. 797) until the next group-0 command; POM2's clock kept running between
+the set and the next read. The **written weekday and a Feb 29 survive**
+(pp. 792, 795): POM2 went through `mktime` with the host's year, which
+rewrote the weekday — and ProDOS derives the year from the weekday — and
+turned a 29 February into 1 March; the year is now chosen as the nearest one
+in which the written date falls on the written weekday, and the guest never
+sees it. A **Register Hold does not touch TP** (p. 796: a group-0 command
+"can change the group '0' function mode only"); POM2 reset it to 64 Hz on
+every Hold, which DEV.md had already declared impossible in the very
+paragraph above the code that did it. The held instant travels in the
+snapshot (a 9-byte tail; sessions accept both sizes).
+
+**Memory Expansion "Slinky" (670-0024)** — [B] IIc Memory Expansion Card
+Reference Manual ch. 1-2, RamFactor manual v1.5 p. 45, and ROM 341-0344A
+disassembled. **One address register**, not a register plus a write latch:
+writing one address byte reloaded the other two from a phantom latch instead
+of the live, auto-incremented register. **`$C0n2` reads `$Fx` after a reset**
+(it read `$00`) — the ROM's own self-test at `$2050` does `ORA #$F0 / CMP
+$C0n2`. **A power cycle erases the megabyte** ("a loss of power will cause
+the contents of the card to be erased"); it used to survive a coldBoot.
+
+Six tests, six mutations failing on their own assertion; `clock_card_dos_driver`
+and `no_slot_clock_prodos_driver` — which need media the agent's worktree did
+not have — pass here. Not modelled, and said so: the RamFactor's carry into
+the next address byte when a write clears bit 7 (AE's clone, not Apple's
+card); no hardware measurement on either.
+
 ## 2026-11-01 — Slices 10-14: seven fixes, every one checked against the document, and nineteen places where the emulators are wrong
 
 Five more parity slices (`6522via`, `NTSC`, `a2ssc`, `apple2`, `ay8910`) ran

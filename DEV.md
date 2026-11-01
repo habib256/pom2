@@ -6581,9 +6581,25 @@ Mode `0b011` = `MODE_TIME_READ`: arm via `$C0C0=$18`, pulse STB
 STB, read bit 7 + pulse CLK (`$1A`/`$18`) **40** times → **5** bytes
 (sec, min, hour, day, `(month<<4)|dow`) — **there is no year byte**.
 Mode `0b010` = `MODE_TIME_SET`: load 40 bits via DATA_IN + 40 CLK,
-then STB-in-TIME_SET commits via `commitTimeSetFromShiftReg()`
-(`std::mktime`, delta captured as `userOffsetSeconds`); the year comes
-from the host clock, as it must, since the chip has no year counter.
+then STB-in-TIME_SET commits via `commitTimeSetFromShiftReg()`. Three
+things the data sheet says about that commit, all three wrong in POM2
+until 2026-11-01 (`docs/audits/parite-upd1990a-2026-11-01.md`): **a Time
+Set holds the counter** — p. 797, it does "hold the Time Counter. By
+setting other command of group '0', the Time Counter is released" — so
+the set instant is stored and the offset to the host clock is only taken
+at the next Hold, Shift or Time Read (POM2's clock used to keep running
+in between); **the written weekday and a Feb 29 are honoured** — p. 792,
+the chip "counts independently the month, date, day of the week", p. 795
+"it is possible to set calendar FEB. 29" — so `chipFieldsToTime` picks
+the year nearest the host's in which the written date exists and falls on
+the written weekday, instead of `mktime` with the host year (which
+rewrote the weekday and turned a Feb 29 into Mar 1 — and ProDOS derives
+the year from the weekday); and **a Register Hold leaves TP alone** —
+p. 796, "the command of the group '0' can change the group '0' function
+mode only"; p. 797, TP goes back to 64 Hz only "when TEST MODE is
+released by Register Hold". The chip has no year counter; the guest never
+sees the year POM2 picks. The held instant travels in the snapshot (a
+9-byte CLK1 tail; `SessionSnapshot.cpp` accepts both sizes).
 
 *This paragraph said 48 bits, 6 bytes and a year until 2026-11-01; the
 code always did 40/5/none.* NEC's own data sheet settles it — `uPD1990AC
@@ -7194,10 +7210,17 @@ real `SlotBus` at `$C0C0-$C0CF`.
 
 *(2026-10-16.)* Apple's 670-0024, ported from MAME
 `src/devices/bus/a2bus/a2memexp.cpp` (`a2bus_memexpapple_device`). 1 MB behind
-a 24-bit address latch: `$C0n0-$C0n2` set the pointer (and reload the live
-pointer from the latch), `$C0n3` reads/writes RAM with auto-increment carried
-back into `$C0n0-$C0n2`, `$C0n2` reads with its high nibble forced to `$F`
-(`m_bankhior`), `$C0n4-$C0nF` are plain latches (:166-232). Mask `$FFFFF`
+**one** 20-bit address register: `$C0n0-$C0n2` write its three bytes,
+`$C0n3` reads/writes RAM with auto-increment, `$C0n2` reads with its high
+nibble forced to `$F`, `$C0n4-$C0nF` are plain latches (:166-232). Until
+2026-11-01 POM2 kept a second, write-side latch and a one-byte address write
+reloaded the other two bytes from it rather than from the live register —
+[B] the IIc Memory Expansion Card Reference Manual ch. 2 describes "a
+20-bit address register ... automatically increments", one register; the
+RamFactor manual v1.5 p. 45 warns that a partial write keeps "the previous
+contents" of the other bytes. The ROM's own self-test at `$2050` does
+`ORA #$F0 / CMP $C0n2`, so `$C0n2` must publish `$F0` after a reset too
+(it read `$00`). `docs/audits/parite-a2memexp-2026-11-01.md`. Mask `$FFFFF`
 (:130): MAME models only the 1 MB board, so no size setting — how a partly
 populated card aliases is not sourced.
 
@@ -7216,7 +7239,10 @@ the ROM ships and a synthetic one would have had to invent the volume layout.
 software runs on both. Not modelled: no RamFactor ROM is shipped.
 
 **State.** Volatile, like the board (no battery): never written to a file;
-reset clears the latches, not the RAM (:155-159). Snapshot/rewind carry it
+reset clears the registers, not the RAM (:155-159) — and a **power cycle
+erases it**, [B] IIc manual ch. 1, "a loss of power will cause the contents
+of the card to be erased": `onPowerCycle` refills the megabyte with `$FF`
+(it used to survive a coldBoot). Snapshot/rewind carry it
 **sparsely** — only 256-byte pages that differ from the `$FF` power-on fill —
 so an idle card costs ~30 bytes a frame. Not an irreversible write, so the
 rewind rule does not apply.

@@ -241,14 +241,30 @@ private:
     // BCD bytes are converted back to a `time_t` and the delta against
     // the host clock at that moment is stored as `userOffsetSeconds`.
     // Subsequent reads compose `timeFn() + userOffsetSeconds` so the
-    // "set time" advances naturally with wall-clock (mirroring MAME's
-    // internal time counter that ticks at 1 Hz from `m_timer_clock`).
+    // "set time" advances naturally with wall-clock.
+    //
+    // But NOT from the Time Set itself: [B] NEC uPD1990AC data sheet
+    // (1983 NEC Integrated Circuits for Consumer Use) p. 797, Time set MODE
+    // [010]: "Presets the data of the 40 Bit Shift Register in the Time
+    // Counter. Resets the Flip-Flop (F/F) of 11 to 15 bits of the 15 Stage
+    // Binary Divider and hold the Time Counter. By setting other command of
+    // group "0", the Time Counter is released from the reset and the hold."
+    // So a Time Set parks the set instant in `heldTime_` and the offset is
+    // only taken against the host clock when the next Register Hold /
+    // Shift / Time Read strobes (releaseHeldCounter). [D] MAME
+    // upd1990a.cpp:246-283 @ mame0287 (`m_timer_clock->enable(0)`, l. 249);
+    // master 5cc9a8d408 `m_counter_held`. Audit parite-upd1990a constat 1.
     //
     // For a test injector returning a fixed timestamp, the offset is
     // captured once and the effective time stays pinned — matching the
     // existing fixed-snapshot behaviour the smoke test relies on.
     bool        userOffsetActive  = false;
     std::time_t userOffsetSeconds = 0;
+    bool        counterHeld_      = false;   // Time Set seen, not released
+    std::time_t heldTime_         = 0;       // the set instant while held
+    /// End a Time Set's counter hold: the clock starts from the set
+    /// instant NOW (NEC p. 797; application note p. 1117).
+    void releaseHeldCounter();
 
     // ── uPD1990AC TP (Timing Pulse) timer ──────────────────────────────
     //
@@ -340,10 +356,11 @@ private:
     void latchTimeToShiftReg();
 
     /// Commit the contents of shiftReg as the new "set time" — converts
-    /// the 6 BCD bytes back to `time_t` (via `std::mktime`) and stores
-    /// the delta vs the current host clock so future reads carry the
-    /// adjustment. Called on STB rising edge when MODE_TIME_SET is
-    /// selected.
+    /// the 5 BCD bytes to a `time_t` (in the year nearest the host's that
+    /// holds the written date on the written weekday) and HOLDS it; the
+    /// delta vs the host clock is taken when the next group-0 command
+    /// releases the counter (releaseHeldCounter). Called on STB rising
+    /// edge when MODE_TIME_SET is selected.
     void commitTimeSetFromShiftReg();
 
     ClockCard(int slot, TimeFn fn, bool probeDump = true);

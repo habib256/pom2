@@ -17,10 +17,11 @@
 // slinky_card — the Apple II Memory Expansion Card (SlinkyCard.h).
 //
 // Part 1, registers (no ROM needed): MAME a2memexp.cpp:166-232 — the 24-bit
-// latch, the forced $F0 high nibble on $C0n2, the data port's
-// auto-increment carried back into $C0n0-$C0n2, the latch keeping the START
-// of a transfer, the 1 MB wrap, and device_reset clearing the latches but
-// not the RAM.
+// register, the forced $F0 high nibble on $C0n2 (after a reset too), the
+// data port's auto-increment carried back into $C0n0-$C0n2, ONE register
+// (an address write keeps the other bytes' current value — no MAME m_wptr
+// latch), the 1 MB wrap, device_reset clearing the registers but not the
+// RAM, and a power cycle erasing the RAM.
 //
 // Part 2, the REAL 341-0344A firmware on a 6502: STATUS / WRITE / READ
 // through the ProDOS driver entry ($CnFF), exactly as ProDOS 8 calls it, and
@@ -76,12 +77,29 @@ void registers()
     expect(c.ramAt(0x01FFFE) == 0x11 && c.ramAt(0x01FFFF) == 0x22 &&
            c.ramAt(0x020000) == 0x33, "data port wrote consecutive bytes");
 
-    // Re-writing ONE address byte reloads the live pointer from the latch,
-    // which still holds the transfer's start ($01FFFE) in its other bytes.
+    // ONE 20-bit register (IIc MemExp Ref. Manual ch. 2; RamFactor Manual
+    // p. 45): re-writing ONE address byte keeps the other two at their
+    // CURRENT value ($020001 → $0200FE), not at the transfer's start as
+    // MAME's m_wptr latch did ($01FFFE). Audit parite-a2memexp constat 1.
     c.deviceSelectWrite(0, 0xFE);
-    expect(c.livePointer() == 0x01FFFE, "address write reloads the pointer from the latch");
+    expect(c.livePointer() == 0x0200FE, "an address write keeps the other bytes' current value");
+    expect(c.deviceSelectRead(1) == 0x00 && c.deviceSelectRead(2) == 0xF2,
+           "$C0n1/$C0n2 still read the current pointer");
+    c.deviceSelectWrite(1, 0xFF); c.deviceSelectWrite(2, 0x01);   // $01FFFE
     expect(c.deviceSelectRead(3) == 0x11 && c.deviceSelectRead(3) == 0x22 &&
            c.deviceSelectRead(3) == 0x33, "data port reads back with auto-increment");
+
+    // The audit's "re-read the page" idiom: load $000000, stream 256 bytes,
+    // then rewrite only the low byte. The register now holds $000100 — the
+    // NEXT page — so the next read is page 1's first byte, not page 0's.
+    c.deviceSelectWrite(0, 0x00); c.deviceSelectWrite(1, 0x00); c.deviceSelectWrite(2, 0x00);
+    for (int i = 0; i < 256; ++i) c.deviceSelectWrite(3, 0xA0);
+    c.deviceSelectWrite(3, 0xB0);                                  // $000100
+    c.deviceSelectWrite(0, 0x00); c.deviceSelectWrite(1, 0x00); c.deviceSelectWrite(2, 0x00);
+    for (int i = 0; i < 256; ++i) (void)c.deviceSelectRead(3);
+    c.deviceSelectWrite(0, 0x00);
+    expect(c.livePointer() == 0x000100 && c.deviceSelectRead(3) == 0xB0,
+           "a lone low-byte write after a page-crossing stream lands on the next page");
 
     // 1 MB mask (a2memexp.cpp:130): $1xxxxx aliases $0xxxxx.
     c.deviceSelectWrite(0, 0xFE); c.deviceSelectWrite(1, 0xFF); c.deviceSelectWrite(2, 0x11);
@@ -99,6 +117,21 @@ void registers()
     expect(c.livePointer() == 0 && c.deviceSelectRead(0x8) == 0x00,
            "reset clears the latches, and they ignore writes until $Cn00");
     expect(c.ramAt(0x01FFFE) == 0x11, "reset keeps the RAM");
+    // $C0n2 has no bits 4-7: "always "F" when you read it" (RamFactor
+    // Manual p. 45) — after a RESET too, before any pointer write. MAME's
+    // device_reset left $00 there. Audit parite-a2memexp constat 2.
+    expect(c.deviceSelectRead(2) == 0xF0, "after RESET $C0n2 reads $F0, not $00");
+    expect(SlinkyCard(kSlot).deviceSelectRead(2) == 0xF0, "a fresh card's $C0n2 reads $F0");
+
+    // A POWER cycle (coldBoot → SlotBus::reset(true) → onPowerCycle) is a
+    // DRAM with no refresh: the megabyte is gone ("a loss of power will
+    // cause the contents of the card to be erased", IIc MemExp Ref. Manual
+    // ch. 1). Audit parite-a2memexp constat 3.
+    c.onPowerCycle();
+    expect(c.ramAt(0x01FFFE) == 0xFF && c.ramAt(0x000100) == 0xFF,
+           "a power cycle erases the card's RAM");
+    c.deviceSelectWrite(0, 0x12);
+    expect(c.livePointer() == 0, "registers are off after a power cycle until $Cn00");
 }
 
 void callDriver(M6502& cpu, Memory& mem, uint8_t cmd, uint16_t block, uint16_t buffer)

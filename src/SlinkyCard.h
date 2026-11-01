@@ -24,11 +24,12 @@
 // through a 24-bit address latch and a data port in the card's $C0nX window
 // (MAME `read_c0nx` / `write_c0nx`, a2memexp.cpp:166-232):
 //
-//   $C0n0  address bits 0-7    write: set the latch byte, live pointer = latch
+//   $C0n0  address bits 0-7    write: set that byte of THE pointer (one
+//                              register — no separate latch, SlinkyCard.cpp)
 //   $C0n1  address bits 8-15   write: idem
 //   $C0n2  address bits 16-23  write: idem. READS back with the high nibble
 //                              forced to 1 (MAME `m_bankhior = 0xF0` for the
-//                              Apple card, :129) — what firmware sizes it by.
+//                              Apple card, :129), after a reset too.
 //   $C0n3  data port           read or write RAM[ptr & $FFFFF], then ptr++,
 //                              and $C0n0-$C0n2 follow the incremented pointer
 //   $C0n4-$C0nF               plain read/write latches (MAME `m_regs`)
@@ -119,6 +120,8 @@ public:
     bool    takesC800() const override { return romLoaded_; }
 
     void onReset() override;
+    /// Power off and on: the DRAM forgets (SlinkyCard.cpp).
+    void onPowerCycle() override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
@@ -137,8 +140,7 @@ private:
     // of saving pins; "the boot scan hits $Cn00 anyway"). Not in MAME's
     // a2memexp. A card built outside a machine has seen no reset: on.
     bool regsEnabled_ = true;
-    uint32_t wptr_    = 0;
-    uint32_t liveptr_ = 0;
+    uint32_t liveptr_ = 0;   // THE 20-bit address register (+ carry above)
     std::vector<uint8_t> ram_;
     std::array<uint8_t, kRomBytes> rom_{};
     bool romLoaded_ = false;

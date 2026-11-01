@@ -362,9 +362,8 @@ void testTimeSetRoundTrip()
     // value 0 or 0xC0 is acceptable.
     assert((got[4] & 0xF0) == 0xC0);
     // No year assertion: the chip has no year counter (40-bit register).
-    // commitTimeSetFromShiftReg takes the year from the host clock, which
-    // is what a real ThunderClock+ does — ProDOS reads only month/day/
-    // time from the card and supplies the year itself.
+    // The weekday it was given is kept (testTimeSetKeepsWeekdayAndFeb29) —
+    // ProDOS 2.4.3's driver derives the year from it.
 }
 
 // CLK shifts the register in MODE_SHIFT only (MAME `upd1990a.cpp:393`).
@@ -657,6 +656,122 @@ void testResetPreservesSetTime()
     assert((readByteLsbFirst(*card, baseline) & 0xF0) == 0xC0); // month=12
 }
 
+// ── Audit parite-upd1990a-2026-11-01, constats 1-3 ────────────────────
+//
+// A host clock the test moves by hand: 2026-05-09 14:37:42 + gHostAdvance s.
+long gHostAdvance = 0;
+std::tm movableHost()
+{
+    std::tm t = fixedTime_2026_05_09_14_37_42();
+    t.tm_isdst = -1;
+    std::time_t base = std::mktime(&t);
+    base += gHostAdvance;
+    return *std::localtime(&base);   // single-threaded test: portable
+}
+
+void strobe(ClockCard& card, uint8_t mode)
+{
+    const uint8_t m = static_cast<uint8_t>(mode << 3);
+    card.deviceSelectWrite(0, m);
+    card.deviceSelectWrite(0, m | kBitStb);
+    card.deviceSelectWrite(0, m);
+}
+
+// SHIFT, 40 bits in, TIME SET — the firmware's `!` path ($C8CF, $C91D),
+// with no group-0 command after it (the firmware sends none).
+void timeSet(ClockCard& card, const uint8_t (&b)[5])
+{
+    strobe(card, 0x01);
+    for (int k = 0; k < 40; ++k) {
+        const uint8_t bit = (b[k / 8] >> (k % 8)) & 1;
+        const uint8_t base =
+            static_cast<uint8_t>(kModeShiftShifted | (bit ? kBitDataIn : 0));
+        card.deviceSelectWrite(0, base);
+        card.deviceSelectWrite(0, base | kBitClk);
+        card.deviceSelectWrite(0, base);
+    }
+    strobe(card, 0x02);
+}
+
+// TIME READ then SHIFT, 40 bits out — the firmware's read ($C951).
+void timeRead(ClockCard& card, uint8_t (&out)[5])
+{
+    strobe(card, 0x03);
+    strobe(card, 0x01);
+    for (auto& b : out) b = readByteLsbFirst(card, kModeShiftShifted);
+}
+
+// Constat 1. NEC p. 797: Time Set "hold[s] the Time Counter. By setting
+// other command of group "0", the Time Counter is released". The manual's
+// p. 2-10 example, then 600 s with no read: the read returns the SET time.
+void testTimeSetHoldsTheCounter()
+{
+    gHostAdvance = 0;
+    auto card = ClockCard::makeForTest(4, &movableHost);
+    const uint8_t set[5] = { 0x30, 0x08, 0x14, 0x07, 0x34 };   // !03 4 07 14 08 30
+    timeSet(*card, set);
+    gHostAdvance = 600;
+    uint8_t got[5];
+    timeRead(*card, got);                    // TIME READ releases the hold
+    std::printf("  held 600 s → %02X,%02X,%02X,%02X,%02X\n",
+                got[4], got[3], got[2], got[1], got[0]);
+    assert(got[0] == 0x30 && got[1] == 0x08 && got[2] == 0x14 &&
+           "Time Set holds the counter until the next group-0 command");
+    // Released by that read: the clock runs from there.
+    gHostAdvance = 660;
+    timeRead(*card, got);
+    assert(got[0] == 0x30 && got[1] == 0x09 && got[2] == 0x14 &&
+           "the counter runs once a group-0 command released it");
+    gHostAdvance = 0;
+}
+
+// Constat 2. NEC p. 792: the chip "counts independently the month, date,
+// day of the week …"; p. 795: "it is possible to set calendar FEB. 29".
+// Host year 2026: 7 March is a Saturday, and there is no 29 February.
+void testTimeSetKeepsWeekdayAndFeb29()
+{
+    gHostAdvance = 0;
+    auto card = ClockCard::makeForTest(4, &movableHost);
+    const uint8_t thu[5] = { 0x30, 0x08, 0x14, 0x07, 0x34 };   // Thu 7 March
+    timeSet(*card, thu);
+    uint8_t got[5];
+    timeRead(*card, got);
+    std::printf("  set Thu 7 Mar → %02X (month<<4 | dow), day %02X\n", got[4], got[3]);
+    assert(got[4] == 0x34 && got[3] == 0x07 &&
+           "the written day of week reads back (not the host year's Saturday)");
+
+    const uint8_t feb29[5] = { 0x00, 0x00, 0x12, 0x29, 0x20 }; // Sun 29 Feb 12:00
+    timeSet(*card, feb29);
+    timeRead(*card, got);
+    std::printf("  set Sun 29 Feb → %02X, day %02X\n", got[4], got[3]);
+    assert(got[3] == 0x29 && got[4] == 0x20 &&
+           "a set 29 February reads back, not 1 March");
+    // …and the weekday counts on with the date: 24 h later, Mon 1 March.
+    gHostAdvance = 24 * 3600;
+    timeRead(*card, got);
+    assert(got[3] == 0x01 && got[4] == 0x31 && got[2] == 0x12);
+    gHostAdvance = 0;
+}
+
+// Constat 3. NEC p. 796: "the command of the group "0" ("1") can change the
+// group "0" ("1") function mode only"; p. 797: Register Hold sets TP to
+// 64 Hz only "When TEST MODE is released by Register Hold MODE [000]".
+void testRegisterHoldLeavesTp()
+{
+    auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+    armTpInterrupts(*card, 0x06);                         // TP = 2048 Hz
+    assert(card->tpRateHz() == 2048);
+    strobe(*card, 0x00);                                  // Register Hold
+    card->deviceSelectWrite(0, 0x40);   // the $00 writes disarmed IRQs; re-arm, no STB
+    assert(card->tpRateHz() == 2048 && "a group-0 Hold does not touch TP");
+    assert(countIrqPulses(*card, static_cast<int>(POM2_CPU_CLOCK_HZ / 8)) >= 250 &&
+           "still 2048 interrupts/s after Register Hold");
+    strobe(*card, 0x07);                                  // TEST
+    strobe(*card, 0x00);                                  // Hold releases TEST
+    assert(!card->testModeActive() && card->tpRateHz() == 64 &&
+           "Hold out of TEST gives TP = 64 Hz (NEC p. 797)");
+}
+
 // RESET disables the card's interrupts (manual 5-2 point 2) but not the
 // battery-backed chip: TP keeps its rate, and enabling interrupts again —
 // with no STB, as A2osX's `$60` does — brings the ticks straight back.
@@ -768,6 +883,13 @@ int main()
 
     testResetPreservesSetTime();
     std::printf("RESET preserves battery-backed set time: OK\n");
+
+    testTimeSetHoldsTheCounter();
+    std::printf("Time Set holds the counter until a group-0 command: OK\n");
+    testTimeSetKeepsWeekdayAndFeb29();
+    std::printf("Time Set keeps the written weekday and 29 February: OK\n");
+    testRegisterHoldLeavesTp();
+    std::printf("Register Hold leaves TP alone outside TEST: OK\n");
 
     testResetStopsIrqButNotTp();
     testFreshCardTicksAt64HzOnEnable();

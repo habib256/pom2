@@ -159,13 +159,14 @@ void ClockCard::onReset()
 
 std::tm ClockCard::effectiveTime() const
 {
+    // A Time Set holds the counter until the next group-0 command (NEC
+    // p. 797, see ClockCard.h): it reads the set instant, not one that ran.
+    if (counterHeld_) return localTimeR(heldTime_);
     std::tm host = timeFn();
     if (!userOffsetActive) return host;
     // Compose `host + offset` via std::mktime / localtime_r so the
     // BCD bytes that come out the shift register reflect the user's
-    // set time + elapsed real seconds since the set point. Mirrors
-    // MAME's internal time counter which ticks at 1 Hz from
-    // `m_timer_clock` once TIME_SET commits.
+    // set time + elapsed real seconds since the counter was released.
     std::time_t hostT = std::mktime(&host);
     if (hostT == static_cast<std::time_t>(-1)) return host;
     hostT += userOffsetSeconds;
@@ -176,8 +177,10 @@ void ClockCard::latchTimeToShiftReg()
 {
     const std::tm lt = effectiveTime();
     // tm_wday: 0=Sun..6=Sat — matches uPD1990AC's day-of-week field
-    // layout. ProDOS doesn't consult day-of-week; we still populate it
-    // so the chip's output is faithful for code that does.
+    // layout (ThunderClock manual p. 2-10: "0=SUN"). ProDOS DOES consult
+    // it: [C] the ProDOS 8 v2.4.3 ThunderClock driver derives the YEAR from
+    // the day of week against the date (audit parite-upd1990a constat 2),
+    // which is why a Time Set keeps the weekday it was given.
     const int dow   = (lt.tm_wday >= 0 && lt.tm_wday <= 6) ? lt.tm_wday : 0;
     const int month = lt.tm_mon + 1;        // tm_mon is 0..11
     shiftReg[0] = toBcd(lt.tm_sec);
@@ -217,12 +220,14 @@ void ClockCard::latchTimeToShiftReg()
     //
     // KNOWN DIVERGENCE, in POM2's favour and stated so it is not mistaken
     // for fidelity: POM2 synthesises these nibbles from the HOST clock on
-    // every read, so its calendar is Gregorian. The chip's is not — it
-    // corrects month lengths but "leap year is not automatically
-    // performed", so a real ThunderClock+ left running across a 29 February
-    // in a non-leap year rolls to 1 March while POM2 would not. Modelling
-    // that would mean carrying the chip's own counter instead of the host's,
-    // which is the one thing that makes POM2's clock survive a rewind.
+    // every read, so its RUNNING calendar is Gregorian. The chip's is not —
+    // it corrects month lengths but "leap year is not automatically
+    // performed", so a real ThunderClock+ goes from 28 February to 1 March
+    // even in a leap year, where POM2 shows the 29th. Modelling that would
+    // mean carrying the chip's own counter instead of the host's, which is
+    // the one thing that makes POM2's clock survive a rewind. What a Time
+    // Set WRITES is kept, though — a set 29 February and a set weekday read
+    // back as written (commitTimeSetFromShiftReg).
     //
     // NOT in the data sheet, and so a convention rather than silicon: the
     // TP rate a chip comes up in. NEC documents no power-on default for
@@ -236,42 +241,82 @@ void ClockCard::latchTimeToShiftReg()
     shiftReg[5] = 0;
 }
 
+namespace {
+
+// The chip has no year, and both its day of week and its day of month are
+// counters of their own: [B] NEC p. 792, "This IC counts independently the
+// month, date, day of the week, hour, minute and second"; p. 795, "it is
+// possible to set calendar FEB. 29". POM2 keeps its time as an offset to the
+// host clock, so it needs SOME year to turn the written fields into an
+// instant — and since the guest never sees that year, pick the one nearest
+// the host's in which the written date exists AND falls on the written
+// weekday. Both then read back as written and keep counting together. The
+// host year with `mktime` (the old code) replaced the weekday with the host
+// year's and normalised a 29 February into 1 March; the ProDOS driver then
+// dated files in the wrong year (audit parite-upd1990a constat 2). Past
+// years are tried first at equal distance; 28 years cover every
+// (date, weekday) pair of the Gregorian calendar between 1901 and 2099.
+// A field the calendar cannot hold in any year (31 April, month 13 —
+// malformed input the firmware never produces) falls back to the host
+// year and mktime's normalisation, as before.
+std::time_t chipFieldsToTime(std::tm desired, int dow, int hostYear)
+{
+    const int mon = desired.tm_mon, mday = desired.tm_mday;
+    for (int k = 0; k <= 28; ++k) {
+        for (int sign : { -1, +1 }) {
+            if (k == 0 && sign > 0) continue;
+            std::tm t = desired;
+            t.tm_year  = hostYear + sign * k;
+            t.tm_isdst = -1;
+            const std::time_t r = std::mktime(&t);
+            if (r == static_cast<std::time_t>(-1)) continue;
+            if (t.tm_mon != mon || t.tm_mday != mday) continue;   // no such date
+            if (dow >= 0 && dow <= 6 && t.tm_wday != dow) continue;
+            return r;
+        }
+    }
+    desired.tm_year  = hostYear;
+    desired.tm_isdst = -1;
+    return std::mktime(&desired);
+}
+
+}  // namespace
+
 void ClockCard::commitTimeSetFromShiftReg()
 {
-    // MAME `upd1990a.cpp:194-225` — MODE_TIME_SET: copy shift_reg into
-    // the chip's internal time_counter, then `set_time()`. POM2 has no
-    // separate time_counter (we synthesise BCD bytes from `timeFn()`
-    // each read), so we instead decode shiftReg → time_t and store the
-    // delta vs the current host clock. Future reads compose
-    // `timeFn() + userOffsetSeconds` to produce the running set-time.
+    // MODE_TIME_SET: the 40 bits go into the time counter as they are
+    // ([D] MAME upd1990a.cpp:257-259 @ mame0287). POM2 has no separate
+    // time counter (we synthesise BCD bytes from `timeFn()` each read), so
+    // we decode shiftReg → time_t and HOLD it (NEC p. 797); the delta to
+    // the host clock is taken at release (releaseHeldCounter).
     std::tm desired{};
     desired.tm_sec  = bcdToInt(shiftReg[0]);
     desired.tm_min  = bcdToInt(shiftReg[1]);
     desired.tm_hour = bcdToInt(shiftReg[2]);
     desired.tm_mday = bcdToInt(shiftReg[3]);
     desired.tm_mon  = ((shiftReg[4] >> 4) & 0x0F) - 1;     // 1..12 → 0..11
-    // The chip carries NO year (40-bit register: sec/min/hour/day/
-    // month+dow). Take the year from the host clock — that is what a real
-    // ThunderClock+ does, since ProDOS only ever reads month/day/time
-    // from it and supplies its own year.
-    {
-        std::tm hostNow = timeFn();
-        desired.tm_year = hostNow.tm_year;
-    }
-    desired.tm_wday = shiftReg[4] & 0x0F;
-    desired.tm_isdst = -1;     // let mktime decide
+    const int dow   = shiftReg[4] & 0x0F;                  // 0=SUN..6=SAT
 
-    const std::time_t desiredT = std::mktime(&desired);
-    std::tm hostTm = timeFn();
-    const std::time_t hostT = std::mktime(&hostTm);
-    if (desiredT == static_cast<std::time_t>(-1)
-        || hostT == static_cast<std::time_t>(-1)) {
-        // Malformed input — leave the offset alone so a botched
+    const std::time_t desiredT =
+        chipFieldsToTime(desired, dow, timeFn().tm_year);
+    if (desiredT == static_cast<std::time_t>(-1)) {
+        // Malformed input — leave the clock alone so a botched
         // TIME_SET doesn't poison subsequent reads.
         return;
     }
-    userOffsetSeconds = desiredT - hostT;
+    heldTime_    = desiredT;
+    counterHeld_ = true;
+}
+
+void ClockCard::releaseHeldCounter()
+{
+    if (!counterHeld_) return;
+    std::tm hostTm = timeFn();
+    const std::time_t hostT = std::mktime(&hostTm);
+    if (hostT == static_cast<std::time_t>(-1)) return;
+    userOffsetSeconds = heldTime_ - hostT;
     userOffsetActive  = true;
+    counterHeld_      = false;
 }
 
 uint8_t ClockCard::deviceSelectRead(uint8_t low4)
@@ -336,6 +381,14 @@ void ClockCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             dataOutStart_  = !dataOut();
             dataOutCycles_ = 0;
         }
+        // Any other group-0 command ends a Time Set's counter hold — NEC
+        // p. 797, and the application note p. 1117: "by setting another
+        // Register Control command, such as Register Hold, Register Shift
+        // or Time Read commands, the Time Counter will be started". Before
+        // the TIME_READ latch below, so that read returns the set instant.
+        if (mode == kModeRegisterHold || mode == kModeShift ||
+            mode == kModeTimeRead)
+            releaseHeldCounter();
         lastMode = mode;
         if (mode == kModeTimeRead) {
             latchTimeToShiftReg();
@@ -386,6 +439,7 @@ void ClockCard::programTpTimer(uint8_t mode)
     // and the TP-rate modes re-enable the time counter and LEAVE test mode;
     // SHIFT / TIME_SET / TIME_READ leave the flag alone, which is what makes
     // a TEST → SHIFT sequence give a 32 Hz TP instead of the previous rate.
+    const bool wasTest = testMode_;
     if (mode == kModeRegisterHold ||
         (mode >= kModeTp64Hz && mode < kModeTest))
         testMode_ = false;
@@ -398,7 +452,17 @@ void ClockCard::programTpTimer(uint8_t mode)
     // TP; SHIFT / TIME_SET / TIME_READ leave it running at its prior rate in
     // normal (non-test) mode, matching MAME.
     switch (mode) {
-    case kModeRegisterHold: setTpRate(kChipXtalHz / 512); break;   // 64 Hz
+    case kModeRegisterHold:
+        // A group-0 command does not touch TP — [B] NEC p. 796: "Groups "0"
+        // and "1" hold their functions independently, in other word, the
+        // command of the group "0" ("1") can change the group "0" ("1")
+        // function mode only" — save the one exception p. 797 writes down:
+        // "When TEST MODE is released by Register Hold MODE [000], TP
+        // terminal is 64 Hz output." [D] MAME upd1990a.cpp:222-228 @
+        // mame0287 set 64 Hz on EVERY Hold; master 5cc9a8d408:260-264 does
+        // what NEC says. Audit parite-upd1990a constat 3.
+        if (wasTest) setTpRate(kChipXtalHz / 512);                   // 64 Hz
+        break;
     case kModeTp64Hz:       setTpRate(kChipXtalHz / 512); break;   // 64 Hz
     case kModeTp256Hz:      setTpRate(kChipXtalHz / 128); break;   // 256 Hz
     case kModeTp2048Hz:     setTpRate(kChipXtalHz / 16);  break;   // 2048 Hz
@@ -740,6 +804,13 @@ void ClockCard::appendSnapshotState(std::vector<uint8_t>& out) const
     out.push_back(tpLevel_ ? 1 : 0);
     out.push_back(irqEnabled_ ? 1 : 0);
     out.push_back(irqPending_ ? 1 : 0);
+    // Optional tail (after the fixed 'CLK1' record, so an older reader that
+    // checks only `len >= kClkSnapBytes` still loads the head): a Time Set
+    // whose counter hold has not been released yet.
+    out.push_back(counterHeld_ ? 1 : 0);
+    const uint64_t held = static_cast<uint64_t>(heldTime_);
+    for (int i = 0; i < 8; ++i)
+        out.push_back(static_cast<uint8_t>(held >> (8 * i)));
 }
 
 void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -794,6 +865,14 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     tpLevel_            = data[p++] != 0;
     irqEnabled_         = data[p++] != 0;
     irqPending_         = data[p++] != 0;
+    counterHeld_ = false;
+    heldTime_    = 0;
+    if (len >= kClkSnapBytes + 9) {           // optional hold tail
+        counterHeld_ = data[p++] != 0;
+        uint64_t held = 0;
+        for (int i = 0; i < 8; ++i) held |= static_cast<uint64_t>(data[p++]) << (8 * i);
+        heldTime_ = static_cast<std::time_t>(held);
+    }
     // Re-drive the slot IRQ line from the restored request flip-flop:
     // assertIrq() owns the wire-OR bookkeeping in SlotPeripheral.
     assertIrq(irqEnabled_ && irqPending_);

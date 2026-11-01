@@ -33,6 +33,7 @@ constexpr std::size_t kPages = SlinkyCard::kRamBytes / 256;
 SlinkyCard::SlinkyCard(int slot)
     : slot_(slot), ram_(kRamBytes, 0xFF)   // device_start: memset 0xFF, :147
 {
+    publishPointer(0);   // $C0n2 reads $F0, not $00 — see onReset
 }
 
 bool SlinkyCard::loadRom(const std::vector<uint8_t>& bytes)
@@ -44,15 +45,42 @@ bool SlinkyCard::loadRom(const std::vector<uint8_t>& bytes)
 }
 
 // a2memexp.cpp:155-159 device_reset — the latches clear, the RAM does not.
+// [B] RamFactor User's Manual v1.5 p. 45 (the register-compatible clone):
+// "If the card has one Megabyte or less, reading the high address byte will
+// always return a value in the range $F0-FF. The top nybble can be any value
+// when you write it, but it will always be "F" when you read it"; [B] Apple
+// IIc Memory Expansion Card Reference Manual (1988) ch. 2: $C0C2 is the "high
+// nibble (D3 to D0) of the address register" — bits 4-7 do not exist. MAME's
+// `memset(m_regs, 0, …)` read them back as $00 until the pointer first
+// moved (audit parite-a2memexp-2026-11-01 constat 2). Whether the counter
+// itself clears on RESET is in no source [F]; MAME's zero is kept.
 void SlinkyCard::onReset()
 {
     regs_.fill(0);
-    wptr_ = liveptr_ = 0;
+    liveptr_ = 0;
+    publishPointer(liveptr_);
     regsEnabled_ = false;   // until the next $Cn00-$CnFF access (TN MemExp #1)
 }
 
-// The three pointer bytes always mirror a pointer, with the Apple card's
-// forced high nibble on bits 16-23 (a2memexp.cpp:175-177, 195-197, …).
+// [B] Apple IIc Memory Expansion Card Reference Manual (1988) ch. 1, "Important":
+// "Remember that the memory expansion card is a RAM device: a loss of power
+// will cause the contents of the card to be erased"; ch. 2 "RAM refresh":
+// the DRAM is refreshed by the gate array every 4 ms, which a powered-off
+// card cannot do. The //e card has no battery either (SlinkyCard.h). A
+// POWER cycle (coldBoot → SlotBus::reset(true)) therefore forgets the
+// megabyte, as EzColorCard's DRAM and Memory::clearRam do; the default
+// onPowerCycle() = onReset() kept it (audit constat 3). The fill a fresh
+// DRAM shows is undocumented [F]: MAME's device_start $FF (:147), which is
+// also what the sparse snapshot treats as an untouched page.
+void SlinkyCard::onPowerCycle()
+{
+    std::fill(ram_.begin(), ram_.end(), 0xFF);
+    onReset();
+}
+
+// The three pointer bytes always mirror THE pointer, with the Apple card's
+// forced high nibble on bits 16-23 (a2memexp.cpp:175-177, 195-197, …),
+// from construction and reset on (onReset).
 void SlinkyCard::publishPointer(uint32_t p)
 {
     regs_[0] = static_cast<uint8_t>(p & 0xFF);
@@ -74,10 +102,22 @@ uint8_t SlinkyCard::deviceSelectRead(uint8_t low4)
     return v;
 }
 
-// a2memexp.cpp:188-232 write_c0nx. Note the asymmetry MAME keeps: a write to
-// an address byte reloads the live pointer from the latch (`m_wptr`), while
-// the data port's increment moves only the live pointer — so the latch keeps
-// the START of a transfer.
+// a2memexp.cpp:188-232 write_c0nx, with ONE register where MAME keeps two.
+// [B] Apple IIc Memory Expansion Card Reference Manual (1988) ch. 2: "The
+// memory expansion card has a 20-bit address register and a 1-byte data
+// register … the address register automatically increments after each
+// access of the data register"; "RAM addressing": "an auto increment 20-bit
+// address pointer". [B] RamFactor User's Manual v1.5 p. 45: load all three
+// bytes "Unless, of course, you are sure of the previous contents" — advice
+// that only means something if an address byte left unwritten keeps its
+// CURRENT value. MAME's `m_wptr` latch (present since 2012) reloaded the
+// other two bytes from the START of the last transfer instead (audit
+// parite-a2memexp-2026-11-01 constat 1). NOT modelled, stated as unknown:
+// the RamFactor manual's ripple carry on an address WRITE whose bit 7 falls
+// ("Whenever the lower or middle address byte changes from a value with
+// bit 7 = 1 to one with bit 7 = 0, the next higher byte is automatically
+// incremented") — that page describes AE's clone, not the 670-0024, and the
+// 341-0344A firmware formats identically either way (audit probe [1]).
 void SlinkyCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     if (!regsEnabled_) return;
@@ -85,9 +125,8 @@ void SlinkyCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     switch (low4) {
         case 0: case 1: case 2: {
             const unsigned shift = 8u * low4;
-            wptr_ = (wptr_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(v) << shift);
-            publishPointer(wptr_);
-            liveptr_ = wptr_;
+            liveptr_ = (liveptr_ & ~(0xFFu << shift)) | (static_cast<uint32_t>(v) << shift);
+            publishPointer(liveptr_);
             break;
         }
         case 3:
@@ -133,6 +172,8 @@ bool SlinkyCard::peekExpansionRom(uint16_t offset, uint8_t& out) const
 }
 
 // MAME save_item list (a2memexp.cpp:149-152): regs, ram, wptr, liveptr.
+// The `wptr` slot is kept in the blob for format stability; since the latch
+// is gone it carries the pointer itself and is ignored on load.
 // The RAM is written SPARSELY — only the 256-byte pages that differ from
 // the power-on $FF fill — so an idle card costs ~30 bytes per rewind frame
 // and a busy 1 MB RAM disk at most 1 MB + 2 bytes a page.
@@ -141,7 +182,7 @@ void SlinkyCard::appendSnapshotState(std::vector<uint8_t>& out) const
     byteio::putU32(out, kSnapMagic);
     byteio::putU16(out, kSnapVersion);
     out.insert(out.end(), regs_.begin(), regs_.end());
-    byteio::putU32(out, wptr_);
+    byteio::putU32(out, liveptr_);   // former wptr slot
     byteio::putU32(out, liveptr_);
     std::vector<uint16_t> pages;
     for (std::size_t p = 0; p < kPages; ++p) {
@@ -169,7 +210,7 @@ void SlinkyCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (version != 1 && version != kSnapVersion) return;
     std::array<uint8_t, 16> regs{};
     for (auto& b : regs) b = r.u8();
-    const uint32_t wptr = r.u32();
+    (void)r.u32();                   // former wptr slot (see append)
     const uint32_t live = r.u32();
     const std::size_t count = r.u16();
     if (count > kPages || len < kHead + count * 258) return;
@@ -185,7 +226,6 @@ void SlinkyCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         enabled = data[kHead + count * 258] != 0;
     }
     regs_ = regs;
-    wptr_ = wptr;
     liveptr_ = live;
     regsEnabled_ = enabled;
     std::fill(ram_.begin(), ram_.end(), 0xFF);
