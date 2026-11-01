@@ -409,25 +409,49 @@ the historical completions.
 - [x] grep -c 'v0\.9' README.md == 0 — the last match was the bundled A2 File
       Cmd XL v0.9.8, now v1.0 *(2026-10-28)*
 
-### archive.org media — before EVERY release, and whenever they change
+### archive.org media — NOT a per-release chore; CI says when
 
-> CI fetches `pom2_media.zip` through an Actions cache keyed on the hash of
-> `tools/test_media.sha256` (`.github/actions/fetch-test-media`, 2026-11-01):
-> a new manifest is a new key and the first job to miss downloads once for
-> the whole run. So a rebuilt archive is only re-fetched when the manifest
-> changed with it — which is the rule anyway: a dump or disk added to the
-> zip is added to the manifest in the same commit.
+**This used to read "before EVERY release". It should not, and nobody should
+be tracking it by hand** *(corrected 2026-11-01)*. An upload is needed when,
+and only when, the **manifest or the ROM catalogue gains an entry the
+published zip does not have** — and the machine already detects exactly that:
 
-- [ ] **`pom2_firm`** (`pom2_firm.zip`; the first item `pom2_roms_202610` went dark
-      2026-10-31) re-uploaded with every dump
-      `RomCatalog.h` now lists (a new card ROM — CCS 7710 PROMs, Dan ][ EPROM, … — is
-      missing from the zip until someone uploads it, and RetroBIOS has no copy of most).
-      `kPom2RomArchiveUrl` (DEV.md) points at the item that holds it
-- [ ] **`pom2_media_202611`** (`pom2_media.zip`; the first item `pom2_testmedia_20261029` went
-      dark 2026-10-31) re-uploaded with every ROM and disk the
-      tests now open, and `tools/test_media.sha256` + `tools/fetch_test_media.py` updated to
-      match — a test that SKIPs in CI because its medium is missing verifies nothing
-- [ ] A fresh clone running `tools/fetch_test_media.py` gets every file, all hashes OK
+- Every CI build/test job runs `tools/fetch_test_media.py --strict`
+  (`.github/actions/fetch-test-media`), which checks every manifest entry
+  against the downloaded zip and fails the job with
+  `<file>: missing from the archive`. A needed upload is therefore a RED CI
+  run on the commit that added the file, not something to remember at tag
+  time.
+- The Actions cache is keyed on the hash of `tools/test_media.sha256`, so a
+  manifest that did not change is not even re-fetched: archive.org is
+  contacted once per manifest change, not once per job or once per release.
+- Everything is SHA-256 gated in `fetch_test_media.py` and `RomFetch.h`, so a
+  substituted or corrupted file cannot be used silently either.
+
+So the release check is just: **is CI green?** If it is, the archives match
+the tree. There is nothing to upload "just in case".
+
+What *does* need a human, and only then:
+
+- [ ] A commit that adds a dump to `RomCatalog.h` → add it to `pom2_firm.zip`
+      (`kPom2RomArchiveUrl`, DEV.md). RetroBIOS has no copy of most card ROMs.
+- [ ] A commit that adds a disk or dump to `tools/test_media.sha256` → add it
+      to `pom2_media.zip`. A test that SKIPs in CI because its medium is
+      missing verifies nothing.
+
+**The standing risk is the item going DARK, not the upload cadence.** Both
+first-generation items (`pom2_roms_202610`, `pom2_testmedia_20261029`) were
+darkened without notice on 2026-10-31 and took CI down with them; no takedown
+e-mail is ever sent, so the failure arrives as a red build. `pom2_media.zip`
+cannot simply move into the repo or into GitHub Releases, because POM2
+deliberately distributes no copyrighted firmware or third-party disk
+(CLAUDE.md, 2026-10-29) and Releases are POM2's own channel — archive.org is
+the arm's-length host, which is the whole point of using it.
+
+- [ ] **Mitigation worth having: a second URL.** `fetch_test_media.py` takes
+      one `--url` / `$POM2_TEST_MEDIA_URL`. A *list*, tried in order, would
+      mean one dark item cannot stop the build — and the SHA-256 gate makes a
+      mirror safe by construction. Needs a second host to point at.
 
 ### Build repeatability
 
