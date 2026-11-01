@@ -145,8 +145,11 @@ public:
     ///   Auto            POM2's historical model: DCD+DSR active while a
     ///                   telnet peer is connected or the printer tap is armed
     ///                   (or `setModemLinesTied`), CTS always active.
-    ///   Nothing         no cable: every input inactive. A byte written to
-    ///                   the transmitter stays there and TDRE reads 0.
+    ///   Nothing         no cable. On an SSC every input reads ACTIVE: the
+    ///                   card has 15 kΩ pull-ups to +12 V on CTS, DCD and
+    ///                   DSR ([B] manual p. 48), so an unplugged card looks
+    ///                   like a ready device and PR#n prints into the void.
+    ///                   (A //c port: DCD inactive, see below.)
     ///   PrinterReady    a printer on the usual null-modem printer cable: its
     ///                   DTR (pin 20) drives DCD and DSR, CTS active.
     ///   PrinterOffline  the same printer offline, out of paper or buffer
@@ -171,6 +174,14 @@ public:
     /// The three handshake inputs as the 6551 sees them now (true = active).
     struct InputLines { bool dcd; bool dsr; bool cts; };
     InputLines inputLines() const;
+    /// TEST SEAM: pin the three handshake inputs to given levels, overriding
+    /// the cable. No real cable in `Cable` holds CTS inactive on an SSC — the
+    /// card's 15 kΩ pull-ups (manual p. 48) make an empty connector read all
+    /// three ACTIVE — yet the 6551's "byte parked behind an inactive CTS,
+    /// sent when CTS returns" path must stay pinned; this stands in for
+    /// whatever device drives CTS OFF. Not persisted, not in the UI.
+    void setInputLinesForTest(bool dcd, bool dsr, bool cts);
+    void clearInputLinesForTest();
 
     /// A //c's two serial ports are this card with no card around it: no
     /// EPROM (the system ROM drives them) and no DIP switches to set. The
@@ -657,6 +668,10 @@ private:
     uint8_t tdrHeldByte_ = 0;
     /// `inputLines()` with `bufferMtx` already held.
     InputLines inputLinesLocked() const;
+    /// The 6551-side consequences of the handshake inputs moving: a DCD/DSR
+    /// edge interrupts (DTR asserted, IRD clear), CTS returning releases a
+    /// parked TDR byte. Caller holds `bufferMtx`.
+    void applyInputLineChangeLocked(InputLines before, InputLines after);
     /// Put one byte on the line: TX ring, recent-bytes tail, printer spool,
     /// transmit interrupt. Caller holds `bufferMtx`.
     void transmitByte(uint8_t v);
@@ -690,6 +705,8 @@ private:
     // paper trail, not machine state (same rule as PrinterCard's spool).
     bool printerTap_ = false;
     std::atomic<bool> modemLinesTied_{false};   // see setModemLinesTied
+    bool       linesForTestSet_ = false;        // setInputLinesForTest
+    InputLines linesForTest_{true, true, true};
     std::vector<uint8_t> printerSpool_;
     // Absolute offset of printerSpool_[0] in the ever-spooled byte stream —
     // lets the 1 MiB cap trim the consumed prefix without breaking the

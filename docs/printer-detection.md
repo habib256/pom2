@@ -108,8 +108,16 @@ told apart by ROM. The Grappler+, the 1981 Grappler and the PIC all start
 
 ## 4. Super Serial Card
 
-**Registers** (MAME `a2ssc.cpp:394-409`, `read_c0nx`): `$C0n8-$C0nB` are the
-6551 (A0-A1 decoded, `$C0nC-F` mirror). `$C0n0-$C0n7` are the DIP switches,
+**Registers**: `$C0n8-$C0nB` are the 6551 — and **only** those four. [B] SSC
+manual p. 47 (Table 4-5 and the text under it), "while address lines A2 and A3
+select the chip, A0 and A1 select the actual register": schematic 050-0045-A
+puts CS0 (pin 2) on A3 and /CS1 (pin 3) on A2, so `$C0nC-$C0nF` select nothing
+and read the floating bus. (MAME `a2ssc.cpp` mirrors them on A3 alone since
+2020 and POM2 copied that until 2026-11-01; AppleWin returns nothing there.)
+**A //c port is different:** the //c Technical Reference's GLU takes A0 and
+A3-A7 but no A2 (Table 11-10), and Tables 7-3/8-3 mark `$C09C-$C09F` only
+"Reserved" — so the built-in ports plausibly mirror their ACIA there, and POM2
+keeps the mirror on them (§ 6). `$C0n0-$C0n7` are the DIP switches,
 and **reading them has no side effect**: the value is `$FF`, ANDed with DSW1
 when A1 = 0 and with DSW2 when A0 = 0 — so `$C0n1` = DSW1, `$C0n2` = DSW2,
 `$C0n0` = both ANDed, `$C0n3` = `$FF`. Values are raw, not inverted.
@@ -142,8 +150,9 @@ detection loop that walks every slot's ROM should end with `LDA $CFFF`.
 
 **What blocks:** the Apple firmware (not the card) waits, before every byte,
 for `status & $70 == $10` (`$CAF5`) — transmitter empty **and** DSR and DCD
-active. A `PR#n` on a communications-mode SSC with nothing on the line, or a
-printer-mode one whose printer is off, hangs there without a timeout.
+active. A `PR#n` on a printer-mode SSC whose printer is off hangs there
+without a timeout. With **nothing** on the line it does not: the card's
+pull-ups hold DSR and DCD active (§ 5), and the bytes go out into the void.
 
 **In POM2:** Apple's EPROM when `roms/ssc_341-0065-a.bin` is present (else a
 hand-written page with the same ID bytes). DIP banks settable per slot
@@ -173,7 +182,7 @@ drops DTR, both lines go inactive, and the firmware waits.
 
 | Plugged in | DCD | DSR | CTS | Status bits `$70` |
 |---|---|---|---|---|
-| nothing | inactive | inactive | inactive | `$60` (TDRE masked) |
+| nothing | active | active | active | `$10` — [B] 15 kΩ pull-ups (manual p. 48) |
 | printer, ready | active | active | active | `$10` |
 | printer, off line / out of paper | inactive | inactive | active | `$70` |
 | modem, no carrier | inactive | active | active | `$30` |
@@ -181,10 +190,17 @@ drops DTR, both lines go inactive, and the firmware waits.
 | null modem (another computer) | active | active | active | `$10` |
 
 So "status & `$60` == 0" says *something ready is on the line*; it cannot tell
-a ready printer from a connected modem, and "nothing plugged in" reads exactly
-like "printer off". MAME models an unplugged input as inactive; a real RS-232
-receiver (MC1489) with an open input is only *typically* inactive —
-unverified on hardware.
+a ready printer from a connected modem — nor from **nothing at all**: [B] the
+SSC manual p. 48 ("Data Input and Output") gives CTS, DCD and DSR 15 kΩ
+pull-ups "so the SSC will work with devices that do not assert those signals" —
+schematic 050-0045-A, R6/R2/R5 to +12 V on MC1489 (7A) inputs 1, 4 and 13,
+card-side of the jumper block. +12 V is RS-232 ON and the 1489 inverts, so the
+6551 sees all three active (that last step is electrical inference; the manual
+states the resistors, not the consequence). An unplugged card reads `$10`,
+exactly like a ready printer. (MAME models the empty port as
+inactive and AppleWin reports DCD/DSR down with no client; both are wrong for
+this card. Until 2026-11-01 this paragraph called the open input "typically
+inactive — unverified on hardware"; the manual settles it.)
 
 **In POM2:** `cable=` on `--printer-port` / `/printer-port`, per port, persisted
 as `ssc_cable_slotN`: `auto` (POM2's historical model — lines active while a

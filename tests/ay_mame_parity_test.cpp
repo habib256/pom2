@@ -98,28 +98,46 @@ void resetSelection()
     }
 }
 
-// AUDIO-010: R14/R15 read back what was written, whatever R7's port
-// direction bits say. MAME `ay8910_read_ym`: with no port callback bound (a
-// Mockingboard wires neither port) it only logs a warning for a port set as
-// output and returns the stored register — no DDR mask either way.
+// [A] mb-audit issue #22 (Tom Charlesworth), measured on real chips with the
+// sequence mb-audit uses to identify the part — R7=$FF, R14=$55, R15=$69, read
+// back: AY-3-8913 → 3F 0E 0F (ReactiveMicro Mockingboard, both Phasor AYs);
+// AY-3-8910 (MB-K) and AY38912A/P (from a Mockingboard 4c) → FF 55 69, and
+// FF FF for both ports once set as INPUTS ([B] GI datasheet p. 5-19, "internal
+// pull-ups"). AUDIO-010 pinned the opposite here on 2026-10-24 — "the stored
+// byte, input or output, matching MAME" — a grade-D alignment against a
+// grade-A measurement; mb-audit then flagged every POM2 AY as an 8910.
+// `docs/audits/parite-ay8910-2026-11-01.md`.
 void portReadBack()
 {
-    pom2::Ay3_8910 ay;
-    auto store = [&](uint8_t reg, uint8_t v) {
+    using Chip = pom2::Ay3_8910::Chip;
+    auto store = [](pom2::Ay3_8910& ay, uint8_t reg, uint8_t v) {
         ay.applyControl(reg, 7);       // latch (BDIR|BC1, /RESET high)
         ay.applyControl(v, 6);         // write (BDIR)
     };
-    auto load = [&](uint8_t reg) {
+    auto load = [](pom2::Ay3_8910& ay, uint8_t reg) {
         ay.applyControl(reg, 7);
         assert(ay.applyControl(0, 5) == pom2::Ay3_8910::Read);   // read (BC1)
         return ay.busOut;
     };
-    for (uint8_t enable : {uint8_t(0x00), uint8_t(0x40), uint8_t(0x80), uint8_t(0xC0)}) {
-        store(7, enable);
-        store(14, 0x5A);
-        store(15, 0xA5);
-        assert(load(14) == 0x5A && "port A: input or output, the stored byte");
-        assert(load(15) == 0xA5 && "port B: input or output, the stored byte");
+    {   // The default is the 8913, which every POM2 slot card carries.
+        pom2::Ay3_8910 ay;
+        assert(ay.chip == Chip::Ay8913);
+        store(ay, 7, 0xFF); store(ay, 14, 0x55); store(ay, 15, 0x69);
+        assert(load(ay, 7)  == 0x3F && "8913: R7 has no port-direction bits");
+        assert(load(ay, 14) == 0x0E && "8913: R14 reads $0E, there is no port");
+        assert(load(ay, 15) == 0x0F && "8913: R15 reads $0F");
+    }
+    for (Chip c : { Chip::Ay8910, Chip::Ay8912 }) {
+        pom2::Ay3_8910 ay; ay.chip = c;
+        store(ay, 7, 0xFF); store(ay, 14, 0x55); store(ay, 15, 0x69);
+        assert(load(ay, 7) == 0xFF);
+        assert(load(ay, 14) == 0x55 && load(ay, 15) == 0x69 && "outputs read the latch");
+        store(ay, 7, 0x3F);                 // both ports as inputs
+        assert(load(ay, 14) == 0xFF && load(ay, 15) == 0xFF && "inputs read the pull-ups");
+        store(ay, 7, 0x38);                 // a music driver's usual R7
+        assert(load(ay, 14) == 0xFF && "still an input: $FF, not the stored $55");
+        store(ay, 7, 0x40);                 // port A out, port B in
+        assert(load(ay, 14) == 0x55 && load(ay, 15) == 0xFF);
     }
 }
 

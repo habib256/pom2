@@ -12,6 +12,89 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Slices 10-14: seven fixes, every one checked against the document, and nineteen places where the emulators are wrong
+
+Five more parity slices (`6522via`, `NTSC`, `a2ssc`, `apple2`, `ay8910`) ran
+under Cursor; the fixes were made here, and three Opus agents were sent to the
+**primary documents** before anything landed — the audit's page numbers were
+off by one in two places and a pin number was wrong, which is exactly what
+that pass is for. Two slices found no bug at all (`NTSC`, `6522via`) and said
+so; between them the five recorded eight more `AMONT FAUX`, nineteen in total
+today. Three emulators agreeing is not evidence when they share an ancestor.
+
+**An unplugged SSC reads every handshake line ACTIVE.** [B] SSC manual (1981)
+p. 48, *"Three of the received handshake lines (Clear To Send, Data Carrier
+Detect, and Data Set Ready) have 15K ohm pullup resistors so the SSC will work
+with devices that do not assert those signals"*; schematic 050-0045-A, read at
+600 dpi: R6/R2/R5 to +12 V on MC1489 (7A) inputs 1, 4 and 13. +12 V is RS-232
+ON and the 1489 inverts, so the 6551 sees all three asserted (that step is
+electrical inference, the manual states the resistors). POM2 copied [D] MAME's
+empty `rs232_port` (lines inactive) and AppleWin's no-client state: `cable=none`
+read `$60`, TDRE was masked, and `PR#n` in communications mode hung at `$CAF5`
+where a real card prints into the void and returns. The repo's own prose
+called the open input "typically inactive — unverified on hardware": a grade F
+the manual settles. Since no cable in the set now holds CTS off, the tests
+that pinned the 6551's *park-behind-CTS* mechanics get an explicit test seam
+(`setInputLinesForTest`) instead of a fiction about empty connectors.
+
+**The SSC's 6551 answers at `$C0n8-$C0nB` only.** [B] manual p. 47, *"While
+address lines A2 and A3 select the chip, A0 and A1 select the actual
+register"*; schematic: CS0 (pin 2) on A3, /CS1 (pin 3) on A2. MAME has mirrored
+`$C0nC-$C0nF` on A3 alone since 2020 and POM2 copied it — not inertly: a read
+of `$C0nC` popped a received byte, `$C0nD` acknowledged the IRQ, a write to
+`$C0nC` transmitted. **A //c port keeps the mirror**: its GLU takes A0 and
+A3-A7 with no A2 (//c Technical Reference, Table 11-10 and p. 276), and
+Tables 7-3/8-3 mark `$C09C-$C09F` only "Reserved". **A //c port has no DIP
+switches either**, which `PrinterPortControl.cpp` and `printer-detection.md`
+already said while `deviceSelectRead` answered `$FC`/`$52` there; it now reads
+the open bus. Not measured on a //c — PLAUSIBLE, as the audit rated it.
+
+**PB2 floats high.** [A] AppleWin GH#1234, measured: a bare ][+ reads
+`1 1 1 1` on `$C061-$C063`, a //e enhanced `1 0 0 1`, and a Kraft joystick
+leaves SW2 high. [B] Sather p. 7-4 (*"the three pushbutton inputs ... are
+actually TTL inputs"*) and pp. 7-9/7-10 (*"the two pull-down resistors in a
+paddle set are installed in the plug"* — two, for PB0 and PB1). [D] MAME
+`14c441d5` and AppleWin agree. POM2 read 0, the `mame0287` rule upstream has
+since corrected, so a program reading the Shift mod on SW2 saw Shift held for
+ever. POM2's `button_[2]` keeps one meaning, by convention and marked [F]: a
+controller that grounds PB2 — the only third button a TTL input can see.
+
+**RESET on a ][ / ][+ keeps the keyboard strobe and the key.** [B] Sather
+Fig. 7.7 (p. 7-44), read on the page: B10's CLR is driven by A12, a NOR of
+`C01X` and the power-up 555's output; the RESET key grounds only Q5's
+collector, the RESET' net, which never reaches A12. *"This pulse resets the
+keyboard strobe flip-flop and also forces the RESET' line low"* — siblings,
+not cause and effect. Same on Rev 0 (Apple II Reference Manual, Jan 1978,
+Fig. S-10). MAME's `keyb_reset_w` agrees; AppleWin's `KeybReset` clears both
+and cites nothing. POM2's //e branch already kept it ("except KEYSTROBE"); the
+][+ branch called `Keyboard::reset()`, so a ][ coming back to its Monitor lost
+the key that was waiting.
+
+**The AY-3-8913 reads back `3F 0E 0F`, and input ports read their pull-ups.**
+[A] mb-audit issue #22 (opened 2024-09-15; measurements 2026-06-06, 07-26,
+08-19, Tom Charlesworth): 8913s — a ReactiveMicro Mockingboard and both Phasor
+AYs — read R7/R14/R15 back as `3F 0E 0F`; an 8910, two Microchip AY38912A/P
+pulled from a Mockingboard 4c and a GI 8912 read `FF 55 69`, and `FF FF` with
+the ports set as inputs. [B] 1982 GI Microelectronics Data Catalog p. 5-19,
+*"The I/O Ports are TTL-compatible and are provided with internal pull-ups on
+each pin. Both Ports are available on the AY-3-8910; only I/O Port A is
+available on the AY-3-8912; no ports are available on the AY-3-8913."*
+`Ay3_8910` gains a `chip`: 8913 by default (every slot card), 8912 on the
+Mockingboard 4c. On 2026-10-24 AUDIO-010 had been *"closed with no change,
+matching MAME"*, with a test pinning the stored-byte read-back — a grade-D
+alignment against a grade-A measurement, and mb-audit flagged every POM2 AY as
+an 8910. That test is turned round. One more `AMONT FAUX` on the way, this time
+AppleWin's: `d5db8e84` gives the 8912 `R7 & $7F` and `R15 → $0F`, which both
+measured 8912s contradict.
+
+**Method notes.** Seven mutations, seven failures on the right assertion. Nine
+tests had pinned the old behaviour and were corrected with their source, not
+accommodated. Two of today's "regressions" were stale binaries: a targeted
+`cmake --build --target X` rebuilds X alone, and a test linking the changed
+source but not rebuilt passes on yesterday's code — the full suite is the
+only verdict. The 4c's `setAyChip` wiring lives in the GUI's slot plumbing and
+has no unit test; it is stated here rather than implied.
+
 ## 2026-11-01 — The platter resumes where it stopped; a test that cried "hang"; a literal 83
 
 `floppy.cpp` parity slice (24 citations, dated across the file's 190 upstream

@@ -110,7 +110,20 @@ public:
         if ((iieMod && shiftMod_.load(std::memory_order_relaxed))
             || (iiPlus && iiShiftWiring() == IiShiftWiring::Sw2))
             return !shift_.load(std::memory_order_relaxed);
-        return connected() && button_[2];
+        // PB2 is a TTL input with NOTHING pulling it down in an Apple or a
+        // Kraft plug: [B] Sather p. 7-4 ("the three pushbutton inputs ... are
+        // actually TTL inputs") and pp. 7-9/7-10 ("the two pull-down
+        // resistors in a paddle set are installed in the plug" — two, for
+        // PB0 and PB1). [A] AppleWin GH#1234, measured: a bare ][+ reads
+        // 1 1 1 1 on $C061-$C063, a //e enhanced 1 0 0 1, a Kraft joystick
+        // leaves SW2 high. [D] MAME 14c441d5 and AppleWin agree. POM2 read 0
+        // here — the mame0287 rule, since corrected upstream — so a program
+        // reading the Shift mod on SW2 saw Shift held for ever.
+        // `button_[2]` keeps one meaning, by POM2 convention [F]: a
+        // controller that GROUNDS PB2 when pressed, the shift-mod wiring —
+        // the only third button a TTL input can observe.
+        // `docs/audits/parite-apple2-2026-11-01.md`.
+        return !(connected() && button_[2]);
     }
     /// PADDL2 / PADDL3 replaced by Shift / Ctrl (][+ only). -1 = the timer.
     int wiredPaddle(int idx, bool iiPlus) const {

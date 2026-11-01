@@ -570,3 +570,18 @@ Attendu selon le manuel et le schéma :
     été exécuté ;
   - la règle générale « RESET garde la fenêtre `$C800` » de `SlotBus` pour
     les autres cartes : seule la SSC a été confrontée à un document.
+
+---
+
+## Suite donnée (2026-11-01)
+
+Constats 1, 2 et 3 **corrigés** (`0x10` sans câble ; décodage A2/A3 sur la
+SSC, miroir conservé sur un port //c ; DIP du //c → bus ouvert). Vérification
+sur pièces par un agent : manuel SSC téléchargé et OCRisé, schéma 050-0045-A
+lu à 600 dpi — les pull-ups sont **p. 48** (pas 47) et sur les broches 1489
+**1, 4 et 13** (pas 10) ; le décodage est **p. 47**. La //c TRM (Tables 7-3,
+8-3, 11-10, p. 276) montre un GLU sans A2 : le miroir `$C09C-F` est plausible
+sur le //c et y reste. Ce que rend un //c en `$C090-$C097` n'est toujours pas
+mesuré. Les tests qui parquaient un octet derrière CTS via `Cable::Nothing`
+utilisent désormais `setInputLinesForTest`. Pinned : `ssc_firmware`,
+`ssc_acia_smoke` (`testSscDecodesA2AndA3`).

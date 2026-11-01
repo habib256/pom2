@@ -639,12 +639,28 @@ void Memory::pushVideoEventLocked(VideoEventKind kind, bool value)
 
 void Memory::resetSoftSwitchesWarm()
 {
-    // II/II+ machine_reset (apple2.cpp:325-331) only clears the cnxx
-    // tracker + kbd strobe — LC bank-select, display switches and the
-    // expansion-ROM latch SURVIVE. IIe/IIc/IIc+ reset_w (apple2e.cpp:
-    // 1453-1508) runs the full MMU/IOU/LC list — our cold reset, keyboard aside.
+    // II/II+: LC bank-select, display switches and the expansion-ROM latch
+    // SURVIVE the reset key. So does the keyboard strobe, and so does the
+    // key byte. [B] Sather, *Understanding the Apple II*, Fig. 7.7 (p. 7-44,
+    // Rev 1+ boards): the strobe flip-flop is B10 (LS74); its CLR (pin 13)
+    // is driven by A12 (LS02), a NOR of C01X (via C11) and the OUTPUT of the
+    // power-up 555 A13; the RESET key grounds only the collector of Q5 —
+    // the "RESET TO MPU AND PERIPH. SLOTS" net — which never reaches A12.
+    // The 555 drives both ("This pulse resets the keyboard strobe flip-flop
+    // and also forces the RESET' line low", p. 7-45): siblings, not cause
+    // and effect. Same on Rev 0: Apple II Reference Manual (Jan 1978)
+    // Fig. S-10, B10's only asynchronous input is the $C01X decode from F13.
+    // The byte lives in the keyboard's encoder (MM5740 / AY-5-3600), which
+    // the RESET switch does not touch. [D] MAME's `keyb_reset_w` agrees;
+    // AppleWin's `KeybReset` clears both and cites nothing. The //e branch
+    // below already kept it ("except KEYSTROBE", Sather IIe 7-3); this
+    // branch called Keyboard::reset() and dropped strobe AND byte, so a
+    // ][ (1977) coming back to its Monitor lost the key that was waiting.
+    // Not measured on hardware. `docs/audits/parite-apple2-2026-11-01.md`.
+    // IIe/IIc/IIc+ reset_w (apple2e.cpp:1453-1508) runs the full MMU/IOU/LC
+    // list — our cold reset, keyboard aside.
     if (iieMode) { resetSoftSwitches(/*warm=*/true); return; }
-    keyboard_.reset();   // abandon any in-flight paste, drop the strobe
+    keyboard_.cancelPaste();   // abandon an in-flight paste; strobe and byte stay
     // NB: cnxx-slot tracker analogue lives in SlotBus, which the caller
     // (EmulationController::softReset) drives via slotBus().reset();
     // nothing else needs touching here on II/II+.

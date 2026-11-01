@@ -872,8 +872,26 @@ bool SuperSerialCard::parseCableKey(std::string_view key, Cable& out)
     return false;
 }
 
+void SuperSerialCard::setInputLinesForTest(bool dcd, bool dsr, bool cts)
+{
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    const InputLines before = inputLinesLocked();
+    linesForTest_ = { dcd, dsr, cts };
+    linesForTestSet_ = true;
+    applyInputLineChangeLocked(before, inputLinesLocked());
+}
+
+void SuperSerialCard::clearInputLinesForTest()
+{
+    std::lock_guard<std::mutex> lk(bufferMtx);
+    const InputLines before = inputLinesLocked();
+    linesForTestSet_ = false;
+    applyInputLineChangeLocked(before, inputLinesLocked());
+}
+
 SuperSerialCard::InputLines SuperSerialCard::inputLinesLocked() const
 {
+    if (linesForTestSet_) return linesForTest_;
     // A //c port wires only DCD to the connector (pin 5, "DSR" on the
     // label): its CTS is grounded, and DSR is the disk port's EXTINT on
     // port 1 and the keyboard strobe on port 2 — held inactive here, since
@@ -890,7 +908,22 @@ SuperSerialCard::InputLines SuperSerialCard::inputLinesLocked() const
         return { dcd, false, true };
     }
     switch (cable_) {
-        case Cable::Nothing:        return { false, false, false };
+        // [B] SSC manual (1981) p. 48, "Data Input and Output": "Three of
+        // the received handshake lines (Clear To Send, Data Carrier Detect,
+        // and Data Set Ready) have 15K ohm pullup resistors so the SSC will
+        // work with devices that do not assert those signals." Schematic
+        // 050-0045-A sheet 2, read at 600 dpi: R6, R2 and R5 (15K) to +12 V
+        // on MC1489 (7A) inputs 1, 4 and 13, card-side of the jumper block
+        // (R2 sits on the 1489 side of SW1-7, so it pulls with SW1-7 OFF
+        // too). The step from there is electrical, not quoted: +12 V is
+        // RS-232 ON, the 1489 inverts, the 6551 sees /CTS /DCD /DSR LOW =
+        // ACTIVE. So with NOTHING plugged the card believes a ready device
+        // is there, and the Apple firmware's $CAF5 wait falls through.
+        // [D] MAME plugs an empty rs232_port (lines inactive) and AppleWin
+        // reports DCD/DSR inactive with no TCP client; POM2 copied that and
+        // hung PR#n in communications mode. A real SSC prints into the
+        // void and returns. `docs/audits/parite-a2ssc-2026-11-01.md`, 1.
+        case Cable::Nothing:        return { true,  true,  true  };
         case Cable::PrinterReady:   return { true,  true,  true  };
         case Cable::PrinterOffline: return { false, false, true  };
         case Cable::Modem:          return { connected.load(), true, true };
@@ -919,13 +952,17 @@ void SuperSerialCard::setCable(Cable c)
     std::lock_guard<std::mutex> lk(bufferMtx);
     const InputLines before = inputLinesLocked();
     cable_ = c;
-    const InputLines after = inputLinesLocked();
-    // A DCD or DSR change interrupts only with DTR asserted, the rule
-    // onConnectionEdge already follows (MAME `mos6551.cpp:533-560`).
+    applyInputLineChangeLocked(before, inputLinesLocked());
+}
+
+void SuperSerialCard::applyInputLineChangeLocked(InputLines before, InputLines after)
+{
+    // A DCD or DSR change interrupts only with DTR asserted AND IRD clear
+    // (`rxIrqEnable_`), the rule onConnectionEdge follows.
     uint8_t edges = 0;
     if (before.dcd != after.dcd) edges |= IRQ_DCD;
     if (before.dsr != after.dsr) edges |= IRQ_DSR;
-    if (edges && rxIrqEnable_) raiseIrqSource(edges);   // IRD gates it too
+    if (edges && rxIrqEnable_) raiseIrqSource(edges);
     // CTS back: the byte parked in TDR goes out now.
     if (after.cts && tdrHeld_) {
         tdrHeld_ = false;
@@ -955,14 +992,34 @@ bool SuperSerialCard::parseModeKey(std::string_view key, Mode& out)
 
 uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
 {
-    // Address decode (MAME `a2ssc.cpp:339-353`):
-    //   bit 3 set ($C0n8-$C0nF) → ACIA, with **A0-A1 only** decoded
-    //     so $C0nC-$C0nF mirror $C0n8-$C0nB.
-    //   bit 3 clear ($C0n0-$C0n7) → 74LS259 DIP-switch reads, with bits
-    //     1/0 selecting which DSW to AND-mask: bit 1 clear ⇒ AND DSW1,
-    //     bit 0 clear ⇒ AND DSW2 (so $C0n0 returns DSW1 & DSW2,
-    //     $C0n1 returns DSW1, $C0n2 returns DSW2, $C0n3 returns 0xFF).
+    // Address decode. [B] SSC manual p. 47 (Table 4-5 and the text under
+    // it): "While address lines A2 and A3 select the chip, A0 and A1 select
+    // the actual register" — schematic 050-0045-A puts the SY6551's CS0
+    // (pin 2, active high) on A3 and /CS1 (pin 3, active low) on A2, so the
+    // ACIA answers at $C0n8-$C0nB ONLY. $C0nC-$C0nF select nothing and read
+    // the floating bus. **Not on a //c port**: there the 6551's CS0 is A4/A5
+    // and /CS1 is SER* from the GLU, whose address inputs are A0 and A3-A7
+    // with no A2 (//c Technical Reference, Table 11-10 and p. 276), and
+    // Tables 7-3/8-3 mark $C09C-$C09F only "Reserved" — so the built-in
+    // ports plausibly mirror, and the mirror is kept for them (not measured).
+    // [D] MAME a2ssc.cpp (since
+    // 810a143a, 2020-12-30) mirrors on `BIT(offset, 3)` alone and POM2
+    // copied it; the mirror was not inert — a read of $C0nC popped a
+    // received byte, $C0nD acknowledged the IRQ, a write to $C0nC sent.
+    // AppleWin returns IO_Null there, as the schematic says.
+    // `docs/audits/parite-a2ssc-2026-11-01.md`, constat 2.
+    //   $C0n0-$C0n7 → 74LS259 DIP-switch reads, with bits 1/0 selecting
+    //     which DSW to AND-mask: bit 1 clear ⇒ AND DSW1, bit 0 clear ⇒
+    //     AND DSW2 (so $C0n0 = DSW1 & DSW2, $C0n1 = DSW1, $C0n2 = DSW2,
+    //     $C0n3 = $FF). A //c port has no DIP switches at all: those eight
+    //     addresses decode nothing there ([D] MAME apple2c_map maps only
+    //     the two ACIA windows; the repo already said so in
+    //     PrinterPortControl.cpp and printer-detection.md § 6, and this
+    //     function contradicted both). Constat 3 of the same audit,
+    //     PLAUSIBLE: not measured on a //c.
     if (low4 & 0x08) {
+        if ((low4 & 0x04) && !builtInPort_)
+            return openBus();                   // SSC $C0nC-$C0nF: no chip select
         const uint8_t reg = low4 & 0x03;
         switch (reg) {
             case 0x0: {  // RDR (data register)
@@ -1063,7 +1120,8 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
             case 0x3: return ctlReg;
         }
     }
-    // DIP-switch readback ($C0n0-$C0n7).
+    // DIP-switch readback ($C0n0-$C0n7) — a slot card only.
+    if (builtInPort_) return openBus();
     uint8_t result = 0xFF;
     if (!(low4 & 0x02)) result &= lastDip1;
     if (!(low4 & 0x01)) result &= lastDip2;
@@ -1072,9 +1130,12 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
 
 void SuperSerialCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
-    // Only $C0n8-$C0nF carries the ACIA registers (A0-A1 mirror); writes
-    // to $C0n0-$C0n7 hit the 74LS259 latch which we don't model.
+    // Only $C0n8-$C0nB carries the ACIA registers on an SSC (A3=1, A2=0 —
+    // see the read decode); $C0nC-$C0nF select nothing there, while a //c
+    // port keeps the mirror. Writes to $C0n0-$C0n7 hit the 74LS259 latch
+    // which we don't model.
     if (!(low4 & 0x08)) return;
+    if ((low4 & 0x04) && !builtInPort_) return;
     const uint8_t reg = low4 & 0x03;
     std::lock_guard<std::mutex> lk(bufferMtx);
     switch (reg) {

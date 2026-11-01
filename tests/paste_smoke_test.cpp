@@ -386,9 +386,14 @@ int main()
         Memory mem;                            // II+ default (iieMode off)
         mem.pasteText("HELLO");
         assert(mem.pendingPasteSize() == 4);
-        mem.resetSoftSwitchesWarm();           // II/II+ machine_reset path
-        assert(mem.pendingPasteSize() == 0);
-        assert(!keyReady(mem));
+        mem.resetSoftSwitchesWarm();           // II/II+ reset-key path
+        assert(mem.pendingPasteSize() == 0 && "the rest of the paste is abandoned");
+        // The key already in the latch SURVIVES the reset key: [B] Sather
+        // Fig. 7.7 — B10's CLR comes from the $C01X decode and the power-up
+        // 555, and the RESET switch reaches neither (Memory.cpp, warm reset).
+        // This used to assert the opposite, pinning Keyboard::reset().
+        assert(keyReady(mem) && "a latched key is not cleared by RESET on a ][/][+");
+        assert(consumeKey(mem) == 'H');
     }
     {
         Memory mem;

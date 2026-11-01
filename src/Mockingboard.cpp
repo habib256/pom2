@@ -739,6 +739,12 @@ MockingboardCard::MockingboardCard(int slotNum, Variant variant)
 
 MockingboardCard::~MockingboardCard() = default;
 
+void MockingboardCard::setAyChip(pom2::Ay3_8910::Chip chip)
+{
+    std::lock_guard<std::mutex> lk(mtx);
+    for (auto& ay : ay_) if (ay) ay->chip = chip;
+}
+
 void MockingboardCard::onUnplug()
 {
     // SlotBus::detachFromBus() auto-releases any pending IRQ line bit

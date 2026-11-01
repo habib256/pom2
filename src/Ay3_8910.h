@@ -23,11 +23,30 @@
 // Extracted 2026-05-27 from MockingboardCard's private nested struct so
 // PhasorCard can drive four instances over the same bus contract.
 //
-// AY-3-8910 vs AY-3-8913: identical synthesis core; the 8913 omits the
-// two 8-bit I/O ports (registers R14/R15). Mockingboard wires R14/R15
-// unused so the same struct serves both. Phasor uses 8913s — we keep
-// R14/R15 in the bank for code symmetry, they just stay zero in
-// practice.
+// AY-3-8910 / 8912 / 8913: identical synthesis core; the 8912 has one
+// I/O port, the 8913 none. The difference IS observable, on read-back —
+// [A] mb-audit issue #22 (tomcw/mb-audit, opened 2024-09-15; measurements
+// in the comments of 2026-06-06, 07-26 and 08-19, by Tom Charlesworth) with
+// the sequence R7=$FF, R14=$55, R15=$69 then read back:
+//   AY-3-8913 (ReactiveMicro Mockingboard; both Phasor AYs): 3F 0E 0F
+//   AY-3-8910 (MB-K), two Microchip AY38912A/P pulled from a Mockingboard
+//     4c, and a GI AY-3-8912 (date code 8048): FF 55 69, and FF FF with
+//     both ports set as INPUTS (R7=$3F).
+// [B] 1982 GI Microelectronics Data Catalog (bitsavers, components/gi/
+// _dataBooks/), p. 5-19: "The I/O Ports are TTL-compatible and are provided
+// with internal pull-ups on each pin. Both Ports are available on the
+// AY-3-8910; only I/O Port A is available on the AY-3-8912; no ports are
+// available on the AY-3-8913" — and p. 5-22 (R16/R17): "none are available
+// on the AY-3-8913".
+// [D] AppleWin d5db8e84 (2026-07-18) has the 8913 right (R7 & $3F, R14 →
+// $0E, R15 → $0F) but gives the 8912 R7 & $7F and R15 → $0F, which both
+// measured 8912s contradict: an 8912 reads back like an 8910. AMONT FAUX.
+// Every POM2 slot card carries 8913s (Mockingboard A/C, Sound II, Phasor,
+// Echo+); the Mockingboard 4c carries an 8912. `chip` says which. Until
+// 2026-11-01 POM2 returned the stored byte for every chip — AUDIO-010 was
+// "closed with no change, matching MAME": a grade-D alignment against a
+// grade-A measurement, and mb-audit flagged every AY as an 8910.
+// `docs/audits/parite-ay8910-2026-11-01.md`.
 //
 // PB → AY control bus map (Mockingboard A/C + Phasor):
 //   PB0 → BC1
@@ -54,6 +73,11 @@ namespace pom2 {
 struct Ay3_8910
 {
     static constexpr int kAyNumRegs = 16;
+
+    /// Which part sits in the socket — see the header comment for what each
+    /// one reads back. Configuration, not state: not in the snapshot.
+    enum class Chip : uint8_t { Ay8910, Ay8912, Ay8913 };
+    Chip chip = Chip::Ay8913;
 
     // PB bit positions for AY control bus.
     static constexpr uint8_t kPbBitBc1   = 0x01;
@@ -193,9 +217,16 @@ struct Ay3_8910
                     0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF,
                 };
                 const uint8_t r = latchedAddr & 0x0F;
-                // Deselected, the bus floats high (MAME: 0xff).
-                busOut = (latchedAddr & kDeselected) ? 0xFF
-                                                     : regs[r] & kReadMask[r];
+                if (latchedAddr & kDeselected)
+                    busOut = 0xFF;                      // deselected: bus floats high
+                else if (chip == Chip::Ay8913 && r == 7)
+                    busOut = regs[7] & 0x3F;            // [A] no port-direction bits to read
+                else if (chip == Chip::Ay8913 && r >= 14)
+                    busOut = r;                         // [A] $0E / $0F: no port behind it
+                else if (r >= 14 && !(regs[7] & (r == 14 ? 0x40 : 0x80)))
+                    busOut = 0xFF;                      // [A][B] input port: pull-ups
+                else
+                    busOut = regs[r] & kReadMask[r];
             }
             result = ApplyResult::Read;
             break;

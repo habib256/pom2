@@ -158,7 +158,10 @@ void testCableLines()
     using Cable = SuperSerialCard::Cable;
     struct Row { Cable cable; uint8_t lineBits; };
     const Row rows[] = {
-        { Cable::Nothing,        0x60 },   // DCD, DSR inactive; TDRE masked
+        // [B] SSC manual p. 48: 15 kΩ pull-ups on CTS/DCD/DSR — an unplugged
+        // SSC reads every line ACTIVE. This row pinned MAME's empty rs232
+        // port ($60) against the manual. parite-a2ssc-2026-11-01.md, 1.
+        { Cable::Nothing,        0x10 },   // nothing plugged: all pulled active
         { Cable::PrinterReady,   0x10 },   // all active
         { Cable::PrinterOffline, 0x70 },   // DCD, DSR inactive; CTS active
         { Cable::Modem,          0x30 },   // no telnet peer: no carrier
@@ -184,16 +187,20 @@ void testCableLines()
         card.setPrinterTap(true);
         expect((card.deviceSelectRead(0x9) & 0x70) == 0x10, "auto, tap armed");
     }
-    {   // CTS inactive parks the byte in TDR; CTS back sends it.
+    {   // CTS inactive parks the byte in TDR; CTS back sends it. No cable
+        // in the set holds CTS off (an empty SSC connector reads all three
+        // lines ACTIVE through its pull-ups), so the device driving CTS OFF
+        // is stood in for by the test seam.
         SuperSerialCard card(2);
-        card.setCable(Cable::Nothing);
+        card.setCable(Cable::NullModem);
+        card.setInputLinesForTest(true, true, false);
         card.deviceSelectWrite(0xA, 0x0B);          // DTR on, no IRQs
         card.deviceSelectWrite(0x8, 'A');
         card.deviceSelectWrite(0x8, 'B');           // replaces A in TDR
         expect(card.recentTxText().empty(), "CTS inactive: nothing is sent");
         expect((card.deviceSelectRead(0x9) & 0x10) == 0,
                "CTS inactive: TDRE reads 0");
-        card.setCable(Cable::NullModem);
+        card.clearInputLinesForTest();              // CTS back
         expect(card.recentTxText() == "B",
                "CTS back: the byte left in TDR is sent, once");
         expect((card.deviceSelectRead(0x9) & 0x10) != 0, "CTS back: TDRE");

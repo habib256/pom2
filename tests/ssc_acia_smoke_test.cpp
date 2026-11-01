@@ -138,7 +138,8 @@ void testClosingPortDiscardsParkedTdr()
         for (const bool reopenBeforeCts : {false, true}) {
             SuperSerialCard card(2);
             card.setPrinterTap(true);
-            card.setCable(SuperSerialCard::Cable::Nothing);
+            card.setCable(SuperSerialCard::Cable::NullModem);
+            card.setInputLinesForTest(true, true, false);   // a device holding CTS off
             card.deviceSelectWrite(kCommandAddr, 0x01);
             card.deviceSelectWrite(kRdrAddr, 'X'); // parked behind inactive CTS
             assert(card.bytesTx() == 0);
@@ -146,7 +147,7 @@ void testClosingPortDiscardsParkedTdr()
             else card.deviceSelectWrite(kCommandAddr, 0);
             assert(!card.dtrAsserted());
             if (reopenBeforeCts) card.deviceSelectWrite(kCommandAddr, 0x01);
-            card.setCable(SuperSerialCard::Cable::NullModem);
+            card.clearInputLinesForTest();              // CTS back
             assert(card.txQueueDepth() == 0 && "closing the port left an old byte in TDR");
             assert(card.bytesTx() == 0);
             std::vector<uint8_t> spool;
@@ -1044,32 +1045,38 @@ void testSnapshotStatusErrorsAreMasked()
 // A byte parked in TDR behind a de-asserted CTS travels with the snapshot.
 // It was not saved: the restored card kept the LIVE value, so a snapshot
 // taken while a byte waited came back with TDRE=1 and the byte gone.
+// These three park a byte behind an inactive CTS. No cable in the set does
+// that any more — an empty SSC connector reads all three lines ACTIVE through
+// its pull-ups (manual p. 48) — so the device driving CTS OFF is the test seam.
 void testSnapshotKeepsParkedTdr()
 {
     SuperSerialCard live(2);
     live.deviceSelectWrite(kCommandAddr, 0x0B);        // DTR on
-    live.setCable(SuperSerialCard::Cable::Nothing);    // CTS inactive
+    live.setCable(SuperSerialCard::Cable::NullModem);
+    live.setInputLinesForTest(true, true, false);   // a device holding CTS off
     live.deviceSelectWrite(kRdrAddr, 'Z');
     assert((live.deviceSelectRead(kStatusAddr) & SR_TDRE) == 0);
     std::vector<uint8_t> blob;
     live.appendSnapshotState(blob);
 
     SuperSerialCard restored(2);
-    restored.setCable(SuperSerialCard::Cable::Nothing);
+    restored.setCable(SuperSerialCard::Cable::NullModem);
+    restored.setInputLinesForTest(true, true, false);   // a device holding CTS off
     restored.loadSnapshotState(blob.data(), blob.size());
     assert((restored.deviceSelectRead(kStatusAddr) & SR_TDRE) == 0);
     const auto before = restored.bytesTx();
-    restored.setCable(SuperSerialCard::Cable::NullModem);   // CTS returns
+    restored.clearInputLinesForTest();                      // CTS returns
     assert(restored.bytesTx() == before + 1);
 
     // An older blob (no tail) restores with nothing parked.
     SuperSerialCard parked(2);
     parked.deviceSelectWrite(kCommandAddr, 0x0B);
-    parked.setCable(SuperSerialCard::Cable::Nothing);
+    parked.setCable(SuperSerialCard::Cable::NullModem);
+    parked.setInputLinesForTest(true, true, false);   // a device holding CTS off
     parked.deviceSelectWrite(kRdrAddr, 'Y');
     parked.loadSnapshotState(blob.data(), blob.size() - 2);
     const auto sent = parked.bytesTx();
-    parked.setCable(SuperSerialCard::Cable::NullModem);
+    parked.clearInputLinesForTest();                     // CTS returns
     assert(parked.bytesTx() == sent);                    // 'Y' did not survive
     std::printf("  ok: snapshot keeps a byte parked behind CTS\n");
 }
@@ -1167,10 +1174,49 @@ void testEmptyTransmitRegisterKeepsInterrupting()
     std::printf("  ok: an empty TDR keeps interrupting at character rate\n");
 }
 
+
+/// [B] SSC manual p. 47: "While address lines A2 and A3 select the chip, A0
+/// and A1 select the actual register" — schematic 050-0045-A, CS0 on A3 and
+/// /CS1 on A2 — so an SSC's 6551 answers at $C0n8-$C0nB only; $C0nC-$C0nF
+/// select nothing. MAME mirrors them on A3 alone and POM2 copied it, which
+/// was not inert: a read of $C0nC popped a byte, $C0nD acknowledged the IRQ,
+/// a write to $C0nC transmitted. A //c port is different (GLU without A2,
+/// //c TRM Table 11-10): its mirror stands. And a //c has no DIP switches,
+/// so $C0n0-$C0n7 decode nothing there. `parite-a2ssc-2026-11-01.md`, 2-3.
+void testSscDecodesA2AndA3()
+{
+    SuperSerialCard ssc(2);
+    ssc.setCable(SuperSerialCard::Cable::NullModem);
+    ssc.deviceSelectWrite(kCommandAddr, 0x09);          // DTR on, IRD clear
+    ssc.deviceSelectWrite(0xC, 'Z');
+    assert(ssc.bytesTx() == 0 && "SSC: a write to $C0nC selects no chip");
+    ssc.deviceSelectWrite(kRdrAddr, 'Y');
+    assert(ssc.bytesTx() == 1 && "control: $C0n8 is the data register");
+
+    ssc.setCable(SuperSerialCard::Cable::PrinterOffline);  // DCD/DSR edge → IRQ
+    assert(ssc.irqState() != 0);
+    (void)ssc.deviceSelectRead(0xD);
+    assert(ssc.irqState() != 0 && "SSC: reading $C0nD is not a status read, it acknowledges nothing");
+    (void)ssc.deviceSelectRead(kStatusAddr);
+    assert(ssc.irqState() == 0 && "control: $C0n9 acknowledges");
+
+    assert(ssc.deviceSelectRead(0x1) != 0xFF && "SSC: $C0n1 reads DSW1");
+
+    SuperSerialCard port(1);
+    port.setBuiltInPort(true);
+    port.setCable(SuperSerialCard::Cable::NullModem);
+    port.deviceSelectWrite(kCommandAddr, 0x09);
+    port.deviceSelectWrite(0xC, 'Z');
+    assert(port.bytesTx() == 1 && "//c port: the ACIA mirrors at $C0nC (GLU has no A2)");
+    assert(port.deviceSelectRead(0x1) == 0xFF && "//c port: no DIP switches, open bus");
+    std::printf("  ok: SSC decodes A2 and A3; a //c port mirrors and has no DIP\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
     testEmptyTransmitRegisterKeepsInterrupting();
+    testSscDecodesA2AndA3();
     testTdrWhileDtrDeasserted();
     testClosingPortDiscardsParkedTdr();
     testEchoLoopback();

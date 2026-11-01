@@ -105,10 +105,11 @@ void testButtons()
 {
     Memory mem;
 
-    // All buttons up: bit 7 low on $C061-$C063.
+    // PB0/PB1 up: bit 7 low (the plug's pull-downs). PB2 has no pull-down in
+    // any Apple plug and floats HIGH — [A] GH#1234 measured, [B] Sather 7-9.
     assert((mem.memRead(kBtn0) & 0x80) == 0);
     assert((mem.memRead(kBtn1) & 0x80) == 0);
-    assert((mem.memRead(kBtn2) & 0x80) == 0);
+    assert((mem.memRead(kBtn2) & 0x80) != 0 && "PB2 floats high at rest");
 
     // Paddle buttons 0..2 raise bit 7 of $C061..$C063 respectively.
     mem.setPaddleButton(0, true);
@@ -142,7 +143,9 @@ void testShiftKeyMod()
     Memory mem;
     mem.setIIEMode(true);
     mem.setShiftKey(true);
-    assert((mem.memRead(kBtn2) & 0x80) == 0 && "no mod: Shift is not on PB2");
+    // Without the mod Shift is not on PB2 — and PB2 floats HIGH on its own
+    // ([A] GH#1234, [B] Sather 7-4/7-9), so it reads $80 with Shift held too.
+    assert((mem.memRead(kBtn2) & 0x80) != 0 && "no mod: Shift is not on PB2, which floats high");
     mem.setShiftKey(false);
 
     mem.setShiftKeyMod(true);
@@ -156,7 +159,7 @@ void testShiftKeyMod()
 
     // A ][+ has no such option here (MAME wires it through another switch).
     mem.setIIEMode(false);
-    assert((mem.memRead(kBtn2) & 0x80) == 0 && "][+: PB2 is the game port's");
+    assert((mem.memRead(kBtn2) & 0x80) != 0 && "][+: PB2 is the game port's — and floats high, nothing pulls it down");
     std::printf("[ OK ] //e Shift-key mod: Shift on PB2, active low\n");
 }
 
@@ -171,7 +174,7 @@ void testIiShiftWirings()
     auto up = [&](uint16_t a) { return (mem.memRead(a) & 0x80) != 0; };
 
     mem.setShiftKey(true);
-    assert(!up(kBtn2) && "not fitted: Shift is nowhere");
+    assert(up(kBtn2) && "not fitted: Shift is nowhere — PB2 just floats high, Shift or not");
     mem.setShiftKey(false);
 
     mem.setIiShiftWiring(W::Sw2);
@@ -216,7 +219,7 @@ void testEmptyGamePort()
     assert(!up(plus, kBtn0) && !up(plus, kBtn1) && "connected by default: released");
     plus.setGamePortConnected(false);
     assert(up(plus, kBtn0) && up(plus, kBtn1) && "][+ empty port: PB0/PB1 float high");
-    assert(!up(plus, kBtn2) && "PB2 is not pulled up");
+    assert(up(plus, kBtn2) && "PB2 floats high: no pull-down in any plug (GH#1234: ][+ bare = 1 1 1 1)");
     plus.memRead(kPdlRst);
     for (int i = 0; i < 20000; ++i) plus.memRead(0xC000);   // far past any count
     assert(up(plus, kPdl0) && up(plus, 0xC067) && "empty port: paddles never time out");

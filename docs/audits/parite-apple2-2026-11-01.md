@@ -452,3 +452,15 @@ Saturn. MAME admet la simplification (« This code makes a ton of assumptions »
   - une ancre trop stricte peut avoir manqué une révision où le code est mis
     en forme autrement. Les positions à `mame0287` et `master` ont été lues à
     la main pour les 14 citations.
+
+---
+
+## Suite donnée (2026-11-01)
+
+Les deux constats sont **corrigés**. PB2 flotte haut (`PaddleInputs.h`,
+`input_io_smoke` retourné sur trois assertions). Le Ctrl-Reset ][ / ][+ garde
+strobe et octet — et le doute du rapport est levé **au grade B** : un agent a
+lu Sather Fig. 7.7 (B10 LS74, CLR ← A12 LS02 ← C01X et la sortie du 555 A13 ;
+la touche RESET ne touche que le collecteur de Q5) et la Fig. S-10 du
+Reference Manual 1978, relus ensuite sur l'image. MAME avait raison, AppleWin
+non. Toujours pas de mesure sur machine. Pinned : `paste_smoke` (bloc ][+).

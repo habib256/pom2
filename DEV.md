@@ -6428,9 +6428,13 @@ still wins at restore).
 
 One behaviour change comes with the real firmware: in communications mode
 it waits for `status & $70 == $10` (`$CAF5`) — transmitter empty **and** DSR
-and DCD active — before every byte. With no telnet peer (and the modem lines
-not tied) `PR#2` therefore waits, as a real card with no modem does; the
-hand-assembled page checked TDRE alone and printed into the void. Printer
+and DCD active — before every byte. With no telnet peer on the `auto` cable
+(and the modem lines not tied) `PR#2` therefore waits — the model of a cabled
+device that is switched off. It is **not** what a card with nothing plugged in
+does: [B] the SSC's 15 kΩ pull-ups (manual p. 48, schematic R6/R2/R5) hold
+those lines active, so
+`cable=none` prints into the void and returns, as the hand-assembled page did
+for the wrong reason (it checked TDRE alone). Printer
 mode is unaffected while the tap is on (`deviceAttached()`). Pinned by
 `ssc_firmware` (map, size gate, switches, factory, and a //e running `PR#2`
 through the EPROM in both modes) and `serial_panel_boundary`.
