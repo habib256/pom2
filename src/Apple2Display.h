@@ -199,6 +199,34 @@ public:
     void      setHiResMode(HiResMode m);
     HiResMode getHiResMode() const { return hiResMode; }
 
+    /// What a PROFILE SWITCH does to the render path, and what it has to
+    /// remember to undo it. Pure, because the decision used to be two lines
+    /// inside an ImGui-bound lambda where no test could reach it.
+    ///
+    /// A profile that SHIPS an on-board Le Chat Mauve (the //c PAL's soldered
+    /// Adaptateur IIc) must come up in its RGB mode. Nothing used to put the
+    /// user's pipeline back on the way out, and the live mode is persisted at
+    /// quit — so a single visit to the //c PAL profile permanently rewrote
+    /// `hi_res_mode`: back on the //e the RGB decode kept rendering (the
+    /// fresh-install map also puts `chatmauve` in slot 7), artifact colour was
+    /// gone, the CRT Settings sliders did nothing, and every later launch came
+    /// up that way. A profile switch is a MACHINE change; the colour pipeline
+    /// is a render-path choice the machine never sees
+    /// (`MainWindow_MiscPanels.cpp`, the CompositeVideo toggle).
+    ///
+    /// `remembered` travels across calls: absent means "RGB is the user's own
+    /// choice, leave it alone", which is why a View-menu pick of RGB on a //e
+    /// survives a profile switch untouched.
+    struct ProfileModeSwitch {
+        HiResMode mode;             ///< what the display should show now
+        bool      hasRemembered;    ///< whether `remembered` is meaningful
+        HiResMode remembered;       ///< the mode to restore on the way out
+    };
+    static ProfileModeSwitch modeForProfileSwitch(HiResMode current,
+                                                  bool builtinRgb,
+                                                  bool hasRemembered,
+                                                  HiResMode remembered);
+
     /// Demod-stage knobs for the OE composite CPU path — the same subset the
     /// GPU shader consumes (NtscPostProcessor uHue / uSharpness / uPalMode +
     /// the textSharp bypass). MainWindow mirrors the live NtscParams here

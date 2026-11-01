@@ -106,6 +106,13 @@ int main()
     VidexVideotermCard* card = owned.get();
     mem.slotBus().plug(3, std::move(owned));
     expect(card->takesC800(), "the card takes $C800 (a2videoterm.cpp:122)");
+    // The other half of the two-picture-cards rule (the E-Z Color side is
+    // pinned in ezcolor_card): a Videoterm DOES take the Apple's monitor, so
+    // preferScreenSource hands it the screen whatever the slot order. Nothing
+    // asserted this ANSWER — reverting the one-line override in EzColorCard.h
+    // made a Videoterm's 80 columns vanish behind an E-Z Color in a higher
+    // slot (the 2026-10-31 bug) with the whole suite still green.
+    expect(card->takesMonitor(), "a Videoterm takes the Apple's monitor");
 
     // ── 6845 register file ──────────────────────────────────────────────
     crtcWrite(mem, 1, 80);

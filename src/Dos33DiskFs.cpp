@@ -221,12 +221,19 @@ std::vector<uint8_t> Dos33Disk::payload(uint8_t type, const std::vector<uint8_t>
             return { raw.begin(), z };
         }
         case 0x01: case 0x02: {
-            const std::size_t n = std::min(word(0), raw.size() >= 2 ? raw.size() - 2 : 0);
+            // `begin() + 2` is only defined for 2 <= size(): a T/S list whose
+            // 122 pairs are all (0,0) leaves `raw` EMPTY, and the resulting
+            // iterator is UB — harmless in a release build, an abort under
+            // _LIBCPP_HARDENING_MODE / _GLIBCXX_ASSERTIONS / UBSan, which is
+            // what the nightly sanitizer job runs. `n` was already 0 here.
+            if (raw.size() < 2) return {};
+            const std::size_t n = std::min(word(0), raw.size() - 2);
             return { raw.begin() + 2, raw.begin() + 2 + std::ptrdiff_t(n) };
         }
         case 0x04: {
             if (loadAddress) *loadAddress = uint16_t(word(0));
-            const std::size_t n = std::min(word(2), raw.size() >= 4 ? raw.size() - 4 : 0);
+            if (raw.size() < 4) return {};
+            const std::size_t n = std::min(word(2), raw.size() - 4);
             return { raw.begin() + 4, raw.begin() + 4 + std::ptrdiff_t(n) };
         }
         default:

@@ -730,7 +730,11 @@ void MainWindow::renderSlotConfigPanel()
             // user's saved //e-era slot_N_card keys whenever Apply was
             // clicked on a //c-class profile. Same guard as the
             // ~MainWindow shutdown persist path.
-            std::array<std::string, 8> previous{};
+            // `Settings::capture`, not getString: an undo has to put an
+            // ABSENT key back as absent. Writing "" over one says "no card"
+            // where the file said "use the default map", so a refused Apply
+            // on a fresh install emptied every slot for good.
+            std::array<pom2::Settings::Saved, 8> previous{};
             std::array<bool, 8> changed{};
             for (int s = 1; s <= 7; ++s) {
                 const std::string key = pom2::slotCardSettingKey(profileCfg, s);
@@ -738,10 +742,11 @@ void MainWindow::renderSlotConfigPanel()
                 // Apply used to write "" there, so a ][+ Videoterm was gone
                 // after any Apply on a //e (bug hunt 2026-10-27).
                 if (!pom2::slotKeyShouldPersist(
-                        profileCfg, s, draft[s], settings->getString(key, ""),
+                        profileCfg, s, draft[s],
+                        pom2::savedSlotCardKey(*settings, profileCfg, s),
                         slotConfigCoordinator_->dedupCleared(s)))
                     continue;
-                previous[s] = settings->getString(key, "");
+                previous[s] = settings->capture(key);
                 changed[s] = true;
                 settings->setString(key, draft[s]);
             }
@@ -753,22 +758,22 @@ void MainWindow::renderSlotConfigPanel()
                 settings->setInt("ramworks_banks", ramWorksDraft_);
                 ramWorksChanged = true;
             }
-            std::string prevCmVariant;
+            pom2::Settings::Saved prevCmVariant;
             bool cmVariantChanged = false;
             if (!profileCfg.noPhysicalSlots &&
                 !chatMauveVariantDraft_.empty() &&
                 chatMauveVariantDraft_ != cmVariantLive) {
-                prevCmVariant = settings->getString("chatmauve_variant", "");
+                prevCmVariant = settings->capture("chatmauve_variant");
                 settings->setString("chatmauve_variant", chatMauveVariantDraft_);
                 cmVariantChanged = true;
             }
             if (!settings->save()) {
                 for (int s = 1; s <= 7; ++s) {
-                    if (changed[s]) settings->setString(
+                    if (changed[s]) settings->restore(
                         pom2::slotCardSettingKey(profileCfg, s), previous[s]);
                 }
                 if (cmVariantChanged)
-                    settings->setString("chatmauve_variant", prevCmVariant);
+                    settings->restore("chatmauve_variant", prevCmVariant);
                 if (ramWorksChanged)
                     settings->setInt("ramworks_banks", prevRamWorks);
                 tapeStatusMessage = "Slot changes not applied — settings could not be saved.";
@@ -779,11 +784,11 @@ void MainWindow::renderSlotConfigPanel()
                 // persisted mapping too, otherwise the refused draft would be
                 // applied silently on the next launch.
                 for (int s = 1; s <= 7; ++s) {
-                    if (changed[s]) settings->setString(
+                    if (changed[s]) settings->restore(
                         pom2::slotCardSettingKey(profileCfg, s), previous[s]);
                 }
                 if (cmVariantChanged)
-                    settings->setString("chatmauve_variant", prevCmVariant);
+                    settings->restore("chatmauve_variant", prevCmVariant);
                 if (ramWorksChanged)
                     settings->setInt("ramworks_banks", prevRamWorks);
                 if (!settings->save())
@@ -1485,9 +1490,17 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
             if (cfg.builtInSlots[s].has_value() &&
                 cfg.builtInSlots[s]->cardKey == "chatmauve")
                 builtinRgb = true;
-        if (builtinRgb &&
-            devicePanelCoordinator_->captureInventory().chatMauvePlugged())
-            display->setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        // ...and a profile that does NOT must give the user's pipeline back:
+        // the forced RGB used to stick, and the live mode is persisted at
+        // quit, so one visit to the //c PAL rewrote `hi_res_mode` for good.
+        const bool rgbAdapterLive =
+            devicePanelCoordinator_->captureInventory().chatMauvePlugged();
+        const auto sw = Apple2Display::modeForProfileSwitch(
+            display->getHiResMode(), builtinRgb && rgbAdapterLive,
+            preBuiltinRgbModeSet_, preBuiltinRgbMode_);
+        if (sw.mode != display->getHiResMode()) display->setHiResMode(sw.mode);
+        preBuiltinRgbModeSet_ = sw.hasRemembered;
+        preBuiltinRgbMode_    = sw.remembered;
     };
     hooks.publishLocked = [this](pom2::StateAccess& st) {
         slotRebuildCoordinator_->publishLocked(st);

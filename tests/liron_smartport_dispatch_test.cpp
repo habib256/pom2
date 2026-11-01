@@ -303,10 +303,22 @@ int main()
         setPlist(mem, {3, 1, kBuf & 0xFF, kBuf >> 8, 0x00});
         r = spCall(cpu, mem, 0x00);
         assert(!r.carry && (mem.memRead(kBuf) & 0x10) && "cancelled: online again");
+        // Unit 2 is a bay with NO UNIT OBJECT (see the setup above: "bay 1
+        // left EMPTY (no unit object) -> SmartPort unit 2 = $28"), and READ on
+        // it is asserted $28 further up. CONTROL used to answer $00 here —
+        // "an empty drive, nothing to eject" — which told a chain enumerator
+        // probing with CONTROL that the unit exists while every sibling
+        // command said it does not. It joins them: $28 NO DEVICE.
         setPlist(mem, {3, 2, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
-        assert(!r.carry && r.a == 0x00 && "an empty drive: nothing to eject, no error");
+        assert(r.carry && r.a == 0x28 && "a bay with no unit is no device");
         assert(cardRaw->takeGuestEjectRequests().empty());
+        // A code this card does not implement, on a unit that DOES exist,
+        // still answers BADCTL rather than NO DEVICE — the fix must not turn
+        // the whole command into a presence test.
+        setPlist(mem, {3, 2, kBuf & 0xFF, kBuf >> 8, 0x00});
+        r = spCall(cpu, mem, 0x04);
+        assert(r.carry && r.a == 0x28 && "code 0 on a bayless unit: still no device");
         setPlist(mem, {3, 3, kBuf & 0xFF, kBuf >> 8, 0x04});
         r = spCall(cpu, mem, 0x04);
         assert(r.carry && r.a == 0x28 && "CONTROL past the chain: no device");

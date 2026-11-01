@@ -1070,7 +1070,13 @@ bool MainWindow::swapSlotCardVariant(const char* fromKey, const char* toKey)
 
     const std::string key      =
         pom2::slotCardSettingKey(pom2::profileConfig(activeProfile), slot);
-    const std::string previous = settings->getString(key, "");
+    // savedSlotCardKey for the guard (a //c's adapter may still be carried in
+    // the pre-split `slot_7_card`), Settings::capture for the undo: writing
+    // "" back over an ABSENT key says "no card" where the file said "use the
+    // default map".
+    const std::string previous =
+        pom2::savedSlotCardKey(*settings, pom2::profileConfig(activeProfile), slot);
+    const pom2::Settings::Saved savedKey = settings->capture(key);
 
     // `slotCards[]` is the RESOLVED plan, so on a profile-forced slot it holds
     // the PROFILE's card, not the user's saved choice — writing the swap back
@@ -1107,7 +1113,7 @@ bool MainWindow::swapSlotCardVariant(const char* fromKey, const char* toKey)
 
     settings->setString(key, toKey);
     if (!settings->save()) {
-        settings->setString(key, previous);
+        settings->restore(key, savedKey);
         tapeStatusMessage = "Could not save the slot change.";
         tapeStatusUntil   = lastFrameTime + 6.0;
         return false;
@@ -1118,7 +1124,7 @@ bool MainWindow::swapSlotCardVariant(const char* fromKey, const char* toKey)
         // apply silently on the next launch. Same contract as Slot Config's
         // Apply. Say so: the panel's radio snaps back to the old side next
         // frame, and an unexplained snap-back reads as a dead control.
-        settings->setString(key, previous);
+        settings->restore(key, savedKey);
         settings->save();
         tapeStatusMessage = std::string("Could not rebuild the machine with ") +
                             toKey + " — kept " + fromKey + ".";

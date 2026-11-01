@@ -40,9 +40,40 @@ ALLOW=$(printf '%s\n' \
 # Linux job installs libslirp, so slirp_loopback_fence may not skip.
 
 scan() {  # scan <LastTest.log> → "test<TAB>line" for every printed skip
+    # ANYWHERE in the line and case-insensitively, not `^SKIP`. Two
+    # independent audits (2026-11-01) found ~33 sites in 24 files that skip a
+    # SUB-CASE, print a word this detector could not see and exit 0 — so the
+    # one guard built to catch "a missing fixture must not read as a pass" was
+    # blind to all of them. The spellings in the tree: `[SKIP]` (first char is
+    # `[`), lowercase `skip:`, `WARN`, `NOTE: … skipped`, `(skipped: …)` and
+    # `[ OK ] … (SKIP the comparison…)`. The worst case was
+    # `diskii_lss_smoke`, where 7 of 11 cases — including the two the project
+    # pins its Disk II data-separator fixes with — `return true` on a missing
+    # `roms/diskii_p6.rom` under a green "diskii_lss_smoke OK".
+    #
+    # `ctest` is excluded because its own progress lines carry the word
+    # ("***Skipped" is scanConsole's job, and `N/M Test #K: name ... Skipped`
+    # would double-report).
+    # ANCHORED on purpose: a bare substring match also hits ctest's own
+    # framing lines for a test whose NAME contains the word, and legitimate
+    # output from a test ABOUT skipping (display_dirty_skip measures frame
+    # skipping). So match the announcement shapes instead, case-insensitively.
     awk '
         /^[0-9]+\/[0-9]+ Testing: / { t = $3; next }
-        /^[ \t]*SKIP/               { sub(/^[ \t]+/, ""); print t "\t" $0 }
+        {
+            line = $0
+            sub(/^[ \t]+/, "", line)
+            low = tolower(line)
+            # Deliberately NOT a bare /\(skip/: a test is allowed to talk
+            # about skipping (display_dirty_skip measures frame skipping and
+            # signs off "OK (skip is bit-identical to full repaint)"). A test
+            # announcing that it skipped SOMETHING says so at the start of the
+            # line, or with the word "skipped".
+            if (low ~ /^\[?[ \t]*skipp?(ed|ing)?[^a-z]/ ||
+                low ~ /\(skipped/ ||
+                low ~ /^(warn|note)[^a-z].*skipp?(ed)?[^a-z]/)
+                print t "\t" line
+        }
     ' "$1"
 }
 scanConsole() {  # scan <ctest console log> → "test<TAB>(ctest: Skipped)"

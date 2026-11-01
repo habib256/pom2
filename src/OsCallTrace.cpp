@@ -261,7 +261,12 @@ void OsCallTrace::mliStep(uint16_t pc)
     const uint8_t s = cpu_->getStackPointer();
     if (pc == 0xBF00) {
         // JSR pushed the address of its own last byte.
-        const uint16_t jsrLast = uint16_t(peek(uint16_t(0x0101 + s)) | peek(uint16_t(0x0101 + uint8_t(s + 1))) << 8);
+        // The two bytes JSR pushed live at $0100+((SP+1)&$FF) and
+        // $0100+((SP+2)&$FF) — the wrap belongs INSIDE the 8-bit add, which
+        // `0x0101 + uint8_t(s + 1)` gets wrong by a page at SP=$FE (and the
+        // low byte at SP=$FF). Same idiom as pascalStep's `param` lambda.
+        const uint16_t jsrLast = uint16_t(peek(uint16_t(0x0100 + uint8_t(s + 1))) |
+                                          peek(uint16_t(0x0100 + uint8_t(s + 2))) << 8);
         const uint16_t cmdAt = uint16_t(jsrLast + 1);
         Pending c;
         c.ret = uint16_t(cmdAt + 3);
@@ -379,7 +384,12 @@ void OsCallTrace::spStep(uint16_t pc)
             pc != uint16_t(page + peek(uint16_t(page + 0xFF)) + 3)) {
             if (spPending_.empty() || pc != spPending_.back().ret) return;
         } else {
-            const uint16_t jsrLast = uint16_t(peek(uint16_t(0x0101 + s)) | peek(uint16_t(0x0101 + uint8_t(s + 1))) << 8);
+            // The two bytes JSR pushed live at $0100+((SP+1)&$FF) and
+    // $0100+((SP+2)&$FF) — the wrap belongs INSIDE the 8-bit add, which
+    // `0x0101 + uint8_t(s + 1)` gets wrong by a page at SP=$FE (and the
+    // low byte at SP=$FF). Same idiom as pascalStep's `param` lambda.
+    const uint16_t jsrLast = uint16_t(peek(uint16_t(0x0100 + uint8_t(s + 1))) |
+                                      peek(uint16_t(0x0100 + uint8_t(s + 2))) << 8);
             const uint16_t cmdAt = uint16_t(jsrLast + 1);
             Pending c;
             c.fn  = peek(cmdAt);

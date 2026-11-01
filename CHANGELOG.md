@@ -10,6 +10,134 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — Bug hunt round 2: a dead control, a rewritten preference, a destroyed card
+
+Eleven domains swept read-only, every finding re-verified by hand before
+anything changed, every fix watched failing first. The full ledger — including
+the twenty-odd verified defects deferred for size, and the test-suite audit —
+is [docs/audits/bug-hunt-2026-11-01-round2.md](docs/audits/bug-hunt-2026-11-01-round2.md).
+
+Four of these are the same shape: a setting written on one path and read with a
+different question on another.
+
+- **The //c's Chat Mauve adapter could not be removed, ever.**
+  `SlotConfigurationCoordinator::resolve` plugs the DB-15 adapter from the
+  pre-split `slot_7_card` whenever the //c's own `iic_rgb_adapter` key is
+  absent — a carry-over it re-applied on *every* resolve. The persist guards
+  were handed the raw key instead, so Apply saw "the user never saved an
+  adapter", `slotKeyIsUserChoice` refused to write the removal, and the
+  carry-over put the adapter straight back on the next rebuild and on every
+  later launch. The badge said "1 staged change" and Apply cold-booted the
+  machine to no effect. **`pom2::savedSlotCardKey`** is now the single answer to
+  "what was this slot last saved as", used by `resolve()` and by all three
+  persist sites, so the removal persists as `iic_rgb_adapter=""` and the
+  carry-over retires. Pinned by `slot_configuration_coordinator`.
+- **One visit to the //c PAL profile rewrote `hi_res_mode` for good.** That
+  profile solders a Chat Mauve on, so it rightly comes up in RGB — but nothing
+  restored the user's pipeline on the way out, and the live mode is persisted at
+  quit. Back on the //e the RGB decode kept rendering (the fresh-install map
+  also puts `chatmauve` in slot 7), artifact colour was gone and the CRT
+  Settings sliders affected nothing, on that launch and on every later one. A
+  profile switch is a *machine* change; the colour pipeline is a render-path
+  choice the machine never sees. **`Apple2Display::modeForProfileSwitch`** is
+  the pure rule — it remembers the outgoing mode once, gives it back on the way
+  out, and deliberately leaves an RGB mode the user picked themselves alone.
+  Pinned by `display_dirty_skip`.
+- **A refused Apply emptied every slot.** `getString(key, "")` collapses the two
+  cases `has()` exists to tell apart: a missing `slot_N_card` means "use the
+  default card map", an empty one means "no card". Both Slot Config undo paths
+  captured the collapsed form, so a refused rebuild on a fresh install (nothing
+  saved yet) wrote `slot_1_card=""` … `slot_7_card=""` — and the next launch
+  came up with no Disk II, no mouse and no sound card, after the user had been
+  told the change was refused. **`Settings::capture`/`restore`** put an absent
+  key back as absent; the same fix in `swapSlotCardVariant`. Pinned by
+  `settings_roundtrip`.
+- **The CCS 7710 and DAN ][ firmware toggles persisted a refused rebuild.**
+  They saved the key *before* asking the machine to take it and never undid it,
+  so when `restartEmulationFromSettings()` refused — the user reading "machine
+  paused; apply again once fixed" — the live machine kept the old firmware while
+  the next launch quietly ran the new one. New **`SettingRebuild.h`** holds the
+  rule the other three toggles already followed through
+  `swapSlotCardVariant`: write, ask, and on a refusal leave nothing behind;
+  saved only once the machine took it. Same shape and same reason as
+  `MouseGrab.h` — the policy lived in an ImGui callback where no test could
+  reach it. Pinned by `settings_roundtrip`.
+- **`chatmauve_variant` was written on a //c** because the guard re-parsed the
+  *persisted* `system_profile`, a key every restore path deliberately never
+  writes — and `profileFromKey("")` answers a ][+, i.e. "has slots". So on
+  exactly the launches that take a restore (a package carrying only the //c
+  firmware; a saved profile reapplied) the //c guard inverted and a later //e
+  session inherited the //c experiment. `DevicePanelCoordinator` now asks for the
+  live profile. Pinned by `frontend_device_panel_concurrency`.
+- **A session load destroyed a live Premium SoftCard //e instead of refusing
+  it.** `outgoingSafe` looped slots 1-7; `SlotBus::clear()` empties slot 0 — the
+  //e auxiliary slot — along with the rest; and `restoreSession`'s own slot-0
+  guard ran *after* that clear, so it found an empty slot, passed, and the card
+  with its Z80, its `$C07E` register and its live CP/M was gone while the UI
+  reported "Session loaded". `docs/session-format.md` promises the opposite in
+  those words ("No unsupported device is silently omitted"), and
+  `slotZeroRefusal` existed for the message. The outgoing check now refuses
+  first and the card survives. Pinned by `session_machine`.
+- **SmartPort `CONTROL` claimed a unit that does not exist.** A unit number
+  inside `unitCount_` whose bay holds no unit object answers `$28` NO DEVICE
+  from STATUS, READ, WRITE, FORMAT and from the bus responder — and `$00`
+  SUCCESS from CONTROL, the only command that did not test the lookup. A fresh
+  //e SmartPort card has 8 bays and 7 nulls, so a chain enumerator probing with
+  CONTROL code `$00` (the cheapest presence probe there is) was told units 2-8
+  exist and then got `$28` the moment it asked them anything. Pinned by
+  `smartport_liron_parity`, which gained the bayless case the harness was
+  missing — both its cards modelled bay 1 as a *drive with no disk*, a
+  different state. `liron_smartport_dispatch` held the oracle and contradicted
+  itself: its setup comment says "bay 1 left EMPTY (no unit object) →
+  SmartPort unit 2 = $28" and it asserts exactly that for READ, three blocks
+  above an assertion that CONTROL on the same unit answers `$00`, "an empty
+  drive: nothing to eject, no error". That one described the behaviour rather
+  than a rule, and is now `$28` with the siblings.
+- **The OS-calls panel's "Clear" was a dead button.** `clear()` emptied the list
+  without moving `emitted_`, the only change signal the panel watches, so the
+  cleared lines stayed on screen until the guest happened to make another traced
+  call. **A stack-wrap off-by-one** in four trace decoders went with it:
+  `0x0101 + uint8_t(s + 1)` puts the wrap outside the 8-bit add, so at `SP=$FE`
+  the return address's high byte came from `$0200` instead of `$0100` (and the
+  low byte at `SP=$FF`) — the caller address, the command byte and the
+  parameter-list pointer all read from an unrelated page. MLI, SmartPort,
+  Monitor GETLN and CP/M-65; `pascalStep` had the right idiom ten lines away.
+  Both pinned by `os_call_trace`.
+- **`Dos33Disk::payload` formed `raw.begin() + 4` on an empty vector** — a
+  catalog entry whose T/S list is 122 all-zero pairs, reachable from
+  `pom2_dos33 get` on a corrupt image. Undefined, survived by a release build,
+  an abort under the nightly's hardened standard library. The new test cannot
+  observe that half (nothing can, in a normal build — the same class as the
+  `TMS9918` `~regs[3]` fix); it pins the length clamp instead, with a B file
+  declaring `$FFFF` bytes and three on the disk.
+
+### The test suite's own guard was blind
+
+`tools/check_ctest_skips.sh` exists so that a missing fixture cannot read as a
+pass. It matched `awk '/^[ \t]*SKIP/'` — uppercase, anchored, `LC_ALL=C` — and
+two independent audits found **~33 sites in 24 files** that skip a sub-case,
+print a word it could not see, and exit 0: `[SKIP]` (the first character is
+`[`), lowercase `skip:`, `WARN`, `NOTE: … skipped`, `(skipped: …)`, and one
+`[ OK ] … (SKIP the comparison…)`. The worst was `diskii_lss_smoke`, where 7 of
+11 cases `return true` on a missing `roms/diskii_p6.rom` — including the two
+cases this project's own notes name as the pins for the Disk II data-separator
+fixes — under a green `diskii_lss_smoke OK`.
+
+The detector now matches the announcement shapes case-insensitively. It stays
+*anchored* on purpose: a bare substring match also hits ctest's own framing
+lines for a test whose name contains the word, and the legitimate output of a
+test about skipping (`display_dirty_skip` measures frame skipping). The three
+CCS 7710 announcements — one of them a bare wordless `return;` that printed
+nothing at all — now start with `SKIP`, and `dos33_disk_fs` returns the 77 it
+used to compute and throw away. Making the ~21 manifest-backed gates fatal is
+the next step, recorded in the audit.
+
+Two more test-quality holes closed: nothing asserted `EzColorCard::takesMonitor()
+== false` or the Videoterm's `true`, so reverting that one-line override
+restored a reported bug — a Videoterm's 80 columns vanishing behind an E-Z Color
+in a higher slot — with the whole suite green. Each half now sits in the test
+that links its card.
+
 ## 2026-11-01 — CI fetches the test media once per manifest, not once per job
 
 Twice this morning a green run had one red job, and the red was the first

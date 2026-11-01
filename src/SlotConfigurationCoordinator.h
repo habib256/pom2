@@ -38,6 +38,25 @@ namespace pom2 {
 
 class Settings;
 
+/// The value a slot's card key was last SAVED as — the string every persist
+/// guard (`slotKeyShouldPersist`, `slotKeyIsUserChoice`) must be given as its
+/// `savedKey`. It is `settings.getString(slotCardSettingKey(cfg, slot))`
+/// everywhere but one place: on a //c-class machine, slot 7 whose own
+/// `iic_rgb_adapter` key is ABSENT inherits the pre-split `slot_7_card` when
+/// that names the adapter — because that is exactly the carry-over
+/// `resolve()` plugs the adapter from.
+///
+/// Reading the raw key there made the two sides disagree. `resolve()` plugged
+/// the DB-15 adapter from `slot_7_card` on every resolve, while Apply saw an
+/// absent `iic_rgb_adapter` ("the user never saved an adapter") and
+/// `slotKeyIsUserChoice` refused to persist its removal — so the carry-over
+/// put the adapter straight back on the next rebuild and on every later
+/// launch. The "Video expansion (DB-15)" row could not be emptied, ever.
+/// With the carried value as `savedKey` the removal persists as
+/// `iic_rgb_adapter=""`, `has()` becomes true, and the carry-over retires.
+std::string savedSlotCardKey(const Settings& settings,
+                             const ProfileConfig& cfg, int slot);
+
 class SlotConfigurationCoordinator
 {
 public:

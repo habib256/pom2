@@ -24,6 +24,19 @@ worked proactively, supported is fixed on report) and by **what unblocks it**.
 **Admission rule:** no new card or peripheral without a named piece of
 software that needs it.
 
+## Bug hunt of 2026-11-01, round 2
+
+Eleven domains swept read-only on `b9818f5d`; ten defects fixed and pinned,
+~20 more verified and deferred, plus a four-part audit of the test suite
+itself — [evidence](docs/audits/bug-hunt-2026-11-01-round2.md). The three
+deferred items worth scheduling first: a non-stock `--speed` leaves every slot
+card's phase-0 bus clock unscaled (CPU-1), one host folder can be served into
+two bays with both writing it back (MED-1), and a W5100 `DISCON` from
+`SOCK_CLOSE_WAIT` drops the TX tail the guest was told was sent (NET-1). On the
+test side: ~33 sub-case skips still exit 0 (the detector now sees them), and
+`disks_3.5/The New Print Shop 800K.po` is referenced by `iic_external_smartport`
+but is in no manifest, so one of its "five boots" has never run.
+
 ## Action queue
 
 The linked domain entry owns the task's state, evidence and acceptance

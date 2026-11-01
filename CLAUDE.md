@@ -109,6 +109,20 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   expected to undo them — but the floppy autosave's capture does. The cassette
   recording does not bump either: it follows the rewind, cut to each frame's
   `sideMark` (CASSETTE-002, DEV § Rewind).
+- **A setting the MACHINE has to take leaves nothing behind on a refusal**
+  — write it, ask for the rebuild, and put the key back EXACTLY as it was if
+  the rebuild is refused: **absent stays absent** (`Settings::capture` /
+  `restore`; `getString(key, "")` collapses the two cases `has()` exists to
+  tell apart, and a refused Apply on a fresh install wrote `slot_1_card=""` …
+  `slot_7_card=""`, so the next launch had no Disk II, no mouse and no sound
+  card). The rule lives in `SettingRebuild.h`
+  (`pom2::applySettingWithRebuild`), which saves only once the machine took
+  it — saving first left the next launch running a level the user was told
+  could not be applied. Same shape and same reason as `MouseGrab.h` /
+  `KeyChord.h`: it was policy inside an ImGui callback that no test could
+  reach, and two of the five call sites had drifted. A wrapper that takes the
+  key as an ARGUMENT must name its shape in `tools/check_settings_keys.sh`,
+  which reads the writes statically. Pinned by `settings_roundtrip`.
 - **Every long-lived thread wears an exception barrier** — an exception
   escaping a `std::thread` callable calls `std::terminate()`, killing the
   process with no log line: a crash the user cannot report and you cannot

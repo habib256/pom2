@@ -53,6 +53,14 @@ Card* findCard(SlotBus& bus)
 
 } // namespace
 
+SystemProfile DevicePanelCoordinator::activeProfile() const
+{
+    // See the header: the persisted key is absent on every restore path, and
+    // `profileFromKey("")` answers a ][+ — which reads as "has slots".
+    return liveProfile_ ? liveProfile_()
+                        : profileFromKey(settings_.getString("system_profile", ""));
+}
+
 DevicePanelCoordinator::DevicePanelCoordinator(EmulationController& controller,
                                                Settings& settings)
     : controller_(controller), settings_(settings)
@@ -236,9 +244,7 @@ void DevicePanelCoordinator::applyChatMauve(
         // (`plugChatMauve` forces IIcAdapter and ignores this key). Writing
         // it here made the panel's combo look applied, then a later //e
         // session inherited the //c experiment (hunt #21).
-        const auto p = pom2::profileFromKey(
-            settings_.getString("system_profile", ""));
-        if (!pom2::profileConfig(p).noPhysicalSlots)
+        if (!pom2::profileConfig(activeProfile()).noPhysicalSlots)
             settings_.setString("chatmauve_variant",
                                 LeChatMauveCard::variantKey(command.variantTo));
     }

@@ -407,11 +407,11 @@ void runSkipStillEngages()
                        std::chrono::duration<double, std::milli>(t2 - t1).count());
     }
     const double ratio = bestFull / std::max(best, 1e-6);
-    std::printf("[skip] %d static text frames: skipping %.2f ms, "
+    std::printf("[frame-skip] %d static text frames: skipping %.2f ms, "
                 "forced repaint %.2f ms (%.0fx)\n",
                 kFrames, best, bestFull, ratio);
     if (ratio < 3.0) {
-        std::printf("FAIL [skip] the static-text fast path is no longer taken "
+        std::printf("FAIL: the static-text fast path is no longer taken "
                     "(expected a large speed-up, got %.1fx)\n", ratio);
         ++failures;
     }
@@ -462,6 +462,56 @@ int main()
     runCapturePath(false);
     runCapturePath(true);
     runSkipStillEngages();
+
+    // ── A profile switch must GIVE BACK the user's colour pipeline ────────
+    // A profile that ships an on-board Le Chat Mauve (the //c PAL's soldered
+    // Adaptateur IIc) comes up in RGB. Nothing used to restore the pipeline
+    // on the way out, and the live mode is persisted at quit — so one visit
+    // to the //c PAL rewrote `hi_res_mode` for good: back on the //e the RGB
+    // decode kept rendering, artifact colour was gone and the CRT Settings
+    // sliders did nothing, on that launch and on every later one.
+    {
+        using M  = Apple2Display::HiResMode;
+        using PS = Apple2Display::ProfileModeSwitch;
+        int bad = 0;
+        auto want = [&](const char* what, PS got, M mode, bool has, M rem) {
+            if (got.mode != mode || got.hasRemembered != has ||
+                (has && got.remembered != rem)) {
+                std::printf("  FAIL %s: mode=%d has=%d rem=%d\n", what,
+                            int(got.mode), int(got.hasRemembered),
+                            int(got.remembered));
+                ++bad;
+            }
+        };
+        // Entering: force RGB and remember what the user had.
+        want("OE -> builtin RGB",
+             Apple2Display::modeForProfileSwitch(M::ColorCompositeOE, true,
+                                                 false, M::ColorCompositeOE),
+             M::ChatMauveRGB, true, M::ColorCompositeOE);
+        // A second visit must not overwrite the memory with RGB itself.
+        want("RGB -> builtin RGB (memory kept)",
+             Apple2Display::modeForProfileSwitch(M::ChatMauveRGB, true,
+                                                 true, M::ColorNTSC),
+             M::ChatMauveRGB, true, M::ColorNTSC);
+        // Leaving: the remembered pipeline comes back and the memory clears.
+        want("builtin RGB -> //e (restored)",
+             Apple2Display::modeForProfileSwitch(M::ChatMauveRGB, false,
+                                                 true, M::ColorCompositeOE),
+             M::ColorCompositeOE, false, M::ColorCompositeOE);
+        // An RGB mode the USER picked (View menu, card plugged on a //e) has
+        // nothing remembered against it and must be left alone.
+        want("user-picked RGB survives",
+             Apple2Display::modeForProfileSwitch(M::ChatMauveRGB, false,
+                                                 false, M::ColorCompositeOE),
+             M::ChatMauveRGB, false, M::ColorCompositeOE);
+        // Two profiles with no adapter at all: a no-op either way.
+        want("mono -> //e",
+             Apple2Display::modeForProfileSwitch(M::MonoGreen, false, false,
+                                                 M::ColorCompositeOE),
+             M::MonoGreen, false, M::ColorCompositeOE);
+        if (bad) failures += bad;
+        else std::puts("  ok: the profile switch restores the colour pipeline");
+    }
 
     if (failures) {
         std::printf("display_dirty_skip_test: FAIL (%d)\n", failures);

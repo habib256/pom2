@@ -84,8 +84,22 @@ normalize_vsdrive_keys() {
         -e 's/^vsdrive_read_only[12]$/vsdrive_read_only/' \
         -e 's/^vsdrive_enabled_slot$/vsdrive_enabled/' | sort -u
 }
+# Writes that do not spell `setString("key", ...)` at the call site. A key
+# behind a variable is invisible to a static scan, so a wrapper that takes the
+# key as an argument has to name its shape here or its keys read as
+# never-written. `MainWindow::applyFirmwareToggle(key, value)` is the one:
+# the Abstraction-Levels firmware toggles stage a setting, ask the machine to
+# take it, and put it back on a refusal (SettingRebuild.h) — the call sites
+# keep the key literal precisely so this scan can see it.
+scan_wrappers() {
+    find "$ROOT/src" \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) -type f -print0 \
+        | xargs -0 perl -0777 -ne \
+            'while (/\bapplyFirmwareToggle\s*\(\s*"([A-Za-z0-9_]+)"/g) { print "$1\n" }' \
+        | sort -u || true
+}
 READ=$(scan get | normalize_vsdrive_keys)
-WRITE=$(scan set | normalize_vsdrive_keys)
+WRITE=$(printf '%s\n%s\n' "$(scan set)" "$(scan_wrappers)" \
+        | grep -v '^$' | normalize_vsdrive_keys)
 if [ -z "$READ" ] && [ -z "$WRITE" ]; then
     echo "check_settings_keys: no settings calls found under $ROOT/src" >&2
     exit 2

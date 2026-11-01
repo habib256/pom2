@@ -31,6 +31,7 @@
 // window off; 5 puts it back.
 
 #include "EzColorCard.h"
+#include "CardVideoSource.h"
 #include "Memory.h"
 
 #include <cstdio>
@@ -194,6 +195,21 @@ int main()
         const long pal = firstF(1015625.0);
         const long palWant = long(double(k) * 1015625.0 / 1022727.0 + 0.999);
         CHECK(pal >= palWant - 1 && pal <= palWant + 1 && "PAL host: the VDP's own 59.94 Hz");
+    }
+
+    // ── The E-Z Color's picture never takes the Apple's screen ───────────
+    // `preferScreenSource` is pinned in card_video_source, but nothing
+    // asserted the ANSWER this card gives it. Revert the one-line override and
+    // the whole suite stays green while a Videx Videoterm plugged beside an
+    // E-Z Color loses its 80 columns — the card's picture belongs to its own
+    // monitor (Display ▸ Card Monitor), not to the main screen.
+    {
+        EzColorCard ez;
+        CHECK(!ez.takesMonitor());
+        // The other side of the rule lives in videx_videoterm_bus, which is
+        // the test that links that card: a Videoterm DOES take the screen.
+        CHECK(pom2::preferScreenSource(nullptr, &ez) == &ez);   // alone: it is the source
+        CHECK(pom2::preferPanelSource(nullptr, &ez) == &ez);
     }
 
     if (g_fail) {

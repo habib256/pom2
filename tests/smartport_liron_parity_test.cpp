@@ -268,6 +268,54 @@ int main()
             ++g_failures;
         }
     }
+    // ── A bay with NO UNIT OBJECT is no device, for EVERY command ────────
+    // The two cards above both model bay 1 as a DRIVE WITH NO DISK. The other
+    // state — a unit number inside `unitCount_` whose bay holds no unit object
+    // at all — is the fresh-install one: a SmartPortCard comes up with 8 bays
+    // and `units_` all null, so a //e with one image mounted has units 2..8 in
+    // range and empty. STATUS, READ, WRITE and FORMAT all answered $28 NO
+    // DEVICE there; CONTROL answered $00 SUCCESS, so a chain enumerator
+    // probing with CONTROL code $00 — the cheapest presence probe, and one
+    // that needs no status buffer — was told those units exist and then got
+    // $28 the moment it asked them anything.
+    {
+        Machine bare;
+        if (!loadIIe(bare, rom)) { std::printf("FAIL: //e ROM\n"); return 1; }
+        auto card = std::make_unique<pom2::SmartPortCard>(kSlot);
+        card->setUnitCount(2);                 // unit 2 in range, bay 1 null
+        auto unit = std::make_unique<pom2::SmartPort35Unit>();
+        if (!unit->loadImage(image)) { std::printf("FAIL: bare mount\n"); return 1; }
+        card->setUnit(0, std::move(unit));
+        bare.mem.slotBus().plug(kSlot, std::move(card));
+
+        const Call status2{ "STATUS unit 2 (no bay)",  0x00, {3, 2, lo, hi, 0x00}, 0 };
+        const Call control2{ "CONTROL unit 2 (no bay)", 0x04, {3, 2, clo, chi, 0x00}, 0 };
+        const Result rs = spCall(bare, status2);
+        const Result rc = spCall(bare, control2);
+        std::printf("  %-26s %s\n", status2.what,  hex(rs).c_str());
+        std::printf("  %-26s %s\n", control2.what, hex(rc).c_str());
+        if (!rs.returned || !rc.returned) {
+            std::printf("FAIL: a no-bay call did not return\n"); ++g_failures;
+        }
+        // The invariant: CONTROL agrees with its siblings.
+        if (!(rs.carry && rs.a == 0x28)) {
+            std::printf("FAIL: STATUS on a bayless unit is not $28\n"); ++g_failures;
+        }
+        if (!(rc.carry && rc.a == 0x28)) {
+            std::printf("FAIL: CONTROL on a bayless unit is not $28 "
+                        "(it reports the unit exists)\n");
+            ++g_failures;
+        }
+        // Unit 1, which DOES have a bay, still succeeds — the fix must not
+        // turn the whole command off.
+        const Call control1{ "CONTROL unit 1 code 0", 0x04, {3, 1, clo, chi, 0x00}, 0 };
+        const Result r1 = spCall(bare, control1);
+        if (!(r1.returned && !r1.carry && r1.a == 0x00)) {
+            std::printf("FAIL: CONTROL on a mounted unit stopped succeeding\n");
+            ++g_failures;
+        }
+    }
+
     std::printf("%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

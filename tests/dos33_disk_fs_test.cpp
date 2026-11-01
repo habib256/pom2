@@ -209,8 +209,48 @@ int testMaster()
 
 } // namespace
 
+// `payload` must not form an out-of-range iterator on a file with no data.
+// A catalog entry whose T/S list is 122 all-zero pairs leaves `raw` EMPTY;
+// `raw.begin() + 4` is then undefined — harmless in a release build, an abort
+// under _LIBCPP_HARDENING_MODE / _GLIBCXX_ASSERTIONS / UBSan, which is what
+// the nightly sanitizer job runs. Reachable from `pom2_dos33 get` on a
+// corrupt image.
+void testEmptyPayload()
+{
+    uint16_t addr = 0xFFFF;
+    const std::vector<uint8_t> empty;
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x04, empty, &addr).empty());   // B
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x02, empty, nullptr).empty()); // A
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x01, empty, nullptr).empty()); // I
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x00, empty, nullptr).empty()); // T
+    // A one-byte and a three-byte file are the other side of the bound: the
+    // length word itself is incomplete, so there is no payload either.
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x02, std::vector<uint8_t>{0x01}, nullptr).empty());
+    CHECK(pom2::dos33fs::Dos33Disk::payload(0x04, std::vector<uint8_t>{0, 0x20, 0x01}, &addr).empty());
+
+    // A LENGTH THAT LIES — the case the clamp is for, and the one a test can
+    // really observe. A B file declaring $FFFF bytes with three on the disk
+    // must yield those three, not read past the sectors that were read.
+    // (The empty-vector guards above remove undefined `begin() + 4`
+    // arithmetic that a release build happens to survive; only the nightly
+    // sanitizer job can see that half, the way it saw TMS9918's `~regs[3]`.)
+    {
+        const std::vector<uint8_t> liar{ 0x00, 0x20, 0xFF, 0xFF, 1, 2, 3 };
+        const auto got = pom2::dos33fs::Dos33Disk::payload(0x04, liar, &addr);
+        CHECK(addr == 0x2000);
+        CHECK(got.size() == 3);
+        CHECK(got.size() == 3 && got[0] == 1 && got[1] == 2 && got[2] == 3);
+        // And an A/I file the same way: length word $FFFF, two bytes present.
+        const std::vector<uint8_t> liarA{ 0xFF, 0xFF, 0x41, 0x42 };
+        const auto gotA = pom2::dos33fs::Dos33Disk::payload(0x02, liarA, nullptr);
+        CHECK(gotA.size() == 2);
+        CHECK(gotA.size() == 2 && gotA[0] == 0x41 && gotA[1] == 0x42);
+    }
+}
+
 int main()
 {
+    testEmptyPayload();
     testVolume();
     testProdosOrder();
     testListing();
@@ -219,6 +259,15 @@ int main()
         std::fprintf(stderr, "dos33_disk_fs: %d failure(s)\n", g_fail);
         return 1;
     }
-    std::printf("dos33_disk_fs: PASS%s\n", master == 77 ? " (System Master absent: skipped)" : "");
+    if (master == 77) {
+        // RETURN it: the skip code used to decorate a string and the test
+        // exited 0, so a missing System Master read as a full pass — and the
+        // word was lowercase and mid-line, so neither half of
+        // tools/check_ctest_skips.sh could see it either. The fixture is in
+        // tools/test_media.sha256, so on CI this is never taken.
+        std::printf("SKIP dos33_disk_fs: disks_5.4/dsk/dos33_master.dsk absent\n");
+        return 77;
+    }
+    std::printf("dos33_disk_fs: PASS\n");
     return 0;
 }

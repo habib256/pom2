@@ -3,6 +3,8 @@
 // coordinator captures and slot changes contend for the same machine lock.
 
 #include "DevicePanelCoordinator.h"
+#include "LeChatMauveCard.h"
+#include "SystemProfile.h"
 #include "EmulationController.h"
 #include "Memory.h"
 #include "Settings.h"
@@ -120,4 +122,51 @@ int main()
     ImGui::DestroyContext();
     std::printf("frontend device panel concurrency: 120 frames, U1=%d U2=%d swaps=%d\n",
                 u1Frames, u2Frames, raceSwaps.load());
+
+    // ── `chatmauve_variant` follows the LIVE machine, not a persisted key ──
+    // On a //c-class machine the Chat Mauve model is hardware (the rear DB-15
+    // is the Adaptateur IIc), so the key must not be written there. The guard
+    // used to re-parse the PERSISTED `system_profile`, which the restore
+    // paths deliberately never write — and `profileFromKey("")` answers a
+    // ][+, i.e. "has slots". So on exactly the launches that take a restore
+    // (a package carrying only the //c firmware; a saved profile reapplied)
+    // the //c guard inverted, the key was written, and a later //e session
+    // inherited the //c experiment (hunt #21).
+    {
+        pom2::Settings s;
+        pom2::DevicePanelCoordinator c(controller, s);
+        // The coordinator resolves the card from the bus and returns early
+        // without one, so the adapter has to be live for the write to be
+        // reachable at all.
+        {
+            auto state = controller.lockState();
+            state.memory().slotBus().unplug(3);
+            state.memory().slotBus().plug(
+                7, std::make_unique<LeChatMauveCard>(7));
+        }
+        pom2::LeChatMauve_ImGui::FrameResult variant{};
+        variant.requestVariant = true;
+        variant.variantTo      = LeChatMauveCard::Variant::Feline;
+
+        // No `system_profile` key — the restore-path state — on a live //c.
+        assert(!s.has("system_profile"));
+        c.setProfileProvider([] { return pom2::SystemProfile::AppleIIcPAL; });
+        c.applyChatMauve(variant);
+        assert(!s.has("chatmauve_variant"));
+
+        // The same call on a live //e does persist it.
+        c.setProfileProvider([] { return pom2::SystemProfile::AppleIIePAL; });
+        c.applyChatMauve(variant);
+        assert(s.getString("chatmauve_variant", "") ==
+               LeChatMauveCard::variantKey(LeChatMauveCard::Variant::Feline));
+
+        // And a persisted key naming a //e cannot talk a live //c into it.
+        pom2::Settings mismatched;
+        mismatched.setString("system_profile", "iie-pal");
+        pom2::DevicePanelCoordinator c2(controller, mismatched);
+        c2.setProfileProvider([] { return pom2::SystemProfile::AppleIIc; });
+        c2.applyChatMauve(variant);
+        assert(!mismatched.has("chatmauve_variant"));
+    }
+    std::printf("  ok: chatmauve_variant follows the live profile\n");
 }

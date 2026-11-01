@@ -925,6 +925,13 @@ private:
     // for II+ probe); user-driven Presets menu clicks + CLI --preset go
     // through `applyProfile()` which keeps this in sync.
     pom2::SystemProfile activeProfile;
+    /// The colour pipeline the user had before a profile with an on-board Le
+    /// Chat Mauve forced RGB on them, so leaving that profile gives it back
+    /// (`Apple2Display::modeForProfileSwitch`). Not persisted: it only has to
+    /// survive between two profile switches in one session.
+    bool                      preBuiltinRgbModeSet_ = false;
+    Apple2Display::HiResMode  preBuiltinRgbMode_ =
+        Apple2Display::HiResMode::ColorCompositeOE;
 
     // Slot Config panel working-copy sync flag. Reset to false by
     // applyProfile()/restartEmulationFromSettings() so the next render
@@ -1569,6 +1576,13 @@ private:
     /// rebuilds the machine. False when `fromKey` is not plugged or the
     /// rebuild was refused (the live machine is left intact either way).
     bool swapSlotCardVariant(const char* fromKey, const char* toKey);
+    /// An Abstraction-Levels toggle whose setting the MACHINE has to take (the
+    /// CCS 7710 and DAN ][ firmware levels): stage it, rebuild, and on a
+    /// refusal put the key back exactly as it was and say so. The key is only
+    /// saved once the rebuild took it — saving first left the next launch
+    /// running a level the user was told could not be applied.
+    /// `pom2::applySettingWithRebuild` (SettingRebuild.h) is the rule.
+    void applyFirmwareToggle(const char* key, const char* value);
     void renderJoystickPanelWindow();
     /// Mouse Inspector — diagnostic panel for cursor-alignment tuning.
     /// Live host cursor position + Apple II Screen widget rect + Mouse

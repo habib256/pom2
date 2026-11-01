@@ -97,6 +97,28 @@ public:
     void holdUnresolvedPath(const std::string& key) { heldPaths_.insert(key); }
     void erase(const std::string& key)       { store.erase(key); }
 
+    /// One key's previous state, so a refused change can be undone EXACTLY.
+    /// `getString(key, "")` collapses the two cases `has()` exists to tell
+    /// apart, and an undo that writes "" over an ABSENT key does not restore
+    /// it — it states the opposite: a missing `slot_N_card` means "use the
+    /// default card map", an empty one means "no card in that slot". Both
+    /// Slot Config undo paths took the collapsed form, so a refused Apply on
+    /// a fresh install wrote `slot_1_card=""` … `slot_7_card=""` and the next
+    /// launch came up with no Disk II, no mouse, no sound card at all.
+    struct Saved {
+        bool        present = false;
+        std::string value;
+    };
+    Saved capture(const std::string& key) const
+    {
+        return Saved{ has(key), getString(key, "") };
+    }
+    void restore(const std::string& key, const Saved& saved)
+    {
+        if (saved.present) setString(key, saved.value);
+        else               erase(key);
+    }
+
     /// True when the store holds no keys — i.e. `load()` found no file, or
     /// found an empty one. The honest test for "is this a first run?", used
     /// by the browser build to decide whether a returning visitor's panel

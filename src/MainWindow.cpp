@@ -223,6 +223,12 @@ MainWindow::MainWindow(bool forceIIPlus)
     // writes panel state: the menus, the palette, the settings round-trip and
     // the browser build's chrome-light startup are all derived from those
     // bindings, and an unbound panel is a menu row that toggles nothing.
+    // Who the live machine is, for the panels that persist a setting only on
+    // the machines that can own it. `activeProfile` is the authority (the
+    // profile transaction commits it at step 0); the persisted
+    // `system_profile` key is NOT — the restore paths never write it.
+    devicePanelCoordinator_->setProfileProvider(
+        [this] { return activeProfile; });
     initializeSessionLoader();
     registerPanels();
 

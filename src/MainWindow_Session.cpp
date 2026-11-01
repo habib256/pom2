@@ -293,7 +293,10 @@ void MainWindow::persistSession(bool flushMedia)
             // profile's value, not the user's — shared guard with the Slot
             // Config Apply button (pom2::slotKeyIsUserChoice).
             const std::string key = pom2::slotCardSettingKey(cfg, s);
-            const std::string saved = settings->getString(key, "");
+            // savedSlotCardKey, not the raw key: a //c's DB-15 adapter may
+            // still be carried in the pre-split `slot_7_card`, and the guard
+            // has to see it or the user's removal is never written.
+            const std::string saved = pom2::savedSlotCardKey(*settings, cfg, s);
             // A slot the single-instance policy EMPTIED (the same card asked
             // for twice) reads back as "" in the plan while the saved key
             // still names the card. Persisting the plan there overwrote a

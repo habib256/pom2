@@ -1378,9 +1378,17 @@ uint8_t SmartPortCard::spExecute()
             const uint8_t code = spCollect_[5];
             if (unitNo == 0) return fail(code <= 0x01 ? 0x1F : 0x21);
             if (unitNo > static_cast<uint8_t>(unitCount_)) return fail(0x28);
-            if (code != 0x00 && code != 0x04) return fail(0x21);
+            // A unit number in range whose BAY holds no unit object is still
+            // no device: STATUS, READ, WRITE and FORMAT all answer $28 for it
+            // (and so does SmartPortBusDevice::serveWriteData over the wire),
+            // while CONTROL used to answer $00 — so a chain enumerator that
+            // probes with CONTROL code $00, the cheapest presence probe there
+            // is, was told units 2..8 of a default 8-bay card exist and then
+            // got $28 the moment it asked them anything.
             SmartPortUnit* u = unitFor(unitNo);
-            if (code == 0x04 && u && guestLoaded(unitNo - 1u) &&
+            if (!u) return fail(0x28);
+            if (code != 0x00 && code != 0x04) return fail(0x21);
+            if (code == 0x04 && guestLoaded(unitNo - 1u) &&
                 u->kindKey() == SmartPort35Unit::kKindKey)
                 requestGuestEject(unitNo - 1, unitMediaId(u));
             return ok();

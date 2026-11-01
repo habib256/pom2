@@ -351,6 +351,61 @@ int main()
     (void)slots.captureLive(SlotBus{});
     assert(slots.effectivePlan()[1] == "cffa");
 
+    // ── The //c DB-15 adapter can be REMOVED, and the removal sticks ─────
+    // resolve() plugs the adapter from the pre-split `slot_7_card` whenever
+    // the //c's own `iic_rgb_adapter` key is absent. The persist guards were
+    // handed the RAW key instead, so Apply saw "the user never saved an
+    // adapter", `slotKeyIsUserChoice` refused to write the removal, and the
+    // carry-over put the adapter straight back — on the next rebuild and on
+    // every later launch. The DB-15 row was a dead control.
+    {
+        pom2::Settings cfgSettings;
+        const auto& iicCfg = pom2::profileConfig(pom2::SystemProfile::AppleIIc);
+        const auto& iieCfg = pom2::profileConfig(pom2::SystemProfile::AppleIIe);
+        const std::string adapterKey = pom2::slotCardSettingKey(iicCfg, 7);
+        assert(adapterKey == "iic_rgb_adapter");
+
+        // A pre-split state.cfg: the adapter lives in the shared key.
+        cfgSettings.setString("slot_7_card", "chatmauve");
+        assert(!cfgSettings.has(adapterKey));
+        // What resolve() plugs and what the persist guards are told agree.
+        assert(pom2::savedSlotCardKey(cfgSettings, iicCfg, 7) == "chatmauve");
+        pom2::SlotConfigurationCoordinator iicSlots;
+        assert(iicSlots.resolve(cfgSettings, pom2::SystemProfile::AppleIIc)[7] ==
+               "chatmauve");
+        // ...so emptying the row IS a user choice and gets persisted.
+        assert(pom2::slotKeyShouldPersist(iicCfg, 7, "",
+                   pom2::savedSlotCardKey(cfgSettings, iicCfg, 7), ""));
+
+        // Apply writes it, and the carry-over retires: the adapter stays off.
+        cfgSettings.setString(adapterKey, "");
+        assert(pom2::savedSlotCardKey(cfgSettings, iicCfg, 7).empty());
+        assert(iicSlots.resolve(cfgSettings, pom2::SystemProfile::AppleIIc)[7].empty());
+
+        // The //e's own slot 7 is untouched by all of it — that is what the
+        // key split is for.
+        assert(pom2::savedSlotCardKey(cfgSettings, iieCfg, 7) == "chatmauve");
+        assert(iicSlots.resolve(cfgSettings, pom2::SystemProfile::AppleIIe)[7] ==
+               "chatmauve");
+
+        // The carry-over only ever reads as the ADAPTER: a //e card left in
+        // slot 7 is not a //c DB-15 choice.
+        pom2::Settings otherCard;
+        otherCard.setString("slot_7_card", "mockingboard");
+        assert(pom2::savedSlotCardKey(otherCard, iicCfg, 7).empty());
+        assert(!pom2::slotKeyShouldPersist(iicCfg, 7, "",
+                   pom2::savedSlotCardKey(otherCard, iicCfg, 7), ""));
+
+        // An explicitly SAVED adapter needs no carry-over, and an absent
+        // shared key answers empty rather than the default map.
+        pom2::Settings ownKey;
+        ownKey.setString(adapterKey, "chatmauve");
+        assert(pom2::savedSlotCardKey(ownKey, iicCfg, 7) == "chatmauve");
+        pom2::Settings nothing;
+        assert(pom2::savedSlotCardKey(nothing, iicCfg, 7).empty());
+        assert(pom2::savedSlotCardKey(nothing, iieCfg, 6).empty());
+    }
+
     std::printf("slot_configuration_coordinator_test: OK\n");
     return 0;
 }

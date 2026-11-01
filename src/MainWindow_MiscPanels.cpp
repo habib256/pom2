@@ -60,6 +60,7 @@
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
 #include "Settings.h"
+#include "SettingRebuild.h"
 #include "SystemProfile.h"
 #include "Version.h"
 #include "DebugCoordinator.h"
@@ -76,6 +77,20 @@
 
 #include "imgui.h"
 #include <fstream>
+
+void MainWindow::applyFirmwareToggle(const char* key, const char* value)
+{
+    if (pom2::applySettingWithRebuild(
+            *settings, key, value,
+            [this] { return restartEmulationFromSettings(); })) {
+        if (!settingsReadOnly()) (void)settings->save();
+        return;
+    }
+    tapeStatusMessage = std::string("Could not rebuild the machine with the ") +
+                        value + " firmware — kept the previous one.";
+    tapeStatusUntil = lastFrameTime + 6.0;
+    pom2::log().warn("Abstraction", tapeStatusMessage);
+}
 
 void MainWindow::renderMemoryViewerWindow()
 {
@@ -559,15 +574,20 @@ void MainWindow::renderAbstractionPanel()
             swapSlotCardVariant(req.option == 0 ? "printer" : "grappler",
                                 req.option == 0 ? "grappler" : "printer");
             break;
+        // Both through applySettingWithRebuild, like the three toggles above
+        // go through swapSlotCardVariant: these two used to save the key
+        // BEFORE the rebuild and never undo it, so a refused rebuild left the
+        // next launch running the level the user was told could not be
+        // applied. Saved only once the machine took it. The keys stay LITERAL
+        // at the call site — tools/check_settings_keys.sh reads the writes
+        // statically, and a key behind a variable reads as never written.
         case pom2::AbsToggle::SerialFirmware:
-            settings->setString("ccs7710_firmware", req.option == 0 ? "ccs" : "pom2");
-            if (!settingsReadOnly()) settings->save();
-            restartEmulationFromSettings();
+            applyFirmwareToggle("ccs7710_firmware",
+                                req.option == 0 ? "ccs" : "pom2");
             break;
         case pom2::AbsToggle::Dan2Firmware:
-            settings->setString("dan2_firmware", req.option == 0 ? "eprom" : "pom2");
-            if (!settingsReadOnly()) settings->save();
-            restartEmulationFromSettings();
+            applyFirmwareToggle("dan2_firmware",
+                                req.option == 0 ? "eprom" : "pom2");
             break;
         case pom2::AbsToggle::CompositeVideo:
             // No restart: the colour pipeline is a render-path choice, and

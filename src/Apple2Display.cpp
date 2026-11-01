@@ -41,6 +41,26 @@ Apple2Display::Apple2Display()
 {
 }
 
+Apple2Display::ProfileModeSwitch
+Apple2Display::modeForProfileSwitch(HiResMode current, bool builtinRgb,
+                                    bool hasRemembered, HiResMode remembered)
+{
+    if (builtinRgb) {
+        // Entering a profile with the adapter soldered on. Remember what the
+        // user had — but only the FIRST time, or a second //c-PAL visit would
+        // overwrite the memory with ChatMauveRGB and strand them there.
+        if (current == HiResMode::ChatMauveRGB)
+            return { HiResMode::ChatMauveRGB, hasRemembered, remembered };
+        return { HiResMode::ChatMauveRGB, true, current };
+    }
+    // Leaving it. Restore only what WE forced; an RGB mode the user picked
+    // themselves (View menu, on a //e with the card plugged) has nothing
+    // remembered against it and is left alone.
+    if (current == HiResMode::ChatMauveRGB && hasRemembered)
+        return { remembered, false, remembered };
+    return { current, hasRemembered, remembered };
+}
+
 void Apple2Display::setHiResMode(HiResMode m)
 {
     if (m == hiResMode) return;

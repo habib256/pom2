@@ -171,6 +171,16 @@ bool outgoingSafe(EmulationController& c, std::string& error)
         if (c.sony35(i).isEjectPending() || !c.disk35(i).sessionReplaceable()) {
             error = "outgoing 3.5-inch medium has unsaved changes or pending writes"; return false;
         }
+    // Slot 0 FIRST, and from here rather than from restoreSession: the //e
+    // auxiliary slot can hold a Premium SoftCard, `SlotBus::clear()` empties
+    // slot 0 along with the rest, and restoreSession's own slot-0 guard runs
+    // AFTER that clear — so it found an empty slot, passed, and the card (with
+    // its Z80, its $C07E register and its live CP/M) was destroyed without a
+    // word. docs/session-format.md: "No unsupported device is silently
+    // omitted", and the refusal table says this one is named.
+    if (auto* aux = c.memory().slotBus().peripheral(0)) {
+        error = slotZeroRefusal(aux); return false;
+    }
     for (int i = 1; i <= 7; ++i) if (auto* card = c.memory().slotBus().peripheral(i)) {
         // A live network worker cannot be joined while holding stateMutex.
         if (auto* serial = dynamic_cast<SuperSerialCard*>(card)) {

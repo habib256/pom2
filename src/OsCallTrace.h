@@ -144,9 +144,14 @@ public:
     /// Newest last; at most kCapacity lines.
     static constexpr std::size_t kCapacity = 4000;
     const std::deque<std::string>& lines() const { return lines_; }
-    /// Lines ever emitted — a UI notices new ones without copying.
+    /// A counter the UI watches to notice the list CHANGED without copying
+    /// it. Every mutation must move it, `clear()` included: the Debugger
+    /// panel only re-copies when this differs from what it last saw
+    /// (`Debugger_ImGui.cpp`), so a clear that left it alone drew the
+    /// emptied lines for ever — the "Clear" button looked dead until the
+    /// guest happened to make another traced call.
     uint64_t emitted() const { return emitted_; }
-    void clear() { lines_.clear(); }
+    void clear() { lines_.clear(); ++emitted_; }
     /// The machine jumped in time: open calls name a timeline that is gone.
     void dropPending()
     {

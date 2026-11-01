@@ -30,10 +30,12 @@
 #define POM2_DEVICE_PANEL_COORDINATOR_H
 
 #include "LeChatMauve_ImGui.h"
+#include "SystemProfile.h"
 #include "Uthernet_ImGui.h"
 
 #include <cstdint>
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -146,9 +148,30 @@ public:
     /// CLI/configuration seam. Returns false when no matching card is live.
     bool setChatMauveInvertBit7(bool enabled);
 
+    /// Who the LIVE machine is. `applyChatMauve` has to know, because on a
+    /// //c-class machine the Chat Mauve model is hardware (the rear DB-15 is
+    /// the Adaptateur IIc; `plugChatMauve` forces it) and `chatmauve_variant`
+    /// must not be written there — a later //e session would inherit the //c
+    /// experiment (hunt #21).
+    ///
+    /// It used to re-parse the PERSISTED `system_profile` key, which is a
+    /// different question: the restore paths (`restoringSavedProfile_`, and
+    /// the first launch of a package that carries only the //c firmware)
+    /// deliberately never write it, and `profileFromKey("")` answers
+    /// `AppleIIPlus` — so on exactly those launches the //c guard inverted and
+    /// the key was written after all. MainWindow installs the provider; with
+    /// none installed the old key-reading behaviour stands, which is only
+    /// reachable before MainWindow wires it.
+    using ProfileProvider = std::function<SystemProfile()>;
+    void setProfileProvider(ProfileProvider p) { liveProfile_ = std::move(p); }
+
 private:
+    /// The live profile, or the persisted key when no provider is installed.
+    SystemProfile activeProfile() const;
+
     EmulationController& controller_;
     Settings& settings_;
+    ProfileProvider liveProfile_;
 };
 
 } // namespace pom2

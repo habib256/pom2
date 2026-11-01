@@ -210,7 +210,12 @@ std::vector<Step> terminalSession(bool lle)
 
 void testTerminalModeAgainstProm()
 {
-    if (!std::filesystem::is_regular_file("roms/apple2p.rom")) return;
+    if (!std::filesystem::is_regular_file("roms/apple2p.rom")) {
+        // Was a bare `return;` with NO message: nothing in any log a
+        // checker reads said the comparison had not run.
+        std::printf("SKIP ccs7710: terminal mode needs roms/apple2p.rom\n");
+        return;
+    }
     const auto hle = terminalSession(false);
     // What the PROM is known to do, checked on POM2's page on its own.
     std::string sent7;
@@ -230,7 +235,8 @@ void testTerminalModeAgainstProm()
     CHECK(hle.back().screen.find("42") != std::string::npos && "keyboard input is back");
     if (!std::filesystem::is_regular_file(Ccs7710Card::kPromHiPath)
         || !std::filesystem::is_regular_file(Ccs7710Card::kPromLoPath)) {
-        std::printf("[ OK ] terminal mode on POM2's page (SKIP the comparison: no PROMs)\n");
+        std::printf("SKIP ccs7710: terminal mode ran on POM2's page, but CCS's\n"
+                    "     7710-03 PROMs are absent so the comparison did not run\n");
         return;
     }
     const auto lle = terminalSession(true);
@@ -255,7 +261,7 @@ void testTerminalModeAgainstProm()
 void testFirmwareAgainstProm()
 {
     if (!std::filesystem::is_regular_file("roms/apple2p.rom")) {
-        std::printf("[SKIP] firmware runs: needs roms/apple2p.rom\n");
+        std::printf("SKIP ccs7710: firmware runs need roms/apple2p.rom\n");
         return;
     }
     const Run hle = scenario(false);
@@ -267,8 +273,9 @@ void testFirmwareAgainstProm()
     CHECK(hle.screenAfterIn.find("42") != std::string::npos && "IN#1 ran a line from the 6850");
     if (!std::filesystem::is_regular_file(Ccs7710Card::kPromHiPath)
         || !std::filesystem::is_regular_file(Ccs7710Card::kPromLoPath)) {
-        std::printf("[ OK ] POM2's firmware: PR#1 sends + echoes, IN#1 reads "
-                    "(SKIP the comparison: CCS's PROMs absent)\n");
+        std::printf("SKIP ccs7710: POM2's firmware ran (PR#1 sends + echoes,\n"
+                    "     IN#1 reads), but CCS's PROMs are absent so the\n"
+                    "     LLE comparison did not run\n");
         return;
     }
     const Run lle = scenario(true);

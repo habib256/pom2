@@ -1,5 +1,6 @@
 // POM2 — GPL-3.0-or-later
 #include "EmulationController.h"
+#include "PremiumSoftCard.h"
 #include "SessionMachine.h"
 #include "SessionSnapshot.h"
 #include "SessionLoadQueue.h"
@@ -288,10 +289,48 @@ void tapeRewindSession()
 }
 }
 
+// A session load must REFUSE a live Premium SoftCard, not destroy it.
+//
+// `SlotBus::clear()` empties slot 0 — the //e auxiliary slot — along with the
+// rest, and `restoreSession`'s own slot-0 guard runs AFTER that clear. So it
+// found an empty slot, passed, and the card (its Z80, its $C07E register, its
+// live CP/M) was gone with the UI reporting "Session loaded". The outgoing
+// check now refuses first, which is what docs/session-format.md promises:
+// "No unsupported device is silently omitted", and the refusal names it.
+void premiumSoftCardSurvivesARefusedLoad()
+{
+    auto source = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
+    source->setMachineId(snapshotMachineId(SystemProfile::AppleIIePAL));
+    source->setVideoStandard(VideoStandard::PAL);
+    source->memory().setIIEMode(true);
+    const SessionArchive session = capture(*source);
+
+    auto target = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
+    target->setMachineId(snapshotMachineId(SystemProfile::AppleIIePAL));
+    target->setVideoStandard(VideoStandard::PAL);
+    target->memory().setIIEMode(true);
+    target->memory().slotBus().plug(
+        PremiumSoftCard::kAuxSlot,
+        std::make_unique<PremiumSoftCard>());
+    assert(target->memory().slotBus().peripheral(PremiumSoftCard::kAuxSlot));
+
+    std::string error;
+    assert(!reconstructSession(*target, session, error));
+    // The refusal NAMES the card — not "slot 0", which no Slot Config row
+    // shows and which would send the user looking for a slot the //e has not
+    // got.
+    assert(error.find("Premium SoftCard") != std::string::npos);
+    assert(error.find("Machine menu") != std::string::npos);
+    // And the card is still there: a refused load leaves the machine intact.
+    assert(target->memory().slotBus().peripheral(PremiumSoftCard::kAuxSlot));
+    std::printf("  ok: a session load refuses a Premium SoftCard and keeps it\n");
+}
+
 int main()
 {
     profiles(); legacyBundles(); zipAndExpansions(); transwarp(); cffaAndFolder(); outgoingDurability(); tapes();
     tapeRewindSession();
+    premiumSoftCardSurvivesARefusedLoad();
     auto source = std::make_unique<EmulationController>();
     source->setMachineId(snapshotMachineId(SystemProfile::AppleIIePAL));
     source->setVideoStandard(VideoStandard::PAL);

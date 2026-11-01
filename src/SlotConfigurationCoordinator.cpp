@@ -165,6 +165,20 @@ bool SlotConfigurationCoordinator::isMultiInstance(
            cardKey == "phasor" || cardKey == "echoplus";
 }
 
+std::string savedSlotCardKey(const Settings& settings,
+                             const ProfileConfig& cfg, int slot)
+{
+    const std::string key = slotCardSettingKey(cfg, slot);
+    if (settings.has(key)) return settings.getString(key, "");
+    // See the header: an absent `iic_rgb_adapter` inherits the pre-split
+    // `slot_7_card`, but only when it names the adapter — a //e card layout
+    // left in slot 7 is not a //c DB-15 choice and must not read as one.
+    if (cfg.noPhysicalSlots && slot == 7 &&
+        settings.getString("slot_7_card", "") == "chatmauve")
+        return "chatmauve";
+    return {};
+}
+
 const SlotConfigurationCoordinator::CardMap&
 SlotConfigurationCoordinator::resolve(const Settings& settings,
                                       SystemProfile profile,
@@ -187,11 +201,11 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
         effectivePlan_[slot] = settings.getString(
             key, browserIicHeader ? std::string("mockingboard") :
                  ownKey ? std::string() : std::string(kDefaultCards[slot]));
-        // One-time carry-over for the //c adapter's own key: a state.cfg from
-        // before the split kept a //c's adapter in the shared slot_7_card.
-        if (profileCfg.noPhysicalSlots && slot == 7 && !settings.has(key) &&
-            settings.getString("slot_7_card", "") == "chatmauve")
-            effectivePlan_[slot] = "chatmauve";
+        // Carry-over for the //c adapter's own key: a state.cfg from before
+        // the split kept a //c's adapter in the shared slot_7_card. The same
+        // helper answers the persist guards, so a removal can be written.
+        if (profileCfg.noPhysicalSlots && slot == 7 && !settings.has(key))
+            effectivePlan_[slot] = savedSlotCardKey(settings, profileCfg, slot);
     }
 
     // Compatibility with the old clock checkbox. An explicit per-slot value

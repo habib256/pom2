@@ -40,6 +40,7 @@
 
 #include "Settings.h"
 #include "ResourcePaths.h"
+#include "SettingRebuild.h"
 #include "SettingsList.h"
 
 #include <cassert>
@@ -466,10 +467,72 @@ int main()
         fs::remove_all(file);
     }
 
+    // ── An undo must restore ABSENT as absent, not as "" ────────────────
+    // `getString(key, "")` collapses the two cases `has()` exists to tell
+    // apart: a missing `slot_N_card` means "use the default card map", an
+    // empty one means "no card in that slot". Both Slot Config undo paths
+    // wrote the collapsed form back, so a refused Apply on a fresh install
+    // (nothing saved yet) turned all seven slots into explicit blanks and the
+    // next launch came up with no Disk II, no mouse and no sound card.
+    {
+        pom2::Settings s;
+        const pom2::Settings::Saved absent = s.capture("slot_6_card");
+        assert(!absent.present && absent.value.empty());
+        s.setString("slot_6_card", "cffa");
+        s.restore("slot_6_card", absent);
+        assert(!s.has("slot_6_card"));                 // absent, NOT ""
+        assert(s.getString("slot_6_card", "diskii") == "diskii");
+
+        // The other direction still round-trips, empty value included.
+        s.setString("slot_6_card", "diskii");
+        const pom2::Settings::Saved had = s.capture("slot_6_card");
+        assert(had.present && had.value == "diskii");
+        s.setString("slot_6_card", "cffa");
+        s.restore("slot_6_card", had);
+        assert(s.has("slot_6_card") && s.getString("slot_6_card", "") == "diskii");
+
+        s.setString("slot_5_card", "");
+        const pom2::Settings::Saved emptyOnPurpose = s.capture("slot_5_card");
+        assert(emptyOnPurpose.present && emptyOnPurpose.value.empty());
+        s.setString("slot_5_card", "smartport35");
+        s.restore("slot_5_card", emptyOnPurpose);
+        assert(s.has("slot_5_card"));                  // "" is a statement
+        assert(s.getString("slot_5_card", "smartport35").empty());
+    }
+
+    // ── A setting the MACHINE has to take leaves nothing behind on refusal ──
+    // The Abstraction Levels panel's CCS 7710 / DAN ][ firmware toggles saved
+    // the key before the rebuild and never undid it: a refused rebuild kept
+    // the old firmware live while the next launch ran the new one.
+    {
+        pom2::Settings s;
+        // Refused, key absent beforehand: nothing is left.
+        assert(!pom2::applySettingWithRebuild(s, "ccs7710_firmware", "pom2",
+                                              [] { return false; }));
+        assert(!s.has("ccs7710_firmware"));
+        // Refused, key present beforehand: the old value, not the new one.
+        s.setString("ccs7710_firmware", "ccs");
+        assert(!pom2::applySettingWithRebuild(s, "ccs7710_firmware", "pom2",
+                                              [] { return false; }));
+        assert(s.getString("ccs7710_firmware", "") == "ccs");
+        // Taken: the new value stands, and the callable really ran.
+        int calls = 0;
+        assert(pom2::applySettingWithRebuild(s, "ccs7710_firmware", "pom2",
+                                             [&] { ++calls; return true; }));
+        assert(calls == 1);
+        assert(s.getString("ccs7710_firmware", "") == "pom2");
+        // A caller that forgot to wire the rebuild undoes its own write
+        // rather than persisting a change nothing applied.
+        s.setString("dan2_firmware", "eprom");
+        assert(!pom2::applySettingWithRebuild(s, "dan2_firmware", "pom2", {}));
+        assert(s.getString("dan2_firmware", "") == "eprom");
+    }
+
     fs::remove_all(home);
     std::printf("OK settings_roundtrip (#-in-value, newline, backslash, "
                 "boundary whitespace, int/float/bool round-trip, partial "
                 "parses rejected, joystick binding keys, config dir, "
-                "unchanged-save skip, list encoding)\n");
+                "unchanged-save skip, list encoding, absent-vs-empty undo, "
+                "setting+rebuild revert)\n");
     return 0;
 }

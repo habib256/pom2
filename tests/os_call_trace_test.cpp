@@ -504,9 +504,64 @@ void testSlotBusObserver()
 
 } // namespace
 
+// ── The trace survives a stack that has wrapped, and Clear is not inert ──
+void testStackWrapAndClear()
+{
+    // The decoders read the two bytes JSR pushed. `0x0101 + uint8_t(s + 1)`
+    // puts the wrap OUTSIDE the 8-bit add: at SP=$FE the high byte came from
+    // $0200 instead of $0100 (and the low byte from $0200 at SP=$FF), so the
+    // caller address, the command byte and the parameter-list pointer were all
+    // read from an unrelated page — a garbage call name that never paired with
+    // its result.
+    for (uint8_t sp : { uint8_t(0xFF), uint8_t(0xFE), uint8_t(0x01) }) {
+        Memory mem;
+        M6502 cpu(&mem);
+        mem.setCpu(&cpu);
+        pom2::Debugger dbg;
+        dbg.setMemory(&mem);
+        dbg.osCalls().bind(&cpu, &mem);
+        dbg.osCalls().setMli(true);
+        cpu.setDebugHook(&dbg);
+
+        installMliStub(mem);
+        poke(mem, 0x0800, {
+            0x20, 0x00, 0xBF, 0xC8, 0x00, 0x09,     // JSR MLI / OPEN / $0900
+            0x4C, 0x06, 0x08,                       // JMP *
+        });
+        poke(mem, 0x0900, { 0x03, 0x10, 0x09, 0x00, 0x1C, 0x00 });
+        mem.memWrite(0x0910, 13);
+        pokeStr(mem, 0x0911, "/PRODOS/HELLO");
+        cpu.setStackPointer(sp);
+        cpu.setProgramCounter(0x0800);
+        for (int i = 0; i < 200; ++i) cpu.run(1);
+
+        const auto l = lines(dbg.osCalls());
+        // The SAME line at every stack depth: the decode must not depend on
+        // where in page 1 the return address happens to sit.
+        CHECK(l.size() == 1);
+        CHECK(l.size() > 0 &&
+              l[0] == "MLI  $0800 OPEN \"/PRODOS/HELLO\" buf=$1C00 -> ref=1");
+        if (l.size() != 1 || (l.size() > 0 &&
+            l[0] != "MLI  $0800 OPEN \"/PRODOS/HELLO\" buf=$1C00 -> ref=1")) {
+            std::fprintf(stderr, "  (at SP=$%02X)\n", sp);
+            dump(dbg.osCalls());
+        }
+
+        // Clear must MOVE the change counter. The Debugger panel re-copies the
+        // list only when `emitted()` differs from what it last saw, so a clear
+        // that left it alone drew the emptied lines for ever — the button read
+        // as dead until the guest made another traced call.
+        const uint64_t before = dbg.osCalls().emitted();
+        dbg.osCalls().clear();
+        CHECK(dbg.osCalls().lines().empty());
+        CHECK(dbg.osCalls().emitted() != before);
+    }
+}
+
 int main()
 {
     testMli();
+    testStackWrapAndClear();
     testMliNoReturn();
     testBdos();
     testSmartPort();
