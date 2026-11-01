@@ -6723,9 +6723,11 @@ binds `tp_callback`). Wiring per ThunderClock Plus manual ch. V:
 → `assertIrq(true)` while enabled; **any** device-select read/write
 clears request (enable latch persists, periodic source keeps ticking);
 read `$C0n0` bit 5 = "interrupt asserted" flag; RESET disables.
-Rates decode latched C0/C1/C2 on STB rising edge: dividers 512/128/
-16/8 against 32.768 kHz XTAL → **64/256/2048/4096 Hz** (modes 4-7),
-plus 64 Hz for REGISTER_HOLD. Interval timers (1/10/30/60 s, modes
+Rates decode latched C0/C1/C2 on STB rising edge: dividers 512/128/16
+against the 32.768 kHz XTAL → **64/256/2048 Hz** (modes 4-6); code 7 is
+**TEST**, not a 4096 Hz tap — `ClockCard.cpp` says why (MAME `stb_w` maps a
+parallel C=7 to MODE_TEST; the firmware never offers 4096). Plus 64 Hz when
+a REGISTER_HOLD releases TEST, and only then (data sheet p. 797). Interval timers (1/10/30/60 s, modes
 8-15) need uPD4990A 4-bit serial, unreachable on parallel uPD1990AC —
 not modelled. Pinned: `clock_card_smoke` (TP rates, IRQ enable, bit-5
 flag, reset). **The half-period is held in 1/256ths of a cycle**: the exact
