@@ -127,6 +127,24 @@ titles depend on the VIA/timer period instead. Not to be confused with
 the VIA `syncToCpuCycle` one-instruction over-count (fixed 2026-05-25,
 see [Lazy timer sync](#mockingboard)).
 
+### Upstream state of the CPU tables, as of 2026-11-01
+
+The parity audit (`docs/audits/parite-ow65c02-2026-11-01.md`) found POM2's
+`ow65c02.lst` / `om6502.lst` citations numbered **without blank lines** — a
+systematic offset, not drift — and no pin. What the core actually follows:
+
+| Upstream file | Revision followed | Taken | Deliberately NOT taken |
+|---|---|---|---|
+| `ow65c02.lst` | `370d8dffb7` (= `mame0287` = `master`) | decimal ADC/SBC +1 cycle with valid N/Z; RMW read-read-write; `JMP (a)` 6 cycles, `JMP (a,X)` 6; `BIT #imm` Z only; TRB/TSB; D cleared by BRK/IRQ/NMI/RESET; NMI chosen in `brk_c_imp`; `nop_c_imp` 1 cycle, `nop_c_aba` 8; WAI/STP and the Rockwell bits (superset table only) | the dummy read at the *invalid* address on an indexed page cross (**AMONT FAUX 1**: the 65C02 re-reads the base, not the wrong page — [B] data sheet); shift RMW abs,X fixed at 7 cycles with three reads (**AMONT FAUX 2**: 6 cycles, two reads on the chip; MAME `82c9bfb6bb` says "page boundaries do not figure into cycle timings for indexed modes"); `nop_c_abx` reading `base+X` (POM2 = AppleWin, unsettled); `JMP (a)`/`(a,X)` dummy reads (unmodelled, latent) |
+| `om6502.lst` | `6e04a8591e` (= `mame0287`); `master` `e59c49eb85` is bus-neutral (probed) | NMOS: RMW read-write-write, indexed dummy reads, undocumented opcodes, the `JMP ($xxFF)` bug | its `sta_idy` as reused by MAME's 65C02 table, which reads the target before writing it (**AMONT FAUX 3**, PLAUSIBLE: Sather 4-23 and the hoglet captures were relayed, not re-read); IRQ sampled on the penultimate cycle and the NMOS BRK/NMI hijack — **WANTED** (§ CPU, "instruction-granular") |
+| `dw65c02.lst` | `mame0287` = `master` | the NCR table: `$x3`/`$x7`/`$xB`/`$xF`, `$CB`, `$DB` = `nop_c_imp` | — |
+| `w65c02.cpp` | `370d8dffb7` | `do_sbc_cd` | — |
+
+The three `AMONT FAUX` are against MAME's Apple 65C02 table; the core is
+right and must not be "aligned". The one bug that slice found is in the
+debugger, not the core: its disassembler and assembler decode a
+Rockwell/WDC 65C02 on the NCR part Apple shipped (fix in progress).
+
 ### Tom Harte 65x02 ProcessorTests (cycle-exact gate)
 
 `tomharte_cpu_test <nmos|cmos> <dir>` runs Tom Harte's
@@ -2427,6 +2445,33 @@ the desired suffix themselves; that method writes WAV only for `.wav`, ACI
 otherwise. Historical finding: CHANGELOG 2026-09-09 (bug hunt #17).
 
 ### Mockingboard
+
+**Upstream state of the 6522 (`6522via.cpp`), as of 2026-11-01** — from
+`docs/audits/parite-6522via-2026-11-01.md` (39 citations dated over 69
+revisions, no pin, **no bug**). The timer column is where MAME changed under
+POM2's feet and POM2 had already moved, on hardware evidence:
+
+| Behaviour | `mame0287` | `master` | POM2 | Source above grade D |
+|---|---|---|---|---|
+| T1/T2 read-back, `e` cycles after the CxH write | T1 `N - e`, T2 `N + 3 - e` | `N + 1 - e` (`33d8aca83c`) | `N + 1 - e` since `c58528ac` (2026-09-02) | [B] WDC § 2.6; [A] TRIBU, mb-audit |
+| IFR.T1 / IFR.T2 raised at | N+3 | N+2 (`33d8aca83c`) | N+2, pin at N+3 (`ifrFresh_`, 2026-10-31) | [A] mb-audit T6522_F/10/11; [B] Rockwell fig. 15 "N + 1.5 cycles" |
+| Free-running T1 period | latch+3 | latch+2 (`33d8aca83c`) | latch+2 since 2026-06-12 | [A] MAD EFFECT (`20280 - 2`) |
+| Reload after a one-shot | no (`0xffff - elapsed`) | yes (`33d8aca83c`) | yes since `fe596777` (2026-10-27) | [A] mb-audit T6522_9 |
+| ACR → continuous re-arms a stopped T1 | yes (`:1036-1040`) | no (`33d8aca83c`) | no since 2026-10-27 | [A] mb-audit T6522_1 |
+| PB7 on a one-shot | forced 1 | toggled if ACR.7 | toggled if ACR.7 | [B] WDC § 2.6 |
+| PB7 when ACR.7 = 0 | unchanged | unchanged | **held at 1** | VICE (D); POM2 cites a die analysis — unsettled |
+| PA latch after IFR.CA1 is cleared | transparent | **always latched** (`9d7234409c`) | transparent | [B] WDC § 2.1, MOS 1977 § C → **AMONT FAUX 4** (MAME master) |
+| RES | touches neither counters, latches nor SR | same | same | [B] Rockwell "RESET (RES)", WDC § 3.9 (MAME master loses T2: **AMONT FAUX 5**) |
+| SR, 8-bit T2 in SR mode | partial | redone (`33d8`, `d59e`) | **not modelled** (documented) | — |
+
+Post-`mame0287` upstream fixes **taken**: the whole timer side of
+`33d8aca83c` (part of it was in POM2 before that commit — period, the -1
+bias — the rest came after, with hardware sources besides `master`).
+**Not taken**, deliberately or for want of a model: the SR side of
+`33d8aca83c` and `d59ea3614b`, the 8-bit T2 in SR mode, and `9d7234409c`
+(permanent latch) — rightly. `mame0287`'s timers are three `AMONT FAUX` in
+themselves (read-back one cycle low, IFR one cycle late, free period
+latch+3).
 
 **6522 timer flag vs /IRQ pin** *(2026-10-31, mb-audit)*. A T1/T2 underflow
 raises IFR on the cycle the counter shows $FFFF — N+2 after the CxH write —

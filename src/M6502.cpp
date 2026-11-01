@@ -921,8 +921,10 @@ accumulator = memory->memRead((uint16_t)(stackPointer + 0x100));
 void M6502::PLP(void)
 {
     stackPointer++;
-    // MAME om6502.lst:959 + m6502.cpp:408 force U=1 AND B=1 on every P
-    // pop (PLP/RTI). The "B" and "U" bits aren't physical flags; the
+    // [D] MAME om6502.lst `plp_imp` (0287:1068) and `rti_imp` (0287:1174),
+    // `read(m_SP) | (F_B|F_E)`, force U=1 AND B=1 on every P pop (PLP/RTI).
+    // (This used to cite `m6502.cpp:408`; that file's only `F_B|F_E` is the
+    // debugger's `state_import` — parite-ow65c02-2026-11-01.md.) The "B" and "U" bits aren't physical flags; the
     // pushed byte carries them as 1 from PHP/BRK and as B=0/U=1 from
     // IRQ/NMI. Without the OR with 0x30, an RTI from IRQ leaves B=0 in
     // the popped status, which a subsequent PHP would then push back —
