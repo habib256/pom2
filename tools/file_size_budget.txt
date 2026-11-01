@@ -449,11 +449,18 @@ src/Apple2Display.cpp                    2536
 # on main — moved to its own TU (DiskIICard_Sequencer.cpp). Tightened to the
 # new size so the room freed is not spent quietly.
 #   src/DiskIICard.cpp: 2143 -> 2076 (-67)
-src/DiskIICard.cpp                       2076
+# 2026-11-01 (parity campaign): graded evidence comments ([A]..[F] + the
+# upstream revision) on the IWM mode gate and the angular resume; the code
+# grew by the stoppedPosition capture alone.
+#   src/DiskIICard.cpp: 2076 -> 2084 (+8)
+src/DiskIICard.cpp                       2084
 # 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
 # the existing format detection and loader; covered by disk_macbinary_smoke.
 #   src/DiskImage.cpp: 3293 -> 3316 (+23)
-src/DiskImage.cpp                        3316
+# 2026-11-01 (parity campaign): the FLUX seam rule (the last byte is a
+# transition) and its graded comment.
+#   src/DiskImage.cpp: 3316 -> 3329 (+13)
+src/DiskImage.cpp                        3329
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
 src/ProDOSVolume.cpp                     2146
@@ -467,7 +474,11 @@ src/ProDOSVolume.cpp                     2146
 # 2026-11-01 (bug hunt E): the aux slot's geometry (setAuxSlotPort, the
 # RamWorks size it excludes) joined the aux-slot card in MemoryLanguageCard.cpp.
 #   src/Memory.cpp: 2275 -> 2260 (-15)
-src/Memory.cpp                           2260
+# 2026-11-01 (parity campaign): the floating bus sampled before a $C050-57
+# switch, the ][+ warm-reset keyboard rule (Sather Fig. 7.7), each with its
+# graded citation.
+#   src/Memory.cpp: 2260 -> 2297 (+37)
+src/Memory.cpp                           2297
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.
@@ -496,3 +507,14 @@ src/StorageCoordinator.cpp               2449
 #   src/TMS9918.cpp: 2029 -> 2037 (+8)
 src/TMS9918.cpp                          2037
 src/hgrpaint/HgrPaintEditor.cpp          2656
+# 2026-11-01 (parity campaign): src/Scc8530Device.cpp crossed the watch
+# threshold with the z80scc slice — WR5 no longer resets the transmitter,
+# WR1 mode 01 arms rxFirst, receiveAllowed/transmitAllowed/resumeTransmit,
+# the loopback guard, WR14 reset against the AMD table — and the graded
+# comments that back each against MAME's reading. One chip, one TU: the
+# register file and the two channels share every state the comments cite.
+src/Scc8530Device.cpp                    2071
+# 2026-11-01 (parity campaign): src/W5100Device.cpp crossed the watch
+# threshold with the Ctrl-Reset, RECV re-raise and DISCON-IRQ fixes and
+# their graded comments. One chip, one TU.
+src/W5100Device.cpp                      2030
