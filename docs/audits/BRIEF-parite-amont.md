@@ -67,8 +67,14 @@ Conséquences pratiques :
 | 12 | `ay8910.cpp` | 17 | MAME | ✅ `parite-ay8910-2026-11-01.md` — 2 MINEUR (relecture R7/R14/R15 8913, ports), 1 AMONT FAUX, pin à jour |
 | 13 | `apple2.cpp` | 14 | MAME | ✅ `parite-apple2-2026-11-01.md` — 2 MINEURS (PB2 flottant, clavier au reset ][+), 2 AMONT FAUX |
 | 14 | `a2ssc.cpp` | 14 | MAME | ✅ `parite-a2ssc-2026-11-01.md` — 3 MINEURS (port vide, miroir ACIA, DIP //c), 2 AMONT FAUX |
-| 15 | `upd1990a.cpp` | 13 | MAME | ⬜ |
-| 16+ | 67 autres fichiers | ~260 | mixte | ⬜ par paquets de 3-4 |
+| 15 | `upd1990a.cpp` | 13 | MAME | ✅ `parite-upd1990a-2026-11-01.md` — 3 MINEURS (Time Set, jour de semaine, Hold→64 Hz), 2 AMONT FAUX, pin périmé |
+| 16 | `ow65c02.lst` | 12 | MAME | ✅ `parite-ow65c02-2026-11-01.md` — 0 bug CPU, 1 MINEUR débogueur NCR, 3 AMONT FAUX, numérotation sans lignes vides |
+| 17 | `mc6845.cpp` | 12 | MAME | ✅ `parite-mc6845-2026-11-01.md` — 3 MINEURS hérités de MAME (reset curseur, clignotement), 0 AMONT FAUX |
+| 18 | `apple2video.cpp` | 12 | MAME | ✅ `parite-apple2video-2026-11-01.md` — 2 MINEURS : TEXT/MIXED mi-ligne, bus flottant lu après bascule |
+| 19 | `a2memexp.cpp` | 12 | MAME | ✅ `parite-a2memexp-2026-11-01.md` — 3 MINEURS (pointeur partiel, $C0n2 après RESET, coldBoot), 2 AMONT FAUX, pin juste |
+| 20 | `flopimg.cpp` + `as_dsk.cpp` + `wozfdc.cpp` | 27 | MAME | ✅ `parite-flopimg-as_dsk-wozfdc-2026-11-01.md` — 1 MAJEUR (transition de couture FLUX perdue), 3 AMONT FAUX, `as_dsk` jamais existé |
+| 21 | `a2videoterm.cpp` + `a2pic.cpp` | 21 | MAME | ✅ `parite-a2videoterm-a2pic-2026-11-01.md` — 0 constat, 2 AMONT FAUX, reset PIC cité hors révision |
+| 22+ | ~58 autres fichiers | ~165 | mixte | ⬜ par paquets de 3-4 |
 
 **801 citations, 82 fichiers amont.** `ow65c02.lst` est la table d'opcodes
 65C02 → `src/devices/cpu/m6502/`.
