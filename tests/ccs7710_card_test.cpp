@@ -29,6 +29,7 @@
 //  4. SoftCard2Protocol on synthetic traffic.
 
 #include "Ccs7710Card.h"
+#include "Block512Backing.h"   // pom2::mediaWriteEpoch
 #include "M6502.h"
 #include "Memory.h"
 #include "SoftCard2Protocol.h"
@@ -336,9 +337,40 @@ void testProtocol()
 
 } // namespace
 
+// The spool is PRINTED OUTPUT — irreversible, so every append bumps the rewind
+// epoch at the leaf (CLAUDE.md; the 2026-10-27 fix every other printer spool
+// got: without it a held F6 rewound past bytes the next drain then printed
+// while the guest sent them again). And it is capped like its siblings, with
+// absolute offsets so the drain cursor survives the trim.
+void testSpoolIsPrintedOutput()
+{
+    Ccs7710Card c(1);
+    c.deviceSelectWrite(0x0, 0x51);                  // out of master reset
+    const uint64_t before = pom2::mediaWriteEpoch().load();
+    c.deviceSelectWrite(0x1, 'P');
+    CHECK(pom2::mediaWriteEpoch().load() != before && "a printed byte must bump the epoch");
+
+    const std::size_t cap = Ccs7710Card::kMaxSpoolBytes;
+    for (std::size_t i = 0; i < cap + 9; ++i)
+        c.deviceSelectWrite(0x1, uint8_t('A' + i % 26));
+    CHECK(c.bytesWritten() == cap + 10 && "the count is absolute and monotonic");
+    std::vector<uint8_t> out;
+    const std::size_t next = c.drainSpoolFrom(0, out);
+    CHECK(next == cap + 10);
+    CHECK(out.size() == cap && "the spool is capped");
+    CHECK(!out.empty() && out.back() == uint8_t('A' + (cap + 8) % 26));
+    out.clear();
+    CHECK(c.drainSpoolFrom(cap + 5, out) == cap + 10 && out.size() == 5);
+    out.clear();
+    c.drainSpoolFrom(cap * 4, out);                  // past the end: resync
+    CHECK(out.size() == cap);
+    std::printf("[ OK ] 6850 spool: epoch bump, %zu-byte cap, absolute offsets\n", cap);
+}
+
 int main()
 {
     testAcia();
+    testSpoolIsPrintedOutput();
     testFirmwareAgainstProm();
     testTerminalModeAgainstProm();
     testProms();

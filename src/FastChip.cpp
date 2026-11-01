@@ -82,7 +82,8 @@ void FastChip::onReset(uint64_t /*now*/)
     slowUntil_ = 0;
 }
 
-CpuSocketAccelerator::ReadResult FastChip::ioRead(uint8_t low, uint64_t now, uint8_t /*stateByte*/)
+CpuSocketAccelerator::ReadResult FastChip::ioRead(uint8_t low, uint64_t now, uint8_t /*stateByte*/,
+                                                   uint64_t /*stockNow*/)
 {
     ReadResult r;
     if ((low & 0xF0) == 0x30) { if (config_[2]) slowFor(kShortDelayMs, now); return r; }

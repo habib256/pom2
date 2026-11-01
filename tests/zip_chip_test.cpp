@@ -146,6 +146,28 @@ int main()
     expect(std::fabs(c.emulatedCpuClockHz() - 4000000.0) < 2.0, "devices told 4 MHz");
 
     {
+        // ── $C05B bit 7 is PH0/1024: the crystal's clock, not the 6502's ──
+        // MAME apple2e.cpp:2266 `machine().time().as_ticks(1M_CLOCK / 512)`.
+        // POM2 tapped the CPU cycle counter, so at 4 MHz the bit toggled
+        // 3.9x too often and a loop timed against it measured 1 MHz.
+        auto st = c.lockState();
+        Memory& m = st.memory();
+        expect(zip.fast() && m.cpuSpeedMultiplier() > 3.0, "bit-7 probe: running fast");
+        int edges = 0;
+        uint8_t last = m.memRead(0xC05B) & 0x80;
+        for (int i = 0; i < 128; ++i) {                 // 128 x 64 = 8192 CPU cycles
+            m.advanceCycles(64);
+            const uint8_t b = m.memRead(0xC05B) & 0x80;
+            if (b != last) ++edges;
+            last = b;
+        }
+        // 8192 CPU cycles at 3.91x = ~2095 stock cycles = ~4 edges of 512;
+        // the CPU-clock tap gave 16.
+        std::printf("$C05B bit 7: %d edges over 8192 fast CPU cycles\n", edges);
+        expect(edges >= 3 && edges <= 5, "$C05B bit 7 toggles every 512 STOCK cycles");
+    }
+
+    {
         auto st = c.lockState();
         Memory& m = st.memory();
         // ── Slot slow-down: slot 6 is in the reset mask ($E4) ────────────

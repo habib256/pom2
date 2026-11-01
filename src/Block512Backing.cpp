@@ -730,6 +730,17 @@ uint8_t Block512Backing::readByte(size_t absolute) const
     return (absolute < image_.size()) ? image_[absolute] : 0xFF;
 }
 
+void Block512Backing::writeByteLatched(size_t absolute, uint8_t v)
+{
+    if (!loaded_ || wpHeader_) return;
+    bumpActivity();
+    if (absolute < image_.size() && image_[absolute] != v) {
+        image_[absolute] = v;
+        markDirty(static_cast<uint32_t>(absolute / kBlockBytes));
+        noteMediaWrite();                       // see writeBlock
+    }
+}
+
 void Block512Backing::writeByte(size_t absolute, uint8_t v)
 {
     if (!loaded_ || isWriteProtected()) return;

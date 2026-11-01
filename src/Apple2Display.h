@@ -672,11 +672,14 @@ private:
     // whichever framebuffer the band was painted into — Eve TXTGREEN (P31
     // green) and the RVB Graph's CT. Text is black and white before this
     // pass, so the remap is exact.
-    void textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1);
+    // [x0, x1) bounds the tint to the columns a clipped beam segment painted,
+    // in the current buffer's dots; x1 < 0 = the whole line.
+    void textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1,
+                      int x0 = 0, int x1 = -1);
     bool renderChatMauveGrMixed(Memory& mem, const Memory::DisplayState& state,
                                 int scanY0, int scanY1);
     void tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
-                  uint32_t colour, uint32_t background = 0);
+                  uint32_t colour, uint32_t background = 0, int x0 = 0, int x1 = -1);
     // The RGB-card pipeline is selected AND a card is plugged. Without the
     // card ChatMauveRGB silently renders as ColorNTSC (a real machine pulled
     // out of its adapter still has composite on the wire).

@@ -489,14 +489,25 @@ void MainWindow::renderSlotConfigPanel()
                         ImGui::SameLine(0.0f, 0.0f);
                     }
                     slotLabel(row.label.c_str());
+                    // One auxiliary slot: with the Premium SoftCard //e in it
+                    // there is no RamWorks (Memory::setAuxSlotPort forces one
+                    // bank), so the picker would be a dead control.
+                    const bool auxSlotTaken = settings->getBool("premium_softcard", false);
                     ImGui::SetNextItemWidth(320.0f);
-                    if (ImGui::BeginCombo("##ramworks", curLabel)) {
+                    ImGui::BeginDisabled(auxSlotTaken);
+                    if (ImGui::BeginCombo("##ramworks", auxSlotTaken
+                            ? "64 KB (Premium SoftCard //e in the aux slot)" : curLabel)) {
                         for (const auto& t : kRwTiers)
                             if (ImGui::Selectable(t.label, t.banks == curBanks))
                                 ramWorksDraft_ = t.banks;
                         ImGui::EndCombo();
                     }
-                    if (ImGui::IsItemHovered())
+                    ImGui::EndDisabled();
+                    if (auxSlotTaken && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip(
+                            "The Premium SoftCard //e occupies the auxiliary slot:\n"
+                            "no RamWorks beside it (Machine menu to remove it).");
+                    else if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
                             "RamWorks III bank-switched aux RAM ($C071/3/5/7).\n"
                             "Staged: it lands on Apply, which COLD-BOOTS the\n"

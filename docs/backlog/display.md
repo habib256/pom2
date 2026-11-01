@@ -55,6 +55,19 @@ fallback and the absence of a C800 claim, as well as the SHR painter.
   Displaying an SHR image alone does not enable execution of IIgs
   applications. Reference: [VidHD Manual 1.2](https://www.callapple.org/docs/vidhd/VidHD_Manual_1.2.pdf).
 
+- [ ] **RamWorks bank under the SHR picture (left as is, bug hunt
+  2026-11-01).** The VidHD paints from the aux bank the CPU has selected
+  (`Memory.cpp` `setAuxRamRef(aux.data())`, pinned by `vidhd_card` § 4,
+  as AppleWin's `MemGetAuxPtr`), while the motherboard scanner reads bank 0
+  (`videoAuxData`, MAME `a2eramworks3`). A slot card cannot read the aux
+  slot; a real VidHD builds its picture from the aux writes it snoops, so a
+  bank switch with no write would not change it — in POM2 it does. Options:
+  (a) hand the card `videoAuxData()` (re-pointed on every bank swap), cheap
+  but blind to SHR written while another bank is selected; (b) a VidHD-owned
+  32 KB shadow fed by every aux write, the hardware model, at the cost of a
+  hook on the aux write slow path (`docs/PERFORMANCE.md` § 8 first). Needs a
+  VidHD + RamWorks capture to choose.
+
 <a id="display-011"></a>
 
 ## DISPLAY-011 — Le Chat Mauve — what is left after P0-P2

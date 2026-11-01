@@ -218,6 +218,12 @@ private:
     uint16_t selectedBlock = 0;
     size_t   streamOffset  = 0;  // byte offset within the selected 512-byte block
     int      drive_        = 0;  // latched by the driver entry ($C0n6 bit 7)
+    /// The block being written was writable when its first byte arrived.
+    /// The ROM asks write-protect once per block (`BIT $C0n3 / BVS` before
+    /// its loop) and returns CLC after it, so the card decides per block too:
+    /// a notch flipped mid-loop protects the NEXT block and never tears this
+    /// one. Cleared by any block/drive select, a media change and the wrap.
+    bool     blockWriteLatched_ = false;
 
     static bool validDrive(int d) { return d >= 0 && d < kDrives; }
     /// The drive the firmware is talking to — every hardware path goes here.

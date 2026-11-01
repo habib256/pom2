@@ -148,6 +148,54 @@ void testBus()
     CHECK(mem.memRead(0xD000) == kRom);
 }
 
+// A card holding INH for READS takes every $D000-$FFFF write too, and drops
+// it while its own write side is off: MAME apple2.cpp:236-281 (INH_READ
+// selects upperbank[1], whose write handler is inh_w → the card) and
+// apple2e.cpp:826-870 + :3321 (same on the //e, the motherboard lc_w never
+// runs). POM2 let the write through to the machine's language card, which a
+// reset leaves write-enabled (Sather fig. 5.13): the Saturn dropped it, and
+// the motherboard LC — ProDOS's home on a //e — silently took it.
+void testInhReadTakesWrites()
+{
+    for (int iie = 0; iie < 2; ++iie) {
+        Memory mem;
+        mem.setIIEMode(iie != 0);
+        std::vector<uint8_t> rom(0x3000, kRom);
+        CHECK(mem.loadRomBytes(rom.data(), rom.size(), 0xD000));
+        mem.resetSoftSwitches();                         // motherboard LC: ROM read, RAM write
+        mem.memRead(0xC083); mem.memRead(0xC083);        // read its bank 2 RAM, still write-enabled
+        mem.memWrite(0xD000, 0x11);
+        CHECK(mem.memRead(0xD000) == 0x11);
+        auto owned = std::make_unique<SaturnCard>();
+        owned->setMemory(&mem);
+        mem.slotBus().plug(5, std::move(owned));
+        touch(mem, 0x0);                                 // Saturn: RAM read, writes off
+        CHECK(mem.peekCpuWriteTarget(0xD000) == 0x00);   // the write's target is the card's cell
+        CHECK(mem.debugBank(0xD000, true).kind == pom2::DebugBank::Ignored);
+        mem.memWrite(0xD000, 0x5C);                      // dropped by the card...
+        CHECK(mem.memRead(0xD000) == 0x00);
+        touch(mem, 0x2);                                 // the card lets go
+        CHECK(mem.memRead(0xD000) == 0x11);              // ...and never reached the motherboard
+        mem.memRead(0xC082);
+    }
+}
+
+// DEVSEL is decoded from the address only — the card drives nothing back
+// (MAME ramcard128k.cpp read_c0nx: `return get_open_bus();`).
+void testDevselFloatingBus()
+{
+    Memory mem;
+    int calls = 0;
+    mem.slotBus().setFloatingBusSource([&calls]() { ++calls; return uint8_t{0x3C}; });
+    auto owned = std::make_unique<SaturnCard>();
+    owned->setMemory(&mem);
+    mem.slotBus().plug(5, std::move(owned));
+    const int before = calls;
+    CHECK(mem.memRead(uint16_t(kSw + 0x2)) == 0x3C);
+    CHECK(calls > before);
+    mem.slotBus().unplug(5);
+}
+
 uint16_t textRowBase(int row) { return uint16_t(0x0400 + (row % 8) * 0x80 + (row / 8) * 0x28); }
 
 std::string screen(Memory& mem)
@@ -258,6 +306,8 @@ int testRamTest()
 int main()
 {
     testBus();
+    testInhReadTakesWrites();
+    testDevselFloatingBus();
     const int ramTest = testRamTest();
     if (g_fail) {
         std::fprintf(stderr, "saturn_card: %d failure(s)\n", g_fail);

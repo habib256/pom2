@@ -70,6 +70,12 @@ struct ScreenDumpOptions {
     /// Emit a form feed once the image is done, so the sheet is ejected and
     /// the next job starts clean.
     bool formFeed = true;
+    /// ImageWriter / DMP family only: the pitch command to send once the
+    /// image is done (ImageWriter::pitchCommand()), or 0 to leave the dump's
+    /// own pitch selected. The dump picks a pitch for its graphics density
+    /// (`ESC n`/`E`/`p`/`P`), and pitch persists: without this the next text
+    /// job printed at 9 cpi, or proportional.
+    uint8_t restorePitch = 0;
 };
 
 /// Build the byte stream for the ImageWriter / Apple DMP family (`ESC G`,

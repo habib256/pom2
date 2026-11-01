@@ -492,7 +492,7 @@ bool EmulationController::mount35(int idx, const std::string& path, bool click)
     if (drive->isEjectPending()) {
         // The guest ejected while phase 1 read: start over behind it.
         lk.unlock();
-        return mount35(idx, path);
+        return mount35(idx, path, click);   // the caller's click, not the default
     }
 
     // Decided HERE, under the lock that also does the flush, so no window

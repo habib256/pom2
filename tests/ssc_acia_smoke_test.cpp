@@ -1077,6 +1077,32 @@ void testTxPacingBurstIsShort()
     std::printf("  ok: TX pacing after a pause bursts %zu bytes, not the ring\n", n);
 }
 
+// Ctrl-Reset is not the end of the line. TDRE read 1 the moment each byte was
+// written, so the host ring holds bytes the guest was told had LEFT the chip;
+// a 6551 losing RESET stops its transmitter and loses at most the shift
+// register (the same reading as the DTR path, 2026-10-23). onReset cleared the
+// ring: at 1200 baud a LIST followed by Ctrl-Reset lost its last ~3 s. Power
+// off is different — the line goes dead — and onPowerCycle clears it.
+void testResetKeepsTransmitRing()
+{
+    SuperSerialCard ssc(2);
+    ssc.deviceSelectWrite(kCommandAddr, 0x0B);   // DTR on
+    ssc.deviceSelectWrite(kRdrAddr, 'H');
+    ssc.deviceSelectWrite(kRdrAddr, 'I');
+    const uint8_t in[] = { 'z' };
+    ssc.deliverRxBytes(in, 1);
+    assert(ssc.txQueueDepth() == 2);
+
+    ssc.onReset();
+    assert(ssc.txQueueDepth() == 2 && "a reset discarded bytes already sent");
+    assert(!ssc.dtrAsserted());
+    assert(ssc.rxQueueDepth() == 0);
+
+    ssc.onPowerCycle();
+    assert(ssc.txQueueDepth() == 0 && "power-off keeps a dead line's ring");
+    std::printf("  ok: reset keeps the TX ring, power-off clears it\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
@@ -1108,6 +1134,7 @@ int main()
     testSnapshotStatusErrorsAreMasked();
     testSnapshotKeepsParkedTdr();
     testTxPacingBurstIsShort();
+    testResetKeepsTransmitRing();
     std::printf("OK ssc_acia_smoke\n");
     return 0;
 }

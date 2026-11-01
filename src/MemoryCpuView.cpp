@@ -155,7 +155,9 @@ uint8_t Memory::peekCpuWriteTarget(uint16_t addr) const
     // dropped and so is its undo, so the read view is the right answer.
     // A card holding INH for writes owns the cell (its inhRead is a plain
     // RAM index, whatever its read mode).
-    if (addr >= 0xD000 && lcInhibitor_ && lcInhibitor_->inhibitsWrite())
+    // Under INH_READ too (languageCardWrite): the card's cell is the target,
+    // and a write it drops replaces nothing the CPU can see but that cell.
+    if (addr >= 0xD000 && lcInhibitor_ && (lcInhibitor_->inhibitsWrite() || inhRead_))
         return lcInhibitor_->inhRead(addr);
     if (addr >= 0xD000 && lcWriteEnable) return languageCardRamPeek(addr);
     return peekCpuView(addr);
@@ -198,6 +200,10 @@ pom2::DebugBank Memory::debugBank(uint16_t addr, bool write) const
         return auxiliary ? B{B::Aux, ramWorksBank_} : B{B::Main};
     }
     if (addr >= 0xD000) {
+        // A card holding INH for reads drops the writes it does not take
+        // (languageCardWrite): the motherboard language card never sees them.
+        if (write && lcInhibitor_ && inhRead_ && !lcInhibitor_->inhibitsWrite())
+            return {B::Ignored};
         if (lcInhibitor_ && (write ? lcInhibitor_->inhibitsWrite() : inhRead_)) {
             for (int slot = 1; slot <= 7; ++slot)
                 if (dynamic_cast<const LcInhibitor*>(slots.peripheral(slot)) == lcInhibitor_)

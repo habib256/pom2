@@ -406,6 +406,7 @@ public:
     /// a later card out until $CFFF.
     bool    takesC800() const override { return true; }
     void    onReset() override;
+    void    onPowerCycle() override;
     void    onUnplug() override;
     // CPU-thread hook: apply a worker-thread-pending IRQ-line change here so
     // assertIrq() (which mutates non-atomic SlotPeripheral state) is only

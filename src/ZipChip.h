@@ -64,8 +64,6 @@
 //   not. Real unlock code (four consecutive `STA $C05A`) is unaffected.
 // * The multiplier is sampled once per 4096-cycle chunk, as for the
 //   TransWarp (TranswarpCard.h § Sampling) — exact in aggregate.
-// * $C05B bit 7 toggles every 512 EMULATED cycles, not every 512 stock
-//   cycles of wall time; equal while slow, ~3.9× faster while fast.
 // * The "Bootup speed" default is FAST here (MAME's config defaults to
 //   Standard). MAME says the real chip's own firmware decides at power-up
 //   from the Esc/space keys and that its config is an approximation (:1537-
@@ -97,7 +95,7 @@ public:
     static constexpr int     kSlotDelayMs   = 52;          // :1568
     static constexpr int     kShortDelayMs  = 5;           // :1914, :2044
 
-    ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte) override;
+    ReadResult ioRead(uint8_t low, uint64_t now, uint8_t stateByte, uint64_t stockNow) override;
     void   ioWrite(uint8_t low, uint8_t value, uint64_t now) override;
     double cpuSpeedMultiplier(uint64_t now) const override;
     uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const override;

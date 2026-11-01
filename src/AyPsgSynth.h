@@ -424,6 +424,13 @@ struct DcBlocker {
 
     void reset() { x1_ = x2_ = y1_ = y2_ = 0.0f; }
 
+    /// The filter's memory, for a card that snapshots its rendered output
+    /// (EchoPlusTMS5220Card renders on the CPU thread, so a restore must
+    /// continue the same waveform). Coefficients come from setRate.
+    struct History { float x1, x2, y1, y2; };
+    History history() const { return { x1_, x2_, y1_, y2_ }; }
+    void setHistory(const History& h) { x1_ = h.x1; x2_ = h.x2; y1_ = h.y1; y2_ = h.y2; }
+
 private:
     uint32_t rate_ = 0;
     // `clear()` identity coefficients until setRate runs, so a caller

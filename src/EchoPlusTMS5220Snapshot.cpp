@@ -73,9 +73,23 @@ constexpr size_t snapshotSize = 4 + coreSize + pom2::Via6522::kSnapshotBytes + 2
 void EchoPlusTMS5220Card::appendSnapshotState(std::vector<uint8_t>& out) const {
     std::lock_guard<std::mutex> lock(mtx_);
     pack(out, speech_, via_, ay_, synth_, viaPhase_, speechPhase_, samplePhase_, lastSpeech_, lastWrite_, rate_);
+    // Extension tail (the loader reads the versioned prefix only, so older
+    // builds ignore it): the two PSG DC blockers' history, so a restore
+    // continues the same AC-coupled waveform (bug hunt 2026-11-01). It ENDS
+    // on the sample rate again, so the blob's last word stays the rate the
+    // session loader (SessionCards.cpp) reads from the end.
+    out.insert(out.end(), {'D', 'C'});
+    for (const auto& dc : psgDc_) {
+        const auto h = dc.history();
+        for (float v : {h.x1, h.x2, h.y1, h.y2}) {
+            uint32_t bits; std::memcpy(&bits, &v, 4); pom2::byteio::putU32(out, bits);
+        }
+    }
+    pom2::byteio::putU32(out, rate_);
 }
 void EchoPlusTMS5220Card::loadSnapshotState(const uint8_t* data, size_t size) {
     if (!data || size < snapshotSize || data[0] != 'E' || data[1] != 'T' || data[2] != 'S' || data[3] != 2) return;
+    const size_t fullSize = size;
     size = snapshotSize; // Future extension tails do not alter this versioned prefix.
     pom2::byteio::Reader r(data, size); r.pos = 4;
     pom2::Tms5220 speech;
@@ -110,5 +124,27 @@ void EchoPlusTMS5220Card::loadSnapshotState(const uint8_t* data, size_t size) {
     samplePhase_ = rate_ == rate ? samplePhase : 0;
     lastSpeech_ = lastSpeech; lastWrite_ = lastWrite;
     pcm_.clear(); lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    // The PSG DC blockers: their history from the 'DC' tail when present and
+    // sane, a clean filter otherwise (a pre-2026-11-01 blob has no tail).
+    bool dcRestored = false;
+    constexpr size_t kDcTail = 2 + 2 * 4 * 4 + 4;   // tag, history, rate
+    if (fullSize >= snapshotSize + kDcTail && data[snapshotSize] == 'D' &&
+        data[snapshotSize + 1] == 'C' && rate_ == rate) {
+        pom2::byteio::Reader t(data + snapshotSize + 2, kDcTail - 2);
+        pom2::ay::DcBlocker::History h[2];
+        bool finite = true;
+        for (auto& hist : h) {
+            float* f[4] = { &hist.x1, &hist.x2, &hist.y1, &hist.y2 };
+            for (float* v : f) {
+                const uint32_t bits = t.u32(); std::memcpy(v, &bits, 4);
+                finite = finite && std::isfinite(*v) && std::fabs(*v) <= 16.0f;
+            }
+        }
+        if (finite) {
+            for (int i = 0; i < 2; ++i) { psgDc_[i].setRate(rate_); psgDc_[i].setHistory(h[i]); }
+            dcRestored = true;
+        }
+    }
+    if (!dcRestored) for (auto& dc : psgDc_) { dc.setRate(rate_); dc.reset(); }
     assertIrq(via_.irqOut());
 }

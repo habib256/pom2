@@ -29,9 +29,11 @@
 // when roms/slinky_341-0344a.bin is absent.
 
 #include "M6502.h"
+#include "MachineSnapshot.h"
 #include "Memory.h"
 #include "ResourcePaths.h"
 #include "SlinkyCard.h"
+#include "SnapshotIO.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -176,11 +178,44 @@ int firmware()
     return 0;
 }
 
+// A card whose every page has been written once (a RAM test, a zero-fill, a
+// RAM disk filled to 99 %) serialises to 32 + 258 x 4096 + 1 = 1 056 801
+// bytes — over the 1 MiB the rewind restore used to accept for a SLOTn
+// section. It skipped the section and reported success: main RAM went back
+// in time, the RAM disk did not (bug hunt 2026-11-01).
+void rewindFullCard()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    auto owned = std::make_unique<SlinkyCard>(kSlot);
+    SlinkyCard* card = owned.get();
+    mem.slotBus().plug(kSlot, std::move(owned));
+    card->deviceSelectWrite(0, 0x00); card->deviceSelectWrite(1, 0x00);
+    card->deviceSelectWrite(2, 0x00);
+    for (std::size_t i = 0; i < SlinkyCard::kRamBytes; ++i) card->deviceSelectWrite(3, 0x00);
+    std::vector<uint8_t> blob;
+    {
+        pom2::SnapshotWriter w(blob);
+        pom2::captureMachineState(w, cpu, mem, /*includeSlots=*/true);
+    }
+    expect(blob.size() > 1024u * 1024u, "a full card's rewind frame is over 1 MiB");
+    card->deviceSelectWrite(0, 0x34); card->deviceSelectWrite(1, 0x12);
+    card->deviceSelectWrite(2, 0x00);
+    card->deviceSelectWrite(3, 0x55);
+    expect(card->ramAt(0x1234) == 0x55, "the post-capture write landed");
+    pom2::SnapshotReader r(blob.data(), blob.size());
+    const auto res = pom2::restoreMachineState(r, cpu, mem, /*transactional=*/false);
+    expect(res.ok, "the rewind frame restores");
+    expect(card->ramAt(0x1234) == 0x00, "a full Slinky rolls back with the rest of the machine");
+}
+
 } // namespace
 
 int main()
 {
     registers();
+    rewindFullCard();
     const int rc = firmware();
     std::printf("slinky_card: %d failure(s)\n", failures);
     if (failures) return 1;

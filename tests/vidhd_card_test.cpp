@@ -176,6 +176,17 @@ int main()
     auxPoke(mem, l11 + 1, 0x01);         // fill → green, red
     auxPoke(mem, l11 + 2, 0x00);         // fill, fill → red, red
     auxPoke(mem, l12 + 3, 0x1B);         // 00 01 10 11 → 8+0, 12+1, 0+2, 4+3
+    // Lines 13-14: fill mode from the first dot. The IIgs VGC starts a fill
+    // line from a colour the SCB's low five bits choose (MAME apple2video.cpp
+    // `fillmode_init[scb & 0x1f]`, John Brooks's hardware test): entry 2 for
+    // palette 0 (SCB bit 4 clear), entry n for palette n — not entry 0.
+    setColor(mem, 0, 0, 0, 0, 0);
+    setColor(mem, 0, 2, 0, 0, 0xF);      // palette 0 entry 2: blue
+    auxPoke(mem, 0x9D00 + 13, 0x20);     // fill, palette 0
+    auxPoke(mem, 0x9D00 + 14, 0x23);     // fill, palette 3
+    const uint16_t l13 = 0x2000 + 13 * 160, l14 = 0x2000 + 14 * 160;
+    auxPoke(mem, l13, 0x00); auxPoke(mem, l13 + 1, 0x00);
+    auxPoke(mem, l14, 0x00); auxPoke(mem, l14 + 1, 0x00);
     expect(mem.peekMainRam(l10) == 0 && mem.auxData()[l10] == 0x12,
            "the pixel bytes went to aux, not main");
     mem.memWrite(0xC029, 0xC1);
@@ -202,6 +213,9 @@ int main()
         expect(px(p, 14, 24) == c3(0 + 2), "640: dot 2 from palette entry 0 + 2");
         expect(px(p, 15, 24) == c3(4 + 3), "640: dot 3 from palette entry 4 + 3");
         expect(px(p, 15, 25) == c3(7), "640: doubled vertically too");
+        expect(px(p, 0, 26) == rgb(0, 0, 15) && px(p, 6, 26) == rgb(0, 0, 15),
+               "fill from the line start, palette 0: entry 2 (fillmode_init)");
+        expect(px(p, 0, 28) == c3(3), "fill from the line start, palette 3: entry 3");
     }
 
     // ── Through Apple2Display ───────────────────────────────────────────
@@ -281,6 +295,41 @@ int main()
         expect(disp.width() == 280 && !disp.showingCardPicture(),
                "NEWVIDEO cleared: back to the Apple's picture");
         disp.setCardVideoSource(nullptr);
+    }
+
+    // ── 3b. $C022 on a beam-raced line ─────────────────────────────────
+    // A mid-line PAGE2 split sends that scanline's column segments down the
+    // 280-wide clipped painter, which never ran the text tint: the split
+    // line came out white on black between two tinted bands (bug hunt
+    // 2026-11-01). Both pages hold normal spaces, so every dot of line 40
+    // is text background whichever page a segment reads.
+    {
+        Memory bm;
+        bm.setIIEMode(true);
+        auto vc = std::make_unique<VidHDCard>(3);
+        auto* v = vc.get();
+        bm.slotBus().plug(3, std::move(vc));
+        for (uint16_t a = 0x0400; a < 0x0C00; ++a) bm.memWrite(a, 0xA0);
+        bm.memWrite(0xC051, 0);                       // TEXT
+        bm.memWrite(0xC054, 0);                       // page 1
+        bm.memWrite(0xC022, 0xD6);                    // yellow on medium blue
+        Apple2Display disp;
+        disp.setCardVideoSource(v);
+        bm.setCycleCounter(0);
+        bm.beginVideoEventFrame();
+        bm.setCycleCounter(40 * 65 + 44);             // line 40, byte column 20
+        bm.memRead(0xC055);
+        bm.setCycleCounter(40 * 65 + 54);             // byte column 30
+        bm.memRead(0xC054);
+        disp.render(bm);
+        const uint32_t bg = VidHDCard::iigsColour(0x6);
+        const uint32_t* p = disp.pixels();
+        const int w = disp.width();
+        expect(p[static_cast<size_t>(30) * w + 10] == bg, "an unsplit line wears $C022");
+        expect(p[static_cast<size_t>(40) * w + 10] == bg &&
+               p[static_cast<size_t>(40) * w + 160] == bg &&
+               p[static_cast<size_t>(40) * w + 250] == bg,
+               "every segment of a split line wears $C022");
     }
 
     // ── 4. RamWorks: the CPU's selected aux bank ────────────────────────

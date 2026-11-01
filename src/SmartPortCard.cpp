@@ -137,6 +137,7 @@ SmartPortCard::setUnit(size_t idx, std::unique_ptr<SmartPortUnit> u)
     readCacheValid_[idx] = false;
     readCacheBlock_[idx] = 0xFFFF;
     writeBufPrimed_[idx] = false;
+    writeBufMedia_[idx]  = 0;
     borrowedKind_[idx].reset();
     auto old = std::move(units_[idx]);
     units_[idx] = std::move(u);
@@ -272,6 +273,10 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         }
         p += kPerUnit;
     }
+    // A prime that survived the identity check above belongs to the medium
+    // in the bay now (the blob carries a path hash, not a mount id).
+    for (size_t u = 0; u < kMaxUnits; ++u)
+        writeBufMedia_[u] = writeBufPrimed_[u] ? unitMediaId(unit(u)) : 0;
     // Media didn't move; the read cache just re-fills from the same block.
     readCacheValid_.fill(false);
 
@@ -668,11 +673,18 @@ void SmartPortCard::writeDataByte(uint8_t v)
             std::memset(writeBuf_[u].data(), 0, kBlockBytes);
         }
         writeBufPrimed_[u] = true;
+        writeBufMedia_[u]  = unitMediaId(unit);
     }
     writeBuf_[u][streamOffset_[u]] = v;
     streamOffset_[u] = (streamOffset_[u] + 1) % kBlockBytes;
     if (streamOffset_[u] == 0) {
-        if (!unit->writeBlock(selectedBlock_[u], writeBuf_[u].data())) {
+        // The medium changed while the block streamed in (bug hunt
+        // 2026-11-01): `writeBuf_` holds the OLD disk's block with the
+        // guest's bytes on top, and none of it belongs on this one. The same
+        // guard the snapshot loader applies to a restored prime (v2 tail).
+        if (writeBufMedia_[u] != unitMediaId(unit)) {
+            noteIoError(u);
+        } else if (!unit->writeBlock(selectedBlock_[u], writeBuf_[u].data())) {
             // Out-of-range / rejected commit → report failure to ProDOS
             // (ROM write routine tests $C0n4 bit 0 and returns carry-set).
             noteIoError(u);

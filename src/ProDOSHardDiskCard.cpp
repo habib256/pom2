@@ -84,6 +84,7 @@ void ProDOSHardDiskCard::mediumChanged(int drive)
     if (drive != drive_) return;
     selectedBlock = 0;
     streamOffset  = 0;
+    blockWriteLatched_ = false;
 }
 
 bool ProDOSHardDiskCard::loadDrive(int drive, const std::string& path)
@@ -250,6 +251,7 @@ void ProDOSHardDiskCard::onReset()
 {
     selectedBlock = 0;
     streamOffset = 0;
+    blockWriteLatched_ = false;
     drive_ = 0;
 }
 
@@ -267,6 +269,7 @@ void ProDOSHardDiskCard::deviceSelectWrite(uint8_t low4, uint8_t v)
     //   $C0D2 write = next byte INTO selected block (write-back enabled)
     //   $C0D3 read  = bit-7 = imageLoaded, bit-6 = isWriteProtected
     //   $C0D6 write = drive select, bit 7 (ProDOS's unit byte, verbatim)
+    if (low4 == 0x0 || low4 == 0x1 || low4 == 0x6) blockWriteLatched_ = false;
     if (low4 == 0x6) {
         drive_ = (v & 0x80) ? 1 : 0;
         if (hdvTraceOn())
@@ -358,7 +361,12 @@ void ProDOSHardDiskCard::writeDataByte(uint8_t v)
     // the real medium WP flag (2MG header) blocks the write. Persisting those
     // RAM changes to the host .hdv/.2mg file is a SEPARATE opt-in handled by
     // writeBackEnabled in saveDirty()/ejectImage().
-    if (!cur().isLoaded() || cur().isWriteProtected()) return;
+    if (!cur().isLoaded()) return;
+    // Decided per block, as the ROM decides it (blockWriteLatched_): once a
+    // block has begun writable, a notch flipped mid-loop no longer stops it.
+    if (streamOffset == 0 || !blockWriteLatched_)
+        blockWriteLatched_ = !cur().isWriteProtected();
+    if (!blockWriteLatched_) return;
 
     if (hdvTraceOn() && streamOffset == 0) {
         const bool inRange = (selectedBlock + 1u) <= cur().blockCount();
@@ -370,8 +378,9 @@ void ProDOSHardDiskCard::writeDataByte(uint8_t v)
 
     const size_t absolute =
         static_cast<size_t>(selectedBlock) * kBlockBytes + streamOffset;
-    cur().writeByte(absolute, v);
+    cur().writeByteLatched(absolute, v);
     streamOffset = (streamOffset + 1) % kBlockBytes;
+    if (streamOffset == 0) blockWriteLatched_ = false;
 }
 
 void ProDOSHardDiskCard::buildRom()
@@ -706,4 +715,7 @@ void ProDOSHardDiskCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // before the modulo wrap, handing the guest one wrong byte (and
     // corrupting one byte of the wrong block on the write path).
     if (streamOffset >= 512) streamOffset = 0;   // untrusted input
+    // Not in the blob: a block restored mid-stream is decided again here.
+    blockWriteLatched_ = streamOffset != 0 && cur().isLoaded() &&
+                         !cur().isWriteProtected();
 }

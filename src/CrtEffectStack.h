@@ -40,12 +40,28 @@
 #ifndef POM2_CRT_EFFECT_STACK_H
 #define POM2_CRT_EFFECT_STACK_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
 #include "NtscPostProcessor.h"   // pom2::NtscParams
 
 namespace pom2 {
+
+/// The glass pass's per-pass phosphor retention. `p` (NtscParams::persistence)
+/// is what one EMULATED frame keeps of the previous one at the machine's own
+/// refresh (60 Hz NTSC, 50 Hz PAL); the pass itself runs once per HOST present,
+/// so it is raised to the frames of the machine this present spans,
+/// `dtSeconds * refreshHz`. Without it the afterglow was 2-2.4x shorter on a
+/// 120/144 Hz panel. Wall time, not the emulated frame index: a paused machine
+/// still fades like a tube does (the 2026-09-08 MonoWhite fix's lesson: a frozen
+/// history kept erased dots lit).
+inline float crtRetention(float p, float dtSeconds, float refreshHz)
+{
+    if (!(p > 0.0f) || !(dtSeconds > 0.0f) || !(refreshHz > 0.0f)) return 0.0f;
+    return std::pow(std::min(p, 0.98f), dtSeconds * refreshHz);
+}
 
 class CrtEffectStack
 {
@@ -64,6 +80,13 @@ public:
 
     void setParams(const NtscParams& p) { params = p; }
     const NtscParams& getParams() const { return params; }
+    /// Host time since the previous present, and the emulated machine's
+    /// refresh rate (crtRetention). The defaults keep one pass = one frame.
+    void setFramePacing(float dtSeconds, float refreshHz)
+    {
+        dtSeconds_ = std::clamp(dtSeconds, 0.0f, 0.1f);
+        refreshHz_ = refreshHz;
+    }
 
     // Apply the enabled effect layers to RGBA source texture `srcTex`
     // (logical size srcW × srcH — drives the scanline/mask frequency), and
@@ -132,6 +155,8 @@ private:
     bool firstFrame  = true;
 
     NtscParams params{};
+    float dtSeconds_ = 1.0f / 60.0f;
+    float refreshHz_ = 60.0f;
 
     bool createTextures(int w, int h);
     // w/h clamped to what this GL implementation can actually allocate.

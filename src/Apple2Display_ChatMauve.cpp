@@ -27,6 +27,7 @@
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
@@ -329,16 +330,18 @@ void Apple2Display::renderDhgrCol280(Memory& mem, const Memory::DisplayState& st
 // the text painters are shared with every other pipeline, so the tint is
 // applied once per band (renderInternalBand) — and once over the composite
 // mixed-text patch, which paints rows 160-191 outside that tree.
-void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1)
+void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1,
+                                 int x0, int x1)
 {
     if (chatMauveActive()) {
         const auto tm = chatMauve->textMode(state.eightyCol, /*an3On=*/!state.dhgr);
         if (tm == LeChatMauveCard::TextMode::Green)
             tintText(state, scanY0, scanY1,
-                     0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u);
+                     0xFF000000u | (uint32_t{0x33} << 16) | (uint32_t{0xFF} << 8) | 0x33u,
+                     0, x0, x1);
         else if (tm == LeChatMauveCard::TextMode::Tinted)
             tintText(state, scanY0, scanY1,
-                     kChatMauveLoResPalette[chatMauve->rvbGraph().textColour]);
+                     kChatMauveLoResPalette[chatMauve->rvbGraph().textColour], 0, x0, x1);
     }
     // A VidHD's IIgs text colours ($C022) on the Apple's own text, when the
     // card is not showing its Super Hi-Res picture and the monitor is not a
@@ -346,7 +349,7 @@ void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, 
     uint32_t fg = 0, bg = 0;
     if (cardVideo_ && !cardOwnsMonitor(state.textMode, state.an0) &&
         !isMonochrome() && cardVideo_->textColours(fg, bg))
-        tintText(state, scanY0, scanY1, fg, bg);
+        tintText(state, scanY0, scanY1, fg, bg, x0, x1);
 }
 
 // Text in one colour: Eve TXTGREEN ("blanc → vert", 40 and 80 columns, the
@@ -354,7 +357,7 @@ void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, 
 // painters put pure white on pure black, so remapping white in the text
 // rows of the band is the whole effect.
 void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
-                             uint32_t colour, uint32_t background)
+                             uint32_t colour, uint32_t background, int x0, int x1)
 {
     int lo = 0, hi = 0;
     if (state.textMode) {
@@ -366,9 +369,11 @@ void Apple2Display::tintText(const Memory::DisplayState& state, int scanY0, int 
     }
     const int w = useFrame80_ ? kWidth80 : kWidth;
     uint32_t* base = useFrame80_ ? frame80.data() : frame.data();
+    const int xa = std::max(0, x0);
+    const int xb = (x1 < 0) ? w : std::min(w, x1);
     for (int y = lo; y < hi; ++y) {
         uint32_t* row = base + static_cast<size_t>(y) * w;
-        for (int x = 0; x < w; ++x) {
+        for (int x = xa; x < xb; ++x) {
             if (row[x] == 0xFFFFFFFFu) row[x] = colour;
             // background == 0: leave the paper alone (no alpha-0 colour is
             // ever painted, so 0 is free as "not asked").

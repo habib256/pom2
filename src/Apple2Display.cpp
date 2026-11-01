@@ -383,7 +383,7 @@ Apple2Display::RasterPos Apple2Display::frameCycleToPos(uint64_t emuCycle,
     // CLOSES the lit run is legitimately thrown in HBL — a switch in
     // blanking governs the whole upcoming line. Only the opening switch
     // must be inside the window.)
-    const int byteCol = std::clamp(hpos - 24, 0, 40);
+    const int byteCol = std::clamp(hpos - kVideoAccessColumnOffset, 0, 40);
     return {scanline, byteCol};
 }
 

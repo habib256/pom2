@@ -54,6 +54,12 @@ private:
     pom2::Via6522 via_;
     pom2::Ay3_8910 ay_[2];
     pom2::ay::ChipSynthState synth_[2];
+    /// MAME's default 20 Hz speaker high-pass on each PSG side (AyPsgSynth.h
+    /// DcBlocker; the Mockingboard and the Phasor run the same one). The AY
+    /// channel model is unipolar: without it every note and volume write
+    /// stepped a DC offset (bug hunt 2026-11-01). Rendered on the CPU thread
+    /// with the samples, so guarded by mtx_; not snapshotted (filter history).
+    pom2::ay::DcBlocker psgDc_[2];
     std::deque<std::array<float, 2>> pcm_;
     double cpuHz_ = 1022727, busHz_ = 1022727;
     bool busClockSet_ = false;

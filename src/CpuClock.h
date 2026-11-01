@@ -126,6 +126,15 @@ inline constexpr VideoTiming POM2_TIMING_NTSC{
 inline constexpr VideoTiming POM2_TIMING_PAL{
     VideoStandard::PAL,  1015625, 312, 65, 192, 20313, 50 };
 
+// The beam rule shared by the soft-switch replay and the video write log: a
+// bus access (switch OR store) on horizontal cycle `hpos` first reaches byte
+// column `hpos - kVideoAccessColumnOffset` of its line. The scanner fetches
+// column c in phi1 of hpos 25 + c, before the CPU's phi2, so an access AT
+// 25 + c is one column late — measured on MAD EFFECT, offsets 21..24 valid,
+// 25 not (Apple2Display::frameCycleToPos). One constant, so the two consumers
+// cannot drift apart again (bug hunt 2026-11-01: the log used 25).
+inline constexpr int kVideoAccessColumnOffset = 24;
+
 inline constexpr const VideoTiming& pom2VideoTiming(VideoStandard s)
 {
     return s == VideoStandard::PAL ? POM2_TIMING_PAL : POM2_TIMING_NTSC;

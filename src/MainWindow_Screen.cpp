@@ -462,6 +462,8 @@ void MainWindow::drawScreenImage()
                         crtP.hue       = 0.0f;
                         crtP.sharpness = 0.5f;
                         crtFx->setParams(crtP);
+                        crtFx->setFramePacing(ImGui::GetIO().DeltaTime,   // CrtEffectStack.h crtRetention
+                            float(pom2VideoTiming(controller->getVideoStandard()).refreshHz));
                         const unsigned int out = crtFx->process(
                             demod, ntscFx->outputWidth(), ntscFx->outputHeight(),
                             dstW, dstH);
@@ -495,6 +497,8 @@ void MainWindow::drawScreenImage()
             crtP.hue       = 0.0f;
             crtP.sharpness = 0.5f;
             crtFx->setParams(crtP);
+            crtFx->setFramePacing(ImGui::GetIO().DeltaTime,   // CrtEffectStack.h crtRetention
+                float(pom2VideoTiming(controller->getVideoStandard()).refreshHz));
             const unsigned int out = crtFx->process(
                 presentTex, fbW, fbH, dstW, dstH);
             if (out != 0) presentTex = out;
@@ -514,6 +518,8 @@ void MainWindow::drawScreenImage()
             // NtscParams the user edits there (the demod-only knobs are
             // ignored by the effect stack).
             if (ntscFx) crtFx->setParams(ntscFx->getParams());
+            crtFx->setFramePacing(ImGui::GetIO().DeltaTime,   // CrtEffectStack.h crtRetention
+                float(pom2VideoTiming(controller->getVideoStandard()).refreshHz));
             const unsigned int out = crtFx->process(
                 presentTex, fbW, fbH, dstW, dstH);
             if (out != 0) presentTex = out;

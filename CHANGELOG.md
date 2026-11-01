@@ -10,6 +10,318 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — Bug hunt: audio and the sound chips
+
+mb-audit v1.61 still passes everything (Mockingboard A/C, Sound II + SSI263,
+Phasor, two Mockingboards), and so did the AY, 6522, TMS5220, Phasor and
+speaker code when read against MAME master and AppleWin master. The five
+defects sat in the cards mb-audit never touches: the S.A.M., the Cricket/Echo
+and the Echo+ TMS5220. Each is pinned by a test that failed on the old code.
+
+- **A card that decodes no `$C0nX` read answered `$FF`, not the floating
+  bus.** `SlotPeripheral::deviceSelectRead`'s default returned a hard `$FF`,
+  where MAME's base `read_c0nx` ends `return get_open_bus();` (`a2bus.cpp`)
+  and an empty slot already gave the floating bus. A guest sampling `$C0nX`
+  (VBL by comparing reads, RNG loops, presence probes) saw a constant. **The
+  default is now `openBus()`.** It changes the read of every card that does
+  not override it: the S.A.M. (`SamCard`, MAME `a2sam.cpp` defines only
+  `write_c0nx`), the Cricket/Echo (`EchoPlusCard`), the ALS CP/M Card
+  (`AlsCpmCard`), the Microsoft SoftCard (`SoftCardZ80`), the TransWarp
+  (`TranswarpCard`), and the Premium SoftCard //e (`PremiumSoftCard`, which
+  sits in aux slot 0, whose `$C080-$C08F` is the language card, so this one
+  makes no difference in practice). A bus with no floating-bus source still
+  answers `$FF`, so standalone harnesses see no change. The Saturn 128K had
+  its own override returning `$FF` after its bank switch. It now returns
+  `openBus()` too, which is what hunt E's `testDevselFloatingBus` in
+  `saturn_card` asks for. Pinned by `sam_card` and `echoplus_card_smoke`
+  (a counting floating-bus source, read through `SlotBus::deviceSelectRead`;
+  the S.A.M.'s DAC must not move).
+- **The Echo+ TMS5220's PSG had no DC blocker.** The AY channel model is
+  unipolar: a channel adds `kVolumeTable[level]` or nothing. A full-scale
+  tone therefore carried a DC term (0.058 at the default volume, measured),
+  and every note and volume write stepped it, which is a click. The
+  Mockingboard and the Phasor run MAME's default 20 Hz speaker high-pass
+  (`AyPsgSynth.h` `DcBlocker`), and MAME's Echo+ routes its two AYs to such a
+  speaker (`a2mockingboard.cpp` `single_via_devices`). The Echo+ TMS card now
+  runs the same filter on each PSG side, but not on the TMS5220, whose output
+  is already bipolar. The filter is reset on power cycle and on a rate change.
+  Its history rides in an extension tail of the ETS v2 snapshot, so a restore
+  continues the same waveform. The tail ends on the sample rate again because
+  the session loader (`SessionCards.cpp`) reads the rate from the blob's last
+  word. `session_machine` caught a first version that did not. The loader reads the versioned prefix only, so
+  older blobs still load, with a clean filter. Pinned by `echoplus_tms5220`:
+  the mean of a settled tone is below 0.005 (it was 0.058) and a silenced
+  channel decays to zero. Its speech-centring check now drains the
+  post-reset tail first and compares with a tolerance.
+- **An Echo+ TMS5220 clock change double-counted its VIA, speech and PSG
+  time.** `setCpuClock` and `setStandardClock` called `sync()`, which is the
+  in-instruction form (`getCycleCountNow() + 1`). Both setters run BETWEEN
+  instructions: in `setVideoStandard`, in `applyAcceleratorClock` once per
+  4096-cycle chunk, and in Slot Config Apply. There `getCycleCountNow()`
+  still counts the last instruction, so the card was advanced past "now",
+  and the next `advanceCycles` landed behind it. `syncAt` then re-counted the
+  overlap. With a TransWarp or a FASTChip, every slow window moved the 6522's
+  T1 phase a few cycles ahead. The setters no longer sync; `advanceCycles`
+  has already brought the card to the instruction boundary, as on the
+  Mockingboard and the Phasor. Pinned by `echoplus_tms5220`: a guest loop
+  reads both cards' T1 from inside an instruction, and the difference must
+  stay constant with a same-clock setter call after every step.
+- **The Echo+ TMS5220 held an AY READ on VIA port A forever.** Only the READ
+  branch set the port's input pins. Nothing put them back, so a later
+  port-A read with DDRA = 0 returned a stale PSG register. MAME replaces
+  `m_porta1` at the next port-A output. The Mockingboard and Phasor float the
+  bus high after any command but READ (mb-audit TestAYReadHiZ, test 21:14).
+  The card now computes the bus once per strobe: `$FF` unless a selected chip
+  returned `Read`, with the last one winning as in MAME. Pinned by
+  `echoplus_tms5220`.
+- **The Echo+ TMS5220's volume clamped at 1.0 while its mixer slider runs to
+  2.0** like every other source's, so the top half of the slider did nothing.
+  It now clamps to [0, 2]. Pinned by `echoplus_tms5220`.
+
+## 2026-11-01 — Bug hunt: memory, the MMU and the soft switches
+
+Four defects, each pinned by a test that failed on the old code. MAME master
+(`apple2e.cpp`, `apple2.cpp`, `ramcard128k.cpp`, `a2eramworks3.cpp`) was the
+reference throughout. A fifth finding, a Saturn 128K's `$C0nX` read driving
+`$FF` rather than the floating bus, is fixed by the audio hunt's change to
+`SlotPeripheral`'s default together with the Saturn's own override, which
+returned a hard `$FF` after its bank switch (`SaturnCard.h`). Its assertion
+is in `saturn_card` (`testDevselFloatingBus`).
+
+- **A Premium SoftCard //e and RamWorks could both be fitted, and a 6502
+  `STA $C073` swapped the Z80's 64 KB away.** Both are //e auxiliary-slot
+  cards, and there is one aux slot. Nothing decodes `$C071/3/5/7` beside a
+  Premium SoftCard either: MAME hands `$C07x` to the aux card
+  (`apple2e.cpp:2665`), and only the RamWorks device implements it.
+  `ramworks_banks` was still applied on every //e profile, so with both set
+  any RamWorks probe (AppleWorks expanders, RAM-disk drivers) memcpy'd
+  another bank into the arrays the Z80 runs from (`auxPhysical`). The
+  80-column screen went with it, because the display reads bank 0. Seating an
+  aux-slot card now brings bank 0 back and drops the geometry to one bank.
+  `setRamWorksBanks` keeps it there while the card stays, and
+  `ramWorksSwapToBank` is a no-op beside it (`Memory::setAuxSlotPort`, now in
+  `MemoryLanguageCard.cpp` with the aux-slot code). Slot Config greys the
+  RamWorks row while the Machine-menu option is on. Pinned by
+  `premium_softcard` (`testNoRamWorksBesideTheCard`): both plug orders, a
+  `$C073`/`$C071` store leaving the Z80's cells, and RamWorks allowed again
+  once the card is out.
+- **A write to `$C060-$C06F` read the cassette comparator, which starts an
+  armed tape.** `softSwitchAccess` ran the `$C060` and `$C061-$C06F` branches
+  for stores too, and `CassetteDevice::readTapeInput()` is not a pure read:
+  an armed PLAY becomes active there, and the leader-rewind clock is reset.
+  The inputs are read-only on the hardware. MAME maps the ][+ range
+  `.nopw()` (`apple2.cpp:657`), and on the //e `c000_w` reaches only
+  `do_io`'s IIgs-STATE `break` (`apple2e.cpp:2039`). So `STA $C068`, the STATE
+  register ProDOS touches, started the tape before the LOAD. Writes there are
+  now inert, after the //c mouse IOU and the FASTChip have had their turn.
+  Pinned by `cassette_hostile` (`testWritesDoNotReachTheComparator`, ][+ and
+  //e, with the read as the negative control).
+- **A Saturn 128K reading RAM with writes off let `$D000-$FFFF` stores
+  through to the motherboard language card.** `languageCardWrite` gave the
+  card only the writes it took (INH_WRITE) and passed the rest on. MAME does
+  otherwise in both drivers. In `apple2.cpp:236-281`, INH_READ selects
+  `upperbank[1]`, whose write handler is `inh_w`, so every write goes to the
+  card, which drops it when its write side is off. In `apple2e.cpp:826-870`
+  with `inh_w :3321`, the //e's own `lc_w` never runs under INH_READ. A reset
+  leaves the motherboard LC write-enabled (Sather fig. 5.13). So a Saturn in
+  write-protect mode, the case Saturn's own RAMTEST128K checks, had the //e
+  LC take every byte it refused, and that LC is where ProDOS lives. The same
+  rule now holds in `peekCpuWriteTarget` (the card's cell) and in
+  `debugBank(write)` (`ignored`). The real Saturn's INH timing on write cycles
+  is undocumented, so this follows MAME. Pinned by `saturn_card`
+  (`testInhReadTakesWrites`, ][+ and //e). RAMTEST128K still passes all
+  eight blocks.
+- **The Zip Chip's `$C05B` bit 7 counted 6502 cycles.** The bit is a PH0/1024
+  tap. MAME times it with `machine().time()` at the stock clock
+  (`apple2e.cpp:2266`). POM2 used the CPU cycle counter, so at 4 MHz it
+  toggled 3.9× too often, and a loop timed against it measured 1 MHz. This
+  was listed as a known divergence in `ZipChip.h` because POM2 had no crystal
+  clock at the time; Memory has one now (`videoAccessCycle`).
+  `CpuSocketAccelerator::ioRead` takes a `stockNow` argument, and the
+  divergence note is gone. Pinned by `zip_chip`: 4 edges in 8192 fast CPU
+  cycles, where there were 16.
+
+## 2026-11-01 — Bug hunt: the display pipeline
+
+Four defects, each pinned by a test that failed on the old code. A fifth
+(the VidHD reads the CPU's RamWorks bank) is left as is and recorded under
+DISPLAY-001.
+
+- **The CRT glass afterglow depended on the host monitor's refresh rate.**
+  `CrtEffectStack` multiplied the previous output by `persistence` once per
+  pass, and the pass runs once per host present (vsync). The 2026-07-12 fix
+  that paced FLASH and the painters' own phosphor by the emulated frame
+  never reached this GL stage: at the shipped 0.4, what one emulated frame
+  kept was 0.4 at 60 Hz, 0.16 at 120 Hz and 0.11 at 144 Hz, and a PAL
+  machine on a 60 Hz host decayed 1.2 times per frame. The retention per
+  pass is now `persistence ^ (dt · refreshHz)` (`crtRetention`,
+  `CrtEffectStack.h`): host time since the last present × the machine's
+  own 50/60 Hz. That is one pass = one frame at 60 Hz on NTSC, so the look
+  there is unchanged. Wall time and not the emulated frame index, because a
+  frozen history keeps erased dots lit while paused (the 2026-09-08 MonoWhite
+  lesson). Pinned by `crt_glass_resample` § 3 (one 1/60 s present against
+  two 1/120 s ones: 102 against 40 before, 102 against 101 now).
+- **On a beam-raced frame, a split line lost the VidHD's text colours.**
+  A mid-line soft switch sends that line's column segments down the clipped
+  280-wide painter in `renderInternalSegment`, which painted and returned
+  without `textTintPass`; full-width bands and the 560-wide save/restore
+  path run it through `renderInternalBand`. With `$C022` set, the split
+  line came out white on black between two tinted bands. The clipped path
+  now tints the columns it owns (`textTintPass` / `tintText` take an
+  x-window). Pinned by `vidhd_card` § 3b.
+- **A store into video RAM showed one cycle earlier than a soft switch on
+  the same cycle.** The scanner fetches byte column c in phi1 of hpos 25 +
+  c, before the CPU's phi2, so an access AT 25 + c misses column c — the
+  rule `frameCycleToPos` measured on MAD EFFECT (offsets 21-24 valid, 25
+  not). The video write log's cut used 25: a store at 25 + c reached column
+  c on its own line. Both now read one constant, `kVideoAccessColumnOffset`
+  (`CpuClock.h`), so they cannot drift apart again. Pinned by
+  `drol_pageflip_render` (a store at hpos 28 misses column 3 and reaches
+  column 4). Booting DIX-fix.po with the old and the new rule,
+  `dix_menu_raster_probe` (six menu frames) and `dix_auto_tour_probe --png`
+  (50 frames over one full cycle of the automatic mode, 2100 s) wrote
+  byte-identical frames, with an identical per-part log; `dix_modpage_split`,
+  `purplesoft_eve_probe` and `purplesoft_eve_screens` pass unchanged. MAD
+  EFFECT and OLDSKOOL as separate disks are not in the test media, so their
+  own probes did not run.
+- **VidHD: a 320-mode colour-fill line started from palette entry 0.** The
+  IIgs VGC starts a fill line from a colour chosen by the SCB's low five
+  bits: entry 2 for palette 0, entry n for palette n (MAME
+  `apple2video.cpp` `fillmode_init`, from John Brooks's hardware test).
+  POM2 now uses that table. This is an assumption: it is the IIgs rule
+  Brooks measured, Brooks is also the VidHD's author, and no VidHD capture
+  exists to confirm the card follows it. Pinned by `vidhd_card` § 3.
+
+## 2026-11-01 — Bug hunt: serial, network and printers
+
+Four defects, each pinned by a test that failed on the old code.
+
+- **Super Serial: Ctrl-Reset threw away what the guest had already sent.**
+  `onReset` cleared the host TX ring. TDRE reads 1 the moment a byte is
+  written, so the guest can be up to 4 KB ahead of the line (13 s at
+  300 baud), and to it those bytes have left the chip. This is the same
+  rule the 2026-10-23 DTR fix follows: a 6551 that loses RESET stops its
+  transmitter and loses at most the shift register. A `LIST` to a telnet
+  peer ended by Ctrl-Reset lost its last seconds. The ring now survives a
+  reset and keeps draining; the new `onPowerCycle` clears it, because
+  power-off kills the line (`ssc_acia_smoke`, `testResetKeepsTransmitRing`).
+- **CCS 7710: its printer spool had no rewind-epoch bump and no cap.**
+  The card (2026-10-31) feeds the ImageWriter but missed the 2026-10-27
+  leaf bump every other spool has. A held F6 could rewind past bytes the
+  next drain then printed while the guest sent them again. Its `std::vector`
+  also grew without bound under a CP/M `PIP LST:` loop. The spool is now a
+  4 MiB deque with an absolute base, the CentronicsPrinter contract, and
+  every append calls `noteMediaWrite()` (`ccs7710_card`,
+  `testSpoolIsPrintedOutput`).
+- **Z8530: Rx Overrun and Parity Error stopped being latched on the next
+  read.** Zilog's manual, RR1 D5 and D4: once the flagged character is read
+  "the Error condition is latched until reset by the Error Reset command".
+  `dataRead` (MAME's line) masked both on every read, so in polled mode or
+  mode 10 a driver checking RR1 once per block never saw the overrun.
+  `rr1View` already showed the latch. Only CRC/Framing is replaced per
+  character now. The Special Receive Condition is taken from the
+  character's own status, not the latch, so clean characters after an
+  overrun are neither special nor held (`scc8530_smoke`,
+  `testOverrunLatchedUntilErrorReset`). Silicon over MAME.
+- **Screen dump left the ImageWriter at 9 cpi or proportional.** The dump
+  selects `ESC n`/`E`/`p`/`P` for its graphics density and already put the
+  line spacing back, but not the pitch. A listing printed after a dump came
+  out at 72 columns to the line, and a Videx-wide dump left the head
+  proportional. `ScreenDumpOptions::restorePitch` makes the dump end with
+  the pitch command in effect when it was queued
+  (`ImageWriter::pitchCommand()`), and the panel sets it on the C. Itoh
+  lineage (`printer_screen_dump`, `testDumpPitchAndRestore`).
+
+## 2026-11-01 — Bug hunt: the block and 3.5" storage stack
+
+- **Re-inserting the 3.5" disk already in a SmartPort-card unit rolled the
+  guest's writes back.** `SmartPort35Unit::adoptImage` →
+  `Disk35Image::loadPrepared` flushed the outgoing disk and then installed the
+  bytes phase 1 had read *before* that flush. The image in RAM fell behind the
+  file, it was marked clean, and the next guest write made the autosave write
+  that stale 800 KB copy over the file. Two paths reached it: the Slot Config
+  SmartPort panel, where any unsaved write was exposed, and `mountMediaBay`,
+  where only writes during the unlocked read were. `Block512Backing::adoptImage`,
+  `DiskIICard::installDisk` and `EmulationController::mount35` already re-read a
+  same file after the flush. `loadPrepared` now does the same, through
+  `loadFile`, for any spelling of the path (`Block512Backing::sameFile`). Pinned
+  by `smartport_card_smoke` (`testUnitAdoptSameFileKeepsGuestWrites`).
+- **A mount mid-write put the old disk's block into the new one.**
+  - When a disk changed in a SmartPortCard bay while a 512-byte write was
+    streaming, the stream carried on. The buffer, pre-filled from the outgoing
+    disk's block N and partly overwritten by the guest, was committed into the
+    *incoming* disk's block N at the wrap, and the driver was told it succeeded.
+    A mount, a swap, or an eject followed by a mount all did it, as did the
+    SmartPort WRITE call's stream.
+  - The HDV and CFFA cards reset their transfer state on a media change, and
+    this card's own snapshot loader drops a prime whose medium changed.
+    `SmartPortCard`'s live paths had neither.
+  - The prime now remembers its medium (`writeBufMedia_`, the unit's mount id).
+    A commit that finds another medium there is refused as an I/O error ($27),
+    so the guest retries. This holds whichever path changed the medium, the
+    direct unit adopt of `pom2::mountSmartPortUnit` included.
+  - Pinned by `smartport_card_smoke` (`testMountMidWriteDoesNotTouchNewDisk`,
+    three ways).
+- **The SmartPort panel's mount saved the outgoing image under `stateMutex`.**
+  It was the one mount entry point without `flushOutgoingBay` in front of it.
+  The deferred mount went straight to `pom2::mountSmartPortUnit`, whose locked
+  adopt does the whole-file write-back: 76 ms of lock for a dirty 32 MiB HDV,
+  with the CPU and the window both stopped. The panel now flushes first,
+  unlocked, and refuses the mount if that save fails, as `mountMediaBay` does
+  (3.5 ms after the fix).
+  Pinned by `storage_lock_budget` case D. The test also had a fault of its own:
+  its cases share `big.hdv`, and case A's mount flushed A's 0xA5 blocks into
+  that file. Every later case then wrote bytes the file already held, nothing
+  went dirty, and B (panel eject) and C (`mountDisk35`) timed operations with
+  nothing to save. `dirtyUnit` now writes a different byte every call and
+  asserts that the unit is dirty.
+- **A Write-protected tick during an HDV-card write tore the block.** The
+  ROM's WRITE asks `$C0n3` about protection once, before its 512-byte loop,
+  and returns `CLC` after the loop without asking again. The card refused
+  *each byte* while protected, so a notch flipped mid-loop silently dropped the
+  tail of the block. The block stayed dirty, and a notch never strands written
+  blocks (`isMediumLocked`), so it was committed to the file torn. ProDOS had
+  been told it was written. One block is about 7 ms, so a copy left a wide
+  window. The card now decides once per block, as the ROM does
+  (`blockWriteLatched_`, finished through `Block512Backing::writeByteLatched`,
+  which skips only the notch and still honours a 2IMG lock). The next block
+  sees the notch and returns $2B. Pinned by `hdv_card_smoke`.
+
+## 2026-11-01 — Bug hunt: the runtime and the host side
+
+- **A full Slinky dropped out of every rewind.** The rewind restore capped a
+  `SLOTn` section at 1 MiB and *skipped* a larger one while still reporting
+  success. The Slinky writes its RAM sparsely (256-byte pages that differ
+  from the power-on `$FF`, 258 bytes each), so a card with 4065 or more of
+  its 4096 pages written — a RAM test, a zero-fill, a RAM disk filled to
+  99 % — serialises past the cap (1 056 801 bytes when full). A rewind then
+  rolled main RAM, ProDOS's buffers included, back under a RAM disk that
+  stayed in the future. The cap is 4 MiB now; it is only an allocation
+  guard, since the section length is already checked against the blob and
+  file snapshots never carry `SLOTn`. Pinned by `slinky_card`
+  (`rewindFullCard`).
+- **The SDK's `Core::coldBoot()` was a bus RESET, not a power cycle.** It
+  called `SlotBus::reset()` where `EmulationController::coldBoot` and
+  `bootFromSlot` pass `powerCycle = true`, so no card's `onPowerCycle` ran
+  and the `$C800` owner survived. Yesterday's E-Z Color fix patched the one
+  card it saw by hand; a Mockingboard still kept its 6522 timer latches
+  (power-on is `$FFFF`) and a Sound II its talking SSI263 (only power reaches
+  that chip's reset, AppleWin `SSI263.cpp`). `Core::coldBoot` now sends the
+  power cycle and the E-Z Color special case is gone. Pinned by
+  `pom2_core_api` (`testColdBootPowerCyclesTheCards`).
+- **Step Over ran away when an interrupt was taken at the stepped JSR.** The
+  debugged loop offers an instruction to the hook *before* `step()`, and
+  `step()` may enter a pending IRQ/NMI instead of executing it. The
+  step-over's "this JSR is not a nested call" skip was consumed on that
+  first offer; after the handler's RTI the same JSR was offered again and
+  counted as a nested call, so its callee's RTS never ended the step and F8
+  became Run. The skip is now retired in `onStepCompleted`, when that JSR
+  has really executed, and matched on its PC and stack level. Pinned by
+  `debugger` (`testStepOverInterruptAtTheJsr`, NMI and IRQ).
+- **`mount35`'s retry after a racing guest eject dropped `click`**, so a
+  mount asked to be silent (the startup restore) clicked. It passes the
+  caller's flag now.
+
 ## 2026-11-01 — Both archive.org items dark: `pom2_firm` and `pom2_media_202611` rebuilt from the tree
 
 On 2026-10-31 archive.org darkened `pom2_roms_202610` (the zip the ROM

@@ -517,7 +517,10 @@ on that same RAM. Not a slot card, so not in the catalog: setting
 `premium_softcard` (Machine menu), seated on SlotBus **slot 0**, which a //e
 does not have — Memory decodes $C080-$C08F itself — so the card gets the
 bus's pacing, reset, rewind (`SLOT0`) and CPU-clock fan-out — the last two
-since the 2026-10-31 bug hunt, when they still walked slots 1-7 only. No emulator had it and no
+since the 2026-10-31 bug hunt, when they still walked slots 1-7 only. It
+holds the one aux slot, so no RamWorks beside it: `Memory::setAuxSlotPort`
+drops the geometry to one bank and `$C071/3/5/7` swap nothing (bug hunt
+2026-11-01). No emulator had it and no
 programmer's manual is online; everything below is read off Microsoft's CP/M
 2.25 and 2.26 (6502 and Z80 BIOS) and the Installation manual pp. 72-74:
 
@@ -661,9 +664,12 @@ $C0n8-B language-card switches, $C0n4-7 / $C0nC-F block 0-7 — with a
 two-access write-enable where, unlike Apple's card, a write counts as an
 access (Saturn Operations Manual pp. 70-72; MAME's card enables on the
 first access, POM2 had copied Apple's reads-only rule until 2026-10-31). The card
-takes $D000-$FFFF over the bus INH line, reads and writes separately
-(`Memory::LcInhibitor`, MAME `recalc_inh`): its read side folds into
-`romFastRead_`, writes above $D000 were already slow. Pinned by
+takes $D000-$FFFF over the bus INH line (`Memory::LcInhibitor`, MAME
+`a2bus_inh_w`): reads while it reads RAM, and EVERY write while it holds
+either side. Under INH_READ with its writes off, it drops the write, and the
+motherboard language card never sees it (MAME `apple2.cpp:236-281`,
+`apple2e.cpp:826-870`; bug hunt 2026-11-01). Its read side folds into
+`romFastRead_`, and writes above $D000 were already slow. Pinned by
 `saturn_card` on the real bus, with a negative control on the fold, and by
 Saturn's own `RAMTEST128K` (the 1982 software disk,
 `disks_5.4/dsk/saturn128k_software.dsk`, from the Apple II Documentation
@@ -1640,8 +1646,10 @@ palette at `$9E00 + 32·(SCB & $0F)`, 16 little-endian `$0RGB` words, each
 4-bit component × 17. SCB bit 7 = 640 mode: four 2-bit dots per byte, MSB
 pair first, palette quarters 8, 12, 0, 4 (IIgs HW Ref table 4-21); else 320
 mode, high nibble first, each dot doubled, and with SCB bit 5 (colour fill)
-index 0 repeats the previous dot's colour (the line starts from entry 0, as
-in pom2gs). Painted whole each frame, not raster-raced.
+index 0 repeats the previous dot's colour. A fill line starts from MAME's
+`fillmode_init[SCB & $1F]` (John Brooks's IIgs measurement: entry 2 for
+palette 0, else entry *n* of palette *n*), assumed to hold on the VidHD too.
+Painted whole each frame, not raster-raced.
 
 **Which aux RAM.** The bank the CPU has selected — the one RAMWRT / 80STORE
 writes, i.e. the RamWorks bank in use (AppleWin reads `memaux`, the active
@@ -1974,7 +1982,9 @@ box-averages eight taps across the covered source footprint when
 free on every magnifying path, `crt_barrel_view` byte-identical. (2) On a
 `firstFrame` — every output resize, i.e. every frame of a window drag — the
 ping-pong history is undefined, so persistence is 0 on exactly that frame.
-Both pinned by `crt_glass_resample` (a real GL 3.2 context, exit 77 where
+Otherwise the retention per pass is `persistence ^ (dt · refreshHz)`
+(`crtRetention`): the knob is what one 50/60 Hz machine frame keeps, the pass
+runs per host present. All three pinned by `crt_glass_resample` (a real GL 3.2 context, exit 77 where
 none can be made — which is what CI gets). (3) The voxel grid is sized from
 its tap — under OE-GPU the demod output, always 560 wide — not from the
 framebuffer; `MainWindow_Screen.cpp` carries the tap's own size. No pin:
@@ -2707,10 +2717,15 @@ sample production; AY1 is left, AY2 right, with speech centered. The bounded
 PCM backlog drops its oldest samples during turbo; callbacks only consume
 samples and never advance hardware. VIA and AY clocks stay at the standard
 slot clock under acceleration. Mixer volume/mute settings are per slot.
+Each PSG side goes through MAME's default 20 Hz speaker high-pass
+(`ay::DcBlocker`, as on the Mockingboard and the Phasor); the TMS5220 output
+does not. Only an AY READ drives VIA port A; any other strobe floats it high.
 
 ETS v2 snapshots preserve FIFO bits, interpolation/filter latches, VIA state,
-AY registers/generators and fractional clocks. The host PCM queue is discarded
-on restore. The former ETS v1 provisional hardware map is not reconstructed.
+AY registers/generators and fractional clocks, plus a `DC` extension tail with
+the PSG high-pass history, ending on the sample rate again for the session
+loader (a blob without it restores a clean filter). The host
+PCM queue is discarded on restore. The former ETS v1 provisional hardware map is not reconstructed.
 Tests: `tms5220`, `echoplus_tms5220`, `card_snapshot_state`,
 `card_snapshot_contract` and `audio_coordinator`. No physical board audio
 capture or independent analog output calibration is claimed.
@@ -3122,8 +3137,7 @@ game-I/O `$40`. Delays are emuCycles deadlines against the stock clock
 
 **Divergences (stated in `ZipChip.h`).** MAME cancels an unlock on any
 intervening write; POM2 sees I/O-page writes only (watching RAM writes would
-put a branch on the fast path). `$C05B` bit 7 ticks every 512 emulated
-cycles. Boot speed defaults to fast (`zip_chip_boot_fast`; MAME's config
+put a branch on the fast path). Boot speed defaults to fast (`zip_chip_boot_fast`; MAME's config
 defaults to Standard and calls itself an approximation of the chip's own
 Esc/space boot logic). `$C05D` speed select is not modelled — MAME has no case
 for it, so nothing is invented.

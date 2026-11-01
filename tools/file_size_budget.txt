@@ -464,7 +464,10 @@ src/ProDOSVolume.cpp                     2146
 # 2026-10-31: the language card (switches, RAM, and the Saturn's INH and the
 # Premium SoftCard's A15 flip in front of it) moved to MemoryLanguageCard.cpp.
 #   src/Memory.cpp: 2354 -> 2275 (-79)
-src/Memory.cpp                           2275
+# 2026-11-01 (bug hunt E): the aux slot's geometry (setAuxSlotPort, the
+# RamWorks size it excludes) joined the aux-slot card in MemoryLanguageCard.cpp.
+#   src/Memory.cpp: 2275 -> 2260 (-15)
+src/Memory.cpp                           2260
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.
@@ -473,7 +476,12 @@ src/Memory.cpp                           2275
 # RestoreSettingsResult::unresolvedPathKeys at each of the restore's six
 # "persisted path not found" sites, so the quit writer cannot erase it.
 #   src/StorageCoordinator.cpp: 2415 -> 2425 (+10)
-src/StorageCoordinator.cpp               2425
+# 2026-11-01 (bug hunt): the SmartPort panel's deferred mount takes
+# flushOutgoingBay like every other mount entry point, so the outgoing
+# image is no longer saved under stateMutex (storage_lock_budget D). It
+# needs the file's own anonymous-namespace helper, so it lives here.
+#   src/StorageCoordinator.cpp: 2425 -> 2433 (+8)
+src/StorageCoordinator.cpp               2433
 # 2026-10-31: src/TMS9918.cpp is POM1's TMS9918 VDP (the same author's
 # Apple-1 emulator), imported nearly verbatim for the E-Z Color card so the
 # two copies can be kept in sync. Splitting it here would break that diff;

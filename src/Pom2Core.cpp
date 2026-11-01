@@ -1029,10 +1029,12 @@ void Core::coldBoot()
     impl_->memory.setIicSmartPortArmed(false);
     impl_->memory.clearRam();
     impl_->memory.resetSoftSwitches();
-    impl_->memory.slotBus().reset();
-    // A cold boot is power-on for the E-Z Color's DRAM too: the bus RESET
-    // above only resets the VDP's pin and keeps VRAM (EzColorCard.h).
-    if (impl_->ezColor) impl_->ezColor->onPowerCycle();
+    // A POWER cycle, as EmulationController::coldBoot sends: every card's
+    // onPowerCycle() runs (the E-Z Color's VRAM, a 6522's $FFFF timer latches,
+    // the Sound II's SSI263, which a bus RESET never reaches) and the $C800
+    // owner is released. A plain reset() here kept all of that alive across
+    // the SDK's cold boot (bug hunt 2026-11-01).
+    impl_->memory.slotBus().reset(/*powerCycle=*/true);
     if (impl_->plus) {
         impl_->plus->iwm.reset();
         impl_->plus->hub.reset();

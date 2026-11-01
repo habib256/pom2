@@ -20,6 +20,7 @@
 #include "PrinterScreenDump.h"
 
 #include <algorithm>
+#include <string>
 
 namespace pom2 {
 
@@ -151,6 +152,18 @@ void buildScreenDumpImageWriter(const uint32_t* pixels, int w, int h,
     // default back, or the next text job printed at 1/9" lines.
     out.push_back(kEsc);
     out.push_back('A');
+    // Pitch persists as well: the `ESC n/E/p/P` above chose the graphics
+    // density, and left alone it became the next text job's pitch — a
+    // listing after the dump printed at 9 cpi (72 columns to the 8" line), or
+    // proportional after a Videx-wide dump. Only the caller knows the pitch
+    // that was in effect (ImageWriter::pitchCommand()).
+    static constexpr char kPitchCommands[] = "nNEeqQpP";
+    if (opt.restorePitch != 0 &&
+        std::char_traits<char>::find(kPitchCommands, 8,
+                                     static_cast<char>(opt.restorePitch))) {
+        out.push_back(kEsc);
+        out.push_back(opt.restorePitch);
+    }
     if (opt.formFeed) out.push_back(0x0C);
 }
 

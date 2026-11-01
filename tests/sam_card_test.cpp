@@ -29,6 +29,7 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "SamCard.h"
+#include "SlotBus.h"
 
 #include <cmath>
 #include <cstdio>
@@ -183,6 +184,25 @@ int main()
                     static_cast<unsigned long long>(span), high, expected);
         expect(high >= expected - 1 && high <= expected + 1,
                "an accelerated write plays at the speed it was made");
+    }
+
+    // $C0nX READS are not decoded (MAME a2sam.cpp defines only write_c0nx,
+    // and the a2bus base read_c0nx returns get_open_bus()): the floating bus,
+    // not a hard $FF, and the DAC is left alone (bug hunt 2026-11-01).
+    {
+        SlotBus bus;
+        int calls = 0;
+        bus.setFloatingBusSource([&calls]() { ++calls; return static_cast<uint8_t>(0x10 + calls); });
+        auto card = std::make_unique<SamCard>(4);
+        SamCard* sam = card.get();
+        bus.plug(4, std::move(card));
+        const std::size_t queued = sam->dac().queuedWrites();
+        const int before = calls;
+        const uint8_t a = bus.deviceSelectRead(0xC0C0);
+        const uint8_t b = bus.deviceSelectRead(0xC0C7);
+        expect(calls > before, "a $C0nX read consults the floating bus");
+        expect(a != 0xFF && b != 0xFF && a != b, "a $C0nX read is the floating bus, not $FF");
+        expect(sam->dac().queuedWrites() == queued, "a $C0nX read does not drive the DAC");
     }
 
     std::printf("sam_card: %d failure(s)\n", failures);

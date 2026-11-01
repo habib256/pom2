@@ -522,10 +522,28 @@ size_t SuperSerialCard::txQueueDepth() const
     return txBuf.size();
 }
 
+void SuperSerialCard::onPowerCycle()
+{
+    // Power off kills the line: what the host ring was still pacing out goes
+    // with it. Then everything a reset does.
+    {
+        std::lock_guard<std::mutex> lk(bufferMtx);
+        txBuf.clear();
+        txPendingCr_ = false;
+    }
+    onReset();
+}
+
 void SuperSerialCard::onReset()
 {
     std::lock_guard<std::mutex> lk(bufferMtx);
-    txBuf.clear();
+    // The TX ring SURVIVES a reset. TDRE read 1 the moment each byte was
+    // written, so every byte in it has left the 6551 as far as the guest can
+    // tell; the ring only paces them onto the wire. A 6551 losing RESET stops
+    // its transmitter and loses at most the byte in the shift register — the
+    // reading the DTR path already follows (applyCommandReg, 2026-10-23).
+    // Clearing it here lost up to 4 KB (13 s at 300 baud) of a listing whose
+    // program ended with Ctrl-Reset. onPowerCycle clears it.
     rxBuf.clear();
     tdrHeld_      = false;
     rdrLatch_     = 0;

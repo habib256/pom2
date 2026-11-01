@@ -1324,6 +1324,38 @@ void testStepOverReturnInterrupt()
     assert(cpu.getStackPointer() == 0xFF);
 }
 
+// The interrupt taken AT the stepped JSR, before it runs (bug hunt
+// 2026-11-01): onInstruction saw the JSR, the step entered the handler
+// instead, and on the way back the JSR was counted as a NESTED call — its
+// callee's RTS was then never the return, and Step Over ran away.
+void testStepOverInterruptAtTheJsr()
+{
+    for (const bool nmi : { true, false }) {
+        Memory mem;
+        M6502 cpu(&mem);
+        pom2::Debugger dbg;
+        mem.memWrite(0x0800, 0x20); mem.memWrite(0x0801, 0x00); mem.memWrite(0x0802, 0x09);
+        mem.memWrite(0x0803, 0x4C); mem.memWrite(0x0804, 0x03); mem.memWrite(0x0805, 0x08);
+        mem.memWrite(0x0900, 0x60);
+        mem.memWrite(0x0A00, 0x40); // handler: RTI
+        const uint8_t vectors[] = {0x00, 0x0A, 0x00, 0x00, 0x00, 0x0A};
+        mem.loadRomBytes(vectors, 6, 0xFFFA);
+        cpu.setProgramCounter(0x0800);
+        cpu.setStackPointer(0xFF);
+        cpu.setStatusRegister(0x20);                 // I clear
+        dbg.setStepOver(cpu, mem);
+        cpu.setDebugHook(&dbg);
+        if (nmi) cpu.setNMI();
+        else     cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+        cpu.run(7);                                  // the entry, not the JSR
+        if (!nmi) cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, false);
+        cpu.run(1000);
+        assert(dbg.stopRequested() && "Step Over ran away after an interrupt at its JSR");
+        assert(cpu.getProgramCounter() == 0x0803);
+        assert(cpu.getStackPointer() == 0xFF);
+    }
+}
+
 void testConditionalBreakpointsAndSymbols()
 {
     Memory mem;
@@ -1630,6 +1662,7 @@ int main()
     testStepOverInlineParameters();
     testStepEndsAtTheOuterReturn();
     testStepOverReturnInterrupt();
+    testStepOverInterruptAtTheJsr();
     testStepOverRecursiveReturn();
     testConditionalBreakpointsAndSymbols();
     testProfilerHistoryAndStepOut();

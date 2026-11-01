@@ -940,6 +940,25 @@ void testDumpPitchAndRestore()
     assert(narrow[0] == 0x1B && narrow[1] == 'n');
     assert(videx[0] == 0x1B && videx[1] == 'E');
     assert(narrow[narrow.size() - 2] == 0x1B && narrow.back() == 'A');
+
+    // ...and the pitch, when the caller names the one in effect: `ESC n`
+    // persists, and a listing printed after the dump came out at 9 cpi (72
+    // columns to the 8" line); a Videx-wide dump left the head proportional.
+    for (const char before : { 'E', 'N', 'q' }) {
+        for (const int w : { 560, 720, 1200 }) {
+            pom2::ImageWriter iw;
+            const uint8_t sel[] = { 0x1B, static_cast<uint8_t>(before) };
+            iw.printBytes(sel, sizeof sel);
+            assert(iw.pitchCommand() == before);
+            std::vector<uint32_t> fb(static_cast<size_t>(w) * 8, kBlack);
+            std::vector<uint8_t> out;
+            ScreenDumpOptions opt; opt.autoInvert = false; opt.formFeed = false;
+            opt.restorePitch = static_cast<uint8_t>(iw.pitchCommand());
+            pom2::buildScreenDumpImageWriter(fb.data(), w, 8, w, opt, out);
+            iw.printBytes(out.data(), out.size());
+            assert(iw.pitchCommand() == before && "the dump left its own pitch selected");
+        }
+    }
     std::printf("  dump pitch fits the line and spacing is restored: OK\n");
 }
 

@@ -957,9 +957,15 @@ uint8_t Scc8530Device::dataRead(int channel)
     if (c.rxFifoWp != c.rxFifoRp) {
         data = c.rxData[c.rxFifoRp];
 
+        // Overrun and Parity Error LATCH once their character is read, until
+        // Error Reset (Zilog SCC/ESCC User Manual, RR1 D5/D4: "when that
+        // character is read, the Error condition is latched until reset by
+        // the Error Reset command"); CRC/Framing (D6) is per character. MAME
+        // masks all three here, so the latch lasted one read — rr1View
+        // already showed it latched, and the next data read wiped it.
+        const uint8_t charError = c.rxError[c.rxFifoRp];
         c.rr1 = static_cast<uint8_t>(
-            (c.rr1 & ~(RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR | RR1_PARITY_ERROR)) |
-            c.rxError[c.rxFifoRp]);
+            (c.rr1 & ~RR1_CRC_FRAMING_ERROR) | charError);
 
         // SDLC (datasheet, not MAME): the frame's last byte carries End Of
         // Frame and its residue code. It rides beside the slot because the
@@ -978,7 +984,9 @@ uint8_t Scc8530Device::dataRead(int channel)
         // Error Reset command in WR0 is what unlocks it. End Of Frame is one
         // of them (SDLC, datasheet).
         const uint8_t mode = c.wr1 & WR1_RX_INT_MODE_MASK;
-        const bool special = eof || (c.rr1 & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
+        // From the character's OWN status, not the latch: with the latch in
+        // c.rr1 every clean character after an overrun would be special.
+        const bool special = eof || (charError & (RR1_CRC_FRAMING_ERROR | RR1_RX_OVERRUN_ERROR |
                      ((c.wr1 & WR1_PARITY_IS_SPEC_COND) ? RR1_PARITY_ERROR : 0)));
         // The Special Receive Condition interrupts when WR1 enables receive
         // interrupts at all (every non-zero mode includes "or Special
