@@ -12,6 +12,40 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — A FLUX track lost one transition per revolution
+
+Slice 20 (`flopimg` + `as_dsk` + `wozfdc`), the one MAJEUR of the last wave,
+fixed by an Opus agent against the format references, reviewed and landed
+here.
+
+[B] WOZ 2.1 reference, TRKS, and the MOOF reference (applesaucefdc.com,
+fetched 2026-11-01): *"Each byte represents a single flux transition and its
+value is the number of ticks since the previous flux transition"*, a 255
+continues the delta, and the streams *"are properly looped so there is no
+time warp when wrapping"*. So the **last** non-255 byte is a transition too —
+the one that closes the loop, at cumulative tick == period, i.e. angular
+position 0. [D] MAME `as_dsk.cpp:81-102` @ `mame0287` agrees: *"There is
+always a pulse at index, and it's the last one in the stream."* Both POM2
+loaders (`DiskImage.cpp` for 5.25", `Disk35Image.cpp` for 3.5" WOZ and MOOF)
+read that byte as a time marker and dropped it: one transition lost every
+revolution, a 1 turned into a 0 at the seam. On the mutant the 3.5" mount
+logs *"decoded 11 of 1600 blocks"* — the sector under the seam is gone,
+which is the bug's real face. Both writers ended the stream on an extra
+"wrap" byte, and the 3.5" writer opened with a 0-tick byte when a pulse sat
+at 0; they now start after the first transition and end on it, one period
+later, so a track as loaded rewrites byte for byte.
+
+Three consequences, stated rather than hidden: a track whose transition at
+0 was overwritten is saved **rotated** to start on its first remaining
+transition (no Apple drive has an index sensor, so the machine cannot tell —
+not measured on a capture); a track with no transition at all cannot be
+written in this format and reloads with a single pulse at 0; the slot-growth
+test's byte count goes from 514 to 513, the old count having included the
+extra byte. Pinned by two new tests — the seam placed *inside* a 3.5" data
+field (`moof35_load`), the byte-for-byte rewrite and the rotation case
+(`woz_writeback`) — with `woz_bit_timing` now expecting five transitions as
+the audit predicted. Mutation: three targets fail. Disk suite 75/75.
+
 ## 2026-11-01 — Two video timings, both measured on real machines
 
 Slice 18 (`apple2video.cpp`), fixed by an Opus agent against the published
