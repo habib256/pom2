@@ -159,13 +159,21 @@ jobs:
           tools/check_version_strings.sh
           tools/check_workflow_pins.sh
 
+      # ghostscript and the fr_FR locale are TEST dependencies, as on the CI
+      # Linux leg: the skip guard below refuses a host-dependent skip, so
+      # postscript_render's bounded-raster jobs and imagewriter_pdf's
+      # decimal-comma case must RUN here (2026-11-02: the v1.1.0 rehearsal
+      # was red on exactly those two skips, after ci.yml had been fixed).
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
-            libslirp-dev libglib2.0-dev
+            libslirp-dev libglib2.0-dev ghostscript locales
+          sudo locale-gen fr_FR.UTF-8
           pkg-config --modversion slirp
+          gs --version
+          locale -a | grep -i '^fr_FR.utf-\?8$'
 
       - name: Fetch Dear ImGui (pinned commit)
         run: tools/fetch_imgui_pinned.sh
