@@ -38,6 +38,9 @@ ALLOW=$(printf '%s\n' \
 # The two CRT tests depend on an OpenGL context (the main Linux leg has none;
 # the `gl-software` job gives them one and requires that they run). The main
 # Linux job installs libslirp, so slirp_loopback_fence may not skip.
+# Since 2026-11-02 it also installs ghostscript and the fr_FR.UTF-8 locale,
+# so postscript_render's bounded-raster jobs and imagewriter_pdf's
+# decimal-comma case may not skip either.
 
 scan() {  # scan <LastTest.log> → "test<TAB>line" for every printed skip
     # ANYWHERE in the line and case-insensitively, not `^SKIP`. Two
