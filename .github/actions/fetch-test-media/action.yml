@@ -1,0 +1,43 @@
+# Fetch the test media — the ROMs and third-party disks the suite opens,
+# from POM2's archive.org item, THROUGH an Actions cache.
+#
+# The repository carries none of them (2026-10-29): every job that builds,
+# tests or boots something runs tools/fetch_test_media.py first, and that
+# script downloaded pom2_media.zip from archive.org on every job of every
+# run — a dozen downloads per push. archive.org answers 500/502 for a
+# minute now and then (2026-11-01: twice in one morning, each time failing
+# one job of an otherwise green run), so the zip is cached here, keyed on
+# the manifest's hash: a change to tools/test_media.sha256 is a new key,
+# and archive.org is asked once per manifest, by the first job to miss.
+# The script still checks every file's SHA-256 against the manifest
+# whatever the zip's origin, so a cache is never trusted further than a
+# download was.
+#
+# Split restore/save rather than actions/cache so the zip is saved right
+# after it is fetched, not in a post step that only runs when the whole
+# job succeeded — the job that misses may well be the one that then fails
+# on something else, and the next run should not pay the download again.
+name: Fetch the test media
+description: ROMs + third-party disks the suite opens, from archive.org through an Actions cache keyed on tools/test_media.sha256
+runs:
+  using: composite
+  steps:
+    - id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/pom2-test-media/pom2_media.zip
+        key: test-media-${{ hashFiles('tools/test_media.sha256') }}
+
+    - name: Fetch the test media (ROMs + third-party disks)
+      shell: bash
+      run: |
+        py=python3
+        command -v python3 >/dev/null 2>&1 || py=python
+        "$py" -I tools/fetch_test_media.py --strict \
+          --cache "$HOME/.cache/pom2-test-media/pom2_media.zip"
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/pom2-test-media/pom2_media.zip
+        key: test-media-${{ hashFiles('tools/test_media.sha256') }}

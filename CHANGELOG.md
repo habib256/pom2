@@ -10,6 +10,59 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — CI fetches the test media once per manifest, not once per job
+
+Twice this morning a green run had one red job, and the red was the first
+step: `fetch_test_media.py` got HTTP 500/502 from archive.org for the
+length of its four retries (50 s) while the other eight jobs of the same
+run downloaded the same zip seconds apart. Sixteen jobs across three
+workflows each downloaded 3.9 MB from a server that answers 500 for a
+minute now and then — the outage only had to land on one.
+
+- **`.github/actions/fetch-test-media`** (composite): `actions/cache/restore`
+  keyed on `hashFiles('tools/test_media.sha256')`, the script with
+  `--cache`, then `actions/cache/save` when the restore missed — saved
+  right after the fetch, not in a post step the job has to succeed to
+  reach. archive.org is asked once per manifest by the first job to miss;
+  every other job of every later run reads the cache. Every file is still
+  SHA-256-checked against the manifest whatever the zip's origin.
+- **`tools/fetch_test_media.py --cache FILE`**: uses FILE when it is a zip,
+  otherwise downloads and keeps the download there (atomically; a file
+  that is not a zip is replaced). Six retries with 5 s more between each
+  (~2 min) instead of four (50 s), for the download that still happens.
+- The sixteen steps in `ci.yml`, `release.yml` and `pi400.yml` are now one
+  `uses:` line each.
+
+## 2026-11-01 — The audio device buffer climbs a ladder instead of crackling
+
+The Raspberry Pi build crackled unless the user raised scheduler priorities
+by hand, and the WASM build crackled on a phone. One cause: POM2 opened the
+host audio device with 3 × 256 frames (16 ms at 48 kHz) on every platform,
+low-latency profile. The sources' jitter buffers (speaker 100 ms,
+Mockingboard two frames + callback span) absorb a late *producer*; a late
+*consumer* — the host's audio thread, or the browser's main thread, not
+scheduled before the device runs dry — is a device underrun the sources
+cannot see, and 16 ms is less than one hitch on a Pi (whose PipeWire runs
+a 21 ms quantum anyway) or one emulated frame on a phone.
+
+- **`AudioBufferPolicy.h`** — a ladder of periods (powers of two, 256 …
+  2048 on a desktop, … 8192 in the browser), a first rung per platform
+  (desktop 256, unchanged; Linux ARM 1024; browser 2048; phone 4096), and
+  the climb rule: three **late callbacks** in ten seconds move one rung. A
+  late callback is a wall-clock gap between two data callbacks longer than
+  the whole buffer — the device's own underrun, measured without backend
+  help — and under a second, so a laptop lid is not one.
+- **`AudioDevice::reconfigurePeriod`** re-opens the device at a rung with
+  the sources kept and the rate re-announced; `lateCallbacks()` is the
+  tally. **`AudioCoordinator::tick()`** climbs, logs the move with its
+  numbers, and remembers the rung reached (`audio_buffer_learned`) so the
+  next launch starts there. Audio panel ▸ **Device buffer** shows the rung,
+  the late-callback count, and pins a size (`audio_buffer_frames`).
+- Pinned by `audio_buffer_policy`: the rungs, the late rule, the climb,
+  and a hot re-open that keeps two sources registered and on the new rate
+  (miniaudio's null device on CI). → [DEV § Device
+  buffer](DEV.md#device-buffer-a-ladder-climbed-on-late-callbacks-2026-11-01)
+
 ## 2026-11-01 — The flush capture lands in a buffer touched off the lock
 
 The first CI run of the day's six hunts was red on `storage_lock_budget`

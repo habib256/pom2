@@ -9,8 +9,10 @@
 #
 # The repository carries no copyrighted ROM and no third-party disk image
 # (2026-10-29): every job that builds, tests or boots something first runs
-# tools/fetch_test_media.py, which downloads POM2's test-media archive from
-# archive.org and checks each file against tools/test_media.sha256.
+# .github/actions/fetch-test-media — tools/fetch_test_media.py behind an
+# Actions cache keyed on tools/test_media.sha256 — which downloads POM2's
+# test-media archive from archive.org once per manifest and checks each file
+# against that manifest in every job.
 #
 # MOST OF THE SUITE DOES DEPEND ON roms/. This file used to claim the opposite
 # ("no test depends on machine ROM dumps — the suite drives the emulator core
@@ -102,8 +104,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Install build dependencies + software GL
         run: |
@@ -151,8 +152,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       # Cheap, and first: TODO.md's standing rule is "do not grow the
       # god-objects" (target < 3000 lines). It had no mechanism, and
@@ -396,8 +396,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Fetch Dear ImGui (pinned)
         run: tools/fetch_imgui_pinned.sh
@@ -468,9 +467,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        shell: bash
-        run: python -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Fetch Dear ImGui (pinned)
         shell: bash
@@ -548,8 +545,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Install build dependencies
         run: |
@@ -724,8 +720,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Fetch Dear ImGui (pinned)
         run: |
@@ -830,8 +825,7 @@ jobs:
       # The repository carries no copyrighted ROM or third-party disk:
       # the suite's are fetched from archive.org, SHA-256-checked file by
       # file against tools/test_media.sha256.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Install build dependencies
         run: |

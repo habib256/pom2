@@ -64,8 +64,7 @@ jobs:
 
       # No copyrighted ROM or third-party disk in the repository: the PGO
       # training load and the launch smoke fetch theirs from archive.org.
-      - name: Fetch the test media (ROMs + third-party disks)
-        run: python3 -I tools/fetch_test_media.py --strict
+      - uses: ./.github/actions/fetch-test-media
 
       - name: Build identity
         id: id

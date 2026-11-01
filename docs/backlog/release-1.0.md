@@ -411,6 +411,13 @@ the historical completions.
 
 ### archive.org media — before EVERY release, and whenever they change
 
+> CI fetches `pom2_media.zip` through an Actions cache keyed on the hash of
+> `tools/test_media.sha256` (`.github/actions/fetch-test-media`, 2026-11-01):
+> a new manifest is a new key and the first job to miss downloads once for
+> the whole run. So a rebuilt archive is only re-fetched when the manifest
+> changed with it — which is the rule anyway: a dump or disk added to the
+> zip is added to the manifest in the same commit.
+
 - [ ] **`pom2_firm`** (`pom2_firm.zip`; the first item `pom2_roms_202610` went dark
       2026-10-31) re-uploaded with every dump
       `RomCatalog.h` now lists (a new card ROM — CCS 7710 PROMs, Dan ][ EPROM, … — is

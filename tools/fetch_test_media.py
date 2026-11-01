@@ -15,8 +15,15 @@
 # an error instead of a warning.
 #
 # Usage: tools/fetch_test_media.py [--strict] [--url URL] [--zip FILE]
-#                                  [--manifest FILE] [--root DIR]
-#   --zip FILE   use a local copy of the archive instead of downloading it
+#                                  [--cache FILE] [--manifest FILE] [--root DIR]
+#   --zip FILE    use a local copy of the archive instead of downloading it
+#   --cache FILE  use FILE as the archive when it is one; otherwise download
+#                 and keep the download there for the next run (CI keeps it
+#                 in an Actions cache keyed on the manifest's hash, so
+#                 archive.org — which answers 500/502 for a minute now and
+#                 then — is asked once per manifest, not once per job). A
+#                 cached file that is not a zip is replaced. Every file is
+#                 SHA-256-checked whatever the zip's origin.
 #   $POM2_TEST_MEDIA_URL overrides the default URL, as --url does.
 
 import argparse
@@ -47,7 +54,10 @@ def read_manifest(path):
 
 def download(url):
     last = None
-    for attempt in range(1, 5):
+    # Six tries, 5 s more between each: ~2 minutes of patience. The outages
+    # seen on 2026-11-01 lasted about a minute and the other jobs of the same
+    # run downloaded fine seconds later — four tries (50 s) sat inside them.
+    for attempt in range(1, 7):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "pom2-ci"})
             with urllib.request.urlopen(req, timeout=120) as r:
@@ -70,18 +80,38 @@ def main():
     ap.add_argument("--url", default=os.environ.get("POM2_TEST_MEDIA_URL",
                                                     DEFAULT_URL))
     ap.add_argument("--zip")
+    ap.add_argument("--cache")
     ap.add_argument("--manifest", default=os.path.join(here, "test_media.sha256"))
     ap.add_argument("--root", default=os.path.dirname(here))
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args()
 
     want = read_manifest(args.manifest)
+    blob = None
     if args.zip:
         with open(args.zip, "rb") as f:
             blob = f.read()
-    else:
+    elif args.cache and os.path.exists(args.cache):
+        with open(args.cache, "rb") as f:
+            blob = f.read()
+        if zipfile.is_zipfile(io.BytesIO(blob)):
+            print(f"fetch_test_media: using the cached archive {args.cache}")
+        else:
+            print(f"fetch_test_media: {args.cache} is not a zip — "
+                  "downloading again", file=sys.stderr)
+            blob = None
+    if blob is None:
         print(f"fetch_test_media: downloading {args.url}")
         blob = download(args.url)
+        if args.cache:
+            # Kept for the next run; atomic, so a killed job never leaves a
+            # half-written file under the cache's name.
+            os.makedirs(os.path.dirname(os.path.abspath(args.cache)),
+                        exist_ok=True)
+            tmp = args.cache + ".fetchtmp"
+            with open(tmp, "wb") as f:
+                f.write(blob)
+            os.replace(tmp, args.cache)
 
     written = kept = 0
     problems = []
