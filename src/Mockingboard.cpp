@@ -1097,13 +1097,34 @@ void MockingboardCard::slotRomWrite(uint8_t low8, uint8_t v)
         // $00..$02 — the host CPU clears the VIA's IFR.CA1 separately
         // (typical Mockingboard Sound II driver writes the CA1 bit to
         // IFR after each phoneme).
+        // Seed the AUDIO-side shadow from the pre-write state before the
+        // CPU-side write moves it, the way PhasorCard already does. Without
+        // this, whenever `aPrimed_` is false — after a power cycle, after a
+        // cycle rollback with no card blob, after a snapshot load, after a
+        // ctlEvents_ overflow — `fillAudioTimed` primed itself from the LIVE
+        // registers, i.e. from the value the guest had just written, and
+        // voiced it ~40 ms before the cycle the driver wrote it on.
+        ssi_->prepareTimedPlayback();
         ssi_->write(low8 & 0x07, v);
-        // …and queue the same write on the AUDIO timeline, stamped with the
-        // cycle the driver issued it on (bug hunt #19). `write()` above is
-        // the CPU-NOW half: it drives the phoneme countdown and A/!R, both
-        // guest-visible. The rendering half now travels with the PSG events
-        // through the same jitter buffer instead of arriving ~40 ms early.
-        ssi_->queuePlaybackEvent(low8 & 0x07, v, lastSyncCycle_);
+        // …and queue the same write on the AUDIO timeline (bug hunt #19).
+        // `write()` above is the CPU-NOW half: it drives the phoneme
+        // countdown and A/!R, both guest-visible. The rendering half travels
+        // with the PSG events through the same jitter buffer instead of
+        // arriving ~40 ms early.
+        //
+        // Stamped `busNow_`, NOT `lastSyncCycle_`: the consumer's cursor is
+        // anchored to `busNow_` and paced at `ayClockHz()`, as the comment
+        // over `cyclesPerSample` says ("the stamps are slot-bus ticks"). The
+        // PSG queue two functions down has always stamped `busNow_`; the
+        // speech queue was the one consumer left on the CPU clock. Under any
+        // accelerator — a TransWarp, a Zip Chip, a FASTChip, the //c+'s
+        // built-in 4x — `SlotBusClock::ratio()` drops below 1, the CPU stamp
+        // runs away from the bus cursor within tens of milliseconds, every
+        // queued event sits permanently in the cursor's future, and the chip
+        // renders its pre-write shadow for ever: speech goes MUTE while the
+        // music (correctly stamped) plays on and the guest-visible A/!R, the
+        // phoneme countdown and the IRQ all keep answering.
+        ssi_->queuePlaybackEvent(low8 & 0x07, v, busNow_);
     }
     const int chip = (low8 & 0x80) ? 1 : 0;
     ++viaWriteCount_[chip];

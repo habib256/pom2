@@ -135,7 +135,7 @@ void VidexVideotermCard::paintPicture(uint32_t* dst, uint32_t lit,
     // as outside the display-enable window of a real CRTC.
     std::fill(dst, dst + kPictureWidth * kPictureHeight, dark);
 
-    const int rasters = crtc_.maxRaster() + 1;
+    const int rasters = crtc_.rasterCount();
     const int cols    = std::min(crtc_.horizDisplayed(), kPictureWidth / kCellWidth);
     const int rows    = crtc_.vertDisplayed();
     if (cols <= 0 || rows <= 0) return;

@@ -277,3 +277,251 @@ bus-clock conversion.
   impact is inferred.
 - Whether MSVC honours `-UNDEBUG` on the Windows portable leg. If it does not,
   all 12 Windows cases assert nothing.
+
+---
+
+# Round 3 — seven fresh domains (same day)
+
+Seven more domains, chosen because no earlier hunt had touched them and
+because a v1.1 release was next: packaging/CI/release, CLI/headless/SDK,
+the browser build, printers end-to-end, the paint/sprite toolkit, the video
+cards, and the card sound chips + cassette. Same method: read-only sweep,
+hand verification, mutation control on every fix.
+
+Two of these agents went further than reading. The video-card one fetched
+MAME's `mc6845.cpp` / `a2ultraterm.cpp` / `a2videoterm.cpp` and AppleWin's
+`VidHD.cpp`, and then read the tracked UltraTerm firmware's bytes; the
+CLI one ran the built `pom2_bench` and measured. Those are the two reports
+whose findings needed the least re-derivation.
+
+## Landed
+
+| # | Defect | Pin |
+|---|---|---|
+| PKG-5 | **A two-component `project(VERSION 1.1)` would have broken the Windows release leg** — CMake leaves an unspecified component as the EMPTY STRING, so `POM2.rc.in`'s `FILEVERSION @MAJOR@,@MINOR@,@PATCH@,0` expands to `1,1,,0`, which `rc.exe`/`windres` reject. Nothing upstream objects: the release job compares the tag to `PROJECT_VERSION` as a string, `check_version_strings.sh` reads `[0-9.]*`, and the publish job has an explicit two-component branch — so the whole release path assumes `1.1` is legal and only Windows would die, after every other package was built. The components are normalised to 0 before `configure_file`. **Verified with `cmake -P`**, which the agent could not do: `1,1,,0` before, `1,1,0,0` after. | — (a `cmake -P` check is noted as the honest pin) |
+| PKG-1 | **The release workflow's quality gate never ran `check_version_strings.sh`.** Its own header forbids relying on a separate, concurrently-running CI workflow — and that was the only place the guard ran. A v1.1.0 tag would have published seven packages with a README still naming the 1.0.0 AppImage and a Release body fallen back to a generated commit list, ~80 minutes before `ci.yml` went red. Added, with the workflow-pin guard, *before* the 180-minute build. | the guards themselves |
+| PKG-2 | **`check_workflow_pins.sh`'s image rule was a recognise-an-image regex blind to every Docker Hub short name.** I reproduced it: `emscripten/emsdk:3.1.64`, `node:20`, `myorg/b:latest`, `python:3.12-slim` and a tagless `docker run alpine` all passed while the script printed "passed". The rule is inverted — any `image:`/`container:`/`*_IMAGE:` value and any `docker run\|pull` argument must carry `@sha256:` — continuation lines are joined before scanning, and the guard finally has the `--self-test` it was the only one in the pre-build block to lack, with all five blind shapes as negative controls. Writing that self-test also found that **`grep -n` prints no filename for a single file**, so the whole parser shifted on a one-workflow tree and reported nothing; every grep now uses `-H`. | `--self-test`, 11 controls |
+| WASM-1 | **Printing one page in the browser tore the whole tab down.** `PrinterHistory` hands each ejected sheet to a worker thread; the browser build has no pthreads by design, so `std::thread`'s constructor throws `ENOTSUP` — and `-fignore-exceptions` is emcc's default with nothing turning it off, so the throw reaches `abort()`. I confirmed the committed `wasm/POM2.js` carries **zero** `invoke_` thunks and no `__cxa_increment_exception_refcount`: there are no landing pads at all. A guest `PR#1` with a form feed, or the palette's "Print screen", was enough. Now encoded inline under `__EMSCRIPTEN__`, the shape `BlockWriteBackExecutor` already uses. | — (see WASM-3 below for the guard that would catch the class) |
+| WASM-2 | **The LaserWriter head did the same, and spawned before looking for Ghostscript.** `findPostScriptInterpreter()` now runs first and the empty result is returned synchronously — which fixes the browser without an `#ifdef` (`ChildProcess` is already stubbed there) and stops a desktop with no Ghostscript paying a thread per job to produce one error string. | — |
+| PRN-1 | **The ImageWriter II's draft rate was 180 cps where everything else says 250.** `git` shows the commit that introduced the per-model table (`d20871c3`) replaced `kDraftCps = 250.0` with 180 in that one row — the correspondence tier's rate, selected from the host's *Draft* rung — and left the Specifications comment, `speedName`'s "Draft (250 cps)", the header doc, DEV.md and the test's own arithmetic at 250. Every draft print took 39 % too long and a back-pressured guest sat in its ACK loop 39 % longer. Every other row carries its own published figure, so the default was the only one out. | `imagewriter_smoke` (the pacing case asserted `> 0 && < 11`, true for both rates; it now asserts exactly 4 characters per 60 Hz frame — 3 at 180) |
+| PRN-2 | **A guest could freeze the UI thread with a two-byte sequence.** The Diablo 630's `ESC -` pushed a vertical tab stop with no dedup and no cap and re-sorted the whole vector on every insert; `ESC 1` deduped but was also uncapped. Neither costs mechanism time, so the paced drain allows ~8192 pushes per UI frame. Both racks are now bounded (32/16, like the ESC/P head's), deduped, and inserted at `lower_bound`. | `imagewriter_escape` |
+| VID-1 | **Every row of the UltraTerm's four interlaced modes lost its last scanline.** `Hd6845Crtc` latched R8 and read it from nowhere, so a character row was always R9 + 1 rasters; on an HD6845S in interlace-and-video mode (R8 bits 1-0 = 11) it is R9 + 2. The witness is the card's own firmware, and I read the bytes: the three non-interlaced tables use R9 = 8 — the nine rasters a 9×9 glyph needs — and the four interlaced ones use R8 = 3 with a *smaller* R9 (14, 11, 7, 11) precisely because the chip adds 2. So the 80×48 mode, the card's headline feature, asked for nine rasters and got eight: the ninth raster of every glyph on all 48 rows was never painted, the picture was 48 scanlines short, and the frame rate was 33.9 Hz against MAME's 30.1, skewing the cursor blink by ~12 %. | `videx_ultraterm`, driven from the firmware's own 80×48 table |
+| SND-2 | `MockingboardCard` never called `Ssi263::prepareTimedPlayback()`, so whenever the audio-side shadow was unprimed (power cycle, cycle rollback, snapshot load, `ctlEvents_` overflow) it seeded itself from the **post-write** live registers and voiced them ~40 ms early. The Phasor has always primed first. | — |
+| SND-3 | `PhasorCard`'s realtime render `resize`d its speech scratch from `frameCount`, so every rung the device-buffer ladder climbs cost a heap allocation **inside the audio callback** — at the moment the callback is already late, which is what triggered the climb. Reserved in `setSampleRate` and grown only, as the Mockingboard it was extracted from has always done. | — |
+
+### SND-1 — fixed, but the reported symptom is NOT reproduced
+
+The SSI263 playback queue was stamped `lastSyncCycle_` (CPU cycles) while the
+render cursor is anchored to `busNow_` and paced at `ayClockHz()` — the comment
+over `cyclesPerSample` states the rule ("the stamps are slot-bus ticks") and the
+PSG queue beside it has always honoured it. Under an accelerator
+`SlotBusClock::ratio()` drops below 1 and the two counters really do diverge, so
+the stamps were in the wrong domain and both call sites now use `busNow_`.
+
+**But the reported consequence — "speech goes mute under any accelerator" — is
+unverified.** A new case drives a Sound II at 1×, 3.5× and 4× for ~0.4 s of
+emulated time; the measured energy is 468.47 at every multiplier, and reverting
+the stamp leaves the suite green and that number unchanged. So the fix is a
+consistency correction with a sound argument and no demonstrated user-visible
+symptom. The case is kept as a property test and labelled as such in the source.
+If someone builds a reproduction it belongs there.
+
+## Verified, deferred — round 3
+
+- **WASM-3 — the browser build has no exception handling at all.**
+  `-fignore-exceptions` is emcc's default, nothing in the `if(EMSCRIPTEN)`
+  block turns it off, and the committed glue proves it. So every `catch` in
+  `src/` is dead there: `Settings.cpp`'s malformed-numeric fallback among
+  them, which means one non-numeric value in a persisted `/persistent/state.cfg`
+  would abort the module on **every** later load — the page dies before
+  anything can rewrite the file, so that origin is bricked for that visitor.
+  No live cross-type key exists today, so it is latent. Adding `-fexceptions`
+  costs bundle size and speed on the shipped demo, which is a **decision for
+  the maintainer**, not a drive-by fix; WASM-1 and WASM-2 remove the two live
+  aborts regardless. The cheap CI guard is a `grep -q "invoke_" wasm/POM2.js`
+  in the wasm job.
+- **WASM-4 — `userDataDir()` has no Emscripten branch**, so F9 screenshots,
+  saved BASIC listings, printouts and the media cache land on a MEMFS path
+  outside the one IDBFS mount and vanish on reload, while the status bar
+  reports a host path as though it had been written. Its sibling
+  `userConfigDir()` does return `/persistent`. The BASIC listing additionally
+  claims "(and copied)" while emscripten's `glfwSetClipboardString` is a
+  no-op — the visitor is told twice that something happened.
+  `downloadBrowserFile()` already exists and none of these paths uses it.
+- **WASM-5 — pinning a device-buffer rung *below* the browser default is
+  accepted, shown, persisted and ignored for ever.** The constructor discards
+  a remembered rung that is not strictly larger than the platform default, a
+  clamp written for a stale *learned* value and applied to an explicit *pin*;
+  the panel then promises "(512 frames at the next load)" on every load,
+  permanently.
+- **WASM-6 — `key_chord_policy`'s abort-stub scan has drifted from the pinned
+  toolchain in both directions**: ~13 aborting GLFW entry points are missing
+  from its list, three of the six it names are silent no-ops in emsdk 6.0.8,
+  it covers 7 of ~540 files, it mishandles `#if !defined(__EMSCRIPTEN__)`
+  (false alarm on the guarded branch, blind to the real one), and it only
+  knows GLFW names — so it cannot see the `std::thread` aborts of WASM-1/2.
+  Deriving the list from `$EMSDK`'s `libglfw.js` at test time and scanning all
+  of `src/` would make it catch that whole class.
+- **PKG-3 — a `wasm` manifest entry is the one payload kind no parser
+  validates.** `stage_data.sh` collects them without an existence check, CMake
+  drops a missing `--preload-file` with no diagnostic, and the release job's
+  only WASM gate is `test -s` on four files plus a 100 MB ceiling — so the
+  browser bundle can ship with its //c + //e ROMs silently absent and the
+  Chrome smoke, which waits for the splash to hide and checks settings
+  persistence, would not notice. All four are present today.
+- **PKG-4 — a poisoned test-media cache is permanent.** `fetch_test_media.py`
+  replaces a cached file that is not a zip, but never a cached zip whose
+  members fail the manifest; the Actions cache is keyed on the manifest hash
+  alone. One truncated-but-valid download to the first job that misses would
+  be restored by every later job of every later run, failing them all
+  identically, until someone edits the manifest or clears the cache by hand —
+  while the log says "using the cached archive". The action's own stated
+  invariant is "a cache is never trusted further than a download".
+- **CLI-1 — `pom2_bench` takes two numbers straight off argv with no error
+  channel.** Measured on the built binary: `--cycles-per-frame abc` silently
+  runs the 17045 default, and `--read-watch zzz` or `--read-watch 10000` both
+  arm a read watchpoint at `$0000` the user never asked for, dropping the
+  measured speed from ~134 to ~91 MHz — in the binary whose whole contract is
+  reproducibility, and which is the callgrind subject and the PGO training
+  driver. A value flag written without its value is also reported as an
+  unknown flag. `pom2_headless.cpp` carries both fixes, and the rationale, one
+  file away.
+- **CLI-2 — `pom2_bench --dump-text` is parsed and is what `docs/PERFORMANCE.md`
+  tells the reader to use, but `usage()` never mentions it** (confirmed:
+  `--help | grep -c dump-text` is 0). CLAUDE.md calls the usage text the source
+  of truth, and `checkUsageParserSymmetry` is only pointed at `CliDispatcher.cpp`
+  and `pom2_headless.cpp`.
+- **CLI-3 / CLI-4 — two probes write outside `probeOutDir()`.**
+  `u5_woz_save_probe` writes `<base>.hgr1/2` into the **current directory** —
+  which that probe requires to be the repo root — and `artifact_phase_probe`
+  hard-codes `/tmp/test4_signal.bin`, ignoring `$TMPDIR` and
+  `$POM2_PROBE_OUT`. Both swallow a failed `fopen` and still print their
+  success line. `ProbeOutDir.h` states the policy and the incident that
+  produced it. One source-scan guard over `POM2_PROBE_TARGETS` covers both.
+- **CLI-5 — `--fujinet-slot N` alone is validated, recorded and silently
+  ignored**: every consumer is gated on a transport that flag never sets. It is
+  the one accepted-but-inert input in a parser that otherwise refuses every
+  near-miss loudly, and it is exactly the flag someone reaches for when they
+  already believe a card is being plugged.
+- **VID-2 — the UltraTerm's device-select *write* decode is three addresses too
+  wide.** It dispatches on `low4 & 3`, so `$C0n4-$C0nF` writes reach the 6845
+  and both control registers — and in Videoterm-emulation mode (the reset
+  state) `$C0n4/8/C` are precisely the bank-select addresses, so `STA $C0n6`
+  rewrites control 1 and can take the monitor away mid-draw. MAME decodes
+  `case 0,1,2,3` exactly and POM2's own `VidexVideotermCard` already does too —
+  the two sibling cards disagree. The documented A0-A1 mirror is about *reads*.
+  The agent disassembled the tracked firmware and found it only ever uses
+  offsets 0-3, so the card's own driver cannot trigger it.
+- **PAINT-1 — Ctrl+Z during an open pencil drag corrupts the sprite editor's
+  undo stack** and resurrects an already-undone stroke, because
+  `HgrSpriteEditor` has no `flushOpenStroke`. The paint editor has exactly that
+  guard, for exactly this reason, and states the invariant in its header.
+- **PAINT-2 — the HGR Fill tool floods against the user's canvas *pipeline*.**
+  Connectivity is exact-RGB equality of a page rendered through the host, and
+  the host renders through the selected pipeline — including two CPU composite
+  demods, whose output for a periodic field varies with each dot's NTSC phase.
+  The flood's premise and its measured edge constants only hold for the MAME
+  artifact LUT, and the one test hard-codes `ColorNTSC`. The portable module
+  already carries a pipeline-independent decode (`hgrDecodeScanlineRgb`, pinned
+  byte-identical to the display's) that the flood should use instead — which
+  would also make `fillRegion` headless-testable. Failure *shape* unverified.
+- **PAINT-3 / PAINT-4** — the status bar prints an HGR-interleave address while
+  editing a lo-res GR page (`$23D0` for a block that lives at `$07D0`), and the
+  file browser highlights 8 KB files when loading a 1 KB GR page, so selecting
+  the highlighted one loads the top-left of an HGR picture as lo-res nibbles.
+  Both pure-ImGui, both one arm short of a `switch` that already covers DHGR
+  and DLGR.
+- **PRN-3 — ESC/P `ESC D NUL` restores the power-on tab stops instead of
+  cancelling them**, because "empty `epsonHTabs_`" is the encoding for
+  *defaults*. The vertical side has the `epsonVTabsSet_` flag that distinguishes
+  them; the horizontal side has no counterpart. ESC/P says HT is ignored when no
+  tab is set after the current position.
+- **PRN-4 — the Diablo 630's `ESC L` and `ESC FF n` have none of the "one line
+  must fit" floor** that `ESC H` and ESC/P's `ESC N` carry (and whose comments
+  record the incident: "`ESC H 0000` set a zero-length page, so every single
+  line feed ejected"). A driver emitting its page setup at home turns every
+  subsequent LF into a blank sheet — and `archiveNewPrinterPages` writes those
+  into the durable print history. Faithfulness cuts the other way here (a real
+  630 would also end the page), so the finding is the inconsistency plus the
+  durable side effect.
+- **SES/CPU/MED leftovers from round 2** are unchanged above.
+
+## Could not verify — round 3
+
+- Whether MSVC honours `-UNDEBUG`; whether `actions/cache/save` on a reserved
+  key warns or fails; the Windows `Compress-Archive` and macOS `.dmg` paths.
+- The browser findings were read, not observed: no agent could run a real
+  browser. WASM-1's chain (`ENOTSUP` → no landing pad → `abort()` →
+  `Module.onAbort`) is inferred from the toolchain's own stub and the committed
+  glue, both of which I checked directly.
+- Diablo 630 escape parameter counts (`ESC CR`, `ESC DC1`, `ESC SYN`, `ESC SUB`,
+  `ESC SO`, `ESC EM`, `ESC CAN`, `ESC .`) — no 630 SPI document available. If
+  any takes no parameter, that handler eats the next byte of the document.
+- `AppleParallelCard::slotRomRead`'s PROM address twiddle against MAME
+  `a2pic.cpp:286-293`; the FX-80's default HT stop spacing; the Eve's and RVB
+  Graph's register semantics beyond internal consistency; the Féline dot rules
+  against fenarinarsa's captures.
+- `Ssi263::renderSamples`'s DUR=1 advance averages 1.2 source samples where the
+  frame ratio implies 4/3 — worth one line of AppleWin diff.
+- Whether any shipping UltraTerm software writes `$C0n6` (VID-2's worst case),
+  and whether any guest probes a SmartPort chain with `CONTROL` code `$00`.
+
+---
+
+# The WASM exception question, measured
+
+I framed `-fexceptions` as "costs bundle size and speed", and was asked the
+sharper question: if the browser build does not handle exceptions, they should
+not be wasting space either. Measured on the committed artifacts rather than
+estimated.
+
+**The expensive half is already gone.** `wasm/POM2.js` contains zero
+`invoke_*` thunks, zero `setThrew`, zero `__cxa_begin_catch` and zero
+`__cxa_find_matching_catch` — emcc's default (`DISABLE_EXCEPTION_CATCHING=1`
+plus `-fignore-exceptions`) strips every landing pad and discards every
+`catch` block. There is no thunk wall to reclaim.
+
+**What remains is 414 bytes.** Fifteen strings in a 5 521 125-byte
+`POM2.wasm` — 0.0075 % — and they are libc++ type names (`St9bad_alloc`,
+`NSt3__212system_errorE`, `NSt3__210filesystem16filesystem_errorE`, …) that
+ride in the prebuilt library because libc++ itself still throws.
+`-sDISABLE_EXCEPTION_THROWING=1` would not remove them. (An earlier count of
+21 KB was wrong: the pattern was catching every libc++ mangled type name,
+`shared_ptr` and `std::function` included, not the exception types.)
+
+So there is nothing meaningful to reclaim, and no size argument either way.
+What the question does expose is the *real* cost, which is not bytes: since
+the build neither pays for exceptions nor gets them, **a throw is an immediate
+`abort()`**, and that is what let "print one page → dead tab" ship. That is
+free to enforce, so it now is:
+
+- `key_chord_policy`'s source scan was extended from GLFW abort stubs to
+  **thread spawns** (`pom2::guardedThread` / `std::thread`), over the TUs that
+  hand work to a worker. It catches `PrinterHistory.cpp` and
+  `PostScriptRender.cpp` the moment their `__EMSCRIPTEN__` guard is removed
+  (verified by removing it), and the correctly-guarded spawners —
+  `BlockWriteBackExecutor`, `EmulationController`'s `WriteBackQueue`, the
+  socket workers — stay invisible to it, which is the point.
+- That scan also exposed a weakness in **my own** WASM-2 fix: moving the
+  Ghostscript lookup ahead of the spawn makes the browser path return early at
+  *runtime*, but the spawn was still compiled and the property rested on a
+  runtime invariant. `PostScriptRender` now carries a compile-time
+  `__EMSCRIPTEN__` guard as well.
+
+`-fexceptions` stays unapplied: it would cost size and speed to buy back
+`catch` blocks on paths that, with the two spawns guarded, no longer throw.
+The remaining latent case (a malformed numeric in a persisted
+`/persistent/state.cfg` reaching `std::stoi` with its `catch` compiled out,
+which would brick that origin) is recorded under WASM-3 and is unreachable
+today.
+
+## Six more "cannot fail" tests, fixed
+
+| Test | Was | Now |
+|---|---|---|
+| `iicplus_accelerator_test.cpp:57` | lowercase `skip:` + `return 0` — the WHOLE test (CGGA 4 MHz, `cpuSpeedMultiplier` after reset, Esc-at-reset, the IWM drive-disable delay the 2026-10-25 bug produced) passed silently without `roms/apple2cp.rom` | `SKIP` at line start + `return 77` |
+| `iwm_mig_snapshot_test.cpp:310` | lowercase partial skip, `main` always 0 — the only case pinning the 3.5" revolution anchoring could stop running with no signal | a flag, and `main` returns 77 |
+| `printer_glyph_test.cpp:271` | `assert(k.count >= 0)` on an `int` that starts at 0 and is only ever `++`'d — a tautology, under a comment claiming "the bundled font has a glyph so something must print" | **the comment was false**: row `0x7F` of `kBBFontCp437` is all zeros, so a blank is correct. Asserts the blank, with the font table as the oracle, plus a positive control (`$B0`, the light-shade block, 8 non-zero rows) so "inks nothing" cannot pass for a dead printer |
+| `printer_grain_pileup_test.cpp:94` | ceilings only (`maxStep`, `peak`), and `drain()` answers `{0,0}` for silence — a printer making no sound at all certified as crackle-free, which is the regression *next to* the one the file pins | a floor as well: `peak > 0.01` |
+| `mouse_card_applewin_smoke_test.cpp:590` | `FirmwareRig::ok` conflated "dump absent" with "`loadAppleIIRom`/`loadRom` refused it", so a regression in the loaders silently disabled the four firmware cases that would have caught it | present-but-unloadable now asserts; absent prints `SKIP` and `main` returns 77 |
+| `key_chord_policy_test.cpp:179` | a source scanner with **no positive control**: a broken `PpFrame` model would inspect zero lines and pass — the state in which a newly added unguarded call ships and `abort()`s the module | two fixtures with a known answer (reachable → caught, `#ifndef __EMSCRIPTEN__` → not), a `g_linesInspected` assertion, and the thread-spawn scan above |

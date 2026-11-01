@@ -10,6 +10,158 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-01 — Bug hunt round 3: the release machinery, the browser, and a scanline
+
+Seven domains no earlier hunt had touched, chosen with a v1.1 release next:
+packaging/CI/release, CLI/headless/SDK, the browser build, printers end to end,
+the paint/sprite toolkit, the video cards, and the card sound chips + cassette.
+Ledger, including the ~20 further verified defects deferred for size:
+[docs/audits/bug-hunt-2026-11-01-round2.md](docs/audits/bug-hunt-2026-11-01-round2.md)
+§ Round 3.
+
+**The release machinery would have bitten on the 1.1 tag.**
+
+- **A two-component `project(VERSION 1.1)` would have broken the Windows leg
+  only, after every other package was built.** CMake leaves an unspecified
+  version component as the EMPTY STRING, so `POM2.rc.in`'s
+  `FILEVERSION @MAJOR@,@MINOR@,@PATCH@,0` expands to `1,1,,0` and `rc.exe` /
+  `windres` reject it. Nothing upstream objects: the release job compares the
+  tag to `PROJECT_VERSION` as a string, `check_version_strings.sh` reads
+  `[0-9.]*`, and the publish job has an explicit two-component branch — the
+  whole path is written on the assumption that `1.1` is legal. `CMakeLists.txt`
+  now normalises the three components to 0 before `configure_file`. Verified
+  with `cmake -P`: `1,1,,0` before, `1,1,0,0` after.
+- **`release.yml`'s quality gate never ran `tools/check_version_strings.sh`.**
+  That job's own header forbids relying on a separate, concurrently-running
+  workflow — and `ci.yml` was the only place the guard ran. A v1.1.0 tag would
+  have published seven packages with a README still naming the 1.0.0 AppImage
+  and a Release body fallen back to a generated commit list, ~80 minutes before
+  `ci.yml` went red. Both it and the workflow-pin guard now run in that job,
+  before the 180-minute build.
+- **`check_workflow_pins.sh` was blind to every Docker Hub short-name image.**
+  Its rule tried to *recognise* an image and only knew a dotted registry host
+  or six distro names, so `emscripten/emsdk:3.1.64`, `node:20`,
+  `myorg/b:latest`, `python:3.12-slim` and a tagless `docker run alpine` all
+  passed while it printed "passed" — a fifth shape of the class the 2026-09-09
+  audit found four of. The rule is now inverted (any `image:` / `container:` /
+  `*_IMAGE:` value, and any `docker run|pull` argument, must carry `@sha256:`),
+  continuation lines are joined before scanning, and the guard finally has the
+  `--self-test` it was the only one in the pre-build block to lack. Writing
+  that self-test turned up a second defect in the guard itself: **`grep -n`
+  prints no filename for a single file**, so on a one-workflow tree the parser
+  shifted and the script reported nothing. Every grep now uses `-H`.
+
+**Printing one page in the browser tore the whole tab down.** `PrinterHistory`
+hands each ejected sheet to a worker thread. The browser build has no pthreads
+by design, so `std::thread`'s constructor throws `ENOTSUP` — and
+`-fignore-exceptions` is emcc's default with nothing in the `if(EMSCRIPTEN)`
+block turning it off, so the throw reaches `abort()`. The committed
+`wasm/POM2.js` carries **zero** `invoke_` thunks: there are no exception
+landing pads at all, and every `catch` in `src/` is dead code there. A guest
+`PR#1` with a form feed, or the palette's "Print screen", was enough: black
+page, the shell's error box, the machine and every unflushed disk write gone.
+The sheet is now encoded inline under `__EMSCRIPTEN__`, the shape
+`BlockWriteBackExecutor` already uses. The LaserWriter head did the same, and
+spawned *before* looking for Ghostscript — the lookup moved ahead of the
+spawn, which fixes the browser with no `#ifdef` and stops a desktop without
+Ghostscript paying a thread per job to produce one error string. That the
+browser has no exception handling at all is left as a decision, not a
+drive-by fix: `-fexceptions` costs bundle size and speed on the shipped demo.
+
+**Every row of the UltraTerm's four interlaced modes lost its last scanline.**
+`Hd6845Crtc` latched R8 (Interlace & Skew) and read it from nowhere, so a
+character row was always `R9 + 1` rasters; on an HD6845S in interlace-and-video
+mode (R8 bits 1-0 = `11`) it is `R9 + 2` — the datasheet's "when the total
+number of rasters is RN, RN-2 shall be programmed", which is MAME's
+`m_interlace_adjust`. The witness is the card's own firmware:
+`roms/videx_ultraterm_frm_b537.bin` carries seven CRTC tables, the three
+non-interlaced ones use R9 = 8 (the nine rasters a 9×9 glyph needs) and the
+four interlaced ones use R8 = 3 with a *smaller* R9 — 14, 11, 7, 11 —
+precisely because the chip adds 2. So 80×48, the card's headline feature,
+asked for nine rasters and got eight: the ninth raster of every glyph on all
+48 rows was never painted (descenders, underlines, the bottom edge of the
+box-drawing and MouseText cells), the picture was 48 scanlines short, and the
+frame rate read 33.9 Hz against MAME's 30.1, skewing the cursor blink by
+~12 %. `rasterCount()` carries the adjust and the four call sites use it; the
+Videoterm gets it too, for parity. Pinned by `videx_ultraterm`, driven from
+the firmware's own 80×48 table.
+
+**Two printer defects.** The ImageWriter II's **draft rate was 180 cps** where
+the Specifications comment, `speedName`'s "Draft (250 cps)", the header doc,
+DEV.md and the test's own arithmetic all say 250: the commit that introduced
+the per-model table replaced `kDraftCps = 250.0` with the correspondence
+tier's rate in that one row and left every other mention alone, so every draft
+print took 39 % too long and a back-pressured guest sat in its ACK loop 39 %
+longer. And **a guest could freeze the UI thread with a two-byte sequence**:
+the Diablo 630's `ESC -` pushed a vertical tab stop with no dedup and no cap
+and re-sorted the whole vector on every insert, and neither `ESC -` nor
+`ESC 1` costs mechanism time, so the paced drain allows ~8192 pushes per UI
+frame. Both racks are bounded (32/16, like the ESC/P head's), deduped and
+inserted at `lower_bound`. The pacing test asserted `> 0 && < 11` — true at
+either rate — and now asserts exactly 4 characters per 60 Hz frame.
+
+**The browser's exception question, measured rather than estimated.** I had
+framed `-fexceptions` as "costs bundle size", and the sharper question is
+whether exceptions we cannot use are wasting space. They are not: `POM2.js`
+carries zero `invoke_*` thunks, zero `setThrew` and zero `__cxa_begin_catch` —
+emcc's default already strips every landing pad and discards every `catch` —
+and what remains is **414 bytes in 15 strings** of a 5 521 125-byte
+`POM2.wasm`, 0.0075 %, all libc++ type names that ride in the prebuilt library
+and that `DISABLE_EXCEPTION_THROWING` would not remove. (An earlier 21 KB
+count was wrong; the pattern was matching every libc++ mangled type name.)
+So there is nothing to reclaim and no size argument either way — the real
+cost is not bytes but that **a throw is an immediate `abort()`**, which is what
+let "print one page → dead tab" ship. That is free to enforce, so
+`key_chord_policy`'s source scan now also refuses a browser-reachable
+**thread spawn**, and it immediately found a weakness in this hunt's own
+LaserWriter fix: moving the Ghostscript lookup ahead of the spawn made the
+browser path return early at *runtime* while the spawn stayed compiled, so the
+property rested on a runtime invariant. `PostScriptRender` now carries the
+compile-time guard too. `-fexceptions` stays unapplied.
+
+**Six more tests that could not fail.** `iicplus_accelerator` printed a
+lowercase `skip:` and returned 0, so the whole //c+ CGGA test — including the
+IWM drive-disable delay the 2026-10-25 bug produced — passed silently without
+`roms/apple2cp.rom`; same shape in `iwm_mig_snapshot`, where the only case
+pinning the 3.5" revolution anchoring could stop running with no signal. Both
+now print `SKIP` at line start and return 77. `printer_grain_pileup` asserted
+ceilings only, and `drain()` answers `{0,0}` for silence — so a printer making
+no sound at all certified as crackle-free, which is precisely the regression
+next to the one the file pins; it has a floor now. `mouse_card_applewin`'s rig
+conflated "dump absent" with "the loader refused it", so a regression in
+`Memory::loadAppleIIRom` or `MouseCardAppleWin::loadRom` silently disabled the
+four firmware cases that would have caught it. `key_chord_policy`'s source
+scanner had **no positive control** — a broken preprocessor model would inspect
+zero lines and pass, which is the state in which an unguarded call ships — and
+now has two fixtures with a known answer plus an assertion that the scan
+looked at a plausible number of lines.
+
+And one tautology turned out to be hiding a false comment:
+`printer_glyph_test.cpp` asserted `k.count >= 0` on an `int` that starts at 0
+and is only ever incremented, under a comment claiming "the bundled font has a
+glyph, so something must still print rather than a blank" for `$7F`. Asserting
+that broke the test — row `0x7F` of `kBBFontCp437` is **all zeros**, so the
+blank is correct and the comment was wrong. The case now asserts the blank with
+the font table as its oracle, and carries a positive control (`$B0`, the
+light-shade block) so "inks nothing" cannot pass for a dead printer.
+
+**Three in the sound chips.** The Mockingboard never called
+`Ssi263::prepareTimedPlayback()`, so an unprimed audio-side shadow seeded
+itself from the **post-write** live registers and voiced them ~40 ms early
+(the Phasor has always primed first). The Phasor's realtime render `resize`d
+its speech scratch from `frameCount`, so every rung the device-buffer ladder
+climbs cost a heap allocation *inside the audio callback* — at the moment the
+callback was already late, which is what triggered the climb; it is now
+reserved in `setSampleRate` and grown only, as the Mockingboard it was
+extracted from has always done. And the SSI263 playback queue was stamped in
+CPU cycles while its render cursor is anchored to `busNow_` and paced at the
+bus clock, which the comment over `cyclesPerSample` states and the PSG queue
+beside it has always honoured; both call sites now stamp `busNow_`. **That
+last one is a consistency fix with an unverified symptom**: the reported
+"speech goes mute under any accelerator" is not reproduced — a new case
+measures identical energy at 1×, 3.5× and 4×, and reverting the stamp leaves
+the suite green — so the case is kept as a property test and labelled as one.
+
 ## 2026-11-01 — Bug hunt round 2: a dead control, a rewritten preference, a destroyed card
 
 Eleven domains swept read-only, every finding re-verified by hand before

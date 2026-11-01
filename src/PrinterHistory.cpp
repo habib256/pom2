@@ -442,6 +442,37 @@ PrinterHistory::~PrinterHistory()
 
 void PrinterHistory::startWriter()
 {
+#ifdef __EMSCRIPTEN__
+    // The browser build is compiled WITHOUT pthreads by design, so
+    // `pthread_create` answers ENOTSUP and `std::thread`'s constructor
+    // THROWS — and the same build has no exception landing pads
+    // (`-fignore-exceptions` is emcc's default and nothing turns it off), so
+    // the throw reaches `std::terminate` → `abort()`. Printing ONE page tore
+    // the whole module down: black page, the shell's error box, the machine
+    // and every unflushed disk write gone. A guest `PR#1` with a form feed, or
+    // the palette's "Print screen", was enough.
+    //
+    // So encode inline, exactly as `BlockWriteBackExecutor`'s and
+    // `EmulationController`'s browser branches already do for the media
+    // write-backs. `addPage` has already pushed, and `writerQuit_` makes
+    // `writerLoop`'s wait fall straight through — it then drains what is
+    // queued and returns on the first empty queue rather than blocking the
+    // tab's one thread for ever. The cost is the ~100-140 ms per Letter page
+    // at 144 dpi that the thread existed to hide: a visible hitch, which is
+    // the price of a page that lands at all.
+    {
+        std::lock_guard<std::mutex> lk(qMtx_);
+        writerQuit_  = true;
+        writerAlive_ = false;      // nothing may wait on a worker that cannot exist
+    }
+    writerLoop();
+    {
+        std::lock_guard<std::mutex> lk(qMtx_);
+        writerQuit_ = false;
+    }
+    qDoneCv_.notify_all();
+    return;
+#else
     if (writer_.joinable()) {
         bool alive = false;
         {
@@ -494,6 +525,7 @@ void PrinterHistory::startWriter()
         } guard{this};
         writerLoop();
     });
+#endif
 }
 
 void PrinterHistory::stopWriter()

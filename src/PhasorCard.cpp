@@ -110,6 +110,10 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     {
         if (hz == 0) hz = kAudioSampleRate;
         sampleRate.store(hz, std::memory_order_relaxed);
+        // Off the audio thread, once: the render below only ever grows it, so
+        // the device-buffer ladder's climb (256 -> 1024 -> 2048 -> 4096) costs
+        // no allocation in the callback whose lateness triggered it.
+        speechScratch.reserve(kSpeechScratchReserve);
     }
 
     // Per-chip synthesis state + the per-tick generators live in
@@ -193,6 +197,14 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
         return true;
     }
 
+    // Reserved in setSampleRate, off the audio thread, and only ever grown
+    // in render: a heap allocation inside the realtime callback is the
+    // canonical source of underruns, and the device-buffer ladder
+    // (AudioBufferPolicy.h) climbs 256 -> 1024 -> 2048 -> 4096 precisely
+    // WHEN callbacks are already arriving late — so the old `resize` added an
+    // allocation stall to a system that was underrunning. The Mockingboard,
+    // the card this one was extracted from, has reserved it all along.
+    static constexpr std::size_t kSpeechScratchReserve = 8192;
     std::vector<float> speechScratch;
 
     void render(float* left, float* right, int frameCount)
@@ -342,8 +354,13 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
 
         // The reference renders SSI voices in mono. Keep both on the same
         // emulated-cycle cursor as the PSGs; host mute affects only final gain.
-        speechScratch.resize(static_cast<std::size_t>(frameCount));
-        std::fill(speechScratch.begin(), speechScratch.end(), 0.0f);
+        // GROW-only: a `resize` down and back up is still a reallocation, and
+        // this runs on the realtime audio thread. See kSpeechScratchReserve.
+        if (speechScratch.size() < static_cast<std::size_t>(frameCount))
+            speechScratch.resize(static_cast<std::size_t>(frameCount));
+        std::fill(speechScratch.begin(),
+                  speechScratch.begin() + static_cast<std::ptrdiff_t>(frameCount),
+                  0.0f);
         {
             std::lock_guard<std::mutex> lk(parent->mtx_);
             for (auto& speech : parent->ssi_)
@@ -793,7 +810,11 @@ void PhasorCard::slotRomWrite(uint8_t low8, uint8_t v)
             if (!(low8 & (i == 0 ? 0x40 : 0x20))) continue;
             ssi_[i].prepareTimedPlayback();
             ssi_[i].write(low8 & 7, v);
-            ssi_[i].queuePlaybackEvent(low8 & 7, v, lastSyncCycle_);
+            // busNow_, not lastSyncCycle_: the render cursor is anchored to
+            // busNow_ and paced at the bus clock, so a CPU-clock stamp runs
+            // away from it under any accelerator and the speech never plays.
+            // See the Mockingboard's copy of this call for the long form.
+            ssi_[i].queuePlaybackEvent(low8 & 7, v, busNow_);
         }
     }
     updateIrq();

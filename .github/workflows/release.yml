@@ -145,6 +145,20 @@ jobs:
       # file against tools/test_media.sha256.
       - uses: ./.github/actions/fetch-test-media
 
+      # The release-specific guards, BEFORE the 180-minute build: the version
+      # job only compares the tag to project(VERSION) and says nothing about
+      # vcpkg.json, CLAUDE.md, README or docs/releases/. Without this a v1.1.0
+      # tag published seven packages with a README still naming the 1.0.0
+      # AppImage and a Release body that had fallen back to a generated commit
+      # list — ci.yml does catch it, but in a separate workflow `publish` does
+      # not depend on, ~80 minutes later, with the Release already live. That
+      # is exactly what this job's own header forbids relying on.
+      - name: Version strings and workflow pins
+        run: |
+          tools/check_version_strings.sh --self-test
+          tools/check_version_strings.sh
+          tools/check_workflow_pins.sh
+
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq

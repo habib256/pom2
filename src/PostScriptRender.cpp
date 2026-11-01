@@ -521,21 +521,51 @@ void PostScriptSpooler::startNextLocked(std::thread& retired)
     req.heightIn   = heightIn_;
     const std::string scratch = scratchDir_;
 
-    worker_ = pom2::guardedThread("LaserWriter", [this, req, scratch]() {
+    // Look for the interpreter BEFORE spawning. Two reasons: a host without
+    // Ghostscript paid a thread per job to produce one error string, and — the
+    // sharp one — in the browser there is no interpreter and no pthreads, so
+    // `std::thread`'s constructor threw ENOTSUP into a build with no exception
+    // landing pads and `abort()` tore the tab down. Switching the head to the
+    // LaserWriter and printing one byte was enough. `ChildProcess` is already
+    // stubbed under Emscripten, so the empty path is the honest answer there
+    // and this branch needs no `#ifdef`.
+    const std::string gsPath = findPostScriptInterpreter();
+    if (gsPath.empty()) {
         PsRenderResult r;
-        const std::string gsPath = findPostScriptInterpreter();
-        if (gsPath.empty()) {
-            r.ok = false;
-            r.error = "no PostScript interpreter found — install Ghostscript, "
-                      "or switch the head to its Diablo 630 mode";
-        } else {
-            (void)renderPostScript(gsPath, scratch, req, r);
-        }
+        r.ok = false;
+        r.error = "no PostScript interpreter found — install Ghostscript, "
+                  "or switch the head to its Diablo 630 mode";
+        done_       = std::move(r);
+        haveResult_ = true;
+        busy_       = false;
+        return;
+    }
+
+#ifdef __EMSCRIPTEN__
+    // Belt as well as braces. The lookup above already answers empty in the
+    // browser (ChildProcess is stubbed there), so this is unreachable at
+    // runtime — but that is a runtime argument, and the browser build has no
+    // pthreads: `std::thread`'s constructor throws into a build with no
+    // exception landing pads and abort()s the whole module. A COMPILE-time
+    // guard is what makes the property checkable, and key_chord_policy's
+    // source scan checks it.
+    PsRenderResult r;
+    r.ok = false;
+    r.error = "the browser build has no PostScript interpreter";
+    done_       = std::move(r);
+    haveResult_ = true;
+    busy_       = false;
+    return;
+#else
+    worker_ = pom2::guardedThread("LaserWriter", [this, req, scratch, gsPath]() {
+        PsRenderResult r;
+        (void)renderPostScript(gsPath, scratch, req, r);
         std::lock_guard<std::mutex> lk(mtx_);
         done_       = std::move(r);
         haveResult_ = true;
         busy_       = false;
     });
+#endif
 }
 
 bool PostScriptSpooler::takeResult(PsRenderResult& out)

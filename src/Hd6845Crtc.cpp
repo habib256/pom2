@@ -70,11 +70,13 @@ void Hd6845Crtc::registerWrite(uint8_t v)
 
 double Hd6845Crtc::frameRateHz(double charClockHz) const
 {
-    // One frame = (R0+1) characters per line × ((R4+1) rows × (R9+1)
-    // rasters + R5 adjust) lines; the HD6845S has no interlace adjust in
-    // non-interlaced mode beyond the +1 (mc6845.cpp:1210-1222).
+    // One frame = (R0+1) characters per line × ((R4+1) rows × rasterCount()
+    // + R5 adjust) lines. rasterCount() carries the interlace adjust: +1
+    // non-interlaced, +2 in interlace-and-video (mc6845.cpp:311,1278-1280).
+    // Without it the UltraTerm's 80x48 mode reported 33.9 Hz against MAME's
+    // 30.1, skewing the cursor blink period by ~12 %.
     const double lines =
-        static_cast<double>((vertTotal() + 1) * (maxRaster() + 1) + vertAdjust());
+        static_cast<double>((vertTotal() + 1) * rasterCount() + vertAdjust());
     const double chars = static_cast<double>(horizTotal() + 1);
     if (horizTotal() == 0 || vertTotal() == 0 || lines <= 0.0 || chars <= 0.0)
         return 0.0;
@@ -100,7 +102,7 @@ bool Hd6845Crtc::cursorVisible(int ra, uint16_t lineAddr, bool blinkOn,
     if (cursor < lineAddr || cursor >= lineAddr + horizDisplayed())
         return false;
     const int start = cursorStart();
-    const int maxRas = maxRaster();   // + noninterlace adjust (1) - 1
+    const int maxRas = rasterCount() - 1;   // mc6845.cpp:584, adjust included
     if (start > maxRas || start > cursorEnd()) return false;
     if (ra < start || ra > cursorEnd()) return false;
     cursorX = cursor - lineAddr;      // mc6845.cpp:826

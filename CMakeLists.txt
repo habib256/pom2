@@ -689,6 +689,7 @@ set(POM2_FOUNDATION_HEADERS
 )
 
 set(POM2_FRONTEND_HEADERS
+    src/SettingRebuild.h
     src/FujiNetConfigHostClick.h
     src/AudioCoordinator.h
     src/DebugCoordinator.h
@@ -1124,6 +1125,7 @@ set(HEADERS
     src/ProDOSVolume.h
     src/Logger.h
     src/Settings.h
+    src/SettingRebuild.h
     src/SettingsList.h
     src/PersistentFs.h
     src/CpuClock.h
@@ -1289,6 +1291,23 @@ endif()
 # source of truth as Version.h — instead of being a second place to bump.
 # Listed as a target source so CMake drives rc.exe (MSVC) or windres (MinGW)
 # automatically; on every other platform the list is empty.
+# CMake leaves an unspecified version component as the EMPTY STRING, so a
+# two-component `project(... VERSION 1.1 ...)` — legal, and what v0.7 and v0.8
+# were tagged as — expands POM2.rc.in's
+# `FILEVERSION @MAJOR@,@MINOR@,@PATCH@,0` to `FILEVERSION 1,1,,0`, which
+# rc.exe and windres both reject. Nothing upstream objects: the release
+# workflow compares the tag to PROJECT_VERSION as a string,
+# check_version_strings.sh reads `[0-9.]*`, and the publish job has an
+# explicit two-component branch — so the whole release path is written on the
+# assumption that `1.1` is legal, and only the Windows leg would die, after
+# every other package had been built. Verified with `cmake -P` (2026-11-01).
+foreach(_pom2_vc MAJOR MINOR PATCH)
+    if(NOT DEFINED PROJECT_VERSION_${_pom2_vc} OR PROJECT_VERSION_${_pom2_vc} STREQUAL "")
+        set(PROJECT_VERSION_${_pom2_vc} 0)
+    endif()
+endforeach()
+unset(_pom2_vc)
+
 set(POM2_PLATFORM_SOURCES "")
 if(WIN32)
     set(POM2_WINDOWS_RES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows")

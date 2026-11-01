@@ -261,15 +261,32 @@ void testLocaleOverride()
 void testFallbackForUnmappedCode()
 {
     auto iw = makePrinter();
-    // $7F is outside the ROM range ($20-$7E) but the bundled font has a
-    // glyph, so something must still print rather than a blank.
+    // $7F is outside the ROM range ($20-$7E), so it takes the bundled CP437
+    // fallback — and row $7F of `hgrpaint::kBBFontCp437` is ALL ZEROS, so the
+    // correct outcome is a blank. The old assertion was `k.count >= 0` on an
+    // `int` that starts at 0 and is only ever ++'d: a tautology that asserted
+    // nothing, under a comment claiming "the bundled font has a glyph, so
+    // something must still print" — which is simply false, as the font table
+    // shows. Assert what is true, with the font as the oracle, and keep a
+    // positive control beside it so "inks nothing" cannot pass for a printer
+    // that inks nothing at all.
     const uint8_t del = 0x7F;
     iw->printBytes(&del, 1);
-    // Whether it inks or not depends on the fallback font's $7F, so the real
-    // assertion is only that this did not crash or hang and the page is sane.
-    const Ink k = measure(*iw);
-    assert(k.count >= 0);
-    std::printf("  ok: codes outside the ROM range fall back cleanly\n");
+    const Ink blank = measure(*iw);
+    assert(blank.count == 0 &&
+           "kBBFontCp437[0x7F] is empty, so DEL must fall back to a blank");
+
+    // The control: a code the fallback DOES carry inks. Row $B0 of the same
+    // table is the CP437 light-shade block, which is non-empty.
+    auto iw2 = makePrinter();
+    const uint8_t shade = 0xB0;
+    iw2->printBytes(&shade, 1);
+    const Ink inked = measure(*iw2);
+    assert(inked.count > 0 &&
+           "a code the CP437 fallback carries must ink — otherwise the blank "
+           "above proves only that the printer is dead");
+    std::printf("  ok: codes outside the ROM range fall back cleanly "
+                "($7F blank, $B0 inks %d dots)\n", inked.count);
 }
 
 

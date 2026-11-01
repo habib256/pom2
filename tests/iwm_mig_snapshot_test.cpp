@@ -307,12 +307,21 @@ void testSel35RoundTrip()
 // re-points the hub (2026-09-17). The IWM section put `revStart35_` back, and
 // the MIG push that followed — the live machine had deselected the internal
 // drive — attached it again as a LIVE event, anchoring the surface at "now".
+// Set when the only case that pins the 3.5" revolution anchoring did not run:
+// `main` returns 77 so ctest RECORDS the skip. It used to print a lowercase
+// word mid-line and return 0, so neither half of tools/check_ctest_skips.sh
+// could see it and the case could stop running with no signal at all. Both
+// fixtures are in tools/test_media.sha256, so CI never takes this path.
+static bool g_revolutionCaseSkipped = false;
+
 void testRestoreKeepsTheRevolution()
 {
     const std::string rom  = pom2::findResource("roms/apple2cp.rom");
     const std::string disk = pom2::findResource("disks_3.5/A2DeskTop-1.5-en_800k.2mg");
     if (rom.empty() || disk.empty()) {
-        std::printf("  skip: needs roms/apple2cp.rom and the A2DeskTop 800K image\n");
+        std::printf("SKIP iwm_mig_snapshot: the revolution-anchoring case needs "
+                    "roms/apple2cp.rom and disks_3.5/A2DeskTop-1.5-en_800k.2mg\n");
+        g_revolutionCaseSkipped = true;
         return;
     }
     Memory mem; M6502 cpu(&mem); mem.setCpu(&cpu);
@@ -385,6 +394,7 @@ int main()
     testSel35RoundTrip();
     testThirdSonySnapshot();
     testRestoreKeepsTheRevolution();
+    if (g_revolutionCaseSkipped) return 77;
     std::printf("PASS\n");
     return 0;
 }

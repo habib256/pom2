@@ -125,6 +125,27 @@ void testDiablo630()
 
 int main()
 {
+    // ── The Diablo 630 tab racks are BOUNDED ─────────────────────────────
+    // `ESC 1` (horizontal) and `ESC -` (vertical) cost no mechanism time, so
+    // the paced drain's only brake is kCatchUpBytes — ~8192 pushes per UI
+    // frame. Unbounded, and with `ESC -` re-sorting the whole vector on every
+    // insert, `1B 2D` in a loop grew it without limit at O(N^2) ON THE UI
+    // THREAD: the window stops painting, cancel button included. A real 630's
+    // rack is one bit per column position, and POM2's two other heads bound
+    // theirs at 32/16.
+    {
+        auto iw = std::make_unique<ImageWriter>(144, ImageWriter::PaperSize::Letter);
+        iw->setModel(pom2::IwModel::LaserWriterDiablo);
+        std::vector<uint8_t> job;
+        for (int i = 0; i < 2000; ++i) { job.push_back(0x1B); job.push_back('-'); }
+        for (int i = 0; i < 2000; ++i) { job.push_back(0x1B); job.push_back('1'); }
+        iw->queueBytes(job.data(), job.size());
+        for (int i = 0; i < 4000 && iw->pendingBytes(); ++i) iw->tick(0.05);
+        // Both at an UNCHANGED position, so dedup alone would hold them at 1;
+        // the cap is what holds them if a job really walks the page.
+        assert(iw->diabloVTabStops() <= 16);
+        assert(iw->diabloTabStops() <= 32);
+    }
     testDiablo630();
     testEpsonControlsAndLists();
     testRepeatCountAcceptsHighBitDigits();

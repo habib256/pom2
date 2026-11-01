@@ -587,20 +587,35 @@ void test_snapshot_round_trip_and_irq_rewind()
 // ── Firmware-level checks: the real AppleMouse II EPROM on a 6502 ─────────
 // The Apple II Technical Notes (Mouse #2, #3, #7) describe the firmware
 // entries; these run them through 341-0270-C, as a program would.
+// A firmware case did not run: `main` returns 77 so ctest records the skip
+// instead of reporting a pass over four cases that never executed.
+static bool g_skipped = false;
+
 struct FirmwareRig {
     Memory mem;
     M6502  cpu{&mem};
     MouseCardAppleWin* card = nullptr;
     bool ok = false;
+    // ABSENT is not the same as FAILED. `ok = false` used to mean both, so a
+    // regression in `Memory::loadAppleIIRom` or in
+    // `MouseCardAppleWin::loadRom` — the two loaders these cases exercise —
+    // silently disabled the four firmware cases that would have caught it.
+    // A dump that is present but will not load is a FAILURE, not a skip.
+    bool fixturesPresent = false;
     FirmwareRig()
     {
         const auto rom  = pom2::findResource("roms/apple2p.rom");
         const auto slot = pom2::findResource("roms/mouse_341-0270-c.bin");
         if (rom.empty() || slot.empty()) return;
+        fixturesPresent = true;
         mem.setCpu(&cpu);
-        if (!mem.loadAppleIIRom(rom.c_str())) return;
+        // Both are in tools/test_media.sha256, so on CI these asserts are the
+        // live statement "the loaders work", not a fixture gate.
+        assert(mem.loadAppleIIRom(rom.c_str()) &&
+               "roms/apple2p.rom is present but Memory::loadAppleIIRom refused it");
         auto owned = std::make_unique<MouseCardAppleWin>(4);
-        if (!owned->loadRom(slot)) return;
+        assert(owned->loadRom(slot) &&
+               "roms/mouse_341-0270-c.bin is present but MouseCardAppleWin::loadRom refused it");
         card = owned.get();
         mem.slotBus().plug(4, std::move(owned));
         cpu.setCpuMode(M6502::CpuMode::NMOS);
@@ -646,7 +661,15 @@ struct FirmwareRig {
 void test_getclamp_reads_the_window_and_leaves_the_pointer()
 {
     FirmwareRig r;
-    if (!r.ok) { std::printf("  skip: GETCLAMP needs the ][+ and Mouse Card ROMs\n"); return; }
+    if (!r.ok) {
+        // SKIP at line start so tools/check_ctest_skips.sh sees it; the
+        // rig now asserts rather than returns when a present dump will
+        // not load, so reaching here really means the dumps are absent.
+        std::printf("SKIP mouse_card_applewin: GETCLAMP needs roms/apple2p.rom "
+                    "+ roms/mouse_341-0270-c.bin\n");
+        g_skipped = true;
+        return;
+    }
     r.call(0x19, 0);                                    // INITMOUSE
     r.clamp(0, 100, 500);
     r.clamp(1, 20, 300);
@@ -680,7 +703,15 @@ void test_getclamp_reads_the_window_and_leaves_the_pointer()
 void test_timedata_sets_the_vbl_rate()
 {
     FirmwareRig r;
-    if (!r.ok) { std::printf("  skip: TIMEDATA needs the ][+ and Mouse Card ROMs\n"); return; }
+    if (!r.ok) {
+        // SKIP at line start so tools/check_ctest_skips.sh sees it; the
+        // rig now asserts rather than returns when a present dump will
+        // not load, so reaching here really means the dumps are absent.
+        std::printf("SKIP mouse_card_applewin: TIMEDATA needs roms/apple2p.rom "
+                    "+ roms/mouse_341-0270-c.bin\n");
+        g_skipped = true;
+        return;
+    }
     r.card->setCpuClock(1022727.0);
     r.call(0x19, 0);
     assert(r.card->timeDataHz() == 0);
@@ -761,7 +792,15 @@ void test_timedata_sets_the_vbl_rate()
 void test_mouse_off_ignores_motion()
 {
     FirmwareRig r;
-    if (!r.ok) { std::printf("  skip: mouse-off needs the ][+ and Mouse Card ROMs\n"); return; }
+    if (!r.ok) {
+        // SKIP at line start so tools/check_ctest_skips.sh sees it; the
+        // rig now asserts rather than returns when a present dump will
+        // not load, so reaching here really means the dumps are absent.
+        std::printf("SKIP mouse_card_applewin: mouse-off needs roms/apple2p.rom "
+                    "+ roms/mouse_341-0270-c.bin\n");
+        g_skipped = true;
+        return;
+    }
     r.call(0x19, 0);
     r.call(0x12, 0x01);                                 // SETMOUSE: on
     r.card->setHostMouse(0, 0, false);
@@ -785,7 +824,15 @@ void test_mouse_off_ignores_motion()
 void test_fast_motion_does_not_wrap()
 {
     FirmwareRig r;
-    if (!r.ok) { std::printf("  skip: fast motion needs the ][+ and Mouse Card ROMs\n"); return; }
+    if (!r.ok) {
+        // SKIP at line start so tools/check_ctest_skips.sh sees it; the
+        // rig now asserts rather than returns when a present dump will
+        // not load, so reaching here really means the dumps are absent.
+        std::printf("SKIP mouse_card_applewin: fast motion needs roms/apple2p.rom "
+                    "+ roms/mouse_341-0270-c.bin\n");
+        g_skipped = true;
+        return;
+    }
     r.call(0x19, 0);
     r.call(0x12, 0x01);                                 // SETMOUSE: on
     r.card->setHostMouse(0, 0, false);
@@ -813,6 +860,7 @@ int main()
     test_mouse_off_ignores_motion();
     test_fast_motion_does_not_wrap();
 
+    if (g_skipped) return 77;
     std::printf("OK mouse_card_applewin_smoke\n");
     return 0;
 }

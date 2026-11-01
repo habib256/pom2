@@ -104,7 +104,7 @@ int VidexUltratermCard::pictureWidth() const
 
 int VidexUltratermCard::pictureHeight() const
 {
-    return std::clamp(crtc_.vertDisplayed() * (crtc_.maxRaster() + 1), 0, kMaxHeight);
+    return std::clamp(crtc_.vertDisplayed() * crtc_.rasterCount(), 0, kMaxHeight);
 }
 
 void VidexUltratermCard::paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark,
@@ -114,7 +114,7 @@ void VidexUltratermCard::paintPicture(uint32_t* dst, uint32_t lit, uint32_t dark
     const int h = pictureHeight();
     std::fill(dst, dst + std::size_t(w) * std::size_t(h), dark);
     const int cols = w / kCellWidth;
-    const int rasters = crtc_.maxRaster() + 1;
+    const int rasters = crtc_.rasterCount();   // interlace adjust included
     if (cols <= 0 || h <= 0) return;
 
     // Grey levels of crtc_update_row: 0 dark, 1 lowlight, 3 highlight.

@@ -78,6 +78,23 @@ public:
     int vertAdjust()     const { return r_[5]; }
     int vertDisplayed()  const { return r_[6]; }
     int maxRaster()      const { return r_[9]; }
+    /// R8 bits 1-0 == 11: Interlace Sync AND Video (MAME mc6845.cpp:81
+    /// `MODE_INTERLACE_AND_VIDEO`). The HD6845S then paints BOTH fields'
+    /// rasters into one frame, so a character row is R9 + 2 rasters tall, not
+    /// R9 + 1 — the datasheet puts it as "when the total number of rasters is
+    /// RN, RN-2 shall be programmed" (quoted in mc6845.cpp:1278-1280, where
+    /// `m_interlace_adjust = 2`).
+    bool interlaceAndVideo() const { return (r_[8] & 0x03) == 0x03; }
+    /// Rasters per character row, interlace adjust included. R8 was latched
+    /// and read by nothing, so every interlaced row was one raster short: the
+    /// UltraTerm's own firmware selects this mode for four of its seven
+    /// display tables (80x24 HQ, 80x32, 80x48, 128x32) and programs a SMALLER
+    /// R9 because the chip adds 2 — its 80x48 table has R9 = 7, i.e. the nine
+    /// rasters the 9x9 glyph needs. With R9+1 the ninth raster of every glyph
+    /// on all 48 rows was never painted (descenders, underlines, the bottom
+    /// edge of the box-drawing and MouseText cells) and the picture was 48
+    /// scanlines short.
+    int rasterCount()    const { return maxRaster() + (interlaceAndVideo() ? 2 : 1); }
     int cursorStart()    const { return r_[10] & 0x1F; }
     int cursorEnd()      const { return r_[11]; }
     /// R10 bits 6-5: 0 steady, 1 off, 2 blink every 16 frames, 3 every 32.

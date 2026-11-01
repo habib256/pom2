@@ -159,7 +159,16 @@ const IwModelProfile kModels[static_cast<size_t>(IwModel::Count)] = {
     // ImageWriter II — the superset.
     { "ImageWriter II", /*colour*/ true, /*tiers*/ true,
       &kBankStdFixed, &kBankStdProp, &kBankDraft, &kBankNlqFixed, &kBankNlqProp,
-      12.0, 2, 96, 180.0, 45.0, IwLineage::CItoh, 0, nullptr, 0 },
+      // 250 cps draft, Apple's published figure — the same number this
+      // file's Specifications comment, `speedName`'s "Draft (250 cps)", the
+      // header doc, DEV.md and imagewriter_smoke's own arithmetic all carry.
+      // The per-model table (d20871c3) replaced `kDraftCps = 250.0` with 180
+      // in this one row — the correspondence/standard tier's rate, selected
+      // here from the HOST's Draft rung — and left every other mention at
+      // 250, so every draft print took 39 % too long and a back-pressured
+      // guest sat in its ACK loop 39 % longer. Every other row carries its
+      // own published figure, so the default was the only one out.
+      12.0, 2, 96, 250.0, 45.0, IwLineage::CItoh, 0, nullptr, 0 },
     // ImageWriter I — mono, one face, powers up at Elite 12 cpi.
     { "ImageWriter I", false, false,
       &kBankIw1Fixed, &kBankIw1Prop, nullptr, nullptr, nullptr,
@@ -2144,13 +2153,21 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         case 'C': topMargin_    = 0.0;                                  // clear
                   bottomMargin_ = pageHeightIn_;             return true;
         case '1': // Set a tab here. Kept sorted so the HT scan is a
-                  // straight walk, and deduplicated so setting the same
-                  // stop twice does not make HT stall on it.
-                  if (std::find_if(diabloTabs_.begin(), diabloTabs_.end(),
+                  // straight walk, deduplicated so setting the same stop
+                  // twice does not make HT stall on it, and CAPPED: a real
+                  // 630's rack is one bit per column position, and the two
+                  // other heads bound theirs at 32/16 for the reason stated
+                  // over `kMaxPages` — "a guest that form-feeds in a loop
+                  // must not exhaust host RAM". These two were unbounded,
+                  // and `ESC 1`/`ESC -` cost no mechanism time, so a guest
+                  // could push ~500 k stops a second on the UI thread.
+                  if (diabloTabs_.size() < kMaxDiabloTabs &&
+                      std::find_if(diabloTabs_.begin(), diabloTabs_.end(),
                           [&](double t) { return std::fabs(t - curX_) < 1e-9; })
                       == diabloTabs_.end()) {
-                      diabloTabs_.push_back(curX_);
-                      std::sort(diabloTabs_.begin(), diabloTabs_.end());
+                      diabloTabs_.insert(
+                          std::lower_bound(diabloTabs_.begin(), diabloTabs_.end(), curX_),
+                          curX_);
                   }
                   return true;
         case '8': // Clear the tab at the current position, if there is one.
@@ -2160,8 +2177,20 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
                       diabloTabs_.end());
                   return true;
         case '2': diabloTabs_.clear(); diabloVTabs_.clear(); return true;   // all tabs, H and V
-        case '-': diabloVTabs_.push_back(curY_);                          // vertical tab here
-                  std::sort(diabloVTabs_.begin(), diabloVTabs_.end()); return true;
+        case '-': // Vertical tab here — same cap and same dedup as `ESC 1`.
+                  // This one had NEITHER, and re-sorted the whole vector on
+                  // every insert: `1B 2D` in a loop grew it without limit at
+                  // O(N^2) on the UI thread, which stops the window painting
+                  // (cancel button included) within seconds.
+                  if (diabloVTabs_.size() < kMaxDiabloVTabs &&
+                      std::find_if(diabloVTabs_.begin(), diabloVTabs_.end(),
+                          [&](double t) { return std::fabs(t - curY_) < 1e-9; })
+                      == diabloVTabs_.end()) {
+                      diabloVTabs_.insert(
+                          std::lower_bound(diabloVTabs_.begin(), diabloVTabs_.end(), curY_),
+                          curY_);
+                  }
+                  return true;
         case 'L': bottomMargin_ = curY_ + lineSpacing_;      return true;   // bottom margin here
 
         // ── Styles ─────────────────────────────────────────────────────

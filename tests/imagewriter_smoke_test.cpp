@@ -465,10 +465,17 @@ void testMechanismPacing()
     assert(iw.pendingBytes() == 11);
     assert(iw.bytesReceived() == 0);               // nothing printed yet
 
-    // One 60 Hz frame buys 16.7 ms ≈ 4 characters — not the whole line.
+    // One 60 Hz frame buys 16.667 ms, and a draft character costs 1/250 s =
+    // 4.0 ms, so EXACTLY 4 characters land — the arithmetic this test has
+    // always stated in prose while asserting only `> 0 && < 11`, which held
+    // just as well for the 180 cps the model table had carried since
+    // d20871c3 (3 characters). Pin the rate, not the range: 4 at 250 cps, 3
+    // at 180. Apple's published figure is 250 (ImageWriter II Owner's Manual,
+    // "Specifications"), which is also what the Speed combo promises the
+    // user.
     iw.tick(1.0 / 60.0);
     const uint64_t afterOneFrame = iw.bytesReceived();
-    assert(afterOneFrame > 0 && afterOneFrame < 11);
+    assert(afterOneFrame == 4);
     assert(iw.busy());
 
     // Ticking past the line's print time drains it exactly once.

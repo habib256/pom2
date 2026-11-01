@@ -34,6 +34,10 @@
 #include "KeyChord.h"
 
 #include <cstdio>
+#include <filesystem>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include <fstream>
 #include <string>
 #include <vector>
@@ -159,6 +163,13 @@ const char* const kAbortStubs[] = {
     "glfwGetWindowFrameSize",
 };
 
+// Thread spawns. `pom2::guardedThread` is POM2's own wrapper (ThreadGuard.h)
+// and `std::thread` the raw form; both are fatal in the browser.
+const char* const kThreadSpawns[] = {
+    "pom2::guardedThread",
+    "guardedThread",
+};
+
 const char* const kScannedFiles[] = {
     "src/main.cpp",
     "src/MainWindow.cpp",
@@ -167,6 +178,11 @@ const char* const kScannedFiles[] = {
     "src/MainWindow_Slots.cpp",
     "src/MainWindow_Chrome.cpp",
     "src/JoystickInput.cpp",
+    // Added for the thread-spawn scan: every TU that hands work to a worker
+    // and is reachable from a browser frame. PrinterHistory and
+    // PostScriptRender are the two that were not guarded (2026-11-01).
+    "src/PrinterHistory.cpp",
+    "src/PostScriptRender.cpp",
 };
 
 /// Would a line at this preprocessor nesting be COMPILED with __EMSCRIPTEN__
@@ -175,6 +191,15 @@ const char* const kScannedFiles[] = {
 ///    0 = anything else (unrelated condition, or the Emscripten branch)
 /// A line is browser-reachable when no open frame excludes Emscripten.
 struct PpFrame { bool excludesEmscripten; bool sawEmscriptenCond; };
+
+/// How many browser-reachable lines the last scan actually inspected. The
+/// scanner had NO POSITIVE CONTROL: if the PpFrame model ever broke so that
+/// every line looked excluded, it would inspect nothing and pass — which is
+/// precisely the state in which a newly added unguarded call ships and
+/// abort()s the whole WASM module. `testNoEmscriptenAbortStubs` now asserts
+/// this is non-trivial, and `testScannerSeesWhatItShould` feeds it fixtures
+/// with a known answer.
+int g_linesInspected = 0;
 
 bool scanFile(const std::string& path)
 {
@@ -220,6 +245,34 @@ bool scanFile(const std::string& path)
         for (const auto& fr : stack)
             if (fr.excludesEmscripten) { browserReachable = false; break; }
         if (!browserReachable) continue;
+        ++g_linesInspected;
+
+        // A THREAD SPAWN is browser-fatal too, and it is the class the GLFW
+        // list could not see. The browser build has no pthreads by design, so
+        // `pthread_create` answers ENOTSUP and `std::thread`'s constructor
+        // throws — into a build with no exception landing pads at all
+        // (`-fignore-exceptions` is emcc's default and nothing turns it off),
+        // so the throw reaches abort(). Printing ONE page used to tear the
+        // tab down this way (PrinterHistory), and so did switching the head
+        // to the LaserWriter (PostScriptRender). The correctly-guarded
+        // spawners — BlockWriteBackExecutor, EmulationController's
+        // WriteBackQueue, the socket workers — all sit behind a guard and are
+        // invisible here, which is the point.
+        for (const char* fn : kThreadSpawns) {
+            const std::string needle = std::string(fn) + "(";
+            const std::size_t at = s.find(needle);
+            if (at == std::string::npos) continue;
+            const std::size_t cm = s.find("//");
+            if (cm != std::string::npos && cm < at) continue;
+            std::printf("FAIL: %s:%d spawns a thread outside an "
+                        "__EMSCRIPTEN__ guard — the browser build has no "
+                        "pthreads, so this throws into a build with no "
+                        "landing pads and abort()s the whole module\n",
+                        path.c_str(), lineNo);
+            ++failures;
+            ok = false;
+            break;          // one report per line, not one per spelling
+        }
 
         for (const char* fn : kAbortStubs) {
             const std::string needle = std::string(fn) + "(";
@@ -288,14 +341,90 @@ void testLinuxAltGr()
     check(!rightAltIsLevel3(kKeyA + 16, 0, false, false), "no Right Alt held");
 }
 
+// POSITIVE CONTROL. Two fixtures with a known answer, written to a temp file:
+// one whose offending call is browser-reachable (must be caught) and one where
+// the same call sits under `#ifndef __EMSCRIPTEN__` (must not be). Without
+// this the scanner's own correctness rested on nothing — the shape
+// `bundle_manifest --self-test` and `check_ctest_skips.sh --self-test` both
+// already use.
+void testScannerSeesWhatItShould()
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() /
+        ("pom2_kcp_scan_" + std::to_string(
+#if defined(_WIN32)
+            0
+#else
+            ::getpid()
+#endif
+        ));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+
+    auto write = [&](const char* name, const std::string& body) {
+        const fs::path p = dir / name;
+        std::ofstream(p) << body;
+        return p.string();
+    };
+
+    // Raw string literals: the fixtures are C++ source, so nothing to escape.
+    // Reachable — must FAIL the scan, and must have inspected lines.
+    const std::string bad = R"CPP(
+void f() {
+    glfwGetKeyName(1, 2);
+}
+)CPP";
+    // The same call under #ifndef __EMSCRIPTEN__ — must pass.
+    const std::string good = R"CPP(
+void f() {
+#ifndef __EMSCRIPTEN__
+    glfwGetKeyName(1, 2);
+    (void)pom2::guardedThread("x", []{});
+#endif
+}
+)CPP";
+    // An unguarded thread spawn — the class that killed the tab.
+    const std::string thread = R"CPP(
+void f() {
+    worker_ = pom2::guardedThread("X", []{});
+}
+)CPP";
+
+    const int failuresBefore = failures;
+    g_linesInspected = 0;
+    const bool badOk = scanFile(write("bad.cpp", bad));
+    check(!badOk, "the scanner catches a browser-reachable abort stub");
+    check(g_linesInspected > 0, "the scanner actually inspected lines");
+
+    g_linesInspected = 0;
+    const bool goodOk = scanFile(write("good.cpp", good));
+    check(goodOk, "the scanner leaves an #ifndef __EMSCRIPTEN__ branch alone");
+    check(g_linesInspected > 0, "the scanner inspected the unguarded lines too");
+
+    const bool threadOk = scanFile(write("thread.cpp", thread));
+    check(!threadOk, "the scanner catches an unguarded thread spawn");
+
+    // The three deliberate failures above are the control, not real defects.
+    failures = failuresBefore;
+    fs::remove_all(dir, ec);
+}
+
 void testNoEmscriptenAbortStubs()
 {
     const std::string root = POM2_STR(POM2_SOURCE_DIR);
     bool allOk = true;
+    g_linesInspected = 0;
     for (const char* rel : kScannedFiles)
         allOk &= scanFile(root + "/" + rel);
     check(allOk,
-          "no Emscripten abort()-stub GLFW call is reachable in the browser build");
+          "no Emscripten abort()-stub GLFW call or thread spawn is reachable "
+          "in the browser build");
+    // The scan must have LOOKED. A PpFrame model that excluded everything
+    // would otherwise pass by inspecting nothing.
+    check(g_linesInspected > 2000,
+          "the Emscripten scan inspected a plausible number of lines");
+    std::printf("  (the Emscripten scan inspected %d browser-reachable lines)\n",
+                g_linesInspected);
 }
 
 }  // namespace
@@ -312,6 +441,7 @@ int main()
     testAppleChordChar();
     testCtrlPunctuation();
     testLinuxAltGr();
+    testScannerSeesWhatItShould();
     testNoEmscriptenAbortStubs();
 
     if (failures) {

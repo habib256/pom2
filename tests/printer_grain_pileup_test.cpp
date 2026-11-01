@@ -103,6 +103,16 @@ void check(const char* what, const Render& r)
     if (r.peak > 0.5f)
         fail(std::string(what) + ": peak " + std::to_string(r.peak) +
              " — grains are summing, not thinning");
+    // A FLOOR as well as a ceiling. `drain()` answers {0, 0} for silence, so a
+    // printer that makes no sound at all certified as crackle-free — and the
+    // regression that sits next to the one this file pins is exactly the
+    // opposite error: dropping too aggressively in PrinterSoundDevice's grain
+    // scheduler. One-sided bounds cannot tell the two apart. 0.01 is two
+    // orders of magnitude under the 0.5 ceiling, so it only catches silence
+    // and near-silence, not a quieter-but-working mix.
+    if (!(r.peak > 0.01f))
+        fail(std::string(what) + ": peak " + std::to_string(r.peak) +
+             " — the head is silent, so 'no crackle' proves nothing");
 }
 
 }  // namespace

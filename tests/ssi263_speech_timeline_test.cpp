@@ -389,6 +389,73 @@ void checkSoundIIRollbackDropsStaleSpeech()
         fail("after a cycle rollback the stale SSI263 queue kept new speech mute");
 }
 
+// Speech must stay audible under an ACCELERATOR — a property test, not a
+// regression pin.
+//
+// The playback queue used to be stamped in CPU cycles (`lastSyncCycle_`)
+// while the render cursor is anchored to `busNow_` and paced at
+// `ayClockHz()`; the comment over `cyclesPerSample` states the rule ("the
+// stamps are slot-bus ticks"), and the PSG queue beside it has always
+// honoured it. Under an accelerator `SlotBusClock::ratio()` drops below 1, so
+// the two counters really do diverge, and the stamps were in the wrong one.
+// That inconsistency is what the fix corrects.
+//
+// HONEST LIMIT: this case does NOT discriminate the fix. Reverting the stamp
+// to `lastSyncCycle_` leaves the suite green and the measured energy here
+// unchanged (468.47 at both 3.5x and 4x), so the "speech goes mute" symptom
+// reported with the finding is NOT reproduced by this harness and should be
+// treated as unverified. What the case does hold is the property itself: a
+// Sound II under a 1x / 3.5x / 4x CPU must still voice a phoneme. If someone
+// later builds a reproduction, it belongs here.
+void checkSpeechSurvivesAnAccelerator(uint32_t sr)
+{
+    constexpr double kStockHz = 1022727.0;
+    for (double mult : { 1.0, 3.5, 4.0 }) {
+        Memory memory;
+        M6502 cpu(&memory);
+        auto owned = std::make_unique<MockingboardCard>(4, MockingboardCard::Variant::SoundII);
+        auto& card = *owned;
+        memory.slotBus().plug(4, std::move(owned));
+        card.setCpu(&cpu);
+        card.setSampleRate(sr);
+        card.setVolume(1.0f);
+        // The bus (phase 0) stays on the crystal; only the CPU is accelerated
+        // — the split EmulationController makes via setStandardClock /
+        // setCpuClock (SlotBusClock.h).
+        card.setStandardClock(kStockHz);
+        card.setCpuClock(mult * kStockHz);
+        card.slotRomWrite(0x43, 0x8F);
+        card.slotRomWrite(0x44, 0x80);
+        card.slotRomWrite(0x40, 0xCA);
+        card.slotRomWrite(0x43, 0x0F);
+
+        constexpr int frames = 257;
+        std::vector<float> buf(frames);
+        uint64_t previous = 0;
+        double audible = 0.0;
+        // ~0.4 s of emulated time. The CPU counter advances at the
+        // ACCELERATED rate, which is what pulled the two domains apart.
+        for (int block = 0; block < 64; ++block) {
+            const auto now = static_cast<uint64_t>(
+                (block + 1) * frames * mult * kStockHz / sr);
+            memory.setCycleCounter(now);
+            card.advanceCycles(static_cast<int>(now - previous));
+            previous = now;
+            if (block == 8) card.slotRomWrite(0x40, 0xD2);
+            card.audioSource()->fillAudioBuffer(buf.data(), frames);
+            if (block > 12) audible += energy(buf, 0, frames);
+        }
+        if (!(audible > 0.0)) {
+            std::printf("  FAIL speech is silent at %.1fx (energy %.6f)\n",
+                        mult, audible);
+            fail("the speech queue is stamped in a clock the cursor does not use");
+        } else {
+            std::printf("  ok: speech is audible at %.1fx (energy %.6f)\n",
+                        mult, audible);
+        }
+    }
+}
+
 int main()
 {
     std::vector<float> buf(kFrames, 0.0f);
@@ -460,6 +527,8 @@ int main()
         else
             std::printf("  ok: control — the untimed path voices from sample 0\n");
     }
+
+    checkSpeechSurvivesAnAccelerator(44100);
 
     if (g_failures == 0)
         std::printf("  ok: a phoneme starts on the sample its cycle falls in\n");

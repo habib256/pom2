@@ -525,6 +525,11 @@ public:
     /// however many characters it still owes, which is also what the real
     /// buffer holds, so back-pressure keys off this and not off `busy()`.
     size_t pendingBytes() const { return pending_.size() - pendingHead_; }
+    /// How many Diablo 630 tab stops are set. Exposed for the pin on the
+    /// rack cap: `ESC 1` / `ESC -` cost no mechanism time, so an
+    /// unbounded rack was a guest-driven UI-thread freeze.
+    std::size_t diabloTabStops()  const { return diabloTabs_.size(); }
+    std::size_t diabloVTabStops() const { return diabloVTabs_.size(); }
     /// True while the mechanism still owes work: queued bytes, or an
     /// `ESC R` run only partly expanded. The repeat is paced like anything
     /// else it prints, so it outlives the byte that asked for it and
@@ -908,6 +913,12 @@ private:
     uint8_t diabloNeed_ = 0;
     /// Column tab stops, inches from the left edge. The 630 sets them at the
     /// CURRENT position (ESC 1) rather than by number.
+    // Bounded like the ESC/P head's racks (32 horizontal / 16 vertical): a
+    // real 630 has one bit per column position, and `ESC 1` / `ESC -` cost no
+    // mechanism time, so an unbounded rack was a guest-driven UI-thread
+    // freeze. Both are kept sorted and deduplicated.
+    static constexpr std::size_t kMaxDiabloTabs  = 32;
+    static constexpr std::size_t kMaxDiabloVTabs = 16;
     std::vector<double> diabloTabs_;
     std::vector<double> diabloVTabs_;   // ESC - stops, inches from the top of the page
 

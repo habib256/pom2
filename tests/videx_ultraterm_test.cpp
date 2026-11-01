@@ -109,6 +109,51 @@ void testBus()
     CHECK(d.control1() == (VidexUltratermCard::kPages256 | 2) && d.vram()[9 * 256 + 0xFF] == 0x77);
 }
 
+// The HD6845S's INTERLACE-AND-VIDEO adjust (R8 bits 1-0 == 11): a character
+// row is R9 + 2 rasters tall, not R9 + 1 (mc6845.cpp:81, :1278-1280 — the
+// datasheet's "when the total number of rasters is RN, RN-2 shall be
+// programmed"). R8 was latched and read by nothing.
+//
+// The witness is the card's OWN FIRMWARE. roms/videx_ultraterm_frm_b537.bin
+// carries seven 16-byte CRTC tables at 0xF25..0xF95; the three
+// non-interlaced ones (80x24, 96x24, 160x24) use R8 = 0 with R9 = 8 — the
+// nine rasters a 9x9 glyph needs — and the four interlaced ones use R8 = 3
+// with a SMALLER R9 (14, 11, 7, 11) precisely because the chip adds 2. So
+// the 80x48 table below asks for nine rasters and used to get eight: the
+// ninth raster of every glyph on all 48 rows was never painted, and the
+// picture came out 48 scanlines short.
+void testInterlaceAndVideoRasterAdjust()
+{
+    VidexUltratermCard c(3);
+    std::vector<uint8_t> fw(4096, 0), ch(4096, 0);
+    ch[0x800 + 'A' * 16 + 0] = 0x80;   // raster 0
+    ch[0x800 + 'A' * 16 + 8] = 0x80;   // raster 8 — only reachable with the adjust
+    c.loadRoms(fw, ch);
+    auto reg = [&](int r, uint8_t v) { c.deviceSelectWrite(0, uint8_t(r)); c.deviceSelectWrite(1, v); };
+    // The firmware's 80x48 table, verbatim (offset 0xF75).
+    reg(0, 122); reg(1, 80); reg(4, 57); reg(5, 1); reg(6, 48);
+    reg(8, 3); reg(9, 7); reg(10, 0x20); reg(12, 0); reg(13, 0);
+    CHECK(c.crtc().interlaceAndVideo());
+    CHECK(c.crtc().rasterCount() == 9);
+    CHECK(c.pictureHeight() == 48 * 9);          // 432, not 384
+
+    c.deviceSelectWrite(2, VidexUltratermCard::kPages256);
+    c.expansionRomWrite(0x400, 'A');
+    const uint32_t lit = 0xFF00FF00u, dark = 0xFF000000u;
+    std::vector<uint32_t> pic(std::size_t(c.pictureWidth()) * std::size_t(c.pictureHeight()), 0);
+    c.paintPicture(pic.data(), lit, dark, 0, 1022727.0);
+    const int w = c.pictureWidth();
+    CHECK(pic[std::size_t(0 * w) + 0] != dark);   // raster 0 of row 0
+    CHECK(pic[std::size_t(8 * w) + 0] != dark);   // raster 8 — the lost one
+    CHECK(pic[std::size_t(9 * w) + 0] == dark);   // row 1 starts at y = 9
+
+    // And a non-interlaced table is unchanged: R8 = 0 keeps R9 + 1.
+    reg(8, 0); reg(9, 8); reg(6, 24);
+    CHECK(!c.crtc().interlaceAndVideo());
+    CHECK(c.crtc().rasterCount() == 9);
+    CHECK(c.pictureHeight() == 24 * 9);
+}
+
 // Geometry and attributes: 160 × 24 cells of 9 × 1 rasters, one glyph whose
 // raster 0 is $80 (the leftmost dot): a highlight char vs a lowlight one,
 // and inverse.
@@ -224,6 +269,7 @@ int testFirmware()
 int main()
 {
     testBus();
+    testInterlaceAndVideoRasterAdjust();
     testPicture();
     const int fw = testFirmware();
     if (g_fail) {

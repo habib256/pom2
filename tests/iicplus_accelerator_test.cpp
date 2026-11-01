@@ -54,7 +54,18 @@ void runFrames(EmulationController& c, int n)
 int main()
 {
     const std::string rom = pom2::findResource("roms/apple2cp.rom");
-    if (rom.empty()) { std::printf("skip: needs roms/apple2cp.rom\n"); return 0; }
+    if (rom.empty()) {
+        // 77, not 0: this gates the WHOLE test — the CGGA 4 MHz model,
+        // cpuSpeedMultiplier() after reset, "Esc held at reset -> 1 MHz",
+        // the pre-2026-10-21 snapshot compatibility and the IWM
+        // drive-disable delay in crystal time (the 2026-10-25 bug this file
+        // was written for). Exiting 0 made all of it a silent pass, and the
+        // lowercase word was invisible to tools/check_ctest_skips.sh, whose
+        // detector matched `^SKIP` only (widened 2026-11-01).
+        // roms/apple2cp.rom is in tools/test_media.sha256, so CI never skips.
+        std::printf("SKIP iicplus_accelerator: needs roms/apple2cp.rom\n");
+        return 77;
+    }
 
     EmulationController c;
     c.setCyclesPerFrame(17045);
