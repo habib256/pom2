@@ -12,6 +12,56 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — ImageWriter: five power-on defaults, all inherited from the reference and all wrong
+
+`imagewriter` parity slice. The citations were almost clean (22 of 24 exact
+against greg-kennedy `d0d70958`), and every finding is the same shape: POM2
+faithfully ported the GSport / greg-kennedy reference, web-a2e does most of
+them the same way, and **the ImageWriter II Technical Reference contradicts
+all three**. Three emulators agreeing is not evidence; they share an ancestor.
+
+**A full line overprints; it does not feed.** [B] TR p. 79: *"When you turn
+the printer on, it is not set to insert a line feed character after an
+automatic carriage return. In this case, if you send a long string of
+characters to the printer without any line feeds, each line of text
+overprints the previous line."* p. 34 says the same of soft switch **A-6**
+(*"The default is for no line feed to be inserted"*) and p. 83 of `ESC R`.
+POM2 always did CR **and** LF, and A-6 — set by `ESC D SP NUL` — was accepted
+and then ignored. It is now the switch it always was.
+
+**A bare LF returns the carriage.** [B] TR Table 5-14 p. 75: `ESC l 0` =
+*"Insert CR before LF and FF (default)"*, and Tables A-1 / A-2 list
+*"Carriage return insertion: On"* after either reset. POM2 advanced the paper
+without touching the carriage and ignored `ESC l` entirely, so anything ending
+its lines with a bare LF came out as a staircase. (web-a2e had this one right
+and the reference did not.)
+
+**Proportional margins and tabs are counted at 9 and 10 to the inch.** [B] TR
+p. 60: *"If elite proportional pitch is selected, the margin setting is
+measured at 10 character positions to the inch; with pica proportional pitch,
+it is measured at 9 to the inch."* The ranges agree (`ESC L` 000-071 pica,
+000-079 elite) and so does the arithmetic (144 and 160 dpi over a 16-dot
+cell). All three emulators used 10 and 12 — `cpi_`, which is a different
+quantity. `columnCpi()` now separates them; `cpi_` keeps its other two jobs,
+the fallback advance and the backspace step.
+
+**The power-on font is Draft.** [B] TR p. 39: *"When you turn on the printer
+it is set to use the draft font"*, with Tables A-1 and A-2 both reading
+*"Font: Draft"*. POM2 started on Correspondence, citing Table 4-1 — whose
+"Default" column points at the Print Quality button that the facing text puts
+on draft. So a plain `PR#1 : LIST` printed in the wrong face.
+
+**`ESC m` and `ESC M` are `ESC a 0` and `ESC a 2`.** [B] TR Table 4-1 p. 39,
+*"to maintain compatibility with the Apple Scribe printer"*. POM2 had `ESC a`
+but swallowed these two as a "typeface variant" the manual does not describe.
+
+Five fixes, one new test, five mutations. The slice also recorded two
+`AMONT FAUX` where POM2 had already corrected the reference (bold at reset,
+and the perforation-skip switch), and one grade-E claim of POM2's own — that
+an over-long graphics line "loses its excess columns" — which the TR
+contradicts by speaking of *"text or graphics"*; the graphics half of constat 1
+is left open, the report rating it PLAUSIBLE on a single general sentence.
+
 ## 2026-11-01 — Uthernet II: Ctrl-Reset is a hardware reset, and two Sn_IR bits that never rose
 
 `Uthernet2` parity slice. The citations were perfect — 46 of 46 exact, one

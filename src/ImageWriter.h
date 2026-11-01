@@ -635,6 +635,23 @@ private:
     // ─── Printer state (imagewriter.h:214-294) ───────────────────────────
     uint8_t  color_ = 7 << 5;             // COLOR_BLACK
     uint8_t  switcha_ = 0, switchb_ = ' ';
+    /// Character positions per inch for MARGINS and TAB STOPS. [B] TR p. 60:
+    /// the two proportional pitches count them at 9 (pica) and 10 (elite) to
+    /// the inch, not at the 10 and 12 that `cpi_` carries — `cpi_` is also
+    /// the fallback advance and the backspace step, which stay as they are.
+    /// Only `ESC p` / `ESC P` set this; every fixed pitch clears kStyleProp
+    /// and `columnCpi()` falls back to `cpi_` on its own.
+    /// `docs/audits/parite-imagewriter-2026-11-01.md`, constat 3.
+    double   columnCpi_ = 10.0;
+    double   columnCpi() const { return (style_ & kStyleProp) ? columnCpi_ : cpi_; }
+    /// [B] TR Table 5-14 p. 75: `ESC l 0` = "Insert CR before LF and FF
+    /// (default)", `ESC l 1` = no insertion; Tables A-1 and A-2 both list
+    /// "Carriage return insertion: On" after a hardware or software reset,
+    /// and pp. 75-76: after a line feed "The printer is set to start the
+    /// next line at the left margin". POM2 fed the paper without touching
+    /// the carriage and ignored `ESC l`, so text ended with bare LFs came
+    /// out as a staircase. `docs/audits/...`, constat 2.
+    bool     crBeforeLf_ = true;
     uint8_t  msb_ = 0;                    // 255 = pass bit 7 through
 
     // ─── Custom characters (ImageWriter II Technical Reference, ch. 7) ──

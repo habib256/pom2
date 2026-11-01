@@ -294,8 +294,11 @@ void testPrinterEndpoints(EmulationController& ctrl, pom2::AiControlServer& srv)
     r = get("/printer-port?slot=2");
     assert(contains(r.body, "\"mode\":\"printer\""));
 
+    // [B] Epson FX manual Table K-1: BUSY "goes HIGH ... 3) When Off-Line".
+    // An off-line printer therefore reads $08 (BUSY), not $00 — this line
+    // pinned the old value. `docs/audits/parite-grappler-2026-11-01.md`.
     r = post("/printer-port", "{\"slot\":1,\"set\":\"online=off\"}");
-    assert(r.status == 200 && contains(r.body, "\"line_bits\":\"$00\""));
+    assert(r.status == 200 && contains(r.body, "\"line_bits\":\"$08\""));
     r = post("/printer-port", "{\"slot\":1,\"set\":\"online=on,paper=out\"}");
     assert(r.status == 200 && contains(r.body, "\"line_bits\":\"$0E\""));
     r = post("/printer-port", "{\"slot\":1,\"set\":\"paper=ok\"}");

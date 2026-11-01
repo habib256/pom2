@@ -61,8 +61,25 @@ void testImageWriterResidue()
         const int cols = static_cast<int>(std::lround(8.0 * iw.status().cpi));
         feed(iw, std::string(static_cast<size_t>(cols - 1), 'H').c_str());
         assert(iw.status().headY == y0 && "an 8-inch line holds its columns");
+        const double x0 = iw.status().headX;
         feed(iw, "H");
-        assert(iw.status().headY > y0 && "the head wraps at the 8-inch line, not the paper edge");
+        // [B] TR pp. 34 / 79: a full line returns the CARRIAGE and, by
+        // default, does NOT feed — "each line of text overprints the
+        // previous line". The feed is soft switch A-6, set by ESC D SP NUL.
+        // This assertion read `headY > y0` and pinned the opposite.
+        // `docs/audits/parite-imagewriter-2026-11-01.md`, constat 1.
+        assert(iw.status().headY == y0 &&
+               "a full line overprints by default: the paper does not move");
+        assert(iw.status().headX < x0 && "but the carriage does return");
+    }
+    {   // ...and with A-6 set, it feeds, which is what the switch is for.
+        ImageWriter iw(144, ImageWriter::PaperSize::Letter);
+        const uint8_t a6[] = { 0x1B, 'D', ' ', 0 };
+        iw.printBytes(a6, 4);
+        const double y0 = iw.status().headY;
+        const int cols = static_cast<int>(std::lround(8.0 * iw.status().cpi));
+        feed(iw, std::string(static_cast<size_t>(cols + 1), 'H').c_str());
+        assert(iw.status().headY > y0 && "ESC D SP NUL restores the line feed");
     }
     // Paper: a width drag leaves an A4's 11.69" alone, and says Custom until
     // a named format is picked again.

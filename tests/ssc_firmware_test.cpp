@@ -204,9 +204,18 @@ void testCableLines()
         (void)card.deviceSelectRead(0x9);           // clear anything pending
         card.setCable(Cable::PrinterOffline);
         expect(card.irqState() == 0, "no DTR: a line change does not interrupt");
-        card.deviceSelectWrite(0xA, 0x0B);          // DTR on
+        // [B] WDC W65C51N p. 13: a DCD/DSR edge interrupts "unless bit 1 of
+        // the Command Register (IRD) is set to a 1 to disable IRQB". $0B
+        // sets IRD, so it must NOT interrupt — this line used to assert the
+        // opposite, which is what killed ProDOS under every polling driver.
+        // `docs/audits/parite-mos6551-2026-11-01.md`, constat 1.
+        card.deviceSelectWrite(0xA, 0x0B);          // DTR on, IRD SET
         card.setCable(Cable::PrinterReady);
-        expect(card.irqState() != 0, "DTR on: a line change interrupts");
+        expect(card.irqState() == 0, "IRD set: a line change does NOT interrupt");
+
+        card.deviceSelectWrite(0xA, 0x09);          // DTR on, IRD clear
+        card.setCable(Cable::PrinterOffline);
+        expect(card.irqState() != 0, "IRD clear: a line change interrupts");
         expect((card.deviceSelectRead(0x9) & 0x80) != 0, "status shows IRQ");
     }
     {   // The raw DIP banks.

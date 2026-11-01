@@ -235,6 +235,80 @@ void testDiabloRemoteReset()
     std::printf("  ok: Diablo ESC CR P / ESC SUB I re-initialise the head\n");
 }
 
+
+/// The five divergences the 2026-11-01 ImageWriter parity slice found against
+/// the ImageWriter II Technical Reference. POM2 inherited all five from the
+/// GSport / greg-kennedy reference, and web-a2e shares most of them: three
+/// emulators against the manual.
+/// `docs/audits/parite-imagewriter-2026-11-01.md`.
+void testImageWriterManualDefaults()
+{
+    auto run = [](const std::vector<uint8_t>& job) {
+        auto iw = std::make_unique<ImageWriter>(144, ImageWriter::PaperSize::Letter);
+        iw->queueBytes(job.data(), job.size());
+        for (int i = 0; i < 8000 && iw->pendingBytes(); ++i) iw->tick(0.05);
+        return iw;
+    };
+    auto near = [](double a, double b) { return std::fabs(a - b) < 1e-4; };
+    const double home = ImageWriter::kHomeX;
+
+    // [B] TR p. 39 and Tables A-1 / A-2: "Font: Draft" at power-up.
+    assert(run({})->quality() == ImageWriter::Quality::Draft &&
+           "the printer powers up on the draft font");
+
+    // [B] TR Table 4-1 p. 39: ESC m = ESC a 0, ESC M = ESC a 2 (Apple Scribe
+    // compatibility). Both were swallowed as a "typeface variant".
+    assert(run({ 0x1B, 'm' })->quality() == ImageWriter::Quality::Correspondence);
+    assert(run({ 0x1B, 'M' })->quality() == ImageWriter::Quality::NLQ);
+
+    // [B] TR Table 5-14 p. 75: CR insertion before LF is ON by default, so a
+    // bare LF returns the carriage; ESC l 1 turns it off and the text
+    // staircases, which is what POM2 always did.
+    assert(near(run({ 'A', 'B', 'C', 0x0A })->status().headX, home) &&
+           "a bare LF returns the carriage (CR insertion is the default)");
+    {
+        auto iw = run({ 0x1B, 'l', 1, 'A', 'B', 'C', 0x0A });
+        assert(iw->status().headX > home + 0.2 &&
+               "ESC l 1 turns the insertion off: the head stays put");
+    }
+
+    // [B] TR pp. 34 / 79 / 83: a full line overprints by default; A-6, set by
+    // ESC D SP NUL, is what adds the line feed. 100 characters at the
+    // power-up pitch overflow the line.
+    {
+        const std::vector<uint8_t> many(100, 'X');
+        auto plain = run(many);
+        std::vector<uint8_t> withA6 = { 0x1B, 'D', ' ', 0 };
+        withA6.insert(withA6.end(), many.begin(), many.end());
+        auto fed = run(withA6);
+        assert(near(plain->status().headY, run({})->status().headY) &&
+               "a full line overprints: no feed without A-6");
+        assert(fed->status().headY > plain->status().headY &&
+               "ESC D SP NUL (A-6) restores the automatic line feed");
+    }
+
+    // [B] TR p. 60: margins are counted at 9 positions/inch in pica
+    // proportional and 10 in elite proportional, not at cpi_'s 10 and 12.
+    // A CR parks the head on the left margin, so it reads the margin back.
+    {
+        auto iw = run({ 0x1B, 'p', 0x1B, 'L', '0', '0', '9', 0x0D });
+        assert(near(iw->status().headX, home + 9.0 / 9.0) &&
+               "pica proportional counts margin columns at 9 to the inch");
+    }
+    {
+        auto iw = run({ 0x1B, 'P', 0x1B, 'L', '0', '1', '0', 0x0D });
+        assert(near(iw->status().headX, home + 10.0 / 10.0) &&
+               "elite proportional counts them at 10 to the inch");
+    }
+    // Control: a FIXED pitch still counts at cpi_.
+    {
+        auto iw = run({ 0x1B, 'E', 0x1B, 'L', '0', '1', '2', 0x0D });
+        assert(near(iw->status().headX, home + 12.0 / 12.0) &&
+               "fixed elite is unchanged: 12 columns to the inch");
+    }
+    std::printf("  ok: ImageWriter power-on defaults follow the TR, not the reference\n");
+}
+
 int main()
 {
     // ── The Diablo 630 tab racks are BOUNDED ─────────────────────────────
@@ -259,6 +333,7 @@ int main()
         assert(iw->diabloTabStops() <= 32);
     }
     testDiablo630();
+    testImageWriterManualDefaults();
     testDiabloEscSandX();
     testDiabloRemoteReset();
     testEpsonControlsAndLists();

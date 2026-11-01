@@ -51,6 +51,16 @@ static_assert(sizeof(kPapers) / sizeof(kPapers[0]) ==
 // Soft switch A (imagewriter.cpp:87-98).
 constexpr uint8_t kSwitchACharsetMask    = 0x07;
 constexpr uint8_t kSwitchALfAfterCr      = 0x80;
+// A-6, "automatic line feed when line is full". [B] ImageWriter II Technical
+// Reference p. 34: "The default is for no line feed to be inserted"; p. 79:
+// "if you send a long string of characters to the printer without any line
+// feeds, each line of text overprints the previous line"; p. 83, on ESC R:
+// "the excess characters print over other characters on the same line unless
+// the 'automatic line feed when line is full' function is enabled". Set and
+// cleared by `ESC D SP NUL` / `ESC Z SP NUL` (Table 5-16). POM2 and the
+// GSport reference always fed; web-a2e does too — three emulators against
+// the manual. `docs/audits/parite-imagewriter-2026-11-01.md`, constat 1.
+constexpr uint8_t kSwitchALfWhenLineFull = 0x20;
 // Bit 4 of switch A is A-5, "Soft select response" (manual, software-switch
 // table: "A-5 | Soft select response | Enabled | Disabled | Disabled"), NOT
 // the perforation skip — the reference read the skip off this bit and so did
@@ -446,7 +456,13 @@ void ImageWriter::resetPrinter()
         printRes_    = mp.defaultPrintRes;
         definedUnit_ = mp.defaultUnit;
     }
-    quality_      = Quality::Correspondence;   // ESC a default (Table 4-1)
+    // [B] TR p. 39: "When you turn on the printer it is set to use the draft
+    // font", and Tables A-1 (hardware reset) and A-2 (after ESC c) both read
+    // "Font: Draft". The old comment cited Table 4-1, whose "Default" column
+    // points at the Print Quality button — which the facing text puts on
+    // draft at power-up. `docs/audits/parite-imagewriter-2026-11-01.md`,
+    // constat 4.
+    quality_      = Quality::Draft;
     // The 630's tab rack is part of the reset — its ESC 2 exists precisely
     // because tabs otherwise survive everything.
     diabloTabs_.clear(); diabloVTabs_.clear();
@@ -967,11 +983,13 @@ void ImageWriter::printCharInternal(uint8_t ch)
                  curX_ - lineStart, 1.0 / 72.0);
     }
 
-    // Wrap when the next character would cross the right margin.
+    // A full line returns the carriage; it only FEEDS when A-6 is set.
+    // [B] TR pp. 34 / 79 / 83 — see kSwitchALfWhenLineFull. The default is
+    // overprinting: the excess characters land on the same line.
     if ((curX_ + advance) > rightMargin_) {
         if (sound_) sound_->carriageReturn(curX_ - leftMargin_);
         curX_ = leftMargin_;
-        lineFeed();
+        if (switcha_ & kSwitchALfWhenLineFull) lineFeed();
     }
 }
 
@@ -1664,6 +1682,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
             }
             return true;
         case 0x0c:                              // FF
+            if (crBeforeLf_) curX_ = leftMargin_;   // same insertion as LF
             newPage(true, true);
             return true;
         case 0x0d:                              // CR
@@ -1699,6 +1718,12 @@ bool ImageWriter::processCommandChar(uint8_t ch)
                 }
                 return true;
             }
+            // [B] TR pp. 75-76: after a line feed "The printer is set to
+            // start the next line at the left margin", unless `ESC l 1`
+            // turned the insertion off. POM2 advanced the paper without
+            // touching the carriage, so text ended with bare LFs came out
+            // as a staircase.
+            if (crBeforeLf_) curX_ = leftMargin_;
             lineFeed();
             return true;
         case 0x0e:                              // SO  double width on
@@ -1748,7 +1773,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     // moment a job moved the left margin right, every low stop landed to the
     // LEFT of the head and HT became a silent no-op — one ragged column
     // again, from a different direction than the nearest-stop bug.
-    auto tabStop = [&]() { return leftMargin_ + (param3() - 1.0) / cpi_; };
+    auto tabStop = [&]() { return leftMargin_ + (param3() - 1.0) / columnCpi(); };
 
     // A command this head has no hardware for is DROPPED here, after its
     // parameter bytes have been collected — the manuals' rule is that an
@@ -1905,9 +1930,18 @@ bool ImageWriter::processCommandChar(uint8_t ch)
                style_ &= ~kStyleProp; extraIntraSpace_ = 0; updateMetrics(); break;
     case 0x51: cpi_ = 17.0; printRes_ = 5; definedUnit_ = 136;
                style_ &= ~kStyleProp; extraIntraSpace_ = 0; updateMetrics(); break;
-    case 0x70: cpi_ = 10.0; printRes_ = 6; definedUnit_ = 144;
+    // [B] TR p. 60 (Table 5-2 and text): "If elite proportional pitch is
+    // selected, the margin setting is measured at 10 character positions to
+    // the inch; with pica proportional pitch, it is measured at 9 to the
+    // inch." The ranges agree — ESC L 000-071 in pica proportional and
+    // 000-079 in elite (tabs 001-072 and 001-080, Table 5-8 p. 66) — and so
+    // does the arithmetic: 144 and 160 dpi over a 16-dot cell give 9 and 10.
+    // `cpi_` stays 10 and 12 because it is also the fallback advance and the
+    // BS step; `columnCpi_` is what margins and tab stops are counted in.
+    // `docs/audits/parite-imagewriter-2026-11-01.md`, constat 3.
+    case 0x70: cpi_ = 10.0; columnCpi_ =  9.0; printRes_ = 6; definedUnit_ = 144;
                style_ |= kStyleProp;  updateMetrics(); break;
-    case 0x50: cpi_ = 12.0; printRes_ = 7; definedUnit_ = 160;
+    case 0x50: cpi_ = 12.0; columnCpi_ = 10.0; printRes_ = 7; definedUnit_ = 160;
                style_ |= kStyleProp;  updateMetrics(); break;
 
     case 0x54:                                  // ESC T nn  nn/144 in spacing
@@ -1951,13 +1985,28 @@ bool ImageWriter::processCommandChar(uint8_t ch)
 
     // ESC a is handled above (quality select); ESC m / ESC M pick a
     // typeface variant POM2 has only one bank for.
-    case 0x6d: case 0x4d: break;                // typeface select — one font
+    // [B] TR Table 4-1 p. 39: `ESC m` is "Same as ESC a 0" and `ESC M` is
+    // "Same as ESC a 2", both added "to maintain compatibility with the
+    // Apple Scribe printer". POM2 had implemented ESC a but left these two
+    // as a "typeface variant" the manual does not describe.
+    // `docs/audits/parite-imagewriter-2026-11-01.md`, constat 5.
+    case 0x6d:                                  // ESC m  = ESC a 0
+        if (modelProfile().qualityTiers) quality_ = Quality::Correspondence;
+        break;
+    case 0x4d:                                  // ESC M  = ESC a 2
+        if (modelProfile().qualityTiers) quality_ = Quality::NLQ;
+        break;
     case 0x3d: break;                           // internal font ID
     case 0x24: customFont_ = 0; break;          // ESC $  standard font
     case 0x3f: break;                           // ESC ?  ID string: no back-channel
     case 0x4f: case 0x6f: break;                // paper-out detector
     case 0x6b: break;                           // optional font
-    case 0x6c: break;                           // CR before LF/FF
+    case 0x6c:                                  // ESC l n  CR before LF/FF
+        // [B] TR Table 5-14 p. 75: `ESC l 0` = "Insert CR before LF and FF
+        // (default)", `ESC l 1` = no insertion. Accepts the ASCII digit and
+        // the raw value, as the firmware does.
+        crBeforeLf_ = (static_cast<uint8_t>(params_[0] & 0x0F) == 0);
+        break;
     case 0x40: break;                           // output bin
     case 0x2d: case 0x2b: case 0x49: case 0x27: case 0x2a:
         execCustomCharEscape(static_cast<uint8_t>(escCmd_));   // ESC - + I ' *
@@ -1983,7 +2032,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         // Columns count from position 0, the power-on home (kHomeX, Tech.
         // Ref. p. 59) — not from the paper edge: `ESC L 000`, the default
         // drivers send back, moved every line 1/4" left of where it printed.
-        leftMargin_ = std::clamp(kHomeX + param3() / cpi_,
+        leftMargin_ = std::clamp(kHomeX + param3() / columnCpi(),
                                  0.0, std::max(0.0, pageWidthIn_ - 1.0 / cpi_));
         if (curX_ < leftMargin_) curX_ = leftMargin_;
         break;
