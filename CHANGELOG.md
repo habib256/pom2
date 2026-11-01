@@ -12,6 +12,41 @@ marker and the previous one.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
+## 2026-11-01 — Z8530: a flow-control write that stopped the transmitter dead
+
+Third parity slice (`docs/audits/parite-z80scc-2026-11-01.md`, 107 citations).
+It is the best-cited slice of the three — 88 OK outright, zero INEXACTE —
+because it is the only one whose port carries a pinned revision. The argument
+for the pin rule, made by its own absence elsewhere. It also found the pin has
+**aged**: `DEV.md` names `588eeb33` while the code follows `master` to
+2026-10-11. A stale pin is worse than none, because it inspires confidence.
+
+**A WR5 write confined to RTS or DTR aborted the character in flight.** At the
+pinned revision, `do_sccreg_wr5` calls `safe_transmit_register_reset()` on
+*any* WR5 change, and POM2 ported that faithfully (`txHalfBits = 0`). Upstream
+fixed it on 2026-10-12 (`17842be9`): a change confined to RTS (D1), DTR (D7) or
+Send Break (D4) no longer touches the shifter — those three drive output pins,
+and nothing in the Zilog ties them to the shift register. In POM2 the character
+was never completed, so `traComplete` never fired, the buffered byte was never
+loaded, TBE stayed low and All Sent never rose: a driver waiting on TBE waited
+forever. Not academic on the one card that uses this chip — the Workstation
+Card ROM (`roms/341-0358-A.bin`) toggles DTR through WR5 for flow control at
+`$E200-$E238`, and rewrites RTS alone at `$DD6D`. Latent today only because
+nothing yet feeds that SCC from outside; it would have fired the day a serial
+or LocalTalk bridge landed.
+
+**Selecting Rx-Int-on-First-Character did not arm that first character.**
+Upstream `2071f9aa`, same day: entering WR1 mode 01 from another mode sets
+`m_rx_first`. POM2, like the pin, armed it only through the WR0 `$20` command —
+yet the Zilog text POM2 itself quotes says that command *re*-enables the mode
+"after each message is received", which presupposes selection arms it. Masked
+on the ROM's main path, which issues WR0 `$20` right after re-enabling the
+receiver; not necessarily on the others.
+
+Both fixed as upstream fixes them, both pinned in `scc8530_smoke` and each
+verified by mutation. The WR5 test also pins the converse — a change *outside*
+those three pins still resets the shifter — so the fix cannot be over-applied.
+
 ## 2026-11-01 — Graded evidence, and a DOS 3.3 SAVE that disarmed the //c's motor timer
 
 **The convention was wrong, and it hid a bug.** `CLAUDE.md` said *MAME = source

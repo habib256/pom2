@@ -832,6 +832,16 @@ void Scc8530Device::doWr0(int index, uint8_t data)
 void Scc8530Device::doWr1(int index, uint8_t data)
 {
     Channel& c = ch_[index];
+    // [D] MAME z80scc.cpp:1882-1883 @ master (commit `2071f9aa`, 2026-10-12,
+    // "Interrupt on the first character once that mode is selected"):
+    // entering "Rx Int on First Character or Special Condition" ARMS that
+    // first character. The WR0 $20 command only RE-arms it after each
+    // message — which is what the Zilog text quoted at `doWr0` says, and it
+    // presupposes that selecting the mode arms it in the first place.
+    // `docs/audits/parite-z80scc-2026-11-01.md`, constat 2.
+    if ((data & WR1_RX_INT_MODE_MASK) == WR1_RX_INT_FIRST &&
+        (c.wr1 & WR1_RX_INT_MODE_MASK) != WR1_RX_INT_FIRST)
+        c.rxFirst = 1;
     c.wr1 = data;
     checkDmaRequest(index);
 
@@ -896,15 +906,30 @@ void Scc8530Device::doWr4(int index, uint8_t data)
     c.txHalfBits = 0;
 }
 
-/// MAME `z80scc_channel::do_sccreg_wr5` (z80scc.cpp:1973).
+/// [D] MAME `z80scc_channel::do_sccreg_wr5`, z80scc.cpp:1970-1998 @ master
+/// (commit `17842be9`, 2026-10-12). **A change confined to RTS, DTR or Send
+/// Break does NOT re-init the transmitter** — those three drive output pins
+/// and nothing in the Zilog ties them to the shift register. The pinned
+/// revision (`588eeb33`) reset it on every WR5 write, and POM2 ported that
+/// faithfully: a driver that toggled RTS or DTR mid-character lost the
+/// character, never saw TBE come back, and hung. The Workstation Card's own
+/// ROM does exactly that (`$E200-$E238` toggles DTR by WR5 for flow control,
+/// `$DD6D` rewrites RTS alone). Found by
+/// `docs/audits/parite-z80scc-2026-11-01.md`, constat 1; pinned by
+/// `scc8530_smoke`.
 void Scc8530Device::doWr5(int index, uint8_t data)
 {
     Channel& c = ch_[index];
     if (data == c.wr5)
         return;
+    const uint8_t changed = static_cast<uint8_t>(data ^ c.wr5);
     c.wr5 = data;
-    updateSerial(index);
-    c.txHalfBits = 0;       // safe_transmit_register_reset()
+    constexpr uint8_t kPinsOnly =
+        static_cast<uint8_t>(WR5_RTS | WR5_DTR | WR5_SEND_BREAK);
+    if (changed & static_cast<uint8_t>(~kPinsOnly)) {
+        updateSerial(index);
+        c.txHalfBits = 0;   // safe_transmit_register_reset()
+    }
     updateRts(index);       // also updates DTR
     checkDmaRequest(index);
 }

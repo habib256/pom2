@@ -1186,6 +1186,110 @@ void testOverrunLatchedUntilErrorReset()
     std::printf("  ok: RR1 overrun latched until Error Reset\n");
 }
 
+
+/// [D] MAME z80scc.cpp:1982-1986 @ master (commit `17842be9`, 2026-10-12).
+/// A WR5 write that changes only RTS, DTR or Send Break must NOT reset the
+/// transmit shift register: those three drive output pins. The pinned
+/// revision reset it on every WR5 write, so a driver toggling RTS or DTR
+/// mid-character dropped that character, never saw TBE come back, and hung
+/// — and the Workstation Card ROM toggles DTR by WR5 for flow control
+/// (`$E200-$E238`) and rewrites RTS alone (`$DD6D`).
+/// `docs/audits/parite-z80scc-2026-11-01.md`, constat 1.
+void testWr5PinOnlyChangeKeepsTransmitting()
+{
+    for (const bool touchPinsMidChar : { false, true }) {
+        Scc8530Device scc;
+        scc.setPclk(Scc8530Device::kDefaultPclk);
+
+        const uint16_t tc = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+        writeReg(scc, A, 4, 0x44);      // x16, 1 stop bit, no parity
+        writeReg(scc, A, 11, 0x50);     // Rx + Tx clock from BRG
+        writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
+        writeReg(scc, A, 13, static_cast<uint8_t>(tc >> 8));
+        writeReg(scc, A, 14, 0x03);     // BRG source PCLK + enable
+        writeReg(scc, A, 5, 0x68);      // Tx enable, 8 bits, RTS low
+
+        std::vector<uint8_t> sent;
+        scc.setTxCallback([&](int ch, uint8_t d) { assert(ch == A); sent.push_back(d); });
+
+        const uint64_t frameCycles = (10ull * Scc8530Device::kDefaultPclk) / 9600ull;
+        scc.dataWrite(A, 0x41);         // into the shift register
+        scc.dataWrite(A, 0x42);         // into the one-slot buffer
+        scc.tick(frameCycles / 2);      // mid-character
+
+        if (touchPinsMidChar)
+            writeReg(scc, A, 5, 0x6A);  // RTS only ($68 -> $6A)
+
+        scc.tick(3 * frameCycles);
+        assert(sent.size() == 2 &&
+               "a WR5 write confined to RTS must not abort the character in flight");
+        assert(sent[0] == 0x41 && sent[1] == 0x42);
+        assert((scc.peekRr(A, 0) & 0x04) != 0 && "TBE must come back");
+        assert((scc.peekRr(A, 1) & 0x01) != 0 && "ALL SENT must rise");
+    }
+
+    // The converse still holds: a change OUTSIDE those three pins does
+    // re-init the transmitter, as the chip does.
+    {
+        Scc8530Device scc;
+        scc.setPclk(Scc8530Device::kDefaultPclk);
+        const uint16_t tc = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+        writeReg(scc, A, 4, 0x44);
+        writeReg(scc, A, 11, 0x50);
+        writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
+        writeReg(scc, A, 13, static_cast<uint8_t>(tc >> 8));
+        writeReg(scc, A, 14, 0x03);
+        writeReg(scc, A, 5, 0x68);
+
+        std::vector<uint8_t> sent;
+        scc.setTxCallback([&](int, uint8_t d) { sent.push_back(d); });
+        const uint64_t frameCycles = (10ull * Scc8530Device::kDefaultPclk) / 9600ull;
+        scc.dataWrite(A, 0x41);
+        scc.tick(frameCycles / 2);
+        writeReg(scc, A, 5, 0x60);      // Tx bits/character changed, not a pin
+        scc.tick(3 * frameCycles);
+        assert(sent.empty() && "a real WR5 change still resets the shifter");
+    }
+    std::printf("  ok: WR5 RTS/DTR/Break-only change keeps the transmitter running\n");
+}
+
+/// [D] MAME z80scc.cpp:1882-1883 @ master (commit `2071f9aa`, 2026-10-12,
+/// "Interrupt on the first character once that mode is selected").
+/// Entering Rx-Int-on-First-Character mode arms that first character; the
+/// WR0 $20 command only RE-arms it after each message.
+/// `docs/audits/parite-z80scc-2026-11-01.md`, constat 2.
+void testWr1FirstCharModeArmsItself()
+{
+    Scc8530Device scc;
+    scc.setPclk(Scc8530Device::kDefaultPclk);
+
+    const uint16_t tc = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+    writeReg(scc, A, 4, 0x44);
+    writeReg(scc, A, 3, 0xC1);      // Rx enable, 8 bits
+    writeReg(scc, A, 11, 0x50);
+    writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
+    writeReg(scc, A, 13, static_cast<uint8_t>(tc >> 8));
+    writeReg(scc, A, 14, 0x13);     // local loopback + BRG
+    writeReg(scc, A, 5, 0x68);
+    writeReg(scc, A, 9, 0x08);      // MIE
+    writeReg(scc, A, 1, 0x08);      // Rx Int on First Character — no WR0 $20
+
+    const uint64_t frameCycles = (10ull * Scc8530Device::kDefaultPclk) / 9600ull;
+    scc.dataWrite(A, 0x5A);
+    scc.tick(2 * frameCycles);
+
+    assert(scc.rxFifoCount(A) == 1 && "the character arrived");
+    assert(scc.intAsserted() &&
+           "selecting mode 01 must arm the first character, with no WR0 $20");
+    assert(scc.peekRr(A, 3) == 0x20 && "RR3 shows the channel-A Rx request");
+
+    // Re-selecting the SAME mode must not re-arm: only a transition does.
+    scc.dataRead(A);
+    writeReg(scc, A, 1, 0x08);
+    assert(!scc.intAsserted() && "writing the same mode again is not a transition");
+    std::printf("  ok: WR1 mode 01 arms its own first character\n");
+}
+
 int main()
 {
     testHardwareResetValues();
@@ -1214,6 +1318,8 @@ int main()
     testZeroCountObeysWr1ExtEnable();
     testSpecialConditionObeysRxIntMode();
     testSnapshotV3FifoRestores();
+    testWr5PinOnlyChangeKeepsTransmitting();
+    testWr1FirstCharModeArmsItself();
     std::printf("OK scc8530_smoke\n");
     return 0;
 }
