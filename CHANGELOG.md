@@ -58,6 +58,13 @@ a 21 ms quantum anyway) or one emulated frame on a phone.
   numbers, and remembers the rung reached (`audio_buffer_learned`) so the
   next launch starts there. Audio panel ▸ **Device buffer** shows the rung,
   the late-callback count, and pins a size (`audio_buffer_frames`).
+- **The browser remembers, it does not re-open.** miniaudio's WebAudio
+  re-open deletes `window.miniaudio` and rebuilds a fresh AudioContext
+  under the autoplay policy, and the first build that did it mid-session
+  killed the page's main loop (the WASM smoke timed out on its pause
+  click). So `reconfigurePeriod` in the browser stores the rung in
+  `localStorage` (`pom2.audio_buffer_frames`), the next load opens the
+  device with it, and the panel says "(N frames at the next load)".
 - Pinned by `audio_buffer_policy`: the rungs, the late rule, the climb,
   and a hot re-open that keeps two sources registered and on the new rate
   (miniaudio's null device on CI). → [DEV § Device

@@ -475,6 +475,10 @@ void MainWindow::renderAudioMixerWindow()
                 "launch. Pin a size to stop it moving (more buffer = more delay\n"
                 "between a key press and its click).");
         }
+        if (buf.appliesAtNextLoad && buf.nextLoadFrames != buf.periodFrames) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%u frames at the next load)", buf.nextLoadFrames);
+        }
         ImGui::SameLine();
         if (buf.lateCallbacks > 0) {
             ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.20f, 1.0f),

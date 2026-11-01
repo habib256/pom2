@@ -165,7 +165,26 @@ public:
     /// audio thread inside, so nothing races the source list. False when
     /// the new device could not be opened — audio is then disabled, as a
     /// failed first open leaves it.
+    ///
+    /// **In the browser the device is never re-opened mid-session**
+    /// (`appliesAtNextLoad()`): the rung is remembered in `localStorage`
+    /// and the NEXT load opens the device with it. miniaudio's WebAudio
+    /// re-open tears `window.miniaudio` down and rebuilds it with a fresh
+    /// AudioContext under the autoplay policy, and the first run that
+    /// climbed a rung mid-session killed the page's main loop (the WASM
+    /// smoke went red on its pause click, 2026-11-01). `periodFrames()`
+    /// keeps reporting the device as opened; `nextLoadPeriodFrames()` is
+    /// the remembered rung.
     bool reconfigurePeriod(uint32_t periodFrames);
+    static constexpr bool appliesAtNextLoad()
+    {
+#ifdef __EMSCRIPTEN__
+        return true;
+#else
+        return false;
+#endif
+    }
+    uint32_t nextLoadPeriodFrames() const { return nextLoadPeriodFrames_; }
 
 private:
     bool initAudio(uint32_t periodFrames);
@@ -188,6 +207,10 @@ private:
 
     Platform platform_ = Platform::Desktop;
     std::atomic<uint32_t> periodFrames_{pom2::AudioBufferPolicy::kMinPeriodFrames};
+    uint32_t nextLoadPeriodFrames_ = pom2::AudioBufferPolicy::kMinPeriodFrames;
+    // Browser only: the rung remembered across loads (localStorage).
+    static uint32_t rememberedPeriodFrames();
+    static void     rememberPeriodFrames(uint32_t frames);
     std::atomic<uint64_t> lateCallbacks_{0};
     std::atomic<uint64_t> callbacks_{0};
     // Audio thread only. Reset by the UI thread in `reconfigurePeriod`,

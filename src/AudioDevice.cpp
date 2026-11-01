@@ -174,17 +174,63 @@ AudioDevice::AudioDevice() : AudioDevice(OutputMode::Host)
 {
 }
 
+// The rung the browser remembered across loads. localStorage rather than
+// state.cfg because the device is opened in EmulationController's
+// constructor, before the settings are restored (and before IDBFS has
+// necessarily synced), and the whole point is to open it right the first
+// time. Guarded: a private window or a blocked origin throws on access.
+uint32_t AudioDevice::rememberedPeriodFrames()
+{
+#if defined(__EMSCRIPTEN__)
+    const int frames = EM_ASM_INT({
+        try {
+            var v = window.localStorage.getItem('pom2.audio_buffer_frames');
+            var n = v === null ? 0 : parseInt(v, 10);
+            return (n > 0 && n < 65536) ? n : 0;
+        } catch (e) { return 0; }
+    });
+    return static_cast<uint32_t>(frames);
+#else
+    return 0;
+#endif
+}
+
+void AudioDevice::rememberPeriodFrames(uint32_t frames)
+{
+#if defined(__EMSCRIPTEN__)
+    EM_ASM({
+        try { window.localStorage.setItem('pom2.audio_buffer_frames', String($0)); }
+        catch (e) {}
+    }, static_cast<int>(frames));
+#else
+    (void)frames;
+#endif
+}
+
 AudioDevice::AudioDevice(OutputMode mode)
     : platform_(detectPlatform())
 {
-    periodFrames_.store(pom2::AudioBufferPolicy::defaultPeriodFrames(platform_),
-                        std::memory_order_relaxed);
+    uint32_t start = pom2::AudioBufferPolicy::defaultPeriodFrames(platform_);
+    // The browser's remembered rung, when it is one and above the default
+    // (a default that moved up makes an older memory stale).
+    const uint32_t remembered = rememberedPeriodFrames();
+    if (pom2::AudioBufferPolicy::isRung(remembered, platform_) && remembered > start)
+        start = remembered;
+    periodFrames_.store(start, std::memory_order_relaxed);
+    nextLoadPeriodFrames_ = start;
     if (mode == OutputMode::Host) initAudio(periodFrames());
 }
 
 bool AudioDevice::reconfigurePeriod(uint32_t periodFrames)
 {
     if (!pom2::AudioBufferPolicy::isRung(periodFrames, platform_)) return false;
+    if (appliesAtNextLoad()) {
+        // Browser: remember, never re-open (see the header).
+        nextLoadPeriodFrames_ = periodFrames;
+        rememberPeriodFrames(periodFrames);
+        return true;
+    }
+    nextLoadPeriodFrames_ = periodFrames;
     if (periodFrames == this->periodFrames() && device) return true;
     if (!device) {
         // Offline, or a first open that failed: nothing to re-open. Record

@@ -533,6 +533,8 @@ AudioCoordinator::BufferSnapshot AudioCoordinator::captureBuffer() const
     s.minFrames     = P::kMinPeriodFrames;
     s.maxFrames     = P::maxPeriodFrames(device_.platform());
     s.available     = device_.isAvailable();
+    s.appliesAtNextLoad = AudioDevice::appliesAtNextLoad();
+    s.nextLoadFrames    = device_.nextLoadPeriodFrames();
     return s;
 }
 
@@ -553,6 +555,10 @@ void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& 
                             std::to_string(static_cast<int>(
                                 device_.bufferSeconds() * 1000.0 + 0.5)) +
                             " ms), " + why);
+    } else if (AudioDevice::appliesAtNextLoad() && frames != before) {
+        log().info("Audio", "device buffer: " + std::to_string(frames) +
+                            " frames remembered for the next load (now " +
+                            std::to_string(before) + "), " + why);
     }
     // A new window: the old device's late callbacks are not the new one's.
     lateAtWindowStart_ = device_.lateCallbacks();
@@ -577,7 +583,7 @@ void AudioCoordinator::pinBuffer(std::uint32_t frames)
 void AudioCoordinator::tick()
 {
     using P = pom2::AudioBufferPolicy;
-    if (pinnedFrames_ != 0 || !device_.isAvailable()) return;
+    if (pinnedFrames_ != 0 || !device_.isAvailable() || climbDeferred_) return;
     using clock = std::chrono::steady_clock;
     static const auto t0 = clock::now();
     const double now = std::chrono::duration<double>(clock::now() - t0).count();
@@ -593,6 +599,7 @@ void AudioCoordinator::tick()
         P::escalatedPeriodFrames(current, lateInWindow, device_.platform());
     if (next == current) return;
     learnedFrames_ = std::max(learnedFrames_, next);
+    if (AudioDevice::appliesAtNextLoad()) climbDeferred_ = true;
     applyLadderRung(next, std::to_string(lateInWindow) +
                               " late callbacks in the last " +
                               std::to_string(static_cast<int>(now - windowStartSec_ + 0.5)) +

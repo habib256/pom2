@@ -192,6 +192,10 @@ public:
         std::uint32_t minFrames      = 0;
         std::uint32_t maxFrames      = 0;   ///< the platform's top rung
         bool          available      = false;
+        /// Browser: a rung is applied at the next load, not now. This is
+        /// the one remembered (== periodFrames when nothing is pending).
+        bool          appliesAtNextLoad = false;
+        std::uint32_t nextLoadFrames    = 0;
     };
     BufferSnapshot captureBuffer() const;
     /// Pin the device to one rung (`frames`), or 0 to let the ladder decide
@@ -228,6 +232,9 @@ private:
     std::uint32_t learnedFrames_ = 0;   ///< highest rung the ladder reached
     std::uint64_t lateAtWindowStart_ = 0;
     double        windowStartSec_    = -1.0;
+    /// Browser: one climb per session — it is remembered for the next load,
+    /// so the late callbacks that follow are still the OLD buffer's.
+    bool          climbDeferred_     = false;
     void applyLadderRung(std::uint32_t frames, const std::string& why);
 };
 

@@ -2165,6 +2165,18 @@ a phone's browser runs the whole emulated frame between two callbacks.
   the next launch when it is above the platform default, so a Pi does not
   crackle through the climb again. **Pinnable**: Audio panel ▸ Device
   buffer, `audio_buffer_frames` (0 = automatic); a pinned rung never moves.
+* **The browser never re-opens the device mid-session**
+  (`AudioDevice::appliesAtNextLoad()`). miniaudio's WebAudio re-open
+  deletes `window.miniaudio`, closes the AudioContext and builds a new one
+  under the autoplay policy; the first build that climbed a rung
+  mid-session killed the page's main loop (the WASM smoke timed out on its
+  pause click, 2026-11-01). So in the browser `reconfigurePeriod` only
+  remembers the rung — `localStorage` key `pom2.audio_buffer_frames`, read
+  by the AudioDevice constructor before the first open, because the
+  device opens in `EmulationController`'s constructor, before the settings
+  are restored — and one climb per session is allowed, since the late
+  callbacks after it are still the old buffer's. The panel says
+  "(N frames at the next load)" while a rung waits.
 
 What it costs: latency, one rung at a time, only on the machines that
 needed it — a desktop that never underruns stays at 5.3 ms. What it does
