@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.1.1 marker** — 2026-11-02. Release notes: [v1.1.1](docs/releases/v1.1.1.md).
+
+## 2026-11-02 — The first-launch workaround returns, at the top of the README
+
+A downloaded macOS package reported *"POM2 is damaged and can't be opened"*,
+with only "Move to Trash" and "Cancel" on offer. The bundle is intact
+(`codesign --verify --deep --strict` passes): it is signed ad-hoc and not
+notarized (`syspolicy_check`: `Notary Ticket Missing`), and the download's
+quarantine flag does the rest. The README had explained the way through until
+the v0.9.6 rewrite (`2100b7b8`) dropped it, along with the Windows SmartScreen
+note, while `RELEASE-011` went on saying the README documented it. Both are back
+as a warning directly under the title, because the reader meets the dialog
+before reading anything else. The old "right-click, Open" advice stays out: it
+stopped working with macOS 15. Real signing is still `RELEASE-011`, and it needs
+a paid Apple Developer account. No emulator code changed.
+
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 
 ## 2026-11-01 — A held AY WRITE re-strobed R13 on a same-value ORB store

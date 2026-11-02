@@ -1,6 +1,26 @@
 <div align="center">
 
-# 🍏 POM2 v1.1.0 — Apple II Family Emulator
+# 🍏 POM2 v1.1.1 — Apple II Family Emulator
+
+</div>
+
+> [!WARNING]
+> **First launch on macOS or Windows: POM2 is not damaged and not a virus.** The
+> packages are not notarized by Apple or signed for Windows, so both systems
+> block a downloaded copy until you allow it once.
+>
+> **🍏 macOS: "POM2 is damaged and can't be opened".** Do not move it to the
+> Trash. Drag **POM2** from the `.dmg` into *Applications*, then run this in
+> Terminal:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/POM2.app
+> ```
+>
+> **🪟 Windows: "Windows protected your PC".** Click **More info**, then
+> **Run anyway**.
+
+<div align="center">
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 
@@ -23,7 +43,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 **[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
 [Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
 
-> **v1.1.0:** [What's new](docs/releases/v1.1.0.md) ·
+> **v1.1.1:** [What's new](docs/releases/v1.1.1.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
@@ -59,9 +79,13 @@ Keep the executable and its accompanying folders together.
 On Linux, make the AppImage executable before opening it:
 
 ```bash
-chmod +x POM2-v1.1.0-x86_64.AppImage
-./POM2-v1.1.0-x86_64.AppImage
+chmod +x POM2-v1.1.1-x86_64.AppImage
+./POM2-v1.1.1-x86_64.AppImage
 ```
+
+On macOS, open the `.dmg` and drag **POM2** into *Applications*. On Windows,
+unzip anywhere and keep `POM2.exe` with the folder it came in. If the first
+launch is blocked, follow the warning at the top of this page.
 
 Then pick a machine in **Machine → Profile**, drop a disk image onto the
 window, and play. POM2 accepts `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`,
