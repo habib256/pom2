@@ -369,15 +369,21 @@ package launch/rendering evidence on the target devices remains the gate.
 
 ### RELEASE-011 — Notarization / signing.
 
-**Priority:** 🟢 · **State:** To verify / decision pending.
+**Priority:** 🟢 · **State:** macOS deferred by decision (2026-11-02); Windows undecided.
+
+**Decision (2026-11-02):** no Apple Developer account for now. The maintainer
+will reconsider in one to two years, once there is enough software to justify the
+$99/yr. Until then the macOS package stays ad-hoc signed and every release's
+notes open with the first-launch warning. v1.1.2 gets the "Apple could not verify" dialog, so
+**Open Anyway** in System Settings works without Terminal.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-547).
 
 **Acceptance criterion:** Record a platform signing decision and test first launch on a clean machine under the chosen distribution policy.
 
 - 🟢 **Notarization / signing.** Both macOS and Windows refuse the first launch;
-  the warning at the top of the README documents the workaround (the v0.9.6
-  rewrite had dropped it; back in v1.1.2, keep it until this is settled). Absent from this file entirely until now. A
+  the warning at the top of each release's notes documents the workaround (it
+  left the README on 2026-11-02; keep it there until this is settled). Absent from this file entirely until now. A
   1.0 where two of three desktop platforms show a security warning reads as
   unfinished. *~1 d + $99/yr Apple, $200-400/yr Windows EV.*
 

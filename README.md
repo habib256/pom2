@@ -2,41 +2,14 @@
 
 # 🍏 POM2 v1.1.2 — Apple II Family Emulator
 
-</div>
-
-> [!WARNING]
-> **First launch on macOS or Windows: you have to allow POM2 once.** The packages
-> are not notarized by Apple or signed for Windows, so both systems block a
-> downloaded copy.
->
-> **🍏 macOS: "Apple could not verify POM2".** Drag **POM2** from the `.dmg` into
-> *Applications* and try to open it. Click **Done**, then open the Apple menu →
-> **System Settings** → **Privacy & Security**, scroll down to **Security**, click
-> **Open Anyway** and confirm.
->
-> A package older than v1.1.2 says *"POM2 is damaged"* instead and has no
-> **Open Anyway**. Do not move it to the Trash. Run this in Terminal:
->
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/POM2.app
-> ```
->
-> **🪟 Windows: "Windows protected your PC".** Click **More info**, then
-> **Run anyway**.
-
-<div align="center">
-
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
-
-**Live demo — one click, no installation.**
+[![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
 
 ### A floppy disk. A glowing screen. One more game.
 
-Play, explore and create on the Apple II — on your desktop or in your browser.
-POM2 is written in modern C++ with a Dear ImGui interface and 6502/65C02
-cores whose per-instruction cycle counts match the Tom Harte test vectors.
-
-[![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
+Every Apple II from the 1977 ][ to the //c Plus, in NTSC and PAL, with about
+forty expansion cards to plug in. Play, explore and create, on your desktop or
+in your browser.
 
 ![POM2 running Wilderness on a PAL Apple //c, with a Monitor II frame, keyboard and drive controls](pic/POM2-default-desktop.png)
 
@@ -44,8 +17,9 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 
 </div>
 
-**[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
-[Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
+**[Why POM2](#why-pom2) · [Start playing](#start-playing) · [What's inside](#whats-inside) ·
+[Bundled disks](#bundled-disks) · [Controls](#handy-controls) · [Build it](#build-it) ·
+[Documentation](#documentation)**
 
 > **v1.1.2:** [What's new](docs/releases/v1.1.2.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
@@ -53,22 +27,45 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
 tagged packages follow their release notes.
 
+## Why POM2
+
+- **It keeps time with the beam.** Video modes follow changes made in the middle
+  of a scanline, the PAL profiles run real 312-line, 50 Hz timing, and the
+  6502/65C02 cores match the Tom Harte test vectors' per-instruction cycle
+  counts. The [DIX](https://github.com/Fr3nchT0uch/DIX/) demo anthology is the
+  [benchmark](docs/test_corpus.md).
+- **The silicon is the reference.** Hardware claims in the source carry a grade,
+  from A (measured on a real machine) through datasheets, ROM disassembly and
+  other emulators down to F (admitted unknown). Where a document contradicts
+  another emulator, the document wins.
+- **It looks and sounds like your desk in 1984.** Composite and CRT rendering,
+  a monitor frame, drive artwork, a clickable keyboard, and the chatter of the
+  drive and the printer.
+- **Your disks behave like disks.** Writes reach the image file about a second
+  after the drive goes quiet, with no eject. Write protection is the file's
+  read-only bit, so it follows the disk into any drive or emulator.
+- **It is made for looking inside.** Hold F6 to rewind, step through a
+  bank-aware debugger, trace ProDOS and CP/M calls, or watch the flux pass under
+  the Disk II head.
+
 ## Start playing
 
-**In a browser:** [launch POM2](https://habib256.github.io/pom2/wasm/).
-It opens a PAL Apple //c with the DIX-fix demo disk. The browser build follows
-`main`, so it may differ from a tagged release.
-Drop a disk image from your computer onto the browser canvas to boot it,
-or onto an empty drive to insert without rebooting.
-**File → Import disk and boot...** also opens a local file selector.
-Save a session or enable Automatic resume to keep supported disks and changes;
-see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for limits.
+### In a browser
 
-**On your computer:** [download a package](https://github.com/habib256/pom2/releases/latest),
-unpack it and launch POM2. Fonts, artwork and the bundled disks are included;
-Apple's firmware is **not** — the first launch offers to download the ROMs in
-one click (see [Missing ROMs and the ROM download](#missing-roms-and-the-rom-download)).
-Keep the executable and its accompanying folders together.
+[Launch POM2](https://habib256.github.io/pom2/wasm/). It opens a PAL Apple //c
+with a Mockingboard 4c and the DIX-fix demo disk. The browser build follows
+`main`, so it may differ from a tagged release.
+
+Drop a disk image onto the canvas to boot it, or onto an empty drive to insert
+it without rebooting. **File → Import disk and boot...** also opens a file
+selector. To keep your disks and changes, save a session or enable Automatic
+resume; see [browser disk import](docs/USER-GUIDE.md#browser-disk-import) for
+the limits.
+
+### On your computer
+
+[Download a package](https://github.com/habib256/pom2/releases/latest), unpack
+it and launch POM2. Keep the executable and its accompanying folders together.
 
 | Platform | Package |
 |---|---|
@@ -80,120 +77,88 @@ Keep the executable and its accompanying folders together.
 | Windows 10/11 x64 | `POM2-Windows-v<version>.zip` |
 | Self-hosted browser | `POM2-v<version>-web-wasm.zip` |
 
-On Linux, make the AppImage executable before opening it:
+- **Linux:** make the AppImage executable before opening it. If FUSE is
+  unavailable, add `--appimage-extract-and-run`.
 
-```bash
-chmod +x POM2-v1.1.2-x86_64.AppImage
-./POM2-v1.1.2-x86_64.AppImage
-```
+  ```bash
+  chmod +x POM2-v1.1.2-x86_64.AppImage
+  ./POM2-v1.1.2-x86_64.AppImage
+  ```
 
-On macOS, open the `.dmg` and drag **POM2** into *Applications*. On Windows,
-unzip anywhere and keep `POM2.exe` with the folder it came in. If the first
-launch is blocked, follow the warning at the top of this page.
+- **macOS:** open the `.dmg` and drag **POM2** into *Applications*.
+- **Windows:** unzip anywhere and keep `POM2.exe` with the folder it came in.
 
-Then pick a machine in **Machine → Profile**, drop a disk image onto the
-window, and play. POM2 accepts `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`,
-`.moof`, `.2mg` and `.hdv`. You can also open **File → Disk Library** to try
-one of the included disks.
+If macOS or Windows blocks the first launch, the
+[release notes](https://github.com/habib256/pom2/releases/latest) explain how to
+allow POM2.
 
-New to the Apple II? At the BASIC prompt, type `PRINT "HELLO, APPLE II!"`
-and press Return.
+### First steps
 
-### Missing ROMs and the ROM download
+1. **Accept the ROM download** when POM2 offers it. Apple's firmware is not in
+   the package ([why, and the alternatives](#roms)).
+2. **Pick a machine** in **Machine → Profile**. The first launch uses an
+   enhanced PAL //e.
+3. **Insert a disk.** Drop an image onto the window, or open **File → Disk
+   Library** for the [included disks](#bundled-disks).
 
-POM2 redistributes no copyrighted firmware: desktop packages carry no ROM at
-all, and the first time it starts the desktop version offers to download them
-in one click. The browser demo, which
-cannot download them, keeps the //c and //e ROMs that run the disks POM2
-ships. The source repository has no ROM either (see [Build it](#build-it)).
+POM2 reads `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`, `.2mg` and
+`.hdv`. The desktop version also takes a `.zip`, a `.gz`, an http(s) URL or a
+`tnfs://` URL, and keeps the guest's writes in a local copy.
 
-If a ROM is missing or damaged, **Help → ROM Status** says which one, and
-**Download missing ROMs** fetches it from POM2's
-[ROM archive](https://archive.org/details/pom2_firm) on archive.org, with
-the [RetroBIOS](https://github.com/Abdess/retrobios) collection as a
-fallback. POM2 checks every downloaded file's size and SHA-256 before
-installing it.
+New to the Apple II? With no disk inserted the machine keeps trying to boot, so
+press **F11** to reach the BASIC prompt, type `PRINT "HELLO, APPLE II!"` and
+press Return.
 
-Already have the dump under another name, or as a MAME romset `.zip`? Drop
-it onto the POM2 window (or use **Import ROM file...** in ROM Status). POM2
-recognises it by its SHA-256, installs it under the name it looks for, and
-loads it at the next machine switch or restart. A file it cannot identify
-is left alone.
+### ROMs
 
-> **Fixed since v1.0.0:** on 20–22 October 2026 RetroBIOS reorganised its
-> collection and removed many of the files v1.0.0's Download button pointed
-> at, so from a ROM-free folder it installed only 19 of the 45 dumps it knew
-> about — enough for the //e and the ][, but not for the //c, the //c Plus,
-> the mouse, the Super Serial Card, the Liron or the international character
-> sets. POM2 now asks its own archive.org item first and reads RetroBIOS at a
-> **pinned commit** for whatever that cannot supply, so all 57 catalogued
-> dumps resolve. Every file is still size- and SHA-256-checked whatever its
-> origin.
+POM2 redistributes no copyrighted firmware. Desktop packages and the source
+repository carry no ROM, and the first desktop launch offers to download them in
+one click. The browser demo cannot download them, so it keeps the //c and //e
+ROMs that run the disks POM2 ships.
 
-## Technical overview
+- **A ROM is missing or damaged:** **Help → ROM Status** says which one, and
+  **Download missing ROMs** fetches it from POM2's
+  [ROM archive](https://archive.org/details/pom2_firm), with the
+  [RetroBIOS](https://github.com/Abdess/retrobios) collection as a fallback.
+  POM2 checks every file's size and SHA-256 before installing it.
+- **You already have a dump,** under any name or as a MAME romset `.zip`: drop
+  it onto the window, or use **Import ROM file...** in ROM Status. POM2
+  recognises it by its SHA-256, installs it under the name it looks for and
+  loads it at the next machine switch or restart. A file it cannot identify is
+  left alone.
 
-- **Machines and memory.** Nine profiles span the Apple ][, ][+, unenhanced
-  and enhanced //e, //c, //c Plus and three PAL variants. POM2 emulates the
-  6502/65C02, Language Card, //e auxiliary memory and RamWorks III. Expansion
-  options include Slinky RAM, TransWarp and Zip Chip.
-- **CP/M.** Two Z80 cards run CP/M on the Apple: the Microsoft SoftCard
-  (CP/M 2.2) and the ALS CP/M Card (CP/M Plus 3.01C, 6 MHz, its own 64 KB,
-  booting from a floppy or from ProDOS on a hard disk, with a RAM disk).
-  The `pom2_cpm` tool lists, extracts, adds and deletes files on CP/M disk
-  images without cpmtools, converting text between CP/M's CR LF and the
-  host's; `pom2_dos33` does the same for DOS 3.3 disks and lists an
-  Applesoft or Integer BASIC program as text. Both carry a file's type in
-  the host file's name, so a binary keeps its load address across a round
-  trip.
-- **Video.** Text 40/80, lo-res, hi-res and their double-resolution modes
-  follow mode changes during a scanline. Choose composite NTSC, AppleWin,
-  monochrome or CRT rendering; Le Chat Mauve/Video-7 RGB, Videx Videoterm,
-  VidHD and a 3D voxel view add other ways to see the machine.
-- **Sound and input.** The speaker, cassette, drive sounds, stereo Mockingboard
-  A/C, //c Mockingboard 4c, Phasor, SSI263 and Echo+ TMS5220C speech, and S.A.M. DAC share the
-  mixer. Mouse, paddles, gamepads, 4play and SNES MAX are supported. Serial
-  and parallel cards connect to an ImageWriter emulator with PNG/PDF export.
-- **Storage.** Disk II, Sony 3½-inch, SmartPort/Liron, HDV, CFFA 2.0,
-  CFFA3000 SmartPort, SuperDrive and Floppy Emu handle `.dsk`, `.do`, `.d13`,
-  `.po`, `.nib`, `.2mg`, `.woz`, `.moof` and `.hdv`. Writable 5¼-inch WOZ 2.1
-  includes FLUX tracks; 3½-inch GCR WOZ/MOOF captures support native IWM
-  flux writes. SuperDrive exposes 400/800K GCR and 1.44 MB MFM images as
-  ProDOS blocks; its block writes splice CRC-valid sectors in MFM MOOF
-  captures, while GCR block services require export to a raw image.
-- **Files and tools.** The shared ProDOS host folder preserves type/aux type
-  in portable `NAME#TTAAAA` names, offers opt-in TXT line-ending conversion
-  and saves concurrent edits in `.pom2-conflicts/`. Disk Library search,
-  rewind, snapshots, a memory viewer, bank-aware debugger, conditional
-  breakpoints, symbols and source correspondence, an interactive 6502/65C02
-  assembler, Disk II flux inspection and CPU profiling support both play and
-  development.
-- **Connections and browser.** Desktop builds offer Uthernet I/II, FujiNet
-  relay, TNFS and VSDrive. The WebAssembly build stores settings and layout in
-  IndexedDB and offers direct disk-image import (File → Import disk and boot...),
-  text upload, session import/export and optional
-  [automatic resume for supported sessions](docs/session-format.md#using-it).
-  Sessions reconstruct supported profiles, embedded firmware and cards, including
-  writable floppy/block media and program tapes. Restored disks retain unsaved
-  data and further guest writes in RAM; save another session to retain them.
-  Its //c starts with a Mockingboard 4c and pauses while the tab is hidden.
-  Host socket networking is unavailable in the browser.
+## What's inside
+
+| Area | What you get |
+|---|---|
+| **Machines** | Nine profiles: ][, ][+, unenhanced and enhanced //e, //c, //c Plus, and PAL versions of the unenhanced //e, the enhanced //e and the //c |
+| **Memory and speed** | Language Card, //e auxiliary memory, RamWorks III, Saturn 128K, Slinky; TransWarp, Zip Chip, FASTChip and the //c Plus's 4 MHz |
+| **Video** | Text 40/80, lo-res, hi-res and their double-resolution modes; composite NTSC, AppleWin, monochrome and CRT rendering ([compared](docs/graphics_modes_comparison.md)); Le Chat Mauve/Video-7 RGB, Videx Videoterm and UltraTerm, VidHD Super Hi-Res, E-Z Color; a 3D voxel view |
+| **Sound** | Speaker, cassette, drive and printer sounds; stereo Mockingboard A/C, Sound II and //c Mockingboard 4c, Phasor; SSI263 and Echo+ TMS5220C speech, S.A.M. DAC |
+| **Storage** | Disk II, Sony 3½-inch, SmartPort, Liron, HDV, CFFA 2.0, CFFA3000, SuperDrive, DAN ][, Floppy Emu; writable WOZ and MOOF captures; a host folder served as a ProDOS volume |
+| **CP/M** | Five Z80 cards: Microsoft SoftCard, SoftCard II and Premium SoftCard //e, PCPI Applicard, ALS CP/M Card (CP/M Plus) |
+| **Input and printing** | Mouse, paddles, gamepads, 4play, SNES MAX; serial and parallel cards feeding an ImageWriter II with PNG/PDF export |
+| **Connections** | Uthernet I/II, FujiNet relay, TNFS and VSDrive (desktop only; the browser has no host sockets) |
+| **Development** | Memory viewer, debugger with banks, symbols, conditional breakpoints and source correspondence, 6502/65C02 assembler, CPU profiling, OS-call trace, Disk II flux view, HGR/DHGR paint and sprite editors |
+| **State** | Rewind, snapshots and resumable sessions that rebuild the machine, its cards and its media |
+| **Automation** | `pom2_headless`, a loopback [HTTP control API](DEV.md#ai-control-server-aicontrolserver), a [C++ SDK](docs/SDK.md); `pom2_cpm` and `pom2_dos33` to move files on and off disk images |
 
 Some cards expose a high-level service instead of running every original chip
-or firmware. See the [LLE/HLE matrix](docs/lle_vs_hle.md) for each card's
-emulation level and the [user guide](docs/USER-GUIDE.md) for compatibility,
-write-back rules and setup.
+or firmware. The [LLE/HLE matrix](docs/lle_vs_hle.md) gives each card's emulation
+level, and the [user guide](docs/USER-GUIDE.md) covers compatibility, write-back
+rules and setup.
 
 ## Bundled disks
 
 Five disks are ready in **File → Disk Library**:
 
-| Disk | Try it for |
-|---|---|
-| [A2 File Cmd XL v1.0](https://github.com/habib256/a2filecmd/releases/tag/v1.0) | A ProDOS file manager on a 32 MB hard-disk image; mount in an HDV/SmartPort bay. |
-| [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch demos; use a PAL machine with 128 KB and Mockingboard. The recorded //e setup uses slots 4 (sound) and 5 (SmartPort); the browser uses a //c with Mockingboard 4c. |
-| [Dirtbike 1.1](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) | A motocross time trial across 30 tracks; use II+ or later with 48 KB. |
-| [ChromaBreak 1.1](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) | A colourful brick-breaking game. |
-| [Micro-Sokoban 1.3](https://github.com/habib256/pom2games/releases/tag/micro-sokoban-1.3) | A small puzzle with many crates to move. |
+| Disk | Try it for | Needs |
+|---|---|---|
+| [A2 File Cmd XL v1.0](https://github.com/habib256/a2filecmd/releases/tag/v1.0) | A ProDOS file manager on a 32 MB hard-disk image | //e with 128 KB; HDV or SmartPort bay |
+| [DIX-fix](https://github.com/Fr3nchT0uch/DIX/) | French Touch's demo anthology | PAL machine with 128 KB, Mockingboard and a 3½-inch bay |
+| [Dirtbike 1.1](https://github.com/habib256/pom2games/releases/tag/dirtbike-1.1) | A motocross time trial across 30 tracks | ][+ or later with 48 KB |
+| [ChromaBreak 1.1](https://github.com/habib256/pom2games/releases/tag/chromabreak-1.1) | A colourful brick-breaking game | Enhanced //e or //c with 128 KB |
+| [Micro-Sokoban 1.3](https://github.com/habib256/pom2games/releases/tag/micro-sokoban-1.3) | A small puzzle with many crates to move | ][+ or later |
 
 [Disk setup and sources](packaging/disks/README.txt) ·
 [SHA-256 checksums](packaging/disks/SHA256SUMS.txt)
@@ -203,18 +168,21 @@ Five disks are ready in **File → Disk Library**:
 | Key | Action |
 |---|---|
 | **F6** (hold) | Rewind (enable Record in Machine → Rewind first) |
-| **F10** | Toggle fullscreen |
 | **F9** | Save a screenshot |
-| **F11 / F12** | Soft reset / hard reset |
+| **F10** or **Ctrl+Alt+F** | Toggle fullscreen |
+| **F11 / F12** | Soft reset (Ctrl-Reset) / hard reset |
+| **Left / right Alt** | Open-Apple / Solid-Apple |
+| **Ctrl+Alt+G** or middle click | Capture or release the mouse for a Mouse Card |
 | **Ctrl+Shift+P** | Open the command palette |
 | **Ctrl+V** | Paste text into the Apple II |
 
-In fullscreen, **F1** opens the game menu and **F2** opens the on-screen
-keyboard. The [user guide](docs/USER-GUIDE.md#controls) has the full list.
+In fullscreen, **F1** opens the game menu and **F2** the on-screen keyboard. The
+[user guide](docs/USER-GUIDE.md#controls) has the full list.
 
 ## Build it
 
-On Linux or macOS, install Git, CMake 3.16 or newer, a C++17 compiler and GLFW, then:
+On Linux or macOS, with Git and a C++17 compiler (`setup_imgui.sh` installs CMake
+and GLFW through your package manager, and fetches the pinned Dear ImGui):
 
 ```bash
 git clone https://github.com/habib256/pom2.git
@@ -227,16 +195,38 @@ cmake --build build --parallel 3
 ```
 
 The repository carries no copyrighted ROM or third-party disk image.
-`tools/fetch_test_media.py` downloads the ROMs and the disks the tests use
-from POM2's [test-media archive](https://archive.org/details/pom2_media_202611),
-checking every file against `tools/test_media.sha256`; skip it and the
-first launch offers the ROM download instead.
+`tools/fetch_test_media.py` downloads the ROMs and the disks the tests use from
+POM2's [test-media archive](https://archive.org/details/pom2_media_202611),
+checking every file against `tools/test_media.sha256`. Skip it and the first
+launch offers the ROM download instead.
 
 The same build makes `build/pom2_headless`, the machine without a window: it
-boots a disk and serves the Super Serial Card over telnet, and can capture
-the screen, type at given moments and plug a SoftCard or ALS card
-(`--softcard`, `--als`) to test CP/M programs. `--help` lists the options.
+boots a disk and serves the Super Serial Card over telnet, and can capture the
+screen, type at given moments and plug a SoftCard, ALS or SoftCard II card
+(`--softcard`, `--als`, `--softcard2`) to test CP/M programs. `--help` lists the
+options.
 
-[Windows, Raspberry Pi and WebAssembly instructions](docs/USER-GUIDE.md#build-from-source) ·
-[Tests and contributing](CONTRIBUTING.md) ·
-[Third-party notices](THIRD-PARTY.md)
+[Windows, Raspberry Pi and WebAssembly instructions](docs/USER-GUIDE.md#build-from-source)
+
+## Documentation
+
+- **Using POM2:** [user guide](docs/USER-GUIDE.md) ·
+  [command line](docs/USER-GUIDE.md#command-line) ·
+  [debugger](docs/debugger-banks.md) ·
+  [sessions](docs/session-format.md)
+- **How it works:** [developer reference](DEV.md) ·
+  [LLE/HLE matrix](docs/lle_vs_hle.md) ·
+  [parity dashboard](docs/audits/emulation-parity.md) ·
+  [all documentation](docs/README.md)
+- **Taking part:** [report an issue](https://github.com/habib256/pom2/issues) ·
+  [tests and contributing](CONTRIBUTING.md) ·
+  [security reports](SECURITY.md) ·
+  [changelog](CHANGELOG.md)
+
+## Credits and license
+
+POM2 is by Arnaud Verhille and is released under the [GPL-3.0](LICENSE). It draws
+on MAME, AppleWin, OpenEmulator and MicroM8 hardware and video work; the Monitor
+II and Disk II artwork is based on [sscanf/apple2e-emulator](pic/retro/). French
+Touch and other Apple II authors made the included demos, games and tools. Full
+licenses and notices are in [THIRD-PARTY.md](THIRD-PARTY.md).
