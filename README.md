@@ -1,17 +1,21 @@
 <div align="center">
 
-# 🍏 POM2 v1.1.1 — Apple II Family Emulator
+# 🍏 POM2 v1.1.2 — Apple II Family Emulator
 
 </div>
 
 > [!WARNING]
-> **First launch on macOS or Windows: POM2 is not damaged and not a virus.** The
-> packages are not notarized by Apple or signed for Windows, so both systems
-> block a downloaded copy until you allow it once.
+> **First launch on macOS or Windows: you have to allow POM2 once.** The packages
+> are not notarized by Apple or signed for Windows, so both systems block a
+> downloaded copy.
 >
-> **🍏 macOS: "POM2 is damaged and can't be opened".** Do not move it to the
-> Trash. Drag **POM2** from the `.dmg` into *Applications*, then run this in
-> Terminal:
+> **🍏 macOS: "Apple could not verify POM2".** Drag **POM2** from the `.dmg` into
+> *Applications* and try to open it. Click **Done**, then open the Apple menu →
+> **System Settings** → **Privacy & Security**, scroll down to **Security**, click
+> **Open Anyway** and confirm.
+>
+> A package older than v1.1.2 says *"POM2 is damaged"* instead and has no
+> **Open Anyway**. Do not move it to the Trash. Run this in Terminal:
 >
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/POM2.app
@@ -43,7 +47,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 **[Start playing](#start-playing) · [Technical overview](#technical-overview) ·
 [Bundled disks](#bundled-disks) · [Build it](#build-it) · [Documentation](docs/README.md)**
 
-> **v1.1.1:** [What's new](docs/releases/v1.1.1.md) ·
+> **v1.1.2:** [What's new](docs/releases/v1.1.2.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
@@ -79,8 +83,8 @@ Keep the executable and its accompanying folders together.
 On Linux, make the AppImage executable before opening it:
 
 ```bash
-chmod +x POM2-v1.1.1-x86_64.AppImage
-./POM2-v1.1.1-x86_64.AppImage
+chmod +x POM2-v1.1.2-x86_64.AppImage
+./POM2-v1.1.2-x86_64.AppImage
 ```
 
 On macOS, open the `.dmg` and drag **POM2** into *Applications*. On Windows,

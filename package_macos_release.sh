@@ -95,6 +95,13 @@ if [ -n "$LEAKED" ]; then
     echo "ERROR: .app references dylibs outside the bundle:"; echo "$LEAKED"; exit 1
 fi
 
+# Everything in the bundle, not just the manifest's payload: a non-ASCII name
+# breaks the seal on a Finder copy (packaging/stage_data.sh, verify()).
+NON_ASCII=$(find "$APP" | LC_ALL=C grep '[^ -~]' || true)
+if [ -n "$NON_ASCII" ]; then
+    echo "ERROR: non-ASCII names in the bundle:"; echo "$NON_ASCII"; exit 1
+fi
+
 # Ad-hoc signature. Not notarised (that needs an Apple Developer account), but
 # an ad-hoc signature is REQUIRED on Apple Silicon: an unsigned arm64 binary is
 # killed by the kernel outright rather than merely warned about by Gatekeeper.

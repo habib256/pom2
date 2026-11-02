@@ -201,6 +201,17 @@ verify() {
         fi
     done
 
+    # ASCII names only. [A] Measured 2026-11-02 on macOS 15.6, v1.1.0: one
+    # `pic/à-…` file, sealed in NFC, came out of a Finder drag from the .dmg in
+    # NFD. The signature no longer matched the bundle, so Gatekeeper called the
+    # app "damaged" and offered no Open Anyway.
+    local non_ascii
+    non_ascii=$(find "$dest" | LC_ALL=C grep '[^ -~]' | head -5 || true)
+    if [ -n "$non_ascii" ]; then
+        printf 'NON-ASCII names (a Finder copy breaks the macOS signature):\n%s\n' "$non_ascii" >&2
+        failed=1
+    fi
+
     [ "$failed" -eq 0 ] || die "payload verification failed for '$dest'"
     log "OK: payload verified in $dest"
 }
@@ -278,6 +289,14 @@ case "${1:-}" in
             fi
             rm -rf "${TMP:?}/$FIRST_DIR/$DIR_LEAF"
             log "OK: verify() rejects a $DIR_LEAF directory"
+
+            NON_ASCII_LEAF=$'selftest-\xc3\xa0.txt'
+            : > "$TMP/$FIRST_DIR/$NON_ASCII_LEAF"
+            if ( verify "$TMP" ) >/dev/null 2>&1; then
+                die "self-test: verify() accepted a non-ASCII file name"
+            fi
+            rm -f "$TMP/$FIRST_DIR/$NON_ASCII_LEAF"
+            log "OK: verify() rejects a non-ASCII file name"
 
             # And staging must PRUNE both, not merely report them afterwards.
             SRC_UP="$REPO_ROOT/$FIRST_DIR/.pom2-selftest-$UPPER_LEAF"

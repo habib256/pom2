@@ -10,21 +10,33 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
-**v1.1.1 marker** — 2026-11-02. Release notes: [v1.1.1](docs/releases/v1.1.1.md).
+**v1.1.2 marker** — 2026-11-02. Release notes: [v1.1.2](docs/releases/v1.1.2.md).
 
-## 2026-11-02 — The first-launch workaround returns, at the top of the README
+## 2026-11-02 — "POM2 is damaged" was our bug: one accented file name
 
 A downloaded macOS package reported *"POM2 is damaged and can't be opened"*,
-with only "Move to Trash" and "Cancel" on offer. The bundle is intact
-(`codesign --verify --deep --strict` passes): it is signed ad-hoc and not
-notarized (`syspolicy_check`: `Notary Ticket Missing`), and the download's
-quarantine flag does the rest. The README had explained the way through until
-the v0.9.6 rewrite (`2100b7b8`) dropped it, along with the Windows SmartScreen
-note, while `RELEASE-011` went on saying the README documented it. Both are back
-as a warning directly under the title, because the reader meets the dialog
-before reading anything else. The old "right-click, Open" advice stays out: it
-stopped working with macOS 15. Real signing is still `RELEASE-011`, and it needs
-a paid Apple Developer account. No emulator code changed.
+with only "Move to Trash" and "Cancel". Missing notarization alone gives a
+different dialog, *"Apple could not verify"*, which System Settings can then
+overrule with Open Anyway. The maintainer spotted the difference.
+
+The cause was `pic/à-disque-souple-5195380.webp`, a file nothing reads and the
+bundle's only non-ASCII name. It is sealed in NFC and stays NFC on the `.dmg`
+(the name's bytes are `c3 a0`), so `codesign --verify --deep --strict` passes on
+the mounted image and on a `ditto` copy. A Finder drag rewrites it to NFD (`61 cc
+80`), and the copy in *Applications* then fails with `a sealed resource is
+missing or invalid`. Reproduced on v1.1.0 with a Finder copy. The same bundle
+with an ASCII name, re-signed, keeps a valid seal through a Finder copy and, once
+quarantined, gets the dialog with Open Anyway (seen on macOS 15.6, 2026-11-02).
+
+The file is renamed, and non-ASCII names now fail `stage_data.sh --verify` (with
+a negative control in `--self-test`) and the macOS packager. Verifying the
+mounted `.dmg` could never have caught this: check a Finder copy.
+
+The README had explained the way past the block until the v0.9.6 rewrite
+(`2100b7b8`) dropped it and the Windows SmartScreen note, while `RELEASE-011` went
+on saying the README documented it. Both are back as a warning under the title.
+The tag v1.1.1 carried only that warning, with the wrong explanation; its build
+was cancelled and it was never published. Real signing is still `RELEASE-011`.
 
 **v1.1.0 marker** — 2026-11-01. Release notes: [v1.1.0](docs/releases/v1.1.0.md).
 

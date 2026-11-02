@@ -377,9 +377,7 @@ package launch/rendering evidence on the target devices remains the gate.
 
 - 🟢 **Notarization / signing.** Both macOS and Windows refuse the first launch;
   the warning at the top of the README documents the workaround (the v0.9.6
-  rewrite had dropped it; back in v1.1.1, keep it until this is settled). A
-  downloaded macOS copy on macOS 15 says "damaged", with no "Open Anyway"
-  (seen on v1.1.0, 2026-11-02). Absent from this file entirely until now. A
+  rewrite had dropped it; back in v1.1.2, keep it until this is settled). Absent from this file entirely until now. A
   1.0 where two of three desktop platforms show a security warning reads as
   unfinished. *~1 d + $99/yr Apple, $200-400/yr Windows EV.*
 

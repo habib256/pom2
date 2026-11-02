@@ -567,7 +567,7 @@ and a cache hit opens no socket, so a second run works offline.
 
 ## Version string locations
 
-Current release: **v1.1.1**. **Single source of truth = `CMakeLists.txt`
+Current release: **v1.1.2**. **Single source of truth = `CMakeLists.txt`
 `project(pom2_imgui VERSION x.y.z ...)`.** A `configure_file` expands it into
 `build/generated/Version.h` (from `src/Version.h.in`); all C++ pulls the
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::
@@ -620,5 +620,7 @@ is case-insensitive and applies to directories as well as files, at any depth
 below `-maxdepth 4`). `--verify` is the guard the six release packaging jobs run
 against their staged trees — and a payload directory holding only its README now
 *fails* it, because that is a package with zero ROMs. `--self-test` runs in CI as
-the `bundle_manifest` ctest, with negative controls. Adding an asset means
+the `bundle_manifest` ctest, with negative controls. **Payload file names are ASCII**: a Finder copy rewrites an accented name
+(NFC → NFD), which breaks the macOS seal and turns Gatekeeper's dialog into "POM2
+is damaged", with no Open Anyway (2026-11-02). Adding an asset means
 editing the manifest, nothing else. → [DEV § Package payload](DEV.md#package-payload--packagingbundlemanifest)
