@@ -9,6 +9,8 @@ version has not yet been bumped. Current behavior is documented in the
 
 | Release | Notes |
 |---|---|
+| 1.1.2 | [v1.1.2](v1.1.2.md) |
+| 1.1.0 | [v1.1.0](v1.1.0.md) |
 | 1.0.0 | [v1.0.0](v1.0.0.md) |
 | 0.9.9 | [v0.9.9](v0.9.9.md) |
 | 0.9.8 | [v0.9.8](v0.9.8.md) |

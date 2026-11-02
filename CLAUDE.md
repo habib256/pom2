@@ -588,7 +588,9 @@ cannot `#include` the header:
 - `vcpkg.json` (`"version-string"`) — manual, cannot `#include` anything
 - `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes; the
   publish job tries both conventions, and says so loudly in the log when it
-  finds neither before falling back to a generated commit list
+  finds neither before falling back to a generated commit list. They open with
+  the first-launch warning (macOS, `xattr`, Windows), which the README links to
+  and no longer carries; copy it from the previous notes
 
 **Before every release — and whenever a ROM or a test medium is added — update
 the two archive.org items**: `pom2_firm` (`pom2_firm.zip`, the zip the ROM

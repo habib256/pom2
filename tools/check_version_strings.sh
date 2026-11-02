@@ -14,7 +14,11 @@
 #                           `git tag vV` example;
 #   · docs/releases/        vV.md or vMAJOR.MINOR.md exists — otherwise the
 #                           GitHub Release body silently falls back to a
-#                           generated commit list.
+#                           generated commit list. Those notes also carry the
+#                           first-launch warning: since 2026-11-02 they are the
+#                           only place a downloader finds the macOS and Windows
+#                           steps, `xattr` included, and the README links there.
+#                           Drop this check once the packages are signed.
 # A future version named in prose ("ships since v0.9.4") is NOT checked: only
 # the shapes above claim to BE the current release.
 #
@@ -30,6 +34,9 @@ self_test() {
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
     here="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    notes() {  # release notes that pass
+        printf '> [!WARNING]\n> **Open Anyway**\n> xattr -dr com.apple.quarantine /Applications/POM2.app\n> **Run anyway**\n'
+    }
     mk() {  # a consistent tree at version $1
         rm -rf "$tmp/t"; mkdir -p "$tmp/t/docs/releases"
         printf 'project(pom2_imgui VERSION %s LANGUAGES CXX)\n' "$1" > "$tmp/t/CMakeLists.txt"
@@ -37,7 +44,7 @@ self_test() {
         printf 'Current release: **v%s**. Single source\n' "$1" > "$tmp/t/CLAUDE.md"
         printf '<div align="center">\n\n# \xf0\x9f\x8d\x8f POM2 v%s \xe2\x80\x94 Apple II Emulator\n| `POM2-v%s-x86_64.AppImage` |\n| `POM2-macOS-v%s.dmg` |\ngit tag v%s && git push\nships since v9.9.9\n> **v%s:** [What'"'"'s new](docs/releases/v%s.md)\n' \
             "$1" "$1" "$1" "$1" "$1" "$1" > "$tmp/t/README.md"
-        : > "$tmp/t/docs/releases/v$1.md"
+        notes > "$tmp/t/docs/releases/v$1.md"
     }
     expect() {  # expect <0|1> <label>
         local rc=0
@@ -55,8 +62,14 @@ self_test() {
     mk 1.2.3; sed -i.bak 's/git tag v1.2.3/git tag v1.2.2/' "$tmp/t/README.md"; expect 1 "stale tag example"
     mk 1.2.3; sed -i.bak 's|docs/releases/v1.2.3.md|docs/releases/v1.2.2.md|' "$tmp/t/README.md"; expect 1 "stale What's new link"
     mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "missing release notes"
-    mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; : > "$tmp/t/docs/releases/v1.2.md"
+    mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; notes > "$tmp/t/docs/releases/v1.2.md"
     expect 0 "vMAJOR.MINOR.md release notes are accepted"
+    mk 1.2.3; sed -i.bak '/xattr/d' "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "release notes without the xattr command"
+    mk 1.2.3; sed -i.bak '/Open Anyway/d' "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "release notes without the macOS steps"
+    mk 1.2.3; sed -i.bak '/Run anyway/d' "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "release notes without the Windows steps"
+    mk 1.2.3; sed -i.bak '/WARNING/d' "$tmp/t/docs/releases/v1.2.3.md"; expect 1 "release notes without the warning block"
+    mk 1.2.3; rm "$tmp/t/docs/releases/v1.2.3.md"; notes > "$tmp/t/docs/releases/v1.2.md"; : > "$tmp/t/docs/releases/v1.2.3.md"
+    expect 1 "the file the publish job tries first is the one checked"
     mk 1.2.3; rm "$tmp/t/CLAUDE.md"; expect 1 "a missing file is a failure, not a pass"
     echo "check_version_strings: self-test passed"
 }
@@ -108,6 +121,17 @@ done < <(grep -E "^> \*\*v[0-9.]+:\*\* \[What's new\]" README.md || true)
 if [ ! -f "docs/releases/v$V.md" ] && [ ! -f "docs/releases/v$MM.md" ]; then
     echo "MISSING docs/releases/v$V.md (or v$MM.md) — the Release body would be a generated commit list"
     bad=1
+else
+    # The publish job uses the first hit, so that is the file to check.
+    NOTES="docs/releases/v$V.md"
+    [ -f "$NOTES" ] || NOTES="docs/releases/v$MM.md"
+    for want in '[!WARNING]' 'Open Anyway' \
+                'xattr -dr com.apple.quarantine /Applications/POM2.app' 'Run anyway'; do
+        grep -qF -- "$want" "$NOTES" || {
+            echo "MISSING in $NOTES: $want — the first-launch warning (copy it from the previous notes)"
+            bad=1
+        }
+    done
 fi
 
 if [ "$bad" != 0 ]; then

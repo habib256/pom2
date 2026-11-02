@@ -4,12 +4,16 @@
 
 ## Install and first launch
 
-Desktop packages include the firmware, fonts and interface artwork. Keep the
+Desktop packages include fonts, interface artwork and the bundled disks, but no
+firmware: the first launch offers to download Apple's ROMs. **Help → ROM Status**
+can do it later, or import a dump you already own. Keep the
 executable and its accompanying folders together. On Linux, make an AppImage
 executable before launching it; if FUSE is unavailable, use
 `--appimage-extract-and-run`. On macOS, drag POM2 from the DMG into Applications.
 The app is ad-hoc signed, so macOS may require **System Settings → Privacy &
-Security → Open Anyway** after the first attempt. On Windows, extract the ZIP
+Security → Open Anyway** after the first attempt. A package older than v1.1.2
+says "POM2 is damaged" instead and has no **Open Anyway**; run
+`xattr -dr com.apple.quarantine /Applications/POM2.app` in Terminal. On Windows, extract the ZIP
 and launch `POM2.exe`; if SmartScreen appears, choose **More info → Run anyway**.
 Release downloads include `SHA256SUMS.txt` for integrity checks.
 
@@ -385,21 +389,22 @@ on //c+, booting an external SmartPort image requires ejecting Sony disks first.
 
 ## Explore the hardware
 
-POM2 uses MAME as a hardware reference, with regression tests for its CPU and
-device behaviour. The interface leaves room to explore the cards that made
+POM2 aims at the real hardware. Measurements, datasheets, Apple's documents and
+ROM disassembly outrank other emulators such as MAME and AppleWin, which remain
+useful references, and regression tests pin CPU and device behaviour. The interface leaves room to explore the cards that made
 these machines so versatile.
 
 | Area | Available hardware and tools |
 |---|---|
-| **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB and VidHD Super Hi-Res on a //e |
-| **Memory** | Language Card, IIe auxiliary memory, RamWorks III up to 8 MB and Slinky 1 MB expansion |
-| **Sound** | Speaker, cassette, Mockingboard A/C, Sound II with SSI263 speech, Phasor with dual SSI263AP, Cricket / Echo, Echo+ TMS5220C and S.A.M. DAC; stereo mixing and mono output |
-| **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0, CFFA3000 SmartPort HLE and Floppy Emu |
-| **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, parallel interfaces and ImageWriter II |
-| **Expansion** | Microsoft SoftCard Z80, TransWarp, Zip Chip socket accelerator, Videx Videoterm, clocks and Apple II Workstation Card |
+| **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB, Videx Videoterm on a ][ or ][+, Videx UltraTerm, E-Z Color (TMS9918A) and VidHD Super Hi-Res on a //e |
+| **Memory** | Language Card, IIe auxiliary memory, RamWorks III up to 8 MB, Saturn 128K and Slinky 1 MB expansion |
+| **Sound** | Speaker, cassette, Mockingboard A/C, //c Mockingboard 4c, Sound II with SSI263 speech, Phasor with dual SSI263AP, Cricket / Echo, Echo+ TMS5220C and S.A.M. DAC; stereo mixing and mono output |
+| **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0, CFFA3000 SmartPort HLE, SuperDrive, DAN ][ and Floppy Emu |
+| **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, CCS 7710 serial, parallel interfaces and ImageWriter II |
+| **Expansion** | Z80 cards for CP/M (Microsoft SoftCard, SoftCard II and Premium SoftCard //e, PCPI Applicard, ALS CP/M Card), TransWarp, Zip Chip and FASTChip socket accelerators, clocks and Apple II Workstation Card |
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS disk downloads and a ProDOS host-folder volume |
 | **Creative tools** | HGR/DHGR Paint Editor, HGR Sprite Editor, screenshots and print exports |
-| **Inspection** | Memory viewer, bank-aware debugger with symbols, conditional breakpoints, step over/out, source correspondence, profiling and history; snapshots, resumable sessions and an optional AI-control HTTP API |
+| **Inspection** | Memory viewer, bank-aware debugger with symbols, conditional breakpoints, step over/out, source correspondence, profiling and history; OS-call trace; snapshots, resumable sessions and an optional AI-control HTTP API |
 
 For card keys, firmware details and implementation notes, see
 [CLAUDE.md](../CLAUDE.md) and [DEV.md](../DEV.md).
@@ -585,8 +590,8 @@ Desktop kiosk mode leaves settings and layout unchanged. When launched with
 
 ROM searches prefer the per-user data directory, then locations relative to
 the executable (including `../share/POM2/`), then the working directory and
-its two parents. A per-user ROM override therefore takes precedence over the
-packaged or checkout copy.
+its two parents. A per-user ROM override therefore takes precedence over a copy
+beside the executable or in a checkout.
 
 That directory order applies to each filename separately. Profile switching
 tries its filenames in the following order, all under `roms/`:
@@ -600,8 +605,8 @@ tries its filenames in the following order, all under `roms/`:
 | `iic`, `iic-pal` | `apple2c-32Kv0.rom`, `apple2c-16K.rom`, `3420033a.256` |
 | `iic+` | `apple2cp.rom`, `apple2c-plus.rom`, `apple2c-32Kv0.rom` |
 
-For example, a per-user `apple2.rom` does not override a packaged
-`apple2p.rom` for `ii+`; use the preferred filename for an explicit override.
+For example, a per-user `apple2.rom` does not override an
+`apple2p.rom` found elsewhere for `ii+`; use the preferred filename for an explicit override.
 An existing but unreadable/invalid main ROM refuses the profile change;
 the resolver does not continue through later filenames after that failure.
 Character-ROM selection has its own profile order, overridden by a selected
