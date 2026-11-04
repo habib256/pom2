@@ -9110,6 +9110,28 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2e.rom")
                          PASS_REGULAR_EXPRESSION "Apple //e")
 endif()
 
+# The CPU matches the machine. $1A is INC A on a 65C02 and a NOP on an NMOS 6502,
+# so the Monitor shows which chip ran: LDA #0 / $1A / STA $06 / RTS, then dump $06.
+# The original ][ starts in the Monitor, where CALL -151 is only a beep.
+foreach(_cpu_case apple2o:00 apple2p:00 apple2e_unenh:00 apple2e:01)
+    string(REPLACE ":" ";" _cpu_case "${_cpu_case}")
+    list(GET _cpu_case 0 _cpu_rom)
+    list(GET _cpu_case 1 _cpu_byte)
+    set(_cpu_mode "")
+    if(_cpu_rom MATCHES "^apple2e")
+        set(_cpu_mode --iie)
+    endif()
+    if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/${_cpu_rom}.rom")
+        add_test(NAME headless_cpu_${_cpu_rom}
+                 COMMAND pom2_headless ${_cpu_mode} --rom roms/${_cpu_rom}.rom
+                         --type "3:CALL -151\\r" --type "4:300:A9 00 1A 85 06 60\\r"
+                         --type "5:300G\\r" --type "6:6\\r" --frames 480 --text-dump
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        set_tests_properties(headless_cpu_${_cpu_rom} PROPERTIES TIMEOUT 120
+                             PASS_REGULAR_EXPRESSION "0006- ${_cpu_byte}")
+    endif()
+endforeach()
+
 # --disk takes a .zip like the GUI's positional (MediaSource.h): it used to
 # reach insertDisk raw and be refused by its size. The zip is made here by
 # `cmake -E tar --format=zip` around a copy of the tracked DIRTBIKE.dsk, and

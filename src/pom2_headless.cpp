@@ -62,7 +62,6 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -104,7 +103,9 @@ void usage(const char* prog)
         "\n"
         "  --rom <path>          System ROM (normally 12/16 KiB for II/II+).\n"
         "                        Default: probe roms/apple2.rom; no profile switch.\n"
-        "  --iie                 //e memory mode, for a 16/32 KiB //e dump.\n"
+        "                        The CPU is an NMOS 6502.\n"
+        "  --iie                 //e memory mode, for a 16/32 KiB //e dump; the CPU\n"
+        "                        follows the dump (unenhanced NMOS, else 65C02).\n"
         "                        Default ROM then: probe roms/apple2e.rom.\n"
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
         "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
@@ -412,6 +413,11 @@ int main(int argc, char** argv)
     if (!controller.memory().loadAppleIIRom(romPath.c_str())) {
         std::fprintf(stderr, "loadAppleIIRom failed\n"); return 1;
     }
+    // The core powers up as a 65C02, which a ][, a ][+ and an unenhanced //e are
+    // not. A //e dump says which it is: [C] $FBC0 is $EA in apple2e_unenh.rom,
+    // $E0 in apple2e.rom.
+    if (!iie || controller.memory().peekCpuView(0xFBC0) == 0xEA)
+        controller.cpu().setCpuMode(M6502::CpuMode::NMOS);
 
     DiskIICard* diskRaw = nullptr;
     // A Disk II with an EMPTY drive is worse than no Disk II at all for the

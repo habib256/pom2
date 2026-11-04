@@ -80,7 +80,9 @@ out as program output (`MON ">PRINT 7"`). They now read `$E3D0 NXTCHAR ">" -> "P
 The entry point was noticed in ReplicApple2Plus's notes and checked in the ROM.
 
 `pom2_headless` gains `--iie`, as `pom2_bench` has: `--rom` alone changed the file and
-not the memory mode, so a //e dump could not boot there.
+not the memory mode, so a //e dump could not boot there. The CPU now matches the machine:
+the core powers up as a 65C02 and nothing there changed it, so a ][, a ][+ and an
+unenhanced //e all ran the wrong chip. They run an NMOS 6502.
 
 **v1.1.2 marker** — 2026-11-02. Release notes: [v1.1.2](docs/releases/v1.1.2.md).
 
