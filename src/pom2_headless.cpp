@@ -104,6 +104,8 @@ void usage(const char* prog)
         "\n"
         "  --rom <path>          System ROM (normally 12/16 KiB for II/II+).\n"
         "                        Default: probe roms/apple2.rom; no profile switch.\n"
+        "  --iie                 //e memory mode, for a 16/32 KiB //e dump.\n"
+        "                        Default ROM then: probe roms/apple2e.rom.\n"
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
         "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
         "                        `--prom pom2` forces POM2's even with a dump\n"
@@ -230,6 +232,7 @@ int main(int argc, char** argv)
     bool doSetup     = true;
     bool setupGiven  = false;
     bool textDump    = false;
+    bool iie         = false;
     pom2::OsTraceKinds trace;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
@@ -314,6 +317,7 @@ int main(int argc, char** argv)
             }
             typed.push_back({ at, unescape(v.substr(colon + 1)), false });
         }
+        else if (a == "--iie") iie = true;
         else if (a == "--text-dump") textDump = true;
         else if (a == "--trace-mli") trace.mli = true;
         else if (a == "--trace-bdos") trace.bdos = true;
@@ -352,8 +356,9 @@ int main(int argc, char** argv)
     const bool captureMode = frames > 0 || !shotPath.empty() || textDump;
     if (captureMode && frames <= 0) frames = 300;   // ~5 s: past the boot beep
 
-    const std::string romPath = !romArg.empty() ? romArg : findAsset(
-        "roms/apple2.rom", { "../roms/apple2.rom", "../../roms/apple2.rom" });
+    const std::string romPath = !romArg.empty() ? romArg : iie
+        ? findAsset("roms/apple2e.rom", { "../roms/apple2e.rom", "../../roms/apple2e.rom" })
+        : findAsset("roms/apple2.rom", { "../roms/apple2.rom", "../../roms/apple2.rom" });
     const std::string promPath = promArg == "pom2" ? std::string()
         : !promArg.empty() ? promArg : findAsset(
         "roms/disk2.rom", { "../roms/disk2.rom", "../../roms/disk2.rom" });
@@ -365,7 +370,7 @@ int main(int argc, char** argv)
                                         "../../disks_5.4/dos33_master.dsk" });
 
     if (romPath.empty()) {
-        std::fprintf(stderr, "missing apple2.rom; try --help\n");
+        std::fprintf(stderr, "missing %s; try --help\n", iie ? "apple2e.rom" : "apple2.rom");
         return 1;
     }
     // A .zip, a .gz or a URL: its local image, as the GUI's positional does
@@ -394,13 +399,16 @@ int main(int argc, char** argv)
         romPath.c_str(), promPath.empty() ? "(POM2 boot PROM)" : promPath.c_str(),
         diskPath.c_str(), port);
 
-    // II/II+ mode is enough for DOS 3.3. We deliberately avoid loading
-    // apple2e.rom here even if present so the headless target stays
-    // simple; --rom changes the file, not the machine's memory mode.
+    // II/II+ mode is enough for DOS 3.3, so that stays the default; --rom changes
+    // the file, not the machine's memory mode. --iie changes the mode.
     EmulationController controller;
     // Everything from here to `controller.start()` below runs before the
     // CPU worker exists, so the raw accessor is correct: there is no second
     // thread to race. The one access inside the run loop takes lockState().
+    // setIIEMode BEFORE loadAppleIIRom: the loader only splits a //e dump into
+    // the internal $C100-$CFFF ROM when the mode is already on (pom2_bench,
+    // MainWindow::applyProfile).
+    controller.memory().setIIEMode(iie);
     if (!controller.memory().loadAppleIIRom(romPath.c_str())) {
         std::fprintf(stderr, "loadAppleIIRom failed\n"); return 1;
     }

@@ -9100,6 +9100,16 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2p.rom")
                          PASS_REGULAR_EXPRESSION "A: DUMP     COM : DOWNLOAD COM")
 endif()
 
+# --iie: the //e dump boots to its own banner. Without the mode the loader leaves
+# $C100-$CFFF empty and the banner never appears.
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2e.rom")
+    add_test(NAME headless_iie_capture
+             COMMAND pom2_headless --iie --frames 300 --text-dump
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_iie_capture PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "Apple //e")
+endif()
+
 # --disk takes a .zip like the GUI's positional (MediaSource.h): it used to
 # reach insertDisk raw and be refused by its size. The zip is made here by
 # `cmake -E tar --format=zip` around a copy of the tracked DIRTBIKE.dsk, and

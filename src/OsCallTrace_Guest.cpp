@@ -141,7 +141,12 @@ void OsCallTrace::monStep(uint16_t pc)
         }
         return;
     }
-    if (pc != 0xFD6A && pc != 0xFD67 && pc != 0xFD6F) return;
+    // [C] Integer BASIC ROM $E3CE (apple2o.rom): TYA / TAX / JSR $FD75. It prints
+    // its own prompt and enters GETLN's key loop, NXTCHAR, with its own X, so no
+    // other entry here sees its lines. GETLN's own passes through $FD75, one per
+    // key, stop at the check of the open call below.
+    const bool nxtchar = pc == 0xFD75;
+    if (pc != 0xFD6A && pc != 0xFD67 && pc != 0xFD6F && !nxtchar) return;
     // GETLN starts LDA PROMPT ($33) on every Apple II monitor.
     if (peek(0xFD6A) != 0xA5 || peek(0xFD6B) != 0x33) return;
     Pending c;
@@ -160,9 +165,10 @@ void OsCallTrace::monStep(uint16_t pc)
     const std::string prompt = monLine_.empty() ? std::string() : " \"" + monLine_ + "\"";
     monLine_.clear();
     monEcho_.clear();
-    monEchoState_ = pc == 0xFD6F ? 1 : 0;       // GETLN1 prints no prompt
-    c.text = fmt("$%04X GETLN", uint16_t(jsrLast - 2)) + prompt +
-             (pc == 0xFD6F ? std::string() : " '" + shown(peek(0x33)) + "'");
+    const bool noPrompt = pc == 0xFD6F || nxtchar;
+    monEchoState_ = noPrompt ? 1 : 0;           // GETLN1 and NXTCHAR print no prompt
+    c.text = fmt("$%04X ", uint16_t(jsrLast - 2)) + (nxtchar ? "NXTCHAR" : "GETLN") + prompt +
+             (noPrompt ? std::string() : " '" + shown(peek(0x33)) + "'");
     abandon(monPending_, c.sp, 0xFF, "MON ");
     if (monPending_.size() < 16) monPending_.push_back(std::move(c));
 }

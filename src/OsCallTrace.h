@@ -35,7 +35,8 @@
 //         ×n in the language card) — so a stray $EC/$ED does not log.
 //   MON   the Monitor's character output (COUT, $FDED, while it holds its
 //         JMP (CSW)), one line per carriage return, and each GETLN ($FD6A /
-//         $FD67 / $FD6F) paired with the line it returns ($0200, X long) —
+//         $FD67 / $FD6F, or NXTCHAR $FD75 as Integer BASIC enters it) paired
+//         with the line it returns ($0200, X long) —
 //         izapple2's traceMonitor.go, with the echo of the typed line kept out.
 //   DISK  a card's own lines (CardTraceSink.h): the Disk II's seeks, motor,
 //         drive select and writes, hung on the cards by SlotBus::setCardTrace.

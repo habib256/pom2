@@ -32,7 +32,8 @@
 //     read/write do not, and a table of non-JMPs logs nothing.
 //  7. Disk II: a seek of consecutive steps is one line, closed by the data
 //     latch; the spindle starting and really stopping (the 556 delay).
-//  8. Monitor: COUT lines, a GETLN with what it returns.
+//  8. Monitor: COUT lines, a GETLN with what it returns; NXTCHAR entered
+//     directly is a call, reached from inside GETLN it is not.
 //  9. Applecorn: an OSBYTE through its page-2 vector in aux RAM.
 // 10. CP/M-65: a BDOS call recognised by its prologue and paired with its
 //     return, a BIOS call by its jmpdispatch.
@@ -371,6 +372,54 @@ void testMonitor()
     if (l.size() != 2) dump(dbg.osCalls());
 }
 
+// The key loop, NXTCHAR at $FD75: entered directly, as Integer BASIC does after
+// printing its own prompt, it is a call whose echo stays out of the output.
+// Reached from inside GETLN, as every key reaches it, it opens nothing.
+void testMonitorNxtchar()
+{
+    for (const bool direct : { true, false }) {
+        Memory mem;
+        M6502 cpu(&mem);
+        mem.setCpu(&cpu);
+        std::vector<uint8_t> rom(0x0800, 0xEA);  // $F800-$FFFF; GETLN NOPs into $FD75
+        auto at = [&](uint16_t a, std::initializer_list<int> b) { for (int v : b) rom[size_t(a++ - 0xF800)] = uint8_t(v); };
+        at(0xFDED, { 0x6C, 0x36, 0x00 });        // COUT: JMP (CSW)
+        at(0xFD6A, { 0xA5, 0x33, 0x20, 0xED, 0xFD });   // GETLN: LDA $33 / JSR COUT
+        at(0xFD75, { 0xA9, 0xC8, 0x20, 0xED, 0xFD,      // NXTCHAR: echo 'H'
+                     0xA2, 0x02, 0x60 });               //          LDX #2 / RTS
+        mem.loadRomBytes(rom.data(), rom.size(), 0xF800);
+        poke(mem, 0x0036, { 0x00, 0x03 });       // CSW = $0300: RTS
+        mem.memWrite(0x0300, 0x60);
+        mem.memWrite(0x0033, 0xDD);              // ']' for GETLN's own prompt
+        poke(mem, 0x0200, { 0xC8, 0xC9, 0x8D }); // "HI" CR
+        pom2::Debugger dbg;
+        dbg.setMemory(&mem);
+        dbg.osCalls().bind(&cpu, &mem);
+        dbg.osCalls().setMonitor(true);
+        cpu.setDebugHook(&dbg);
+        if (direct) {
+            poke(mem, 0x0800, {
+                0xA9, 0xBE, 0x20, 0xED, 0xFD,    // '>', the caller's own prompt
+                0x20, 0x75, 0xFD,                // JSR NXTCHAR
+                0x4C, 0x08, 0x08,                // JMP *
+            });
+        } else {
+            poke(mem, 0x0800, {
+                0x20, 0x6A, 0xFD,                // JSR GETLN
+                0x4C, 0x03, 0x08,                // JMP *
+            });
+        }
+        cpu.setStackPointer(0xFF);
+        cpu.setProgramCounter(0x0800);
+        for (int i = 0; i < 40; ++i) cpu.run(1);
+        const auto l = lines(dbg.osCalls());
+        CHECK(l.size() == 1);
+        CHECK(l.size() > 0 && l[0] == (direct ? "MON  $0805 NXTCHAR \">\" -> \"HI\""
+                                              : "MON  $0800 GETLN ']' -> \"HI\""));
+        if (l.size() != 1) dump(dbg.osCalls());
+    }
+}
+
 // Applecorn: the BBC program runs from aux RAM (RAMRD), the MOS in the aux
 // language card; OSBYTE through its page-2 vector.
 void testApplecorn()
@@ -568,6 +617,7 @@ int main()
     testPascal();
     testDiskHead();
     testMonitor();
+    testMonitorNxtchar();
     testApplecorn();
     testCpm65();
     testSlotBusObserver();

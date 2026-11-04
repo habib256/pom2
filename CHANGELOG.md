@@ -72,6 +72,16 @@ index themselves, so that memory no longer held zeros when the file took over. T
 game ran on regardless, and 1133 assertions did not notice. The root's `PRODOS` now
 gets every block; only a comparison of RAM at the hand-over showed the difference.
 
+## 2026-11-04 — The Monitor trace sees Integer BASIC's prompt
+
+Integer BASIC prints its own `>` and enters GETLN's key loop at `$FD75`, past every
+entry the `MON` trace watched. Its lines never appeared as calls, and their echo came
+out as program output (`MON ">PRINT 7"`). They now read `$E3D0 NXTCHAR ">" -> "PRINT 7"`.
+The entry point was noticed in ReplicApple2Plus's notes and checked in the ROM.
+
+`pom2_headless` gains `--iie`, as `pom2_bench` has: `--rom` alone changed the file and
+not the memory mode, so a //e dump could not boot there.
+
 **v1.1.2 marker** — 2026-11-02. Release notes: [v1.1.2](docs/releases/v1.1.2.md).
 
 ## 2026-11-02 — "POM2 is damaged" was our bug: one accented file name

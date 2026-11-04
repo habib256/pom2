@@ -11610,7 +11610,10 @@ BDOS $94C3 F_SFIRST ????????.??? -> A=$00
   layout; the unit (A) and drive words it marks as unsure read 0 there.
 - **Monitor** (`MON`). COUT (`$FDED`, while it holds `JMP (CSW)`) collected
   into one line per CR, and each GETLN (`$FD6A` / `$FD67` / `$FD6F`, `LDA $33`
-  checked) paired with its line (`$0200`, X long). GETLN's own output — its
+  checked) paired with its line (`$0200`, X long). Integer BASIC prints its own
+  prompt and enters the key loop directly (`$E3CE`: `TYA` / `TAX` / `JSR $FD75`),
+  so a `$FD75` with no call open at that stack depth is logged as `NXTCHAR`, its
+  prompt taken from COUT. GETLN's own output — its
   prompt, the key echo — is not program output and is kept out. DOS 3.3 runs
   a command at the echo of its CR and hands back an empty line, the buffer
   cleared: the echo then says what it took (`-> "" (DOS took "CATALOG")`).
