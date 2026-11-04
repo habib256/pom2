@@ -1470,6 +1470,42 @@ static void testSparseFiles()
         fs::remove_all(dir); fs::remove_all(dst);
     }
 
+    // The volume's boot file has no holes: the boot blocks walk its index
+    // themselves and do not read an entry of 0 as zeros. Only the root's: a
+    // PRODOS in a folder boots nothing, and any other name stays sparse.
+    {
+        fs::path dir = makeTempDir("sparse_boot");
+        std::vector<std::uint8_t> bin(5000, 0);
+        bin[0] = 0x11; bin[4999] = 0x99;
+        writeFile(dir / "PRODOS", bin);
+        fs::create_directories(dir / "SUB");
+        writeFile(dir / "SUB" / "PRODOS", bin);
+        std::vector<std::uint8_t> img;
+        auto br = pom2::buildVolumeFromFolder(dir.string(), "HOST", img);
+        assert(br.ok && br.filesIncluded == 2);
+        const auto usedOf = [&img](std::size_t block, const char* name) -> unsigned {
+            for (std::size_t slot = 0; slot < 13; ++slot) {
+                const std::uint8_t* e = img.data() + block * kBlockBytes + 4 + slot * 39;
+                if ((e[0] & 0x0F) == std::strlen(name) && (e[0] >> 4) != 0
+                    && std::memcmp(e + 1, name, std::strlen(name)) == 0)
+                    return rd16(e + 0x13);
+            }
+            assert(false && "entry not found");
+            return 0;
+        };
+        assert(usedOf(2, "PRODOS") == 11 && "1 index + all 10 chunks");
+        const std::uint16_t subKey = [&img] {
+            for (std::size_t slot = 0; slot < 13; ++slot) {
+                const std::uint8_t* e = img.data() + 2 * kBlockBytes + 4 + slot * 39;
+                if ((e[0] >> 4) == 0xD) return rd16(e + 0x11);
+            }
+            assert(false && "subdirectory not found");
+            return std::uint16_t{0};
+        }();
+        assert(usedOf(subKey, "PRODOS") == 3 && "1 index + chunk 0 + chunk 9");
+        fs::remove_all(dir);
+    }
+
     // The note's own example: BSAVE SPARSE.FILE,A$300,L$1,B$FFFFFF — 16 MB
     // of EOF, "only takes 5 blocks on a ProDOS disk": a master index, two
     // index blocks, two data blocks (the first, always allocated, and the

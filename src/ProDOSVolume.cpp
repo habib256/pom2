@@ -104,11 +104,17 @@ struct PreparedFile {
     std::size_t                 dataBlocks  = 0;     // ALLOCATED data blocks
     std::size_t                 chunks      = 0;     // 512-byte chunks of data
     std::size_t                 indexBlocks = 0;     // 0 for seedling, 1 for sapling
+    /// Every chunk gets a block: the volume's boot file (see scanHostFolder).
+    bool                        dense       = false;
     // Filled at layout: keyPointer (= seedling data block, sapling index block).
     std::size_t                 firstBlock  = 0;
 };
 
 bool chunkAllocated(const std::vector<std::uint8_t>& data, std::size_t i);
+inline bool chunkAllocated(const PreparedFile& f, std::size_t i)
+{
+    return f.dense || chunkAllocated(f.data, i);
+}
 
 // ProDOS TXT uses CR line endings. Only type $04 is transformed, and only
 // when the folder mount explicitly enables text exchange.
@@ -671,6 +677,15 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             // `BSAVE …,B$FFFFFF` round trip is 16 MB with one byte of data)
             // then costs what it cost on the guest's disk, five blocks,
             // instead of overflowing the volume.
+            //
+            // Not the root's PRODOS. A hole is the MLI's to read as zeros, and
+            // the boot blocks are not the MLI: they walk the file's index
+            // themselves. [F] Seen only in POM2 (HDV card, SCOSWAMP's volume,
+            // 2026-11-04): with the file's all-zero last chunk left out, $6200-
+            // $63FF did not hold zeros when the loaded file took over at $2000.
+            // Settled by: the boot blocks' disassembly, on each ProDOS shipped.
+            // A boot file with no holes is correct whichever way that goes.
+            pf.dense       = depth == 0 && pf.prodosName == "PRODOS";
             pf.chunks      = (payloadSize + kBlockBytes - 1) / kBlockBytes;
             pf.storageType = payloadSize <= kSaplingMaxBytes ? kStorageSapling : kStorageTree;
             std::size_t groupsUsed = 0;
@@ -678,7 +693,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             for (std::size_t g = 0; g * 256 < pf.chunks; ++g) {
                 bool any = false;
                 for (std::size_t i = g * 256; i < std::min(pf.chunks, g * 256 + 256); ++i)
-                    if (chunkAllocated(pf.data, i)) { ++pf.dataBlocks; any = true; }
+                    if (chunkAllocated(pf, i)) { ++pf.dataBlocks; any = true; }
                 if (any) ++groupsUsed;
             }
             pf.indexBlocks = pf.storageType == kStorageSapling ? 1 : 1 + groupsUsed;
@@ -762,7 +777,7 @@ void writeFileData(std::vector<std::uint8_t>& image, PreparedFile& f,
             if (i % 256 == 0 && tree) {
                 bool any = false;
                 for (std::size_t k = i; k < std::min(f.chunks, i + 256); ++k)
-                    if (chunkAllocated(f.data, k)) { any = true; break; }
+                    if (chunkAllocated(f, k)) { any = true; break; }
                 if (!any) { i += 255; idx = nullptr; continue; }
             }
             if (i % 256 == 0) {
@@ -777,7 +792,7 @@ void writeFileData(std::vector<std::uint8_t>& image, PreparedFile& f,
                     f.firstBlock = idxBlk;
                 }
             }
-            if (!chunkAllocated(f.data, i)) continue;   // sparse: entry stays 0
+            if (!chunkAllocated(f, i)) continue;   // sparse: entry stays 0
             const std::size_t db = nextBlock++;
             idx[i % 256]       = static_cast<std::uint8_t>(db & 0xFF);
             idx[256 + i % 256] = static_cast<std::uint8_t>((db >> 8) & 0xFF);

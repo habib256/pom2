@@ -1,9 +1,11 @@
 // The image conversion package from an install tree: a 280x192 gradient to an
 // HGR page and a DHGR page pair, with the bundled stb reader and writer linked
-// the way a command-line converter links them. Prints each page's digest.
+// the way a command-line converter links them, then a folder made into a ProDOS
+// volume. Prints each page's digest and the volume's size.
 #include "hgrpaint/HgrConvert.h"
 #include "hgrpaint/HgrPaintModel.h"
 #include "Cam16.h"
+#include "ProDOSVolume.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -12,6 +14,9 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <vector>
 
 int main()
@@ -39,6 +44,19 @@ int main()
         return h;
     };
     const hgrpaint::Cam16Ucs ink = hgrpaint::srgb8ToCam16Ucs(255, 255, 255);
-    std::printf("hgr=%08x dhgr=%08x white=%s\n", sum(hgr), sum(dhgr), ink.J > 0 ? "ok" : "bad");
-    return ink.J > 0 ? 0 : 1;
+
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / "pom2_imageconv_consumer";
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+    fs::create_directories(folder);
+    { std::ofstream(folder / "HELLO.TXT") << "HELLO\r"; }
+    std::vector<std::uint8_t> volume;
+    const pom2::ProDOSBuildResult built =
+        pom2::buildVolumeFromFolder(folder.string(), "CONSUMER", volume);
+    fs::remove_all(folder, ignored);
+
+    std::printf("hgr=%08x dhgr=%08x white=%s volume=%zu\n", sum(hgr), sum(dhgr),
+                ink.J > 0 ? "ok" : "bad", volume.size());
+    return ink.J > 0 && built.ok && !volume.empty() ? 0 : 1;
 }

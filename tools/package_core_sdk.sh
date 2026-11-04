@@ -7,7 +7,7 @@
 #
 #   tools/package_core_sdk.sh [--allow-dirty] <build-dir> <out-dir>
 #
-# <build-dir> is a configured tree; pom2_core and pom2_imageconv are built here.
+# <build-dir> is a configured tree; the three libraries are built here.
 # A tree with uncommitted changes is refused without --allow-dirty: its commit
 # would name sources nobody else can check out.
 set -euo pipefail
@@ -26,7 +26,7 @@ case "$(uname -s)-$(uname -m)" in
     *) echo "package_core_sdk: no SDK is published for $(uname -sm)" >&2; exit 1 ;;
 esac
 
-cmake --build "$build" --target pom2_core pom2_imageconv --config Release
+cmake --build "$build" --target pom2_core pom2_imageconv pom2_prodosvolume --config Release
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

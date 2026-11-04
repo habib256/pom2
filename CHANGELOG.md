@@ -58,6 +58,20 @@ together, and the `pom2_imageconv` package lets a converter build with no POM2 s
 Its output was compared with a build from the sources, byte for byte, on `pom2adventure`'s
 two converters (30 conversions, including the area resampler, no difference).
 
+## 2026-11-04 — The volume builder joins the conversion package
+
+`POM2::prodosvolume` installs `buildVolumeFromFolder` beside `POM2::imageconv`, so a
+game's tools build with no POM2 checkout. It takes three sources: since the host
+naming work of 2026-11-01, `ProDOSVolume.cpp` needs `HostFileTag.cpp` and
+`ProDOSHostNameMap.cpp`. That had already broken `pom2adventure`'s build from these
+sources, which still listed one file; its binary from September hid it.
+
+Rebuilding that volume found a bug in the builder. Since sparse files arrived, the
+root's `PRODOS` lost its all-zero last chunk, and the boot blocks walk the file's
+index themselves, so that memory no longer held zeros when the file took over. The
+game ran on regardless, and 1133 assertions did not notice. The root's `PRODOS` now
+gets every block; only a comparison of RAM at the hand-over showed the difference.
+
 **v1.1.2 marker** — 2026-11-02. Release notes: [v1.1.2](docs/releases/v1.1.2.md).
 
 ## 2026-11-02 — "POM2 is damaged" was our bug: one accented file name

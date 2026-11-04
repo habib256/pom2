@@ -1890,7 +1890,22 @@ target_include_directories(pom2_imageconv
         $<INSTALL_INTERFACE:include/pom2/imageconv>
         $<INSTALL_INTERFACE:include/pom2/imageconv/hgrpaint>)
 target_compile_features(pom2_imageconv PUBLIC cxx_std_17)
-install(TARGETS pom2_imageconv
+# The folder-to-ProDOS-volume builder travels with it: a tool that converts a
+# game's images also has to put them on the game's volume, and this owes nothing
+# to the emulator either. Three sources, because ProDOSVolume.cpp names files by
+# HostFileTag and remembers them in ProDOSHostNameMap.
+add_library(pom2_prodosvolume STATIC
+    ${POM2_SRC_DIR}/ProDOSVolume.cpp
+    ${POM2_SRC_DIR}/HostFileTag.cpp
+    ${POM2_SRC_DIR}/ProDOSHostNameMap.cpp)
+add_library(POM2::prodosvolume ALIAS pom2_prodosvolume)
+set_target_properties(pom2_prodosvolume PROPERTIES EXPORT_NAME prodosvolume)
+target_include_directories(pom2_prodosvolume
+    PUBLIC
+        $<BUILD_INTERFACE:${POM2_SRC_DIR}>
+        $<INSTALL_INTERFACE:include/pom2/imageconv>)
+target_compile_features(pom2_prodosvolume PUBLIC cxx_std_17)
+install(TARGETS pom2_imageconv pom2_prodosvolume
         EXPORT pom2_imageconvTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         COMPONENT pom2_imageconv_sdk
@@ -1900,6 +1915,7 @@ install(FILES ${POM2_IMAGECONV_HEADERS}
         COMPONENT pom2_imageconv_sdk
         EXCLUDE_FROM_ALL)
 install(FILES ${POM2_SRC_DIR}/stb_image.h ${POM2_SRC_DIR}/stb_image_write.h
+              ${POM2_SRC_DIR}/ProDOSVolume.h ${POM2_SRC_DIR}/ProDOSHostNameMap.h
         DESTINATION include/pom2/imageconv
         COMPONENT pom2_imageconv_sdk
         EXCLUDE_FROM_ALL)

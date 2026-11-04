@@ -554,23 +554,25 @@ volume, taken before mounting since a volume changes as the guest writes, and
 
 ## Image conversion package
 
-`pom2_imageconv` is the conversion half of `hgrpaint`, which owes nothing to the
-emulator: a program that turns images into HGR or DHGR pages needs this and no POM2
-checkout.
+`pom2_imageconv` is the conversion half of `hgrpaint`, plus the folder-to-volume
+builder. Neither owes anything to the emulator: a program that turns images into HGR
+or DHGR pages, or puts them on a ProDOS volume, needs this and no POM2 checkout.
 
 ```bash
-cmake --build build --target pom2_imageconv
+cmake --build build --target pom2_imageconv pom2_prodosvolume
 cmake --install build --prefix /tmp/pom2-sdk --component pom2_imageconv_sdk
 ```
 
 ```cmake
 find_package(pom2_imageconv CONFIG REQUIRED)
 target_link_libraries(my_converter PRIVATE POM2::imageconv)
+target_link_libraries(my_volume_tool PRIVATE POM2::prodosvolume)
 ```
 
 The target's include paths give `"hgrpaint/HgrConvert.h"`, `"hgrpaint/HgrPaintModel.h"`,
-`"Cam16.h"` and the bundled `"stb_image.h"` and `"stb_image_write.h"`, with the same
-names a tool compiled against the sources uses. It has no dependency beyond C++17. Its
+`"Cam16.h"` and the bundled `"stb_image.h"` and `"stb_image_write.h"`; `POM2::prodosvolume`
+gives `"ProDOSVolume.h"`. Those are the names a tool compiled against the sources
+uses. It has no dependency beyond C++17. Its
 API follows the sources and carries no stability promise of its own; version
 compatibility is `SameMinorVersion`, as for the core. It runs in CI as the
 `pom2_imageconv_consumer` ctest, from `examples/pom2_imageconv_consumer/`.
