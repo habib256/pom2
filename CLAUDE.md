@@ -310,7 +310,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Two-phase media mount — keeps the file read off `stateMutex` | `MediaMount.h/.cpp` | [§ Two-phase mount](DEV.md#two-phase-media-mount-mediamounthcpp) |
 | Machine snapshot + Rewind ring (MicroM8-style) | `MachineSnapshot.*`, `RewindBuffer.*` | [§ Rewind](DEV.md#rewind--time-travel) |
 | 3D voxel view (MicroM8-style) + camera math | `Voxel3DRenderer.*`, `Mat4.h` | [§ 3D voxel](DEV.md#3d-voxel-view) |
-| ProDOS block backing + HDV cards (the `hdv` card: drive 1 + drive 2) | `Block512Backing.*`, `ProDOSHardDiskCard.*`, `CffaCard.*`, `AtaBlockDevice.*` | [§ HDV](DEV.md#prodosharddiskcard-hdv--synthetic-block-model), [§ CFFA](DEV.md#cffacard-cffa-20--mame-faithful-ide) |
+| ProDOS block backing + HDV cards (the `hdv` card: drive 1 + drive 2) — SDK `attachHardDisk`, [docs/SDK.md](docs/SDK.md#hard-disk) | `Block512Backing.*`, `ProDOSHardDiskCard.*`, `CffaCard.*`, `AtaBlockDevice.*` | [§ HDV](DEV.md#prodosharddiskcard-hdv--synthetic-block-model), [§ CFFA](DEV.md#cffacard-cffa-20--mame-faithful-ide) |
 | ProDOS host folder (a directory served as a volume) | `ProDOSVolume.*`, `ProDOSBlockCard.h` | [§ ProDOS host folder](DEV.md#prodos-host-folder) |
 | **The host exchange convention** — `NAME[#TTAAAA]` (CiderPress), the extension↔type tables and the DOS 3.3↔ProDOS type map, in ONE file shared by the ProDOS host folder, `pom2_dos33` and the HGR Paint editor's `PIC#062000` | `HostFileTag.h/.cpp` | — |
 | TNFS media (fetch a disk image from a TNFS server into a local cache) | `TnfsClient.*`, `TnfsMedia.*` | [§ FujiNet](DEV.md#fujinet-sp-over-slip-relay) |

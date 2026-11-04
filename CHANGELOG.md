@@ -10,6 +10,54 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-04 — The SDK mounts hard disks, and a //c stops reading 32 MiB as empty
+
+`pom2adventure` could not boot its real volumes through the public facade: the
+SDK offered only 400/800 KiB 3.5" media, while the classes that serve hard disks
+were already in the archive. `attachHardDisk` and its calls expose them with one
+contract over two devices, `ProDOSHardDiskCard` on a slotted machine and HDV units
+behind the rear port of a //c or //c+, served by the machine's own firmware. `docs/SDK.md § Hard
+disk` holds the contract; `pom2_core_hdd` asks every claim of the guest, through
+the firmware's ProDOS entry and a real ProDOS MLI.
+
+Three things the facade had to add, because the classes alone get them wrong:
+
+- **A protected process must tell the guest.** `POM2_MEDIA_WRITE_DEFAULT=protected`
+  leaves the card's write-protect line clear, by its documented in-session-writable
+  policy: writes go to RAM and vanish at the eject. The facade mounts protected, so
+  the guest gets `$2B`.
+- **The card has no save on destruction**, while the SmartPort unit does. The
+  facade flushes in `~Impl`, so both machines keep one promise.
+- **A 2IMG's block count must agree with its data length.** The store does not read
+  that field, so the application keeps opening such images as it did. The facade
+  refuses them, since it would have two capacities to report. A non-zero count only:
+  0 is accepted.
+
+And one bug in the application's path too: **a 65536-block image answered STATUS
+with 0 blocks on a //c.** `SmartPortBusDevice` sent the true 24-bit count, and the
+//c firmware's ProDOS entry hands a program its low 16 bits. The slot-ROM path
+already held the count at `$FFFF` for that reason; the bus did not. Blocks are
+still bounded by the real size, so `$FFFF` stays reachable.
+
+## 2026-11-04 — What a test harness asks of the SDK
+
+The rest of the same request, because a harness that can mount the volume still
+has to look at it. `readRam`/`writeRam` reach RAM by physical bank, with nothing
+moving: a bus read of the 80-column page has to flip 80STORE and PAGE2 to see aux,
+and a read of `$C010` acknowledges a key. `keyboardState` says whether the guest
+took a key, which the old HTTP host could only infer from a screen that stopped
+changing. `sdkInfo` names the commit, re-read on every build because a configure-time
+value goes stale at the next commit, and `-dirty` when the tree says so; the SHA-256
+moved from `RomFetch.cpp` to `Sha256.h` so the core can offer it without linking curl
+handling. `docs/SDK.md` now says what `renderFrame` is and is not: a frame is the
+MAME composite table, while the application's default is the OpenEmulator shader
+with the CRT pass, and calling the first the second would be the error.
+
+`tools/package_core_sdk.sh` delivers header, archive, conversion package and manifest
+together, and the `pom2_imageconv` package lets a converter build with no POM2 sources.
+Its output was compared with a build from the sources, byte for byte, on `pom2adventure`'s
+two converters (30 conversions, including the area resampler, no difference).
+
 **v1.1.2 marker** — 2026-11-02. Release notes: [v1.1.2](docs/releases/v1.1.2.md).
 
 ## 2026-11-02 — "POM2 is damaged" was our bug: one accented file name

@@ -3,14 +3,14 @@
 POM2 exposes one optional C++17 facade: `include/pom2/core.hpp`, implemented by
 `src/Pom2Core.cpp`. It is a PIMPL wrapper over `Memory` + `M6502` + the small
 set of devices an embedding host needs (display, speaker, cassette, Disk II,
-3.5" SmartPort, Mockingboard, Apple Mouse, the //c's built-in mouse), so a
-consumer never sees an internal definition.
+3.5" SmartPort, hard disk, Mockingboard, Apple Mouse, the //c's built-in mouse),
+so a consumer never sees an internal definition.
 
 Its contract is pinned by the `pom2_core_api` test, which drives the facade
 through a boot, a display frame, audio pulls, a disk mount, a slot-5 boot off an
 800 KiB image with a write that is flushed and read back from the host file, and
 a full cassette record/save/clear cycle, and asserts the header stays
-self-contained.
+self-contained. The hard disk half has its own test, `pom2_core_hdd`.
 
 ## Scheduling, input and frontend boundaries
 
@@ -72,8 +72,8 @@ promotes a queued character. `pasteText` does not run the CPU or wait for
 the text to be consumed.
 
 `renderFrame()` returns a borrowed CPU-rendered framebuffer without OpenGL;
-the next render, move-assignment or destruction invalidates the view. For
-audio, configure the sample rate before running cassette code. Pull either
+the next render, move-assignment or destruction invalidates the view. What that
+picture is, and is not, is [§ Rendering](#rendering). For audio, configure the sample rate before running cassette code. Pull either
 the speaker-only stream or the complete stereo mix for a given span of guest
 time, because both consume the same speaker timeline.
 
@@ -95,11 +95,12 @@ that final mixer clamp and returns the filtered speaker signal with its
 source gain applied; it does not promise the same amplitude bound. Apply
 any host output limit required by the destination format.
 
-Disk II drive indices and SmartPort unit indices are **0 and 1**, while
-expansion slot numbers are **1 through 7**. The facade provides one Disk II
-controller with its two drives (slot 6 by default), one optional SmartPort
-controller (slot 5 by default), and multiple Mockingboards in separate empty
-slots (slot 4 by default).
+Disk II drive indices, SmartPort unit indices and hard disk unit indices are
+**0 and 1**, while expansion slot numbers are **1 through 7**. The facade
+provides one Disk II controller with its two drives (slot 6 by default), one
+optional SmartPort controller (slot 5 by default), one optional hard disk device
+(slot 7 by default), and multiple Mockingboards in separate empty slots (slot 4
+by default).
 
 `attachDiskII(bootRom, sequencerRom, slot)` takes any slot from 1 to 7: the
 P5 PROM finds its own slot at run time (`JSR $FF58`), so a controller in
@@ -275,12 +276,12 @@ Mockingboard 4c on the internal connector, whatever slot is passed: dormant
 until the guest writes into `$C400-$C4FF`, then answering that page — over
 the mouse firmware, entry table included — until a power cycle (a Ctrl-Reset
 leaves it awake, as MAME's `reset_w` does). Pinned with the 32 KiB rev-0
-and 16 KiB rev-255 ROMs. The //c's serial ports and the external SmartPort
-chain are not part of the facade.
+and 16 KiB rev-255 ROMs. The //c's serial ports are not part of the facade, and
+its external SmartPort chain is reached only through `attachHardDisk`.
 
 `AppleIIcPlus` is the //c+ (`roms/apple2cp.rom`): a //c whose mouse firmware
 sits at `$C700`, with the MIG, the IWM and the two Sony 3.5" drives its ROM
-drives itself. They answer the SmartPort calls of the next section — unit 0
+drives itself; `attachHardDisk` adds the rear port. They answer the SmartPort calls of the next section — unit 0
 the internal drive, unit 1 the external one, which joins the chain when a
 disk is first put in it — with nothing to attach (`attachSmartPort` refuses).
 `bootSlot(5)` is a cold boot through the ROM's own scan, as the application's
@@ -309,7 +310,8 @@ underlying `Disk35Image`: raw ProDOS-order 400/800 KiB media, supported 2IMG
 wrappers and GCR WOZ/MOOF captures decoded as blocks. It is not limited to the
 800 KiB `.po` used by the API regression. The facade does not enable SuperDrive
 MFM/1.44 MB mode and provides no HDV-unit or chain-size setter; its two units
-remain distinct from the application's configurable 2–14-unit chain.
+remain distinct from the application's configurable 2–14-unit chain. A volume
+of any other size is a hard disk: see the next section.
 
 `bootSlot(n)` checks the card's `$Cn01/$Cn03/$Cn05` boot signature before
 resetting, then cold-boots and checks that the ROM is visible on the CPU bus.
@@ -334,6 +336,125 @@ flush/eject/replacement reports an error and keeps the outgoing medium mounted.
 Flush explicitly when the host needs to observe save errors before destroying
 the core.
 
+## Inspecting RAM and the keyboard
+
+`read` and `write` are the bus: a read of `$C010` clears the strobe, a read of
+`$0400` answers whichever bank the switches select. A harness needs to look
+without touching, so these do not go through it.
+
+`readRam(bank, address, out, length)` and `writeRam(bank, address, data, length)`
+reach RAM by physical bank, whatever RAMRD, RAMWRT, ALTZP, 80STORE, PAGE2 and the
+language card's switches select. They move nothing: no soft switch, no strobe, no
+CPU cycle, no bus watch.
+
+| `RamBank` | Addresses | The cells |
+|---|---|---|
+| `Main` | `$0000-$BFFF` | motherboard RAM |
+| `Aux` | `$0000-$BFFF` | auxiliary 64 KiB, //e memory only |
+| `LanguageCard1`, `LanguageCard2` | `$D000-$DFFF` | the card's two 4 KiB banks, as `$C08x` names them |
+| `LanguageCardHigh` | `$E000-$FFFF` | its shared upper RAM, which has no bank |
+| `AuxLanguageCard1`, `AuxLanguageCard2`, `AuxLanguageCardHigh` | the same | the same in auxiliary memory, //e memory only |
+
+A range that is empty or leaves its bank is refused whole, with nothing copied and
+the reason in `lastError()`: `$C000` and above are not `Main`, because a program
+reaches those addresses through the language card's own names. The `$C000-$CFFF`
+I/O space and ROM are not RAM and are not offered. `writeRam` is a debugger's
+write. It lands in the cell as a CPU store never could, and neither a card nor the
+beam-time video log sees a bus cycle for it; a later `renderFrame` does show it.
+
+`keyboardState()` returns the latched character, the strobe and the count of paste
+bytes queued behind it, and acknowledges nothing: reading it clears no strobe and
+promotes no byte. **A key was taken once `strobe` and `queued` are both clear**,
+which a host can wait for under a cycle budget instead of guessing with a delay or
+a stable screen. That says the guest cleared the strobe, not what it did with the
+key: a program that empties the keyboard before its prompt takes a key too. `queueKey`
+takes a byte, so ESC (`$1B`) and RETURN (`$0D`) need no escaping.
+
+## Hard disk
+
+`attachHardDisk(slot)` installs the machine's own hard disk device, with two
+empty units:
+
+| Machine | Device | Units | `bootSlot` enters |
+|---|---|---|---|
+| ][+, //e, `Custom` | `ProDOSHardDiskCard` in an empty `slot` (7 by default), synthetic ROM, no file read | ProDOS drive 1 and drive 2 of the slot | the card's `$Cn00` |
+| //c, 32 KiB ROM | two HDV units on the rear SmartPort connector; `slot` is ignored | units of the built-in slot 5 | the //c's own `$C500`, which finds them over the bus |
+| //c, 16 KiB rev-255 ROM | the same | the same | the card's page, armed by the boot: this ROM has no SmartPort firmware |
+| //c+ | two HDV units on the rear connector, behind its 3.5" drives; `slot` is ignored | numbered by its firmware, below | the ROM's reset scan: the internal 3.5" if it holds a disk, else the rear port |
+
+`hardDiskSlot()` says where it landed, 0 for nowhere. On a //c it plugs a Disk II
+in slot 6 if none is attached, because the port is decoded off that card's soft
+switches and the firmware's bus probe gets no answer without it. A slot-5
+`attachSmartPort` and a //c's hard disk exclude each other: each wants slot 5.
+
+A //c+ numbers its chain from the internal 3.5", device 1 and ProDOS drive 1,
+whether or not it holds a disk. So unit 0 is **drive 2** of slot 5, and booting it
+hands the boot sector X = `$D0`, which needs the internal bay empty. An external
+3.5" (`insertSmartPortDisk(1, …)`) joins the chain before the rear port and takes
+drive 2 for itself. A ProDOS driver call then cannot name the hard disk, and
+neither can it name unit 1 at any time: those stay reachable by native SmartPort
+calls only.
+
+`bootSlot(hardDiskSlot())` boots through that firmware. Nothing is injected into
+RAM: the firmware reads block 0 to `$0800` and enters `$0801` with X naming the
+slot and drive, and ProDOS and its `.SYSTEM` program take it from there. As for
+every `bootSlot`, success means the firmware was entered, not that the guest
+finished booting, and an empty unit is the firmware's to report.
+
+**Media.** `insertHardDisk(unit, path)` takes a raw ProDOS-order file (`.hdv`,
+`.po`) or a ProDOS-order 2IMG, told apart by the file's magic and never by its
+name. A `.2mg` is a container, so it implies no 3.5" geometry. Block order cannot
+be detected in a raw file: a DOS-order `.dsk` mounts, and reads as garbage. A
+2IMG's data offset and length are honoured, and its header and trailer survive
+every write-back. Refused, with the reason in `lastError()`, the file left alone
+and the outgoing volume still mounted:
+
+- a file that cannot be read, is empty, or exceeds the 64 MiB read limit;
+- a 2IMG whose header is cut short, whose data window leaves the file or overlaps
+  its header, whose format is not ProDOS, or whose non-zero block count disagrees
+  with its data length (a block count of 0 is accepted);
+- a capacity that is not a whole number of 512-byte blocks, or above 65536.
+
+**Capacity.** `hardDiskBlockCount(unit)` is the real size. A ProDOS volume
+declares its size in 16 bits, so **65535 blocks** (33 553 920 bytes, last block
+`$FFFE`) is the largest one a guest can fully describe, and on it block `$FFFF`
+fails with `$27` rather than wrapping. A physical image of **65536 blocks**
+(exactly 32 MiB, as real dumps are) is also accepted: its STATUS is held at
+`$FFFF`, block `$FFFF` stays addressable, and only `hardDiskBlockCount` reports
+65536. 65537 is refused. Nothing is truncated.
+
+**Writes** land in the unit's in-memory volume and reach the file on
+`flushHardDisk(unit)` (temp file + rename, whole-file atomic), on an insert over
+it, on an eject, and when the `Core` is destroyed or move-assigned over.
+`hardDiskUnsavedBlocks(unit)` counts what is pending. Inserting the same file
+again saves first and then reads the result. A failed save on a flush, insert,
+eject or `setHardDiskWriteProtected` reports the error, leaves the volume mounted
+and keeps its blocks pending for a retry; only the destructor has nobody to tell,
+so flush first when the host must observe it. There is no background autosave:
+the facade has no threads, and until a flush the file is exactly as it was. A host
+that needs to keep a disk pristine mounts a private copy.
+
+**Protection.** A guest write to a protected volume fails with `$2B`, and neither
+the volume nor its file changes. `hardDiskWriteProtected(unit)` reports what the
+guest sees, whatever the cause: a locked 2IMG, a read-only file (both found at
+mount), `POM2_MEDIA_WRITE_DEFAULT=protected`, or
+`setHardDiskWriteProtected(unit, true)`, a sticker that first saves pending writes
+and lasts until the volume is ejected or replaced. Lifting the sticker cannot get
+past the other three.
+
+**Timing.** There is no mechanical model — no seek, rotation or spin-up — and no
+wall-clock input. On the card a block costs the cycles of the slot ROM's copy loop
+against `$C0n2`. On a 32 KiB //c it costs the cycles of the firmware's own bus
+protocol. One driver READ, entry to return, measured 2026-11-04 and not pinned:
+7746 cycles on the card, 19783 on the //c. Run the same script with the same ROMs,
+volume and keystrokes, and the guest reaches the same RAM on the same cycle
+(pinned, through a real ProDOS boot). Compare cycle counts between the two devices
+only knowing this: the difference belongs to the device model, not to the disk.
+
+`pom2_core_hdd` pins all of the above through guest calls: JSR to the entry `$CnFF`
+names, and CREATE/OPEN/WRITE/CLOSE/READ through a real ProDOS MLI on a 65535-block
+2IMG, with the catalog and data then read back out of the host file.
+
 ## Mockingboard and cassette
 
 `attachMockingboard` accepts multiple cards in different empty slots. The
@@ -344,6 +465,115 @@ Sound II; the desktop card catalogue is not the facade's attachment API.
 `saveCassette` passes its path directly to the cassette device: `.wav` selects
 WAV and other suffixes select ACI. It does not append a suffix as the desktop
 CLI does. Supply `.aci` or `.wav` explicitly when saving through the SDK.
+
+## Rendering
+
+`renderFrame()` paints with `Apple2Display` in its default mode, `ColorNTSC`: POM2's
+port of MAME's composite colour table, on the CPU, into a 280- or 560-wide
+framebuffer. It shares with the application the class, the memory it reads, FLASH
+derived from the emulated frame, and the text and hi-res painters of that mode.
+
+It is **not** what the application shows by default. The application's default
+display is `ColorCompositeOE`: the bitstream demodulated by POM2's OpenEmulator-style
+GLSL shader, then the CRT glass pass (scanlines, mask, vignette, phosphor gamma,
+`CrtEffectStack`). Both need a GL context, the facade has none, and the facade offers
+no call to select another mode, so neither runs here:
+
+| Picture | Application | `renderFrame()` |
+|---|---|---|
+| MAME composite table (`ColorNTSC`) | selectable | **this** |
+| OpenEmulator composite (GPU, or `ColorCompositeOECpu`) | default | no |
+| CRT glass pass | default | no |
+| AppleWin NTSC, monochrome phosphors | selectable | no |
+| RGB card picture | when the card is plugged | no: composite, see § Display state |
+
+The capabilities say the same: `render.cpu-composite` is present and there is no
+`render.crt`. Use a frame as technical evidence (this mode changed, these two frames
+match, this region holds what the guest drew). It does not stand for the look a
+player gets on the default display, and a judgement of an image belongs in the
+application or a tool built to show that pipeline.
+
+## Delivery
+
+`tools/package_core_sdk.sh <build-dir> <out-dir>` makes one
+`pom2-core-sdk-v<version>-<host>.tar.gz`, for `darwin-arm64` or `linux-x86_64`:
+
+- `include/pom2/core.hpp`, `lib/libpom2_core.a` and `lib/cmake/pom2_core/`;
+- the conversion package below;
+- this document;
+- `MANIFEST.json`: version, commit, host, capabilities, system dependencies, and
+  the SHA-256 of every other file in the tarball.
+
+Its commit and capabilities come from running the installed archive, so they
+describe those bytes. It refuses a tree with uncommitted changes unless given
+`--allow-dirty`, and the manifest then says `-dirty`. The `core-sdk` job of
+`release.yml` builds both hosts and attaches them to each tagged release.
+
+`Core::sdkInfo()` gives a running host the same three facts. `commit` is re-read on
+every build, with `-dirty` for uncommitted changes and `unknown` outside a Git
+checkout. A capability name is added with its API and never reused:
+
+| Capability | API |
+|---|---|
+| `cassette` | `loadCassette` and the transport |
+| `disk2` | `attachDiskII`, `insertDisk`, `bootDisk` |
+| `ezcolor` | `attachEzColor` and its calls |
+| `harddisk` | `attachHardDisk` and its calls |
+| `keyboard.state` | `keyboardState` |
+| `machine.iic`, `machine.iicplus` | `Machine::AppleIIc`, `Machine::AppleIIcPlus` |
+| `mockingboard` | `attachMockingboard` |
+| `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
+| `provenance` | `sdkInfo`, `sha256`, `sha256File` |
+| `ram.banks` | `readRam`, `writeRam` |
+| `render.cpu-composite` | `renderFrame`, as § Rendering describes |
+| `rgbcard` | `attachRgbCard` and its calls |
+| `smartport35` | `attachSmartPort` and its calls |
+
+**System dependencies**, for linking: libslirp and zlib everywhere, plus CoreAudio,
+AudioToolbox and AudioUnit on macOS, or libdl, pthread and libm on Linux.
+`find_package(pom2_core)` finds them. miniaudio opens no device on a headless run.
+
+**ROMs**: none ship, and the facade reads no file it was not handed.
+
+| Machine | `loadRom` | `loadCharacterRom` |
+|---|---|---|
+| `AppleIIPlus` | `apple2p.rom` | `apple2_char.rom` |
+| `AppleIIe` | `apple2e_unenh.rom` | `apple2e_char_us_unenh.rom` |
+| `AppleIIeEnhanced` | `apple2e.rom` | `apple2e_char.rom` |
+| `AppleIIc` | `apple2c-32Kv0.rom` or `apple2c-16K.rom` | `apple2e_char.rom` |
+| `AppleIIcPlus` | `apple2cp.rom` | `apple2e_char.rom` |
+
+The hard disk, SmartPort and E-Z Color take no ROM. A Disk II's are optional
+(`disk2.rom`, `diskii_p6.rom`); `attachMouse` reads `mouse_341-0270-c.bin` and, for
+the MCU model, `mouse_341-0269.bin`. `tools/fetch_test_media.py` is how this
+repository's tests get them.
+
+**Recording what ran.** A test records `sdkInfo()`, `sha256File` of each ROM and
+volume, taken before mounting since a volume changes as the guest writes, and
+`sha256` of `readRam` for the program in memory.
+
+## Image conversion package
+
+`pom2_imageconv` is the conversion half of `hgrpaint`, which owes nothing to the
+emulator: a program that turns images into HGR or DHGR pages needs this and no POM2
+checkout.
+
+```bash
+cmake --build build --target pom2_imageconv
+cmake --install build --prefix /tmp/pom2-sdk --component pom2_imageconv_sdk
+```
+
+```cmake
+find_package(pom2_imageconv CONFIG REQUIRED)
+target_link_libraries(my_converter PRIVATE POM2::imageconv)
+```
+
+The target's include paths give `"hgrpaint/HgrConvert.h"`, `"hgrpaint/HgrPaintModel.h"`,
+`"Cam16.h"` and the bundled `"stb_image.h"` and `"stb_image_write.h"`, with the same
+names a tool compiled against the sources uses. It has no dependency beyond C++17. Its
+API follows the sources and carries no stability promise of its own; version
+compatibility is `SameMinorVersion`, as for the core. It runs in CI as the
+`pom2_imageconv_consumer` ctest, from `examples/pom2_imageconv_consumer/`.
 
 ## What ships
 
@@ -360,7 +590,9 @@ in this tree:
   is `SameMinorVersion`.
 - Everything is one install **component**, `pom2_core_sdk`: `cmake --install
   --component pom2_core_sdk` gives a consumer the archive, the headers and the
-  package files and nothing else — no ROMs, no fonts, no emulator binary.
+  package files and nothing else — no ROMs, no fonts, no emulator binary. The
+  conversion package is its own component, `pom2_imageconv_sdk`, and
+  `tools/package_core_sdk.sh` delivers the two together (§ Delivery).
 - **`examples/pom2_core_consumer/`** is a standalone project (its own
   `CMakeLists.txt` + `main.cpp`) that `find_package`es the installed package and
   links `POM2::core`. It runs in CI as the **`pom2_core_sdk_consumer`** ctest,

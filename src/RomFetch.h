@@ -44,6 +44,8 @@
 #ifndef POM2_ROM_FETCH_H
 #define POM2_ROM_FETCH_H
 
+#include "Sha256.h"   // sha256Hex, which the fetch test and the import share
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -151,10 +153,6 @@ bool romArchiveOnly(const RomFetchEntry& e);
 
 /// The member of the POM2 archive that holds `e`: "roms/" + its file name.
 std::string romArchiveMember(const RomFetchEntry& e);
-
-/// Lowercase hex SHA-256 of `n` bytes at `data`. Exposed so the fetch test
-/// can prove the catalog's digests describe the dumps that ship in roms/.
-std::string sha256Hex(const std::uint8_t* data, std::size_t n);
 
 /// The exact argv (after argv[0]) POM2 hands `curl` for one download.
 /// Exposed so the test can pin the hardening flags: a `-fsSL` that silently

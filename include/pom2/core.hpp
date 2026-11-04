@@ -16,6 +16,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pom2 {
 
@@ -144,6 +145,40 @@ struct EzColorState {
     std::uint64_t droppedAccesses = 0;
 };
 
+/// A physical RAM bank, for readRam()/writeRam(). Addresses are the ones the CPU
+/// sees: Main and Aux take $0000-$BFFF; a language card's $D000 banks take
+/// $D000-$DFFF and its shared upper RAM $E000-$FFFF. The Aux banks need //e
+/// memory. Bank 1 and bank 2 name the card's two 4 KiB banks, as $C08x does.
+enum class RamBank : std::uint8_t {
+    Main,
+    Aux,
+    LanguageCard1,
+    LanguageCard2,
+    LanguageCardHigh,
+    AuxLanguageCard1,
+    AuxLanguageCard2,
+    AuxLanguageCardHigh,
+};
+
+/// The keyboard, read without touching it: nothing here clears the strobe or
+/// promotes a queued key. A key was taken once `strobe` and `queued` are both
+/// clear. `key` stays latched after that, as on the machine.
+struct KeyboardState {
+    std::uint8_t key    = 0;       ///< the latched character, 7 bits
+    bool         strobe = false;   ///< $C000 bit 7: not yet cleared by $C010
+    std::size_t  queued = 0;       ///< paste bytes behind the latch
+};
+
+/// What this archive is. `commit` is the POM2 commit it was built from, with a
+/// "-dirty" suffix for a tree with uncommitted changes, or "unknown" outside a
+/// Git checkout. `capabilities` names what the facade offers, sorted (the list
+/// is in docs/SDK.md § Delivery); a name is added with its API and never reused.
+struct SdkInfo {
+    std::string version;
+    std::string commit;
+    std::vector<std::string> capabilities;
+};
+
 /// Host-visible cassette transport state. Program tapes remain armed after
 /// PLAY until the guest first polls $C060, matching the physical interface.
 struct CassetteState {
@@ -250,6 +285,54 @@ public:
     /// one when the internal bay is empty — and needs a 3.5" disk in either.
     bool bootSlot(int slot);
 
+    /// Install the machine's hard disk device, with two empty units. On a
+    /// slotted machine it is POM2's ProDOS block card (ProDOSHardDiskCard, no
+    /// ROM file) in an empty `slot`, units 0 and 1 being ProDOS drive 1 and
+    /// drive 2 of that slot. On Machine::AppleIIc and AppleIIcPlus `slot` is
+    /// ignored: the units hang off the rear SmartPort connector and the
+    /// machine's own firmware at $C500 serves them (a //c gets a Disk II in
+    /// slot 6 if none is attached, because the port is decoded off its soft
+    /// switches). A //c+ counts its internal 3.5" first, so unit 0 is drive 2
+    /// there and boots only with the internal bay empty. hardDiskSlot() says
+    /// where it landed; bootSlot() with that number boots through the
+    /// device's firmware.
+    bool attachHardDisk(int slot = 7);
+    /// The slot or port of the attached device; 0 when there is none.
+    int hardDiskSlot() const;
+    /// Mount a volume of 1 to 65536 512-byte blocks, whatever its name says:
+    /// a raw ProDOS-order file (.hdv, .po) or a ProDOS-order 2IMG. Refused,
+    /// and lastError() says why, for a file it cannot read, a 2IMG whose
+    /// header is cut short, whose data window leaves the file, whose block
+    /// count disagrees with its data length or whose format is not ProDOS, and
+    /// any capacity outside that range or not a whole number of blocks. A
+    /// refusal never modifies the new file and keeps the outgoing volume
+    /// mounted. Mounting over a volume first writes its changed blocks back;
+    /// if that fails, the mount is refused and they stay pending.
+    bool insertHardDisk(int unit, std::string_view path);
+    /// Write back, then drop the volume. A failed save keeps it mounted.
+    bool ejectHardDisk(int unit);
+    bool hardDiskInserted(int unit = 0) const;
+    /// Guest writes land in memory and reach the file on flushHardDisk()
+    /// (temp file + rename, keeping a 2IMG's header and trailer), on the next
+    /// insert or eject, and when the Core is destroyed — where a failure has
+    /// nobody to tell. True when there was nothing to write.
+    bool flushHardDisk(int unit);
+    /// Blocks written by the guest and not yet in the file.
+    std::uint32_t hardDiskUnsavedBlocks(int unit = 0) const;
+    /// The volume's real capacity in blocks; 0 when the unit is empty. A guest
+    /// STATUS answers in 16 bits, so a 65536-block image reads 65535 there,
+    /// with block $FFFF still addressable; only this call tells them apart.
+    std::uint32_t hardDiskBlockCount(int unit = 0) const;
+    /// Protect the mounted volume: the guest's writes fail with $2B and
+    /// nothing reaches its file. Protecting first writes back what the guest
+    /// already wrote (a failed save refuses). Lasts until the volume is
+    /// ejected or replaced, and leaves the file's read-only bit alone. Lifting
+    /// it cannot unprotect a read-only file, a locked 2IMG, or a run under
+    /// POM2_MEDIA_WRITE_DEFAULT=protected.
+    bool setHardDiskWriteProtected(int unit, bool protectedOn);
+    /// The protection the guest sees, whatever its cause.
+    bool hardDiskWriteProtected(int unit = 0) const;
+
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
     /// by the host transport below, while the guest sees the real $C060 input.
     bool loadCassette(std::string_view path);
@@ -353,6 +436,23 @@ public:
     std::uint8_t read(std::uint16_t address);
     void write(std::uint16_t address, std::uint8_t value);
 
+    /// RAM by physical bank, whatever RAMRD, RAMWRT, ALTZP, 80STORE, PAGE2 and
+    /// the language card's switches select. Nothing else moves: no soft switch,
+    /// no strobe, no CPU cycle, no bus watch. The whole range must lie inside
+    /// the bank (see RamBank), or nothing is copied and lastError() says why.
+    /// writeRam is a debugger's write: it reaches the cell as a CPU store never
+    /// could, and a card or the video scanner sees no bus cycle for it.
+    bool readRam(RamBank bank, std::uint16_t address, std::uint8_t* out, std::size_t length);
+    bool writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* data, std::size_t length);
+    KeyboardState keyboardState() const;
+
+    /// The version, commit and capabilities of this archive.
+    static SdkInfo sdkInfo();
+    /// Lowercase hex SHA-256, for a host recording what it ran. sha256File
+    /// answers "" when the file cannot be read.
+    static std::string sha256(const std::uint8_t* data, std::size_t length);
+    static std::string sha256File(std::string_view path);
+
     /// Inject a 7-bit key. With no pending paste, a newer key replaces an
     /// unread latch value; while paste bytes remain, the key appends to them.
     /// II/II+ memory mode folds ASCII lowercase to uppercase.
@@ -384,6 +484,10 @@ public:
 
     /// Render the current Apple II video state entirely on the CPU. No GL
     /// context is involved; width is 280 or 560 depending on 80-column mode.
+    /// This is POM2's composite colour table, not its default display: neither
+    /// the OpenEmulator composite nor the CRT glass pass runs here, so a frame
+    /// is technical evidence and does not stand for what the application
+    /// shows (docs/SDK.md § Rendering).
     FramebufferView renderFrame();
 
     /// Configure the host PCM rate before running code that drives cassette

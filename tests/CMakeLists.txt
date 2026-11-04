@@ -9711,6 +9711,26 @@ pom2_add_headless_test(test_pom2_core_api
     LINK_LIBRARIES pom2_core_test
     INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/include
     COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# The hard disk half of that facade, asked of the guest: firmware boot, driver
+# calls, a real ProDOS save, the 65535-block limit, malformed media, the //c.
+# The second entry leaves the suite's protected default in place, which a
+# process reads once: a protected run must refuse the guest, not drop its writes.
+pom2_add_headless_test(test_pom2_core_hdd
+    NAME pom2_core_hdd TIMEOUT 120 PORTABLE
+    SOURCES pom2_core_hdd_test.cpp
+    LINK_LIBRARIES pom2_core_test
+    INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/include
+    COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME pom2_core_hdd_policy_protected
+         COMMAND test_pom2_core_hdd --policy-protected)
+# What a test harness asks of it: RAM by physical bank, the keyboard, its own
+# identity. Each one pinned free of side effects on the machine it inspects.
+pom2_add_headless_test(test_pom2_core_harness
+    NAME pom2_core_harness TIMEOUT 30 PORTABLE
+    SOURCES pom2_core_harness_test.cpp
+    LINK_LIBRARIES pom2_core_test
+    INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/include
+    COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 endif()
 
 # ─── W5100 host-socket seam ─────────────────────────────────────────────
@@ -9861,6 +9881,18 @@ add_test(NAME pom2_core_sdk_consumer
 # depends on the SDK archive being built first.
 set_tests_properties(pom2_core_sdk_consumer PROPERTIES TIMEOUT 600)
 set_property(TEST pom2_core_sdk_consumer APPEND PROPERTY LABELS slow)
+
+# The same end-to-end shape for the conversion package: installed alone, built
+# from examples/ with no POM2 source on its include path, and run.
+add_test(NAME pom2_imageconv_consumer
+    COMMAND ${CMAKE_COMMAND}
+        -DPOM2_BINARY_DIR=${CMAKE_BINARY_DIR}
+        -DPOM2_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -DPOM2_TEST_CONFIG=$<CONFIG>
+        -DPOM2_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/pom2_imageconv_consumer_test.cmake)
+set_tests_properties(pom2_imageconv_consumer PROPERTIES TIMEOUT 300)
+set_property(TEST pom2_imageconv_consumer APPEND PROPERTY LABELS slow)
 
 # ─── SlotRomAsm — the hand-assembled-ROM assembler itself ───────────────
 # Header-only, no core sources: the point is that this file can assert the

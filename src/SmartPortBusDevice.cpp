@@ -16,6 +16,8 @@
 
 #include "SmartPortBusDevice.h"
 
+#include <algorithm>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -442,7 +444,11 @@ void SmartPortBusDevice::serveCommand(const std::array<uint8_t, 7>& header,
         if (!u) { buildReply(kErrBadUnit, nullptr, 0, false); break; }
         const uint8_t code = body.size() > 4 ? body[4] : 0;
         const bool media = u->hasMedia();
-        const uint32_t blocks = media ? u->blockCount() : 0;
+        // Held at $FFFF, the rule of SmartPortCard::blockCountByte. [C] //c ROM
+        // ProDOS entry at $C5xx — it hands a program the low 16 bits of these
+        // three bytes, so a 65536-block image answered X = Y = 0, "no blocks".
+        // Block $FFFF stays addressable: READ and WRITE ask the unit itself.
+        const uint32_t blocks = media ? std::min<uint32_t>(u->blockCount(), 0xFFFFu) : 0;
         // General status byte: block device, read allowed, format allowed;
         // write allowed unless protected; online iff media (bit 4 — the
         // firmware's own $CD93 test, which returns $2F without it).

@@ -3,7 +3,7 @@
 # verify-then-smoke-launch discipline), minus POM1's cc65 bundling: POM2 has no
 # in-app assembler, so there is no toolchain to stage.
 #
-# SEVEN packages, and why each is what it is:
+# SEVEN packages (and, from the core-sdk job, two SDK tarballs), and why each is what it is:
 #   linux       ubuntu-latest + PINNED bionic container → AppImage x86_64
 #   linux-arm64 ubuntu-24.04-arm (native)               → AppImage aarch64
 #   raspberry   ubuntu-24.04-arm + debian:bookworm      → AppImage raspberry-aarch64 (GLES)
@@ -1007,8 +1007,45 @@ jobs:
           tar tzf DIST/POM2-v*-linux-*.tar.gz | grep -q 'share/POM2/roms/' || { echo "::error::tarball carries no roms/"; exit 1; }
 
   # ------------------------------------------------ attach to the Release ----
+  # The SDK as one deliverable, for the two hosts its consumers link on. The
+  # manifest's commit and capabilities come from running the installed archive.
+  core-sdk:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install build dependencies
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends \
+              cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libslirp-dev libglib2.0-dev zlib1g-dev
+          else
+            brew install glfw libslirp
+          fi
+
+      - name: Fetch Dear ImGui (pinned commit)
+        run: tools/fetch_imgui_pinned.sh
+
+      - name: Configure and package
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=OFF
+          tools/package_core_sdk.sh build sdk-dist
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: core-sdk-${{ matrix.os }}
+          path: sdk-dist/*.tar.gz
+          if-no-files-found: error
+
   publish:
-    needs: [version, quality, linux, linux-arm64, raspberry, pi400, macos, windows, wasm]
+    needs: [version, quality, linux, linux-arm64, raspberry, pi400, macos, windows, wasm, core-sdk]
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag'
     # The ONLY job that needs to write: it creates the Release and attaches the
@@ -1038,21 +1075,23 @@ jobs:
           # checksum file lists clean basenames rather than nested paths. Each
           # package basename is already unique per OS.
           mkdir -p staging
-          find artifacts -type f \( -name '*.AppImage' -o -name '*.dmg' -o -name '*.zip' \) \
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.dmg' -o -name '*.zip' -o -name 'pom2-core-sdk-*.tar.gz' \) \
                -exec cp -v {} staging/ \;
           shopt -s nullglob
-          FILES=(staging/*.AppImage staging/*.dmg staging/*.zip)
-          # Exactly SEVEN, not "at least one". The staging directory is flat, so
-          # two packages that ended up with the same name would leave six here
+          FILES=(staging/*.AppImage staging/*.dmg staging/*.zip staging/pom2-core-sdk-*.tar.gz)
+          # Exactly NINE, not "at least one": the seven packages and the two SDK
+          # tarballs. The staging directory is flat, so two that ended up with
+          # the same name would leave one fewer here
           # and the Release would quietly ship one platform twice and another
           # not at all — the precise failure the per-job name checks guard
           # against upstream, caught again at the last possible moment.
           printf '%s\n' "${FILES[@]}"
-          if [ "${#FILES[@]}" -ne 7 ]; then
-            echo "ERROR: ${#FILES[@]} package(s) staged, expected 7."
+          if [ "${#FILES[@]}" -ne 9 ]; then
+            echo "ERROR: ${#FILES[@]} package(s) staged, expected 9."
             echo "       Expected: x86_64 / aarch64 / raspberry-aarch64 /"
             echo "                 pi400-aarch64 AppImages, macOS .dmg,"
-            echo "                 Windows .zip, web-wasm .zip"
+            echo "                 Windows .zip, web-wasm .zip,"
+            echo "                 core SDK linux-x86_64 / darwin-arm64"
             exit 1
           fi
           # SHA-256 manifest so downloaders can verify with `sha256sum -c`.

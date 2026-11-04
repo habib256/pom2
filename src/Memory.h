@@ -337,6 +337,15 @@ public:
         return auxLcHigh[p - 0xE000];
     }
 
+    /// The motherboard language card's RAM, in the layout of auxPhysical():
+    /// $C000-$CFFF its $D000 bank 1, $D000-$DFFF its bank 2, $E000-$FFFF its
+    /// $E000-$FFFF. Reaches the cell whatever the card's switches select.
+    uint8_t& lcPhysical(uint16_t p) {
+        if (p < 0xD000) return lcBank1[p - 0xC000];
+        if (p < 0xE000) return lcBank2[p - 0xD000];
+        return lcHigh[p - 0xE000];
+    }
+
     /// Test/debug accessor for the current floating-bus byte (the value an
     /// undriven soft-switch read returns) at EXACTLY `cycleCounter` — no
     /// in-instruction offset, so a test that sets the cycle gets a
@@ -840,6 +849,8 @@ public:
         keyboard_.queueKey(ascii);
     }
     void clearKeyStrobe()         { keyboard_.clearStrobe(); }
+    /// What a $C000 read would answer, without promoting a queued key.
+    uint8_t keyLatchPeek() const  { return keyboard_.latchMirror(); }
     void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
     /// The //c keyboard's 40/80-column switch, read at $C060 bit 7 (set =
     /// 40 columns). A physical key on the machine, not a soft switch: no

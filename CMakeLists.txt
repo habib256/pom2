@@ -673,6 +673,7 @@ set(POM2_FOUNDATION_HEADERS
     src/DriveSoundPolicy.h
     src/MediaWritePolicy.h
     src/MediaNotch.h
+    src/Sha256.h
     src/TwoImgHeader.h
     src/AudioBufferPolicy.h
     src/AudioSource.h
@@ -1862,7 +1863,78 @@ install(FILES
         COMPONENT pom2_core_sdk
         EXCLUDE_FROM_ALL)
 
+# ─── pom2_imageconv : the image conversion package ───────────────────────
+# hgrpaint's conversion half, which owes nothing to the emulator: a program that
+# turns images into HGR or DHGR pages links this and needs no POM2 checkout. Its
+# own component and package, because it has none of the core's dependencies and
+# a build of pom2_core alone must still be able to install pom2_core_sdk. The
+# headers keep their relative names, stb included, so a converter written against
+# the sources compiles against the install unchanged.
+set(POM2_IMAGECONV_HEADERS
+    ${POM2_SRC_DIR}/hgrpaint/Cam16.h
+    ${POM2_SRC_DIR}/hgrpaint/DhgrNtsc8Palette.h
+    ${POM2_SRC_DIR}/hgrpaint/HgrConvert.h
+    ${POM2_SRC_DIR}/hgrpaint/HgrPaintModel.h
+    ${POM2_SRC_DIR}/hgrpaint/ImportCommon.h)
+add_library(pom2_imageconv STATIC
+    ${POM2_SRC_DIR}/hgrpaint/Cam16.cpp
+    ${POM2_SRC_DIR}/hgrpaint/DhgrNtsc8Palette.cpp
+    ${POM2_SRC_DIR}/hgrpaint/HgrConvert.cpp
+    ${POM2_SRC_DIR}/hgrpaint/HgrPaintModel.cpp)
+add_library(POM2::imageconv ALIAS pom2_imageconv)
+set_target_properties(pom2_imageconv PROPERTIES EXPORT_NAME imageconv)
+target_include_directories(pom2_imageconv
+    PUBLIC
+        $<BUILD_INTERFACE:${POM2_SRC_DIR}>
+        $<BUILD_INTERFACE:${POM2_SRC_DIR}/hgrpaint>
+        $<INSTALL_INTERFACE:include/pom2/imageconv>
+        $<INSTALL_INTERFACE:include/pom2/imageconv/hgrpaint>)
+target_compile_features(pom2_imageconv PUBLIC cxx_std_17)
+install(TARGETS pom2_imageconv
+        EXPORT pom2_imageconvTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        COMPONENT pom2_imageconv_sdk
+        EXCLUDE_FROM_ALL)
+install(FILES ${POM2_IMAGECONV_HEADERS}
+        DESTINATION include/pom2/imageconv/hgrpaint
+        COMPONENT pom2_imageconv_sdk
+        EXCLUDE_FROM_ALL)
+install(FILES ${POM2_SRC_DIR}/stb_image.h ${POM2_SRC_DIR}/stb_image_write.h
+        DESTINATION include/pom2/imageconv
+        COMPONENT pom2_imageconv_sdk
+        EXCLUDE_FROM_ALL)
+install(EXPORT pom2_imageconvTargets
+        FILE pom2_imageconvTargets.cmake
+        NAMESPACE POM2::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_imageconv
+        COMPONENT pom2_imageconv_sdk
+        EXCLUDE_FROM_ALL)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/pom2_imageconvConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/pom2_imageconvConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_imageconv)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/pom2_imageconvConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMinorVersion)
+install(FILES
+            ${CMAKE_CURRENT_BINARY_DIR}/pom2_imageconvConfig.cmake
+            ${CMAKE_CURRENT_BINARY_DIR}/pom2_imageconvConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_imageconv
+        COMPONENT pom2_imageconv_sdk
+        EXCLUDE_FROM_ALL)
+
+# The commit Core::sdkInfo() reports, re-read on every build (cmake/Pom2CoreBuildId.cmake).
+add_custom_target(pom2_core_build_id
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT=${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2CoreBuildId.cmake
+    BYPRODUCTS ${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
+    VERBATIM)
+add_dependencies(pom2_core pom2_core_build_id)
+
 add_library(pom2_core_test STATIC ${POM2_CORE_SOURCES})
+add_dependencies(pom2_core_test pom2_core_build_id)
 target_include_directories(pom2_core_test PUBLIC
     ${POM2_SRC_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include

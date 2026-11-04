@@ -26,25 +26,42 @@
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
 #include "Disk35Image.h"
+#include "IIcExternalSmartPort.h"
 #include "IIcMouse.h"
 #include "IWMDevice.h"
 #include "LeChatMauveCard.h"
+#include "MediaNotch.h"
 #include "MediaWritePolicy.h"
 #include "Mockingboard.h"
+#include "Sha256.h"
+#include "Version.h"
+#include "MountableMediaCard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "ProDOSHardDiskCard.h"
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
+#include "SmartPortHdvUnit.h"
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
 #include "SpeakerDevice.h"
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <utility>
 #include <vector>
+
+// The commit this archive was built from. cmake/Pom2CoreBuildId.cmake writes it
+// on every build, so it cannot go stale the way a configure-time value does.
+#if __has_include("Pom2CoreBuildId.h")
+#include "Pom2CoreBuildId.h"
+#else
+#define POM2_CORE_COMMIT "unknown"
+#endif
 
 namespace pom2 {
 
@@ -143,6 +160,16 @@ public:
 
     ~Impl()
     {
+        // ProDOSHardDiskCard has no save-on-destruction of its own: the
+        // application flushes it before unplugging. The SmartPort HDV unit
+        // does save, so this is what makes the two machines keep one promise.
+        if (hardDisk) {
+            for (int unit = 0; unit < 2; ++unit) {
+                std::string ignored;
+                (void)hardDisk->flushBay(unit, ignored);
+            }
+        }
+        memory.setExternalSmartPort(nullptr);
         // The 3.5" disks' writes, as the application's eject would land them.
         if (plus) {
             for (auto& image : plus->image35)
@@ -169,6 +196,9 @@ public:
         std::uint64_t      lastIwmTick = 0;
     };
     std::unique_ptr<IIcPlusDisks> plus;
+    // The plain //c's rear connector, once a hard disk hangs off it. Declared
+    // before `memory` for the same reason: its profile holds a pointer to it.
+    std::unique_ptr<pom2::IIcExternalSmartPort> iicRearPort;
     Memory memory;
     M6502  cpu;
     Apple2Display display;
@@ -176,6 +206,10 @@ public:
     CassetteDevice cassette;
     DiskIICard* diskII = nullptr; // non-owning; its slot owns the card
     SmartPortCard* smartPort = nullptr; // non-owning; its slot owns the card
+    // attachHardDisk's device, a ProDOSHardDiskCard or (//c) a SmartPortCard
+    // of HDV units: non-owning, and the same two bays either way.
+    pom2::MountableMediaCard* hardDisk = nullptr;
+    int hardDiskSlot = 0;
     // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
     // mixes every card on the bus, so a second attached card was being mixed
     // at a rate and volume it was never told about — `attachMockingboard`
@@ -596,6 +630,195 @@ bool Core::flushSmartPortDisk(int unit)
     return saved;
 }
 
+bool Core::attachHardDisk(int slot)
+{
+    if (impl_->hardDisk) {
+        impl_->error = "A hard disk device is already attached";
+        return false;
+    }
+    // [C] //c ROM $C500 — the firmware serves the port as slot 5, and no
+    // other number reaches it (the same page bootSlot(5) enters).
+    const bool rearPort = impl_->iicClass();
+    if (rearPort) slot = pom2::IIcExternalSmartPort::kDefaultSlot;
+    if (slot < 1 || slot > 7) {
+        impl_->error = "Hard disk slot must be between 1 and 7";
+        return false;
+    }
+    if (impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "Requested hard disk slot is already occupied";
+        return false;
+    }
+    if (rearPort) {
+        // The rear port is decoded off the Disk II's soft switches: without a
+        // card in slot 6 the firmware's bus probe never gets its answer.
+        if (!impl_->diskII && !attachDiskII({})) return false;
+        auto card = std::make_unique<SmartPortCard>(slot);
+        card->setUnitCount(2);
+        for (std::size_t unit = 0; unit < 2; ++unit)
+            card->setUnit(unit, std::make_unique<pom2::SmartPortHdvUnit>());
+        impl_->hardDisk = card.get();
+        impl_->memory.slotBus().plug(slot, std::move(card));
+        impl_->iicRearPort = std::make_unique<pom2::IIcExternalSmartPort>(
+            &impl_->memory.slotBus(), slot);
+        impl_->memory.setExternalSmartPort(impl_->iicRearPort.get());
+    } else {
+        auto card = std::make_unique<ProDOSHardDiskCard>(slot);
+        impl_->hardDisk = card.get();
+        impl_->memory.slotBus().plug(slot, std::move(card));
+    }
+    impl_->hardDiskSlot = slot;
+    impl_->error.clear();
+    return true;
+}
+
+int Core::hardDiskSlot() const
+{
+    return impl_->hardDiskSlot;
+}
+
+namespace {
+
+pom2::MountableMediaCard* hardDiskBay(pom2::MountableMediaCard* card, int unit,
+                                      std::string& error)
+{
+    if (!card) {
+        error = "Hard disk device is not attached";
+        return nullptr;
+    }
+    if (unit < 0 || unit > 1) {
+        error = "Hard disk unit index must be 0 or 1";
+        return nullptr;
+    }
+    return card;
+}
+
+// What the block store's own 2IMG parse lets through, because the application
+// must keep opening images the wild wrote that way. A 2IMG shorter than its
+// header reads there as a raw file, and the block count goes unread.
+bool hardDiskHeaderAcceptable(const std::string& path, std::string& error)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return true;                  // the mount names this failure
+    std::uint8_t header[64] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
+    const auto got = static_cast<std::size_t>(file.gcount());
+    if (got < 4 || std::string_view(reinterpret_cast<const char*>(header), 4) != "2IMG")
+        return true;
+    if (got < sizeof(header)) {
+        error = "2IMG header is cut short: " + std::to_string(got) + " bytes";
+        return false;
+    }
+    const auto le32 = [&header](std::size_t at) {
+        return static_cast<std::uint32_t>(header[at])
+             | static_cast<std::uint32_t>(header[at + 1]) << 8
+             | static_cast<std::uint32_t>(header[at + 2]) << 16
+             | static_cast<std::uint32_t>(header[at + 3]) << 24;
+    };
+    // [B] 2IMG format spec, bytes 20-23 — the block count of a ProDOS-order
+    // image. Any value but 0 is a second statement of the capacity, and two
+    // statements that disagree leave nothing to report as the volume's size.
+    // A zero length is left to the store, which repairs Sweet-16's images
+    // from this field (TwoImgHeader.h).
+    const std::uint64_t blocks = le32(20);
+    const std::uint64_t length = le32(28);
+    if (le32(12) == 1 && blocks != 0 && length != 0 && blocks * 512u != length) {
+        error = "2IMG header declares " + std::to_string(blocks) + " blocks but "
+              + std::to_string(length) + " bytes of data";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool Core::insertHardDisk(int unit, std::string_view path)
+{
+    pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, impl_->error);
+    if (!card) return false;
+    const std::string ownedPath(path);
+    if (!hardDiskHeaderAcceptable(ownedPath, impl_->error)) return false;
+    if (!card->mountBay(unit, ownedPath, impl_->error)) return false;
+    // A process protected by default has the write-back off, and the card
+    // would take the guest's writes into memory and drop them at the eject.
+    // The rule here is the Disk II's and the 3.5"'s: the guest sees protection.
+    if (!pom2::mediaWritableByDefault()) card->setBayHostWriteProtected(unit, true);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::ejectHardDisk(int unit)
+{
+    pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, impl_->error);
+    if (!card) return false;
+    // Save-on-eject: flushing here names the failure, on either device.
+    if (!card->flushBay(unit, impl_->error)) return false;
+    if (!card->ejectBay(unit)) {
+        impl_->error = card->bayInfo(unit).lastError;
+        if (impl_->error.empty()) impl_->error = "the image could not be saved";
+        return false;
+    }
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::hardDiskInserted(int unit) const
+{
+    std::string ignored;
+    const pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, ignored);
+    return card && card->bayInfo(unit).loaded;
+}
+
+bool Core::flushHardDisk(int unit)
+{
+    pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, impl_->error);
+    if (!card) return false;
+    return card->flushBay(unit, impl_->error);
+}
+
+std::uint32_t Core::hardDiskUnsavedBlocks(int unit) const
+{
+    std::string ignored;
+    const pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, ignored);
+    return card ? card->bayInfo(unit).unsavedBlocks : 0;
+}
+
+std::uint32_t Core::hardDiskBlockCount(int unit) const
+{
+    std::string ignored;
+    const pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, ignored);
+    if (!card) return 0;
+    const pom2::MediaBayInfo info = card->bayInfo(unit);
+    return info.loaded ? info.blockCount : 0;
+}
+
+bool Core::setHardDiskWriteProtected(int unit, bool protectedOn)
+{
+    pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, impl_->error);
+    if (!card) return false;
+    const pom2::MediaBayInfo info = card->bayInfo(unit);
+    if (!info.loaded) {
+        impl_->error = "No volume in that unit";
+        return false;
+    }
+    // Writes the guest already made go to the file first, as setDiskWriteProtected.
+    if (protectedOn && !card->flushBay(unit, impl_->error)) return false;
+    // Lifting goes back to what the file and the process allow, never above.
+    card->setBayHostWriteProtected(unit, protectedOn
+        || pom2::mediaFileIsReadOnly(info.path)
+        || !pom2::mediaWritableByDefault());
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::hardDiskWriteProtected(int unit) const
+{
+    std::string ignored;
+    const pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, ignored);
+    if (!card) return false;
+    const pom2::MediaBayInfo info = card->bayInfo(unit);
+    return info.loaded && info.writeProtected;
+}
+
 bool Core::attachRgbCard(int slot, RgbCardModel model)
 {
     const bool iic = impl_->iicClass();
@@ -730,8 +953,9 @@ bool Core::bootSlot(int slot)
     // scan (Memory::iicPlusBootsSlot5ByReset), which boots the internal
     // drive first and the external one when the internal bay is empty.
     if (impl_->machine == Machine::AppleIIcPlus && slot == 5) {
-        if (!impl_->plus->image35[0].isLoaded() && !impl_->plus->image35[1].isLoaded()) {
-            impl_->error = "No 3.5\" disk in either drive";
+        if (!impl_->plus->image35[0].isLoaded() && !impl_->plus->image35[1].isLoaded()
+            && !hardDiskInserted(0) && !hardDiskInserted(1)) {
+            impl_->error = "No disk in the 3.5\" drives or on the rear port";
             return false;
         }
         coldBoot();
@@ -1148,6 +1372,133 @@ void Core::setKeyHeld(std::uint16_t token, bool down)
 void Core::releaseHeldKeys()
 {
     impl_->memory.releaseHeldKeys();
+}
+
+namespace {
+
+// Where a bank's cells are, or null for a range that leaves the bank.
+std::uint8_t* ramCell(Memory& memory, RamBank bank, std::uint32_t at, bool iieMemory)
+{
+    switch (bank) {
+    case RamBank::Main: return nullptr;   // peekMainRam / writeRamUnchecked: no cell
+    case RamBank::Aux:
+        return iieMemory && at < 0xC000 ? &memory.auxPhysical(static_cast<std::uint16_t>(at)) : nullptr;
+    // The physical layouts keep each $D000 bank apart at $C000 and $D000.
+    case RamBank::LanguageCard1:
+        return at >= 0xD000 && at < 0xE000 ? &memory.lcPhysical(static_cast<std::uint16_t>(at - 0x1000)) : nullptr;
+    case RamBank::LanguageCard2:
+        return at >= 0xD000 && at < 0xE000 ? &memory.lcPhysical(static_cast<std::uint16_t>(at)) : nullptr;
+    case RamBank::LanguageCardHigh:
+        return at >= 0xE000 && at <= 0xFFFF ? &memory.lcPhysical(static_cast<std::uint16_t>(at)) : nullptr;
+    case RamBank::AuxLanguageCard1:
+        return iieMemory && at >= 0xD000 && at < 0xE000 ? &memory.auxPhysical(static_cast<std::uint16_t>(at - 0x1000)) : nullptr;
+    case RamBank::AuxLanguageCard2:
+        return iieMemory && at >= 0xD000 && at < 0xE000 ? &memory.auxPhysical(static_cast<std::uint16_t>(at)) : nullptr;
+    case RamBank::AuxLanguageCardHigh:
+        return iieMemory && at >= 0xE000 && at <= 0xFFFF ? &memory.auxPhysical(static_cast<std::uint16_t>(at)) : nullptr;
+    }
+    return nullptr;
+}
+
+// The first and last byte decide: every bank is one contiguous address range.
+bool ramRangeValid(Memory& memory, RamBank bank, std::uint16_t address, std::size_t length,
+                   bool iieMemory, std::string& error)
+{
+    const std::uint64_t last = static_cast<std::uint64_t>(address) + length - 1;
+    const bool inside = length != 0 && last <= 0xFFFF
+        && (bank == RamBank::Main
+                ? last < 0xC000
+                : ramCell(memory, bank, address, iieMemory) != nullptr
+                  && ramCell(memory, bank, static_cast<std::uint32_t>(last), iieMemory) != nullptr);
+    if (!inside) {
+        const bool aux = bank != RamBank::Main && bank != RamBank::LanguageCard1
+            && bank != RamBank::LanguageCard2 && bank != RamBank::LanguageCardHigh;
+        error = aux && !iieMemory ? "Auxiliary RAM needs //e memory"
+                                  : "RAM range is empty or leaves the bank";
+    }
+    return inside;
+}
+
+} // namespace
+
+bool Core::readRam(RamBank bank, std::uint16_t address, std::uint8_t* out, std::size_t length)
+{
+    if (!out || !ramRangeValid(impl_->memory, bank, address, length, impl_->iieMemory, impl_->error)) {
+        if (!out) impl_->error = "No buffer to read into";
+        return false;
+    }
+    for (std::size_t i = 0; i < length; ++i) {
+        const auto at = static_cast<std::uint32_t>(address + i);
+        out[i] = bank == RamBank::Main ? impl_->memory.peekMainRam(static_cast<std::uint16_t>(at))
+                                       : *ramCell(impl_->memory, bank, at, impl_->iieMemory);
+    }
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* data, std::size_t length)
+{
+    if (!data || !ramRangeValid(impl_->memory, bank, address, length, impl_->iieMemory, impl_->error)) {
+        if (!data) impl_->error = "No data to write";
+        return false;
+    }
+    for (std::size_t i = 0; i < length; ++i) {
+        const auto at = static_cast<std::uint32_t>(address + i);
+        if (bank == RamBank::Main) impl_->memory.writeRamUnchecked(static_cast<std::uint16_t>(at), data[i]);
+        else *ramCell(impl_->memory, bank, at, impl_->iieMemory) = data[i];
+    }
+    impl_->error.clear();
+    return true;
+}
+
+KeyboardState Core::keyboardState() const
+{
+    KeyboardState state;
+    const std::uint8_t latch = impl_->memory.keyLatchPeek();
+    state.key = latch & 0x7F;
+    state.strobe = (latch & 0x80) != 0;
+    state.queued = impl_->memory.pendingPasteSize();
+    return state;
+}
+
+SdkInfo Core::sdkInfo()
+{
+    SdkInfo info;
+    info.version = POM2_VERSION;
+    info.commit = POM2_CORE_COMMIT;
+    // Sorted, and a name is never reused: docs/SDK.md § Delivery.
+    info.capabilities = {
+        "cassette",
+        "disk2",
+        "ezcolor",
+        "harddisk",
+        "keyboard.state",
+        "machine.iic",
+        "machine.iicplus",
+        "mockingboard",
+        "mouse",
+        "provenance",
+        "ram.banks",
+        "render.cpu-composite",
+        "rgbcard",
+        "smartport35",
+    };
+    return info;
+}
+
+std::string Core::sha256(const std::uint8_t* data, std::size_t length)
+{
+    static const std::uint8_t none = 0;
+    return pom2::sha256Hex(data ? data : &none, data ? length : 0);
+}
+
+std::string Core::sha256File(std::string_view path)
+{
+    std::ifstream file(std::string(path), std::ios::binary);
+    if (!file) return {};
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
+    if (file.bad()) return {};
+    return pom2::sha256Hex(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
 }
 
 void Core::queueKey(std::uint8_t ascii)
