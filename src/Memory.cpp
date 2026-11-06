@@ -706,8 +706,8 @@ void Memory::resetSoftSwitches(bool warm)
     // frame edge into a freshly reset machine with no handler — and the
     // guest could no longer turn it off, because $C05A (DisVBL) only
     // decodes while IOUDIS is CLEAR and the reset below forces it back
-    // TRUE. (M6502::reset clears its own source mask, so only the
-    // re-assertion mattered.)
+    // TRUE. The setIrqLine below is what drops the line: M6502's resets
+    // leave the source mask to the devices since CPU-2 (2026-11-06).
     vblIrqMask    = false;
     vblIrqPending = false;
     if (cpu) cpu->setIrqLine(M6502::IRQ_SRC_VBL, false);

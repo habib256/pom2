@@ -276,6 +276,26 @@ bool CpmDisk::readFile(int user, const std::string& name,
     return true;
 }
 
+namespace {
+// [B] Digital Research, CP/M 2.2 Interface Guide § 6 (file control block):
+// t1' — the high bit of the first type byte, directory byte 9 — set means
+// Read/Only, and the BDOS answers ERA and a write with "File R/O" (MED-3,
+// bug hunt 2026-11-01 round 2: the tool removed and replaced such files,
+// which `list()` already reported as R/O). The DOS 3.3 sibling refuses its
+// locked files the same way.
+bool anyReadOnly(const std::vector<int>& entries, const uint8_t (*dir)[32])
+{
+    for (int idx : entries)
+        if (dir[idx][9] & 0x80) return true;
+    return false;
+}
+std::string readOnlyError(const std::string& name)
+{
+    return name + ": read-only (the CP/M R/O attribute; clear it in CP/M with "
+                  "STAT " + name + " $R/W)";
+}
+}  // namespace
+
 bool CpmDisk::removeFile(int user, const std::string& name, std::string& error)
 {
     std::string n11;
@@ -285,6 +305,7 @@ bool CpmDisk::removeFile(int user, const std::string& name, std::string& error)
         error = name + ": no such file in user " + std::to_string(user);
         return false;
     }
+    if (anyReadOnly(entries, dir_)) { error = readOnlyError(name); return false; }
     for (int idx : entries) dir_[idx][0] = kDeleted;
     storeDirectory();
     return true;
@@ -296,6 +317,7 @@ bool CpmDisk::writeFile(int user, const std::string& name,
     std::string n11;
     if (user < 0 || user > 15) { error = "user number must be 0-15"; return false; }
     if (!toDirName(name, n11)) { error = "invalid CP/M file name: " + name; return false; }
+    if (anyReadOnly(entriesOf(user, n11), dir_)) { error = readOnlyError(name); return false; }
 
     // Work on copies so a disk-full or directory-full refusal changes nothing.
     uint8_t dir[kDirEntries][32];

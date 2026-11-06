@@ -165,7 +165,11 @@ bool FastChip::loadSnapshotState(const uint8_t* data, std::size_t len)
     unlockCount_ = data[7];
     enabled_ = data[8] != 0;
     index_ = data[9];
-    powerOnSpeed_ = data[10];
+    // data[10] is the power-on speed, a HOST setting (fast_chip_speed), not
+    // machine state: restoring it left the Machine menu disagreeing with
+    // state.cfg until the slider was touched (CPU-3, bug hunt 2026-11-01
+    // round 2). Kept in the payload for the format; ignored here, as
+    // ZipChip ignores its bootFast_.
     std::copy_n(data + 11, config_.size(), config_.begin());
     byteio::Reader r(data + 19, len - 19);
     slowUntil_ = r.u64();

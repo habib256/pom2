@@ -694,6 +694,15 @@ void W5100Device::connectSocket(size_t i)
 void W5100Device::listenSocket(size_t i)
 {
     Socket& s = sockets_[i];
+    // [B] W5100 datasheet v1.1.6 § 4.2 Sn_SR: SOCK_LISTEN "is shown in case
+    // that LISTEN commands are given to Sn_CR at the SOCK_INIT status". From
+    // any other status the command is not a LISTEN at all, and it used to
+    // fall into the refusal below — tearing down a live ESTABLISHED socket
+    // and raising TIMEOUT on it (NET-4, bug hunt 2026-11-01 round 2). [F]
+    // What the silicon does then is not documented; ignoring it is the
+    // reading that destroys nothing. Settled by: LISTEN on an ESTABLISHED
+    // socket of a real Uthernet II.
+    if (s.status != kW5100SnSrInit) return;
     const uint16_t port = readNetworkWord(s.registerAddress + kW5100SnPort0);
     // WIZnet W5100 datasheet, Sn_CR LISTEN / Sn_SR: INIT -> LISTEN ->
     // ESTABLISHED + CON. Bind locally only, under the existing loopback
@@ -737,9 +746,21 @@ void W5100Device::setCommandRegister(size_t i, uint8_t value)
         // sent (SEND_OK). Closing at once dropped the tail a slow peer had
         // not taken yet — an upload truncated without an error. CLOSE stays
         // abortive.
-        if (sockets_[i].status == kW5100SnSrEstablished && !sockets_[i].pendingTx.empty()) {
+        // From CLOSE_WAIT too (bug hunt 2026-11-01 round 2, NET-1): the peer
+        // half-closed, the guest may still SEND (`sendData` allows it), and
+        // a short write parks a tail here after SEND_OK. The HTTP/1.0 and
+        // IRC shape — and DISCON used to drop that tail with the fd.
+        // [B] W5100 datasheet v1.1.6 § 4.2 Sn_SR: CLOSE_WAIT "can be closed
+        // by receiving the DISCON or CLOSE commands"; FIN_WAIT and LAST_ACK
+        // are listed among the statuses "shown in the process of connection
+        // termination". [B] RFC 793 § 3.2 (state diagram): CLOSE from
+        // ESTABLISHED goes to FIN-WAIT, from CLOSE-WAIT to LAST-ACK.
+        if ((sockets_[i].status == kW5100SnSrEstablished ||
+             sockets_[i].status == kW5100SnSrCloseWait) &&
+            !sockets_[i].pendingTx.empty()) {
+            const bool passive = sockets_[i].status == kW5100SnSrCloseWait;
             sockets_[i].closeAfterTx = true;
-            setSocketStatus(i, kW5100SnSrFinWait);
+            setSocketStatus(i, passive ? kW5100SnSrLastAck : kW5100SnSrFinWait);
         } else {
             closeSocket(i);
             // [B] W5100 datasheet § 4.2, Sn_IR bit 1: DISCON "is set as '1'
@@ -1403,6 +1424,10 @@ void W5100Device::flushPendingTx(size_t i)
 #else
     Socket& s = sockets_[i];
     if (s.pendingTx.empty() || !s.host) return;
+    // A DISCON is waiting on this tail. If the connection dies first the
+    // termination failed: [B] W5100 datasheet v1.1.6 § 4.2 Sn_CR DISCON,
+    // "If connection termination is failed, Timeout interrupt will occur."
+    const bool closing = s.closeAfterTx;
 
     // Stream mode: this is a connected socket and the tail was already
     // accepted from the guest, so it must NOT be re-addressed.
@@ -1415,6 +1440,7 @@ void W5100Device::flushPendingTx(size_t i)
             s.pendingTx.begin() + static_cast<long>(sent.bytes));
     } else if (sent.status == W5100IoStatus::Failed) {
         clearSocket(i);
+        if (closing) raiseSocketIrq(i, kW5100SnIrTimeout);
         return;
     }
     // A peer that has not taken a megabyte is not coming back; an honest
@@ -1424,6 +1450,7 @@ void W5100Device::flushPendingTx(size_t i)
         log().warn("W5100", "socket " + std::to_string(i) +
                             ": peer stalled with >1 MiB unsent — closing");
         clearSocket(i);
+        if (closing) raiseSocketIrq(i, kW5100SnIrTimeout);
     }
 #endif
 }
@@ -1816,12 +1843,40 @@ void W5100Device::poll()
 
     if (backend_) backend_->poll();
 
+    // The raw modes receive on their own as well (NET-2, bug hunt 2026-11-01
+    // round 2): a frame was staged only when the guest read Sn_RX_RSR, so the
+    // mode-independent Sn_IR RECV (§ 5.2.3) never fired by itself and a raw
+    // driver that waits on the interrupt waited for ever. One frame per
+    // service, and only while every raw ring has room for the largest frame:
+    // receiveOnePacketRaw takes a frame off the backend and drops it when it
+    // does not fit, so pulling into a full ring here would throw away frames
+    // the lazy RSR path used to leave queued until the guest drained.
+    if (backend_) {
+        bool raw = false, room = true;
+        for (size_t i = 0; i < kSocketCount; ++i) {
+            const uint8_t st = sockets_[i].status;
+            if (st != kW5100SnSrMacRaw && st != kW5100SnSrIpRaw) continue;
+            raw = true;
+            if (!ringHasRoomFor(i, kMaxEthFrame)) room = false;
+        }
+        if (raw && room) receiveOnePacketRaw();
+    }
+
 #if POM2_HAS_SOCKETS
     for (size_t i = 0; i < kSocketCount; ++i) {
         // Retry TCP bytes the host socket refused earlier (short write /
         // EAGAIN) — see sendDataToSocket.
         if (!sockets_[i].pendingTx.empty()) flushPendingTx(i);
-        if (sockets_[i].closeAfterTx && sockets_[i].pendingTx.empty()) clearSocket(i);
+        if (sockets_[i].closeAfterTx && sockets_[i].pendingTx.empty()) {
+            // The deferred half of DISCON: the tail is out, the FIN follows.
+            // Raise DISCON as the immediate arm does — [B] W5100 datasheet
+            // v1.1.6 § 4.2 Sn_IR bit 1, "set as '1' if connection
+            // termination is requested or finished", and § 5.2.1.1's "First
+            // method" waits on that bit. Closing here without it left such a
+            // driver waiting for ever. After the clear, which zeroes Sn_IR.
+            clearSocket(i);
+            raiseSocketIrq(i, kW5100SnIrDiscon);
+        }
 
         Socket& s = sockets_[i];
         // The chip receives on its own: data, a peer's FIN (Sn_SR CLOSE_WAIT)

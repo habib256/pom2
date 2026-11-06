@@ -2796,7 +2796,18 @@ feeds `SlotBusClock` (`SlotBusClock.h`): the AY `ticksPerSample` derives
 from it, and the lazy sync advances the VIAs by `busTicks(cpuCycles)`, a
 CPU→phase-0 divider with a fractional carry that passes through at ratio 1.
 Before 2026-09-29 a TransWarp made every note 3.5× sharp and every T1-paced
-tune 3.5× fast. Same on `PhasorCard`. Until `setStandardClock` is first
+tune 3.5× fast. **Open: a non-stock `--speed` (CPU-1, bug hunt 2026-11-01
+round 2).** The speed scales `setCpuClock` but not `setStandardClock`, so at 2×
+a T1-paced tune runs at half tempo against the raster and at MAX the VIAs
+barely move. Handing the cards the speed-scaled clock instead was tried and
+withdrawn on 2026-11-06: `setStandardClock` carries two meanings a speed must
+treat differently. As a RATIO against the CPU clock (`SlotBusClock`: the VIAs,
+the Disk II sequencer's steps, the SoftCard Z80) it must follow the speed, or a
+fast-forward is not one. As an ABSOLUTE rate that turns physical time into
+cycles (the Sony platter's RPM, a WOZ FLUX track's 125 ns ticks, the SSI263's
+XCK) it must stay nominal, or at 2× a FLUX track and a 3.5" platter turn half
+as fast as the sequencer and the IWM expect, and the disk stops reading. The
+fix separates machine time from wall time in the card clock API, card by card. Same on `PhasorCard`. Until `setStandardClock` is first
 called the card follows the CPU clock (hand-built cards in tests). Pinned by
 `mockingboard_smoke`, `phasor_card_smoke` (3.5× cases) and
 `accelerator_clock_chunk`. The **event queue** it once lacked arrived on 2026-09-09:
@@ -4476,6 +4487,22 @@ restore paths (`restoreMediaFromSettings`, the profile-switch
 the image, the others are emptied and a warning says so. The //c+ on-board
 3.5" drives are off the bus and not covered there. Pinned in
 `storage_coordinator` and `ai_control_server_smoke`.
+
+**One folder, one bay** *(2026-11-06, bug hunt 2026-11-01 round 2, MED-1)*.
+The same rule for a host directory served as a synthesised ProDOS volume:
+`StorageCoordinator::mountBlockBytes` asks
+`pom2::hostFolderMountedElsewhereAt` before it flushes anything, and refuses
+a folder another bay already serves. Two bays on one tree each kept their own
+snapshot, so every flush saw the other's output as host-newer and copied it to
+`.pom2-conflicts/` for ever. The comparison is on the DIRECTORY, through the
+new `MediaBayInfo::hostFolder` that the four block-backed cards fill in
+(`fs::equivalent`: `/work` and `/work/` are one folder), never on the bay's
+label `"[host folder] /work"`, which `sameImageFile` would compare as a
+string. A bay may take its own folder back (the re-mount above). Behind the
+refusal, `Block512Backing::commitWriteBack` now takes `imageCommitMutex` on
+the synth branch too: two decodes of one tree used to interleave their file
+writes, with the losing blocks already retired clean. Pinned in
+`storage_coordinator` (§ "One folder, one bay").
 
 **A notch cannot be undone by a commit** *(2026-09-16)*. A rename replaces
 the inode, so every media commit copies the image's mode onto its temp
@@ -8946,6 +8973,22 @@ Pinned by `uthernet_cs8900_smoke`.
 
 ### Uthernet II (W5100)
 
+**DISCON waits for the owed tail from CLOSE_WAIT too** *(2026-11-06, bug
+hunt 2026-11-01 round 2, NET-1)*. The peer half-closed, the guest SENDs its
+answer (`sendData` allows CLOSE_WAIT), the host takes part of it and SEND_OK
+is raised; the guest's DISCON then took the abortive arm and dropped the tail
+with the fd — the HTTP/1.0 and IRC shape. DISCON with a tail owed now parks the
+socket in LAST_ACK from CLOSE_WAIT (FIN_WAIT from ESTABLISHED, as before) and
+`poll()` closes it once the tail is out. [B] W5100 datasheet v1.1.6 § 4.2
+lists FIN_WAIT and LAST_ACK among the statuses "shown in the process of
+connection termination"; [B] RFC 793 § 3.2 places CLOSE from CLOSE-WAIT in
+LAST-ACK. The deferred close also raises Sn_IR DISCON now, as the immediate
+arm does — § 5.2.1.1's "First method" waits on that bit after the DISCON,
+and the deferred path left such a driver waiting for ever — and a tail the
+host can no longer send ends in TIMEOUT (§ 4.2 Sn_CR DISCON: "If connection
+termination is failed, Timeout interrupt will occur"). Pinned in
+`w5100_socket_seam`.
+
 **MACRAW / IPRAW receive raises RECV** *(2026-09-08, bug hunt #6)*:
 datasheet § 5.2.3 makes `Sn_IR` RECV mode-independent, and the common `IR`
 is derived from `Sn_IR`. Pinned in `uthernet2_w5100_smoke`.
@@ -12189,7 +12232,14 @@ register dump showing the state going *in* and one showing the state coming
 *out*, and only the first is useful. It has a second consequence that is easy
 to get wrong: resuming has to grant the current PC one instruction of amnesty
 (`armResumeFrom`), or Run re-triggers the same breakpoint forever and the
-button looks dead.
+button looks dead. The amnesty is spent when that instruction EXECUTES
+(`onStepCompleted` at its pc), not when it is offered *(2026-11-06, DBG-1)*:
+an IRQ/NMI taken at that boundary runs its handler first and the instruction
+is offered again after the RTI, and spending it on the first offer re-stopped
+Run at the same breakpoint having executed nothing — for ever, with a
+level-triggered IRQ still asserted. The mirror of the `stepSkipFirst_` fix.
+Pinned in `debugger` (`testResumeAmnestySurvivesAnInterrupt` and the bank
+cases).
 
 The `debugger` test pins both. "Check before the instruction at PC" and
 "check after the previous instruction" differ in one place only: a

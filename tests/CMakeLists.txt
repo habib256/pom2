@@ -1996,6 +1996,9 @@ target_include_directories(test_floppy_sound PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${IMGUI_DIR}     # miniaudio.h sits next to stb_vorbis.c in third_party/
 )
+# The samples are TRACKED: found from the source tree, whatever the cwd.
+target_compile_definitions(test_floppy_sound PRIVATE
+    POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_floppy_sound PRIVATE
         ${CMAKE_DL_LIBS} Threads::Threads m)
@@ -9719,16 +9722,22 @@ set(POM2_WALLCLOCK_TESTS
     tnfs_client
     tnfs_client_hostile
     w5100_udp_recv
+    # Added 2026-11-06 (bug hunt 2026-11-01 round 2, test quality #3): eight
+    # that had come to assert wall clock since the list was written — the
+    # autosave deadlines, the lock-hold budget, the serial and TCP transports,
+    # the resolver's TTL, the ACIA's baud-rate credit, the LISTEN probe bound.
+    block_autosave
+    floppy_autosave
+    storage_lock_budget
+    sp_serial_transport
+    ssc_tcp_transport
+    uthernet2_w5100_smoke
+    w5100_name_resolver
+    ssc_acia_smoke
 )
-foreach(_pom2_t IN LISTS POM2_WALLCLOCK_TESTS)
-    if(TEST ${_pom2_t})
-        set_tests_properties(${_pom2_t} PROPERTIES RUN_SERIAL TRUE)
-    else()
-        message(FATAL_ERROR
-            "POM2_WALLCLOCK_TESTS names '${_pom2_t}', which is not a test. "
-            "Renamed or removed? Update the list in tests/CMakeLists.txt.")
-    endif()
-endforeach()
+# Applied at the END of this file (with the TIMEOUT sweep): half of the
+# names above are declared below this point, and `if(TEST ...)` only sees a
+# test that already exists.
 
 # ─── Host-policy coordinators ───────────────────────────────────────────
 # Ported from refactor/core-boundaries-and-coordinators. The coordinators are
@@ -9880,6 +9889,13 @@ pom2_add_headless_test(test_storage_coordinator
     SOURCES storage_coordinator_test.cpp
     LINK_LIBRARIES pom2_core_test
     COMPILE_DEFINITIONS POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# One folder, one bay (MED-1): a host folder served into two bays wrote each
+# bay's view back over the other; the mount refuses the second.
+pom2_add_headless_test(test_host_folder_one_bay
+    NAME host_folder_one_bay TIMEOUT 20
+    SOURCES host_folder_one_bay_test.cpp
+    LINK_LIBRARIES pom2_core_test)
 
 # A persisted media path that no longer resolves is warned about by EVERY
 # card kind (bug hunt #15): the Disk II, HDV and CFFA restore branches used
@@ -11351,7 +11367,20 @@ add_executable(lss_write_probe EXCLUDE_FROM_ALL
 )
 target_include_directories(lss_write_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+# The Sirius Joyport gameplay probes — manual: each takes a ROM, a Disk II
+# PROM and a commercial disk (Bandits, Wavy Navy) on its command line, none of
+# which a runner has. Registered as ctest tests by mistake on 2026-11-06, they
+# could only ever return 77, and CI's skip check fails on that.
+add_executable(test_sirius_joyport_game EXCLUDE_FROM_ALL sirius_joyport_game_probe.cpp)
+target_include_directories(test_sirius_joyport_game PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_sirius_joyport_game PRIVATE pom2_core_test)
+add_executable(test_sirius_joyport_bandits EXCLUDE_FROM_ALL sirius_joyport_bandits_probe.cpp)
+target_include_directories(test_sirius_joyport_bandits PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_sirius_joyport_bandits PRIVATE pom2_core_test)
+
 set(POM2_PROBE_TARGETS
+    test_sirius_joyport_game
+    test_sirius_joyport_bandits
     a2osx_boot_probe
     os_trace_probe
     artifact_probe
@@ -11600,16 +11629,6 @@ pom2_add_headless_test(test_sirius_joyport
     LINK_LIBRARIES pom2_core_test)
 
 # Optional external-media validation; missing arguments report SKIPPED.
-pom2_add_headless_test(test_sirius_joyport_game
-    NAME sirius_joyport_game TIMEOUT 30
-    SOURCES sirius_joyport_game_probe.cpp
-    LINK_LIBRARIES pom2_core_test)
-
-pom2_add_headless_test(test_sirius_joyport_bandits
-    NAME sirius_joyport_bandits TIMEOUT 30
-    SOURCES sirius_joyport_bandits_probe.cpp
-    LINK_LIBRARIES pom2_core_test)
-
 pom2_add_headless_test(test_text_screen_capture
     NAME text_screen_capture TIMEOUT 10
     SOURCES text_screen_capture_test.cpp
@@ -11657,10 +11676,23 @@ if(_pom2_all_tests)
                    "(SKIP_RETURN_CODE 77 applied to all)")
 endif()
 
+foreach(_pom2_t IN LISTS POM2_WALLCLOCK_TESTS)
+    if(TEST ${_pom2_t})
+        set_tests_properties(${_pom2_t} PROPERTIES RUN_SERIAL TRUE)
+    else()
+        message(FATAL_ERROR
+            "POM2_WALLCLOCK_TESTS names '${_pom2_t}', which is not a test. "
+            "Renamed or removed? Update the list in tests/CMakeLists.txt.")
+    endif()
+endforeach()
+
 # TIMEOUT floor + scale, applied LAST so it really covers every test (see the
-# note where POM2_TEST_TIMEOUT_FLOOR is defined).
+# note where POM2_TEST_TIMEOUT_FLOOR is defined). The same scale reaches the
+# bounds INSIDE the tests as POM2_TEST_TIME_SCALE (tests/TestTimeScale.h).
 get_property(_pom2_all_tests DIRECTORY PROPERTY TESTS)
 foreach(_pom2_t IN LISTS _pom2_all_tests)
+    set_property(TEST ${_pom2_t} APPEND PROPERTY ENVIRONMENT
+                 "POM2_TEST_TIME_SCALE=${POM2_TEST_TIMEOUT_SCALE}")
     get_test_property(${_pom2_t} TIMEOUT _pom2_to)
     if(NOT _pom2_to MATCHES "^[0-9]+$")
         set(_pom2_to 0)                       # no TIMEOUT set — take the floor

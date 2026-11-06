@@ -585,6 +585,19 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     } complete{pending.commitTicket ? pending.commitTicket->barrier : nullptr};
     if (complete.barrier) complete.barrier->wait();
 
+    // Two mounted backings can name the same file or the same host folder
+    // (even via different paths). Serialize complete host transactions, not
+    // just rename: otherwise two workers can each read the old file and lose
+    // the other's disjoint blocks, or collide on the sibling temporary. The
+    // synth branch takes it too (MED-1): two decodes of one tree interleaved
+    // their file writes with the losing blocks already retired clean. The
+    // mount refuses a second bay on one folder; this is the backstop for a
+    // pair that got past it (a restore, a race with the check). This mutex
+    // is never used by guest reads/writes or capture; only off-machine I/O.
+    // Taken after the per-mount barrier, which never waits on it.
+    static std::mutex imageCommitMutex;
+    std::lock_guard<std::mutex> commitLock(imageCommitMutex);
+
     if (pending.synth) {
         std::unique_lock<std::mutex> stickyLock;
         std::set<std::string>* sticky = nullptr;
@@ -619,14 +632,6 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         markPersistentStateDirty();
         return true;
     }
-
-    // Two mounted backings can name the same file (even via different
-    // paths). Serialize complete host-image transactions, not just rename:
-    // otherwise two workers can each read the old file and lose the other's
-    // disjoint blocks, or collide on the sibling temporary. This mutex is
-    // never used by guest reads/writes or capture; only off-machine file I/O.
-    static std::mutex imageCommitMutex;
-    std::lock_guard<std::mutex> commitLock(imageCommitMutex);
 
     // Rewrite a complete sibling copy, preserving the 2IMG envelope and any
     // trailer.  An in-place series of 512-byte writes could leave the user's

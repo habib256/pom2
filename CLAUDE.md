@@ -120,7 +120,9 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   flips it, and **ctest sets it for every test** because dozens of tests boot
   the tracked images and the cards commit dirty media in their destructors —
   a test or probe that boots a tracked image must copy it first if it wants
-  writes). A legacy `*_writeback = false` key is migrated once at restore:
+  writes — and CI checks it: `tools/check_tracked_unchanged.sh` records the
+  tree before ctest and fails the job if the run changed a tracked file or
+  left one outside `build/`). A legacy `*_writeback = false` key is migrated once at restore:
   the disk it protected gets the notch and the flag reverts. The one opt-in
   left is the ProDOS host folder sync (a real directory, a different hazard).
   Pinned by `media_notch`, `media_write_default` and `storage_coordinator`.

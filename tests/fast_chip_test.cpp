@@ -152,6 +152,12 @@ int main()
         pom2::FastChip g;
         expect(g.loadSnapshotState(blob.data(), blob.size()) && g.speed() == 40 && g.delayActive(1001),
                "snapshot round trip");
+        // CPU-3: the power-on speed is the HOST's setting (fast_chip_speed);
+        // a snapshot taken with another must not overwrite it.
+        pom2::FastChip h;
+        h.setPowerOnSpeed(10);
+        expect(h.loadSnapshotState(blob.data(), blob.size()) && h.powerOnSpeed() == 10,
+               "a snapshot leaves the host's power-on speed alone");
         blob[11] = 99;
         expect(!g.validateSnapshotState(blob.data(), blob.size()), "a speed past 40 is refused");
     }

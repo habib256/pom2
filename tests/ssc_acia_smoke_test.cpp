@@ -1103,11 +1103,17 @@ void testTxPacingBurstIsShort()
     std::vector<uint8_t> out;
     (void)ssc.drainTransportTx(out);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < 2000; ++i) ssc.deviceSelectWrite(kRdrAddr, 'A');
     out.clear();
     const size_t n = ssc.drainTransportTx(out);
-    // 300 ms at 1920 B/s is 576 bytes of credit; 50 ms of it is 96.
-    assert(n > 0 && n <= 120);
+    // 300 ms at 1920 B/s is 576 bytes of credit; 50 ms of it is 96. The writes
+    // themselves earn credit while they run — nothing on a plain build, but
+    // a sanitizer build spends real milliseconds in the loop (test quality
+    // #3), so the bound grows by what that time is worth at 1920 B/s.
+    const double loopSec = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t0).count();
+    assert(n > 0 && n <= 120 + static_cast<size_t>(loopSec * 1920.0));
     std::printf("  ok: TX pacing after a pause bursts %zu bytes, not the ring\n", n);
 }
 

@@ -196,9 +196,11 @@ inline constexpr uint8_t kW5100SnDnsNameCpty  =
 // Socket status register values.
 inline constexpr uint8_t kW5100SnSrClosed      = 0x00;
 inline constexpr uint8_t kW5100SnSrInit        = 0x13;
-/// The rest of the datasheet's TCP status ladder (§5.2.2 "Sn_SR"). POM2 does
-/// not expose the four intermediate closing states — a host socket does that
-/// bookkeeping — but the values are named so no code invents its own and so a
+/// The rest of the datasheet's TCP status ladder (§5.2.2 "Sn_SR"). Of the
+/// four intermediate closing states POM2 shows two, and only while a DISCON
+/// waits for a host-side TX tail to drain: FIN_WAIT (from ESTABLISHED) and
+/// LAST_ACK (from CLOSE_WAIT). The FIN itself is the host socket's
+/// bookkeeping. The others are named so no code invents its own and so a
 /// reader can tell "not modelled" from "not known".
 inline constexpr uint8_t kW5100SnSrListen      = 0x14;
 inline constexpr uint8_t kW5100SnSrSynSent     = 0x15;
@@ -381,7 +383,8 @@ private:
         /// snapshotted (a restored connection is demoted to CLOSED anyway).
         std::vector<uint8_t> pendingTx;
         /// DISCON arrived with `pendingTx` still owed: the chip sends its FIN
-        /// after the data (Sn_SR FIN_WAIT), so `poll()` closes once it drains.
+        /// after the data (Sn_SR FIN_WAIT, or LAST_ACK from CLOSE_WAIT), so
+        /// `poll()` closes once it drains and raises Sn_IR DISCON.
         bool closeAfterTx = false;
 
         bool isOpen() const

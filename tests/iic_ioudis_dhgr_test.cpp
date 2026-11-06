@@ -84,7 +84,10 @@ int main()
     int tested = 0;
     for (const std::string& candidate : candidates) {
         const std::string rom = firstExisting(candidate);
-        if (rom.empty()) continue;
+        if (rom.empty()) {   // in tools/test_media.sha256: a missing one is said
+            std::printf("SKIP iic_ioudis_dhgr: %s not found\n", candidate.c_str());
+            continue;
+        }
         ++tested;
 
         Memory mem;

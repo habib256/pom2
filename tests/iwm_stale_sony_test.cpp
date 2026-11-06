@@ -28,6 +28,7 @@
 
 #include "Disk35Image.h"
 #include "IWMDevice.h"
+#include "DiskImage.h"
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
 
@@ -38,6 +39,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -97,10 +99,37 @@ size_t burst(bool reroute, bool& sonyAttachedAtFlush)
     return d;
 }
 
+// SP-1 (bug hunt 2026-11-01 round 2): a selected 3.5" connector with no
+// drive on it — the //c+'s second external one is null by default — made the
+// hub call setSony35(nullptr), which also cleared the 5.25" disk DiskIICard
+// had bound to the shared IWM. It is "no 3.5" drive" now: releaseSony35().
+void emptyConnectorKeepsThe525()
+{
+    pom2::Sony35Drive di;
+    pom2::IWMDevice iwm;
+    auto floppy525 = std::make_unique<DiskImage>();
+    iwm.setFloppy(floppy525.get(), 0);
+    pom2::SmartPortHub hub;
+    hub.attach(&iwm);
+    hub.setSony35(&di, nullptr);
+    uint64_t cyc = 1000;
+    auto tick = [&](int n) { cyc += n; iwm.tick(cyc); };
+    hub.setMigIntDrive(false);
+    hub.setMig35Sel(true);
+    iwm.write(0x0B, 0); tick(2);        // SEL    → devsel 2, the external chain
+    iwm.write(0x09, 0); tick(2);        // ENABLE → the hub routes: 3.5", no drive
+    assert(hub.active35() == nullptr);
+    if (iwm.getFloppy() != floppy525.get()) {
+        std::printf("FAIL: routing to an empty 3.5\" connector dropped the IWM's 5.25\" disk\n");
+        std::exit(1);
+    }
+}
+
 } // namespace
 
 int main()
 {
+    emptyConnectorKeepsThe525();
     bool attached = false;
     const size_t control = burst(/*reroute=*/false, attached);
     assert(attached && control > 0 && "control: a selected drive must take the burst");

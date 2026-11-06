@@ -22,7 +22,8 @@ ALLOW=$(printf '%s\n' \
   $'iic_onboard_smartport_smoke\tPOM2_TRACE_HDV' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
-  $'videx_videoterm_boot\t*' )
+  $'videx_videoterm_boot\t*' \
+  $'card_snapshot_contract\tVideoterm+ROM' )
 # Since 2026-11-01 the test-media archive (pom2_media_202611) carries every disk and
 # ROM the suite opens — the SoftCard II's CP/M 2.28B, the Applicard's boot
 # disk and ROM, the UltraTerm's ROMs, the Premium SoftCard's CP/M 2.25 and
@@ -35,6 +36,8 @@ ALLOW=$(printf '%s\n' \
 # and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending
 # the legal-payload gate (TODO G1). The card itself stays covered on CI by
 # videx_videoterm_bus / _render / _snapshot, which use synthetic ROMs.
+# card_snapshot_contract's Videoterm+ROM entry skips for the same reason; its
+# bare VidexVideoterm entry still runs every contract phase.
 # The two CRT tests depend on an OpenGL context (the main Linux leg has none;
 # the `gl-software` job gives them one and requires that they run). The main
 # Linux job installs libslirp, so slirp_loopback_fence may not skip.

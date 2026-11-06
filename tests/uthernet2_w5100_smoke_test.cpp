@@ -65,9 +65,12 @@
 
 #include <arpa/inet.h>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <netinet/in.h>
 #include <poll.h>
@@ -543,6 +546,28 @@ void testMacRaw()
            "and the common IR must reflect socket 0");
 
     std::printf("  MACRAW OK (%zu-byte frame round-tripped)\n", frame.size());
+
+    // NET-2: a frame arrives and the guest does NOT read Sn_RX_RSR — it waits
+    // on the interrupt. The chip's own service must stage it and raise RECV;
+    // only the RSR read used to.
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnIr), 0xFF);   // ack
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnRxRd0),
+                static_cast<uint16_t>(frame.size() + 2));                   // consume
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrRecv);
+    for (size_t i = 0; i < frame.size(); ++i)
+        writeAt(card, static_cast<uint16_t>(pom2::kW5100TxBase + frame.size() + i), frame[i]);
+    writeWordAt(card, static_cast<uint16_t>(base + pom2::kW5100SnTxWr0),
+                static_cast<uint16_t>(2 * frame.size()));
+    writeAt(card, static_cast<uint16_t>(base + pom2::kW5100SnCr), pom2::kW5100SnCrSend);
+    assert(raw->queued() == 1);
+    assert(!(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnIr)) & pom2::kW5100SnIrRecv));
+    card.chip().poll();
+    if (!(readAt(card, static_cast<uint16_t>(base + pom2::kW5100SnIr)) & pom2::kW5100SnIrRecv)) {
+        std::printf("FAIL: a MACRAW frame waited for an Sn_RX_RSR read — RECV never "
+                    "fired on its own\n");
+        std::exit(1);
+    }
+    std::printf("  MACRAW frame staged by the chip's own service: OK\n");
 }
 
 // MACRAW exists on socket 0 only (datasheet Sn_MR); an OPEN elsewhere
@@ -1084,6 +1109,67 @@ void testSocketInterruptRegister()
     std::printf("  Sn_IR OK (CON / SEND_OK / RECV, write-1-to-clear)\n");
 }
 
+// NET-3 (bug hunt 2026-11-01 round 2): LISTEN probes whether something on
+// this host already answers on the port, on the CPU thread under stateMutex.
+// It was a BLOCKING connect(), and a listener whose accept backlog is full
+// does not refuse — the SYN is dropped and the kernel retries for tens of
+// seconds, machine and window frozen. Saturate a loopback listener's backlog,
+// then LISTEN on its port: refused (the port is taken), and at once.
+void testListenProbeIsBounded()
+{
+    int server = ::socket(AF_INET, SOCK_STREAM, 0);
+    assert(server >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    assert(::bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+    socklen_t length = sizeof(address);
+    assert(::getsockname(server, reinterpret_cast<sockaddr*>(&address), &length) == 0);
+    assert(::listen(server, 0) == 0);
+    // Fill the backlog: connect until one does not complete within 100 ms.
+    // Linux saturates a backlog of 0 at the second or third connect; macOS
+    // rounds it up toward somaxconn (128) — up to 400 tries, bounded by the
+    // descriptors this process may open. Unsaturated, the probe connects and
+    // the assertions below still hold; only the hang is not exercised.
+    std::vector<int> clients;
+    bool saturated = false;
+    for (int n = 0; n < 400 && !saturated; ++n) {
+        int c = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (c < 0) break;   // out of descriptors
+        ::fcntl(c, F_SETFL, ::fcntl(c, F_GETFL, 0) | O_NONBLOCK);
+        clients.push_back(c);
+        if (::connect(c, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) continue;
+        pollfd pfd{ c, POLLOUT, 0 };
+        saturated = ::poll(&pfd, 1, 100) == 0;
+    }
+    std::printf("  (loopback backlog %s after %zu connects)\n",
+                saturated ? "saturated" : "never saturated", clients.size());
+
+    UthernetIICard card(3);
+    card.chip().setSocketFactory(pom2::makeHostW5100SocketFactory());
+    card.chip().setAllowLoopback(true);
+    const uint16_t base = socketBase(0);
+    writeAt(card, base + pom2::kW5100SnMr, pom2::kW5100SnMrTcp);
+    writeWordAt(card, base + pom2::kW5100SnPort0, ntohs(address.sin_port));
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrOpen);
+    const auto start = std::chrono::steady_clock::now();
+    writeAt(card, base + pom2::kW5100SnCr, pom2::kW5100SnCrListen);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+    if (ms > 1000) {
+        std::printf("FAIL: LISTEN's port probe blocked %lld ms on a saturated "
+                    "backlog (the CPU thread, under stateMutex)\n",
+                    static_cast<long long>(ms));
+        std::exit(1);
+    }
+    assert(readAt(card, base + pom2::kW5100SnSr) == pom2::kW5100SnSrClosed &&
+           "a port something on this host answers on is refused");
+    for (int c : clients) ::close(c);
+    ::close(server);
+    std::printf("  LISTEN probe answered in %lld ms (backlog %s)\n",
+                static_cast<long long>(ms), saturated ? "saturated" : "not saturated");
+}
+
 // Disabled inbound mode is a guest-visible failure, not a stuck INIT state.
 void testListenIsAnHonestFailure()
 {
@@ -1342,6 +1428,7 @@ int main()
     testSocketInterruptRegister();
     testGuestDisconRaisesTheDisconBit();
     testListenIsAnHonestFailure();
+    testListenProbeIsBounded();
     testListenAcceptsLocalConnection();
     testFixedLocalPortReconnects();
     testCommonRegisterWritesStick();

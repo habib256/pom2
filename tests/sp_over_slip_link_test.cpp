@@ -44,6 +44,7 @@
 #include "SlipFramer.h"
 #include "SpOverSlipLink.h"
 #include "SocketCompat.h"
+#include "TestTimeScale.h"
 
 #include <cassert>
 #include <cstdio>
@@ -385,7 +386,7 @@ void testTimeoutAndRecovery()
     assert(!bad.replied);                 // caller turns this into $27
     assert(!bad.ok());
     assert(ms >= 100);                    // it really waited its budget...
-    assert(ms < 2000);                    // ...and it really gave up
+    assert(ms < 2000 * pom2test::timeScale());   // ...and it really gave up
     assert(link.stats().timeouts >= 1);
 
     // The link must still be usable — a timeout is not a teardown.
@@ -518,7 +519,7 @@ void testSilentPeerIsDroppedRatherThanPaidForEveryCall()
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - t0).count();
     assert(!after.replied);
-    assert(ms < 60 &&
+    assert(ms < 60 * pom2test::timeScale() &&
            "a call after the peer was dropped still paid the timeout budget — "
            "every guest block read would freeze the machine again");
 
@@ -540,7 +541,7 @@ void testNoPeer()
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - t0).count();
     assert(!r.replied);
-    assert(ms < 100);        // no peer = no wait at all, not a full timeout
+    assert(ms < 100 * pom2test::timeScale());   // no peer = no wait at all, not a full timeout
 
     link.stop();
 }
@@ -603,7 +604,7 @@ void testGuestResetHasAggregateCourtesyBudget()
     link.notifyGuestReset();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count();
-    assert(elapsed < 900 &&
+    assert(elapsed < 900 * pom2test::timeScale() &&
            "guest reset waited for every slow unit despite its courtesy budget");
     int controls = 0;
     for (const auto& req : peer.seen())
@@ -852,7 +853,7 @@ void testStopDuringEnumerationIsPrompt()
     link.stop();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - t0).count();
-    assert(ms < 900 && "stop() waited out the enumeration sweep");
+    assert(ms < 900 * pom2test::timeScale() && "stop() waited out the enumeration sweep");
 
     peer.stop();
 }
@@ -893,7 +894,7 @@ void testSerialReadNoticesShutdown()
     stopper.join();
 
     assert(r < 0 && "a stop reads as 'the peer is gone', which ends the call");
-    assert(ms < 1000 && "readSome waited out its whole budget after shutdown()");
+    assert(ms < 1000 * pom2test::timeScale() && "readSome waited out its whole budget after shutdown()");
 
     t.dropPeer();
     ::close(master);

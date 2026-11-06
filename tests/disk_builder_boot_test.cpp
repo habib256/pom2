@@ -247,7 +247,10 @@ int main()
         const std::vector<uint8_t> wozBytes = asWoz(sectors);
         check(!wozBytes.empty(), "the direct-boot image nibblizes");
         const std::string woz = writeFile("boot.woz", wozBytes);
-        char at[32];
+        // GCC's worst case, not the values' real range: "$" + 8 hex digits +
+        // ", " + 20 decimal digits + " bytes" + NUL is 37 (-Wformat-truncation
+        // under -Werror failed CI's Linux leg at 32).
+        char at[48];
         std::snprintf(at, sizeof at, "$%04X, %zu bytes", c.load, c.bytes);
         for (const auto& prom : proms) {
             bootDirect(std::string("direct boot ") + at + ", .dsk, slot 6, " + prom.first, dsk, 6, prom.second, c.load, code);

@@ -191,6 +191,7 @@ pom2::MediaBayInfo ProDOSHardDiskCard::bayInfo(int bay) const
     info.loaded            = b.isLoaded();
     info.busy              = b.isBusy();
     info.path              = b.path();
+    info.hostFolder        = b.hostFolder();
     info.lastError         = b.lastError();
     info.blockCount        = static_cast<uint32_t>(b.blockCount());
     info.writeProtected    = b.isWriteProtected();

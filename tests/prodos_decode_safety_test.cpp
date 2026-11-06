@@ -40,7 +40,9 @@
 // killed at 25 s). Termination now rests on a per-decode set of expanded
 // directory blocks plus a directory budget, not on the depth cap.
 
+#include "ProDOSHostNameMap.h"
 #include "ProDOSVolume.h"
+#include "TestTimeScale.h"
 
 #include <algorithm>
 #include <cassert>
@@ -49,6 +51,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -174,7 +177,7 @@ int main()
         assert(deepest == 0);
         assert(c.dirsCreated == 0);
         assert(c.dirsSkipped >= 1 && "the cycle must be reported, not silent");
-        assert(ms < 2000 && "decode of a cyclic volume must terminate promptly");
+        assert(ms < 2000 * pom2test::timeScale() && "decode of a cyclic volume must terminate promptly");
     }
 
     // ── Part 3b: 12 sibling entries aliasing one directory block ─────────
@@ -201,7 +204,7 @@ int main()
         assert(dirs == 1 && "only the first entry may expand a given block");
         assert(c.dirsCreated == 1);
         assert(c.dirsSkipped == 11);
-        assert(ms < 2000);
+        assert(ms < 2000 * pom2test::timeScale());
     }
 
     // ── Part 3c: directory block chain that loops back on itself ─────────
@@ -289,6 +292,58 @@ int main()
             assert(d.ok && d.error.empty() && !d.aborted &&
                    "an empty too-deep folder (the build's stand-in) is no error");
         }
+    }
+
+    // ── MED-4 (bug hunt 2026-11-01 round 2): the WRITE budget is charged for
+    // what is written, not for every file read. Forty 15 MiB sparse files the
+    // host already holds byte for byte (600 MiB, past the 512 MiB write
+    // budget) and one small new file: the decode used to charge all forty,
+    // run out, refuse the last few and the new one, and fail the whole
+    // write-back for good — naming files that were fine. Host files are
+    // sparse (resize_file), so the test costs no disk.
+    {
+        const fs::path root = base / "budget_unchanged";
+        fs::create_directories(root);
+        constexpr std::uint32_t kEof = 15u << 20;
+        std::vector<std::uint8_t> vol(16 * kBlk, 0);   // block 6 = zero data block
+        putEntry(vol, 2, 0, /*storage=*/0xF, "VOL", 0x0F, 0, 0);
+        int made = 0;
+        for (size_t block = 2; block <= 5 && made < 40; ++block) {
+            for (size_t slot = (block == 2 ? 1 : 0); slot < 13 && made < 40; ++slot) {
+                char name[16];
+                std::snprintf(name, sizeof name, "F%02d", made);
+                putEntry(vol, block, slot, /*seedling=*/0x1, name, 0x00, /*key=*/6, kEof);
+                std::FILE* f = std::fopen((root / name).string().c_str(), "wb");
+                assert(f);
+                std::fclose(f);
+                fs::resize_file(root / name, kEof);   // all zeros, as the volume reads
+                ++made;
+            }
+            if (block < 5) setNextBlock(vol, block, static_cast<std::uint16_t>(block + 1));
+        }
+        putEntry(vol, 5, 12, /*seedling=*/0x1, "NEW", 0x00, /*key=*/7, /*eof=*/5);
+        std::memcpy(vol.data() + 7 * kBlk, "HELLO", 5);
+
+        const auto d = pom2::decodeVolumeToFolder(vol, root.string());
+        if (!d.ok || d.filesUnsaved != 0 || d.filesWritten != 1) {
+            std::printf("FAIL: 600 MiB of unchanged files exhausted the write budget "
+                        "(ok=%d unsaved=%zu written=%zu: %s)\n", d.ok ? 1 : 0,
+                        static_cast<size_t>(d.filesUnsaved),
+                        static_cast<size_t>(d.filesWritten), d.error.c_str());
+            return 1;
+        }
+        assert(fs::file_size(root / "NEW") == 5);
+    }
+
+    // MED-5: the build's name map is recorded and taken by the FOLDER, not by
+    // its spelling — a trailing slash or a "./" must find the same entry.
+    {
+        pom2::recordFolderNameMap("/tmp/pom2_med5/f/", std::make_shared<const pom2::HostNameMap>());
+        assert(pom2::takeFolderNameMap("/tmp/pom2_med5/./f") != nullptr &&
+               "one folder, two spellings, one registry entry");
+        assert(pom2::takeFolderNameMap("/tmp/pom2_med5/f") == nullptr && "taken once");
+        pom2::recordFolderScanStart("/tmp/pom2_med5/g");
+        assert(pom2::takeFolderScanStart("/tmp/pom2_med5/g/").has_value());
     }
 
     fs::remove_all(base);

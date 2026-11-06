@@ -202,7 +202,10 @@ int main()
     int tested = 0;
     for (const auto& c : cases) {
         const auto rom = locate(c.rom);
-        if (rom.empty()) continue;
+        if (rom.empty()) {   // in tools/test_media.sha256: a missing one is said
+            std::printf("SKIP iic_mouse_lle: %s not found\n", c.rom);
+            continue;
+        }
         exercise(c.profile, rom);
         noIouMouseReadsClearFlags(rom);
         ++tested;

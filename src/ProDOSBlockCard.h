@@ -118,6 +118,7 @@ public:
             info.persistenceState = backing->persistenceState();
             info.persistenceError = backing->persistenceError();
             info.mountId          = backing->mountId();
+            info.hostFolder       = backing->hostFolder();
         }
         return info;
     }

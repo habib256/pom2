@@ -89,7 +89,10 @@ int main()
     for (const char* rom : {"roms/apple2c-32Kv0.rom", "roms/apple2c-16K.rom",
                             "roms/apple2cp.rom"}) {
         const auto path = locate(rom);
-        if (path.empty()) continue;
+        if (path.empty()) {   // in tools/test_media.sha256: a missing one is said
+            std::printf("SKIP iic_acia_idle: %s not found\n", rom);
+            continue;
+        }
         exercise(path);
         ++tested;
     }

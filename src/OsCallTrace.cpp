@@ -273,6 +273,7 @@ void OsCallTrace::mliStep(uint16_t pc)
         c.sp  = uint8_t(s + 2);
         c.fn  = peek(cmdAt);
         c.arg = uint16_t(peek(uint16_t(cmdAt + 1)) | peek(uint16_t(cmdAt + 2)) << 8);
+        if (reoffered(mliPending_, c)) return;   // DBG-2
         c.text = fmt("$%04X ", uint16_t(jsrLast - 2)) + mliCall(c.fn, c.arg);
         abandon(mliPending_, c.sp, 0xFF, "MLI ");
         if (c.fn == 0x65) { emit("MLI  " + c.text); return; }   // QUIT never comes back
@@ -399,6 +400,7 @@ void OsCallTrace::spStep(uint16_t pc)
             const uint32_t list = uint32_t(peek(uint16_t(cmdAt + 1)) | peek(uint16_t(cmdAt + 2)) << 8) |
                 (ext ? uint32_t(peek(uint16_t(cmdAt + 3))) << 16 | uint32_t(peek(uint16_t(cmdAt + 4))) << 24 : 0u);
             c.arg = uint16_t(list);
+            if (reoffered(spPending_, c)) return;   // DBG-2
             c.text = fmt("$%04X S%d ", uint16_t(jsrLast - 2), (page >> 8) & 7) + spCall(c.fn, list);
             abandon(spPending_, c.sp, 0xFF, "SP  ");
             if (spPending_.size() < 16) spPending_.push_back(std::move(c));

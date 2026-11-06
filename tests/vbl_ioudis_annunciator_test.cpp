@@ -88,6 +88,9 @@ void advance(Memory& mem, uint64_t cycles)
 // Memory.
 constexpr size_t kIouSectionLen  = 43;   // the 4c wake latch joined on 2026-09-17, the 558 timers 2026-10-28
 constexpr size_t kEmptyTailCount = 7;   // + the beam clock (2026-10-27)
+// …then the Joyport trailer (2026-11-06), the LAST section and never empty:
+// version, mode, the two contact bytes, the game port's connected flag.
+constexpr size_t kJoyportLen     = 5;
 
 uint8_t iouByte(Memory& mem, size_t index)
 {
@@ -103,6 +106,12 @@ uint8_t iouByte(Memory& mem, size_t index)
     // empty one this configuration produces — if a device ever starts writing
     // one here, that is a loud failure rather than a silent misread.
     size_t end = blob.size();
+    if (end < kJoyportLen + 4 || len32(end - kJoyportLen - 4) != kJoyportLen) {
+        std::printf("FAIL: the Memory snapshot trailer no longer ends in the "
+                    "%zu-byte Joyport section — update kJoyportLen\n", kJoyportLen);
+        std::exit(1);
+    }
+    end -= kJoyportLen + 4;
     for (size_t k = 0; k < kEmptyTailCount; ++k) {
         if (end < 4 || len32(end - 4) != 0) {
             std::printf("FAIL: the Memory snapshot trailer no longer ends in "
@@ -152,7 +161,10 @@ int main()
     int tested = 0;
     for (const auto& candidate : iicRoms) {
         const std::string rom = firstExisting({candidate});
-        if (rom.empty()) continue;
+        if (rom.empty()) {   // in tools/test_media.sha256: a missing one is said
+            std::printf("SKIP vbl_ioudis_annunciator: %s not found\n", candidate.c_str());
+            continue;
+        }
         ++tested;
 
         Memory mem;

@@ -195,6 +195,17 @@ private:
     /// Close every open call the stack has passed beneath (`sp` is where the
     /// new call returns to, or the live SP).
     void abandon(std::vector<Pending>& open, uint16_t sp, uint16_t mask, const char* who);
+    /// The entry of a call already open — same return address, same stack
+    /// level — offered to the hook a second time: a debugger stop on the
+    /// entry (the instruction is offered again on Run), or an IRQ taken
+    /// there (offered again after the RTI). Decoding it twice opened a second
+    /// copy, and `abandon`'s `<=` then closed the first with a bogus
+    /// "-> (no return)" (DBG-2, bug hunt 2026-11-01 round 2). The BDOS and
+    /// Monitor halves carried this guard already.
+    static bool reoffered(const std::vector<Pending>& open, const Pending& c)
+    {
+        return !open.empty() && open.back().sp == c.sp && open.back().ret == c.ret;
+    }
 
     uint8_t peek(uint16_t a) const;
     std::string pathAt(uint16_t a) const;

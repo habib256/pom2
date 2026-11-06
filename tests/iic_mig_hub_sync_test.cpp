@@ -186,7 +186,10 @@ int testStatusReads()
     for (const std::string& cand : { std::string("roms/apple2c-32Kv0.rom"),
                                      std::string("roms/apple2cp.rom") }) {
         const std::string rom = firstExisting(cand);
-        if (rom.empty()) continue;
+        if (rom.empty()) {   // in tools/test_media.sha256: a missing one is said
+            std::printf("SKIP iic_mig_hub_sync: %s not found\n", cand.c_str());
+            continue;
+        }
         Memory mem; M6502 cpu(&mem);
         mem.setCpu(&cpu); mem.clearRam(); mem.setIIEMode(true);
         if (!mem.loadAppleIIRom(rom.c_str(), /*pickLower16KFor32K=*/true))

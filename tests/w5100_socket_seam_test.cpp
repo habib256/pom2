@@ -32,6 +32,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -322,7 +323,102 @@ void testDisconFlushesThePendingTail()
     assert(fake->sendAttempts == attempts + 1 && device.bytesSent() - before == 100 &&
            "the tail reached the peer");
     assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    // [B] W5100 datasheet v1.1.6 § 5.2.1.1 "First method": the driver waits
+    // on Sn_IR DISCON after its DISCON. The deferred close raised nothing.
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrDiscon &&
+           "the deferred close raises DISCON like the immediate one");
     std::printf("  DISCON sends the pending tail before closing: OK\n");
+}
+
+// NET-1 (bug hunt 2026-11-01 round 2): the same from CLOSE_WAIT. The peer
+// half-closed; the guest SENDs its answer (HTTP/1.0, IRC), the host takes
+// part of it, SEND_OK is raised, and DISCON used to take the `else` arm and
+// drop the tail with the fd. Now the socket waits in LAST_ACK for the drain.
+void testDisconFromCloseWaitFlushesThePendingTail()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x0A000001u, 8080);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+    auto* sock = fake->lastSocket;
+    test::FakeW5100HostSocket::Packet fin;
+    fin.result = {W5100IoStatus::Ok, 0, 0, 0};           // the peer's FIN
+    sock->packets.push_back(fin);
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrCloseWait);
+    device.writeValueAt(socketReg(0, kW5100SnIr), kW5100SnIrDiscon);   // ack it
+    assert(!(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrDiscon));
+
+    sock->sendResult = {W5100IoStatus::WouldBlock, 0};   // peer not reading
+    for (uint16_t k = 0; k < 100; ++k)
+        device.writeValueAt(static_cast<uint16_t>(kW5100TxBase + k), static_cast<uint8_t>(k));
+    device.writeValueAt(socketReg(0, kW5100SnTxWr0), 0x00);
+    device.writeValueAt(socketReg(0, kW5100SnTxWr1), 100);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrSendOk);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrDiscon);
+    if (device.socketInfo(0).status != kW5100SnSrLastAck) {
+        std::printf("FAIL: DISCON from CLOSE_WAIT with a tail owed did not "
+                    "wait in LAST_ACK (Sn_SR=$%02X)\n", device.socketInfo(0).status);
+        std::exit(1);
+    }
+    const uint64_t before = device.bytesSent();
+    sock->sendResult = {W5100IoStatus::Ok, 0};             // the peer drains
+    device.poll();
+    assert(device.bytesSent() - before == 100 && "the tail reached the peer");
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrDiscon);
+    std::printf("  DISCON from CLOSE_WAIT sends the pending tail first: OK\n");
+}
+
+// NET-4: LISTEN outside SOCK_INIT is not a LISTEN. It fell into the
+// refusal path and tore down a live ESTABLISHED connection, raising TIMEOUT.
+void testListenOnALiveSocketIsIgnored()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x0A000001u, 8080);
+    assert(device.socketInfo(0).status == kW5100SnSrEstablished);
+    device.writeValueAt(socketReg(0, kW5100SnIr), 0xFF);   // ack everything
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrListen);
+    if (device.socketInfo(0).status != kW5100SnSrEstablished ||
+        (device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout)) {
+        std::printf("FAIL: LISTEN on an ESTABLISHED socket tore it down\n");
+        std::exit(1);
+    }
+    std::printf("  LISTEN on a live socket is ignored: OK\n");
+}
+
+// A DISCON waiting on its tail whose connection dies instead: the
+// termination failed, and the datasheet answers that with TIMEOUT.
+void testDisconTailFailureRaisesTimeout()
+{
+    W5100Device device;
+    auto factory = std::make_unique<test::FakeW5100SocketFactory>();
+    auto* fake = factory.get();
+    device.setSocketFactory(std::move(factory));
+    device.reset(true);
+    openTcpSocket(device, 0);
+    connectTo(device, 0, 0x0A000001u, 8080);
+    auto* sock = fake->lastSocket;
+    sock->sendResult = {W5100IoStatus::WouldBlock, 0};
+    device.writeValueAt(socketReg(0, kW5100SnTxWr0), 0x00);
+    device.writeValueAt(socketReg(0, kW5100SnTxWr1), 10);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrSend);
+    device.writeValueAt(socketReg(0, kW5100SnCr), kW5100SnCrDiscon);
+    assert(device.socketInfo(0).status == kW5100SnSrFinWait);
+    sock->sendResult = {W5100IoStatus::Failed, 0};         // reset by peer
+    device.poll();
+    assert(device.socketInfo(0).status == kW5100SnSrClosed);
+    assert(device.readValueAt(socketReg(0, kW5100SnIr)) & kW5100SnIrTimeout);
+    std::printf("  a DISCON whose tail cannot be sent ends in TIMEOUT: OK\n");
 }
 
 // The chip receives on its own: a peer's FIN moves Sn_SR to CLOSE_WAIT and
@@ -703,6 +799,9 @@ int main()
     testLoopbackDestinationIsRefused();
     testLoopbackDatagramIsRefused();
     testDisconFlushesThePendingTail();
+    testDisconFromCloseWaitFlushesThePendingTail();
+    testDisconTailFailureRaisesTimeout();
+    testListenOnALiveSocketIsIgnored();
     testReceiveWithoutReadingRsr();
     testDiscardedDatagramKeepsTheSocket();
     testLocalPortPolicy();

@@ -1430,6 +1430,7 @@ MediaBayInfo SmartPortCard::bayInfo(int bay) const
         info.persistenceState = b->persistenceState();
         info.persistenceError = b->persistenceError();
         info.mountId          = b->mountId();
+        info.hostFolder       = b->hostFolder();
     } else if (auto* u35 = dynamic_cast<const SmartPort35Unit*>(u)) {
         const auto p = u35->image().persistence();
         info.mountId          = u35->image().mountId();

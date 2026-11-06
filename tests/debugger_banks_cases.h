@@ -69,6 +69,14 @@ static void testBankBreakpointsAndWatches()
     assert(d.onInstruction(0x0800)); // amnesty never leaks to a different bank
     d.clearHit(); d.armResumeFrom(0x0800);
     assert(!d.onInstruction(0x0800));
+    // DBG-1: the amnesty is spent when the instruction EXECUTES. An IRQ taken
+    // at this boundary runs its handler (other addresses) and offers $0800
+    // again after the RTI: still amnestied, or Run re-stops having done nothing.
+    d.onInterruptEntered(cpu, 0x0800, 7);
+    assert(!d.onInstruction(0xFA62));       // the handler's first instruction
+    d.onStepCompleted(cpu, 0xFA62, 2);
+    assert(!d.onInstruction(0x0800) && "the amnesty survives an interrupt");
+    d.onStepCompleted(cpu, 0x0800, 3);      // $0800 executed: amnesty spent
     assert(d.onInstruction(0x0800));
     d.clearForTimeJump();
     assert(d.breakpointCount()==2);

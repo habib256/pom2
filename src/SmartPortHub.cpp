@@ -135,7 +135,11 @@ void SmartPortHub::recalcActiveDevice()
     active35_         = is35 ? drive : nullptr;
 
     if (iwm_) {
-        if (is35) iwm_->setSony35(active35_);
+        // A selected 3.5" connector with NO drive on it (the //c+'s external
+        // ones are null by default) is "no 3.5" drive", not setSony35(nullptr)
+        // — which also cleared the 5.25" `disk_` DiskIICard owns, the exact
+        // call the comment below forbids (SP-1, bug hunt 2026-11-01 round 2).
+        if (is35 && active35_) iwm_->setSony35(active35_);
         // MAME's set_floppy(nullptr) equivalent. NOT `setSony35(nullptr)`:
         // that would also clear `disk_`, which DiskIICard owns. Leaving the
         // stale Sony attached let a 5.25"-era write burst land on the last

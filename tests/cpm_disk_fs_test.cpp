@@ -125,6 +125,38 @@ void testBlank()
         CHECK(!d.writeFile(0, bad, {}, err));
 }
 
+// MED-3 (bug hunt 2026-11-01 round 2): a file carrying CP/M's R/O attribute
+// (t1', bit 7 of directory byte 9) is refused by ERA and by a write in CP/M,
+// and the tool removed and replaced it. Set the bit in the image the way CP/M's
+// STAT does, reopen, and both must be refused with the image untouched.
+void testReadOnlyAttribute()
+{
+    CpmDisk d;
+    std::string err;
+    CHECK(d.open(blankImage(), SectorOrder::Dos, err));
+    CHECK(d.writeFile(0, "KEEP.TXT", pattern(300, 5), err));
+    auto img = d.image();
+    const std::string n11 = "KEEP    TXT";
+    int marked = 0;
+    for (size_t i = 0; i + 12 <= img.size(); ++i)
+        if (img[i] == 0 && std::memcmp(img.data() + i + 1, n11.data(), 11) == 0) {
+            img[i + 9] |= 0x80;   // t1' = R/O
+            ++marked;
+        }
+    CHECK(marked == 1);
+    CpmDisk ro;
+    CHECK(ro.open(img, SectorOrder::Dos, err));
+    CHECK(ro.list().size() == 1 && ro.list()[0].readOnly);
+    const auto before = ro.image();
+    CHECK(!ro.removeFile(0, "KEEP.TXT", err) && err.find("read-only") != std::string::npos);
+    CHECK(!ro.writeFile(0, "keep.txt", pattern(10, 1), err) && err.find("read-only") != std::string::npos);
+    CHECK(ro.image() == before);
+    std::vector<uint8_t> back;
+    CHECK(ro.readFile(0, "KEEP.TXT", back, err) && roundTrips(pattern(300, 5), back));
+    // Another user area's file of the same name is not the R/O one.
+    CHECK(ro.writeFile(1, "KEEP.TXT", pattern(10, 1), err));
+}
+
 void testDirectoryFull()
 {
     CpmDisk d;
@@ -354,6 +386,7 @@ void testTextNaming()
 int main()
 {
     testBlank();
+    testReadOnlyAttribute();
     testDirectoryFull();
     testZeroFilledDirectorySector();
     testCpm3LabelAndStamps();

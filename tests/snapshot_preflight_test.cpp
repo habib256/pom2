@@ -191,7 +191,8 @@ void testPurePreflight()
     rig.memory.setVideoClockRatio(0.25);   // an accelerated beam: its section is not empty
     const Blob valid = mex(rig.memory);
     Parts parts(valid);
-    assert(parts.devices.size() == 10);
+    // …and the Joyport trailer (2026-11-06), the eleventh and last.
+    assert(parts.devices.size() == 11);
     for (const Blob& b : parts.devices) assert(!b.empty());
     // Valid preflight is as inert as refusal, including the detached port
     // decoder's callbacks. Repeat to catch a hidden reset-on-validate.
