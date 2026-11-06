@@ -65,6 +65,7 @@ bool DiskImage::loadSessionMedia(const uint8_t* data, size_t len, std::string& e
         error = "invalid writable session disk record"; return false;
     }
     auto image = std::make_unique<DiskImage>();
+    image->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
     if (!image->loadReadOnlySession(media.data(), media.size(), error)) return false;
     if (!image->loaded) { error = "writable session disk is empty"; return false; }
     // A container's physical lock may never be cleared by an outer flag.

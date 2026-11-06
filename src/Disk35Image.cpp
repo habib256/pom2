@@ -168,6 +168,14 @@ bool Disk35Image::parseImageBytes(std::vector<uint8_t>& buf, const std::string& 
 {
     hostReadOnly_ = hostReadOnly;
     const std::size_t n = buf.size();
+    // The mount's reference for the external-change check. Contents only:
+    // these bytes may have been read by phase 1 of a two-phase mount, and
+    // this function runs under the machine lock, where no stat belongs. A
+    // zero time never matches, so the first commit compares the file's hash.
+    fileStamp_ = MediaFileStamp{};
+    fileStamp_.known = true;
+    fileStamp_.size  = n;
+    fileStamp_.hash  = hashMediaBytes(buf.data(), n);
 
     // Detect 2IMG-wrapped 400K, 800K or SuperDrive 1.44M payloads.
     if (n >= 64 &&
@@ -311,6 +319,7 @@ void Disk35Image::eject()
     path_.clear();
     lastError_.clear();
     autosave_.reset();
+    fileStamp_ = {};
     lineage_ = 0;
 }
 
@@ -451,6 +460,7 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
     if (lineage_ == 0) lineage_ = nextMediaCaptureSeq();
     out.lineage = lineage_;
     out.path  = path_;
+    out.mounted = fileStamp_;
     if (bitstream_) {
         out.bitstream = bitstream_;   // serialised in phase 2 (STORAGE-012)
     } else {
@@ -472,21 +482,27 @@ Disk35Image::PendingWriteBack Disk35Image::takeWriteBack()
 }
 
 bool Disk35Image::commitWriteBack(PendingWriteBack&& pending,
-                                  std::string& error)
+                                  std::string& error, std::string* divertedTo)
 {
     error.clear();
+    if (divertedTo) divertedTo->clear();
     if (!pending.valid) return true;
     if (!pending.error.empty()) { error = pending.error; return false; }
     if (pending.bitstream && !serializeBitstreamOf(*pending.bitstream, pending.bytes, error))
         return false;   // the caller re-marks the medium dirty, as for an I/O failure
     // In capture order: the background autosave and the explicit eject /
     // flush paths commit from different threads (MediaAutosave.h).
-    return commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
-        [&pending](std::string& err) { return writeWholeFile(pending, err); });
+    // The payload is the whole image either way, so a diverted write is the
+    // same bytes under the sibling's name.
+    return commitMediaInOrder(pending.path, pending.lineage, pending.seq,
+                              pending.mounted, error, divertedTo,
+        [&pending](const std::string& target, bool, std::string& err) {
+            return writeWholeFile(pending, target, err);
+        });
 }
 
 bool Disk35Image::writeWholeFile(const PendingWriteBack& pending,
-                                 std::string& error)
+                                 const std::string& target, std::string& error)
 {
 
     // Never open the user's image with `trunc` and rewrite it in place:
@@ -500,7 +516,7 @@ bool Disk35Image::writeWholeFile(const PendingWriteBack& pending,
     // Unique per process AND per call: a fixed `<path>.pom2tmp` is the name
     // every POM2 instance derives, so two of them saving the same image
     // interleaved their writes into one temp file. See tempSiblingPath().
-    const std::string tmp = tempSiblingPath(pending.path).string();
+    const std::string tmp = tempSiblingPath(target).string();
     // Same temp-path scrutiny as every AtomicFileReplace caller: a symlink
     // or hard link planted at <path>.pom2tmp would redirect the trunc onto
     // the user's file (or another victim) before anything is committed.
@@ -537,8 +553,8 @@ bool Disk35Image::writeWholeFile(const PendingWriteBack& pending,
     // would become the image's: carry the image's permissions across, read
     // at the rename and not before the write (a notch flipped meanwhile).
     std::error_code ec;
-    if (!replaceMediaFileAtomic(tmp, pending.path, ec)) {
-        error = "Disk35Image: cannot replace " + pending.path + ": " +
+    if (!replaceMediaFileAtomic(tmp, target, ec)) {
+        error = "Disk35Image: cannot replace " + target + ": " +
                 ec.message();
         std::error_code ec2;
         std::filesystem::remove(tmp, ec2);
@@ -566,7 +582,7 @@ Disk35Image::pollAutosave(MediaCommitExecutor& executor, bool force)
     auto payload = std::make_shared<PendingWriteBack>(std::move(capture));
     return autosave_.start(executor, [payload] {
         MediaCommitResult r;
-        r.ok = commitWriteBack(std::move(*payload), r.error);
+        r.ok = commitWriteBack(std::move(*payload), r.error, &r.divertedTo);
         return r;
     });
 }
@@ -577,10 +593,9 @@ MediumPersistence Disk35Image::persistence() const
     p.loaded  = loaded_;
     p.pending = loaded_ && dirty_;
     p.path    = path_;
-    p.state   = autosave_.state(loaded_, dirty_,
-                                writeBackEnabled_ && !fileWriteProtected_ && !detachedSession_);
+    autosave_.describe(p, loaded_, dirty_,
+                       writeBackEnabled_ && !fileWriteProtected_ && !detachedSession_);
     if (detachedSession_) p.state = "session";
-    p.error   = autosave_.error();
     return p;
 }
 

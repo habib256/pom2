@@ -765,13 +765,19 @@ void Memory::clearRam()
 {
     iicExpansionAwake_ = false;   // power-on: the 4c sleeps (MAME machine_reset;
                                   // reset_w, i.e. Ctrl-Reset, leaves it awake)
-    // MAME-faithful power-on RAM pattern: alternating `00 FF 00 FF…`
-    // (apple2.cpp:294-298 + apple2e.cpp:1014-1035). Real silicon DRAM
-    // settles into this pattern from the way the cell columns refresh;
-    // some software (RAM diagnostics, demo RNG seeds) probes it
-    // deliberately. The Language Card is RAM too, so a power-cycle
-    // clears it even though its address window overlaps motherboard
-    // ROM. Pre-Theme-11 POM2 zero-filled (F-1-2/B-1-1/C-1-1/D-1-3/E-1-1).
+    // Power-on RAM: `00 FF 00 FF…`. A deterministic stand-in — NOT what a
+    // real machine holds, because no single pattern is (DEV § Power-on RAM
+    // pattern has the reports).
+    // [D] MAME `apple2.cpp:290-291` @ mame0287, from commit b24ab572 (2019),
+    //     "AppleWin-like memory fill; fixes hang in Joust": never measured.
+    // [B] Sather, UtA II p. 4-19: "much of RAM goes to a state of all zeroes".
+    // [A] Real machines disagree with each other (Westgate's survey, AppleWin
+    //     #206): it depends on the DRAM maker and the board.
+    // [F] Any one machine's pattern. Settled by: a RAM dump taken before the
+    //     cold start runs. Until 2026-11-06 this said real DRAM "settles
+    //     into" the fill, which nothing supports.
+    // The Language Card is RAM too, so a power-cycle clears it even though
+    // its window overlaps motherboard ROM. Pre-Theme-11 POM2 zero-filled.
     auto fill00FF = [](auto& span, size_t bytes) {
         for (size_t i = 0; i < bytes; i += 2) {
             span[i]     = 0x00;
@@ -1323,11 +1329,19 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // a store ran readTapeInput(), which starts an armed PLAY (hunt 2026-11-01).
     if (isWrite && low >= 0x60 && low <= 0x6F) return 0;
     if (low == 0x60) {
-        // //c-class: no cassette port — $C060 is the keyboard's 40/80-column
-        // switch, bit 7 set in the 40 position (MAME `apple2e.cpp:2321`,
-        // //c Tech Ref 2e). It must never reach the deck: a read of the
-        // switch used to consume an armed PLAY and start the tape.
-        const uint8_t bit7 = iicProfile_ ? (iic40ColSwitch_ ? uint8_t{0x80} : uint8_t{0})
+        // //c-class: no cassette port — $C060 is the keyboard's 80/40 switch,
+        // bit 7 SET in the 40 position.
+        // [B] Apple IIc Technical Reference, 1st ed. Table 4-1: "$C060
+        //     40-column switch status on bit 7; 1 = 40-column display";
+        //     2nd ed. Fig. 11-52: input I0 of the 74LS251 driving D7.
+        // [B] 2nd ed.: "The Apple IIc Plus has no 80/40-column switch", and
+        //     $C060 is "reserved" there — so bit 7 reads 0 on a //c Plus
+        //     whatever the setting says ([D] MAME @ mame0287, same; [F] the
+        //     level of that input with nothing on it. Settled by: PEEK(49248)
+        //     on a real //c Plus).
+        // It must never reach the deck: a read used to start an armed PLAY.
+        const bool forty = iic40ColSwitch_ && iicProfile_ && !iicProfile_->isIIcPlus();
+        const uint8_t bit7 = iicProfile_ ? (forty ? uint8_t{0x80} : uint8_t{0})
             : cassette ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
                        : uint8_t{0x80};   // nothing connected reads high
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));

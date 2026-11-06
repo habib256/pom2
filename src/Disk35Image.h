@@ -174,6 +174,10 @@ public:
         /// (re-encode + CRC32 over up to 16 MiB — not under stateMutex).
         /// Immutable: writeFlux copies the live one before writing again.
         std::shared_ptr<const Disk35Bitstream> bitstream;
+        /// The file as this mount read it — checked before the file is
+        /// replaced (MediaAutosave.h, "External change"). Last, so the
+        /// positional initialisers of the fields above keep working.
+        MediaFileStamp       mounted{};
     };
 
     /// Phase 1, WITH the lock: capture what `saveDirty()` would write and
@@ -185,7 +189,10 @@ public:
 
     /// Phase 2, with NO lock held: perform the deferred write. Static because
     /// the image it came from may no longer exist.
-    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error);
+    /// `divertedTo`, when given, receives the sibling the guest's version
+    /// went to because the image file was changed by another program.
+    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error,
+                                std::string* divertedTo = nullptr);
 
     /// Phase-2 FAILURE undo: re-mark the medium dirty so a retry re-captures
     /// it. Unlike the block backing there is no per-block set to merge — the
@@ -245,7 +252,8 @@ private:
     bool parseImageBytes(std::vector<uint8_t>& buf, const std::string& path,
                          bool hostReadOnly);
     /// The atomic temp + rename itself, for `commitWriteBack`.
-    static bool writeWholeFile(const PendingWriteBack& pending, std::string& error);
+    static bool writeWholeFile(const PendingWriteBack& pending,
+                               const std::string& target, std::string& error);
     /// WOZ2/MOOF chunk walk + GCR decode into `blocks_`. See the .cpp.
     bool loadBitstream(const std::vector<uint8_t>& buf, const std::string& path,
                        bool moof);
@@ -260,6 +268,7 @@ private:
     bool         dirty_               = false;
     bool         detachedSession_     = false;
     MediaAutosave autosave_;
+    MediaFileStamp fileStamp_;    // the file as this mount read it
     uint64_t      lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
     bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
     bool         fileWriteProtected_  = false;   // header / format says so

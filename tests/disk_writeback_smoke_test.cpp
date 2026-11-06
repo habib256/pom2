@@ -26,6 +26,7 @@
 
 #include "DiskImage.h"
 #include "MediaWritePolicy.h"
+#include "SyncGapWrite.h"
 
 #include <cassert>
 #include <cstdint>
@@ -160,21 +161,64 @@ int main()
         std::printf("disk_writeback: .nib raw verbatim OK\n");
     }
 
-    // A source removed/truncated after mount must never turn untouched
-    // tracks into zeroes during write-back.  Keep the dirty state retryable.
+    // A source truncated after mount must never turn untouched tracks into
+    // zeroes during write-back. It used to be refused ("cannot preserve
+    // unchanged tracks") with the dirty state kept; a file that is no longer
+    // the one the mount read is now an EXTERNAL CHANGE (MediaAutosave.h): it
+    // is left exactly as found and the guest's whole disk — every track, not
+    // only the dirty one — goes to a sibling.
     {
         fs::path p = tmpFile("truncated-source.dsk");
+        const std::string copyPrefix = "pom2_disk_writeback_truncated-source.guest-";
+        // Copies an earlier, aborted run left behind are not this run's.
+        for (const auto& e : fs::directory_iterator(p.parent_path()))
+            if (e.path().filename().string().rfind(copyPrefix, 0) == 0) {
+                std::error_code rmEc;
+                fs::remove(e.path(), rmEc);
+            }
+        writeBlankDsk(p);
+        std::vector<uint8_t> original;
+        {
+            std::ifstream f(p, std::ios::binary);
+            original.assign(std::istreambuf_iterator<char>(f), {});
+        }
+        DiskImage img;
+        assert(img.loadFile(p.string()));
+        assert(pom2test::writeInSyncGap(img, 2) >= 0);
+        img.setWriteBackEnabled(true);
+        fs::resize_file(p, 1);
+        assert(img.saveDirty());
+        assert(!img.hasUnsavedChanges());
+        assert(fs::file_size(p) == 1);            // not ours any more: untouched
+        int copies = 0;
+        for (const auto& e : fs::directory_iterator(p.parent_path())) {
+            const std::string name = e.path().filename().string();
+            if (name.rfind(copyPrefix, 0) != 0) continue;
+            std::ifstream f(e.path(), std::ios::binary);
+            const std::vector<uint8_t> copy(std::istreambuf_iterator<char>(f), {});
+            assert(copy == original);             // the complete disk, no zeroes
+            ++copies;
+            f.close();
+            fs::remove(e.path());
+        }
+        assert(copies == 1);
+        fs::remove(p);
+    }
+
+    // A source REMOVED after mount: there is nothing left to compare with and
+    // nothing of anybody's to protect, but the unchanged tracks cannot come
+    // from a file that is gone. Refused, dirty state kept for a retry.
+    {
+        fs::path p = tmpFile("removed-source.dsk");
         writeBlankDsk(p);
         DiskImage img;
         assert(img.loadFile(p.string()));
-        const uint8_t cur = img.nibbleAt(2, 50);
-        img.writeNibbleAt(2, 50, static_cast<uint8_t>(cur ^ 1));
+        assert(pom2test::writeInSyncGap(img, 2) >= 0);
         img.setWriteBackEnabled(true);
-        fs::resize_file(p, 1);
+        fs::remove(p);
         assert(!img.saveDirty());
         assert(img.hasUnsavedChanges());
-        assert(fs::file_size(p) == 1);
-        fs::remove(p);
+        assert(!fs::exists(p));
     }
 
     // ── The temp name is UNIQUE, so the old fixed one captures nothing ──
@@ -201,8 +245,9 @@ int main()
 
         DiskImage img;
         assert(img.loadFile(p.string()));
-        const uint8_t cur3 = img.nibbleAt(3, 60);
-        img.writeNibbleAt(3, 60, static_cast<uint8_t>(cur3 ^ 0x01));
+        // A write every sector survives (SyncGapWrite.h): flipping a bit at
+        // nibble 60 broke a data field, and the save now refuses that.
+        assert(pom2test::writeInSyncGap(img, 3) >= 0);
         img.setWriteBackEnabled(true);
         assert(img.saveDirty());
         assert(fs::file_size(victim) == 6);   // victim untouched, not rewritten
@@ -236,8 +281,7 @@ int main()
 
         DiskImage img;
         assert(img.loadFile(p.string()));
-        const uint8_t cur = img.nibbleAt(4, 70);
-        img.writeNibbleAt(4, 70, static_cast<uint8_t>(cur ^ 0x01));
+        assert(pom2test::writeInSyncGap(img, 4) >= 0);
         img.setWriteBackEnabled(true);
         assert(img.saveDirty());              // no longer refused
         assert(!img.hasUnsavedChanges());
@@ -265,9 +309,11 @@ int main()
     // DOS); decodeTrack did not, so ONE bad nibble in a sector number sent
     // the following data field to the wrong sector of the user's file on
     // write-back — 253 bytes of somebody else's sector, under "Saved 1
-    // modified track(s)". With the gate the damaged field is skipped, the
-    // sector keeps the bytes saveDirty pre-filled from the file, and the
-    // file stays byte-identical.
+    // modified track(s)". With the gate the damaged field routes nothing.
+    // Since 2026-11-05 the track, now one sector short, is REFUSED rather
+    // than saved with that sector's old bytes (DiskImage_WriteBack.cpp, rule
+    // 2): the file stays byte-identical, the writes stay owed, and the
+    // surface is on disk as a WOZ.
     {
         fs::path p = tmpFile("badaddr.dsk");
         // Every sector distinct — on a uniform image a misrouted payload
@@ -299,7 +345,9 @@ int main()
         img.writeNibbleAt(1, found + 7, static_cast<uint8_t>((3 >> 1) | 0xAA));
         img.writeNibbleAt(1, found + 8, static_cast<uint8_t>(3 | 0xAA));
         assert(img.hasUnsavedChanges());
-        assert(img.saveDirty());
+        assert(!img.saveDirty());
+        assert(img.hasUnsavedChanges());
+        assert(img.getLastError().find("no longer decodes") != std::string::npos);
         std::vector<uint8_t> after;
         {
             std::ifstream in(p, std::ios::binary);
@@ -307,7 +355,10 @@ int main()
         }
         assert(after == before &&
                "a header that fails its checksum must not relocate a sector");
+        const fs::path recovered = p.string() + ".recovered.woz";
+        assert(fs::exists(recovered) && "the surface is saved before the refusal");
         std::error_code ec;
+        fs::remove(recovered, ec);
         fs::remove(p, ec);
         std::printf("disk_writeback: bad address checksum routes nothing OK\n");
     }
@@ -353,11 +404,15 @@ int main()
         write44(5, 2);                         // header claims track 2
         write44(7, 3);                         // misroute sector 5 to 3
         write44(9, static_cast<uint8_t>(volume ^ 2 ^ 3));
-        assert(img.saveDirty());
+        assert(!img.saveDirty());              // a sector short: refused whole
+        assert(img.hasUnsavedChanges());
         std::ifstream in(p, std::ios::binary);
         const std::vector<uint8_t> after((std::istreambuf_iterator<char>(in)), {});
         assert(after == before &&
                "a valid header for another track must not relocate a sector");
+        in.close();
+        std::error_code rmEc;
+        fs::remove(p.string() + ".recovered.woz", rmEc);
         fs::remove(p);
     }
 

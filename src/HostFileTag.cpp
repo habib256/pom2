@@ -184,4 +184,21 @@ bool dos33TypeFromProdos(std::uint8_t prodosType, std::uint8_t& dosType)
     }
 }
 
+
+// ------------------------------------------------- the leading-dot escape
+
+std::string hostEscapeLeadingDot(const std::string& name)
+{
+    return "%2e" + name.substr(name.empty() ? 0 : 1);
+}
+
+bool stripHostLeadingDotEscape(std::string& hostName)
+{
+    if (hostName.size() < 4 || hostName[0] != '%' || hostName[1] != '2' ||
+        (hostName[2] != 'e' && hostName[2] != 'E'))
+        return false;
+    hostName.erase(0, 3);
+    return true;
+}
+
 } // namespace pom2

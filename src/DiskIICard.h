@@ -437,8 +437,16 @@ public:
     /// The motor-off delay is the controller's 556 timer, real time: under
     /// a Zip or TransWarp it ran out ~4x early in accelerated CPU cycles.
     /// `motorOffDelay` counts STOCK bus cycles, converted here.
-    void    setCpuClock(double hz) override { motorClock_.setCpuClock(hz); }
-    void    setStandardClock(double hz) override { motorClock_.setBusClock(hz); }
+    void    setCpuClock(double hz) override { motorClock_.setCpuClock(hz); syncFluxClock(); }
+    void    setStandardClock(double hz) override { motorClock_.setBusClock(hz); syncFluxClock(); }
+    /// The sequencer steps twice per STOCK bus cycle, so the bus clock is
+    /// what places a WOZ FLUX track's 125 ns ticks on the LSS timeline
+    /// (DiskImage::setFluxClockHz). Told to both media whenever the clock
+    /// or a medium changes.
+    void    syncFluxClock()
+    {
+        for (DiskImage& img : images) img.setFluxClockHz(motorClock_.busHz());
+    }
     void    onReset() override;
 
     // Rewind/snapshot: serialize the mechanical + LSS runtime state (head
@@ -792,6 +800,12 @@ private:
         bool     click = false;
     } lastStep_;
     void confirmLastStep();
+    /// The head of `drive` has just moved from one quarter-track to another:
+    /// keep the platter at the same ANGLE under it (DiskIICard.cpp).
+    void carryAngleAcrossStep(int drive, int fromQt, int toQt);
+    /// The stand-in period of a quarter-track that holds no cells, in LSS
+    /// cycles: the WOZ reference's 51,200 bits at 4 µs.
+    static constexpr int64_t kEmptyTrackPeriodLss = 51200 * 8;
     // Legacy 32-cycle gate body, retained as a fallback when no P6 PROM
     // is loaded.
     void legacyAdvance(int cycles);

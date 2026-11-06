@@ -25,9 +25,14 @@
 // Ported in spirit from AppleWin `source/SSI263.cpp` (LGPL — POM2's
 // own chip-emulation code is independent; only the protocol contract
 // is shared; the imported phoneme PCM is separately attributed in
-// Ssi263PhonemeData.cpp and THIRD-PARTY.md). MAME does NOT
-// implement the SSI263 (verified 2026-05-27, no `ssi263*` file in
-// `src/devices/sound`), so this is the only reference target.
+// Ssi263PhonemeData.cpp and THIRD-PARTY.md). AppleWin is the only
+// reference target. MAME is not one:
+// [D] MAME src/devices/sound/ssi263hle.cpp @ ba60c481b5 (2024-01-07, still
+//     on master 2026-11-05) — a placeholder that maps the 64 phoneme codes
+//     onto a Votrax SC-01A, and says of itself "This is completely wrong,
+//     and exists only to have working audio in Thayer's Quest". (This
+//     comment said until 2026-11-05 that MAME had no `ssi263*` file at all,
+//     "verified 2026-05-27" — the file was sixteen months old by then.)
 //
 // Register layout (5 registers, $00-$04 within the chip's window):
 //
@@ -83,6 +88,9 @@
 #include <vector>
 
 #include "AyEventRing.h"
+#include "Ssi263Formant.h"
+
+#include <atomic>
 
 namespace pom2 {
 
@@ -274,6 +282,7 @@ public:
         // on the next fillAudioTimed — the comment on aPrimed_ above.
         ctlEvents_.clear();
         aPrimed_ = false;
+        formantStale_.store(true, std::memory_order_relaxed);
     }
 
     /// The CPU cycle counter rolled back with no blob for this chip (a bare
@@ -286,12 +295,25 @@ public:
     {
         ctlEvents_.clear();
         aPrimed_ = false;
+        formantStale_.store(true, std::memory_order_relaxed);
     }
 
     /// Total number of phonemes accepted via writes to $00 since reset.
     /// Surfaces in the UI panel as a heartbeat for "the speech driver
     /// is actively pushing data".
     uint32_t phonemeWriteCount() const { return phonemeWriteCount_; }
+
+    /// Which sound the chip makes. `Recorded` is the 62 phoneme takes
+    /// (AppleWin's, of a real chip) and the default. `Formant` computes the
+    /// sound from the registers (Ssi263Formant.h): unvalidated, but the only
+    /// one the inflection, articulation and filter registers reach — a
+    /// driver that sets a pitch per syllable sings with it and drones
+    /// without. One choice for every SSI 263 in the machine: it is a
+    /// property of the listener's setting, not of a card. The protocol —
+    /// requests, durations, power-down — is the same code for both.
+    enum class Voice : uint8_t { Recorded = 0, Formant = 1 };
+    static void  setVoice(Voice v) { voice_.store(static_cast<uint8_t>(v), std::memory_order_relaxed); }
+    static Voice voice() { return static_cast<Voice>(voice_.load(std::memory_order_relaxed)); }
 
     // ─── Audio render ─────────────────────────────────────────────────────
     /// Sum the chip's current audio output into `output` (does NOT
@@ -310,9 +332,18 @@ private:
     /// Render with an EXPLICIT register pair, so the timed path can render
     /// the chip as it was at a past cycle rather than as it is now.
     void renderSamples(float* output, int frameCount, uint32_t sampleRate,
-                       uint8_t cttrAmp, uint8_t filFreq, uint8_t durPhon, SsiMode mode);
+                       uint8_t cttrAmp, uint8_t filFreq, uint8_t durPhon, SsiMode mode,
+                       uint8_t inflect, uint8_t rateInf);
     /// Apply one queued event to the audio-side shadow state.
     void applyPlaybackEvent(uint8_t reg, uint8_t val);
+    static std::atomic<uint8_t> voice_;
+    /// The formant voice's filters. Audio thread only, and not in the
+    /// snapshot: a rewind or a timeline drop restarts them
+    /// (`formantStale_`), which is inaudible.
+    Ssi263FormantVoice formant_;
+    std::atomic<bool>  formantStale_{false};
+    uint8_t aInflect_ = 0;      ///< audio-side shadows, as aCttrAmp_ below
+    uint8_t aRateInf_ = 0;
 
     // ── Audio-side shadow of the registers that affect RENDERING ─────────
     // The latched registers below belong to the CPU thread: they drive the

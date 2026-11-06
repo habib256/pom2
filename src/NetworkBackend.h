@@ -48,6 +48,9 @@
 //                            "cable unplugged, talk to yourself" mode.
 //   SlirpNetworkBackend    — libslirp user-mode NAT (see
 //                            SlirpNetworkBackend.h). Optional build dep.
+//   BuiltinNatBackend      — POM2's own user-mode NAT, no library (see
+//                            BuiltinNatBackend.h). What a build without
+//                            libslirp — Windows — uses instead.
 //
 // Threading: backends are driven from the CPU thread under
 // EmulationController's stateMutex, via SlotPeripheral::advanceCycles.

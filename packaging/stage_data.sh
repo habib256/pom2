@@ -125,11 +125,13 @@ verify() {
     [ -d "$dest" ] || die "verify: '$dest' is not a directory"
     local failed=0
 
-    # No firmware dump in a desktop package: roms/ may hold the floppy samples
-    # and the README, nothing else (bundle.manifest § Firmware and dumps).
+    # No firmware dump in a desktop package: roms/ may hold the floppy and
+    # printer samples and the README, nothing else (bundle.manifest §
+    # Firmware and dumps).
     if [ -d "$dest/roms" ]; then
         local dump
         dump="$(find "$dest/roms" -type f ! -path "$dest/roms/floppy_samples/*" \
+                    ! -path "$dest/roms/printer_samples/*" \
                     ! -path "$dest/roms/README.txt" 2>/dev/null | head -1)"
         if [ -n "$dump" ]; then
             printf 'FIRMWARE %s (desktop packages ship no ROM dump)\n' "${dump#"$dest"/}" >&2

@@ -43,7 +43,7 @@ public:
         /// True when the build has libslirp. Drives the "why is there no
         /// transport" hint rather than leaving the user guessing.
         bool slirpCompiledIn = false;
-        /// Settings value: "slirp" | "loopback" | "none".
+        /// Settings value: "slirp" | "builtin" | "loopback" | "none".
         std::string backendChoice = "slirp";
 
         // ── Uthernet I (CS8900A) ──────────────────────────────────────

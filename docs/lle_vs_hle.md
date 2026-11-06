@@ -135,7 +135,7 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **Uthernet I** (`Cs8900aDevice`) | **L1** | Verbatim MAME `machine/cs8900a.cpp` (VICE lineage), packet-level | RX is pull-mode — POM2 has no `device_network_interface` push bus |
 | **Uthernet II** (`W5100Device`) | **L1 — and see below** | Register/socket model per AppleWin + WIZnet datasheet; each W5100 socket owns a real host BSD socket | **The chip is itself an offload engine** — host sockets *are* the faithful model, not a shortcut |
 | **FujiNet card** (`FujiNetCard`) | **H1 + relay** | Synthetic slot ROM relays device calls over SP-over-SLIP (loopback TCP or USB CDC-ACM); controller device-count status is local, and the optional built-in `N:` service handles plain HTTP in POM2 | Peer-backed functions remain off-box; the local `N:` is a plain-HTTP host service, not full FujiNet firmware. References are the published spec and FujiNet AppleWin fork; MAME has no FujiNet device |
-| **Network transport** (`NetworkBackend`) | **H2** | Null / Loopback / libslirp user-mode NAT | Outbound-only by design: no root, no TAP/pcap |
+| **Network transport** (`NetworkBackend`) | **H2** | Null / Loopback / libslirp user-mode NAT / POM2's built-in NAT (`BuiltinNatBackend`, where there is no libslirp) | Outbound-only by design: no root, no TAP/pcap. The built-in NAT answers DNS from the host resolver instead of relaying it |
 | **Clock card** (`ClockCard`) | **L2** | uPD1990AC bit-bang state machine per MAME `upd1990a.cpp`, driving the **real Thunderware Rev 1.3 EPROM** — `roms/thunderclock_u9_v1.3.bin` is in-repo and `tryLoadDump()` runs from the ctor, 2 KB mirrored into `$C800-$CFFF`. Synthetic ROM is the fallback only | Already there. The dump settled the 40-bit-vs-48-bit shift-register question by disassembly (`$CACF` emits 4 CLK × 10 = 40), and **NEC's own data sheet confirmed it from the other side on 2026-11-01** — Fig. 1 is headed "40 Bit Shift Register" (`1983 NEC Integrated Circuits for Consumer Use`, pp. 792-805, bitsavers) |
 | **No-Slot Clock** (`NoSlotClock`) | **L1** | Full DS1216E SmartWatch 64-bit pattern-match state machine driven by both reads and writes in the active clock window (`NoSlotClock::interceptRead` / `interceptWrite`), against **Dallas's own data sheet** since 2026-11-01 (`1992 Dallas Semiconductor Product Data Book`, pp. 5-22..5-25) | One divergence kept on purpose: the DAY register's oscillator / RESET control bits are read back as 0 and ignored on a write, so a guest cannot stop POM2's clock — see `NoSlotClock.cpp` |
 | **Printer card** (`PrinterCard`) | **H1** | Synthetic ROM whose entire job is the PR#n CSWL/CSWH hook + a 4-byte trampoline; the data port spools to a `std::vector` | No PROM dump. The Pascal 1.1 signature IS emitted (`$Cn05=$38`, `$Cn07=$18`, `$Cn0B=$01`, `$Cn0C=$10` — class 1 in the high nibble, `PrinterCard.cpp:141-146`, `PascalPrinterRom.h:43`) so ProDOS publishes the card in its device list, and since 2026-09-29 the `$Cn0D-$Cn10` entry table and its PINIT / PREAD / PWRITE / PSTATUS routines are real (`pom2::assemblePascalPrinterEntries`; pinned `printer_card_smoke`) |
@@ -197,7 +197,8 @@ packet-level model").
 The payoff is concrete: the Uthernet II needs **no Ethernet backend at all**.
 Period IRC, telnet and FTP clients work on any machine without privileges or
 libslirp. Contrast the Uthernet I, whose CS8900A really is a packet-level NIC
-and therefore really does need a transport.
+and therefore really does need a transport — libslirp, or POM2's built-in
+network on a build without it.
 
 **Lesson**: "this looks like HLE" is sometimes just "this chip's own
 abstraction level is high". Judge the boundary against the datasheet, not
@@ -401,7 +402,7 @@ Ordered by how much the gate has changed since the original decision.
 | **CFFA CHD backing** | L2 (raw LBA) | Not scheduled | CHD is not implemented; the standing scope decision closes this extension as out of scope, rather than promising a phase 2 |
 | **Display per-scanline incremental** | L1 beam-raced | L0 | Would fix the documented unidirectional mid-frame page-split limit (renders full-page today) |
 | **Composite analog IIR** | L1 (1-bit + FIR) | L1+ | Marked academic in TODO, *5–10 d* |
-| **SSI263 formant synth** | H1 audio | L1 | No reference implementation exists anywhere; would be original DSP work |
+| **SSI263 formant synth** | H1 audio | L1 | No VALIDATED reference exists: MAME's `ssi263hle.cpp` is a self-declared-wrong Votrax SC-01A stand-in, and Casso's register-driven formant synthesiser (MIT, `CassoEmuCore/Devices/Ssi263.cpp` @ 2d899adf) is hand-tuned against a recording that is not in its repository. Still original DSP work, with Casso's ROM-table read as a starting point |
 | **Le Chat Mauve Eve decoder + video tap** | L1 (registers + measured pixel rules; mode latch beam-raced) | L0 combinational on a 14 MHz tap | Plan P3 is closed as bounded — the decoded PLS100 is a router, so DASH, COL280 bit order and SPEC1/2 need a schematic or board trace, not the fuse map. P6 (the rest of the mid-line switches land at the dot) is open. P5 inferred-80COL on the //c adapter is optional. P4 RVB Graph beyond its four strobes is gated on its manual |
 
 ### Keeping a level once you have it

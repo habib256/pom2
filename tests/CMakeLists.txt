@@ -128,6 +128,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
     ${CMAKE_SOURCE_DIR}/src/SnapshotIO.cpp
     ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp
@@ -872,6 +873,7 @@ add_executable(test_iicplus_boot_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -905,6 +907,7 @@ add_executable(test_iic_boot_trace
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -940,6 +943,7 @@ add_executable(test_iic_nodisk_boot_trace
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -975,6 +979,7 @@ add_executable(test_choplifter_iie_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1267,6 +1272,7 @@ add_executable(test_rewind_audio_state
     ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -1615,6 +1621,7 @@ add_executable(test_media_write_default
     ${POM2_TEST_CORE_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -1777,6 +1784,41 @@ target_link_libraries(test_prodos_volume PRIVATE Threads::Threads)
 
 add_test(NAME prodos_volume_smoke COMMAND test_prodos_volume)
 set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
+
+# A guest name that starts with a period (A2osX's /ROOT/.PROFILE) leaves the
+# host folder under the CiderPress %xx escape and comes back intact; nothing
+# that starts with a dot is created on the host.
+add_executable(test_prodos_dot_names
+    prodos_dot_names_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileTag.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
+)
+target_include_directories(test_prodos_dot_names PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_prodos_dot_names PRIVATE Threads::Threads)
+
+add_test(NAME prodos_dot_names COMMAND test_prodos_dot_names)
+set_tests_properties(prodos_dot_names PROPERTIES TIMEOUT 5)
+
+# ─── ProDOS, in place (ProDOSDiskFs.h — pom2_prodos's library) ────────────
+# format / write / read / remove / mkdir on a volume image, every structure as
+# the Technical Reference defines it (its § B.3.1 worked example is reproduced
+# block for block). The second opinion is POM2's OTHER ProDOS code: every
+# volume built here is decoded by decodeVolumeToFolder and compared, and a
+# volume built by buildVolumeFromFolder is opened, changed in place and decoded
+# again. Hostile images (1800 of them) must be refused or bounded, and a
+# refused change must leave the image byte-identical.
+add_executable(test_prodos_disk_fs
+    prodos_disk_fs_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileTag.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
+)
+target_include_directories(test_prodos_disk_fs PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_prodos_disk_fs PRIVATE Threads::Threads)
+add_test(NAME prodos_disk_fs COMMAND test_prodos_disk_fs)
+set_tests_properties(prodos_disk_fs PROPERTIES TIMEOUT 60)
 
 # ─── A failed host-folder write-back must not freeze what it wrote ────────
 # decodeVolumeToFolder stops at the first I/O error, so a failed pass leaves
@@ -2094,6 +2136,23 @@ add_test(NAME audio_mixer_smoke
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(audio_mixer_smoke PROPERTIES TIMEOUT 10)
 
+# ─── CrtPresets: the glass settings per monitor (preset + sparse overrides) ──
+# Pure policy: presets are POM2's defaults (plus a glow on monochrome), one
+# override moves one field of one monitor, keys are distinct, ranges clamp.
+add_executable(test_crt_presets crt_presets_test.cpp)
+target_include_directories(test_crt_presets PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME crt_presets COMMAND test_crt_presets)
+set_tests_properties(crt_presets PROPERTIES TIMEOUT 10)
+
+# ─── AudioDeviceWatch: when a lost or changed output device is re-opened ─────
+# Pure policy (rerouted / stopped / stalled, the back-off, what must not
+# trigger) — no audio device, no source file.
+add_executable(test_audio_device_watch audio_device_watch_test.cpp)
+target_include_directories(test_audio_device_watch PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME audio_device_watch COMMAND test_audio_device_watch)
+set_tests_properties(audio_device_watch PROPERTIES TIMEOUT 10)
+
+
 # ─── Host audio device buffer ladder ──────────────────────────────────────
 # AudioBufferPolicy.h (the rungs, the late-callback rule, the climb) and
 # AudioDevice::reconfigurePeriod (a hot re-open that keeps the sources and
@@ -2266,6 +2325,7 @@ add_executable(test_disk_image
     disk_image_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_image PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2277,6 +2337,7 @@ add_executable(test_disk_wp
     disk_wp_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_wp PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME disk_wp COMMAND test_disk_wp)
@@ -2291,6 +2352,7 @@ add_executable(test_disk_media_state
     disk_media_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -2315,6 +2377,7 @@ add_executable(test_two_phase_mount
     two_phase_mount_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -2366,6 +2429,7 @@ add_executable(test_d13_roundtrip
     d13_roundtrip_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_d13_roundtrip PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME d13_roundtrip_smoke COMMAND test_d13_roundtrip)
@@ -2379,6 +2443,7 @@ add_executable(test_disk_skew_sniff
     disk_skew_sniff_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_skew_sniff PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2393,6 +2458,7 @@ add_executable(test_disk_macbinary
     disk_macbinary_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_macbinary PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2407,6 +2473,7 @@ add_executable(test_disk_cnib2
     disk_cnib2_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_cnib2 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2422,6 +2489,7 @@ add_executable(test_disk_2mg
     disk_2mg_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_2mg PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2438,6 +2506,7 @@ add_executable(test_disk_2mg_writeback
     disk_2mg_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_2mg_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2454,6 +2523,7 @@ add_executable(test_disk_refuse
     disk_refuse_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_refuse PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -2471,6 +2541,7 @@ add_executable(test_diskii_lss
     diskii_lss_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2533,6 +2604,7 @@ add_executable(test_mame_lss_parity
     mame_lss_parity_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2572,12 +2644,118 @@ add_executable(test_disk_writeback
     disk_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 add_test(NAME disk_writeback_smoke COMMAND test_disk_writeback)
 set_tests_properties(disk_writeback_smoke PROPERTIES TIMEOUT 5)
 
+# ─── Mounted image vs the world: external change, damaged WOZ, partial track ─
+# A file another program rewrote while mounted is left alone and the guest's
+# disk goes to a sibling; a damaged WOZ mounts read-only instead of being
+# refused or mounted writable; a dirty track of which some sectors no longer
+# decode is refused whole, with the surface saved as a WOZ beside the image.
+add_executable(test_media_external_change
+    media_external_change_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+)
+target_include_directories(test_media_external_change PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_test(NAME media_external_change COMMAND test_media_external_change)
+set_tests_properties(media_external_change PROPERTIES TIMEOUT 20)
+
+
+# ─── Applesoft text -> program (ApplesoftTokenizer.h) ─────────────────────
+# The inverse of ApplesoftListing, derived from the ROM's own PARSE ($D559):
+# blanks dropped except in strings / REM / DATA, the AT / ATN / "A TO" case,
+# "?" as PRINT, the //e's case fold, the 238-byte body limit. Every keyword
+# round-trips through the lister (one table, so the two cannot drift), and
+# tokenize -> list -> tokenize is byte-identical at two load addresses.
+add_executable(test_applesoft_tokenizer
+    applesoft_tokenizer_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplesoftTokenizer.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplesoftListing.cpp
+)
+target_include_directories(test_applesoft_tokenizer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME applesoft_tokenizer COMMAND test_applesoft_tokenizer)
+set_tests_properties(applesoft_tokenizer PROPERTIES TIMEOUT 20)
+
+# ─── AppleSingle decode / encode (AppleSingle.h) ──────────────────────────
+# How cc65, CiderPress and Cadius carry a ProDOS file's type and aux type.
+# The input is a file the user dropped: every offset and length is checked in
+# 64-bit arithmetic before anything is allocated, and the hostile cases are
+# the bulk of the test (a 4 GiB length, overlapping entries, 65535 entries).
+add_executable(test_apple_single
+    apple_single_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleSingle.cpp
+)
+target_include_directories(test_apple_single PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME apple_single COMMAND test_apple_single)
+set_tests_properties(apple_single PROPERTIES TIMEOUT 20)
+
+# ─── What a host file becomes on an Apple volume (HostFileImport.h) ───────
+# One decision for pom2_dos33 and pom2_prodos: an AppleSingle wrapper states
+# the type itself, else the host name does, and an Applesoft file that is a
+# typed LISTING is tokenized (at the address its tag names) — the stored
+# program is left byte for byte.
+add_executable(test_host_file_import
+    host_file_import_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileImport.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileTag.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleSingle.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplesoftTokenizer.cpp
+    ${CMAKE_SOURCE_DIR}/src/ApplesoftListing.cpp
+)
+target_include_directories(test_host_file_import PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME host_file_import COMMAND test_host_file_import)
+set_tests_properties(host_file_import PROPERTIES TIMEOUT 20)
+
+# ─── The three disk tools, as a user types them (disk_tools_smoke.cmake) ───
+# Arguments, exit codes, the names `get` gives and `put` reads back, and that
+# pom2_disk, pom2_dos33 and pom2_prodos agree with each other.
+if(TARGET pom2_disk AND TARGET pom2_dos33 AND TARGET pom2_prodos)
+    add_test(NAME disk_tools_smoke
+             COMMAND ${CMAKE_COMMAND}
+                     -DTOOLS=$<TARGET_FILE_DIR:pom2_disk>
+                     -DWORK=${CMAKE_BINARY_DIR}/disk_tools_smoke
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/disk_tools_smoke.cmake)
+    set_tests_properties(disk_tools_smoke PROPERTIES TIMEOUT 120)
+endif()
+
+# ─── A damaged WOZ made healthy, and what it lost (WozRecover.h) ──────────
+# The sound image comes from POM2's OWN writer (DiskImage + buildWozFromSurface),
+# an encoder that shares no table with the module, and every recovered file is
+# loaded back by DiskImage, which must find nothing to warn about. Bit rot
+# (reported, never "fixed"), a file cut short (padded, lost tracks unmapped,
+# the rest bit-identical), a record pointing outside the file, a broken chunk
+# chain (the reference's fixed positions), hostile bytes, 13 sectors.
+add_executable(test_woz_recover
+    woz_recover_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/WozRecover.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+)
+target_include_directories(test_woz_recover PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME woz_recover COMMAND test_woz_recover)
+set_tests_properties(woz_recover PROPERTIES TIMEOUT 60)
+
+# ─── What a WOZ says about its machine (WozCompat.h) ──────────────────────
+# The reference's "Compatible Hardware" and "Required RAM" fields: the list,
+# the one-line warning (silent when the image names no machine or this one),
+# the bit of every profile, and the two fields as DiskImage reads them.
+add_executable(test_woz_compat
+    woz_compat_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+)
+target_include_directories(test_woz_compat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME woz_compat COMMAND test_woz_compat)
+set_tests_properties(woz_compat PROPERTIES TIMEOUT 20)
 
 # ─── Disk II controller write-side smoke test ────────────────────────────
 # Drives the controller as a CPU would (write-mode + cycle-paced Q6H stores)
@@ -2590,6 +2768,7 @@ add_executable(test_disk_write_controller
     disk_write_controller_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2620,6 +2799,7 @@ add_executable(test_woz_load
     woz_load_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2660,6 +2840,7 @@ add_executable(test_woz_bit_timing
     woz_bit_timing_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_woz_bit_timing PRIVATE ${CMAKE_SOURCE_DIR}/src)
 if(UNIX AND NOT APPLE)
@@ -2916,6 +3097,7 @@ add_executable(test_disk_drive2
     disk_drive2_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2959,6 +3141,7 @@ add_executable(test_disk_boot
     disk_boot_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -2995,6 +3178,7 @@ add_executable(test_diskii_pom2_boot_prom
     diskii_pom2_boot_prom_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3025,12 +3209,68 @@ endif()
 add_test(NAME diskii_pom2_boot_prom COMMAND test_diskii_pom2_boot_prom)
 set_tests_properties(diskii_pom2_boot_prom PROPERTIES TIMEOUT 60)
 
+# The disks DiskBuilder.h makes, BOOTED: POM2's 6502, Memory and Disk II card
+# reading the image through the drive model. A disk that loads a binary with no
+# operating system (three tracks of it, so the loader's own head stepping runs
+# on a real drive model; and a load that is not page-aligned, entered three
+# bytes in), and the two blank disks, which must say "NOT A STARTUP DISK"
+# instead of running zeros. Under POM2's boot PROM and under Apple's when
+# roms/disk2.rom is there; as .dsk, .po and .woz; from slots 6 and 5.
+add_executable(test_disk_builder_boot
+    disk_builder_boot_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_disk_builder_boot PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_disk_builder_boot PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_disk_builder_boot PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_disk_builder_boot PRIVATE winmm)
+endif()
+add_test(NAME disk_builder_boot COMMAND test_disk_builder_boot
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(disk_builder_boot PROPERTIES TIMEOUT 120)
+
+# The same builder, on paper: layout, every VTOC field, a 6502 walker over both
+# boot sectors, and an interpreter with a fake PROM (disk_builder_test.cpp).
+add_executable(test_disk_builder
+    disk_builder_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
+    ${CMAKE_SOURCE_DIR}/src/Dos33DiskFs.cpp
+)
+target_include_directories(test_disk_builder PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME disk_builder COMMAND test_disk_builder)
+set_tests_properties(disk_builder PROPERTIES TIMEOUT 60)
+
 # POM2's own read sequencer (no P6): the same nibble stream and hold windows
 # as Apple's 341-0028-A on a real WOZ, the same boot, and no writing.
 add_executable(test_diskii_own_sequencer
     diskii_own_sequencer_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3071,6 +3311,7 @@ add_executable(test_dos32_boot_trace
     dos32_boot_trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3111,6 +3352,7 @@ add_executable(test_dos33_save
     dos33_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3151,6 +3393,7 @@ add_executable(test_diskii_format
     diskii_format_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3189,6 +3432,7 @@ add_executable(test_ssc_fallback_dos
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3224,6 +3468,7 @@ add_executable(test_clock_card_dos_driver
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3266,6 +3511,7 @@ add_executable(test_diskii_unformatted
     diskii_unformatted_disk_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3310,6 +3556,7 @@ add_executable(test_diskii_write_integrity
     diskii_write_integrity_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3350,6 +3597,7 @@ add_executable(test_prodos_save
     prodos_save_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3390,6 +3638,7 @@ add_executable(test_sector_order
     sector_order_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3430,6 +3679,7 @@ add_executable(test_no_slot_clock_prodos_driver
     no_slot_clock_prodos_driver_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3467,6 +3717,7 @@ add_executable(c2plus_boot_probe EXCLUDE_FROM_ALL
     c2plus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3502,6 +3753,7 @@ add_executable(copy2plus_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/ClockCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3565,6 +3817,7 @@ add_executable(iic_a2fc_printer_port_probe EXCLUDE_FROM_ALL
     iic_a2fc_printer_port_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -3583,6 +3836,7 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     hdv_boot_dump.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4079,6 +4333,7 @@ add_executable(madef_phase_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -4106,6 +4361,7 @@ add_executable(u5_woz_save_probe EXCLUDE_FROM_ALL
     u5_woz_save_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -4137,6 +4393,7 @@ add_executable(dd2_ay_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -4275,6 +4532,7 @@ add_executable(test_drol_probe
     drol_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4302,6 +4560,7 @@ add_executable(test_diskii_motor_coast
     diskii_motor_coast_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4327,6 +4586,7 @@ add_executable(test_diskii_step_rewind
     diskii_step_rewind_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4362,6 +4622,7 @@ add_executable(test_purplesoft_eve_screens
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4396,6 +4657,7 @@ add_executable(test_chatmauve_feline_screens
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4430,6 +4692,7 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4466,6 +4729,7 @@ add_executable(test_purplesoft_eve_probe
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -4809,6 +5073,7 @@ add_executable(test_bus_fastpath
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -4840,6 +5105,7 @@ add_executable(test_memory_cpu_view
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -5660,6 +5926,7 @@ add_executable(test_slot_config
     slot_config_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -5919,6 +6186,7 @@ add_executable(test_phasor_card
     phasor_speech_cases.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -5942,6 +6210,7 @@ add_executable(test_phasor_timeline
     phasor_timeline_test.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -5995,6 +6264,7 @@ add_executable(test_audio_stereo
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6021,11 +6291,27 @@ set_tests_properties(audio_stereo PROPERTIES TIMEOUT 10)
 add_executable(test_ssi263
     ssi263_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
 )
 target_include_directories(test_ssi263 PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME ssi263_smoke COMMAND test_ssi263)
 set_tests_properties(ssi263_smoke PROPERTIES TIMEOUT 5)
+
+# ─── SSI 263 formant voice ───────────────────────────────────────────────
+# The second voice (Ssi263Formant.h): the data-sheet formulas, pitch follows
+# the inflection register (the recorded voice ignores it), vowel vs sibilant,
+# host-rate independence, silence, determinism. Not whether it sounds like
+# the chip — nothing in the tree can measure that.
+add_executable(test_ssi263_formant
+    ssi263_formant_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
+)
+target_include_directories(test_ssi263_formant PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME ssi263_formant COMMAND test_ssi263_formant)
+set_tests_properties(ssi263_formant PROPERTIES TIMEOUT 20)
 
 
 # ─── Echo+ card smoke test ───────────────────────────────────────────────
@@ -6036,6 +6322,7 @@ add_executable(test_echoplus_card
     echoplus_card_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/EchoPlusCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -6067,6 +6354,7 @@ add_executable(test_cli_kiosk
     ${CMAKE_SOURCE_DIR}/src/CliDispatcher.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 # CliDispatcher.cpp includes the generated Version.h (`--version`).
 target_include_directories(test_cli_kiosk PRIVATE
@@ -6163,6 +6451,7 @@ add_executable(test_mockingboard
     mockingboard_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6189,6 +6478,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6220,6 +6510,7 @@ add_executable(test_mockingboard_audio_quality
     mockingboard_audio_quality_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6246,6 +6537,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6281,6 +6573,7 @@ add_executable(test_mockingboard_sync
     mockingboard_sync_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6307,6 +6600,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6340,6 +6634,7 @@ add_executable(test_mockingboard_4am_detect
     mockingboard_4am_detect_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6366,6 +6661,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6400,6 +6696,7 @@ add_executable(test_mockingboard_irq_delivery
     mockingboard_irq_delivery_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6426,6 +6723,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6460,6 +6758,7 @@ add_executable(test_mockingboard_iie_irq
     mockingboard_iie_irq_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -6486,6 +6785,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -6643,6 +6943,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
@@ -6700,6 +7001,7 @@ add_executable(test_woz_writeback
     woz_writeback_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_woz_writeback PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
@@ -6716,6 +7018,7 @@ add_executable(hero_probe EXCLUDE_FROM_ALL
     hero_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -6916,6 +7219,7 @@ add_executable(test_disk_writeflux_framing
     disk_writeflux_framing_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_disk_writeflux_framing PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME disk_writeflux_framing COMMAND test_disk_writeflux_framing)
@@ -7489,6 +7793,7 @@ add_executable(test_softcard_ssc_bterm
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7540,6 +7845,7 @@ add_executable(test_als_cpm_card
     ${CMAKE_SOURCE_DIR}/src/SuperSerialCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7587,6 +7893,7 @@ add_executable(test_softcard2_card
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7625,6 +7932,7 @@ add_executable(test_a2audit
     a2audit_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7664,9 +7972,11 @@ add_executable(test_mb_audit
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/PhasorCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7707,6 +8017,7 @@ add_executable(test_applicard_card
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7752,6 +8063,7 @@ add_executable(test_os_call_trace
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7793,6 +8105,7 @@ add_executable(test_premium_softcard
     ${CMAKE_SOURCE_DIR}/src/Z80.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7832,6 +8145,7 @@ add_executable(test_saturn_card
     ${CMAKE_SOURCE_DIR}/src/SaturnCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -7924,6 +8238,7 @@ add_executable(test_ccs7710_card
     ${CMAKE_SOURCE_DIR}/src/SoftCard2Protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -8216,6 +8531,7 @@ add_executable(test_iic_diskii_no_iwm_conflict
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_iic_diskii_no_iwm_conflict PRIVATE
     ${CMAKE_SOURCE_DIR}/src ${POM2_GENERATED_DIR})
@@ -8277,6 +8593,7 @@ add_executable(iicplus_boot_probe EXCLUDE_FROM_ALL
     iicplus_boot_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -8309,6 +8626,7 @@ add_executable(test_iic_plus_boot_write
     iic_plus_boot_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -8400,6 +8718,7 @@ set(POM2_DD1_AB_COMMON
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
@@ -8567,6 +8886,7 @@ add_executable(test_audio_source_teardown
     audio_source_teardown_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
@@ -8659,6 +8979,7 @@ add_executable(test_mockingboard_timeline
     mockingboard_timeline_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -8685,6 +9006,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -8714,6 +9036,7 @@ add_executable(dix_return_crash_probe EXCLUDE_FROM_ALL
     dix_return_crash_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
@@ -8907,6 +9230,10 @@ add_executable(test_printer_sound
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
 )
 target_include_directories(test_printer_sound PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# The recorded ImageWriter II bank is tracked (CC BY 4.0), so the test reads
+# it from the source tree whatever directory it runs in.
+target_compile_definitions(test_printer_sound PRIVATE
+    POM2_PRINTER_SAMPLES_DIR="${CMAKE_SOURCE_DIR}/roms/printer_samples")
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_printer_sound PRIVATE Threads::Threads m)
 endif()
@@ -9087,6 +9414,34 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom")
     set_tests_properties(headless_boot_capture PROPERTIES TIMEOUT 120)
 endif()
 
+# --until / --cycles / --registers: a run that ENDS, and says how. $FD1B is the
+# Monitor's KEYIN, where a ][+ with no disk waits for a key: the stop lands on
+# that address exactly, and the register line says so. $0300 is never executed
+# by a machine sitting at its prompt, so a 200 000-cycle budget runs out
+# (exit 4, message pinned) — and a cycle budget on its own ends within one
+# instruction of the count asked for.
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom")
+    add_test(NAME headless_until_address
+             COMMAND pom2_headless --until "$FD1B" --registers
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_until_address PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "PC=FD1B A=[0-9A-F][0-9A-F] ")
+    add_test(NAME headless_until_budget
+             COMMAND pom2_headless --until 0x0300 --cycles 200000
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_until_budget PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "\\$0300 was not reached in 20000[0-9] cycles")
+    add_test(NAME headless_until_budget_exit
+             COMMAND pom2_headless --until 0x0300 --cycles 200000
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_until_budget_exit PROPERTIES TIMEOUT 120 WILL_FAIL TRUE)
+    add_test(NAME headless_cycle_budget
+             COMMAND pom2_headless --cycles 500000 --registers
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_cycle_budget PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "CYCLES=50000[0-9]")
+endif()
+
 # --softcard + --type + --text-dump: boot the tracked SoftCard CP/M master,
 # type DIR at second 14, and find a file of its listing on the text page.
 # The suite's media are write-protected (sweep at the end of this file).
@@ -9226,6 +9581,7 @@ add_executable(test_fuzz_disk_image
     fuzz_disk_image_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
     ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
@@ -9472,6 +9828,17 @@ pom2_add_headless_test(test_card_snapshot_contract
     LINK_LIBRARIES pom2_core_test)
 # The factory-built half needs the shipped firmware dumps.
 set_tests_properties(card_snapshot_contract PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Which accesses make a card let go of $C800-$CFFF: the convention ($CFFF,
+# RESET keeps it — Apple's Fig. 8) and the four cards whose schematics say
+# otherwise (SSC, Grappler, Grappler+, Liron, CFFA 2.0). The ROM half reads
+# the dumps when they are present.
+pom2_add_headless_test(test_c800_release
+    NAME c800_release TIMEOUT 20
+    SOURCES c800_release_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(c800_release PROPERTIES
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 pom2_add_headless_test(test_storage_coordinator
@@ -9922,6 +10289,7 @@ add_test(NAME pom2_imageconv_consumer
         -DPOM2_SOURCE_DIR=${CMAKE_SOURCE_DIR}
         -DPOM2_TEST_CONFIG=$<CONFIG>
         -DPOM2_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+        -DPOM2_TEST_SANITIZE=${POM2_SANITIZE}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/pom2_imageconv_consumer_test.cmake)
 set_tests_properties(pom2_imageconv_consumer PROPERTIES TIMEOUT 300)
 set_property(TEST pom2_imageconv_consumer APPEND PROPERTY LABELS slow)
@@ -10043,6 +10411,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     dix_menu_raster_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
@@ -10062,6 +10431,7 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10085,6 +10455,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     oldskool_raster_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
@@ -10104,6 +10475,7 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10127,6 +10499,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     oldskool_crash_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPort35Unit.cpp
     ${CMAKE_SOURCE_DIR}/src/SmartPortCard.cpp
@@ -10146,6 +10519,7 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10169,6 +10543,7 @@ add_executable(test_mockingboard_t1_irq_phase
     mockingboard_t1_irq_phase_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
@@ -10195,6 +10570,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
     ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
     ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
@@ -10311,6 +10687,7 @@ add_executable(test_diskii_write_burst
     diskii_write_burst_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10340,6 +10717,7 @@ add_executable(test_woz_nibble_write
     woz_nibble_write_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
 )
 target_include_directories(test_woz_nibble_write PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME woz_nibble_write COMMAND test_woz_nibble_write)
@@ -10360,6 +10738,35 @@ target_include_directories(test_snapshot_partial_apply
     PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME snapshot_partial_apply COMMAND test_snapshot_partial_apply)
 set_tests_properties(snapshot_partial_apply PROPERTIES TIMEOUT 10)
+
+# ─── The built-in virtual network (the transport with no libslirp) ─────────
+# The test is the guest AND, through the NatHost.h seam, the remote peer, with
+# its own clock: codec, the loopback fence as a table (the gateway is NOT the
+# host's loopback; one opt-in opens it and nothing else), ARP / ping / DHCP,
+# DNS answered from the host resolver with ONE lookup per name however often
+# the guest repeats itself, UDP (replies only from an address written to),
+# TCP (handshake held for the host connect, window and MSS, retransmission,
+# both closes, refusal as a reset). Then the same over real sockets on
+# 127.0.0.1, where a listener is reached with the opt-in and never without.
+add_executable(test_builtin_nat
+    builtin_nat_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/BuiltinNatBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatPacket.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatDhcp.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatDns.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatUdp.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatTcp.cpp
+    ${CMAKE_SOURCE_DIR}/src/NatHostSockets.cpp
+    ${CMAKE_SOURCE_DIR}/src/W5100NameResolver.cpp)
+target_include_directories(test_builtin_nat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_builtin_nat PRIVATE Threads::Threads)
+endif()
+if(WIN32)
+    target_link_libraries(test_builtin_nat PRIVATE ws2_32)
+endif()
+add_test(NAME builtin_nat COMMAND test_builtin_nat)
+set_tests_properties(builtin_nat PROPERTIES TIMEOUT 60)
 
 # ─── The libslirp half of the loopback perimeter (bug hunt #14, 2026-09-09) ─
 # `cfg.disable_host_loopback` only refuses the ALIAS route (10.0.2.2); a
@@ -10595,6 +11002,7 @@ add_executable(test_diskii_track_reach_weak
     diskii_track_reach_weak_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10631,6 +11039,7 @@ add_executable(test_disk_protection_signals
     disk_protection_signals_test.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10689,6 +11098,7 @@ add_test(NAME test_property_sweep
 add_executable(test_ssi263_phoneme_map
     ssi263_phoneme_map_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
 )
 target_include_directories(test_ssi263_phoneme_map PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -10851,6 +11261,7 @@ add_executable(lss_window_probe EXCLUDE_FROM_ALL
     lss_window_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
@@ -10873,6 +11284,7 @@ add_executable(lss_write_probe EXCLUDE_FROM_ALL
     lss_write_probe.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp

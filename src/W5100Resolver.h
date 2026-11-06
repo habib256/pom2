@@ -52,6 +52,12 @@ public:
     /// Resolve within `waitMs`, answering from cache without waiting.
     virtual Result resolve(const std::string& name, int waitMs) = 0;
 
+    /// The answer already in hand, or `Pending` when there is none. Never
+    /// starts a lookup and never spends a rate token — it is how a caller
+    /// that got `Pending` from resolve() asks again without asking the
+    /// network again (NatDns.cpp). A resolver with no cache answers Pending.
+    virtual Result peek(const std::string& /*name*/) { return Result{ Status::Pending, 0 }; }
+
     /// Fold any late answers in. Called from the CPU thread only.
     virtual void poll() = 0;
 

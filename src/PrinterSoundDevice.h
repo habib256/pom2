@@ -20,9 +20,28 @@
 // SYNTHESISED, not sampled — and unlike every other sound in POM2, that is
 // not a fallback. Port of the model in mikedaley/web-a2e's
 // `src/js/printer/printer-sound.js` (MIT, Shawn Bullock), which ships no audio
-// assets at all: there is no free ImageWriter sample set the way MAME provides
-// one for floppy drives, so nothing exists to load. POM2 keeps
-// `roms/floppy_samples/` for the drives and generates the printer instead.
+// assets at all. POM2 keeps `roms/floppy_samples/` for the drives and
+// generates the printer instead.
+//
+// ── …and a RECORDED bank beside it (2026-11-05) ───────────────────────────
+//
+// This comment said until 2026-11-05 that no free ImageWriter sample set
+// exists. One does: Scott Lawrence's recordings of a real ImageWriter II
+// (github.com/BleuLlama/ImageWriterIISimulator `Sounds/`, CC BY 4.0), shipped
+// unmodified in `roms/printer_samples/` with their attribution. When that
+// bank is loaded and selected it replaces the grains:
+//
+//   * the head is one of three carriage LOOPS — draft, standard, NLQ — kept
+//     running while strikes arrive and released when they stop, picked by
+//     the quality the printer reports (`printQuality`);
+//   * a line feed is one of three platen clacks, taken in turn;
+//   * a long feed (a form feed) is one of three page-feed takes, by length;
+//   * tearing the sheet off and the power switch have their own takes.
+//
+// The recordings are of an ImageWriter II and nothing else: on an Epson or a
+// daisy wheel they are the wrong machine, and the synthesiser stays the
+// honest choice there. Which take goes with which event is this file's
+// judgement, not the recordist's — [F], settled by nothing but ears.
 //
 // ── The model, and why it is grains ───────────────────────────────────────
 //
@@ -88,6 +107,21 @@ public:
     void carriageReturn(double inches) override;
     void paperFeed(double inches) override;
     void power(bool on) override;
+    void printQuality(int tier) override;
+    void tearOff() override;
+
+    /// Scott Lawrence's ImageWriter II recordings, from `dir` (typically
+    /// `roms/printer_samples`). True when the three carriage loops and at
+    /// least one line-feed take decoded; the other takes are optional and a
+    /// missing one is simply silent.
+    bool loadRecordedBank(const std::string& dir);
+    bool recordedReady() const { return recReady_.load(std::memory_order_acquire); }
+    /// Play the recorded bank instead of the grains. The Virtual ][ loop,
+    /// when it is selected, still wins — it is the user's explicit choice.
+    void setRecorded(bool on);
+    bool recorded() const { return useRecorded_.load(std::memory_order_acquire); }
+    /// One-shot takes currently sounding (line feed, page feed, tear, power).
+    int activeShots() const;
 
     /// Virtual ][ "Matrix Printer" recording. When `setSampled` is on and
     /// the file decoded, strikes / feeds / returns keep this loop running
@@ -146,8 +180,49 @@ private:
     void  schedule(double durSeconds, double freqHz, double q, double hpHz,
                    double peak, double spacingSeconds, double jitterHz);
     void  armLoop(double seconds);
-    void  mixLoop(float* output, int frameCount, uint64_t base, float vol);
+    void  mixLoop(const std::vector<float>& loop, uint32_t loopRate,
+                  float* output, int frameCount, uint64_t base, float vol);
     float noise();
+
+    // ── Recorded bank ─────────────────────────────────────────────────────
+    struct Take {
+        std::vector<float> data;
+        uint32_t           rate = 44100;
+    };
+    static constexpr int kQualities = 3;   ///< 0 standard, 1 draft, 2 NLQ
+    static constexpr int kPowerUps  = 6;
+    Take recLoop_[kQualities];
+    Take recLineFeed_[3];
+    Take recPageFeed_[3];                  ///< short, medium, long
+    Take recTear_[5];
+    Take recPowerSwitch_;
+    Take recPowerUp_[kPowerUps];
+    std::atomic<bool> recReady_{false};
+    std::atomic<bool> useRecorded_{false};
+    std::atomic<int>  quality_{1};         ///< draft, the power-on default
+
+    /// A one-shot take being played. Triggered on the UI thread and mixed on
+    /// the audio thread, both under `mtx_`.
+    struct Shot {
+        const Take* take = nullptr;
+        double      pos  = 0.0;
+        float       gain = 0.0f;
+    };
+    static constexpr int kMaxShots = 4;
+    Shot     shots_[kMaxShots];
+    unsigned lineFeedTurn_ = 0, tearTurn_ = 0, powerUpTurn_ = 0;
+    uint64_t lastClackFrame_ = 0;
+    bool     anyClack_ = false;
+    /// Start `take` (if it decoded) on a free voice; the oldest is replaced
+    /// when all are busy. Caller holds `mtx_`.
+    void fire(const Take& take, float gain);
+    void mixShots(float* output, int frameCount, float vol);
+    bool recordedActive() const
+    {
+        return useRecorded_.load(std::memory_order_acquire) &&
+               recReady_.load(std::memory_order_acquire) &&
+               !useLoop_.load(std::memory_order_acquire);
+    }
 
     std::vector<float> loop_;
     uint32_t           loopRate_ = 44100;

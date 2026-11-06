@@ -28,6 +28,10 @@
 #include <fstream>
 #include <memory>
 
+// DiskImage restates the NTSC bus clock (CpuClock.h is a layer above it).
+static_assert(DiskImage::kNtscBusHz == POM2_CPU_CLOCK_HZ,
+              "DiskImage::kNtscBusHz must be POM2_CPU_CLOCK_HZ");
+
 namespace {
 // ~32 CPU cycles per nibble = 4 µs bit cells × 8 bits at 1.0227 MHz. Real
 // hardware varies with the LSS state, but DOS 3.3 / ProDOS only need
@@ -494,6 +498,7 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
     }
     DiskImage& img = images[drive];
     img = std::move(replacement);
+    img.setFluxClockHz(motorClock_.busHz());   // see syncFluxClock
     mediaErrors[drive].clear();
     trackPos[drive] = 0;
     // A media change is a DRIVE event, not a controller one. MAME's image
@@ -757,6 +762,7 @@ void DiskIICard::seekPhaseW(int phases)
             headQuarterTrack[activeDrive] == lastStep_.to &&
             cpuCycleTotal - lastStep_.cycle < kStepperResponseCycles) {
             headQuarterTrack[activeDrive] = lastStep_.from;
+            carryAngleAcrossStep(activeDrive, lastStep_.to, lastStep_.from);
             lastStep_ = PendingStep{};      // and it never clicked
             pushIwmFloppy();
             return;
@@ -777,9 +783,14 @@ void DiskIICard::seekPhaseW(int phases)
     int next = (cur & ~7) | req;
     if (next < cur - 4) next += 8;
     else if (next > cur + 4) next -= 8;
+    // Pulled below track 0: the carriage is against its stop, and the pulse
+    // is heard — the rattle of a recalibration (FloppySoundSink::bump). Only
+    // that stop: nothing a guest does drives the head against the inner one.
+    if (next < 0 && sound_) sound_->bump(cpuCycleTotal);
     next = std::clamp(next, 0, kQuarterTrackMax);
     const bool moved = (next != cur);
     head = next;
+    if (moved) carryAngleAcrossStep(activeDrive, cur, next);
     // One mechanical "click" per quarter-track of head travel. DOS 3.3
     // does a 4-phase sweep (~4 step pulses per track); fast-seeking
     // utilities issue these back-to-back, which trips the audio source's
@@ -1217,7 +1228,10 @@ void DiskIICard::lssStart()
 // same wire that the empty-drive fix already rescued. MAME reaches the same
 // place from the other end — `floppy_image_device::cache_weakness_setup`
 // flags a cell buffer of one entry or less as weak and serves hash-drawn
-// blips (floppy.cpp:1176-1215).
+// blips ([D] MAME floppy.cpp:1110-1152 @ mame0287).
+// [F] A BYTE-level stand-in (about 56 % ones), not the WOZ 2.1 reference's
+//     30 % bit stream that a weak zone gets. Settled by: feeding the
+//     sequencer a 30 % pulse train here too.
 void DiskIICard::advanceNoise(uint64_t extraCycles)
 {
     // One pseudo-random byte per 8 bit cells (4 us each → 64 LSS cycles),
@@ -1743,6 +1757,22 @@ void DiskIICard::control(int offset)
             break;
         case 0xf:
             if (!writeMode) {
+                // `active` is true through the one-second coast, so the write
+                // head can be armed with the motor latch already off. That is
+                // the Disk II's analog card, and it is ALSO the IWM this card
+                // stands in for on a //c:
+                // [B] IWM Device Specification rev 19 (Apple, 1982-09-24),
+                //     p. 7 — "The combination of L7 and Motor-On and
+                //     /underrun enables /WRREQ low"; p. 8 — "Motor-On is
+                //     synonomous with either /ENBL1 or /ENBL2 being low",
+                //     held low "about 1 second after the LMotor-On state bit
+                //     is reset to zero".
+                // [D] MAME iwm.cpp @ mame0287 gates its write state on the
+                //     LMotor-On BIT instead (and so does POM2's port of it,
+                //     IWMDevice.cpp, which only matters for 3.5" media). Do
+                //     not "align" this on it. The //c firmware never arms a
+                //     write in that window: `iic_diskii_after_smartport`
+                //     counts the bursts across a read-only copy — zero.
                 if (active) {
                     address = static_cast<uint8_t>(address | 0x08);
                     writeStartTime = static_cast<int64_t>(lssCycle);

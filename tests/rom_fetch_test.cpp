@@ -308,9 +308,10 @@ int main()
                (e.destRel ? e.destRel : "?"));
         // Archive-only entries (RetroBIOS has no copy) are named here, so an
         // entry cannot lose its URL by accident, nor gain a RetroBIOS one
-        // that 404s; their member is the one the archive serves.
-        static const std::set<std::string> archiveOnly = {
-            "roms/ccs7710_03h.u5", "roms/ccs7710_03l.u6", "roms/dan2_eprom.bin" };
+        // that 404s; their member is the one the archive serves. NONE since
+        // 2026-11-06: RetroBIOS PR #86 brought the CCS 7710 PROMs (inside
+        // MAME's ccs7710 romset) and the DAN ][ EPROM, the three that were.
+        static const std::set<std::string> archiveOnly = {};
         const bool fromArchiveOnly = e.destRel && archiveOnly.count(e.destRel) != 0;
         expect(e.url && *e.url, std::string("url for ") + (e.destRel ? e.destRel : "?"));
         expect(pom2::romArchiveOnly(e) == fromArchiveOnly,
@@ -445,14 +446,17 @@ int main()
                    d == "roms/videx_ultraterm_frm_b537.bin" ||
                    d == "roms/videx_ultraterm_chs_7859.bin" ||
                    d == "roms/videx_ultraterm_enh_frm_b5c9.bin" ||
-                   d == "roms/videx_ultraterm_enh_chs_5604.bin",
+                   d == "roms/videx_ultraterm_enh_chs_5604.bin" ||
+                   d == "roms/ccs7710_03h.u5" ||
+                   d == "roms/ccs7710_03l.u6",
                    std::string("zip-sourced entries are the mouse slot eprom, "
                                "the SSC, Grappler and PIC ROMs, the "
                                "unenhanced //e pair, the four Videx "
-                               "Videoterm dumps, the Slinky, the Applicard "
-                               "and the four UltraTerm dumps, not ") + d);
+                               "Videoterm dumps, the Slinky, the Applicard, "
+                               "the four UltraTerm dumps and the two CCS "
+                               "7710 PROMs, not ") + d);
         }
-        expect(zipped == 15, "exactly fifteen entries unpack a RetroBIOS zip");
+        expect(zipped == 17, "exactly seventeen entries unpack a RetroBIOS zip");
         for (const auto& e : cat)
             expect(!e.zipConcat || e.zipMember,
                    std::string(e.destRel) +

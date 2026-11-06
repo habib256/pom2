@@ -39,11 +39,25 @@
 //    Pin: an erased stretch must yield many distinct bytes AND differ
 //    between two consecutive revolutions, while a repeated identical
 //    `getNextTransition` call stays deterministic (rewind reproducibility).
+//
+// 3. THE ANGLE ACROSS A STEP (2026-11-05; not MAME parity — the WOZ
+//    reference, which outranks it). The tracks of a WOZ do not hold the same
+//    number of bit cells, and POM2 gives each cell a fixed duration, so its
+//    tracks do not share one revolution time. The angular position was kept
+//    as an offset in CYCLES, so a head that stepped at 90 % of a 50,000-cell
+//    track arrived at 86.5 % of its 52,000-cell neighbour: the platter had
+//    jumped back 3.5 % of a turn, some 220 nibbles. Software that times one
+//    track against another (cross-track synchronisation, the first thing
+//    the WOZ reference tells an implementer about) saw the wrong sector.
+//    Pin: stepping with no time elapsed keeps the FRACTION of the turn, in
+//    both directions, across the empty quarter-track in between.
 
 #include "DiskIICard.h"
 #include "DiskIIRoms.h"
 #include "DiskImage.h"
+#include "FloppySoundSink.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -234,6 +248,32 @@ void testWeakZoneIsNoisyAndVaries() {
     const int64_t b = img.getNextTransition(0, period / 2, 0);
     check(a == b, "getNextTransition is deterministic in the weak zone");
 
+    // Density. [B] WOZ 2.1 reference, "Freaking Out Like a MC3470": of the
+    // random bits served while the head sees nothing, "roughly 30%" are 1.
+    // POM2 followed MAME's 50 % until 2026-11-06. Counted over the erased
+    // stretch (the sync bytes end at cell 8000 = LSS cycle 64 000), on two
+    // revolutions: each inside the band, and not the same count.
+    int weakPulses[2] = {0, 0};
+    for (int r = 0; r < 2; ++r) {
+        const int64_t from = int64_t{r} * period + 70000;
+        const int64_t to   = int64_t{r} * period + period - 200;
+        int64_t cur = from;
+        for (;;) {
+            const int64_t next = img.getNextTransition(0, cur, 0);
+            if (next >= to) break;
+            ++weakPulses[r];
+            cur = next + 1;
+        }
+        const double share = weakPulses[r] / ((to - from) / 8.0);
+        char dmsg[128];
+        std::snprintf(dmsg, sizeof(dmsg),
+            "revolution %d: %.1f %% of the weak zone's 4 us intervals carry "
+            "a pulse (want 27-33)", r, share * 100.0);
+        check(share > 0.27 && share < 0.33, dmsg);
+    }
+    check(weakPulses[0] != weakPulses[1],
+          "two revolutions do not draw the same number of pulses");
+
     DiskIICard card;
     pom2test::loadDiskIIDefaults(card);
     card.insertDisk(0, p);
@@ -268,12 +308,122 @@ void testWeakZoneIsNoisyAndVaries() {
     std::error_code ec; fs::remove(p, ec);
 }
 
+// ── 3. a head step keeps the angle, not the cycle offset ────────────────
+void testAngleCarriesAcrossAStep() {
+    std::printf("\n-- cross-track angle: tracks of unequal length --\n");
+    std::vector<uint8_t> t0 = trackNibbles(0), t1 = trackNibbles(1);
+    t0.resize(6250, 0xFF);                    // 50,000 bit cells
+    t1.resize(6500, 0xFF);                    // 52,000 bit cells
+    const std::string p = writeWoz1("pom2_angle.woz", {{0, t0}, {1, t1}});
+
+    DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
+    check(card.insertDisk(0, p), "insert");
+    const int p0 = card.driveImage(0).trackPeriod(0);
+    const int p1 = card.driveImage(0).trackPeriod(4);
+    check(p0 == 50000 * 8 && p1 == 52000 * 8, "the two tracks have unequal periods");
+    check(card.driveImage(0).trackPeriod(2) == 0,
+          "quarter-track 2 (TMAP $FF) lies between them, empty");
+
+    spinUp(card);
+    card.deviceSelectRead(0x1);               // phase 0 on: head held on track 0
+    // A few turns first. In the first revolution after power-on the anchor
+    // would have to go negative to carry the angle forward, which the card
+    // cannot represent (-1 is "never spun") and leaves alone — a window of a
+    // fifth of a second in which nothing steps off track 0.
+    card.advanceCycles(600000);
+    int guard = 0;
+    while (guard++ < 100000) {                // bring the platter to ~90 % of a turn
+        const int pos = card.getFluxPosition(0);
+        if (pos >= p0 / 10 * 9 && pos < p0 / 100 * 92) break;
+        card.advanceCycles(100);
+    }
+    const double before = static_cast<double>(card.getFluxPosition(0)) / p0;
+    check(before >= 0.90 && before < 0.92, "platter parked near 90 % of a turn");
+
+    // Track 0 -> 1 with NO time elapsed: quarter-tracks 1, 2 (empty), 3, 4.
+    card.deviceSelectRead(0x3);               // phase 1 on  -> qt 1
+    card.deviceSelectRead(0x0);               // phase 0 off -> qt 2
+    card.deviceSelectRead(0x5);               // phase 2 on  -> qt 3
+    card.deviceSelectRead(0x2);               // phase 1 off -> qt 4
+    check(card.getQuarterTrack(0) == 4, "head on track 1");
+    const double after = static_cast<double>(card.getFluxPosition(0)) / p1;
+    char msg[160];
+    std::snprintf(msg, sizeof(msg),
+        "same fraction of the turn after the step: %.4f -> %.4f "
+        "(keeping the cycle offset gives %.4f)", before, after,
+        before * p0 / p1);
+    check(std::fabs(after - before) < 0.0005, msg);
+
+    // …and back: the round trip returns to where it started.
+    card.deviceSelectRead(0x3);               // phase 1 on  -> qt 3
+    card.deviceSelectRead(0x4);               // phase 2 off -> qt 2
+    card.deviceSelectRead(0x1);               // phase 0 on  -> qt 1
+    card.deviceSelectRead(0x2);               // phase 1 off -> qt 0
+    check(card.getQuarterTrack(0) == 0, "head back on track 0");
+    const double back = static_cast<double>(card.getFluxPosition(0)) / p0;
+    std::snprintf(msg, sizeof(msg),
+        "round trip returns to the same angle: %.4f -> %.4f", before, back);
+    check(std::fabs(back - before) < 0.0005, msg);
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// ── 4. the track-0 stop is heard ────────────────────────────────────────
+// A recalibration steps outward far more times than there are tracks. With
+// the head already on track 0, every fourth pulse pulls the carriage against
+// its stop — the Disk II's boot rattle. The card reported nothing for it (the
+// head "did not move"), so no sound bank could ever play it.
+struct CountingSink : FloppySoundSink {
+    int bumps = 0, steps = 0;
+    void motor(bool, bool) override {}
+    void step(int, uint64_t) override { ++steps; }
+    void click() override {}
+    void bump(uint64_t) override { ++bumps; }
+};
+
+void testTrackZeroStopIsReported() {
+    std::printf("\n-- the track-0 stop --\n");
+    const std::string p = writeWoz1("pom2_stop.woz", {{0, trackNibbles(0)}, {1, trackNibbles(1)}});
+    DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
+    CountingSink sink;
+    card.setFloppySound(&sink);
+    check(card.insertDisk(0, p), "insert");
+    spinUp(card);
+    check(card.getQuarterTrack(0) == 0, "head on track 0");
+
+    // RWTS's recalibration, as the phases go: 3, 2, 1, 0, 3, 2, 1, 0 …
+    // each one on, a pause, then off.
+    for (int i = 0; i < 40; ++i) {
+        const int ph = 3 - (i & 3);
+        card.deviceSelectRead(static_cast<uint8_t>(ph * 2 + 1));
+        card.advanceCycles(2000);
+        card.deviceSelectRead(static_cast<uint8_t>(ph * 2));
+        card.advanceCycles(2000);
+    }
+    char msg[96];
+    std::snprintf(msg, sizeof(msg), "ten turns of the phases bang the stop %d times (want 10)",
+                  sink.bumps);
+    check(sink.bumps == 10, msg);
+    check(card.getQuarterTrack(0) == 0, "and the head is still on track 0");
+
+    // A real step inward is not a bump.
+    const int before = sink.bumps;
+    stepHalfTracks(card, 0, 4);
+    card.advanceCycles(5000);
+    check(sink.bumps == before && card.getQuarterTrack(0) == 8,
+          "stepping to track 2 hits nothing");
+    std::error_code ec; fs::remove(p, ec);
+}
+
 }  // namespace
 
 int main() {
     std::printf("== Disk II track reach + weak-zone parity ==\n");
     testHeadReachesTrack39();
     testWeakZoneIsNoisyAndVaries();
+    testAngleCarriesAcrossAStep();
+    testTrackZeroStopIsReported();
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK",
                 failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

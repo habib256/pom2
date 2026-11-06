@@ -203,47 +203,49 @@ void SlotBus::slotRomWrite(uint16_t addr, uint8_t v)
 uint8_t SlotBus::expansionRomRead(uint16_t addr)
 {
     if (addr < 0xC800 || addr > 0xCFFF) return openBus();
-    if (addr == 0xCFFF) {
+    const int      owner  = activeExpansionSlot;
+    const uint16_t offset = static_cast<uint16_t>(addr - 0xC800);
+    const bool     owned  = owner >= 1 && owner <= 7 && slots[owner];
+    // $CFFF lets go of the window whoever owns it; the owner may let go on
+    // more than that (SlotPeripheral::releasesC800At — the SSC on all of
+    // $CFxx).
+    if (addr == 0xCFFF || (owned && slots[owner]->releasesC800At(offset))) {
         // Read or write to $CFFF deactivates the expansion ROM — but the
         // access itself still belongs to the card that owned the window:
         // MAME `apple2e.cpp:3137-3152` and `apple2.cpp:563-578` `c800_r`
         // save `m_cnxx_slot` before clearing it and return that card's
         // `read_c800(0x7ff)`. Only an unowned window reads the floating bus.
-        const int owner = activeExpansionSlot;
         deactivateExpansion();
-        if (owner < 1 || owner > 7 || !slots[owner]) return openBus();
-        const uint8_t v = slots[owner]->expansionRomRead(0x7FF);
+        if (!owned) return openBus();
+        const uint8_t v = slots[owner]->expansionRomRead(offset);
         logAccess(owner, addr, v, false);
         return v;
     }
-    const int slot = activeExpansionSlot;
-    if (slot < 1 || slot > 7) return openBus();
-    const uint8_t v = slots[slot]
-        ? slots[slot]->expansionRomRead(static_cast<uint16_t>(addr - 0xC800))
-        : openBus();
-    logAccess(slot, addr, v, false);
+    if (owner < 1 || owner > 7) return openBus();
+    const uint8_t v = slots[owner] ? slots[owner]->expansionRomRead(offset) : openBus();
+    logAccess(owner, addr, v, false);
     return v;
 }
 
 void SlotBus::expansionRomWrite(uint16_t addr, uint8_t v)
 {
     if (addr < 0xC800 || addr > 0xCFFF) return;
-    if (addr == 0xCFFF) {
+    const int      owner  = activeExpansionSlot;
+    const uint16_t offset = static_cast<uint16_t>(addr - 0xC800);
+    const bool     owned  = owner >= 1 && owner <= 7 && slots[owner];
+    if (addr == 0xCFFF || (owned && slots[owner]->releasesC800At(offset))) {
         // The owner sees the write, then lets go (MAME `c800_w`: write_c800
         // first, CNXX_UNCLAIMED after, in both apple2.cpp and apple2e.cpp).
-        const int owner = activeExpansionSlot;
         if (owner >= 1 && owner <= 7) {
             logAccess(owner, addr, v, true);
-            if (auto* p = slots[owner].get()) p->expansionRomWrite(0x7FF, v);
+            if (auto* p = slots[owner].get()) p->expansionRomWrite(offset, v);
         }
         deactivateExpansion();
         return;
     }
-    const int slot = activeExpansionSlot;
-    if (slot < 1 || slot > 7) return;
-    logAccess(slot, addr, v, true);
-    if (auto* p = slots[slot].get())
-        p->expansionRomWrite(static_cast<uint16_t>(addr - 0xC800), v);
+    if (owner < 1 || owner > 7) return;
+    logAccess(owner, addr, v, true);
+    if (auto* p = slots[owner].get()) p->expansionRomWrite(offset, v);
 }
 
 void SlotBus::enableAccessLog(int slot, std::size_t capacity)
@@ -337,8 +339,20 @@ void SlotBus::reset(bool powerCycle)
         if (powerCycle) s->onPowerCycle();
         else s->onReset();
     }
-    // RESET retains the expansion-ROM enable; removing slot power does not.
-    if (powerCycle) activeExpansionSlot = -1;
+    // Removing slot power clears every card's $C800 enable. RESET clears it
+    // only on a card whose latch has a RESET input, and that is a per-card
+    // fact (SlotPeripheral::releasesC800OnReset has the table).
+    // [B] The default — RESET keeps the enable — is the circuit Apple
+    //     recommends: Apple II Reference Manual (1979) p. 85, Fig. 8, a latch
+    //     with S = I/O SELECT, R = $CFFF and no RESET input. It stood here
+    //     until 2026-11-06 as a rule with no source.
+    // [B] Cards that add the input say so: SSC manual p. 45 — the latch "is
+    //     reset by access to the $CFxx space or by a reset".
+    // [D] MAME `reset_w` leaves `m_cnxx_slot` alone (mame0287), for every card.
+    const int owner = activeExpansionSlot;
+    if (powerCycle ||
+        (owner >= 1 && owner <= 7 && slots[owner] && slots[owner]->releasesC800OnReset()))
+        activeExpansionSlot = -1;
 }
 
 void SlotBus::clear()

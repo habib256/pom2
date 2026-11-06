@@ -209,13 +209,10 @@ Uthernet_ImGui::render(const char* title, bool& open, const Snapshot& snap)
 
             if (!snap.u1BackendValid) {
                 ImGui::TextColored(kAmber,
-                    snap.slirpCompiledIn
-                        ? "This card carries no TCP/IP stack of its own — without a\n"
-                          "host transport it will never see a frame. Set the backend\n"
-                          "to \"slirp\" and re-plug the card."
-                        : "libslirp is not compiled in, so there is no way to bridge\n"
-                          "raw Ethernet. Install libslirp-dev and rebuild, or use the\n"
-                          "Uthernet II, whose TCP/UDP works without it.");
+                    "This card carries no TCP/IP stack of its own — without a\n"
+                    "host transport it will never see a frame. Set the backend\n"
+                    "to \"slirp\" (the NAT: libslirp, or POM2's built-in network\n"
+                    "where the build has no libslirp) and re-plug the card.");
             }
 
             ImGui::Separator();
@@ -251,14 +248,19 @@ Uthernet_ImGui::render(const char* title, bool& open, const Snapshot& snap)
 
     ImGui::Separator();
     ImGui::TextDisabled("Backend: %s%s", snap.backendChoice.c_str(),
-                        snap.slirpCompiledIn ? "" : "  (libslirp not in this build)");
+                        snap.slirpCompiledIn ? "" : "  (libslirp not in this build —"
+                                                    " the built-in network serves)");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Set with the `ethernet_backend` setting: slirp | loopback | none.\n"
+            "Set with the `ethernet_backend` setting:\n"
+            "slirp | builtin | loopback | none.\n"
             "Takes effect when the card is next plugged (profile switch or\n"
             "Slot Configuration change).\n\n"
             "slirp    user-mode NAT, guest 10.0.2.15, gateway 10.0.2.2,\n"
-            "         DNS 10.0.2.3 — outbound only, no root needed\n"
+            "         DNS 10.0.2.3 — outbound only, no root needed.\n"
+            "         libslirp where the build has it, else the built-in\n"
+            "         network (same addresses)\n"
+            "builtin  POM2's own NAT, whatever the build has\n"
             "loopback everything transmitted comes straight back (self-test)\n"
             "none     no host transport at all");
     }

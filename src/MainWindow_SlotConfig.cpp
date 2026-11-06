@@ -77,6 +77,7 @@
 #include "ResourcePaths.h"
 #include "Settings.h"
 #include "SlirpNetworkBackend.h"
+#include "BuiltinNatBackend.h"
 #include "SlotCardCatalog.h"
 #include "SlotCardFactory.h"
 #include "SlotConfigurationCoordinator.h"
@@ -440,39 +441,41 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
 
     // Both Ethernet cards share one host-transport decision, so the
     // backend factory lives here rather than in either plug lambda.
-    // Settings key `ethernet_backend`: "slirp" (default) | "loopback" |
-    // "none". Loopback is a self-test mode — everything the guest
-    // transmits comes straight back — and is also the honest fallback
-    // when a user explicitly wants the cards inert.
+    // Settings key `ethernet_backend`: "slirp" (default) | "builtin" |
+    // "loopback" | "none". "slirp" means "the NAT": libslirp where it is
+    // compiled in, POM2's built-in network where it is not (Windows) —
+    // `resolveEthernetBackend`. Loopback is a self-test mode — everything
+    // the guest transmits comes straight back.
     auto makeEthernetBackend = [&](const char* who)
         -> std::unique_ptr<pom2::NetworkBackend> {
-        const std::string choice =
-            settings->getString("ethernet_backend", "slirp");
-        if (choice == "loopback")
+        const std::string backend = pom2::resolveEthernetBackend(
+            settings->getString("ethernet_backend", "slirp"),
+            pom2::slirpAvailable(), pom2::builtinNatAvailable());
+        if (backend == "loopback")
             return std::make_unique<pom2::LoopbackNetworkBackend>();
-        if (choice == "none")
+        if (backend == "none")
             return std::make_unique<pom2::NullNetworkBackend>();
 
-        if (!pom2::slirpAvailable()) {
-            pom2::log().warn(who,
-                "libslirp not compiled in — no host Ethernet transport. "
-                "Uthernet II TCP/UDP still works; install libslirp-dev and "
-                "rebuild for raw-frame modes and the Uthernet I.");
-            return std::make_unique<pom2::NullNetworkBackend>();
+        // ONE fence for both NATs and for the W5100's own sockets (S2): the
+        // guest does not reach the host's loopback unless the user opts in.
+        const bool allowLoopback = settings->getBool("uthernet_allow_loopback", false);
+        const bool restricted    = settings->getBool("uthernet_slirp_restricted", false);
+
+        if (backend == "slirp") {
+            pom2::SlirpOptions slirpOpts;
+            slirpOpts.allowHostLoopback = allowLoopback;
+            slirpOpts.restricted        = restricted;
+            if (auto slirp = pom2::makeSlirpBackend("pom2", slirpOpts)) return slirp;
+            pom2::log().warn(who, "libslirp failed to start — using the "
+                                  "built-in virtual network instead");
         }
-        // Same fence for the NAT path (S2): libslirp's virtual router at
-        // 10.0.2.2 reached the host loopback by default.
-        pom2::SlirpOptions slirpOpts;
-        slirpOpts.allowHostLoopback =
-            settings->getBool("uthernet_allow_loopback", false);
-        slirpOpts.restricted = settings->getBool("uthernet_slirp_restricted", false);
-        auto slirp = pom2::makeSlirpBackend("pom2", slirpOpts);
-        if (!slirp) {
-            pom2::log().warn(who, "libslirp failed to start — falling back "
-                                  "to no host transport");
-            return std::make_unique<pom2::NullNetworkBackend>();
-        }
-        return slirp;
+        pom2::BuiltinNatOptions natOpts;
+        natOpts.allowHostLoopback = allowLoopback;
+        natOpts.restricted        = restricted;
+        if (auto nat = pom2::makeBuiltinNatBackend(natOpts)) return nat;
+        pom2::log().warn(who, "no host Ethernet transport in this build. "
+                              "Uthernet II TCP/UDP sockets still work.");
+        return std::make_unique<pom2::NullNetworkBackend>();
     };
 
     auto plugUthernet = [&](int s) {

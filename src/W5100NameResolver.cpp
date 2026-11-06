@@ -88,6 +88,22 @@ bool W5100NameResolver::takeRateToken()
     return true;
 }
 
+W5100Resolver::Result W5100NameResolver::peek(const std::string& name)
+{
+    Result out;
+    out.status = Status::Pending;
+    const auto cached = cache_.find(name);
+    if (cached == cache_.end()) return out;
+    const CacheEntry& e = cached->second;
+    if (e.address) {
+        out.status  = Status::Resolved;
+        out.address = e.address;
+    } else if (std::chrono::steady_clock::now() - e.stored < failureTtl_) {
+        out.status = Status::Failed;
+    }
+    return out;     // a failure past its lifetime reads as "not known"
+}
+
 W5100Resolver::Result W5100NameResolver::resolve(const std::string& name,
                                                      int waitMs)
 {

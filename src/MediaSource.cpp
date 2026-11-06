@@ -182,7 +182,7 @@ bool pickZipImage(const std::vector<uint8_t>& zip, std::string& member, std::str
         // classifyDiskForSlot needs one. The drive classifies it once out.
         std::string ext = lower(base);
         ext = ext.substr(std::min(ext.size(), ext.find_last_of('.')));
-        for (const char* e : { ".dsk", ".do", ".po", ".nib", ".woz", ".moof", ".2mg",
+        for (const char* e : { ".dsk", ".do", ".po", ".nib", ".nb2", ".woz", ".moof", ".2mg",
                                ".hdv", ".d13", ".image" })
             if (ext == e) { member = n; return true; }
     }
@@ -235,7 +235,7 @@ std::string explainMediaSourceRefusal(const std::string& archive, const std::str
                                                 : fs::path(archive).filename().string();
     return "\"" + name + "\" could not be opened as a disk: " + error + ".\n\n"
            "POM2 opens a .zip (stored or deflated members) and a .gz itself, and takes "
-           "the first .dsk, .do, .po, .nib, .woz, .moof, .2mg, .hdv, .d13 or .image "
+           "the first .dsk, .do, .po, .nib, .nb2, .woz, .moof, .2mg, .hdv, .d13 or .image "
            "inside. A damaged archive has to be downloaded again; a .7z, .shk or an "
            "encrypted zip has to be unpacked first.";
 }

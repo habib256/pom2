@@ -11,6 +11,51 @@
 #include <utility>
 #include <vector>
 
+// One FLUX quarter track, from ticks to LSS cycles (DiskImage.h, fluxBusHz_).
+// The clamp cannot fire for a tick inside the revolution (floor < ceil); it
+// is there for a tick list that is not.
+void DiskImage::projectFluxTrack(int slot) const
+{
+    const int periodLss = static_cast<int>(
+        fluxPeriodToLss(wozQtFluxPeriodTicks[slot]));
+    const int cyc = lssCyclesPerCell();
+    auto& events = fluxStream[slot];
+    auto& bits   = bitStream[slot];
+    const auto& ticks = wozQtFluxTicks[slot];
+    events.clear();
+    events.reserve(ticks.size());
+    bits.assign(static_cast<size_t>((periodLss + cyc - 1) / cyc), 0);
+    for (int tick : ticks) {
+        int cycle = static_cast<int>(fluxTicksToLss(tick));
+        if (cycle >= periodLss) cycle = periodLss > 0 ? periodLss - 1 : 0;
+        events.push_back(cycle);
+        const size_t cell = static_cast<size_t>(cycle / cyc);
+        if (cell < bits.size()) bits[cell] = 1;
+    }
+    fluxQtPeriodLss[slot] = periodLss;
+    bitStreamValid[slot]  = true;
+    fluxStreamValid[slot] = true;
+}
+
+void DiskImage::setFluxClockHz(double busHz)
+{
+    const int hz = static_cast<int>(busHz + 0.5);
+    // Half to twice the stock clock: anything else is not a bus clock, and
+    // the conversion divides by it.
+    if (hz < kNtscBusHz / 2 || hz > kNtscBusHz * 2) return;
+    if (hz == fluxBusHz_) return;
+    fluxBusHz_ = hz;
+    for (int slot = 0; slot < kQuarterTracks; ++slot) {
+        if (wozQtFluxPeriodTicks[slot] == 0) continue;
+        // The period is needed before any event is (angular carry between
+        // tracks); the events and cells wait for the head.
+        fluxQtPeriodLss[slot] = static_cast<int>(
+            fluxPeriodToLss(wozQtFluxPeriodTicks[slot]));
+        bitStreamValid[slot]  = false;
+        fluxStreamValid[slot] = false;
+    }
+}
+
 void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
                              const int64_t* transitions, int64_t revolutionStart)
 {
@@ -32,9 +77,14 @@ void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
         return;
     }
 
+    // LSS cycles → 125 ns ticks (DiskImage.h, fluxBusHz_): the ticks that
+    // project into the window, no more. A window that runs to the end of the
+    // revolution takes the surface to its last tick.
     const int periodTicks = wozQtFluxPeriodTicks[qt];
-    const int firstTick = static_cast<int>(std::min<int64_t>(begin * 4, periodTicks));
-    const int lastTick = static_cast<int>(std::min<int64_t>((begin + duration) * 4, periodTicks));
+    const int firstTick = static_cast<int>(
+        std::min<int64_t>(lssToFluxTicks(begin), periodTicks));
+    const int lastTick = begin + duration >= period ? periodTicks :
+        static_cast<int>(std::min<int64_t>(lssToFluxTicks(begin + duration), periodTicks));
     if (firstTick >= lastTick) return;
     auto& ticks = wozQtFluxTicks[qt];
     std::vector<int> replacement;
@@ -45,7 +95,7 @@ void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
         // revolutions of a long window, must not fold in.
         if (transitions[i] < start || transitions[i] >= limitedEnd) continue;
         const int64_t pos = ((transitions[i] - base) % period + period) % period;
-        const int64_t tick = pos * 4;
+        const int64_t tick = lssToFluxTicks(pos);
         if (tick >= firstTick && tick < lastTick)
             replacement.push_back(static_cast<int>(tick));
     }
@@ -64,19 +114,7 @@ void DiskImage::writeWozFlux(int qt, int64_t start, int64_t end, int count,
         if (wozQtFluxHeaderOff[a] != wozQtFluxHeaderOff[qt] ||
             wozQtFluxPeriodTicks[a] == 0) continue;
         if (a != qt) wozQtFluxTicks[a] = ticks;
-        auto& events = fluxStream[a];
-        auto& bits = bitStream[a];
-        events.clear();
-        events.reserve(ticks.size());
-        std::fill(bits.begin(), bits.end(), 0);
-        const int cyc = lssCyclesPerCell();
-        for (int tick : ticks) {
-            const int cycle = tick / 4;
-            events.push_back(cycle);
-            const size_t cell = static_cast<size_t>(cycle / cyc);
-            if (cell < bits.size()) bits[cell] = 1;
-        }
-        fluxStreamValid[a] = true;
+        projectFluxTrack(a);
     }
     wozQtDirty[qt] = true;
     anyDirty = true;

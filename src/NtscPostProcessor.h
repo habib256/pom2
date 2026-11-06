@@ -93,6 +93,25 @@ struct NtscParams
     // half of the phosphor model).
     float phosphorGamma = 1.0f;  // 0.6..2.6 (1.0 = flat)
 
+    // Bloom (halation): the glow around the bright parts of the picture —
+    // light scattered in the faceplate glass, which is why lit text on a
+    // monochrome tube looks soft-edged and fills the gaps between scanlines
+    // beside it. Only pixels brighter than `bloomThreshold` scatter (a soft
+    // knee below it, so nothing bands as content crosses the threshold); the
+    // bright part is blurred with a separable 9-tap Gaussian whose step is
+    // `bloomRadius` dots of the 560-dot line, the same physical distance down
+    // the screen, and `bloom` times that is ADDED after the scanlines and the
+    // mask. 0 = off, and off is the default: every golden image stays as it
+    // is. CrtEffectStack glass pass only.
+    // [D] libretro glsl-shaders bloom by hunterk (public domain) and Casso's
+    //     adaptation of it (`Shaders/CRT/bloom_*.hlsl` @ 2d899adf, CC0 +
+    //     MIT) — the Gaussian weights, the bright-pass knee and the
+    //     picture-relative radius. [F] the default radius and threshold:
+    //     taste, there is no measurement of a tube's halation behind them.
+    float bloom          = 0.0f;  // 0..1 strength (0 = off)
+    float bloomRadius    = 2.0f;  // 0.5..6 dots of the 560-dot line per tap
+    float bloomThreshold = 0.5f;  // 0..1 brightness above which light scatters
+
     // Analog RGB bandwidth, in MHz — the video chain between the machine and
     // the tube, modelled the way OpenEmulator models its "connection" types.
     // A digital/TTL RGB link carries square dots and needs no filter; an

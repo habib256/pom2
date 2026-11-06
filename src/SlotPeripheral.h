@@ -129,6 +129,40 @@ public:
     /// `expansionRomRead` override this too.
     virtual bool takesC800() const { return false; }
 
+    /// Does an access at `offset` (0-$7FF, from $C800) clear THIS card's
+    /// $C800 enable latch? The Apple II convention is one address, $CFFF,
+    /// and that is the default.
+    ///
+    /// [B] Apple II Reference Manual (1979) pp. 84-85: every card "should
+    ///     recognize" $CFFF "as a signal to turn their flip-flops off", and
+    ///     Fig. 9 "$CFXX Decoding" allows a card to save circuitry "by not
+    ///     fully decoding the special location address" — at the price of
+    ///     the ROM bytes it then cannot use. So the WIDTH of the decode is a
+    ///     per-card fact, read off each card's schematic:
+    ///         Super Serial Card            all of $CFxx   (its manual, p. 45)
+    ///         Grappler, Grappler+          $CFF0-$CFFF    (A4-A10)
+    ///         Liron                        $CFFE-$CFFF    (A1-A10)
+    ///         CFFA 2.0                     $CFEF, $CFFF   (A4 not wired)
+    ///     Each override cites its own source. A card not listed keeps the
+    ///     default, which for it is [F]: nobody read its schematic.
+    virtual bool releasesC800At(uint16_t offset) const { return offset == 0x7FF; }
+
+    /// Does RESET clear this card's $C800 enable latch? By default, no.
+    ///
+    /// [B] Apple II Reference Manual (1979) p. 85, Fig. 8 "Expansion ROM
+    ///     Enable Circuit": the latch Apple recommends has two inputs —
+    ///     S = I/O SELECT, R = $CFFF — and no RESET. The //e manuals repeat
+    ///     the figure (Fig. 6-1). A card built to it keeps its enable across
+    ///     a RESET, and so do [D] MAME (`reset_w` leaves `m_cnxx_slot`,
+    ///     mame0287) and AppleWin (4a43bcdb).
+    /// There is no general rule beyond that — a card may add the input, and
+    /// some did, so this too is read off each schematic:
+    ///         clears on RESET:  Super Serial Card, Liron
+    ///         does not:         Grappler, Grappler+, CFFA 2.0
+    /// [F] Not read: ThunderClock+, Memory Expansion (Slinky), Workstation
+    ///     Card, Videoterm, UltraTerm — they keep the default.
+    virtual bool releasesC800OnReset() const { return false; }
+
     /// Lifecycle. `onPlug` / `onUnplug` flank a card insertion; `onReset`
     /// fires on Apple II hardware reset (Ctrl-Reset).
     virtual void onPlug()   {}

@@ -19,20 +19,39 @@
 // terminal (telnet, screen, minicom-over-tty) can talk to the running
 // Apple II/IIe as a serial peer.
 //
-// Soft-switch map (slot N at $C080+N*16; for slot 2 → $C0A0-$C0AF):
+// Soft-switch map (slot N at $C080+N*16; for slot 2 → $C0A0-$C0AF).
+// [B] SSC manual, Table 4-5 (p. 46) and Table A-7 (p. 53):
 //
-//   $C0nA-$C0nB   DIP-switch reads (we report a sane default config)
-//   $C0nC-$C0nD   ACIA reset / status mirror
-//   $C0nE         Reserved (reads $00)
-//   $C0nF         Reserved (reads $00)
-//   $C0n8         ACIA data register (read = pop RX byte; write = push TX)
-//   $C0n9         ACIA status register
-//                   bit 7 = IRQ                     (we hold low)
-//                   bit 6 = DSR                     (1 when client connected)
-//                   bit 5 = DCD                     (mirror of DSR)
-//                   bit 4 = TDRE: TX register empty (always 1 — TCP buffers it)
-//                   bit 3 = RDRF: RX register full  (1 when bytes are queued)
-//                   bit 0..2 = framing/parity/overrun (always 0)
+//   $C0n1         DIPSW1 — SW1-1..6 through a 74LS365 (read)
+//   $C0n2         DIPSW2 — SW2-1..5 through a 74LS365, and bit 0 = the CTS
+//                 pin, true when 0 (read)
+//   $C0n0, $C0n3-$C0n7   the same two buffers, incompletely decoded
+//   $C0n8         ACIA receive (read) / transmit (write)
+//   $C0n9         ACIA status (read) / programmed reset (write)
+//                   bit 7 IRQ · 6 DSR (0 = ready) · 5 DCD (0 = carrier)
+//                   bit 4 TDRE · 3 RDRF · 2 overrun · 1 framing · 0 parity
+//   $C0nA         ACIA command (read/write)
+//   $C0nB         ACIA control (read/write) — baud code 0 is 115,200 here
+//   $C0nC-$C0nF   nothing on an SSC (A2 deselects the 6551); a //c port
+//                 mirrors the ACIA there
+//
+// This block described another card until 2026-11-05: DIP switches "at
+// $C0nA-$C0nB", an "ACIA reset / status mirror" at $C0nC-$C0nD, TDRE "always
+// 1", DSR "1 when client connected". None of it was the code any more.
+//
+// ONE DELIBERATE DEPARTURE FROM THE SILICON — the receiver. The 6551
+// "single-buffers data transfers" (manual p. 46): one byte in RDR, and a
+// second arriving before the first is read sets OVERRUN and is lost
+// (glossary, p. 115). POM2 queues up to 4 KB on the host side and hands the
+// guest the next byte as soon as it reads the last one; overrun is raised
+// only when that queue overflows. A TCP peer is not a 19,200-baud line — it
+// delivers a screenful in one segment — and the two wires a real card uses
+// to hold a sender off (RTS, DTR to the peer's CTS/DSR) have no counterpart
+// on a telnet stream. Modelling the one-byte RDR faithfully without them
+// would lose data that no real set-up loses. [F] what it costs: a program
+// that RELIES on overrun (to measure the line, or as copy protection) does
+// not see it. Settled by: modelling RTS/DTR as flow control toward the peer,
+// then pacing arrival at the programmed baud.
 //
 // With Apple's EPROM loaded (`loadFirmware`) the card runs the real firmware
 // and everything below about the slot ROM is moot. Without it, the
@@ -126,13 +145,17 @@ public:
     ///         $0C SW2:4,3 — comm: parity ($00 none, $04 odd, $08 none, $0C
     ///             even); printer: line width ($00 40, $04 72, $08 80, $0C 132)
     ///         $02 SW2:5 — end of line (CLEAR = add LF after CR)
+    ///         $01 not a switch: the CTS pin, 0 = true (read live)
     ///         $50 unused (reads high)
     /// The interrupt switch (SW2:6) is not in either bank — see
     /// `setIrqDipEnabled`. Nothing in POM2 reads these but the guest.
+    /// Bit 0 of DSW2 is not a switch: it is the CTS pin, read live at
+    /// $C0n2 (SSC manual, Table A-7: "true when 0"). Whatever is passed
+    /// there is dropped, so a saved `ssc_dsw2` cannot pin the line.
     void setDipSwitches(uint8_t dsw1, uint8_t dsw2)
     {
         lastDip1 = dsw1;
-        lastDip2 = dsw2;
+        lastDip2 = static_cast<uint8_t>(dsw2 & 0xFE);
     }
     uint8_t dipSwitch1() const { return lastDip1; }
     uint8_t dipSwitch2() const { return lastDip2; }
@@ -420,6 +443,17 @@ public:
     /// is the parity-correct behaviour: an SSC that is scanned first DOES lock
     /// a later card out until $CFFF.
     bool    takesC800() const override { return true; }
+    /// [B] SSC manual p. 45: "The latch is set by an access to the $Csxx
+    /// space, and is reset by access to the $CFxx space or by a reset" — the
+    /// LS279 at 1B decodes the page, not the one address $CFFF. That is also
+    /// why the ROM's last page is remapped to $Cs00: "the $CFxx addresses are
+    /// unusable. (Access to them disables use of the $C800 address space.)"
+    /// The byte READ at $CFxx is not stated: POM2 keeps returning the ROM's
+    /// ([D] MAME `read_c800`), [F] — the latch has an RC filter and the ROM
+    /// may or may not still drive the bus when PHI2 falls. Settled by: a
+    /// read of $CF00 on a real card.
+    bool    releasesC800At(uint16_t offset) const override { return offset >= 0x700; }
+    bool    releasesC800OnReset() const override { return true; }
     void    onReset() override;
     void    onPowerCycle() override;
     void    onUnplug() override;
@@ -515,7 +549,8 @@ private:
     /// survives the pull — MAME `mos6551.cpp::read_rdr` returns `m_rdr`
     /// unconditionally. Reset to $00 by a hardware reset only.
     uint8_t rdrLatch_  = 0x00;
-    // The two DIP banks the 74LS259 presents at $C0n1 / $C0n2, laid out as
+    // The two DIP banks the two 74LS365 buffers (2B, 3B — SSC manual,
+    // Table 4-5) present at $C0n1 / $C0n2, laid out as
     // MAME's `a2ssc.cpp` INPUT_PORTS does — that layout being the one the
     // Apple firmware and every SSC utility decode:
     //
@@ -582,7 +617,7 @@ private:
     /// `docs/audits/parite-mos6551-2026-11-01.md`, constat 2.
     double   cpuClockHz_     = 1022727.0;
     double   txIdleAcc_      = 0.0;     ///< cycles since the last idle TDRE
-    double   bytesPerSecond_ = 0.0;     // 0 → unconstrained (16x ext clk)
+    double   bytesPerSecond_ = 0.0;     // 0 until the control register is written
 
     // Persistent status flags (RDRF/TDRE/DCD/DSR computed dynamically at
     // read-time, but OVERRUN/FRAMING/PARITY are sticky — cleared only by

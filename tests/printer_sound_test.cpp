@@ -305,6 +305,126 @@ void testGrainDecays()
     std::printf("  ok: grain decays (head RMS %.4f -> tail %.4f)\n", head, tail);
 }
 
+// ── 11. The recorded ImageWriter II bank ─────────────────────────────────
+// Scott Lawrence's takes (roms/printer_samples, CC BY 4.0) replace the grains
+// when selected: a carriage LOOP per print quality held while strikes arrive,
+// one-shot takes for the platen, the tear and the power switch.
+std::vector<float> render(PrinterSoundDevice& d, int buffers)
+{
+    std::vector<float> out(static_cast<size_t>(buffers) * kFrames, 0.0f);
+    for (int i = 0; i < buffers; ++i)
+        d.fillAudioBuffer(out.data() + static_cast<size_t>(i) * kFrames, kFrames);
+    return out;
+}
+
+void testRecordedBank()
+{
+    {
+        PrinterSoundDevice none;
+        none.setSampleRate(kRate);
+        assert(!none.loadRecordedBank("/nonexistent/pom2/printer_samples"));
+        assert(!none.recordedReady());
+        none.setRecorded(true);              // selected, but not there:
+        none.strike(9);                      // …the synthesiser still answers
+        assert(none.activeGrains() == 1);
+    }
+
+    PrinterSoundDevice d;
+    d.setSampleRate(kRate);
+    assert(d.loadRecordedBank(POM2_PRINTER_SAMPLES_DIR) &&
+           "roms/printer_samples is tracked and must decode");
+    assert(d.recordedReady());
+
+    // Loaded is not selected: the grains stay until the user (or the saved
+    // setting) picks the recordings.
+    d.strike(9);
+    assert(d.activeGrains() == 1);
+    d.setRecorded(true);
+    assert(d.activeGrains() == 0 && "switching banks drops the grains in flight");
+    for (int i = 0; i < 20; ++i) assert(pullPeak(d) == 0.0f);
+
+    // A strike holds the carriage loop for a moment, with no grain at all,
+    // and the loop is released when the strikes stop.
+    d.strike(9);
+    assert(d.activeGrains() == 0);
+    const int held = buffersUntilSilent(d, 400);
+    assert(held >= 8 && held <= 40 && "one strike is a short pass of the head");
+    // Strikes that keep coming keep it running.
+    int sounding = 0;
+    for (int i = 0; i < 120; ++i) {          // ~0.7 s of steady printing
+        d.strike(5);
+        if (pullPeak(d) > 1e-5f) ++sounding;
+    }
+    assert(sounding > 100 && "steady printing is one continuous take");
+    (void)buffersUntilSilent(d, 400);
+
+    // The three qualities are three different takes.
+    const auto passOf = [&d](int tier) {
+        d.setRecorded(false); d.setRecorded(true);      // rewind the voices
+        d.printQuality(tier);
+        std::vector<float> all;
+        for (int i = 0; i < 40; ++i) {
+            d.strike(9);
+            const auto b = render(d, 1);
+            all.insert(all.end(), b.begin(), b.end());
+        }
+        (void)buffersUntilSilent(d, 400);
+        return all;
+    };
+    const auto standard = passOf(0), draft = passOf(1), nlq = passOf(2);
+    const auto differ = [](const std::vector<float>& a, const std::vector<float>& b) {
+        double sum = 0.0;
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i) sum += std::fabs(a[i] - b[i]);
+        return sum > 1.0;
+    };
+    assert(differ(draft, nlq) && differ(draft, standard) && differ(standard, nlq));
+
+    // A line feed is one platen take (~0.4-0.6 s); a run of micro-feeds is
+    // still one motion, not a machine gun.
+    d.paperFeed(1.0 / 6.0);
+    assert(d.activeShots() == 1);
+    for (int i = 0; i < 20; ++i) d.paperFeed(1.0 / 144.0);
+    assert(d.activeShots() == 1 && "feeds inside 90 ms are one clack");
+    const int clack = buffersUntilSilent(d, 600);
+    assert(clack >= 40 && clack <= 130);
+    assert(d.activeShots() == 0);
+
+    // A form feed is a page-feed take, and a longer travel a longer one.
+    d.paperFeed(2.0);
+    const int shortFeed = buffersUntilSilent(d, 1200);
+    d.paperFeed(9.0);
+    const int longFeed = buffersUntilSilent(d, 1200);
+    assert(shortFeed >= 60 && longFeed > shortFeed * 2);
+
+    // Tearing the sheet off.
+    d.tearOff();
+    assert(d.activeShots() == 1);
+    assert(buffersUntilSilent(d, 600) > 20);
+
+    // The power switch: off stops the mechanism and is itself heard; nothing
+    // prints while it is off; on is the head homing. Attaching a printer that
+    // is already on (no change of state) makes no noise.
+    d.power(true);
+    assert(d.activeShots() == 0);
+    d.strike(9);
+    d.power(false);
+    assert(d.activeShots() == 1 && "the switch is heard");
+    (void)buffersUntilSilent(d, 600);
+    d.strike(9);
+    d.paperFeed(1.0 / 6.0);
+    assert(d.activeShots() == 0 && pullPeak(d) == 0.0f && "a printer that is off is silent");
+    d.power(true);
+    assert(d.activeShots() == 1);
+    assert(buffersUntilSilent(d, 1500) > 200 && "the power-up take is seconds long");
+
+    // Back to the synthesiser on request.
+    d.setRecorded(false);
+    d.strike(9);
+    assert(d.activeGrains() == 1);
+    std::printf("  ok: recorded bank — strike %d buffers, clack %d, feeds %d/%d\n",
+                held, clack, shortFeed, longFeed);
+}
+
 } // namespace
 
 int main()
@@ -319,6 +439,7 @@ int main()
     testMuteAndVolume();
     testSampleRateChange();
     testGrainDecays();
+    testRecordedBank();
 
     std::puts("printer_sound: OK");
     return 0;

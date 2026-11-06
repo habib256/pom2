@@ -179,6 +179,46 @@ void testListing()
         return a < ctl.size() ? ctl[a] : uint8_t(0);
     }, ctl.size());
     CHECK(t2 == "30 PRINT \"\x04" "CAT\x07?\"\n");
+
+    // ── A listing typed back must rebuild the program (2026-11-05) ──────
+    // The tokeniser STORES the spaces of a REM and of a DATA statement
+    // (Applesoft ROM $D559: blanks are only eaten outside them), so the
+    // bytes below are what `10 REM HELLO`, `20 DATA 1, 2 ` and the rest
+    // become. The listing used to write a space after EVERY keyword, REM and
+    // DATA included — one more stored space per trip — and to strip every
+    // trailing space, the program's own with it.
+    const auto listOf = [](const std::vector<uint8_t>& body,
+                           pom2::applesoft::ListReport* report = nullptr) {
+        std::vector<uint8_t> prog = { 0x01, 0x08, 0x0A, 0x00 };   // link, line 10
+        prog.insert(prog.end(), body.begin(), body.end());
+        prog.insert(prog.end(), { 0x00, 0x00, 0x00 });
+        return pom2::applesoft::list(0, [&](uint16_t a) {
+            return a < prog.size() ? prog[a] : uint8_t(0);
+        }, prog.size(), report);
+    };
+    // REM: the payload as stored, the typed space and no other.
+    CHECK(listOf({ 0xB2, ' ', 'H', 'E', 'L', 'L', 'O' }) == "10 REM HELLO\n");
+    CHECK(listOf({ 0xB2, 'H', 'I' }) == "10 REMHI\n");          // typed `REMHI`
+    CHECK(listOf({ 0xB2, ' ', 'A', ' ', ' ' }) == "10 REM A  \n");   // its trailing spaces
+    // DATA: the same, up to the ':' that closes the statement.
+    CHECK(listOf({ 0x83, ' ', '1', ',', ' ', '2', ' ' }) == "10 DATA 1, 2 \n");
+    CHECK(listOf({ 0x83, ' ', '1', ':', 0xBA, 'A' }) == "10 DATA 1: PRINT A\n");
+    CHECK(listOf({ 0x83, '"', 'A', ':', 'B', '"', ':', 0x80 }) == "10 DATA\"A:B\": END\n");
+    // A string left open keeps the space it ends on.
+    CHECK(listOf({ 0xBA, '"', 'A', ' ' }) == "10 PRINT \"A \n");
+    // The space this listing adds after a last keyword still goes.
+    CHECK(listOf({ 0x80 }) == "10 END\n");
+    CHECK(listOf({ 0xB1 }) == "10 RETURN\n");
+    // What text cannot hold is REPORTED: a byte past the last token, a token
+    // inside a string, a CR. None of them changes what an ordinary program
+    // lists as.
+    pom2::applesoft::ListReport report;
+    (void)listOf({ 0xBA, '"', 'A', '"' }, &report);
+    CHECK(report.untypable == 0 && report.firstLine == -1);
+    (void)listOf({ 0xBA, 0xEB }, &report);
+    CHECK(report.untypable == 1 && report.firstLine == 10);
+    (void)listOf({ 0xBA, '"', 0x80, 0x0D, '"' }, &report);
+    CHECK(report.untypable == 2 && report.firstLine == 10);
 }
 
 int testMaster()

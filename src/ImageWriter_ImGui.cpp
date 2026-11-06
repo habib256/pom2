@@ -243,6 +243,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
                           "in progress is ejected onto the stack, not lost.");
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_TRASH " Clear all")) {
+        iw.notifyTearOff();
         iw.clearAll();
         viewPage_ = -1;
         texPage_  = -2;

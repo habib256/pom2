@@ -105,6 +105,16 @@ public:
     /// claiming first-one-wins with nothing to serve starved the card that
     /// does have an expansion ROM (bug hunt #9).
     bool takesC800() const override { return romLoaded_; }
+    /// The enable latch lets go on ALL of $CFF0-$CFFF, and RESET does not
+    /// touch it.
+    /// [B] Grappler+ Operator's Manual (Orange Micro, 1983), schematic: the
+    ///     latch U2B is set by /IO SEL and reset by U8, an 8-input NAND of
+    ///     A4..A10 and /IO STB inverted — A0-A3 are not decoded. /RST goes
+    ///     to U2A and U2C only.
+    /// [C] The EPROM agrees: $CFF0-$CFFF is filler (00 FF FF 00 …) in both
+    ///     banks — sixteen bytes the card cannot serve.
+    /// [D] MAME `grappler.cpp` @ mame0287 releases on $CFFF alone.
+    bool releasesC800At(uint16_t offset) const override { return offset >= 0x7F0; }
     void    onReset() override;
 
     /// Rewind/snapshot hooks — the ROM bank / ACK latch / IRQ-enable

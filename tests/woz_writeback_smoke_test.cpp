@@ -18,8 +18,8 @@
 //
 // Pins the WOZ write-back path added in §2 Disques: writeFlux now
 // splices into bitStream[qt] for WOZ images, saveDirty() repacks the
-// dirty quarter-tracks back into the original file bytes (zeroing the
-// CRC32 header per Applesauce WOZ 2.1 spec), and isWriteProtected()
+// dirty quarter-tracks back into the original file bytes (recomputing the
+// CRC32 header over what reaches the file), and isWriteProtected()
 // honours the user's writeBackEnabled opt-in.
 //
 // What this gates:
@@ -28,7 +28,9 @@
 //      cell range updates bitStream[qt] visibly via bitAt().
 //   2. saveDirty() succeeds and produces a file that:
 //        - has the same magic + structure as the input
-//        - has CRC32 header bytes zeroed (sentinel for "skip CRC check")
+//        - carries the CRC32 of its own bytes 12..EOF (it used to be left
+//          at zero, the "not computed" sentinel: legal, and the end of the
+//          file's only integrity check)
 //        - reads back through loadFile() with the modified bit pattern
 //          intact at the same quarter-track / bit offset.
 //   3. INFO.write_protected = 1 keeps the image WP regardless of the
@@ -255,17 +257,22 @@ bool testWoz1WriteBackRoundTrip()
         return false;
     }
 
-    // File on disk must have the CRC32 zeroed (sentinel for "not
-    // computed") and the first byte of the TRKS bit data updated to
-    // $A5.
+    // File on disk must carry the CRC32 of its own contents and the first
+    // byte of the TRKS bit data updated to $A5.
     const auto bytes = readWholeFile(path);
     if (bytes.size() < 12) {
         std::printf("FAIL: saved file truncated\n"); return false;
     }
-    for (int i = 8; i < 12; ++i) {
-        if (bytes[i] != 0) {
-            std::printf("FAIL: saved CRC32 byte %d = $%02X, expected 0\n",
-                        i, bytes[i]);
+    {
+        const uint32_t stored = static_cast<uint32_t>(bytes[8]) |
+                                (static_cast<uint32_t>(bytes[9]) << 8) |
+                                (static_cast<uint32_t>(bytes[10]) << 16) |
+                                (static_cast<uint32_t>(bytes[11]) << 24);
+        const uint32_t want =
+            DiskImage::wozCrc32(bytes.data() + 12, bytes.size() - 12);
+        if (stored == 0 || stored != want) {
+            std::printf("FAIL: saved CRC32 = $%08X, expected $%08X\n",
+                        stored, want);
             return false;
         }
     }
@@ -514,10 +521,20 @@ std::vector<uint8_t> buildFluxWoz(bool protectedInfo = false)
     return woz;
 }
 
+// ── The clock these FLUX mechanics tests run on ──────────────────────────
+// A flux stream counts 125 ns ticks and the LSS counts half bus cycles, so
+// their ratio is the machine's: 176/45 ticks per cycle on an NTSC Apple II,
+// 256/65 on a PAL one (DiskImage.h, fluxBusHz_) — pinned by
+// testFluxTimeBase below. The tests in between are about windows, aliases,
+// seams and slot growth; they run on a 1 MHz bus, where a cycle is exactly
+// 4 ticks, so their positions stay readable (tick 1600 = cycle 400).
+constexpr double kTickAlignedHz = 1000000.0;
+
 bool testFluxWriteBackRoundTrip()
 {
     const auto path = writeTempFile(buildFluxWoz(), "flux");
     DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
     if (!img.loadFile(path)) {
         std::printf("FAIL: load FLUX: %s\n", img.getLastError().c_str());
         return false;
@@ -546,12 +563,14 @@ bool testFluxWriteBackRoundTrip()
         std::printf("FAIL: FLUX deltas/header/chunk not preserved\n"); return false;
     }
     DiskImage reloaded;
+    reloaded.setFluxClockHz(kTickAlignedHz);
     if (!reloaded.loadFile(path) || reloaded.fluxEvents(0) != expected ||
         reloaded.fluxEvents(1) != expected) {
         std::printf("FAIL: FLUX save/reload lost transition\n"); return false;
     }
     const auto wp = writeTempFile(buildFluxWoz(true), "flux_wp");
     DiskImage protectedImage;
+    protectedImage.setFluxClockHz(kTickAlignedHz);
     if (!protectedImage.loadFile(wp) || !protectedImage.isWriteProtected()) {
         std::printf("FAIL: INFO write protect ignored for FLUX\n"); return false;
     }
@@ -578,6 +597,7 @@ bool testFluxStreamEndsOnTransition()
     const auto path = writeTempFile(buildFluxWoz(), "flux_close");
     const auto original = readWholeFile(path);
     DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
     if (!img.loadFile(path)) { std::printf("FAIL: load FLUX (close)\n"); return false; }
     img.setWriteBackEnabled(true);
     int64_t pulse = 109;
@@ -593,6 +613,7 @@ bool testFluxStreamEndsOnTransition()
     img.writeFlux(0, 0, 4, 0, nullptr);        // erase the closing transition
     if (!img.saveDirty()) { std::printf("FAIL: save FLUX (erase)\n"); return false; }
     DiskImage reloaded;
+    reloaded.setFluxClockHz(kTickAlignedHz);
     if (!reloaded.loadFile(path) || reloaded.trackPeriod(0) != 400 ||
         reloaded.fluxEvents(0) != std::vector<int>{0, 8, 16}) {
         std::printf("FAIL: FLUX stream without its seam transition reloaded "
@@ -616,6 +637,7 @@ bool testFluxLongWindowKeepsLastRevolution()
 {
     const auto path = writeTempFile(buildFluxWoz(), "flux_long");
     DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
     if (!img.loadFile(path) || img.trackPeriod(0) != 400) {
         std::printf("FAIL: load FLUX for the long window\n"); return false;
     }
@@ -642,6 +664,7 @@ bool testFluxSlotGrowth()
     source[2047] = 36;               // 2080 ticks = 520 LSS cycles
     const auto path = writeTempFile(source, "flux_grow");
     DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
     if (!img.loadFile(path) || img.trackPeriod(0) != 520) {
         std::printf("FAIL: load dense FLUX\n"); return false;
     }
@@ -664,6 +687,7 @@ bool testFluxSlotGrowth()
         std::printf("FAIL: grown TRKS/INFO/FLUX offsets\n"); return false;
     }
     DiskImage reloaded;
+    reloaded.setFluxClockHz(kTickAlignedHz);
     if (!reloaded.loadFile(path) || reloaded.fluxEvents(0).size() != 513 ||
         reloaded.fluxEvents(1).size() != 513) {
         std::printf("FAIL: grown FLUX does not reload\n"); return false;
@@ -673,6 +697,7 @@ bool testFluxSlotGrowth()
         std::printf("FAIL: second save after FLUX growth\n"); return false;
     }
     DiskImage twice;
+    twice.setFluxClockHz(kTickAlignedHz);
     if (!twice.loadFile(path) || twice.fluxEvents(0).size() != 512 ||
         twice.fluxEvents(1).size() != 512) {
         std::printf("FAIL: second FLUX save lost the grown slot\n"); return false;
@@ -701,6 +726,7 @@ bool testFluxSlotGrowthInMacBinary()
     while (file.size() % 128) file.push_back(0);
     const auto path = writeTempFile(file, "mb_flux_grow");
     DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
     if (!img.loadFile(path)) { std::printf("FAIL: load MacBinary FLUX\n"); return false; }
     img.setWriteBackEnabled(true);
     std::vector<int64_t> pulses;
@@ -714,6 +740,7 @@ bool testFluxSlotGrowthInMacBinary()
         std::printf("FAIL: MacBinary fork length/padding not refitted\n"); return false;
     }
     DiskImage reloaded;
+    reloaded.setFluxClockHz(kTickAlignedHz);
     if (!reloaded.loadFile(path) || reloaded.fluxEvents(0).size() != 513) {
         std::printf("FAIL: grown MacBinary WOZ does not reload: %s\n",
                     reloaded.getLastError().c_str());
@@ -725,8 +752,140 @@ bool testFluxSlotGrowthInMacBinary()
     return true;
 }
 
+// ── The flux time base ───────────────────────────────────────────────────
+// [B] WOZ 2.1 reference: a flux stream counts 125 ns ticks.
+// [B] Sather: the sequencer steps twice per bus cycle — 488.9 ns on an NTSC
+//     machine (1 022 727 Hz), 492.3 ns on a PAL one (1 015 625 Hz).
+// A revolution of 1 600 000 ticks (200 ms) is therefore 409 091 LSS cycles
+// (NTSC) or 406 250 (PAL), and a transition every 32 ticks falls every
+// 8.18 cycles. POM2 divided by a flat 4 until 2026-11-06 — 400 000 and
+// "every 8" — which played every flux track 2.27 % fast.
+bool testFluxTimeBase()
+{
+    // One revolution, a transition every 4 us: 50 000 delta bytes of 32,
+    // stored after the FLUX chunk (track blocks are absolute file offsets).
+    auto woz = buildFluxWoz();
+    constexpr uint32_t kDeltas = 50000;
+    // ...inside a chunk of its own, so the chunk walk steps over it.
+    const size_t wrapper = woz.size();
+    woz.insert(woz.end(), {'P','A','D','S', 0, 0, 0, 0});
+    woz.resize(5 * 512, 0);
+    woz.insert(woz.end(), kDeltas, 32);
+    woz.resize((woz.size() + 511) / 512 * 512, 0);
+    const uint32_t wrapped = static_cast<uint32_t>(woz.size() - wrapper - 8);
+    for (int i = 0; i < 4; ++i)
+        woz[wrapper + 4 + i] = static_cast<uint8_t>(wrapped >> (8 * i));
+    woz[256] = 5; woz[257] = 0;                       // starting block
+    woz[258] = static_cast<uint8_t>((kDeltas + 511) / 512);
+    woz[259] = 0;
+    woz[260] = static_cast<uint8_t>(kDeltas);
+    woz[261] = static_cast<uint8_t>(kDeltas >> 8);
+    woz[262] = woz[263] = 0;
+    const auto path = writeTempFile(woz, "flux_timebase");
+
+    DiskImage img;                                    // a bare image is NTSC
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: load 200 ms FLUX: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    if (img.fluxClockHz() != 1022727 || img.trackPeriod(0) != 409091) {
+        std::printf("FAIL: NTSC flux period %d (want 409091)\n", img.trackPeriod(0));
+        return false;
+    }
+    const std::vector<int> ntsc = img.fluxEvents(0);
+    // 32 ticks = 8.18 cycles, and a transition belongs to the cycle it falls
+    // in: 0, 8.18, 16.36, 24.55, 32.73, 40.91, 49.09 (the first one a flat
+    // "8 per cell" misses), ... and the 45th lands in 368 — it was 360.
+    if (ntsc.size() != kDeltas || ntsc[0] != 0 || ntsc[1] != 8 || ntsc[2] != 16 ||
+        ntsc[3] != 24 || ntsc[6] != 49 || ntsc[45] != 368 || ntsc.back() >= 409091) {
+        std::printf("FAIL: NTSC flux events misplaced (%zu, [6]=%d, [45]=%d)\n",
+                    ntsc.size(), ntsc.size() > 6 ? ntsc[6] : -1,
+                    ntsc.size() > 45 ? ntsc[45] : -1);
+        return false;
+    }
+    for (size_t i = 1; i < ntsc.size(); ++i) {
+        const int gap = ntsc[i] - ntsc[i - 1];
+        if (gap != 8 && gap != 9) {
+            std::printf("FAIL: a 4 us interval read as %d cycles\n", gap);
+            return false;
+        }
+    }
+    // The synthetic cell view follows: one cell per 8 cycles of the period.
+    if (img.trackBitLength(0) != (409091 + 7) / 8) {
+        std::printf("FAIL: flux cell count %d\n", img.trackBitLength(0));
+        return false;
+    }
+
+    // The same surface in a PAL machine's drive: re-projected, not reloaded.
+    img.setFluxClockHz(1015625.0);
+    if (img.trackPeriod(0) != 406250 || img.fluxEvents(0).size() != kDeltas ||
+        img.fluxEvents(0)[45] != 365 || img.trackBitLength(0) != (406250 + 7) / 8) {
+        std::printf("FAIL: PAL flux period %d / [45]=%d\n", img.trackPeriod(0),
+                    img.fluxEvents(0)[45]);
+        return false;
+    }
+    // A clock that is no bus clock is refused, not divided by.
+    img.setFluxClockHz(0.0);
+    img.setFluxClockHz(4000000.0);
+    if (img.fluxClockHz() != 1015625) {
+        std::printf("FAIL: an impossible bus clock was accepted\n"); return false;
+    }
+    img.setFluxClockHz(1022727.0);
+    if (img.fluxEvents(0) != ntsc) {
+        std::printf("FAIL: back on NTSC the projection differs\n"); return false;
+    }
+
+    // A write lands on the cycle it was written at, survives the file, and
+    // leaves the surface outside its window alone — at the real ratio, where
+    // cycles and ticks are each other's rounding.
+    img.setWriteBackEnabled(true);
+    const int64_t pulses[] = {100001, 100009, 100017};
+    img.writeFlux(0, 100000, 100024, 3, pulses);
+    std::vector<int> expected;
+    for (int e : ntsc) if (e < 100000 || e >= 100024) expected.push_back(e);
+    expected.insert(expected.end(), {100001, 100009, 100017});
+    std::sort(expected.begin(), expected.end());
+    if (img.fluxEvents(0) != expected) {
+        std::printf("FAIL: NTSC flux write moved (%zu events, want %zu)\n",
+                    img.fluxEvents(0).size(), expected.size());
+        return false;
+    }
+    if (!img.saveDirty()) {
+        std::printf("FAIL: save NTSC FLUX: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    const auto first = readWholeFile(path);
+    DiskImage reloaded;
+    if (!reloaded.loadFile(path) || reloaded.trackPeriod(0) != 409091 ||
+        reloaded.fluxEvents(0) != expected) {
+        std::printf("FAIL: NTSC flux write did not survive save + reload\n");
+        return false;
+    }
+    // Writing the same flux again changes nothing, in memory or in the file.
+    reloaded.setWriteBackEnabled(true);
+    reloaded.writeFlux(0, 100000, 100024, 3, pulses);
+    if (reloaded.hasUnsavedChanges() && !reloaded.saveDirty()) {
+        std::printf("FAIL: re-save NTSC FLUX\n"); return false;
+    }
+    if (readWholeFile(path) != first) {
+        std::printf("FAIL: rewriting identical flux changed the file\n"); return false;
+    }
+    // A window that runs to the end of the revolution takes the last ticks.
+    reloaded.writeFlux(0, 409000, 409091, 0, nullptr);
+    if (!reloaded.fluxEvents(0).empty() && reloaded.fluxEvents(0).back() >= 409000) {
+        std::printf("FAIL: flux survived an erase to the end of the revolution "
+                    "(last event %d)\n", reloaded.fluxEvents(0).back());
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    std::printf("  ok: FLUX ticks fall on the machine's own LSS cycles (NTSC, PAL)\n");
+    return true;
+}
+
 int main()
 {
+    if (!testFluxTimeBase()) return 1;
     if (!testFluxWriteBackRoundTrip()) return 1;
     if (!testFluxLongWindowKeepsLastRevolution()) return 1;
     if (!testFluxStreamEndsOnTransition()) return 1;

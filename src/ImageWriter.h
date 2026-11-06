@@ -398,7 +398,14 @@ public:
     /// Optional; null = a silent printer, which is what every headless build
     /// and test gets. See PrinterSoundSink.h for why these events carry no
     /// emuCycles stamp, unlike the floppy's.
-    void setSoundSink(PrinterSoundSink* s) { sound_ = s; }
+    void setSoundSink(PrinterSoundSink* s)
+    {
+        sound_ = s;
+        if (s) s->printQuality(static_cast<int>(quality_));
+    }
+    /// The user tore the sheet off (the host's "Clear all"). Not part of
+    /// `clearAll()`: a session load empties the tray too, and makes no noise.
+    void notifyTearOff() { if (sound_) sound_->tearOff(); }
 
     /// Front-panel POWER. Off ignores every incoming byte — and KEEPS THE
     /// PAPER, which is what distinguishes it from `powerCycle()`: pulling the

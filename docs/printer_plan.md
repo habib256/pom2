@@ -317,9 +317,14 @@ already in real time when they are emitted, and stamping them would add
 nothing. `PrinterSoundSink` says so where someone would otherwise wonder.
 
 *Wrong 2: `FloppySoundDevice` as the model.* The floppy plays MAME's WAV set.
-There is no equivalent free ImageWriter sample set — and, checked rather than
-assumed, **web-a2e ships no audio assets at all**; its `printer-sound.js`
-synthesises. So this is synthesis, ported from that model.
+The plan assumed there was no equivalent free ImageWriter sample set — and,
+checked rather than assumed, **web-a2e ships no audio assets at all**; its
+`printer-sound.js` synthesises. So this is synthesis, ported from that model.
+*Corrected 2026-11-05:* a free set does exist — Scott Lawrence's recordings of
+a real ImageWriter II (`github.com/BleuLlama/ImageWriterIISimulator`,
+`Sounds/`, **CC BY 4.0**: carriage loops per print quality, line feeds, page
+feeds, paper tear, power-up). A sample bank beside the synthesiser is an open
+option, not a dead end.
 
 **The model.** A dot-matrix impact is a short broadband NOISE click, not a tone
 (head energy near ~900-1000 Hz with a skirt to ~5 kHz, no clean fundamental) —

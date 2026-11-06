@@ -218,7 +218,42 @@ AudioDevice::AudioDevice(OutputMode mode)
         start = remembered;
     periodFrames_.store(start, std::memory_order_relaxed);
     nextLoadPeriodFrames_ = start;
-    if (mode == OutputMode::Host) initAudio(periodFrames());
+    hostMode_ = (mode == OutputMode::Host);
+    if (hostMode_) initAudio(periodFrames());
+}
+
+bool AudioDevice::reopen(bool quiet)
+{
+    if (!hostMode_ || appliesAtNextLoad()) return false;
+    // Stop the old device first, as reconfigurePeriod does: the deleter's
+    // ma_device_uninit joins the audio thread, so nothing below has a reader.
+    closing_.store(true, std::memory_order_relaxed);
+    device.reset();
+    audioAvailable    = false;
+    haveLastCallback_ = false;
+    const uint32_t rateBefore = actualSampleRate;
+    const bool ok = initAudio(periodFrames(), quiet);
+    if (ok && actualSampleRate != rateBefore) {
+        std::lock_guard<std::mutex> lock(sourcesMutex);
+        for (AudioSource* s : sources)
+            if (auto* ra = dynamic_cast<RateAware*>(s))
+                ra->setSampleRate(actualSampleRate);
+    }
+    return ok;
+}
+
+void AudioDevice::notificationCallback(const void* opaque)
+{
+    const auto* notification = static_cast<const ma_device_notification*>(opaque);
+    if (!notification || !notification->pDevice) return;
+    auto* self = static_cast<AudioDevice*>(notification->pDevice->pUserData);
+    if (!self) return;
+    // Any backend thread. Flags only: the UI thread does the work.
+    if (notification->type == ma_device_notification_type_rerouted)
+        self->rerouted_.store(true, std::memory_order_relaxed);
+    else if (notification->type == ma_device_notification_type_stopped &&
+             !self->closing_.load(std::memory_order_relaxed))
+        self->stopped_.store(true, std::memory_order_relaxed);
 }
 
 bool AudioDevice::reconfigurePeriod(uint32_t periodFrames)
@@ -240,6 +275,7 @@ bool AudioDevice::reconfigurePeriod(uint32_t periodFrames)
     }
     // Stop the old device first — the deleter's ma_device_uninit joins the
     // audio thread — so the fields below are written with no reader alive.
+    closing_.store(true, std::memory_order_relaxed);
     device.reset();
     audioAvailable    = false;
     haveLastCallback_ = false;
@@ -263,13 +299,18 @@ AudioDevice::~AudioDevice()
     shutdownAudio();
 }
 
-bool AudioDevice::initAudio(uint32_t periodFrames)
+bool AudioDevice::initAudio(uint32_t periodFrames, bool quiet)
 {
     // Not shutdownAudio(): that clears the source list, and reconfigurePeriod
     // re-opens the device UNDER a live list. The caller guarantees no device
     // is open here (the constructor has none; reconfigurePeriod reset it).
+    closing_.store(true, std::memory_order_relaxed);
     device.reset();
     audioAvailable = false;
+    // Whatever the old device signalled died with it.
+    rerouted_.store(false, std::memory_order_relaxed);
+    stopped_.store(false, std::memory_order_relaxed);
+    closing_.store(false, std::memory_order_relaxed);
 
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format    = ma_format_f32;
@@ -309,13 +350,17 @@ bool AudioDevice::initAudio(uint32_t periodFrames)
     config.periods            = pom2::AudioBufferPolicy::kPeriods;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.dataCallback       = &AudioDevice::audioDataCallback;
+    // Reroutes and unexpected stops, for AudioDeviceWatch (flags only).
+    config.notificationCallback = [](const ma_device_notification* n) {
+        AudioDevice::notificationCallback(n);
+    };
     config.pUserData          = this;
 
     ma_device* raw = new ma_device();
     if (ma_device_init(nullptr, &config, raw) != MA_SUCCESS) {
         delete raw;
         audioAvailable = false;
-        pom2::log().warn("Audio", "ma_device_init failed — audio disabled");
+        if (!quiet) pom2::log().warn("Audio", "ma_device_init failed — audio disabled");
         return false;
     }
     // Publish the negotiated rate BEFORE starting the device. ma_device_start
@@ -330,10 +375,12 @@ bool AudioDevice::initAudio(uint32_t periodFrames)
     actualSampleRate = raw->sampleRate;
 
     if (ma_device_start(raw) != MA_SUCCESS) {
+        closing_.store(true, std::memory_order_relaxed);
         ma_device_uninit(raw);
+        closing_.store(false, std::memory_order_relaxed);
         delete raw;
         audioAvailable = false;
-        pom2::log().warn("Audio", "ma_device_start failed — audio disabled");
+        if (!quiet) pom2::log().warn("Audio", "ma_device_start failed — audio disabled");
         return false;
     }
 
@@ -387,6 +434,7 @@ void AudioDevice::shutdownAudio()
     // device.reset() -> MaDeviceDeleter -> ma_device_uninit synchronously
     // drains the callback, so by the time we clear sources no audio thread
     // is racing with us.
+    closing_.store(true, std::memory_order_relaxed);
     device.reset();
     audioAvailable = false;
     {

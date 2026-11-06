@@ -25,6 +25,7 @@
 // comment chunk; some archives append a creator chunk past the payload.
 
 #include "DiskImage.h"
+#include "SyncGapWrite.h"
 
 #include <cassert>
 #include <cstdint>
@@ -156,13 +157,18 @@ int main()
         return 1;
     }
     // Mutate a nibble so dirty[track] is set and saveDirty has work to do.
-    // Track 17 is the DOS 3.3 VTOC track — convenient marker. Note: the
-    // single-nibble change may or may not survive decode→re-encode (if it
-    // landed in sync gap, the decoder ignores it and the round-trip is a
-    // no-op at the byte level). The point of this test is NOT to verify
-    // the bytes change; it's to verify the 2IMG envelope is intact after
-    // saveDirty walks the dirty track through the sector branch.
-    img.writeNibbleAt(17, 100, 0xAA);
+    // Track 17 is the DOS 3.3 VTOC track — convenient marker. The write goes
+    // in a sync gap (SyncGapWrite.h): `writeNibbleAt(17, 100, 0xAA)` landed
+    // inside a field, and a track with a sector that no longer decodes is
+    // now refused instead of "saved" with that sector's old bytes. The point
+    // of this test is NOT to verify the bytes change; it's to verify the 2IMG
+    // envelope is intact after saveDirty walks the dirty track through the
+    // sector branch.
+    if (pom2test::writeInSyncGap(img, 17) < 0) {
+        std::fprintf(stderr, "no sync gap on track 17\n");
+        std::remove(path.c_str());
+        return 1;
+    }
     if (!img.saveDirty()) {
         std::fprintf(stderr, "save failed: %s\n", img.getLastError().c_str());
         std::remove(path.c_str());

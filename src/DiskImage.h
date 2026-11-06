@@ -137,14 +137,27 @@ public:
     /// them; DiskIICard forces the LSS path on insert.
     ///
     /// Write-back IS implemented (saveDirty splices the dirty quarter-
-    /// tracks back into wozRaw and zeroes the header CRC32 per the
-    /// Applesauce 2.1 "not computed by the imager" sentinel), and WOZ
-    /// sits under the same writeBackEnabled / fileWriteProtected gate as
-    /// .dsk/.nib. The one exception is a WOZ carrying **FLUX** tracks:
-    /// POM2 cannot serialise their delta streams, so such a medium is
-    /// forced physically write-protected at load rather than accepting
-    /// writes and dropping them at save time.
+    /// tracks back into wozRaw; the header CRC32 is recomputed over the
+    /// bytes that reach the file), and WOZ sits under the same
+    /// writeBackEnabled / fileWriteProtected gate as .dsk/.nib. FLUX
+    /// tracks are written too (DiskImageWozFlux.cpp).
     bool isWoz() const { return wozFormat; }
+
+    /// Non-empty when the image loaded DAMAGED and is therefore held
+    /// write-protected: a WOZ whose CRC32 does not match its contents, or
+    /// whose TMAP / FLUX index names track records that cannot be read. The
+    /// text says which. A damaged image still mounts — refusing it kept the
+    /// user from the tracks that ARE readable — but nothing is written to
+    /// it: a save would stamp a fresh CRC over the damage and make it look
+    /// sound.
+    const std::string& integrityWarning() const { return integrityWarning_; }
+
+    /// What a WOZ 2 image says about the machine it is for: the reference's
+    /// "Compatible Hardware" bit field (0 = says nothing) and its "Required
+    /// RAM" in K (0 = unknown). Both 0 for every other format. See
+    /// WozCompat.h for the bits and for the sentence built from them.
+    uint16_t wozCompatibleHardware() const { return wozCompatibleHardware_; }
+    uint16_t wozRequiredRamK() const { return wozRequiredRamK_; }
 
     /// Discard the loaded image. After eject, isLoaded() returns false
     /// and the controller will see the same "no media" behaviour as if
@@ -315,6 +328,19 @@ public:
     /// `trackBitLength(qt) * 8`.
     int trackPeriod(int qt) const;
 
+    /// The bus clock the controller's sequencer runs from — it steps twice
+    /// per bus cycle, so this fixes how long an LSS cycle is, and with it
+    /// where a WOZ FLUX track's 125 ns ticks fall on the LSS timeline
+    /// (`fluxTicksToLss`). A drive tells its medium (DiskIICard); a bare
+    /// image is NTSC. Changing it re-projects the flux tracks, lazily, one
+    /// quarter track at a time on first use; bit tracks do not move.
+    void setFluxClockHz(double busHz);
+    int  fluxClockHz() const { return fluxBusHz_; }
+    /// The NTSC bus clock, 14.31818 MHz / 14 — `POM2_CPU_CLOCK_HZ`, restated
+    /// because CpuClock.h is a layer above this one (DiskIICard.cpp
+    /// static_asserts the two agree).
+    static constexpr int kNtscBusHz = 1022727;
+
     /// Sorted vector of flux event timestamps (LSS cycles, in [0, period)).
     /// Returns a static empty vector for out-of-range quarter-tracks.
     /// Lazy-built on first call; reused across calls until the underlying
@@ -387,20 +413,31 @@ public:
     /// the image out; the background autosave keeps it mounted). A WOZ or a
     /// nibble image is captured as its complete payload; a sector image as
     /// its dirty tracks' nibbles, decoded at commit time on top of the file's
-    /// current sectors — so a sector the decoder cannot parse keeps its old
-    /// bytes, exactly as the inline save always did.
+    /// current sectors. A dirty track goes in whole or not at all: if any of
+    /// its sectors does not decode the commit is refused and the surface is
+    /// saved beside the image as a WOZ (DiskImage_WriteBack.cpp).
     struct PendingWriteBack {
         enum class Kind { Whole, Sectors16, Sectors13 };
         bool                     valid = false;   ///< false → phase 2 no-ops
         uint64_t                 seq   = 0;       ///< see nextMediaCaptureSeq
         uint64_t                 lineage = 0;     ///< the mount it came from
         std::string              path;
+        /// The file as this mount read it — what the commit checks before it
+        /// replaces anything (MediaAutosave.h, "External change").
+        pom2::MediaFileStamp     mounted;
         Kind                     kind  = Kind::Whole;
         std::vector<uint8_t>     header, trailer; ///< 2IMG / MacBinary envelope
         std::vector<uint8_t>     payload;         ///< Kind::Whole
+        bool                     wozCrc = false;  ///< Whole: stamp the WOZ CRC32
         SectorOrder              order = SectorOrder::Dos33;
         std::vector<int>         trackNumbers;    ///< Sectors16/13: dirty tracks
         std::vector<TrackBuffer> trackNibbles;    ///< …and their nibbles
+        /// Sectors16/13: ALL 35 tracks as the guest sees them. The dirty
+        /// tracks alone are enough when they go on top of the file; they are
+        /// not when the file may no longer be used as the base (a diverted
+        /// mount) or when a track cannot be stored in this format at all and
+        /// the surface is written out as a WOZ instead.
+        std::vector<TrackBuffer> surface;
         std::string              summary;         ///< for the success log line
     };
 
@@ -413,7 +450,21 @@ public:
     bool takeWriteBack(PendingWriteBack& out);
 
     /// Phase 2, with NO lock held. Static: the image may be gone by now.
-    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error);
+    /// `divertedTo`, when given, receives the sibling the guest's version
+    /// went to because the image file had been changed by another program
+    /// (empty otherwise) — the commit still succeeds then.
+    static bool commitWriteBack(PendingWriteBack&& pending, std::string& error,
+                                std::string* divertedTo = nullptr);
+
+    /// The complete surface of a 5.25" disk as a WOZ 2 file: one bit-cell
+    /// track per whole track, laid out as the read path expands the nibbles
+    /// (10-cell sync). Lossless for anything a nibble buffer holds, which is
+    /// what makes it the fallback when a track no longer fits a sector
+    /// format. All-zero (unformatted) tracks are left out of the TMAP.
+    static std::vector<uint8_t> buildWozFromSurface(
+        const std::vector<TrackBuffer>& surface, bool thirteenSector);
+    /// IEEE CRC-32 as the WOZ header carries it (over bytes 12..EOF).
+    static uint32_t wozCrc32(const uint8_t* data, std::size_t n);
 
     /// Background autosave (MediaAutosave.h), `stateMutex` held.
     std::shared_ptr<pom2::MediaCommitOperation>
@@ -462,7 +513,11 @@ private:
     /// and allocation-free (the old per-nibble ±4 neighbour probe was
     /// O(9N) plus a heap vector per flush).
     static void computeNibSyncWidths(const uint8_t* buf, uint8_t* widths);   // MAME a2_nib_format
+    /// The kSyncMinRun rule on one bare nibble buffer (sector formats).
+    static void computeSyncRunWidths(const uint8_t* buf, uint8_t* widths);
     void computeCellWidths(int track, uint8_t* widths) const;
+    /// File sector index for physical sector `p` under `order`'s skew.
+    static const int* logicalForPhysical(SectorOrder order);
 
     bool loaded = false;
     SectorOrder sectorOrder = SectorOrder::Dos33;
@@ -497,16 +552,20 @@ private:
     /// blanket gate is lifted. Stays false for non-WOZ formats.
     bool fileWriteProtected = false;
     bool hostReadOnly_      = false;   // the notch — see setHostWriteProtected
-    /// WOZ INFO write-protect, also forced for images containing FLUX tracks
-    /// until their delta-stream write encoder exists.
+    std::string integrityWarning_;     // see integrityWarning()
+    uint16_t wozCompatibleHardware_ = 0;   // WOZ INFO +40, 0 = unknown
+    uint16_t wozRequiredRamK_       = 0;   // WOZ INFO +42, 0 = unknown
+    pom2::MediaFileStamp fileStamp_;   // the file as this mount read it
     /// WOZ INFO byte +39 — `optimal_bit_timing`. Measured in 125 ns units.
     /// 32 = 4 µs (the standard 5.25" Apple II cell duration; default for
     /// any WOZ1 image, since INFO version 1 didn't carry the field, and
     /// WOZ2 too unless the imager set otherwise). The flux-event view
     /// scales `i * lssCyclesPerCell + lssCyclesPerCell/2` by this so a
     /// disk mastered at e.g. 28 (3.5 µs) or 40 (5 µs) plays back at the
-    /// rate Applesauce captured. LSS clock is 2 MHz → 1 LSS cycle =
-    /// 500 ns → `lssCyclesPerCell = optimalBitTiming / 4` (integer when
+    /// rate Applesauce captured. LSS clock is nominally 2 MHz → 1 LSS cycle
+    /// = 500 ns (really half a bus cycle, 488.9 ns NTSC — a convention for
+    /// BIT tracks only, see DiskImage.cpp above `lssCyclesPerCell`; FLUX
+    /// tracks convert exactly) → `lssCyclesPerCell = optimalBitTiming / 4` (integer when
     /// the imager picked a multiple of 4, which is the universal case
     /// in practice). 0 means "field not present, assume default 32".
     /// MAME `as_dsk.cpp:283` reads the same byte.
@@ -567,16 +626,56 @@ private:
     // sub-chunk; writeFlux only updates `bitStream[qt]`, and saveDirty
     // walks the dirty bits to re-pack into `wozRaw` before writing.
     //
-    // Per the Applesauce WOZ 2.1 spec, we zero the CRC32 header bytes on
-    // save (the spec explicitly allows CRC=0 as "not computed by the
-    // imager"); recomputing would also be valid but adds little safety
-    // because we always re-validate on the next load anyway.
+    // The CRC32 header bytes are zero in `wozRaw` after the first capture
+    // and are recomputed at commit time, off the lock, over the payload that
+    // reaches the file (`PendingWriteBack::wozCrc`). They used to be left at
+    // zero — the "not computed" sentinel the WOZ reference allows — which
+    // was legal and threw away the file's only integrity check the first
+    // time the guest wrote to it.
     std::vector<uint8_t> wozRaw;
     std::array<size_t, kQuarterTracks> wozQtByteOff  {};
     std::array<size_t, kQuarterTracks> wozQtByteLen  {};
     std::array<size_t, kQuarterTracks> wozQtBitCount {};
     std::array<bool,   kQuarterTracks> wozQtDirty    {};
     // WOZ 2.1 FLUX keeps original 125 ns positions outside write windows.
+    // These are the surface; fluxStream / bitStream of such a quarter track
+    // are its projection onto LSS cycles (`projectFluxTrack`).
+    //
+    // ── Flux ticks and LSS cycles ────────────────────────────────────────
+    // [B] WOZ 2.1 reference, FLUX/TRKS: a flux stream counts 125 ns ticks.
+    // [B] Sather, Understanding the Apple II ch. 9: the sequencer is clocked
+    //     at twice the CPU rate (Q3), so an LSS cycle is half a bus cycle —
+    //     488.9 ns at 1 022 727 Hz (NTSC), 492.3 ns at 1 015 625 Hz (PAL),
+    //     not 500. One LSS cycle is therefore 176/45 = 3.911 ticks (NTSC) or
+    //     256/65 = 3.938 (PAL), not 4.
+    // [D] Casso `Disk2NibbleEngine.h:135-143` @ 2d899adf converts the same
+    //     way (176/45 ticks per sequencer clock, revolution = tick sum).
+    //     MAME `as_dsk.cpp:81-101` @ mame0287 instead stretches every flux
+    //     track to exactly 200 ms.
+    // POM2 divided by a flat 4 until 2026-11-06, which played every flux
+    // track 2.27 % fast (1.56 % on a PAL machine): a cell an Apple II wrote
+    // — 4 bus cycles, 31.3 ticks — came back as 7.82 LSS cycles where the
+    // same cell on a BIT track is 8.
+    //
+    // Rounding: a transition belongs to the LSS cycle it happens IN (floor),
+    // a revolution lasts until its last tick is over (ceil), and a cycle
+    // starts at the first tick that belongs to it (ceil). So every tick of
+    // the surface has a cycle inside the revolution, a position the LSS
+    // wrote reads back on the cycle it was written at, and a write window
+    // [a, b) of cycles covers exactly the ticks that project into it.
+    int fluxBusHz_ = kNtscBusHz;
+    int64_t fluxTicksToLss(int64_t ticks) const {
+        return ticks * fluxBusHz_ / 4000000;
+    }
+    int64_t fluxPeriodToLss(int64_t periodTicks) const {
+        return (periodTicks * fluxBusHz_ + 3999999) / 4000000;
+    }
+    int64_t lssToFluxTicks(int64_t lss) const {
+        return (lss * 4000000 + fluxBusHz_ - 1) / fluxBusHz_;
+    }
+    /// fluxStream / bitStream / period of one FLUX quarter track, from its
+    /// ticks. `slot` must have `wozQtFluxPeriodTicks[slot] != 0`.
+    void projectFluxTrack(int slot) const;
     std::array<std::vector<int>, kQuarterTracks> wozQtFluxTicks{};
     std::array<int, kQuarterTracks> wozQtFluxPeriodTicks{};
     std::array<size_t, kQuarterTracks> wozQtFluxHeaderOff{};
@@ -603,8 +702,9 @@ private:
     mutable std::array<bool, kQuarterTracks>             fluxStreamValid{};
     /// True revolution period (LSS cycles) for quarter-tracks populated
     /// from a WOZ FLUX delta stream; 0 everywhere else. A flux capture's
-    /// period is the SUM of its tick deltas (MAME `as_dsk.cpp:61-81`
-    /// accumulates the same stream into the track's total time) — it is
+    /// period is the SUM of its tick deltas, converted by `fluxTicksToLss`
+    /// (MAME `as_dsk.cpp:61-81` @ mame0287 accumulates the same stream into
+    /// the track's total time, then rescales it — see fluxBusHz_) — it is
     /// NOT `bit_count × optimal_bit_timing`, so `trackPeriod` must
     /// return this instead of the synthetic-bitstream-derived product
     /// or every revolution wraps short/long and the flux timeline
@@ -752,16 +852,20 @@ private:
     /// Decode one track's nibble buffer back into 16 × 256-byte logical
     /// sectors. Returns true if any sector was successfully decoded.
     /// Sectors that can't be parsed (no prologue, bad checksum) are
-    /// left untouched in `outSectors` (which the caller pre-fills with
-    /// the existing file content so unmodified sectors persist).
+    /// left untouched in `outSectors`. `decodedMask`, when given, gets one
+    /// bit per sector that DID decode — the write-back refuses a track that
+    /// is not all there (DiskImage_WriteBack.cpp) rather than let the
+    /// missing sectors keep whatever the file held.
     static bool decodeNibbles(const TrackBuffer& buf, int expectedTrack,
-                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes]);
+                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes],
+                              uint32_t* decodedMask = nullptr);
 
     /// 13-sector (5-and-3) decoder, inverse of writeDataField13. Used by
     /// saveDirty for .d13/.dsk write-back. outSectors indexed by the
     /// address-field sector number (0..12).
     static bool decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
-                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes]);
+                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes],
+                                uint32_t* decodedMask = nullptr);
 };
 
 /// Slot-routing class for a disk image — which kind of card/slot the image
@@ -771,7 +875,7 @@ private:
 /// positional disk launcher) needs to pick a target slot.
 enum class DiskSlotClass {
     Unknown,    // extension/size not recognised — caller reports an error
-    Floppy525,  // 5.25" Disk II: .dsk/.do/.nib/.woz/.d13, or .po @143360
+    Floppy525,  // 5.25" Disk II: .dsk/.do/.nib/.nb2/.woz/.d13, or .po @143360
     Sony35,     // 800K 3.5": .po/.2mg sized ~819200 (±2IMG header slack)
     Hdv,        // ProDOS hard disk: .hdv/.2mg > 800K, 512-aligned
 };

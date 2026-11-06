@@ -52,8 +52,10 @@ const char* keyword(uint8_t t)
 }
 
 std::string list(uint16_t start, const std::function<uint8_t(uint16_t)>& peek,
-                 std::size_t maxBytes)
+                 std::size_t maxBytes, ListReport* report)
 {
+    constexpr uint8_t kData = 0x83, kRem = 0xB2;
+    if (report) *report = ListReport{};
     std::string out;
     uint32_t at = start;
     const uint32_t end = start + static_cast<uint32_t>(maxBytes);
@@ -61,26 +63,47 @@ std::string list(uint16_t start, const std::function<uint8_t(uint16_t)>& peek,
     while (at + 4 <= end && at + 4 <= 0x10000) {
         const uint16_t next = word(at);
         if (next == 0) break;
-        out += std::to_string(word(at + 2));
+        const uint16_t lineNumber = word(at + 2);
+        out += std::to_string(lineNumber);
         out += ' ';
         uint32_t p = at + 4;
         bool spaced = true;    // the last thing written ends in a space
+        bool ours   = true;    // …and this listing put that space there
+        bool quoted = false;   // inside "…"
+        bool rem    = false;   // after REM: verbatim to the end of the line
+        bool data   = false;   // inside a DATA statement: verbatim to its ':'
+        const auto lost = [&] {
+            if (!report) return;
+            if (report->untypable++ == 0) report->firstLine = lineNumber;
+        };
         while (p < end && p < 0x10000) {
             const uint8_t b = peek(uint16_t(p++));
             if (b == 0) break;
-            if (const char* kw = keyword(b)) {
+            const char* kw = keyword(b);
+            if (kw) {
+                // A token where the tokeniser never puts one: its keyword is
+                // written, and typed back it is only letters.
+                if (quoted || rem || data) lost();
                 // Words get a space either side; the operators stay tight.
                 if (std::isalpha(static_cast<unsigned char>(kw[0])) || kw[0] == '&') {
                     if (!spaced) out += ' ';
                     out += kw;
-                    out += ' ';
-                    spaced = true;
+                    // …except after REM and DATA, whose payload is stored
+                    // with every space it was typed with (see the header).
+                    if (!quoted && !rem && !data && (b == kRem || b == kData)) {
+                        (b == kRem ? rem : data) = true;
+                        spaced = ours = false;
+                    } else {
+                        out += ' ';
+                        spaced = ours = true;
+                    }
                 } else {
                     out += kw;
-                    spaced = false;
+                    spaced = ours = false;
                 }
                 continue;
             }
+            if (b >= 0x80) lost();                 // above the last token
             // Control characters go out as they are, as LIST types them: a
             // string's Ctrl-D (PRINT "<Ctrl-D>BLOAD ...") is the program, and
             // a '?' in its place listed another one. CR and LF alone would
@@ -88,10 +111,17 @@ std::string list(uint16_t start, const std::function<uint8_t(uint16_t)>& peek,
             const char c = char(b & 0x7F);
             const bool keep = (c >= 0x20 && c < 0x7F)
                            || (c >= 0x01 && c < 0x20 && c != 0x0A && c != 0x0D);
+            if (!keep && b < 0x80) lost();         // CR, LF, DEL
             out += keep ? c : '?';
             spaced = c == ' ';
+            ours   = false;
+            if (c == '"' && !rem) quoted = !quoted;
+            else if (c == ':' && !quoted && !rem) data = false;
         }
-        while (!out.empty() && out.back() == ' ') out.pop_back();
+        // Only the space this listing added after a last keyword goes: one
+        // the program holds — the end of a REM, of a DATA item, of a string
+        // left open — is part of it, and stripping it listed another program.
+        if (spaced && ours && !out.empty() && out.back() == ' ') out.pop_back();
         out += '\n';
         // Lines are contiguous, so the walk follows the bytes, not the link:
         // in a DOS file the links point where the program WILL load, and a

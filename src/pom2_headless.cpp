@@ -145,6 +145,20 @@ void usage(const char* prog)
         "                        frames when --frames is absent or zero.\n"
         "  --text-dump           After the frames, print the 40-column text page\n"
         "                        to stdout (24 lines, inverse/flash shown as is).\n"
+        "  --until <addr>        Stop when the CPU is about to execute <addr>\n"
+        "                        ($C600, 0xC600 or decimal). The time limit is\n"
+        "                        --cycles or --frames; 3600 frames (a minute)\n"
+        "                        when neither is given. Exit 4 if it runs out.\n"
+        "  --cycles <N>          Run N CPU cycles at most, to the cycle's frame\n"
+        "                        slice (a budget: the last instruction may run\n"
+        "                        a few cycles past it). Replaces --frames.\n"
+        "  --registers           When the run ends, print one line on stdout:\n"
+        "                        PC=xxxx A=xx X=xx Y=xx SP=xx P=xx CYCLES=n\n"
+        "\n"
+        "Exit codes, capture mode: 0 the run ended as asked (frames or cycles\n"
+        "  done, or --until reached) · 1 usage or set-up error · 3 the screen\n"
+        "  is one flat colour (only without --until/--cycles) · 4 the budget ran\n"
+        "  out before --until · 5 the CPU halted (KIL / STP) before the end.\n"
         "  --trace-mli           Print every ProDOS MLI call and its result\n"
         "                        to stderr (puts the CPU on its debugged loop).\n"
         "  --trace-bdos          Print every CP/M BDOS call a card Z80 makes.\n"
@@ -234,6 +248,9 @@ int main(int argc, char** argv)
     bool setupGiven  = false;
     bool textDump    = false;
     bool iie         = false;
+    long      untilAddr   = -1;   // --until: stop when PC gets here
+    long long cycleBudget = 0;    // --cycles: 0 = no cycle budget
+    bool      registers   = false;
     pom2::OsTraceKinds trace;
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
@@ -269,6 +286,7 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
+            a == "--until" || a == "--cycles" ||
             a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als" ||
             a == "--softcard2") {
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
@@ -329,6 +347,33 @@ int main(int argc, char** argv)
         else if (a == "--frames" && i+1 < argc) {
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
+        else if (a == "--until" && i+1 < argc) {
+            // An address, the way one is written: $C600, 0xC600 or decimal.
+            std::string text = argv[++i];
+            int base = 10;
+            if (!text.empty() && text[0] == '$') { text.erase(0, 1); base = 16; }
+            else if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+                text.erase(0, 2); base = 16;
+            }
+            char* end = nullptr;
+            const long v = std::strtol(text.c_str(), &end, base);
+            if (text.empty() || *end != '\0' || v < 0 || v > 0xFFFF) {
+                std::fprintf(stderr, "--until expects an address in $0000..$FFFF, got: %s\n",
+                             argv[i]);
+                return 1;
+            }
+            untilAddr = v;
+        }
+        else if (a == "--cycles" && i+1 < argc) {
+            char* end = nullptr;
+            const long long v = std::strtoll(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || v <= 0) {
+                std::fprintf(stderr, "--cycles expects a positive integer, got: %s\n", argv[i]);
+                return 1;
+            }
+            cycleBudget = v;
+        }
+        else if (a == "--registers") registers = true;
         else if (a == "--screenshot" && i+1 < argc) shotPath = argv[++i];
         else if (a == "--no-setup") doSetup = false;
         else if (a == "--version") {
@@ -354,8 +399,14 @@ int main(int argc, char** argv)
     }
     const int z80Slot = softcardSlot ? softcardSlot : alsSlot ? alsSlot : sc2Slot;
     if (z80Slot && !setupGiven) doSetup = false;
-    const bool captureMode = frames > 0 || !shotPath.empty() || textDump;
-    if (captureMode && frames <= 0) frames = 300;   // ~5 s: past the boot beep
+    // A stop address, a cycle budget and a register dump are all questions
+    // about a run that ENDS, so each of them selects capture mode.
+    const bool scripted    = untilAddr >= 0 || cycleBudget > 0;
+    const bool captureMode = frames > 0 || !shotPath.empty() || textDump ||
+                             scripted || registers;
+    // ~5 s, past the boot beep — or a minute when a stop address is the
+    // point and no limit was given: a disk boot takes longer than a banner.
+    if (captureMode && frames <= 0) frames = (untilAddr >= 0) ? 3600 : 300;
 
     const std::string romPath = !romArg.empty() ? romArg : iie
         ? findAsset("roms/apple2e.rom", { "../roms/apple2e.rom", "../../roms/apple2e.rom" })
@@ -580,10 +631,66 @@ int main(int argc, char** argv)
     // the run is deterministic and takes as long as the host needs rather than
     // N/60 seconds: 300 frames land in well under a second on any runner.
     if (captureMode) {
-        std::fprintf(stderr, "[POM2 headless] capture: running %d frames\n", frames);
-        for (int i = 0; i < frames; ++i) {
+        if (untilAddr >= 0) {
+            // The run-control debugger is what stops a machine at an address;
+            // arming it puts the CPU on its debugged loop for this run.
+            auto st = controller.lockState();
+            controller.debugger().addBreakpoint(static_cast<uint16_t>(untilAddr));
+            controller.syncDebugHook();
+        }
+        if (cycleBudget > 0)
+            std::fprintf(stderr, "[POM2 headless] capture: running %lld cycles\n", cycleBudget);
+        else
+            std::fprintf(stderr, "[POM2 headless] capture: running %d frames\n", frames);
+
+        const uint64_t startCycles = controller.memory().getCycleCounter();
+        const int      frameCycles = controller.getCyclesPerFrame();
+        bool reached = false, halted = false;
+        for (int i = 0;; ++i) {
+            if (cycleBudget > 0) {
+                const long long used = static_cast<long long>(
+                    controller.memory().getCycleCounter() - startCycles);
+                if (used >= cycleBudget) break;
+                // The last slice is cut to what is left of the budget.
+                const long long left = cycleBudget - used;
+                controller.setCyclesPerFrame(left < frameCycles ? static_cast<int>(left)
+                                                                : frameCycles);
+            } else if (i >= frames) {
+                break;
+            }
             controller.tickFrame();
             typeDue(controller.memory().getCycleCounter());
+            if (untilAddr >= 0 && controller.debugger().lastHit().valid()) {
+                reached = true;
+                break;
+            }
+            // KIL or STP: nothing short of RESET moves this CPU again, so the
+            // rest of the budget would be spent learning nothing.
+            if (controller.cpu().haltCode() == 1) { halted = true; break; }
+        }
+        controller.setCyclesPerFrame(frameCycles);
+
+        const M6502& cpu = controller.cpu();
+        const unsigned long long ran = static_cast<unsigned long long>(
+            controller.memory().getCycleCounter() - startCycles);
+        if (registers)
+            std::printf("PC=%04X A=%02X X=%02X Y=%02X SP=%02X P=%02X CYCLES=%llu\n",
+                        cpu.getProgramCounter(), cpu.getAccumulator(), cpu.getXRegister(),
+                        cpu.getYRegister(), cpu.getStackPointer(), cpu.getStatusRegister(),
+                        ran);
+        int scriptedExit = 0;
+        if (halted) {
+            std::fprintf(stderr, "ERROR: the CPU halted at $%04X after %llu cycles\n",
+                         cpu.getProgramCounter(), ran);
+            scriptedExit = 5;
+        } else if (untilAddr >= 0 && !reached) {
+            std::fprintf(stderr,
+                "ERROR: $%04lX was not reached in %llu cycles (PC=$%04X)\n",
+                untilAddr, ran, cpu.getProgramCounter());
+            scriptedExit = 4;
+        } else if (untilAddr >= 0) {
+            std::fprintf(stderr, "[POM2 headless] reached $%04lX after %llu cycles\n",
+                         untilAddr, ran);
         }
 
         Apple2Display display;
@@ -622,6 +729,12 @@ int main(int argc, char** argv)
         // nothing. That is precisely the class of failure a packaged binary
         // hits and `--help` sails straight past, so it is an ERROR here, not a
         // remark. Distinct exit code: a CI log should say which check failed.
+        //
+        // Not when the run was scripted: a program stopped at an address, or
+        // after a counted number of cycles, need not have drawn anything, and
+        // the caller asked a different question.
+        if (scripted) return scriptedExit;
+        if (halted) return scriptedExit;
         if (st.differing == 0) {
             std::fprintf(stderr,
                 "ERROR: capture is a single flat colour — the machine did not boot\n");

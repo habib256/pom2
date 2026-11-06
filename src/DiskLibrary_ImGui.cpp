@@ -46,7 +46,7 @@ bool accept525(const std::string& ext, uint64_t sz) {
     // An 800K `.dsk` is a Sony 3.5" payload, not a 5.25" one — accept35
     // takes it, matching classifyDiskForSlot.
     if (ext == ".dsk" && (sz == 819200 || sz == 409600 || sz == 1474560)) return false;
-    if (ext == ".dsk" || ext == ".do" || ext == ".nib" || ext == ".woz"
+    if (ext == ".dsk" || ext == ".do" || ext == ".nib" || ext == ".nb2" || ext == ".woz"
         || ext == ".d13")
         return true;
     if (ext == ".po") {
@@ -102,7 +102,7 @@ bool acceptHdv(const std::string& ext, uint64_t sz) {
 // and here the bay is decided per click by the file's own classification.
 bool acceptFloppyEmu(const std::string& ext, uint64_t sz) {
     (void)sz;
-    return ext == ".dsk" || ext == ".do"  || ext == ".po"  || ext == ".nib"
+    return ext == ".dsk" || ext == ".do"  || ext == ".po"  || ext == ".nib" || ext == ".nb2"
         || ext == ".woz" || ext == ".moof" || ext == ".d13" || ext == ".2mg" || ext == ".hdv";
 }
 
@@ -827,22 +827,39 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
     if (ImGui::Button(ICON_FA_FLOPPY_DISK " New Blank"))
         ImGui::OpenPopup("##library_new_blank");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Insert an UNFORMATTED diskette (no address fields) "
-                          "into a Disk II drive.\nIt reads as I/O ERROR until "
-                          "you INIT it — a new disk, not a blank image.\n"
+        ImGui::SetTooltip("A new diskette into a Disk II drive: unformatted (no "
+                          "address fields —\nI/O ERROR until you INIT it), or "
+                          "already formatted for DOS 3.3 or ProDOS.\n"
+                          "The formatted ones are DATA disks: POM2 ships no "
+                          "operating system.\n"
                           "A .dsk cannot record \"never formatted\", so a "
-                          "restart brings it back\nas an ordinary "
+                          "restart brings an unformatted one\nback as a "
                           "formatted-to-zeros disk unless you format it first.");
     if (ImGui::BeginPopup("##library_new_blank")) {
-        ImGui::TextDisabled("New unformatted diskette into:");
-        ImGui::Separator();
-        if (ImGui::MenuItem("Drive 2  (the one you format)")) {
-            r.requestNewBlankDisk  = true;
-            r.requestNewBlankDrive = 1;
-        }
-        if (ImGui::MenuItem("Drive 1  (replaces the boot disk)")) {
-            r.requestNewBlankDisk  = true;
-            r.requestNewBlankDrive = 0;
+        // Three media, two drives. Drive 2 leads: drive 1 usually holds the
+        // disk you booted.
+        static const struct { const char* label; const char* tip; int format; } kMedia[] = {
+            { "Unformatted diskette", "No address fields: I/O ERROR until you INIT it.", 0 },
+            { "DOS 3.3 data disk",    "Formatted and empty, 528 sectors free. No DOS on it:\n"
+                                      "boot your DOS disk, then use this one.", 1 },
+            { "ProDOS data disk",     "A formatted, empty 140 KB volume /BLANK. No ProDOS on\n"
+                                      "it: boot your ProDOS disk, then use this one.", 2 },
+        };
+        for (const auto& medium : kMedia) {
+            if (ImGui::BeginMenu(medium.label)) {
+                if (ImGui::MenuItem("into drive 2")) {
+                    r.requestNewBlankDisk   = true;
+                    r.requestNewBlankDrive  = 1;
+                    r.requestNewBlankFormat = medium.format;
+                }
+                if (ImGui::MenuItem("into drive 1  (replaces the boot disk)")) {
+                    r.requestNewBlankDisk   = true;
+                    r.requestNewBlankDrive  = 0;
+                    r.requestNewBlankFormat = medium.format;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", medium.tip);
         }
         ImGui::EndPopup();
     }
@@ -897,7 +914,7 @@ DiskLibrary_ImGui::Result DiskLibrary_ImGui::render(
                       ICON_FA_FLOPPY_DISK " 5.25\"  (%zu)", disk525_.size());
         if (ImGui::BeginTabItem(tabLabel)) {
             renderTab(disk525_, mounted.diskII,
-                      "  (drop .dsk / .do / .po / .nib / .woz / .d13 into disks_5.4/)",
+                      "  (drop .dsk / .do / .po / .nib / .nb2 / .woz / .d13 into disks_5.4/)",
                       &DiskLibrary_ImGui::on525Left,
                       &DiskLibrary_ImGui::on525Ctx,
                       r);

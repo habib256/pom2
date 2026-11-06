@@ -297,6 +297,9 @@ void MainWindow::renderScreenWindow()
 
 void MainWindow::drawScreenImage()
 {
+    // The glass look follows the display mode, whoever changed it (menu,
+    // palette, CLI, the AI control server).
+    syncCrtMonitor();
     uploadScreenTexture();
 
     // OpenEmulator-style composite path: when the user selected

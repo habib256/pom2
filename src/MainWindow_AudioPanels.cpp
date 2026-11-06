@@ -39,6 +39,7 @@
 #include "Mockingboard.h"
 #include "PhasorCard.h"
 #include "PrinterSoundDevice.h"
+#include "Ssi263.h"
 #include "ProDOSBlockCard.h"
 #include "Settings.h"
 #include "SmartPortCard.h"
@@ -427,13 +428,52 @@ void MainWindow::renderAudioMixerWindow()
     {
         float vol  = printerSound->volume();
         bool  mute = printerSound->muted();
-        const char* printerLabel = printerSound->sampled()
-            ? "Printer (Virtual ][)" : "Printer";
+        const bool recorded = printerSound->recorded() && printerSound->recordedReady() &&
+                              !printerSound->sampled();
+        const char* printerLabel = printerSound->sampled() ? "Printer (Virtual ][)"
+                                 : recorded               ? "Printer (recorded)"
+                                                          : "Printer";
         channelRow(printerLabel, vol, mute,
                    printerSound->lastBufferPeak.load(std::memory_order_relaxed),
                    "prn", false, printerSound.get());
         if (vol != printerSound->volume()) printerSound->setVolume(vol);
         if (mute != printerSound->muted()) printerSound->setMuted(mute);
+        // Recorded ImageWriter II or the synthesiser. Only offered when the
+        // bank is on this machine; the Virtual ][ take, when selected above,
+        // overrides both.
+        // The speech chip's voice — every SSI 263 in the machine at once
+        // (Mockingboard C / Sound II, Phasor, Echo). Shown whatever is
+        // plugged: it is a listening preference, like the printer's.
+        {
+            int voice = pom2::Ssi263::voice() == pom2::Ssi263::Voice::Formant ? 1 : 0;
+            ImGui::SetNextItemWidth(14.0f * ImGui::GetFontSize());
+            if (ImGui::Combo("Speech chip voice", &voice,
+                             "Recorded phonemes\0Formant synthesis (sings)\0")) {
+                pom2::Ssi263::setVoice(voice ? pom2::Ssi263::Voice::Formant
+                                             : pom2::Ssi263::Voice::Recorded);
+                settings->setString("ssi263_voice", voice ? "formant" : "recorded");
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("SSI 263 speech (Mockingboard, Phasor, Echo).\n"
+                                  "Recorded: 62 takes of a real chip - faithful, but\n"
+                                  "the pitch and filter registers change nothing.\n"
+                                  "Formant: computed from the registers, so a program\n"
+                                  "that sets a pitch per syllable sings. A model\n"
+                                  "nobody has measured against the chip.");
+        }
+        if (printerSound->recordedReady()) {
+            bool rec = printerSound->recorded();
+            if (ImGui::Checkbox("Recorded ImageWriter II sounds", &rec)) {
+                printerSound->setRecorded(rec);
+                settings->setBool("printer_sound_recorded", rec);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A real ImageWriter II, recorded by Scott Lawrence\n"
+                                  "(CC BY 4.0): the head per print quality, line and\n"
+                                  "page feeds, the paper being torn off, the power\n"
+                                  "switch. Untick for the synthesised head — the\n"
+                                  "better choice for an Epson or a daisy wheel.");
+        }
     }
 
     // ── Device buffer (AudioBufferPolicy.h) ─────────────────────────────

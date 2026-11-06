@@ -77,10 +77,17 @@ const ProfileConfig& cfgAppleIIeUnenhanced()
         // a CRC mismatch will be logged (Theme 9, ROM identity check).
         { "roms/apple2e_unenh.rom", "roms/342-0135-b.64.rom",
           "roms/apple2e.rom" },
-        // 1983 //e shipped the 2 KB char ROM (no mousetext). 4 KB
+        // 1983 //e shipped the char ROM WITHOUT MouseText (the dump is 4 KB,
+        // whatever `_2k` in its file name suggests). The
         // Enhanced char ROM is rejected for fidelity — the mousetext
         // glyphs at $40-$5F when ALTCHAR=on would be wrong on Unenhanced.
-        { "roms/apple2e_char_2k.rom", "roms/341-0265-a.chr.rom",
+        // [D] MAME apple2e.cpp:5584 @ mame0287 — ROM_START(apple2e) loads
+        //     "342-0133-a.chr"; "341-0265-a.chr" (:5788) is the //c's, the
+        //     same bytes as the Enhanced //e's 342-0265-A (CRC 2651014d).
+        // The second probe here was `341-0265-a.chr.rom` until 2026-11-05:
+        // the MouseText ROM this very comment rejects, reachable whenever
+        // the first file was missing and a MAME-named //c set was not.
+        { "roms/apple2e_char_2k.rom", "roms/342-0133-a.chr.rom",
           "roms/apple2_char.rom" },
         /*iieMode=*/true,
         // Unenhanced //e = NMOS 6502 (no STZ/BRA/PHX/PLX, no decimal-mode

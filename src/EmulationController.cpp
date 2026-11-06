@@ -158,13 +158,18 @@ EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     tape     = std::make_unique<CassetteDevice>();
     tape->setAudioOutputSampleRate(audioDev->getActualSampleRate());
     tape->setAudioAvailable(audioDev->isAvailable());
-    if (audioDev->isAvailable()) audioDev->addSource(tape.get());
+    // A host device that failed to open still takes its sources: the output
+    // may appear later and be opened then (AudioDeviceWatch.h), and a source
+    // left out here would stay silent after that. An offline device never
+    // opens and takes none, as before.
+    const bool takesSources = audioDev->isAvailable() || audioDev->hostMode();
+    if (takesSources) audioDev->addSource(tape.get());
 
     // 1-bit speaker: cycle-driven AudioSource. Sample rate must match
     // the device's negotiated rate or the audio drifts.
     spk = std::make_unique<SpeakerDevice>();
     spk->setSampleRate(audioDev->getActualSampleRate());
-    if (audioDev->isAvailable()) audioDev->addSource(spk.get());
+    if (takesSources) audioDev->addSource(spk.get());
 
     // Floppy mechanical sounds — two independent instances so the 5.25"
     // and 3.5" sample sets coexist (FloppySoundDevice stores a single
@@ -175,11 +180,11 @@ EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     // convention that is otherwise MainWindow's concern.
     floppy525 = std::make_unique<FloppySoundDevice>();
     floppy525->setSampleRate(audioDev->getActualSampleRate());
-    if (audioDev->isAvailable()) audioDev->addSource(floppy525.get());
+    if (takesSources) audioDev->addSource(floppy525.get());
 
     floppy35 = std::make_unique<FloppySoundDevice>();
     floppy35->setSampleRate(audioDev->getActualSampleRate());
-    if (audioDev->isAvailable()) audioDev->addSource(floppy35.get());
+    if (takesSources) audioDev->addSource(floppy35.get());
 
     // //c / //c+ on-board IWM. Memory mirrors $C0E0-$C0EF accesses to
     // this device on iicHasAltBank profiles so its state machine

@@ -36,6 +36,7 @@
 #include "Mockingboard.h"
 #include "ResourcePaths.h"
 #include "SlirpNetworkBackend.h"
+#include "BuiltinNatBackend.h"
 #include "SlotCardFactory.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortHdvUnit.h"
@@ -143,6 +144,9 @@ public:
     bool ready() const { return ready_; }
     /// Print every Ethernet frame the cards plugged AFTER this call exchange.
     void setNetLog(bool on) { netLog_ = on; }
+    /// Use POM2's built-in virtual network instead of libslirp. Call before
+    /// `plug`: the backend is made when the card is.
+    void setBuiltinNet(bool on) { builtinNet_ = on; }
     /// The card in `slot`, as its concrete type (nullptr otherwise).
     template <class T> T* card(int slot)
     {
@@ -282,12 +286,14 @@ public:
 private:
     std::unique_ptr<pom2::NetworkBackend> network()
     {
-        auto net = pom2::makeSlirpBackend("pom2test");
+        auto net = builtinNet_ ? pom2::makeBuiltinNatBackend()
+                               : pom2::makeSlirpBackend("pom2test");
         if (net && netLog_) net = std::make_unique<LoggingNetworkBackend>(std::move(net));
         return net;
     }
 
     bool netLog_ = false;
+    bool builtinNet_ = false;
     bool iic_;
     bool ready_ = false;
     double bootSeconds_ = 0.0;

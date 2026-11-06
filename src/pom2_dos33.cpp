@@ -21,7 +21,9 @@
 //   pom2_dos33 disk.dsk get HELLO [host-file]      text converted, A/B/I
 //                                                  without their header
 //   pom2_dos33 disk.dsk list HELLO [host-file]     an A or I program listed
-//   pom2_dos33 disk.dsk put HELLO.bas [NAME]       type from the host name
+//   pom2_dos33 disk.dsk put HELLO.bas [NAME]       type from the host name; a
+//                                                  typed listing is tokenized,
+//                                                  an AppleSingle unwrapped
 //   pom2_dos33 disk.dsk rm NAME
 //
 // **The host name carries the type** (`HostFileTag.h`, the convention the
@@ -43,6 +45,7 @@
 #include "IntegerBasicListing.h"
 #include "AtomicFileReplace.h"
 #include "Dos33DiskFs.h"
+#include "HostFileImport.h"
 #include "HostFileTag.h"
 #include "MediaNotch.h"
 
@@ -53,6 +56,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -75,6 +79,12 @@ void usage()
         "  -t T|A|B|I                 type for put, overriding the host name\n"
         "  -a ADDR                    B file load address, hex, overriding it too\n"
         "  --raw                      get: the file's own bytes, header included\n"
+        "  --no-tokenize              put: keep an Applesoft TEXT listing as text\n"
+        "\n"
+        "put understands three things about the host file: an AppleSingle wrapper\n"
+        "(cc65, CiderPress, Cadius) carries the type and load address itself; a\n"
+        ".bas file that is a typed listing is tokenized into a real program; and\n"
+        "anything else is typed by its name.\n"
         "\n"
         "Without HOSTFILE, get names the file after the type: HELLO.bas,\n"
         "NOTES.txt, or GAME#062000 when no extension can carry it. put reads\n"
@@ -123,11 +133,13 @@ int main(int argc, char** argv)
     long addr = 0x2000;
     bool addrGiven = false;
     bool raw = false;
+    bool tokenize = true;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-h" || a == "--help") { usage(); return 0; }
         if (a == "--raw") { raw = true; continue; }
+        if (a == "--no-tokenize") { tokenize = false; continue; }
         if (a == "-t" || a == "-a") {
             if (i + 1 >= argc) { usage(); return 1; }
             const std::string v = argv[++i];
@@ -235,9 +247,16 @@ int main(int argc, char** argv)
             const auto peek = [&](uint16_t a) {
                 return a < prog.size() ? prog[a] : uint8_t(0);
             };
+            pom2::applesoft::ListReport report;
             const std::string text = type == 0x02
-                ? pom2::applesoft::list(0, peek, prog.size())
+                ? pom2::applesoft::list(0, peek, prog.size(), &report)
                 : pom2::integerbasic::list(0, peek, prog.size());
+            if (report.untypable > 0)
+                std::fprintf(stderr,
+                    "%s: warning: %d byte(s) of this program cannot be written "
+                    "as text (first in line %d); typing the listing back will "
+                    "not rebuild it. Use `get` for an exact copy.\n",
+                    args[2].c_str(), report.untypable, report.firstLine);
             out.assign(text.begin(), text.end());
         } else if (raw) {
             out = file;
@@ -270,20 +289,23 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "%s: cannot read\n", args[2].c_str());
             return 1;
         }
-        const std::filesystem::path host(args[2]);
-        // The host name says the type and, for a B file, the load address:
-        // a `#TTAAAA` tag first, else the extension (HostFileTag.h). A
-        // tagged name keeps its extension — `HELLO.BAS#FC0801` is the DOS
-        // file `HELLO.BAS`, not `HELLO` — exactly as the ProDOS host folder
-        // reads it.
-        std::string base = host.filename().string();
-        uint8_t  prodosType = 0;
-        uint16_t prodosAux  = 0;
-        const bool tagged = pom2::stripHostFileTag(base, prodosType, prodosAux);
-        if (!tagged) {
-            prodosType = pom2::prodosTypeFromExtension(host.extension().string());
-            base.resize(base.size() - pom2::strippedExtensionLength(base));
+        // What the host file becomes — its Apple name, type, aux and bytes —
+        // is decided in ONE place for every tool (HostFileImport.h): an
+        // AppleSingle wrapper first, else the host name (`#TTAAAA` tag, else
+        // the extension — a tagged name keeps its extension, `HELLO.BAS#FC0801`
+        // is the DOS file `HELLO.BAS`), and an Applesoft file that is a typed
+        // LISTING is tokenized instead of being stored as ASCII under type A.
+        pom2::ImportedFile imported;
+        if (!pom2::importHostFile(args[2], data, imported, error, tokenize)) {
+            std::fprintf(stderr, "%s: %s\n", args[2].c_str(), error.c_str());
+            return 1;
         }
+        if (!imported.note.empty())
+            std::fprintf(stderr, "%s: %s\n", args[2].c_str(), imported.note.c_str());
+        data = std::move(imported.data);
+        const std::string base = imported.name;
+        const uint8_t  prodosType = imported.type;
+        const uint16_t prodosAux  = imported.aux;
         std::string name = args.size() == 4 ? args[3] : base;
         // The DOS type: -t wins, else what the host name said. A ProDOS type
         // with no DOS equivalent (and a typeless host file) is binary, as

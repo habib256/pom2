@@ -23,6 +23,8 @@
 #ifndef POM2_AUDIO_COORDINATOR_H
 #define POM2_AUDIO_COORDINATOR_H
 
+#include "AudioDeviceWatch.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -231,6 +233,7 @@ private:
     std::uint32_t pinnedFrames_  = 0;   ///< 0 = automatic
     std::uint32_t learnedFrames_ = 0;   ///< highest rung the ladder reached
     std::uint64_t lateAtWindowStart_ = 0;
+    AudioDeviceWatch deviceWatch_;      ///< when to re-open a lost device
     double        windowStartSec_    = -1.0;
     /// Browser: one climb per session — it is remembered for the next load,
     /// so the late callbacks that follow are still the OLD buffer's.

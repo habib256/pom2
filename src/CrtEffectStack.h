@@ -126,6 +126,17 @@ private:
     int          uBwSrcSize  = -1;
     int          uBwCutoff   = -1;
 
+    // Bloom pre-pass (NtscParams::bloom): bright-pass + horizontal Gaussian
+    // into bloomTex[0], vertical Gaussian into bloomTex[1], both on the
+    // source grid; the glass pass adds bloomTex[1]. Allocated lazily and only
+    // while the knob is non-zero.
+    unsigned int bloomProgram = 0;
+    unsigned int bloomTex[2]  = {0, 0};
+    unsigned int bloomFbo[2]  = {0, 0};
+    int          bloomW_ = 0, bloomH_ = 0;
+    int          uBlSrc = -1, uBlStep = -1, uBlThreshold = -1;
+    int          uBloomTex = -1, uBloom = -1;
+
     int uSrc         = -1;
     int uPrevFrame   = -1;
     int uSrcSize     = -1;
@@ -170,6 +181,9 @@ private:
     // filtered texture, or 0 when the filter is inactive / unavailable — in
     // which case the caller simply keeps using srcTex.
     unsigned int applyBandwidth(unsigned int srcTex, int srcW, int srcH);
+    // Run the two bloom passes over `srcTex`. Returns the blurred bright
+    // part, or 0 when bloom is off / unavailable.
+    unsigned int applyBloom(unsigned int srcTex, int srcW, int srcH);
 };
 
 } // namespace pom2

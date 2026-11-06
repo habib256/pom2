@@ -197,6 +197,25 @@ std::uint32_t snapshotMachineId(SystemProfile p);
 /// which the caller should report as "another machine" rather than guess.
 std::string_view profileNameForMachineId(std::uint32_t id);
 
+/// The machine's bit in a WOZ image's "Compatible Hardware" field
+/// (WozCompat.h). A PAL profile is the same machine as its NTSC sibling: the
+/// field names models, not video standards.
+inline std::uint16_t wozHardwareBit(SystemProfile p)
+{
+    switch (p) {
+        case SystemProfile::AppleII:               return 0x0001;
+        case SystemProfile::AppleIIPlus:           return 0x0002;
+        case SystemProfile::AppleIIeUnenhanced:
+        case SystemProfile::AppleIIeUnenhancedPAL: return 0x0004;
+        case SystemProfile::AppleIIc:
+        case SystemProfile::AppleIIcPAL:           return 0x0008;
+        case SystemProfile::AppleIIe:
+        case SystemProfile::AppleIIePAL:           return 0x0010;
+        case SystemProfile::AppleIIcPlus:          return 0x0040;
+    }
+    return 0;
+}
+
 }  // namespace pom2
 
 #endif // POM2_SYSTEM_PROFILE_H

@@ -957,10 +957,26 @@ VBL. Pinned by `iic_acia_idle`.
 
 ### Power-on RAM pattern
 
-MAME-faithful `00 FF 00 FF …` fill (`Memory::clearRam()` on user
-RAM + LC + aux + RamWorks). MAME refs: `apple2.cpp:294-298` (II/+),
-`apple2e.cpp:1014-1035` (IIe). Done at power-on / profile switch /
-cold boot only; soft + hard resets preserve RAM.
+A `00 FF 00 FF …` fill (`Memory::clearRam()` on user RAM + LC + aux +
+RamWorks), done at power-on / profile switch / cold boot only; soft + hard
+resets preserve RAM. **It is a deterministic stand-in, not a measurement**
+(regraded 2026-11-06 — the comment used to say real DRAM "settles into" it):
+
+- [D] MAME `apple2.cpp:290-291` @ `mame0287` fills this way, since commit
+  `b24ab572` (2019-02-17) — "AppleWin-like memory fill; fixes hang in Joust".
+  Chosen to make a game start. AppleWin's own default is `FF FF 00 00`.
+- [B] Sather, *Understanding the Apple II* p. 4-19: "at power up, much of RAM
+  goes to a state of all zeroes" — a tendency, not a map.
+- [A] Reports from real machines disagree with each other: a //c (ROM 4)
+  holds `00` over `$xx00-$xx7F` and `FF` over `$xx80-$xxFF`; a Platinum //e
+  `FF` on even pages, `00` on odd; two enhanced //e's two more patterns
+  (N. Westgate's survey for AppleWin issue #206); one //e close to this fill.
+  It depends on the DRAM maker and the board.
+- [F] Any one machine's true pattern. Settled by: a RAM dump taken before the
+  cold start runs, per machine.
+
+What the fill is for: software that needs RAM non-uniform (Joust, Jigsaw and
+Pooyan read `$4D-$4F`) and repeatable runs.
 
 ### Text/HGR row interleave (Woz DRAM-refresh trick)
 
@@ -1948,13 +1964,11 @@ copied — the implementation is rewritten from the public NTSC spec
 (FCC/CCIR §73.682) and the openemulator-explainer notebook by
 Zellyn Hunter (algorithm description only).
 
-All knobs persist under `state.cfg` keys `ntsc_brightness`,
-`ntsc_contrast`, `ntsc_saturation`, `ntsc_hue`, `ntsc_sharpness`,
-`ntsc_persistence`, `ntsc_scanlines`, `ntsc_barrel`,
-`ntsc_shadow_mask` (int 0..3), `ntsc_shadow_strength`, `ntsc_pal`,
-`ntsc_text_sharp`, `ntsc_luminance_gain`, `ntsc_center_lighting`,
-`ntsc_phosphor_gamma`. The CRT Settings panel (View → CRT Settings)
-drives them live.
+The knobs are stored **per monitor** since 2026-11-05 — see
+[§ CRT settings per monitor](#crt-settings-per-monitor-crtpresetsh). Two
+flags describe the machine rather than a look and stay global: `ntsc_pal` and
+`ntsc_text_sharp`. The CRT Settings panel (View → CRT Settings) drives them
+live.
 
 If shader compilation fails (driver too old, GLES2-only context,
 …), `NtscPostProcessor::available()` returns false and POM2 silently
@@ -1978,6 +1992,49 @@ edge-mask → persistence (ping-pong FBO, applied last so the afterglow isn't
 re-attenuated by the glass each frame). The scanline→mask→lighting→
 luminanceGain ordering matches OpenEmulator's display shader
 (`OpenGLCanvas.cpp:117-126`).
+
+#### CRT settings per monitor (`CrtPresets.h`)
+
+Until 2026-11-05 one set of `ntsc_*` values served every display mode, so
+tuning the green monochrome tube detuned the composite colour set. The panel
+had also once carried "look presets" and lost them, because one click
+overwrote the whole block. Both have the same answer, **layers**:
+
+    value = the user's override for (this monitor, this field), if any
+          ; else the monitor's built-in preset.
+
+`CrtPresets.h` is the policy — pure, no GL, no settings file, tested by
+`crt_presets`. A *monitor* is one `Apple2Display::HiResMode`; a *field* is one
+of the seventeen glass knobs. Overrides are sparse: moving the scanlines on
+the amber monitor stores `crt_amber_scanlines` and nothing else, anywhere. A
+field put back to its preset (right-click on the control) leaves **no key**,
+so a preset that improves in a later release reaches every field the user
+never touched. An override equal to today's preset is still an override — it
+is the user's choice and survives a change of the preset.
+
+- **Keys**: `crt_<monitor>_<field>`, monitors `ntsc`, `medium`, `4bit`,
+  `chatmauve`, `oe`, `oecpu`, `white`, `green`, `amber`, `applewin`. They are
+  built at run time, so `tools/check_settings_keys.sh` does not see them; the
+  flag `crt_per_monitor` is the literal it does see.
+- **The presets are grade F.** Every monitor is POM2's long-standing default;
+  the three monochrome ones add a glow (0.30 green and amber, 0.20 white). No
+  photograph and no measurement stands behind those numbers. Settled by:
+  photographs of each monitor at a known exposure. Casso's own preset values
+  were not taken — they are tuned for a different shader chain.
+- **Carry-over**, once (`MainWindow::loadCrtSettings`, flag `crt_per_monitor`):
+  each legacy `ntsc_*` value that differs from the default becomes an override
+  on **every** monitor — the picture the user tuned is the picture they get —
+  and the legacy key is erased. A value still at its default becomes nothing.
+  An upgrading user therefore sees one change they did not ask for: the glow
+  on the monochrome monitors.
+- **One invariant**: the parameters the processors run on
+  (`ntscFx->getParams()`) are always `Overrides::resolve(current monitor)`.
+  Nothing writes a look into them directly, or the next change of display mode
+  would lose it. `MainWindow::syncCrtMonitor` runs at the top of
+  `drawScreenImage`, so the look follows the mode whoever changed it (menu,
+  palette, CLI, AI control server).
+- The browser's cap on the barrel (0.03) is applied to what is *shown*, never
+  to what is stored.
 
 **GL teardown and FBO limits** *(2026-09-07)*. `~CrtEffectStack` was
 `= default` and deleted nothing, opting the class out of its own teardown
@@ -2021,6 +2078,22 @@ fixed.
   deepens shadows for more CRT-like contrast, γ < 1 lifts them. Default
   identity keeps every existing golden/parity test untouched. Slider range
   0.6–2.6, persisted `ntsc_phosphor_gamma`.
+- **Glow** (`bloom`, default 0 = off; `bloomRadius`, `bloomThreshold`) is a
+  second **pre-pass** at source resolution *(2026-11-05)*: the bright part of
+  the picture — above a threshold, through a quadratic knee that starts at
+  half of it, because a hard cut bands as content crosses it — is blurred by
+  a separable 9-tap Gaussian and added back in the glass shader after the
+  shadow mask, so the halo is scattered light and is not re-cut by the mask.
+  One program run twice: the bright-pass is folded into the horizontal leg's
+  taps, so no pass is spent on the threshold alone. The radius is in 560-dot
+  columns per tap, and the vertical step is scaled by the output aspect, so
+  the halo is round on the screen whatever the source grid (280 or 560 wide)
+  and whatever the window. At 0 the two passes are skipped and the glass
+  shader's `uBloom` multiplies nothing — the picture is bit-identical to the
+  feature being absent. [D] the shape is libretro's public-domain bloom, the
+  knee and the folding Casso's; the weights are row 12 of Pascal's triangle.
+  Pinned by `crt_glass_resample` case 4: lit beside a white block and falling
+  to nothing, round, nothing under the knee, little inside it, identical at 0.
 - **Analog RGB bandwidth** (`rgbBandwidthMHz`, default 0 = off) is a separate
   **pre-pass** at source resolution, ahead of the glass: a 17-tap Hann-windowed
   sinc low-pass, horizontal, per channel, run on the framebuffer's own sample
@@ -2336,9 +2409,17 @@ removed mid-stream); `AudioDevice::getMasterClicksPerSecond` counts on the
 clamped bus inside the loop that already touches every frame and the Master
 row prints it. `PrinterSoundDevice::schedule` drops a grain with `>=` on the
 `kMaxAheadSeconds` cap, so its cursor is strictly increasing
-(`printer_grain_pileup`). Known gap: `AudioDevice::initAudio` runs only from
-the constructor, so a lost or changed OS playback device leaves the session
-silent. History: CHANGELOG 2026-09-09 (bug hunt #13).
+(`printer_grain_pileup`). A lost or changed OS playback device is re-opened
+*(2026-11-05; it used to leave the session silent — `initAudio` ran only from
+the constructor)*: `AudioCoordinator::tick` asks `AudioDeviceWatch` once per
+frame, which answers on three signals — the backend rerouted the output
+(re-opened so the sources synthesise at the NEW device's rate instead of
+through miniaudio's linear resampler), the backend reported a stop POM2 did
+not ask for, or no data callback for 2 s (the catch-all for backends that say
+nothing) — and retries a machine with no output on a 2 → 30 s back-off.
+`AudioDevice::reopen` keeps the source list and re-announces the rate. Never
+in the browser. Policy pinned by `audio_device_watch`; the thresholds are
+[F] and no backend was unplug-tested. History: CHANGELOG 2026-09-09 (bug hunt #13).
 
 ### One mix law, two call sites (`AudioMix.h`, 2026-09-12)
 
@@ -2711,7 +2792,8 @@ restore falls back to. Pinned: `mockingboard_smoke`,
 phoneme speech synth, shared chip model used by both
 `EchoPlusCard` (standalone, slot ROM at `$Cs00-$Cs04`) and
 `MockingboardCard` `Variant::SoundII` (chip at `$Cs40-$Cs44`,
-A/!R wired to VIA1.CA1).
+A/!R wired to **VIA2**.CA1 — the second 6522, as the code and AppleWin have
+it; this line said VIA1 until 2026-11-05).
 
 **Phoneme table indexing** — `Ssi263PhonemeData.cpp`'s table is AppleWin's
 `g_nPhonemeInfo[62]` byte for byte, indexed by **code − 2** (`SSI263::Play`:
@@ -2743,9 +2825,12 @@ levels or stereo routing. `phasor_speech_cases.cpp` pins the decode, clock,
 IRQ, reset, snapshot and future-audio contracts against AppleWin
 6c579da5bd9460ebf7c6051a6d635efbd1375c85.
 
-**No MAME reference**: MAME does NOT implement the SSI263 (verified
-2026-05-27 — no `ssi263*` file in `src/devices/sound`). The canonical
-reference is AppleWin `source/SSI263.cpp`. POM2's chip emulation is
+**No usable MAME reference**: MAME has had `src/devices/sound/ssi263hle.cpp`
+since commit `ba60c481b5` (2024-01-07), but it is a placeholder that maps the
+64 phoneme codes onto a Votrax SC-01A and describes itself as "completely
+wrong", there only to give Thayer's Quest audio. (This paragraph claimed until
+2026-11-05 that no `ssi263*` file existed, "verified 2026-05-27".) The
+canonical reference is AppleWin `source/SSI263.cpp`. POM2's chip emulation is
 independent code modelling the same protocol contract.
 
 Register layout (5 registers at $00..$04 within the chip's window):
@@ -3599,6 +3684,112 @@ dirty 32 MiB image). The Liron and SmartPort 3.5" units are covered too: their `
 declines (no block backing) and the caller takes the whole-image capture from
 `prepareFlushBay` instead, with `restoreFlushBayDirty` on failure. Pinned by `storage_lock_budget`.
 
+### Host disk tools (`pom2_disk`, `pom2_prodos`, `pom2_dos33`, `pom2_cpm`)
+
+*(2026-11-06.)* Two kinds of tool, and the line between them is the one a
+user draws: `pom2_dos33`, `pom2_prodos` and `pom2_cpm` work **inside** a disk
+(files); `pom2_disk` works on the disk **itself** (make one, inspect one,
+repair one). Each `main()` is a few hundred lines over a library that is
+tested without it; `disk_tools_smoke` (a CMake script, so it runs on Windows)
+then drives the three as a user types them.
+
+| Library | What it owns | Test |
+|---|---|---|
+| `DiskBuilder.*` | a formatted empty DOS 3.3 disk; the "not a startup disk" boot sector; the direct-boot disk; DOS ↔ ProDOS sector order | `disk_builder`, `disk_builder_boot` |
+| `ProDOSDiskFs.*` | a ProDOS volume edited in place: format, list, read, write, remove, mkdir | `prodos_disk_fs` |
+| `ApplesoftTokenizer.*` | a text listing → the program as Applesoft stores it | `applesoft_tokenizer` |
+| `AppleSingle.*` | the wrapper cc65, CiderPress and Cadius use to carry a type | `apple_single` |
+| `HostFileImport.*` | what a host file becomes on an Apple volume (one decision for every `put`) | `host_file_import` |
+| `WozRecover.*` | a damaged WOZ made healthy, and the report of what it lost | `woz_recover` |
+| `WozCompat.h` | what a WOZ says of the machine it is for | `woz_compat` |
+
+**No Apple code, anywhere.** A "new" disk has no DOS and no ProDOS on it —
+POM2 ships neither — so it is a *data* disk. Its boot sector is forty bytes
+of our own that print `NOT A STARTUP DISK` through the Monitor and drop to
+the `*` prompt, because the alternative is the PROM jumping into zeros. A
+blank DOS 3.3 disk therefore has **528** free sectors, not the 496 of a
+DOS-INITed one: tracks 1-2 hold no DOS image and are free ([B] Beneath Apple
+DOS ch. 8, `B244`/`B272`: the allocator walks down to track 0 and turns back
+there). VTOC `$30` is `$11`, as DOS's own INIT writes it ([B] ch. 8 `AE8E`) —
+Casso writes 18.
+
+**Direct boot** — a disk that starts a binary with no operating system. Track
+0 sector 0 is a 128-byte loader; the payload follows from track 1, one sector
+per memory page. The loader does not contain a sector reader: it re-enters
+the boot PROM's (`$Cs5C`, through `($3E)`), one sector per call, by setting
+`$26/$27` (buffer), `$3D` (sector), `$41` (track) and the terminating count at
+`$0800` — what every operating system on this machine does. It steps the head
+itself. Reading one sector per call is what buys it the right to choose the
+ORDER: every second physical sector, so a track costs two revolutions instead
+of sixteen. Window `$0900-$BFFF` (page `$08` is the loader's, `$0300` the
+PROM's decode table).
+
+- [D] The loader's bytes and the interleave are Casso's `DirectBootBuilder.cpp`
+  @ 2d899adf (MIT), kept verbatim and re-assembled independently; the builder
+  is POM2's.
+- [C] The entry points it relies on were checked in Apple's `disk2.rom`, the
+  //c's bank 0 and POM2's own `DiskIIBootRom.h`. The three end their
+  recalibration differently (magnet 0 left on, or off); the loader does not
+  care.
+- [F] "interleave 2 is fastest" is Casso's measurement on Casso. It changes
+  speed, never the result.
+- **`disk_builder_boot` is the proof**: every built disk boots in the real
+  machine (POM2's 6502, Memory, Disk II card and drive model), under both
+  PROMs, as `.dsk`, `.po` and `.woz`, from slots 6 and 5 — with a three-track
+  payload so the loader's own stepping runs, and a load address that is not
+  page-aligned and is entered three bytes in. The harness lets the Autostart
+  ROM find the card: jumping straight to `$Cs00` skips the ROM's reset, and
+  the Monitor then prints through whatever INVFLG the RAM came up with.
+
+**`pom2_prodos` edits in place.** `ProDOSVolume.h` builds a volume from a
+folder and decodes one back; neither changes one file and leaves every other
+block alone, which a disk carrying a boot block or a system the user
+installed needs. Every mutator is all-or-nothing (a refused change leaves the
+image byte-identical) and checks the whole volume first: an inconsistent
+structure refuses the write rather than attempting it. The Technical
+Reference's § B.3.1 worked example is reproduced block for block. Its second
+opinion is POM2's *other* ProDOS code, in both directions.
+- New files get access `$E3` ([B] TRM § 4.4.1 CREATE). Directory headers get
+  `$C3` — [F], what Apple's formatter writes there is not established.
+- A volume holding an entry of a storage type other than seedling / sapling /
+  tree / directory (a Pascal area, say) refuses all writes: [F], the TRM does
+  not say which blocks such an entry owns.
+
+**The tokenizer follows the ROM, not Casso.** PARSE (`$D559`) was disassembled
+from the local dumps and the rules taken from it ([C]): blanks dropped outside
+strings, REM and DATA — and between the letters of a keyword; the table tried
+in order, first match wins; `?` is PRINT; `AT` is refused only when the very
+next character is `N` or `O` (so `IF A THEN` really is stored `IF AT HEN`, as
+the machine does); the //e folds case. A bare line number deletes that line
+and a repeated one replaces it, silently, as typing them would. A stored line
+body is at most 238 bytes (INLIN cuts a typed line at 239). Casso differs on
+eight of these. It reuses `ApplesoftListing`'s token table, so the two cannot
+drift, and tokenize → list → tokenize is byte-identical.
+
+**`put` decides once** (`HostFileImport.h`): an AppleSingle wrapper states the
+type and wins over the name; else the name does (`HostFileTag.h`); and an
+Applesoft file that is a typed listing is tokenized at the address its tag
+names. An untagged `GAME.bin` is BIN with aux `$0000` — not a guessed `$2000`:
+that is the pair `get` writes under that name, and guessing would relocate a
+file across a round trip.
+
+**WOZ recovery repairs the container, never the content.** Nothing is moved,
+re-encoded or re-timed: a track whose record is usable keeps its bits; a track
+whose bits are gone is unmapped (TMAP `$FF`), because a mapped-but-missing
+track reads as something worse than a blank one; a file cut short is padded
+back; a broken chunk chain falls back on the fixed positions the reference
+guarantees; the CRC is recomputed. Then each track's bit stream is read as
+the drive would and every standard sector's two checksums are verified. "Does
+not verify" is not "is damaged": a protected track is non-standard on purpose
+and the report says "no standard sector". The damaged file is never the
+output. [F] flux tracks are carried over untouched and not analysed.
+
+**`pom2_headless` as a test runner**: `--until ADDR` arms the run-control
+debugger, `--cycles N` cuts the last frame slice to the budget, `--registers`
+prints one line. Exit 4 = the budget ran out before the address; 5 = KIL/STP.
+The flat-screen check (exit 3) applies only to an unscripted run: a program
+stopped at an address need not have drawn anything.
+
 ### Read / write matrix by format
 
 The disk rows describe whether guest changes can be committed back to the
@@ -3854,10 +4045,47 @@ drives.
   tracks. A sector image copies its dirty tracks' nibbles. The commit runs on
   one worker thread, the `MediaCommitExecutor` injected from
   `BlockWriteBackExecutor.cpp` (inline in the browser build). A sector
-  format decodes there, on top of the file's current sectors, so a sector the
-  decoder cannot parse keeps its old bytes, as the inline save always did.
+  format decodes there, on top of the file's current sectors. The file work
+  is `DiskImage_WriteBack.cpp`.
   `saveDirty()` is the two phases run back to back, so eject, swap and
   `flushAll` share this one copy of the logic.
+- **A track goes in whole or not at all** *(2026-11-05)*. A dirty track is
+  written only when every one of its 16 (or 13) sectors decodes. Until then a
+  track of which fifteen decoded was "saved": the fifteen were written, the
+  sixteenth kept the bytes the file already had, the dirty flag was cleared
+  and the log said `Saved 1 modified track(s)` — the guest read its own sector
+  from memory until the next mount, when it silently became the old one. The
+  commit now fails (dirty state kept, retried as above) and first writes the
+  complete surface as `<image>.recovered.woz` beside the image, so the guest's
+  work is on disk even if the track is never repaired
+  (`DiskImage::buildWozFromSurface`: one bit-cell track per whole track, the
+  10-cell sync layout the read path uses, unformatted tracks left out of the
+  TMAP). The error names that file.
+- **External change** *(2026-11-05)*. A mounted image is a file, and another
+  program can rewrite it while it sits in the drive: a file utility, a script,
+  a second emulator, a sync client. Every commit used to replace the file with
+  the mount's view, and a sector format laid the guest's dirty tracks over the
+  stranger's bytes — a disk made of two states. `commitMediaInOrder` now takes
+  a `MediaFileStamp` (size, modification time, FNV-1a of the bytes) recorded
+  at mount, and compares it with the file before writing: the file must be
+  what the mount read **or** what a commit of this process left there (kept
+  per path, so two drives holding one image do not take each other for
+  strangers). Time and size are the cheap test; when they moved, the
+  **contents** decide, so a `touch` or a restore of identical bytes is not a
+  change. On a real change the file is left alone and the guest's COMPLETE
+  disk goes to `<stem>.guest-<YYYYMMDD-HHMMSS><ext>`, for that commit and every
+  later one of the mount — a sector image captures all 35 tracks for this
+  (`PendingWriteBack::surface`), because the file may no longer serve as the
+  base. Nothing is merged. The commit succeeds (`MediaCommitResult::divertedTo`),
+  the medium reports state `diverted` with the sibling in `error`, the panels
+  say `(saved to a copy)`, and `syncFloppyMedia` FAILS with that sentence: the
+  writes are on disk, but not in the file the caller is about to read. A 3.5"
+  image is stamped by contents only (its bytes may come from phase 1 of a
+  two-phase mount, and no stat belongs under the machine lock). Not covered:
+  block devices, which write blocks in place and have no whole-file commit to
+  guard. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
+  D); the mechanism is POM2's — no directory watcher, the check is made at the
+  one moment it matters.
 - **Dirty state.** Kept until the commit lands. It is retired only if the
   serial did not move since the capture, so a write that races the commit is
   never cleared by it. A failure keeps everything; the panels say
@@ -3893,6 +4121,35 @@ controller poll plus `syncFloppyMedia` over a Disk II card and the //c+
 internal drive. Mutation controls: retiring dirty state regardless of the
 serial fails the racing-write case, and dropping the ordering check fails the
 late-capture case.
+
+Test: `media_external_change` pins the three 2026-11-05 rules on host files —
+a file rewritten from outside is left byte for byte and the sibling holds the
+guest's whole disk; later commits reuse that sibling; an identical file with a
+new time, a second commit of the same mount, and two mounts of one image do
+not divert; a WOZ with a bad CRC or an unreadable track record mounts
+read-only with `integrityWarning()` set (below); a track with one broken data
+field is refused whole, the file untouched, and the recovery WOZ reads back
+the same bit stream. Mutation controls, each run once: never diverting,
+trusting the time alone, accepting a partly decoded track, and forgetting the
+damaged records each fail it.
+
+**A damaged WOZ mounts read-only** *(2026-11-05)*. Three defaults changed in
+`DiskImage::loadWozBytes`. A CRC32 mismatch used to REFUSE the image (MAME's
+policy, `as_dsk.cpp:275-277`, grade D): one flipped byte in a META chunk made
+every track unreachable. A TMAP or FLUX-index entry naming an unreadable track
+record used to be skipped in silence and the image mounted WRITABLE. Both now
+mount, with `fileWriteProtected` forced and the reason in
+`DiskImage::integrityWarning()` (Disk II panel: "Read-only: this image is
+damaged", the detail in the tooltip) — the readable tracks stay readable, and
+nothing is written, because a save would stamp a valid CRC over the damage. An
+all-zero TRK record is an empty one, not damage. And a save no longer leaves
+the header CRC at 0: it is recomputed at commit time, off the lock, over the
+payload that reaches the file (`PendingWriteBack::wozCrc`,
+`DiskImage::wozCrc32`). Zero was legal ("no CRC has been calculated", WOZ 2.1
+reference, grade B) and discarded the file's only integrity check at the first
+guest write. 3.5" WOZ/MOOF (`Disk35Image`) still refuses a CRC mismatch —
+same change owed there. Salvaging a damaged WOZ into a sound copy is not
+done.
 
 ### Two-phase media mount (`MediaMount.h/.cpp`)
 
@@ -4306,6 +4563,44 @@ single pulse at 0. Pinned by `moof35_load` (seam inside a data field),
 `woz_writeback` (byte-for-byte rewrite, rotation) and `woz_bit_timing`.
 `docs/audits/parite-flopimg-as_dsk-wozfdc-2026-11-01.md`.
 
+### FLUX tracks: ticks fall on the machine's own LSS cycles *(2026-11-06)*
+
+[B] A WOZ flux stream counts **125 ns ticks**. [B] The sequencer steps twice
+per bus cycle (Sather), so an LSS cycle is **488.9 ns** on an NTSC machine
+(1 022 727 Hz) and **492.3 ns** on a PAL one (1 015 625 Hz) — 176/45 and
+256/65 ticks, not 4. POM2 divided by a flat 4, which played every flux track
+**2.27 % fast** (1.56 % on PAL): a cell an Apple II wrote — 4 bus cycles,
+31.3 ticks — came back as 7.82 LSS cycles where the same cell on a BIT track
+is 8. [D] Casso converts the same way (`Disk2NibbleEngine.h:135-143` @
+`2d899adf`); MAME instead stretches every flux track to exactly 200 ms
+(`as_dsk.cpp:81-101` @ `mame0287`).
+
+`DiskImage::fluxTicksToLss` / `lssToFluxTicks` (`DiskImage.h`) carry the
+ratio as the bus clock, `setFluxClockHz`. The drive tells its medium:
+`DiskIICard::syncFluxClock` on `setCpuClock` / `setStandardClock`, on every
+insert and on a session restore — the **standard** bus clock, never an
+accelerator's. The ticks (`wozQtFluxTicks`) are the surface; `fluxStream` /
+`bitStream` of a flux quarter track are its projection, made **on first use**
+(`projectFluxTrack`, from `expandTrackFlux` / `expandTrackBits`) so a clock
+change or a mount projects one track under the lock, not 160. Rounding: a
+transition belongs to the cycle it happens in (floor), a revolution lasts
+until its last tick is over (ceil), a cycle starts at the first tick that
+belongs to it (ceil) — so a position the LSS wrote reads back on the cycle it
+was written at, and a write window covers exactly the ticks that project into
+it. A 200 ms revolution is 409 091 cycles NTSC, 406 250 PAL.
+
+**Bit tracks did not move.** A bit track records cells and a nominal width;
+playing a nominal 4 µs cell in 8 LSS cycles (3.911 µs) is a convention, and
+8 LSS cycles is the cell a Disk II writes. The note above `lssCyclesPerCell`
+has the numbers.
+
+Pinned by `woz_writeback_smoke` (`testFluxTimeBase`: both ratios, a write
+that survives save + reload, an idempotent rewrite; the mechanics tests run on
+a 1 MHz bus where a cycle is exactly 4 ticks) and `device_standard_clock`
+(the card tells a mounted disk, and one inserted afterwards). **Not verified:
+no real FLUX image is in the corpus** — the tree holds one WOZ and it has no
+FLUX chunk.
+
 ### WOZ2 `optimal_bit_timing`
 
 INFO+39 (units of 125 ns) — bit-cell duration. Default 32 = 4 µs =
@@ -4512,6 +4807,39 @@ fields — and carries the nibble cursor forward instead of re-deriving the
 angle from a cell-width map the previous burst just rewrote. Pinned by
 `diskii_format_smoke` and `disk_writeflux_framing`.
 
+**…and re-based on every head step** *(2026-11-05)*. Same root — a period
+that is per track where MAME's is one constant — on the other axis. A disk
+turns as one piece, so a head that moves keeps its FRACTION of the turn; the
+anchor arithmetic kept the offset in cycles instead, and between two WOZ
+tracks of 50,000 and 52,000 cells that is 3.5 % of a revolution, some 220
+nibbles. `DiskIICard::carryAngleAcrossStep` (`DiskIICard_Cycles.cpp`) scales
+the position by `new period / old period` at each quarter-track step, the
+formula the WOZ 2.1 reference gives under "Cross-Track Synchronization"
+(grade B), with its stand-in of 51,200 cells for an empty quarter-track so the
+angle survives a TMAP `$FF` on the way. Rounded to nearest: a seek is up to
+160 steps and a floor would walk the platter back half a cycle each. With the
+spindle stopped the remembered position is scaled instead. No new state, so
+snapshots are unchanged. Tracks of one length are left alone — a sector
+image as loaded; after guest writes its padded periods drift by a few cells
+and the carry applies there too, by ratios within 0.1 % of 1. That moved a
+DOS SAVE's rotational waits by a revolution and exposed a test that flushed
+without waiting for it (`diskii_unformatted_disk`: its waits matched the
+echoed command line; the old save swallowed the half-written sector, the
+whole-track rule refused it).
+One documented limit: in the first revolution after power-on the anchor would
+have to go negative (`-1` is "never spun") and the step leaves it alone.
+Pinned by `diskii_track_reach_weak` case 3. Not done for the 3.5" drive.
+
+**The write head follows the ENABLE line, not the motor latch** — on the
+Disk II card and on the IWM it stands in for on a //c. IWM spec rev 19 p. 7
+("The combination of L7 and Motor-On and /underrun enables /WRREQ low") and
+p. 8 ("Motor-On is synonomous with either /ENBL1 or /ENBL2 being low", held
+about a second after the latch drops). MAME's `iwm.cpp` gates its write state
+on the latch bit; POM2's `control()` case `$F` does not, and must not be
+"aligned". The //c firmware never arms a write in that window:
+`iic_diskii_after_smartport` counts the write bursts across a read-only copy
+with SmartPort calls inside every coast — zero.
+
 **An UNFORMATTED diskette** *(2026-09-16)*. A zero-filled `.dsk` is not
 one, and calling it one is the mistake this paragraph exists to stop.
 Every loader NIBBLIZES on insert, so 143 360 bytes of zeros mount as a
@@ -4602,14 +4930,23 @@ does POM2 now. The substitution is in the **controller**, not the image:
 `kFluxNever` (`DiskIICard.cpp:1435-1438`) — **read mode only**, because a
 write must not be fed invented transitions.
 
-**Weak bits are a coin toss.** Past MAME's amplifier-freakout time
-(16 µs, `m_amplifier_freakout_time` → `kWeakGapLss = 32` LSS cycles,
-`DiskImage.cpp:1897`) the real head's AGC hunts and produces bits that
-differ per revolution — which is exactly what a weak-bit copy protection
-measures. `getNextTransition` serves **MAME's pulse train** inside such a
-gap: MAME walks the zone in fixed 4 µs intervals (8 LSS cycles, candidate
-in the middle of each) and returns the first whose hash bit 0 is set — a
-~50 % density train for the zone's whole length, re-drawn per revolution.
+**Weak bits are a 30 % draw** *(density 2026-11-06; it was 50 %)*. Past
+MAME's amplifier-freakout time (16 µs, `m_amplifier_freakout_time` →
+`kWeakGapLss = 32` LSS cycles) the read channel emits pulses that differ per
+revolution — which is exactly what a weak-bit copy protection measures.
+`getNextTransition` keeps **MAME's walk** inside such a gap — fixed 4 µs
+intervals (8 LSS cycles, candidate in the middle of each), re-drawn per
+revolution — and takes the **density** from the one primary statement of
+one: [B] WOZ 2.1 reference, "Freaking Out Like a MC3470", *"roughly 30%"* of
+the fake bits are 1 (`kWeakOnes`). [D] MAME @ `mame0287` draws 50 %
+(`floppy.cpp:1132-1152`) and has changed the figure twice since with no
+source; AppleWin and Casso use 30 %. [B] The MC3470 data sheet shows a
+fixed-gain amplifier — no AGC — so the usual "the amplifier hunts" story is
+not supported by the chip. [A] No measurement found, and no known protection
+counts the ones. [F] Not taken: the reference's *placement* (first fake bit
+12 µs after the last transition, on a cell boundary; POM2 starts at 18 µs).
+The blank-TRACK path (`advanceNoise`) is still a byte-level stand-in, about
+56 % ones.
 The revolution term is `base / period`, not `fullRevs`, because
 `DiskIICard::lssSync` re-bases the anchor every revolution and pins
 `fullRevs` at 0. Still deterministic in (revolution, zone, interval), so a
@@ -5294,6 +5631,26 @@ filter ran on decode only, so a host `aux.txt` was published to the guest as
 the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:214-222`) appends an
 `X` to any DOS device stem (`isDosDeviceStem`: `CON/PRN/AUX/NUL`, `COM1-9`,
 `LPT1-9`), so the file enters the volume as `AUXX` and round-trips.
+
+**A guest name that starts with a period leaves under an escape**
+*(2026-11-06)*. [B] ProDOS 8 TRM § 2.1 — a filename "must begin with a
+letter" — is the MLI's rule, not the directory's, and [C] A2osX 0.95 keeps
+`/ROOT/.PROFILE` (the one entry of its release image's 238 that does not).
+The host must still not receive a dotfile (`.git`, `.bashrc`, and a scan that
+hides them), and the decode used to count the entry as lost data: every save
+of a folder holding one failed, naming a file the user could not rename. It
+now leaves as **`%2ePROFILE#040000`** and comes back as `.PROFILE` — the
+escape of the convention the tag comes from ([B] CiderPress II manual,
+§ NAPS: `%` + two hex digits, un-escaped for a name that carries its
+`#TTAAAA`). Three limits, all deliberate (`hostEscapeLeadingDot` /
+`stripHostLeadingDotEscape`, `HostFileTag.h`): it is the ONE escape POM2 writes and reads; a FILE is
+un-escaped only when tagged, so a host file somebody calls `%2eNOTES.txt`
+keeps the name it always got; a DIRECTORY cannot carry a tag, so there the
+prefix alone decides (POM2's own, NAPS does not escape directories). A DOS
+device name (`AUX`) still has no host spelling and still fails the save.
+Pinned by `prodos_dot_names`, and
+checked on the real A2osX image: 213 files decode, rebuild and decode again
+with nothing rewritten.
 
 **And a write-back that could not place a file now fails and names it.**
 `ProDOSDecodeResult` carries `filesUnsaved` + `unsavedNames`
@@ -6502,6 +6859,69 @@ last disk leaves. LironCard shares all of it. Pinned by
 of the bay being written) and `smartport_bus_device`.
 
 ### Super Serial Card (slot 2) + telnet bridge
+
+**Four corrections from Apple's manual** *(2026-11-05)*. The manual was
+fetched again (archive.org `a2_Super_Serial_Card_installation_and_operating_
+Manual`, text layer) and read at pp. 45-46 and Table A-7 (p. 53); the audit of
+2026-11-01 (`docs/audits/parite-a2ssc-2026-11-01.md`) had recorded two of
+these as "latent" and left them.
+
+| What | The manual [B] | POM2 before |
+|---|---|---|
+| `$C0n2` bit 0 | "Clear To Send (CTS) is true (−) when 0" — the pin, through the 74LS365 at 3B (Tables 4-5, A-7) | a constant of the saved `dsw2`; `dsw2=0x53` made it say "false" while the 6551 saw CTS true |
+| the `$C800` latch | "set by an access to the `$Csxx` space, and … reset by access to the `$CFxx` space or by a reset" (p. 45) | released at `$CFFF` only, kept across Ctrl-Reset |
+| control code 0 | "`$0` = 16 times external clock" — on this card the 1.8432 MHz crystal, so **115,200** | "unconstrained": paced nothing |
+| the buffers | two **74LS365** (2B, 3B) | comments named a 74LS259 |
+
+The latch needed a hook, because the bus owns the claim:
+`SlotPeripheral::releasesC800At(offset)` (default: `$CFFF` only) and
+`releasesC800OnReset()` (default: no). The SSC overrides both.
+
+**The default now has a source, and four more cards have their own**
+*(2026-11-06)*. [B] Apple II Reference Manual (1979) p. 85, Fig. 8
+"Expansion ROM Enable Circuit": the latch Apple recommends has S = I/O SELECT
+and R = `$CFFF` — **no RESET input** — and Fig. 9 lets a card decode less
+than the full address. So both facts are per card, read off each schematic:
+
+| Card | Lets go on | RESET clears | Source |
+|---|---|---|---|
+| (the convention) | `$CFFF` | no | Apple's Fig. 8 |
+| Super Serial Card | `$CF00-$CFFF` | yes | its manual p. 45 |
+| Grappler (1981) | `$CFF0-$CFFF` | no | its manual's schematic (74LS30 over A4-A10) |
+| Grappler+ | `$CFF0-$CFFF` | no | its manual's schematic (U8 over A4-A10; /RST to U2A, U2C only) |
+| Liron | `$CFFE-$CFFF` | yes | board schematic, reverse-engineered (BMOW `liron.sch`) — the RESET half is [F] on that one reading |
+| CFFA 2.0 | `$CFEF`, `$CFFF` | no | its manual's CPLD source (A4 not wired; flip-flops with CLRN = PRN = VCC) |
+
+[C] Every ROM agrees with its decode — the bytes the card cannot serve are
+unused: filler on the Grappler+, a copyright string on the Grappler, `$FF`
+at `$CFFE`/`$CFFF` on the Liron, a lone `$FF` at `$CFEF` on the CFFA between
+a table and a routine that runs `$CFF0-$CFFE`. [D] MAME releases every card
+at `$CFFF` only. [F] Not read: ThunderClock+, Slinky, Workstation Card,
+Videoterm, UltraTerm — they keep the default. Pinned by `c800_release`.
+
+What a *read* of `$CF00` returns on a real SSC is not stated; POM2 keeps
+returning the ROM's byte ([D] MAME). [F] — and probably wrong: on the
+schematic the ROM's chip select and the bus buffer are both gated by the
+latch being clear, which leaves them on for some 40-50 ns of an access that
+needs 120 (SY2316B tCO). Settled by: `LDA $Cs00` / `LDA $CF00` on a real card.
+
+115,200 is [B] for the arithmetic and [C] for the use: ADTPro @ 3580637b53fa
+programs `$10` for it (`src/client/prodos/serial/ssc.asm:130`,
+`BPSCTRL: .byte $1F,$10`). The manual itself lists fifteen rates and calls the
+external clock "not supported" — it is what the silicon does, not what Apple
+documented.
+
+**One departure is kept, and is now written down**: the receiver. The 6551
+"single-buffers data transfers" (p. 46) and a byte arriving before the last
+was read sets OVERRUN and is lost (glossary). POM2 queues 4 KB on the host
+side and raises overrun only when that overflows — a TCP peer delivers a
+screenful in one segment, and RTS/DTR, the wires a real card uses to hold a
+sender off, are not modelled toward the peer. The header of
+`SuperSerialCard.h` states it, with what would settle it.
+
+Pinned by `ssc_acia_smoke`: `testDipSwitch2CarriesCts`,
+`testC800LatchFollowsTheManual` (with a plain card beside the SSC, which must
+keep the convention), `testControlRegBaud`.
 
 **Apple's EPROM and the mode switches** *(2026-09-26)*. The card now runs
 the real firmware, Apple 341-0065-A (`roms/ssc_341-0065-a.bin`, 2 KB, CRC
@@ -8119,8 +8539,94 @@ Both cards throttle to one `poll()` per ~2048 CPU cycles (≈ 500 Hz),
 well inside any Ethernet deadline and cheap enough to leave
 unconditional in the cycle hook.
 
-Settings key `ethernet_backend`: `slirp` (default) | `loopback` | `none`.
-Takes effect on the next plug (profile switch or Slot Config change).
+Settings key `ethernet_backend`: `slirp` (default) | `builtin` | `loopback` |
+`none`. Takes effect on the next plug (profile switch or Slot Config change).
+`slirp` means "the NAT": libslirp where the build has it, POM2's built-in
+network where it does not (`resolveEthernetBackend`, `BuiltinNatBackend.h`).
+
+#### The built-in virtual network (`BuiltinNatBackend`)
+
+*(2026-11-05.)* libslirp was the only transport that carried frames, and it is
+an optional dependency Windows builds do not have — so on Windows the
+Uthernet I plugged, probed, and never saw a frame. `BuiltinNatBackend` is a
+user-mode NAT over the portable sockets the Uthernet II already uses
+(`SocketCompat.h`), compiled into every desktop build. It keeps **libslirp's
+numbering** on purpose — 10.0.2.0/24, gateway .2, DNS .3, lease .15 — so one
+guest configuration works on either backend. libslirp stays the default where
+it exists: it is the more complete stack.
+
+| File | Owns |
+|---|---|
+| `NatPacket.*` | Ethernet / ARP / IPv4 / ICMP echo / UDP / TCP, parse and build |
+| `NatDhcp.*` | one guest, one fixed lease |
+| `NatDns.*` | the DNS server at 10.0.2.3 — **answered, not relayed** |
+| `NatUdp.*`, `NatTcp.*` | the two relays |
+| `NatHost.h`, `NatHostSockets.cpp` | the host socket seam and its real implementation |
+| `BuiltinNatBackend.*` | the gateway (ARP, ping, DHCP), the frame queue, **the fence** |
+
+What it carries: UDP and TCP outbound, ping to the gateway, DHCP, DNS `A`
+queries. What it does not: IP fragments, other ICMP, inbound connections
+(there is no port forwarding), IPv6, other DNS record types (answered empty).
+
+**The fence is one pure function**, `nat::routeDestination`, pinned as a table.
+Same decision and same setting (`uthernet_allow_loopback`) as
+`W5100Device::checkDestination` and `SlirpOptions::allowHostLoopback`:
+
+- **the gateway is not the host's loopback.** In Casso, whose virtual network
+  this design follows, it is (`VirtualSubnet::GuestToHost`: gateway →
+  127.0.0.1); that alias was deliberately not taken, because it is the route by
+  which a guest reaches POM2's own AI control server. With the opt-in it is the
+  loopback, and replies are shown as coming from the gateway.
+- 127/8, 0/8, 169.254/16 named directly: refused (the opt-in allows 127/8
+  only). 224/4 and 240/4: refused — DHCP's broadcast is intercepted before the
+  fence. The rest of 10.0.2.0/24: nobody, refused. `uthernet_slirp_restricted`
+  refuses everything but the virtual services.
+- the DNS address is DNS over UDP port 53 and nothing else. libslirp re-dials
+  that address on the host's resolver keeping the guest's port — 127.0.0.1
+  under dnsmasq and several VPN clients (the hole `framesNamesHostLoopback`
+  closes). Nothing is re-dialled here, so the hole has no counterpart.
+
+A refused TCP connection is **reset** and opens no host socket; a refused
+datagram is dropped.
+
+**DNS is answered from the host resolver** — `W5100Resolver`, the same
+asynchronous, capped, rate-limited resolver the Uthernet II's virtual DNS
+uses — rather than relayed to the host's DNS server. A relay must know that
+server's address, for which there is no portable call (resolv.conf, stale
+under a VPN on macOS; `GetNetworkParams` on Windows), and it forwards whatever
+the guest wrote, unmetered. `getaddrinfo` is the same everywhere, honours the
+host's configuration, and the resolver already allows four new names a second.
+`W5100Resolver::peek` was added for it: the answer in hand or "not yet",
+**never** a new lookup — without it, asking again on every pump started a
+lookup per pump.
+
+**UDP is address-restricted**: a datagram reaches the guest only from an
+address that flow has written to (any port of it — TFTP answers from a port it
+picks). libslirp forwards whatever arrives. The host socket takes an ephemeral
+port; Casso binds the guest's own port number, which would let the guest
+choose a port on the host.
+
+**TCP** holds the SYN-ACK until the host connect completes, so "refused"
+reaches the guest as a reset rather than as a connection that opens and dies.
+No congestion control (the virtual wire drops nothing); the oldest
+unacknowledged segment is resent every second, eight times, then reset. 32
+connections, 32 UDP flows. [F] there is no zero-window probe.
+
+Grades: the protocols are [B] (RFCs 768, 791-793, 826, 894, 1035, 1071, 2131,
+2132, cited at each site); the structure is [D] Casso @ 2d899adf (MIT) and the
+numbering [D] libslirp. **Not verified: a Windows build** — the code goes
+through `SocketCompat.h`, which Windows CI compiles, but nothing here has run
+on Winsock yet. A real guest stack HAS been run against it: `a2osx_boot` boots
+A2osX on each of its three Ethernet drivers (Uthernet II MACRAW, Uthernet II
+IP-offload, Uthernet I) over each transport, and its `libtcpip` takes a DHCP
+lease and gets `ping 10.0.2.2` answered through the built-in network. That
+covers ARP, DHCP and ICMP with a real guest; the **UDP and TCP relays and the
+DNS server have only met the test's own hand-built segments** — settled by an
+IP65 or Contiki client fetching something through them. Pinned by `builtin_nat`:
+the test is the guest and, through the `NatHost.h` seam, the remote peer, with
+its own clock; then real sockets on 127.0.0.1. Five negative controls were run
+by hand (gateway aliased, 127/8 allowed, `peek` replaced by `resolve`,
+strangers' datagrams accepted, SYN-ACK before the connect): each fails it.
 
 **The virtual router no longer reaches the host's own loopback**
 *(2026-09-07 — S2)*. libslirp's `disable_host_loopback` was left at 0, so a
@@ -10794,14 +11300,22 @@ the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per
 entry, when the archive is unreachable or a member is absent or wrong:
 [Abdess/retrobios](https://github.com/Abdess/retrobios/tree/main/bios) at
 the pinned commit (`bios/Apple/Apple II` plus the MAME card zips under
-`bios/Arcade/MAME`). When the archive is down (2026-10-31: the item is dark,
+`bios/Arcade/MAME` and `bios/Arcade/Arcade`). **The pin moved on
+2026-11-06**, from `f71b0061` — the last commit before RetroBIOS dropped 26
+of the dumps, and from 2026-10-20 the only place 22 of them existed — to
+`441d4129`, the merge of RetroBIOS PR #86, which restored them once POM2
+1.1.0 shipped no firmware. That is a commit of RetroBIOS's `main` line, and
+`main` serves the whole catalogue again (48 distinct paths, all answered at
+the pin and on `main` the same day). Two card romsets had moved meanwhile
+(`a2mouse.zip`, `a2ssc.zip`: `bios/Arcade/MAME` → `bios/Arcade/Arcade`) and
+their URLs followed. When the archive is down (2026-10-31: the item is dark,
 403 + an HTML page, which curl 8 reports as exit 56) the run says so in its
 summary — "POM2's ROM archive on archive.org is unavailable (…); RetroBIOS
 was used instead" — and a page served as the zip is deleted with the run's
 scratch dir, never reused (pinned by `rom_fetch_archive_down`, whose
 `RomFetchSources::download` plays the servers). `fetchMissingRoms(...,
 RomFetchSources)` can restrict a run to one source; `rom_fetch_live_probe` downloads the whole catalogue
-from each ALONE (2026-10-29: 49/49 from each). Entries whose `url` IS the archive are **archive-only** (`romArchiveOnly`: the CCS 7710 PROMs and the DAN ][ EPROM, which RetroBIOS has no copy of — the archive's member serves them and no fallback is asked). Entries with a null `url` would be **import-only** (`romDownloadable` false — none since 2026-11-01: the
+from each ALONE (2026-10-29: 49/49 from each; 2026-11-06, at the new pin: 57/57 from each). Entries whose `url` IS the archive are **archive-only** (`romArchiveOnly`: the archive's member serves them and no fallback is asked). **None since 2026-11-06**: the CCS 7710 PROMs and the DAN ][ EPROM were, until RetroBIOS PR #86 brought the first inside MAME's `ccs7710` romset and the second loose — they are ordinary entries now, archive first, RetroBIOS when it cannot supply them; the predicate stays for the next dump only POM2's archive holds. Entries with a null `url` would be **import-only** (`romDownloadable` false — none since 2026-11-01: the
 CCS 7710 PROMs, the DAN ][ EPROM): identified by RomImport, listed in ROM
 Status, never planned by `romsToFetch()`. The mapping lives in `romFetchCatalog()` — every
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`

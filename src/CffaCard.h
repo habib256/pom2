@@ -113,6 +113,21 @@ public:
     { out = rom_[static_cast<size_t>(low8) + static_cast<size_t>(slot_) * 0x100]; return true; }
     uint8_t expansionRomRead (uint16_t offset) override;    // read_c800
     bool    takesC800() const override { return true; }     // MAME a2bus.h:145 take_c800
+    /// The EEPROM is deselected by $CFFF **and by $CFEF**, and RESET does
+    /// not re-enable or disable it.
+    /// [B] CFFA v2.0 Reference Manual (R&D Automation, May 2006), CPLD
+    ///     source: "Decode address range $CFFF and $CFEF for deselecting the
+    ///     onboard EPROM" — the term ANDs A0-A3 and A5-A10 with /IO_STRB,
+    ///     A4 is absent; and the text: "Address line A4 is not connected to
+    ///     the CPLD (U6) so a single address $CFFF could not be uniquely
+    ///     decoded." The equation is the hardware; a sentence elsewhere in
+    ///     the same manual ("any access of $CF00 to $CFFF") is looser than it.
+    ///     The flip-flops are declared with CLRN = PRN = VCC: no RESET.
+    /// [C] The firmware agrees: $CFEF is a lone $FF between a table and the
+    ///     routine at $CFF0-$CFFE — the one byte it steps around.
+    /// [D] MAME `a2cffa.cpp` @ mame0287 releases on $CFFF alone.
+    bool    releasesC800At(uint16_t offset) const override
+    { return offset == 0x7FF || offset == 0x7EF; }
     void    expansionRomWrite(uint16_t offset, uint8_t v) override; // write_c800
 
     /// Snapshot/rewind: 'CFA1'-tagged blob wrapping the ATA chip state

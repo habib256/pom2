@@ -23,7 +23,10 @@
 //                 below, if nobody holds it yet.
 //   $C800-$CFFE   2 KB expansion ROM, routed to the slot that claimed it.
 //   $CFFF         Special "disable expansion ROM" switch — read or write
-//                 releases the claim, so the next $CnXX can take it.
+//                 releases the claim, so the next $CnXX can take it. The
+//                 owner may let go on more than that one address
+//                 (SlotPeripheral::releasesC800At): the Super Serial Card
+//                 does on all of $CFxx, as its manual says.
 //
 // **$C800 ownership is FIRST-one-wins, and only a populated slot claims.**
 // MAME `apple2e.cpp:2970-2987` (`read_slot_rom`) / `:2989-3025`
@@ -277,7 +280,9 @@ public:
 
     /// Apple II RESET line — calls onReset() on every plugged card.
     /// A cold boot passes true to dispatch onPowerCycle() instead.
-    /// RESET retains activeExpansionSlot; a power cycle clears it.
+    /// A power cycle clears activeExpansionSlot. RESET clears it only when
+    /// the owner says its latch is reset by RESET (releasesC800OnReset —
+    /// the Super Serial Card); for cards in general the rule is unsourced.
     void reset(bool powerCycle = false);
 
     /// Unplug every card. Each is given an `onUnplug()` callback first.

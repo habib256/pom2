@@ -39,6 +39,7 @@ bool DiskImage::loadReadOnlySession(const uint8_t* data, size_t len, std::string
         }
         if (hasPendingWriteBack()) { error = "outgoing session disk has pending changes"; return false; }
         auto staged = std::make_unique<DiskImage>();
+        staged->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
         staged->writeBackEnabled = false;
         if (!staged->loadWozBytes(std::vector<uint8_t>(data + 4, data + len), "(session disk)")) {
             error = staged->lastError; return false;
@@ -61,6 +62,7 @@ bool DiskImage::loadReadOnlySession(const uint8_t* data, size_t len, std::string
     // Never flush/replace the only copy of an outgoing dirty medium.
     if (hasPendingWriteBack()) { error = "outgoing session disk has pending changes"; return false; }
     auto staged = std::make_unique<DiskImage>();
+    staged->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
     staged->writeBackEnabled = false;
     if (present) {
         staged->loaded = true;

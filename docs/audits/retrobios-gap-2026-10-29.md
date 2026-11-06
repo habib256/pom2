@@ -72,3 +72,29 @@ downloads the whole catalogue from each source alone: 49/49 from both.
    they accept (MAME romset zips rather than loose renamed files?).
 4. **A mirror POM2 controls** for the 22, with the same SHA-256 gate — a
    redistribution decision, which is exactly what the package change avoids.
+
+## Outcome (2026-11-06)
+
+Option 3 was taken and RetroBIOS accepted it: **PR #86, merged 2026-11-05**
+(`441d4129`). The premise of their 2026-10-20 removal was that POM2 bundled
+those files; POM2 1.1.0 ships no firmware, so the profile now says
+`bundled: false` and the 26 dumps returned byte for byte, plus
+`dan2_eprom.bin` (ThorstenBr's open-source DAN ][ EPROM), which the
+collection had never had.
+
+What POM2 changed in answer:
+
+- `POM2_RETROBIOS_COMMIT` moved from `f71b0061` to `441d4129`. The catalogue
+  no longer hangs on a commit `main` had left behind.
+- Two URLs followed a move RetroBIOS made in the meantime: `a2mouse.zip` and
+  `a2ssc.zip` are under `bios/Arcade/Arcade`, not `bios/Arcade/MAME`. At the
+  new pin, before the fix, exactly those two of the 46 distinct paths
+  answered 404.
+- The three archive-only entries gained a RetroBIOS source: the CCS 7710
+  PROMs as members `7710-03h.u5` / `7710-03l.u6` of `bios/Arcade/MAME/
+  ccs7710.zip`, the DAN ][ EPROM loose. Each was downloaded and matched to
+  the catalogue's SHA-256 before the entry changed.
+
+Checked the same day: all 48 distinct catalogue paths answer 200 at the pin
+**and** on `main` (`b873c6a9`). The pin stays a pin — `main` has moved under
+the catalogue once.

@@ -998,8 +998,9 @@ static void testDecodeRefusesToWriteThroughASymlink()
 
 // ── S6: no dotfiles ─────────────────────────────────────────────────────
 // A guest could plant `.bashrc` / `.git` in the served folder; the scan then
-// hid it, so the user never saw it. A ProDOS name starts with a letter, so
-// nothing legitimate is lost by refusing a leading dot.
+// hid it, so the user never saw it. The name is refused as a host component;
+// the entry itself is written under an escaped spelling
+// (prodos_dot_names_test.cpp).
 static void testLeadingDotNamesRefused()
 {
     assert(!pom2::isHostSafeProDOSName(".bashrc"));

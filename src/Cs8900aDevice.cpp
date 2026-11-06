@@ -566,8 +566,8 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
         // GATED ON tx_enabled ONLY, not on having a host transport. MAME's
         // `cs8900a.cpp` raises it from the transmit path with no backend test,
         // and it is right to: TxOK reports the CHIP's transmitter, and a card
-        // with no backend (the honest fallback when libslirp is absent, and
-        // the "none" ethernet_backend setting) is a card whose wire goes
+        // with no backend (the "none" ethernet_backend setting, or a build
+        // with no host sockets at all) is a card whose wire goes
         // nowhere, not one whose transmitter is broken. With the flag inside
         // the backend test, every such machine hung its Ethernet driver on the
         // first packet instead of merely getting no answers to it.

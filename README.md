@@ -141,7 +141,7 @@ ROMs that run the disks POM2 ships.
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS and VSDrive (desktop only; the browser has no host sockets) |
 | **Development** | Memory viewer, debugger with banks, symbols, conditional breakpoints and source correspondence, 6502/65C02 assembler, CPU profiling, OS-call trace, Disk II flux view, HGR/DHGR paint and sprite editors |
 | **State** | Rewind, snapshots and resumable sessions that rebuild the machine, its cards and its media |
-| **Automation** | `pom2_headless`, a loopback [HTTP control API](DEV.md#ai-control-server-aicontrolserver), a [C++ SDK](docs/SDK.md); `pom2_cpm` and `pom2_dos33` to move files on and off disk images |
+| **Automation** | `pom2_headless`, a loopback [HTTP control API](DEV.md#ai-control-server-aicontrolserver), a [C++ SDK](docs/SDK.md); `pom2_cpm`, `pom2_dos33` and `pom2_prodos` to move files on and off disk images; `pom2_disk` to make a formatted empty disk, a disk that boots your own binary with no operating system, or a healthy copy of a damaged WOZ |
 
 Some cards expose a high-level service instead of running every original chip
 or firmware. The [LLE/HLE matrix](docs/lle_vs_hle.md) gives each card's emulation

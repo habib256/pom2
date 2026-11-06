@@ -416,9 +416,16 @@ For card keys, firmware details and implementation notes, see
   With `uthernet_allow_loopback=true`, `LISTEN` accepts local TCP clients at
   `127.0.0.1` on the guest's chosen port (1024+; 1985/6502/6503 excluded).
   LAN listening/port forwarding is not implemented.
-  Uthernet I and raw Ethernet modes require libslirp, included in the ARM64,
-  Raspberry Pi and Pi 400 Linux packages. Source builds can enable it with
-  `-DPOM2_ENABLE_SLIRP=ON` when the library is available.
+  Uthernet I and raw Ethernet modes need a virtual network, and every desktop
+  build has one: libslirp where the package includes it (the ARM64, Raspberry
+  Pi and Pi 400 Linux packages; `-DPOM2_ENABLE_SLIRP=ON` for a source build),
+  and POM2's own built-in network everywhere else — Windows included. Both
+  give the Apple II the same addresses (itself `10.0.2.15`, gateway
+  `10.0.2.2`, DNS `10.0.2.3`, or simply DHCP), reach the internet and the
+  local network outbound only, and do **not** reach programs on your own
+  computer unless `uthernet_allow_loopback=true`. The built-in network
+  carries TCP, UDP, DHCP, DNS look-ups of host names and ping to the gateway;
+  it has not yet been run on Windows by the author.
 - **FujiNet:** The macOS, Windows x64 and Linux x64 desktop packages include
   [FujiNet-PC Apple v1.5.2](https://github.com/FujiNetWIFI/fujinet-firmware/releases/tag/v1.5.2)
   and its CONFIG disk. POM2 relays SmartPort calls to that program or a

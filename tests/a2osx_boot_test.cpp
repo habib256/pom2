@@ -38,7 +38,8 @@
 //     Grappler+, `echo` to /dev/com2 reaches the SSC's wire (the driver's
 //     CLOSE resets the 6551 right after the last byte), and on Uthernet II
 //     (MACRAW and IP-offload drivers) and Uthernet I, networkd gets a DHCP
-//     lease from libslirp and `ping 10.0.2.2` is answered.
+//     lease and `ping 10.0.2.2` is answered — through libslirp, and again
+//     through POM2's built-in network (BuiltinNatBackend.h).
 //   * on a //c with the internal Mockingboard 4c the boot never reaches the
 //     shell, and that is the machine's behaviour, not POM2's (CHANGELOG
 //     2026-10-23, CARDS-014): A2osX's Z80-card probe writes $C100-$C700,
@@ -51,6 +52,7 @@
 // Skips (77) when the //e ROM or the A2osX disk is missing.
 
 #include "A2osxHarness.h"
+#include "BuiltinNatBackend.h"
 #include "GrapplerCard.h"
 
 #include <chrono>
@@ -207,22 +209,35 @@ int main()
         }
     }
 
-    // ── DHCP and ping through libslirp, on each Ethernet driver ────────────
+    // ── DHCP and ping, on each Ethernet driver, through EACH transport ─────
+    // A real guest IP stack (A2osX's libtcpip) against libslirp and against
+    // POM2's built-in network: the second is what a build without libslirp —
+    // Windows — runs on, and `builtin_nat` only ever plays the guest itself.
+    //
     // networkd is started from etc/init, the way A2osX means it: started
     // by hand as `networkd libtcpip &`, A2osX 0.95 itself overwrites the
     // first byte of libtcpip (the subshell's argument list is copied with its
     // double NUL into a block sized for one; the 17th byte lands on the
     // library's CLD, which becomes a BRK). That is not POM2's to fix.
-    if (!pom2::makeSlirpBackend("probe")) {
-        std::printf("[SKIP] network: this build has no libslirp\n");
-    } else {
+    for (const bool builtin : { false, true }) {
+        const std::string via = builtin ? "built-in NAT" : "libslirp";
+        if (!builtin && !pom2::makeSlirpBackend("probe")) {
+            std::printf("[SKIP] network (libslirp): this build has no libslirp\n");
+            continue;
+        }
+        if (builtin && !pom2::builtinNatAvailable()) {
+            std::printf("[SKIP] network (built-in NAT): this build has no sockets\n");
+            continue;
+        }
         struct Nic { int slot; const char* card; const char* drv; };
         for (const Nic n : { Nic{3, "uthernet2", "uthernet2.drv 00:08:dc:12:34:56"},
                              Nic{3, "uthernet2", "uther2.ai.drv 00:08:dc:12:34:56"},
                              Nic{3, "uthernet",  "uthernet.drv 00:0e:3a:12:34:56"} }) {
             pom2test::A2osxMachine m(false, "pom2_a2osx_net.po");
+            m.setBuiltinNet(builtin);
             m.plug(n.slot, n.card);
-            const std::string tag = std::string(n.drv).substr(0, std::string(n.drv).find(' '));
+            const std::string tag = std::string(n.drv).substr(0, std::string(n.drv).find(' ')) +
+                                    " via " + via;
             if (!m.boot()) { check(false, tag + ": boot to the shell"); continue; }
             m.type(std::string("echo \"${ROOT}sbin/insdrv ") + n.drv + "\" >> ${ROOT}etc/init");
             m.type("echo \"${ROOT}sbin/networkd libtcpip\" >> ${ROOT}etc/init");

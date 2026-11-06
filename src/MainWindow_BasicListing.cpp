@@ -56,6 +56,7 @@ void MainWindow::saveBasicListing()
 {
     std::string text;
     const char* which = "";
+    pom2::applesoft::ListReport report;
     {
         auto st = controller->lockState();
         Memory& mem = st.memory();
@@ -65,7 +66,7 @@ void MainWindow::saveBasicListing()
         const uint16_t vartab = uint16_t(peek(0x69) | peek(0x6A) << 8);
         if (vartab > txttab && txttab >= 0x0200) {
             text = pom2::applesoft::list(txttab, peek,
-                                         std::size_t(vartab - txttab));
+                                         std::size_t(vartab - txttab), &report);
             if (!text.empty()) which = "Applesoft";
         }
         if (text.empty()) {
@@ -102,5 +103,11 @@ void MainWindow::saveBasicListing()
     ImGui::SetClipboardText(text.c_str());
     basicListingStatus_ = std::string("Saved ") + which + " listing to " +
                           file.string() + " (and copied)";
+    // Bytes text cannot hold (ApplesoftListing.h): say so, or the file
+    // passes for a copy of the program.
+    if (report.untypable > 0)
+        basicListingStatus_ += " - " + std::to_string(report.untypable) +
+            " byte(s) cannot be typed back, first in line " +
+            std::to_string(report.firstLine);
     pom2::log().info("Listing", basicListingStatus_);
 }

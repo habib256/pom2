@@ -44,10 +44,25 @@ constexpr size_t kBufCap   = 4096;     // bounded ring buffer (TX and RX)
 constexpr size_t kTailCap  = 256;      // recent-bytes peephole
 
 // MAME `mos6551.cpp:46` — internal baud-rate divider table indexed by
-// control bits 0-3. Index 0 is the "16x external clock" mode (effectively
-// unconstrained for POM2). Otherwise baud = xtal / (divider * 16) with
-// the SSC's 1.8432 MHz crystal — the resulting standard rates run from
-// 50 baud (index 1) to 19200 (index 15).
+// control bits 0-3: baud = xtal / (divider * 16) with the SSC's 1.8432 MHz
+// crystal — fifteen standard rates from 50 baud (index 1) to 19200
+// (index 15).
+//
+// Index 0 is 115,200 baud ON THIS CARD, and that is a correction: POM2 read
+// it as "unconstrained" and paced nothing.
+// [B] SSC manual, Table A-7 (p. 53): "Baud rate: $0 = 16 times external
+//     clock; $1-$F = decimal in Table 2-5". With code 0 the divider is
+//     bypassed, so the bit rate is the 16x clock itself / 16; on the SSC
+//     that clock is the card's own 1.8432 MHz crystal (p. 46: "It and the
+//     crystal at 3A form a 1.8432 MHz oscillator") — 115,200.
+// [C] ADTPro @ 3580637b53fa, src/client/prodos/serial/ssc.asm:130 —
+//     `BPSCTRL: .byte $1F,$10 ; 19200, 115200`: the driver programs $10 for
+//     its 115,200 setting, and that is the rate its host side then talks.
+// [D] AppleWin SerialComms.cpp reads it the same ("undoc'd 115.2K").
+// The manual lists FIFTEEN supported rates and calls the external clock
+// "not supported" (same table, bit 4): 115,200 is what the silicon does,
+// not what Apple documented. The divider of 1 below already said so; only
+// the special case in baudIndexToBytesPerSec contradicted it.
 constexpr int kInternalDivider[16] = {
     1, 2304, 1536, 1048, 856, 768, 384, 192, 96, 64, 48, 32, 24, 16, 12, 6
 };
@@ -77,7 +92,6 @@ constexpr bool kTxIrqEnableByCmd[4] = { false, true, false, false };
 
 double baudIndexToBytesPerSec(uint8_t idx)
 {
-    if (idx == 0) return 0.0;     // 16x ext clk — treat as unconstrained
     const int divider = kInternalDivider[idx & 0xF];
     if (divider <= 0) return 0.0;
     const double baud = kSscXtalHz / (divider * 16.0);
@@ -1008,7 +1022,9 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
     // received byte, $C0nD acknowledged the IRQ, a write to $C0nC sent.
     // AppleWin returns IO_Null there, as the schematic says.
     // `docs/audits/parite-a2ssc-2026-11-01.md`, constat 2.
-    //   $C0n0-$C0n7 → 74LS259 DIP-switch reads, with bits 1/0 selecting
+    //   $C0n0-$C0n7 → DIP-switch reads through two 74LS365 buffers (2B,
+    //     3B: SSC manual Table 4-5 — not a 74LS259, which this comment
+    //     named and which is not on the card), with bits 1/0 selecting
     //     which DSW to AND-mask: bit 1 clear ⇒ AND DSW1, bit 0 clear ⇒
     //     AND DSW2 (so $C0n0 = DSW1 & DSW2, $C0n1 = DSW1, $C0n2 = DSW2,
     //     $C0n3 = $FF). A //c port has no DIP switches at all: those eight
@@ -1124,7 +1140,17 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
     if (builtInPort_) return openBus();
     uint8_t result = 0xFF;
     if (!(low4 & 0x02)) result &= lastDip1;
-    if (!(low4 & 0x01)) result &= lastDip2;
+    if (!(low4 & 0x01)) {
+        // [B] SSC manual, Table 4-5 (p. 46): the LS365 at 3B stores "state
+        //     of SW2 and state of CTS"; Table A-7 (p. 53), DIPSW2 bit 0:
+        //     "Clear To Send (CTS) is true (-) when 0". The bit is the PIN,
+        //     not a switch — it was a constant of the settings file here,
+        //     so `dsw2=0x53` could make $C0n2 say "CTS false" while the
+        //     6551 two addresses away saw it true.
+        std::lock_guard<std::mutex> lk(bufferMtx);
+        const uint8_t cts = inputLinesLocked().cts ? 0x00 : 0x01;
+        result &= static_cast<uint8_t>((lastDip2 & 0xFE) | cts);
+    }
     return result;
 }
 
@@ -1132,8 +1158,8 @@ void SuperSerialCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     // Only $C0n8-$C0nB carries the ACIA registers on an SSC (A3=1, A2=0 —
     // see the read decode); $C0nC-$C0nF select nothing there, while a //c
-    // port keeps the mirror. Writes to $C0n0-$C0n7 hit the 74LS259 latch
-    // which we don't model.
+    // port keeps the mirror. Writes to $C0n0-$C0n7 reach nothing: the two
+    // 74LS365s there are read buffers, there is no latch to write.
     if (!(low4 & 0x08)) return;
     if ((low4 & 0x04) && !builtInPort_) return;
     const uint8_t reg = low4 & 0x03;

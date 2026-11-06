@@ -15,8 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // MainWindow_SettingsPanels — the ImGui bodies for the settings/input panels:
-// No-Slot Clock, the 3D voxel view settings, the NTSC shader settings, the
-// joystick/paddle panel and the mouse inspector. Moved out of MainWindow.cpp
+// No-Slot Clock, the 3D voxel view settings, the joystick/paddle panel and
+// the mouse inspector (the CRT panel: MainWindow_CrtPanel.cpp). Moved out of MainWindow.cpp
 // verbatim; none touch the anonymous-namespace helpers that keep the storage
 // panels there. See the file-size ratchet.
 
@@ -31,7 +31,6 @@
 #include "MouseCardAppleWin.h"
 #include "MouseCoordinator.h"
 #include "NoSlotClock.h"
-#include "NtscPostProcessor.h"
 #include "Settings.h"
 
 #include "imgui.h"
@@ -186,214 +185,8 @@ void MainWindow::renderVoxelSettingsWindow()
     ImGui::End();
 }
 
-// ─── CRT Settings (Composite NTSC mode) ──────────────────────────────────
-//
-// Sliders that drive the OpenEmulator-style shader: standard four TV knobs
-// (B/C/S/H), sharpness (chroma bandwidth), persistence (CRT afterglow), and
-// the pure post-effects (scanlines, barrel, vignette, shadow mask). All
-// values are persisted to state.cfg under the `ntsc_*` keys so the look
-// survives across sessions. No look presets: they overwrote the whole glass
-// block in one click, which made the panel hard to reason about — the
-// defaults plus "Reset to defaults" are the only starting points now.
-void MainWindow::renderNtscSettingsWindow()
-{
-    if (!show(pom2::PanelId::Crt)) return;
-
-    ImGui::SetNextWindowSize(ImVec2(380, 360), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("CRT Settings (Composite NTSC)",
-                      &show(pom2::PanelId::Crt))) {
-        ImGui::End();
-        return;
-    }
-
-    const pom2::Palette& pal = pom2::palette();
-    const auto u32 = ImGui::ColorConvertU32ToFloat4;
-
-    // Master ON/OFF for every CRT effect, full-width at the top of the window.
-    // Off bypasses the whole effect stack (the colour pipeline still runs);
-    // the controls below grey out so it's clear they have no effect.
-    {
-        const bool on = crtEffectsEnabled;
-        const ImVec4 col = u32(on ? pal.ok : pal.danger);
-        // Tint the face at low alpha and put the full-strength colour on the
-        // text: a saturated full-width slab was the loudest thing in the UI.
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              ImVec4(col.x, col.y, col.z, 0.20f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              ImVec4(col.x, col.y, col.z, 0.32f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                              ImVec4(col.x, col.y, col.z, 0.44f));
-        ImGui::PushStyleColor(ImGuiCol_Text, col);
-        if (ImGui::Button(on ? "CRT effects: ON  —  click to disable"
-                             : "CRT effects: OFF  —  click to enable",
-                          ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
-            crtEffectsEnabled = !crtEffectsEnabled;
-        }
-        ImGui::PopStyleColor(4);
-    }
-
-    ImGui::Checkbox("Monitor II frame", &monitorArtworkEnabled);
-    ImGui::BeginDisabled(!crtEffectsEnabled);
-
-    pom2::NtscParams p = ntscFx ? ntscFx->getParams() : pom2::NtscParams{};
-    bool changed = false;
-
-    // ── Scope notes ──────────────────────────────────────────────────────
-    // What actually applies right now. Kept terse and dim: it is reference
-    // material, not a warning.
-    const bool oeFamily =
-        display->getHiResMode() == Apple2Display::HiResMode::ColorCompositeOE ||
-        display->getHiResMode() == Apple2Display::HiResMode::ColorCompositeOECpu;
-    if (!oeFamily) {
-        ImGui::PushStyleColor(ImGuiCol_Text, u32(pal.textDim));
-        ImGui::TextWrapped(
-            "Every glass control below applies on this mode. PAL composite and "
-            "Sharp text are demodulation-only — they affect just the two "
-            "'Composite (OpenEmulator)' pipelines.");
-        ImGui::PopStyleColor();
-    }
-
-    if (ntscFx && !ntscFx->available()) {
-        // Previously this read as a flat contradiction: a green "CRT Effects:
-        // ON" banner immediately above a red "Shader unavailable", leaving the
-        // user unable to tell whether the controls below did anything. Scope
-        // it explicitly — only the OpenEmulator *demodulation* shader is
-        // missing; the CRT glass stack is a separate pass and still runs.
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text, u32(pal.warn));
-        ImGui::TextWrapped(
-            "OpenEmulator demodulation shader unavailable — the two "
-            "'Composite (OpenEmulator)' pipelines fall back to the NTSC LUT. "
-            "The glass controls below are a separate pass and still apply.");
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", ntscFx->lastError().c_str());
-    }
-
-    // ── Advanced ─────────────────────────────────────────────────────────
-    // Open by default: the look presets that used to be the panel's primary
-    // control are gone, so the sliders are the only controls left and hiding
-    // them behind a collapsed header would leave the panel empty on open.
-    // Labels lead, sliders fill the rest of the row:
-    // ImGui's native SliderFloat puts its label on the RIGHT, which made the
-    // panel read "bar → number → name" and clipped the longest label
-    // ("Phosphor curve (ga…"). Two decimals, not three — these are perceptual
-    // knobs and 0.055 was false precision.
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Advanced",
-                                ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Widest label sets the column, so it can never clip. Measured rather
-        // than hardcoded so it survives the UI zoom.
-        const float labelW = ImGui::CalcTextSize("Analog bandwidth").x +
-                             ImGui::GetStyle().ItemSpacing.x * 2.0f;
-        auto slider = [&](const char* label, const char* id, float* v,
-                          float lo, float hi, const char* tip,
-                          const char* fmt = "%.2f") {
-            ImGui::TextUnformatted(label);
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-            ImGui::SameLine(labelW);
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::SliderFloat(id, v, lo, hi, fmt,
-                                   ImGuiSliderFlags_AlwaysClamp))
-                changed = true;
-        };
-
-        ImGui::SeparatorText("Picture");
-        slider("Brightness", "##bright", &p.brightness, -0.5f, 0.5f,
-               "Added to luma.");
-        slider("Contrast",   "##contrast", &p.contrast,  0.5f, 1.5f,
-               "Scaling around mid-grey.");
-        slider("Saturation", "##sat", &p.saturation, 0.0f, 2.0f,
-               "Chroma multiplier. 0 = monochrome.");
-        slider("Hue",        "##hue", &p.hue, -0.5f, 0.5f,
-               "I/Q rotation. Full turn at +/-0.5.");
-
-        ImGui::SeparatorText("Phosphor");
-        slider("Sharpness",   "##sharp", &p.sharpness, 0.0f, 1.0f,
-               "Chroma bandwidth. Lower = more composite bleed.");
-        slider("Persistence", "##persist", &p.persistence, 0.0f, 0.95f,
-               "Temporal decay — the phosphor's afterglow.");
-        slider("Phosphor gamma", "##gamma", &p.phosphorGamma, 0.6f, 2.6f,
-               "Response curve. 1.0 = flat, >1 deepens shadows.\n"
-               "Pairs with Persistence as the phosphor model.");
-
-        ImGui::SeparatorText("Glass");
-        slider("Scanlines", "##scan", &p.scanlines, 0.0f, 1.0f,
-               "0 = off, 1 = black between every line.");
-        slider("Barrel",    "##barrel", &p.barrel, 0.0f, 0.30f,
-               "Tube curvature. 0 = flat.");
-        slider("Vignette",  "##vign", &p.centerLighting, 0.5f, 1.0f,
-               "Center lighting. 1.0 = flat, lower darkens the edges.");
-
-        // Shadow mask: combo + strength. Procedural — no texture upload, no
-        // perf cost when Off.
-        static const char* kMaskNames[] = {
-            "Off", "Triad (3-stripe)", "Aperture grille (Trinitron)",
-            "Dot mask (offset triads)"
-        };
-        int maskIdx = static_cast<int>(p.shadowMask);
-        ImGui::TextUnformatted("Shadow mask");
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::Combo("##mask", &maskIdx, kMaskNames,
-                         IM_ARRAYSIZE(kMaskNames))) {
-            p.shadowMask = static_cast<pom2::NtscParams::ShadowMask>(maskIdx);
-            changed = true;
-        }
-        ImGui::BeginDisabled(p.shadowMask == pom2::NtscParams::ShadowMask::Off);
-        slider("Mask strength", "##maskstr", &p.shadowMaskStrength, 0.0f, 1.0f,
-               nullptr);
-        ImGui::EndDisabled();
-        slider("Luminance gain", "##lumgain", &p.luminanceGain, 1.0f, 2.0f,
-               "Post-glass re-brighten — compensates the dimming\n"
-               "from scanlines and the shadow mask.");
-
-        // The cable between the machine and the tube. OpenEmulator models
-        // this as its "connection" type; POM2 exposes it as one figure in MHz
-        // because the interesting case — Le Chat Mauve — is literally a choice
-        // of connector: the TTL RGB header (square dots, 0 = off) or the
-        // analog Péritel socket (resistor ladders, trim pots and a cable,
-        // ~5-6 MHz). The filter runs on the source sample grid, so the same
-        // figure lands differently per video mode and needs no per-mode knob.
-        ImGui::SeparatorText("Analog link");
-        slider("Analog bandwidth", "##rgbbw", &p.rgbBandwidthMHz, 0.0f, 8.0f,
-               "Bandwidth of the analog video chain, in MHz.\n"
-               "0 = off — a direct/TTL link, square dots.\n"
-               "~5-6 = an analog RGB (Peritel/SCART) cable: 560-dot\n"
-               "detail (DHGR, COL280) softens, 280-dot HGR barely moves.\n"
-               "Above a mode's Nyquist the filter is skipped entirely.",
-               "%.1f MHz");
-
-        ImGui::SeparatorText("Demodulation (OpenEmulator pipelines only)");
-        // PAL composite — line-phase alternation. Off by default (POM2 ships
-        // with the NTSC look most users associate with the Apple II). It
-        // describes the machine being emulated, not a look.
-        changed |= ImGui::Checkbox("PAL composite (line-phase alternation)",
-                                   &p.palMode);
-        // Sharp-text bypass: keep glyphs crisp in TEXT mode by skipping the
-        // shader for the whole text screen. HGR/DHGR/lo-res still run through
-        // the demodulator.
-        changed |= ImGui::Checkbox("Sharp text (bypass shader in TEXT mode)",
-                                   &p.textSharp);
-
-        ImGui::Spacing();
-        if (ImGui::Button("Reset to defaults")) {
-            p = pom2::NtscParams{};
-            changed = true;
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("Saved to ntsc_* keys");
-    }
-
-    ImGui::EndDisabled();
-
-    if (changed) {
-        if (!ntscFx) ntscFx = std::make_unique<pom2::NtscPostProcessor>();
-        ntscFx->setParams(p);
-    }
-
-    ImGui::End();
-}
+// The CRT Settings panel lives in MainWindow_CrtPanel.cpp, with the per-monitor
+// presets it edits.
 
 void MainWindow::renderJoystickPanelWindow()
 {

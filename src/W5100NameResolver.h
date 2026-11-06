@@ -70,6 +70,8 @@ public:
     /// Resolve within `waitMs`. Answers from the cache without waiting.
     Result resolve(const std::string& name, int waitMs) override;
 
+    Result peek(const std::string& name) override;
+
     /// Fold any late answers into the cache. CPU thread only — that is what
     /// keeps the cache free of a lock.
     void poll() override;

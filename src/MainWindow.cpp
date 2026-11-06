@@ -68,6 +68,7 @@
 #include "StorageCoordinator.h"
 #include "PrinterCoordinator.h"
 #include "CrtEffectStack.h"
+#include "CrtPresets.h"
 #include "Voxel3DRenderer.h"
 #include "CffaCard.h"
 #include "ProDOSHardDiskCard.h"
@@ -384,6 +385,23 @@ MainWindow::MainWindow(bool forceIIPlus)
             dir, FloppySoundDevice::FormFactor::FF35);
         if (ok525 || ok35) break;
     }
+    // A door and a head stop for the 5.25" drive, when the user fetched them
+    // (tools/install_drive_extras.py). Local only — see loadExtras.
+    for (const char* d : { "roms/floppy_extras", "../roms/floppy_extras",
+                           "../../roms/floppy_extras" }) {
+        const std::string dir = pom2::findResource(d);
+        if (dir.empty() || !fs::is_directory(dir)) continue;
+        if (controller->floppySound525().loadExtras(dir) > 0) break;
+    }
+    // The recorded ImageWriter II bank (Scott Lawrence, CC BY 4.0 — see
+    // roms/printer_samples/README.txt). Shipped, unlike the Virtual ][ set
+    // below; without it the printer is the synthesiser it always was.
+    for (const char* d : { "roms/printer_samples", "../roms/printer_samples",
+                           "../../roms/printer_samples" }) {
+        const std::string dir = pom2::findResource(d);
+        if (dir.empty() || !fs::is_directory(dir)) continue;
+        if (printerSound->loadRecordedBank(dir)) break;
+    }
     // Virtual ][ Disk II / printer / power-switch recordings. Commercial,
     // local only (gitignored, denied from packages). Missing directory
     // leaves the MAME bank as the only one the mixer can select.
@@ -662,60 +680,9 @@ MainWindow::MainWindow(bool forceIIPlus)
                                             0, int(pom2::FastChip::kSpeedMax))));
         if (!controller->zipChipInstalled())
             controller->setFastChipInstalled(settings->getBool("fast_chip", false));
-        // Composite-NTSC shader params (saved under ntsc_*). We can't
-        // call ntscFx->setParams() yet because the postprocessor is
-        // lazy-constructed in drawScreenImage; stash them into a
-        // pending-params instance that will be picked up on the first
-        // construction.
-        {
-            pom2::NtscParams p;
-            p.brightness  = settings->getFloat("ntsc_brightness",  p.brightness);
-            p.contrast    = settings->getFloat("ntsc_contrast",    p.contrast);
-            p.saturation  = settings->getFloat("ntsc_saturation",  p.saturation);
-            p.hue         = settings->getFloat("ntsc_hue",         p.hue);
-            p.sharpness   = settings->getFloat("ntsc_sharpness",   p.sharpness);
-            p.persistence = settings->getFloat("ntsc_persistence", p.persistence);
-            p.scanlines   = settings->getFloat("ntsc_scanlines",   p.scanlines);
-            p.barrel      = settings->getFloat("ntsc_barrel",      p.barrel);
-            p.shadowMaskStrength = settings->getFloat(
-                "ntsc_shadow_strength", p.shadowMaskStrength);
-            p.luminanceGain = settings->getFloat(
-                "ntsc_luminance_gain", p.luminanceGain);
-            p.centerLighting = settings->getFloat(
-                "ntsc_center_lighting", p.centerLighting);
-            p.phosphorGamma = settings->getFloat(
-                "ntsc_phosphor_gamma", p.phosphorGamma);
-            p.rgbBandwidthMHz = settings->getFloat(
-                "ntsc_rgb_bandwidth_mhz", p.rgbBandwidthMHz);
-            const int sm = settings->getInt("ntsc_shadow_mask",
-                                            static_cast<int>(p.shadowMask));
-            p.shadowMask = static_cast<pom2::NtscParams::ShadowMask>(
-                std::clamp(sm, 0, 3));
-            p.palMode    = settings->getBool("ntsc_pal",        p.palMode);
-            p.textSharp  = settings->getBool("ntsc_text_sharp", p.textSharp);
-            // Clamp every float to its slider range: only values created
-            // in-app are slider-bounded — a hand-edited/corrupted state.cfg
-            // with e.g. ntsc_center_lighting=0 hits 1.0/uCenterLighting in
-            // the glass shader → exp(-inf) → fully black screen everywhere.
-            p.brightness         = std::clamp(p.brightness,        -0.5f, 0.5f);
-            p.contrast           = std::clamp(p.contrast,           0.5f, 1.5f);
-            p.saturation         = std::clamp(p.saturation,         0.0f, 2.0f);
-            p.hue                = std::clamp(p.hue,               -0.5f, 0.5f);
-            p.sharpness          = std::clamp(p.sharpness,          0.0f, 1.0f);
-            p.persistence        = std::clamp(p.persistence,        0.0f, 0.95f);
-            p.scanlines          = std::clamp(p.scanlines,          0.0f, 1.0f);
-            p.barrel             = std::clamp(p.barrel,             0.0f, 0.30f);
-            p.shadowMaskStrength = std::clamp(p.shadowMaskStrength, 0.0f, 1.0f);
-            p.luminanceGain      = std::clamp(p.luminanceGain,      1.0f, 2.0f);
-            p.centerLighting     = std::clamp(p.centerLighting,     0.5f, 1.0f);
-            p.phosphorGamma      = std::clamp(p.phosphorGamma,      0.6f, 2.6f);
-            p.rgbBandwidthMHz    = std::clamp(p.rgbBandwidthMHz,     0.0f, 8.0f);
-#ifdef __EMSCRIPTEN__
-            p.barrel = std::min(p.barrel, 0.03f);
-#endif
-            ntscFx = std::make_unique<pom2::NtscPostProcessor>();
-            ntscFx->setParams(p);
-        }
+        // The CRT glass settings, per monitor (CrtPresets.h). Builds `ntscFx`
+        // with the look of the current display mode; its GL side stays lazy.
+        loadCrtSettings();
         crtEffectsEnabled = settings->getBool("crt_effects_enabled",
                                               crtEffectsEnabled);
         monitorArtworkEnabled = settings->getBool("monitor_artwork", monitorArtworkEnabled);

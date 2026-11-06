@@ -138,7 +138,15 @@ when A1 = 0 and with DSW2 when A0 = 0 — so `$C0n1` = DSW1, `$C0n2` = DSW2,
 | `$20` | SW2:2 | data bits (set = 7, clear = 8) | delay after CR (set = none, clear = 1/4 s) |
 | `$0C` | SW2:4,3 | parity: `$00` none, `$04` odd, `$08` none, `$0C` even | line width: `$00` 40, `$04` 72, `$08` 80, `$0C` 132 |
 | `$02` | SW2:5 | end of line: clear = add LF after CR | same |
+| `$01` | — (not a switch) | **the CTS pin, `0` = true** — read live | same |
 | `$50` | — | unused, read high | |
+
+Bit 0 is a *line*, not a setting: [B] SSC manual Table 4-5 (the buffer at 3B
+stores "state of SW2 and state of CTS") and Table A-7 ("Clear To Send (CTS) is
+true (−) when 0"). So `$C0n2` is the one place a program can read CTS without
+touching the 6551 — whose status register does not carry CTS at all (it only
+gates TDRE). With nothing on the connector the card's pull-ups hold it true
+and the bit reads 0. POM2 stored it as part of `dsw2` until 2026-11-05.
 
 SW2:6 (interrupts) and SW1:7 (DCD connected) are **not** readable: MAME puts
 them in a third, non-mapped port (`DSWX`, `a2ssc.cpp:150-157`).
@@ -147,6 +155,16 @@ them in a third, non-mapped port (`DSWX`, `a2ssc.cpp:150-157`).
 claims the shared `$C800` window (`take_c800() = true`, `a2ssc.cpp:50`), first
 card wins until someone touches `$CFFF`. Harmless for detection, but a
 detection loop that walks every slot's ROM should end with `LDA $CFFF`.
+**The SSC lets go on any address of `$CFxx`, and on RESET** — [B] manual
+p. 45: the latch "is set by an access to the `$Csxx` space, and is reset by
+access to the `$CFxx` space or by a reset". That is why its ROM's last page
+is the one at `$Cs00`: "the `$CFxx` addresses are unusable". So a program that
+walks `$C800-$CFFF` to checksum the SSC's ROM loses the window at `$CF00`.
+The two Grapplers decode less than the SSC and more than one address: their
+latch lets go on **`$CFF0-$CFFF`** (A0-A3 are not decoded — both manuals'
+schematics), and RESET does not touch it. Their EPROMs keep those sixteen
+bytes unused, so a checksum loop over a Grappler's window is good up to
+`$CFEF`. `SlotPeripheral::releasesC800At` has the table for every card read.
 
 **What blocks:** the Apple firmware (not the card) waits, before every byte,
 for `status & $70 == $10` (`$CAF5`) — transmitter empty **and** DSR and DCD

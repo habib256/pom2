@@ -229,6 +229,7 @@ int runScenario(Scenario sc, const std::string& rom, const std::string& po)
     if (!disk->insertDisk(0, floppy.string())) { std::fprintf(stderr, "insert failed\n"); return 1; }
     disk->setWriteBackEnabled(true);
     disk->setIWM(&iwm);
+    DiskIICard* const floppyCard = disk.get();
     // Drive 2 deliberately left EMPTY: the //c's rear port is drive 2 of the
     // IWM, and an empty drive 2 under a motor-on is the trigger.
     mem.slotBus().plug(6, std::move(disk));
@@ -319,10 +320,34 @@ int runScenario(Scenario sc, const std::string& rom, const std::string& po)
         "90 NEXT\r"
         "100 PRINT D$\"CLOSE\"\r"
         "RUN\r";
+    // From here the guest only READS the floppy. Every SmartPort call lands
+    // inside the second the 5.25" drive coasts after its last access, with
+    // the IWM's enable line still low — the window in which a write to
+    // $C0EF with Q6 and Q7 high is write DATA and /WRREQ is asserted:
+    // [B] IWM Device Specification rev 19 (Apple, 1982-09-24), p. 7 — "The
+    //     combination of L7 and Motor-On and /underrun enables /WRREQ low",
+    //     and p. 8 — "Motor-On is synonomous with either /ENBL1 or /ENBL2
+    //     being low", the enable being "held low for 2^23 FCLK periods
+    //     (about 1 second) after the LMotor-On state bit is reset to zero".
+    // POM2's Disk II card arms its write head on that rule (`control()`
+    // case $F, `active` true through the coast). MAME's iwm.cpp gates the
+    // write state on the LMotor-On BIT instead ([D], mame0287) and must not
+    // be followed here. What makes the rule safe is that the //c firmware
+    // never does it: this counter proves so for the whole copy.
+    const uint64_t floppyFlushesBefore = floppyCard->getWriteFlushCount();
     mem.pasteText(copy, std::strlen(copy));
 
     if (sc == Scenario::Plain) {
         run(cpu, 400'000'000);
+        const uint64_t stray = floppyCard->getWriteFlushCount() - floppyFlushesBefore;
+        std::printf("  %s: floppy write flushes during a read-only copy: %llu\n",
+                    tag, static_cast<unsigned long long>(stray));
+        if (stray != 0) {
+            std::fprintf(stderr, "FAIL [%s]: %llu write burst(s) reached the 5.25\" "
+                                 "disk while the guest was only reading it\n",
+                         tag, static_cast<unsigned long long>(stray));
+            return 1;
+        }
     } else {
         // Instruction by instruction until the host is part-way through
         // SENDING a packet to the bus (write mode, bus addressed, a frame in

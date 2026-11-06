@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -70,6 +71,116 @@ float bufferEnergy(const std::vector<float>& b)
     double e = 0.0;
     for (float v : b) e += static_cast<double>(v) * v;
     return static_cast<float>(e);
+}
+
+/// A 16-bit mono 44.1 kHz WAV of a decaying tone — a stand-in recording.
+void writeToneWav(const fs::path& path, int frames, double hz)
+{
+    fs::create_directories(path.parent_path());
+    std::ofstream f(path, std::ios::binary);
+    const uint32_t dataBytes = static_cast<uint32_t>(frames) * 2u;
+    const auto w32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    const auto w16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    f.write("RIFF", 4); w32(36 + dataBytes); f.write("WAVE", 4);
+    f.write("fmt ", 4); w32(16); w16(1); w16(1); w32(44100); w32(88200); w16(2); w16(16);
+    f.write("data", 4); w32(dataBytes);
+    for (int i = 0; i < frames; ++i) {
+        const double env = 1.0 - static_cast<double>(i) / frames;
+        const auto v = static_cast<int16_t>(12000.0 * env *
+                           std::sin(6.283185307179586 * hz * i / 44100.0));
+        w16(static_cast<uint16_t>(v));
+    }
+}
+
+float pullEnergy(FloppySoundDevice& d, int frames = 512)
+{
+    std::vector<float> buf(static_cast<size_t>(frames), 0.0f);
+    d.fillAudioBuffer(buf.data(), frames);
+    return bufferEnergy(buf);
+}
+
+// ── The extras: a door and a head stop for the 5.25" drive ──────────────
+// Three events the MAME set has no recording for. Without the extras they
+// are silent, exactly as before; with them each has its own voice.
+void testDoorAndHeadStopExtras(const std::string& dir)
+{
+    const fs::path extras = fs::temp_directory_path() / "pom2_floppy_extras_test";
+    fs::remove_all(extras);
+
+    FloppySoundDevice d;
+    assert(d.loadSamples(dir, FloppySoundDevice::FormFactor::FF525));
+    d.setSampleRate(44100);
+
+    // Bare MAME bank: a 5.25" door and a bang on the stop make no sound.
+    d.latch(true);
+    d.latch(false);
+    d.bump(cyclesForMs(0));
+    assert(d.queuedCommandCount() == 0);
+    assert(pullEnergy(d) == 0.0f);
+    assert(d.loadExtras(extras.string()) == 0);
+
+    // One extra alone is enough for its own event, and only for it.
+    writeToneWav(extras / "525_head_stop.wav", 2205, 300.0);        // 50 ms
+    assert(d.loadExtras(extras.string()) == 1);
+    assert(d.hasExtra(FloppySoundDevice::EXTRA_HEAD_STOP));
+    assert(!d.hasExtra(FloppySoundDevice::EXTRA_DOOR_OPEN));
+    d.latch(true);
+    assert(d.queuedCommandCount() == 0 && "no door recording, no door sound");
+    d.bump(cyclesForMs(0));
+    assert(pullEnergy(d) > 0.0f);
+    assert(d.audioExtra() == FloppySoundDevice::EXTRA_HEAD_STOP);
+    // A recalibration bangs the stop faster than a bang lasts: the ones that
+    // land inside the first 12 ms do not restart it.
+    for (int i = 0; i < 20; ++i) d.bump(cyclesForMs(1 + i));
+    int buffers = 0;
+    while (d.audioExtra() >= 0 && buffers < 100) { (void)pullEnergy(d); ++buffers; }
+    assert(buffers >= 2 && buffers <= 8 && "one 50 ms take, not twenty of them end to end");
+
+    // All three.
+    writeToneWav(extras / "525_door_open.wav",  8820, 200.0);       // 200 ms
+    writeToneWav(extras / "525_door_close.wav", 8820, 500.0);
+    assert(d.loadExtras(extras.string()) == 3);
+
+    // A disk swap is the door opening and THEN closing: the second waits.
+    d.latch(false);
+    d.latch(true);
+    assert(pullEnergy(d) > 0.0f);
+    assert(d.audioExtra() == FloppySoundDevice::EXTRA_DOOR_OPEN);
+    int open = 1;
+    while (d.audioExtra() == FloppySoundDevice::EXTRA_DOOR_OPEN && open < 100) {
+        (void)pullEnergy(d); ++open;
+    }
+    assert(open >= 15 && "the opening plays through");
+    assert(d.audioExtra() == FloppySoundDevice::EXTRA_DOOR_CLOSE && "then the closing");
+    // A bang does not cut a door.
+    d.bump(cyclesForMs(500));
+    (void)pullEnergy(d);
+    assert(d.audioExtra() == FloppySoundDevice::EXTRA_DOOR_CLOSE);
+    int guard = 0;
+    while (d.audioExtra() >= 0 && guard++ < 200) (void)pullEnergy(d);
+    assert(d.audioExtra() == -1);
+    assert(pullEnergy(d) == 0.0f);
+
+    // reset() stops the motor and leaves one-shots to ring out, the door
+    // like the click: it ends by itself, and nothing follows it.
+    d.latch(true);
+    (void)pullEnergy(d);
+    d.reset();
+    guard = 0;
+    while (d.audioExtra() >= 0 && guard++ < 200) (void)pullEnergy(d);
+    assert(d.audioExtra() == -1 && pullEnergy(d) == 0.0f);
+
+    // A 3.5" drive keeps its click: the extras are the 5.25" drive's.
+    FloppySoundDevice d35;
+    assert(d35.loadSamples(dir, FloppySoundDevice::FormFactor::FF35));
+    d35.setSampleRate(44100);
+    (void)d35.loadExtras(extras.string());
+    d35.latch(true);
+    assert(pullEnergy(d35) > 0.0f);
+    assert(d35.audioExtra() == -1);
+
+    fs::remove_all(extras);
+    std::puts("OK door_and_head_stop_extras");
 }
 
 void testSilenceWithoutSamples()
@@ -517,6 +628,7 @@ int main()
     testDrainConsumesEachCommandOnce(dir);
     testCommandQueueIsBounded(dir);
     testStepCadenceUsesLiveCpuClock(dir);
+    testDoorAndHeadStopExtras(dir);
 
     std::puts("OK floppy_sound_smoke");
     return 0;

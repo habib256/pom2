@@ -63,6 +63,10 @@ wasm roms/mouse_341-0270-c.bin
 # README.txt) — recordings, not firmware.
 dir  roms/floppy_samples
 
+# Scott Lawrence's ImageWriter II recordings (CC BY 4.0 — NOT GPL: the
+# attribution in printer_samples/README.txt must travel with them).
+dir  roms/printer_samples
+
 # The inventory note, which deliberately OVERWRITES any README already sitting
 # in roms/ — it describes what a *package* contains, not the work tree.
 file packaging/roms_README.txt  roms/README.txt

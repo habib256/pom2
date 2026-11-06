@@ -453,17 +453,53 @@ src/Apple2Display.cpp                    2536
 # upstream revision) on the IWM mode gate and the angular resume; the code
 # grew by the stoppedPosition capture alone.
 #   src/DiskIICard.cpp: 2076 -> 2084 (+8)
-src/DiskIICard.cpp                       2084
+# 2026-11-05: the two call sites of carryAngleAcrossStep (the function itself
+# is in DiskIICard_Cycles.cpp) and a graded comment at the write gate — IWM
+# spec rev 19 pp. 7-8 says /WRREQ follows the ENABLE line through the
+# one-second hold, MAME gates on the motor latch, and the next "alignment on
+# MAME" would have been a regression.
+#   src/DiskIICard.cpp: 2084 -> 2102 (+18)
+# …and, same day, the four lines that report the carriage hitting the track-0
+# stop to the sound sink (FloppySoundSink::bump).
+#   src/DiskIICard.cpp: 2102 -> 2106 (+4)
+# 2026-11-06 — the flux time base: the drive tells its medium the bus clock
+# (one line at the adoption point), the static_assert that ties DiskImage's
+# restated NTSC clock to CpuClock.h, and the grade on the blank-track noise.
+#   src/DiskIICard.cpp: 2106 -> 2114 (+8)
+src/DiskIICard.cpp                       2114
 # 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
 # the existing format detection and loader; covered by disk_macbinary_smoke.
 #   src/DiskImage.cpp: 3293 -> 3316 (+23)
 # 2026-11-01 (parity campaign): the FLUX seam rule (the last byte is a
 # transition) and its graded comment.
 #   src/DiskImage.cpp: 3316 -> 3329 (+13)
-src/DiskImage.cpp                        3329
+# 2026-11-05: the first cut along the seam this file has owed since
+# 2026-08-31. Phase 2 of the write-back — commitWriteBack, the atomic
+# replace, the sector decode's refusal — left for DiskImage_WriteBack.cpp,
+# which also took the three new rules (external change, whole track or
+# nothing, the recovery WOZ). The loader gained the damaged-WOZ bookkeeping
+# and the mount stamp on the way.
+#   src/DiskImage.cpp: 3329 -> 3224 (-105)
+# 2026-11-06 — the WOZ INFO "Compatible Hardware" / "Required RAM" fields
+# (WozCompat.h): nine lines in the INFO parser, where the other INFO fields
+# are read, and their reset in the three load paths. The policy and the
+# sentence are in WozCompat.h, not here.
+#   src/DiskImage.cpp: 3224 -> 3240 (+16)
+# 2026-11-06 — flux ticks on the machine's LSS cycle, weak bits at the WOZ
+# reference's 30 %. The projection itself (projectFluxTrack, setFluxClockHz)
+# went to DiskImageWozFlux.cpp; what stays here is where the loader and the
+# two lazy expanders hand over to it, the draw (kWeakOnes / weakPulse) beside
+# the hash it reads, and the graded citations of both rules — the long forms
+# are in DEV.md.
+#   src/DiskImage.cpp: 3240 -> 3280 (+40)
+src/DiskImage.cpp                        3280
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
-src/ProDOSVolume.cpp                     2146
+# 2026-11-06 — a guest name that starts with a period (A2osX's .PROFILE):
+# the escape and its sources are in HostFileTag.*; here, the three call
+# sites that use it (naming pass, subdirectory branch, file branch).
+#   src/ProDOSVolume.cpp: 2146 -> 2151 (+5)
+src/ProDOSVolume.cpp                     2151
 # 2026-10-24 (ARCH-004): the snapshot trailer — appendSnapshotState /
 # loadSnapshotState — moved to MemorySnapshot.cpp, the seam named here since
 # 2026-09-07.
@@ -478,7 +514,12 @@ src/ProDOSVolume.cpp                     2146
 # switch, the ][+ warm-reset keyboard rule (Sather Fig. 7.7), each with its
 # graded citation.
 #   src/Memory.cpp: 2260 -> 2297 (+37)
-src/Memory.cpp                           2297
+# 2026-11-06 — two comments regraded where the code they describe is: the
+# power-on RAM fill (it claimed real DRAM "settles into" it) and $C060 on a
+# //c, plus the one line that keeps the 80/40 switch off a //c Plus. Comment
+# lines but for that one; the reports themselves are in DEV.md.
+#   src/Memory.cpp: 2297 -> 2311 (+14)
+src/Memory.cpp                           2311
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.

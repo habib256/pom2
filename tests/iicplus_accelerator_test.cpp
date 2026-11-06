@@ -86,6 +86,13 @@ int main()
     {
         auto st = c.lockState();
         expect(st.memory().isIIcPlus(), "the ROM is a //c Plus");
+        // [B] Apple IIc Technical Reference, 2nd ed.: "The Apple IIc Plus has
+        // no 80/40-column switch", and $C060 is "reserved" there. A setting a
+        // //c left in the 40 position must not reach this machine's bus.
+        st.memory().setIic40ColumnSwitch(true);
+        expect((st.memory().memRead(0xC060) & 0x80) == 0,
+               "$C060 bit 7 stays clear: a //c Plus has no 80/40 switch");
+        st.memory().setIic40ColumnSwitch(false);
         expect(st.memory().cpuSocketAccelerator() == &zip,
                "the //c Plus seats its own accelerator, not the user's Zip Chip");
     }

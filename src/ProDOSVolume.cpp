@@ -207,8 +207,12 @@ bool isDosDeviceStem(const std::string& stem)
 /// spelling a file falls back to when stripping it would collide with a
 /// sibling (`hello.bas` + `hello.txt` → `HELLO` + `HELLO.TXT`). See the
 /// collision note in `scanHostFolder`.
+///
+/// `leadingDot`: the host name carried the leading-dot escape (already taken
+/// off), so the ProDOS name starts with a period instead of a letter.
 std::string sanitiseProDOSName(const std::string& hostName,
-                               bool stripKnownExt = true)
+                               bool stripKnownExt = true,
+                               bool leadingDot = false)
 {
     fs::path p(hostName);
     std::string raw = p.filename().string();
@@ -228,8 +232,13 @@ std::string sanitiseProDOSName(const std::string& hostName,
                                          out += static_cast<char>(uc);
         else                             out += '.';
     }
-    // ProDOS names must start with a letter.
-    if (out.empty() || !(out[0] >= 'A' && out[0] <= 'Z')) {
+    // An escaped leading dot is kept as long as a real name follows it: `.`
+    // and `..` are not names, and `...` would decode to nothing (the
+    // write-back strips trailing periods).
+    if (leadingDot && out.find_first_not_of('.') != std::string::npos) {
+        out.insert(out.begin(), '.');
+    } else if (out.empty() || !(out[0] >= 'A' && out[0] <= 'Z')) {
+        // ProDOS names must start with a letter.
         out = "A" + out;
     }
     // Steer clear of the DOS device names HERE, not only on the way back.
@@ -504,7 +513,9 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
         he.path = path;
         if (fs::is_directory(path, ec)) {
             he.isDir      = true;
-            he.prodosName = uniqueName(sanitiseProDOSName(path.filename().string()),
+            std::string dirName = path.filename().string();
+            const bool dotted = stripHostLeadingDotEscape(dirName);
+            he.prodosName = uniqueName(sanitiseProDOSName(dirName, true, dotted),
                                        usedNames);
             out.push_back(std::move(he));
             continue;
@@ -538,8 +549,10 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
         const bool tagged = stripHostFileTag(hostName, he.fileType, he.auxType);
         if (tagged && hostName.empty())
             hostName = "FILE";
-        he.prodosName = uniqueName(sanitiseProDOSName(hostName, !tagged), usedNames,
-                                   sanitiseProDOSName(hostName, false));
+        // A leading-dot escape counts only on a tagged name (HostFileTag.h).
+        const bool dotted = tagged && stripHostLeadingDotEscape(hostName);
+        he.prodosName = uniqueName(sanitiseProDOSName(hostName, !tagged, dotted), usedNames,
+                                   sanitiseProDOSName(hostName, false, dotted));
         out.push_back(std::move(he));
     }
     return out;
@@ -1284,6 +1297,16 @@ bool destStaysInsideRoot(const DecodeWalk& w, const fs::path& dest)
     return true;
 }
 
+/// The escaped host spelling of a ProDOS-legal name that starts with a
+/// period (HostFileTag.h). False for every other name: a DOS device name
+/// still has no host spelling, and bytes no ProDOS wrote are not a file.
+bool escapeLeadingDot(const std::string& name, std::string& host)
+{
+    if (!isProDOSLegalName(name) || name.front() != '.') return false;
+    host = hostEscapeLeadingDot(name);
+    return true;
+}
+
 // Reserve `name` as a host filename inside one decoded directory, returning
 // the name actually to use.
 //
@@ -1526,7 +1549,11 @@ void decodeOneDir(DecodeWalk& w,
                 // The name is decoded from untrusted (guest-writable) image
                 // bytes; reject anything that isn't a safe single component
                 // before joining it to the host folder (path-traversal guard).
-                if (!isHostSafeProDOSName(name)) {
+                // `hostDirStem` is that component: the name itself, or its
+                // escaped form when it starts with a period.
+                std::string hostDirStem = name;
+                if (!isHostSafeProDOSName(name) &&
+                    !escapeLeadingDot(name, hostDirStem)) {
                     pom2::log().warn("ProDOSVol",
                         "decode: skipping unsafe subdir name under " + hostFolder);
                     ++r.filesSkipped;
@@ -1566,10 +1593,10 @@ void decodeOneDir(DecodeWalk& w,
                 }
                 if (dirHost.empty()) {
                     bool onDisk = false;
-                    const std::string sp = reuseExistingSpelling(name, onDisk);
+                    const std::string sp = reuseExistingSpelling(hostDirStem, onDisk);
                     std::error_code dec;
                     dirHost = (onDisk && fs::is_directory(fs::path(hostFolder) / sp, dec))
-                        ? sp : name;
+                        ? sp : hostDirStem;
                 }
                 const fs::path subDest = fs::path(hostFolder) /
                     reserveHostName(usedHostNames, dirHost, &usedFolded, ownSource);
@@ -1726,13 +1753,18 @@ void decodeOneDir(DecodeWalk& w,
             // Reject names that aren't a safe single host component — the image
             // is guest-writable, so a crafted entry could carry '/' or '..'
             // and escape `hostFolder` (path-traversal guard).
-            if (!isHostSafeProDOSName(name)) {
+            // A name that starts with a period has a host spelling of its own
+            // (HostFileTag.h, the leading-dot escape) and is no longer one of these.
+            std::string escapedStem;
+            const bool escaped = !isHostSafeProDOSName(name) &&
+                                 escapeLeadingDot(name, escapedStem);
+            if (!escaped && !isHostSafeProDOSName(name)) {
                 pom2::log().warn("ProDOSVol",
                     "decode: skipping unsafe file name under " + hostFolder);
                 ++r.filesSkipped;
                 // Only a name ProDOS itself could hold counts as LOST DATA.
-                // `AUX` or `.git` is a real file the guest has and the host
-                // refuses — the user must be told, and the save must fail.
+                // `AUX` is a real file the guest has and the host refuses —
+                // the user must be told, and the save must fail.
                 // `../PWNED` or a name with a NUL is not a file any ProDOS
                 // wrote: it is a crafted or corrupt entry, and failing every
                 // future save of the volume over it would hand a hostile
@@ -1741,7 +1773,11 @@ void decodeOneDir(DecodeWalk& w,
                 continue;
             }
             const std::uint16_t auxType = rd16(e + 0x1F);
-            const std::string wanted = hostNameForType(name, fileType, auxType);
+            // An escaped name ALWAYS carries its tag, never an extension: the
+            // tag is what makes the escape count on the way back in.
+            const std::string wanted = escaped
+                ? escapedStem + hostFileTag(fileType, auxType)
+                : hostNameForType(name, fileType, auxType);
             bool onDisk = false;
             std::string spelled = reuseExistingSpelling(wanted, onDisk);
             // The host file this entry came from, if the replay knows one.
@@ -1974,11 +2010,13 @@ void decodeOneDir(DecodeWalk& w,
 
 bool isProDOSLegalName(const std::string& name)
 {
-    // What ProDOS itself can hold in a directory entry: 1..15 characters of
-    // [A-Za-z0-9.], never "." or "..". (The real filesystem is stricter still
-    // — a leading letter, no dots — but this is the widest set a well-formed
-    // entry can present, and it is the line between "a file the guest really
-    // has" and "bytes no ProDOS wrote".)
+    // What a directory entry can hold: 1..15 characters of [A-Za-z0-9.],
+    // never "." or "..". The MLI is stricter in one way only — the name must
+    // begin with a letter ([B] ProDOS 8 Technical Reference Manual § 2.1;
+    // periods are allowed after it) — and that one is not applied here:
+    // A2osX writes `.PROFILE` (HostFileTag.h, the leading-dot escape). This is the widest
+    // set a well-formed entry presents, and the line between "a file the
+    // guest really has" and "bytes no ProDOS wrote".
     if (name.empty() || name.size() > 15) return false;
     if (name == "." || name == "..")     return false;
     for (unsigned char c : name) {
@@ -1995,11 +2033,13 @@ bool isHostSafeProDOSName(const std::string& name)
     // not be empty, "." / "..", over-length, or contain anything outside the
     // ProDOS-legal set (which excludes '/', '\\', NUL → blocks traversal).
     if (!isProDOSLegalName(name)) return false;
-    // A LEADING dot is refused too. A ProDOS name must start with a letter,
-    // so nothing legitimate is lost — but the guest writes these bytes, and
+    // A LEADING dot is refused too: the guest writes these bytes, and
     // `.bashrc` / `.git` / `.DS_Store` planted in the served folder are files
     // the host acts on and the next scan hides (buildVolumeFromFolder's own
     // filter skips dotfiles, so the user never sees what was left behind).
+    // Refused AS A HOST COMPONENT — the entry itself is not lost: the decode
+    // writes it under the escaped spelling (HostFileTag.h), because a guest
+    // can legitimately own such a name (A2osX's `.PROFILE`).
     if (name.front() == '.') return false;
     // Windows DOS-device names. `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`,
     // `LPT1`-`LPT9` are reserved in EVERY directory and with ANY extension:

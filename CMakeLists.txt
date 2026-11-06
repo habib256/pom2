@@ -349,6 +349,7 @@ set(SOURCES
     src/MediaBoot.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
     src/DiskLibrary_ImGui.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
@@ -383,11 +384,14 @@ set(SOURCES
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_DevicePanels.cpp
     src/MainWindow_SettingsPanels.cpp
+    src/MainWindow_CrtPanel.cpp
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
     src/MainWindow_OpenUrl.cpp
     src/ApplesoftListing.cpp
+    src/DiskBuilder.cpp
+    src/ProDOSDiskFs.cpp
     src/IntegerBasicListing.cpp
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Slots.cpp
@@ -455,6 +459,7 @@ set(SOURCES
     src/ImageWriter_ImGui.cpp
     src/Rewind_ImGui.cpp
     src/Ssi263.cpp
+    src/Ssi263Formant.cpp
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
@@ -492,6 +497,13 @@ set(SOURCES
     src/W5100Device.cpp
     src/UthernetIICard.cpp
     src/SlirpNetworkBackend.cpp
+    src/BuiltinNatBackend.cpp
+    src/NatPacket.cpp
+    src/NatDhcp.cpp
+    src/NatDns.cpp
+    src/NatUdp.cpp
+    src/NatTcp.cpp
+    src/NatHostSockets.cpp
     src/Uthernet_ImGui.cpp
     src/SmartPort35Unit.cpp
     src/SmartPortCard.cpp
@@ -642,6 +654,7 @@ set(POM2_DEVICES_SOURCES
     src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Ssi263.cpp
+    src/Ssi263Formant.cpp
     src/Ssi263PhonemeData.cpp
     src/SuperSerialCard.cpp
     src/UthernetCard.cpp
@@ -676,6 +689,8 @@ set(POM2_FOUNDATION_HEADERS
     src/Sha256.h
     src/TwoImgHeader.h
     src/AudioBufferPolicy.h
+    src/AudioDeviceWatch.h
+    src/WozCompat.h
     src/AudioSource.h
     src/ByteIO.h
     src/CharRomDump.h
@@ -703,6 +718,7 @@ set(POM2_FRONTEND_HEADERS
     src/DevicePanelCoordinator.h
     src/HostOpenFiles.h
     src/IconsFontAwesome6.h
+    src/CrtPresets.h
     src/KeyChord.h
     src/Mat4.h
     src/MouseCoordinator.h
@@ -742,12 +758,15 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_RomOffer.cpp
     src/MainWindow_Panels.cpp
     src/MainWindow_SettingsPanels.cpp
+    src/MainWindow_CrtPanel.cpp
     # The two other application roots. main.cpp is already here; a benchmark
     # and a headless runner are composition roots too, and classifying them
     # anywhere lower would just be a lie the guard then enforces.
     src/pom2_bench.cpp
     src/pom2_cpm.cpp
+    src/pom2_disk.cpp
     src/pom2_dos33.cpp
+    src/pom2_prodos.cpp
     src/pom2_headless.cpp
     src/DebugCoordinator.cpp
     src/DevicePanelCoordinator.cpp
@@ -889,6 +908,12 @@ set(POM2_MEDIA_SOURCES
     src/CpmDiskFs.cpp
     src/Dos33DiskFs.cpp
     src/ApplesoftListing.cpp
+    src/WozRecover.cpp
+    src/ApplesoftTokenizer.cpp
+    src/AppleSingle.cpp
+    src/DiskBuilder.cpp
+    src/ProDOSDiskFs.cpp
+    src/HostFileImport.cpp
     src/IntegerBasicListing.cpp
     src/DiskImage_Session.cpp
     src/DiskImage_SessionWritable.cpp
@@ -901,6 +926,7 @@ set(POM2_MEDIA_SOURCES
     src/Disk35Image_Session.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
     src/ProDOSVolume.cpp
     src/HostFileTag.cpp
     src/ProDOSHostNameMap.cpp
@@ -941,6 +967,14 @@ set(POM2_RUNTIME_HEADERS
     src/VsDriveTransport.h
     src/ThreadGuard.h
     src/W5100NameResolver.h
+    src/BuiltinNatBackend.h
+    src/NatPacket.h
+    src/NatDhcp.h
+    src/NatDns.h
+    src/NatGuestSink.h
+    src/NatHost.h
+    src/NatUdp.h
+    src/NatTcp.h
 )
 
 set(POM2_RUNTIME_SOURCES
@@ -991,6 +1025,13 @@ set(POM2_RUNTIME_SOURCES
     src/ZipMember.cpp
     src/RewindBuffer.cpp
     src/SlirpNetworkBackend.cpp
+    src/BuiltinNatBackend.cpp
+    src/NatPacket.cpp
+    src/NatDhcp.cpp
+    src/NatDns.cpp
+    src/NatUdp.cpp
+    src/NatTcp.cpp
+    src/NatHostSockets.cpp
     src/SpOverSlipLink.cpp
     src/SpSerialTransport.cpp
     src/SpTcpTransport.cpp
@@ -1125,6 +1166,7 @@ set(HEADERS
     src/ImageWriter_ImGui.h
     src/Rewind_ImGui.h
     src/Ssi263.h
+    src/Ssi263Formant.h
     src/Ssi263PhonemeData.h
     src/Via6522.h
     src/Block512Backing.h
@@ -1650,6 +1692,7 @@ set(POM2_CORE_SOURCES
     src/MediaBoot.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
     src/EchoPlusCard.cpp
     src/EchoPlusTMS5220Card.cpp
     src/EchoPlusTMS5220Snapshot.cpp
@@ -1711,6 +1754,7 @@ set(POM2_CORE_SOURCES
     src/ImageWriter_EscP.cpp
     src/ImageWriterPdf.cpp
     src/Ssi263.cpp
+    src/Ssi263Formant.cpp
     src/Ssi263PhonemeData.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp
@@ -1736,6 +1780,13 @@ set(POM2_CORE_SOURCES
     src/W5100Device.cpp
     src/UthernetIICard.cpp
     src/SlirpNetworkBackend.cpp
+    src/BuiltinNatBackend.cpp
+    src/NatPacket.cpp
+    src/NatDhcp.cpp
+    src/NatDns.cpp
+    src/NatUdp.cpp
+    src/NatTcp.cpp
+    src/NatHostSockets.cpp
     src/SmartPort35Unit.cpp
     src/SmartPortCard.cpp
     src/SerialPort.cpp
@@ -2005,6 +2056,7 @@ add_executable(pom2_headless
     src/Disk35Image_Session.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
     src/DiskIICard.cpp
     src/DiskIICard_Cycles.cpp
     src/DiskIICard_Sequencer.cpp
@@ -2059,6 +2111,7 @@ add_executable(pom2_headless
     src/SnapshotIO.cpp
     src/SpeakerDevice.cpp
     src/Ssi263.cpp
+    src/Ssi263Formant.cpp
     src/Ssi263PhonemeData.cpp
     src/AlsCpmCard.cpp
     src/SoftCardIICard.cpp
@@ -2117,10 +2170,48 @@ add_executable(pom2_dos33
     src/pom2_dos33.cpp
     src/Dos33DiskFs.cpp
     src/ApplesoftListing.cpp
+    src/ApplesoftTokenizer.cpp
+    src/AppleSingle.cpp
+    src/HostFileImport.cpp
     src/IntegerBasicListing.cpp
     src/HostFileTag.cpp
 )
 target_include_directories(pom2_dos33 PRIVATE ${POM2_SRC_DIR})
+endif()
+
+# ─── pom2_prodos ──────────────────────────────────────────────────────────
+# Host tool: ls / get / put / rm / mkdir / list on a ProDOS volume, in place
+# (src/ProDOSDiskFs.h). The ProDOS counterpart of pom2_dos33.
+if(NOT EMSCRIPTEN)
+add_executable(pom2_prodos
+    src/pom2_prodos.cpp
+    src/ProDOSDiskFs.cpp
+    src/ApplesoftListing.cpp
+    src/ApplesoftTokenizer.cpp
+    src/AppleSingle.cpp
+    src/HostFileImport.cpp
+    src/IntegerBasicListing.cpp
+    src/HostFileTag.cpp
+)
+target_include_directories(pom2_prodos PRIVATE ${POM2_SRC_DIR})
+endif()
+
+# ─── pom2_disk ────────────────────────────────────────────────────────────
+# Host tool on the disk itself rather than inside it: a formatted empty DOS
+# 3.3 or ProDOS disk, a disk that boots a binary with no operating system
+# (src/DiskBuilder.h — none of it Apple's code), what a WOZ says of itself,
+# and a healthy copy of a damaged one (src/WozRecover.h).
+if(NOT EMSCRIPTEN)
+add_executable(pom2_disk
+    src/pom2_disk.cpp
+    src/DiskBuilder.cpp
+    src/ProDOSDiskFs.cpp
+    src/WozRecover.cpp
+    src/DiskImage.cpp
+    src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
+)
+target_include_directories(pom2_disk PRIVATE ${POM2_SRC_DIR})
 endif()
 
 # ─── pom2_bench ───────────────────────────────────────────────────────────
@@ -2153,6 +2244,7 @@ add_executable(pom2_bench
     src/DiskIICard_Trace.cpp
     src/DiskImage.cpp
     src/DiskImageWozFlux.cpp
+    src/DiskImage_WriteBack.cpp
     src/FloppySoundDevice.cpp
     src/IWMDevice.cpp
     src/LeChatMauveCard.cpp
@@ -2300,6 +2392,14 @@ if(TARGET pom2_cpm)
 endif()
 if(TARGET pom2_dos33)
     install(TARGETS pom2_dos33
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+if(TARGET pom2_prodos)
+    install(TARGETS pom2_prodos
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+if(TARGET pom2_disk)
+    install(TARGETS pom2_disk
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
 

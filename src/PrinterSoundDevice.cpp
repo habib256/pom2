@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace pom2 {
 
@@ -70,6 +71,14 @@ constexpr double kReturnSecondsPerInch = 1.0 / 15.0;
 /// How far ahead of the clock the cursor may run. A dense burst thins past
 /// this instead of queueing minutes of buzz.
 constexpr double kMaxAheadSeconds = 0.20;
+
+/// The recorded takes are close-mic; this keeps them level with the grains
+/// at the printer channel's default volume.
+constexpr float  kRecordedGain = 0.55f;
+/// A feed at least this long is a form feed and gets a page-feed take.
+constexpr double kPageFeedInches = 1.0;
+/// The platen does not clack more often than this, whatever it is asked.
+constexpr double kClackMinGapSeconds = 0.09;
 
 /// Attack of every grain: near-instant, which is what makes it an impact.
 constexpr double kAttackSeconds = 0.0008;
@@ -233,6 +242,13 @@ void PrinterSoundDevice::schedule(double durSeconds, double freqHz, double q,
 void PrinterSoundDevice::strike(int pins)
 {
     if (pins <= 0) return;
+    if (recordedActive()) {
+        // The loop IS a pass of the head, so a strike only has to keep it
+        // running: long enough that a line of text is one take, short enough
+        // that it stops with the head.
+        armLoop(0.09);
+        return;
+    }
     if (sampled() && sampleReady()) {
         // A character is ~11 ms of head buzz; hold the recording a little
         // longer so a line of text fuses into one pass instead of a chatter
@@ -252,6 +268,26 @@ void PrinterSoundDevice::paperFeed(double inches)
 {
     inches = std::fabs(inches);
     if (inches <= 0.0) return;
+    if (recordedActive()) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!powered_) return;
+        if (inches >= kPageFeedInches) {
+            // A form feed: the take whose length is nearest the travel.
+            fire(recPageFeed_[inches < 3.0 ? 0 : inches < 7.0 ? 1 : 2], kRecordedGain);
+            return;
+        }
+        // One clack per line feed, the three takes in turn so a listing does
+        // not sound like one sample on repeat — and not more often than the
+        // platen can: a run of micro-feeds (bit-image rows) is one motion.
+        const uint64_t now = frameCounter_.load(std::memory_order_relaxed);
+        const uint32_t sr  = sampleRate_ == 0 ? 44100 : sampleRate_;
+        if (anyClack_ && now - lastClackFrame_ <
+                static_cast<uint64_t>(kClackMinGapSeconds * sr)) return;
+        anyClack_ = true;
+        lastClackFrame_ = now;
+        fire(recLineFeed_[lineFeedTurn_++ % 3], kRecordedGain);
+        return;
+    }
     if (sampled() && sampleReady()) {
         armLoop(std::clamp(inches * 0.15, 0.04, 0.35));
         return;
@@ -267,7 +303,7 @@ void PrinterSoundDevice::carriageReturn(double inches)
 {
     inches = std::fabs(inches);
     if (inches < 0.05) return;          // a short hop is not a sweep
-    if (sampled() && sampleReady()) {
+    if (recordedActive() || (sampled() && sampleReady())) {
         const double dur = std::clamp(inches * kReturnSecondsPerInch,
                                       kReturnMinDur, kReturnMaxDur);
         armLoop(dur);
@@ -286,13 +322,136 @@ void PrinterSoundDevice::carriageReturn(double inches)
 void PrinterSoundDevice::power(bool on)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    const bool changed = on != powered_;
     powered_ = on;
     if (!on) {
         // Switching off silences the mechanism at once — no coasting.
         for (auto& g : grains_) g.active = false;
+        for (auto& v : shots_) v.take = nullptr;
         nextGrainFrame_ = frameCounter_.load(std::memory_order_relaxed);
         loopUntil_.store(nextGrainFrame_, std::memory_order_relaxed);
     }
+    // The switch itself, then the head homing — only on a real change, so
+    // attaching the sink to a printer that is already on stays silent.
+    if (changed && recordedActive()) {
+        if (on) fire(recPowerUp_[powerUpTurn_++ % kPowerUps], kRecordedGain);
+        else    fire(recPowerSwitch_, kRecordedGain);
+    }
+}
+
+void PrinterSoundDevice::printQuality(int tier)
+{
+    quality_.store(std::clamp(tier, 0, kQualities - 1), std::memory_order_relaxed);
+}
+
+void PrinterSoundDevice::tearOff()
+{
+    if (!recordedActive()) return;
+    std::lock_guard<std::mutex> lk(mtx_);
+    fire(recTear_[tearTurn_++ % 5], kRecordedGain);
+}
+
+void PrinterSoundDevice::fire(const Take& take, float gain)
+{
+    if (take.data.size() < 8) return;
+    Shot* slot = nullptr;
+    for (auto& v : shots_) if (!v.take) { slot = &v; break; }
+    if (!slot) {
+        // All busy: the one furthest along is the one least missed.
+        slot = &shots_[0];
+        for (auto& v : shots_)
+            if (v.pos / static_cast<double>(v.take->data.size()) >
+                slot->pos / static_cast<double>(slot->take->data.size())) slot = &v;
+    }
+    slot->take = &take;
+    slot->pos  = 0.0;
+    slot->gain = gain;
+}
+
+int PrinterSoundDevice::activeShots() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    int n = 0;
+    for (const auto& v : shots_) if (v.take) ++n;
+    return n;
+}
+
+void PrinterSoundDevice::setRecorded(bool on)
+{
+    useRecorded_.store(on, std::memory_order_release);
+    std::lock_guard<std::mutex> lk(mtx_);
+    for (auto& g : grains_) g.active = false;
+    for (auto& v : shots_) v.take = nullptr;
+    loopUntil_.store(frameCounter_.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
+}
+
+bool PrinterSoundDevice::loadRecordedBank(const std::string& dir)
+{
+    namespace fs = std::filesystem;
+    recReady_.store(false, std::memory_order_release);
+    const auto load = [&dir](const char* name, Take& out, bool loop) {
+        std::vector<float> data;
+        uint32_t rate = 0;
+        const std::string path = (fs::path(dir) / name).string();
+        if (!decodePrinterSample(path, data, rate)) return false;
+        if (loop) {
+            // An MP3 carries encoder padding at both ends: a few dozen
+            // milliseconds of near silence that would be a hole in every
+            // turn of the loop. Trim to the first and last audible sample,
+            // then blend the seam the way `loadSample` does.
+            constexpr float kFloor = 0.004f;
+            size_t a = 0, b = data.size();
+            while (a < b && std::fabs(data[a]) < kFloor) ++a;
+            while (b > a && std::fabs(data[b - 1]) < kFloor) --b;
+            if (b - a < 256) return false;
+            data.erase(data.begin() + static_cast<std::ptrdiff_t>(b), data.end());
+            data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(a));
+            const size_t n = data.size();
+            const size_t window = std::min<size_t>(132, n / 4);
+            for (size_t i = 0; i < window; ++i) {
+                const float alpha = static_cast<float>(i + 1) / static_cast<float>(window);
+                const size_t k = n - window + i;
+                data[k] = data[k] * (1.0f - alpha) + data[i] * alpha;
+            }
+            data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(window));
+        }
+        out.data = std::move(data);
+        out.rate = rate == 0 ? 44100 : rate;
+        return true;
+    };
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (auto& v : shots_) v.take = nullptr;    // they point into the takes
+        // Index = the quality tier `printQuality` reports.
+        bool ok = load("print_medium_loop.mp3", recLoop_[0], true);
+        ok = load("print_draft_loop.mp3", recLoop_[1], true) && ok;
+        ok = load("print_nlq_loop.mp3", recLoop_[2], true) && ok;
+        bool feeds = false;
+        static const char* const kLineFeeds[3] = {
+            "line_feed_01.mp3", "line_feed_02.mp3", "line_feed_03.mp3" };
+        for (int i = 0; i < 3; ++i) feeds = load(kLineFeeds[i], recLineFeed_[i], false) || feeds;
+        (void)load("page_feed_short.mp3",  recPageFeed_[0], false);
+        (void)load("page_feed_medium.mp3", recPageFeed_[1], false);
+        (void)load("page_feed_long.mp3",   recPageFeed_[2], false);
+        static const char* const kTears[5] = {
+            "paper_tear_01.mp3", "paper_tear_02.mp3", "paper_tear_03.mp3",
+            "paper_tear_04.mp3", "paper_tear_05.mp3" };
+        for (int i = 0; i < 5; ++i) (void)load(kTears[i], recTear_[i], false);
+        (void)load("power_switch.mp3", recPowerSwitch_, false);
+        static const char* const kPowerUpNames[kPowerUps] = {
+            "powerup_01.mp3", "powerup_02_closed.mp3", "powerup_03.mp3",
+            "powerup_04_quick.mp3", "powerup_05_color.mp3", "powerup_06_mono.mp3" };
+        for (int i = 0; i < kPowerUps; ++i) (void)load(kPowerUpNames[i], recPowerUp_[i], false);
+        if (!ok || !feeds) {
+            pom2::log().info("PrinterSound", "no recorded ImageWriter II bank in " + dir);
+            return false;
+        }
+    }
+    recReady_.store(true, std::memory_order_release);
+    pom2::log().info("PrinterSound",
+        "loaded the recorded ImageWriter II bank (Scott Lawrence, CC BY 4.0) from " + dir);
+    return true;
 }
 
 bool PrinterSoundDevice::loadSample(const std::string& wavPath)
@@ -355,16 +514,34 @@ void PrinterSoundDevice::armLoop(double seconds)
     }
 }
 
-void PrinterSoundDevice::mixLoop(float* output, int frameCount, uint64_t base, float vol)
+void PrinterSoundDevice::mixShots(float* output, int frameCount, float vol)
 {
-    if (!loopReady_.load(std::memory_order_acquire) || loop_.size() < 2 || vol <= 0.0f)
+    const uint32_t sr = sampleRate_ == 0 ? 44100 : sampleRate_;
+    for (auto& v : shots_) {
+        if (!v.take) continue;
+        const auto& d = v.take->data;
+        const double step = static_cast<double>(v.take->rate) / static_cast<double>(sr);
+        for (int i = 0; i < frameCount; ++i) {
+            const size_t k = static_cast<size_t>(v.pos);
+            if (k + 1 >= d.size()) { v.take = nullptr; break; }
+            const float frac = static_cast<float>(v.pos - static_cast<double>(k));
+            output[i] += (d[k] + frac * (d[k + 1] - d[k])) * v.gain * vol;
+            v.pos += step;
+        }
+    }
+}
+
+void PrinterSoundDevice::mixLoop(const std::vector<float>& take, uint32_t takeRate,
+                                 float* output, int frameCount, uint64_t base, float vol)
+{
+    if (take.size() < 2 || vol <= 0.0f)
         return;
     const uint64_t until = loopUntil_.load(std::memory_order_relaxed);
     if (base >= until) { loopEnv_ = 0.0f; return; }   // the release ends by `until`
     const uint32_t sr = sampleRate_ == 0 ? 44100 : sampleRate_;
-    const double rate = static_cast<double>(loopRate_) / static_cast<double>(sr);
+    const double rate = static_cast<double>(takeRate) / static_cast<double>(sr);
     if (!(rate > 0.0) || rate > 1e6) return;
-    const double len = static_cast<double>(loop_.size());
+    const double len = static_cast<double>(take.size());
     // One envelope for both edges. The cursor resumes wherever the last pass
     // stopped — mid-waveform — so starting at full gain was a step from
     // silence, a click on every strike after a pause. The release begins
@@ -387,9 +564,9 @@ void PrinterSoundDevice::mixLoop(float* output, int frameCount, uint64_t base, f
         while (loopPos_ >= len) loopPos_ -= len;
         while (loopPos_ < 0.0)  loopPos_ += len;
         const size_t k = static_cast<size_t>(loopPos_);
-        const size_t k1 = (k + 1 >= loop_.size()) ? 0 : k + 1;
+        const size_t k1 = (k + 1 >= take.size()) ? 0 : k + 1;
         const float frac = static_cast<float>(loopPos_ - static_cast<double>(k));
-        output[i] += (loop_[k] + frac * (loop_[k1] - loop_[k])) * baseGain * loopEnv_;
+        output[i] += (take[k] + frac * (take[k1] - take[k])) * baseGain * loopEnv_;
         loopPos_ += rate;
     }
 }
@@ -408,7 +585,16 @@ void PrinterSoundDevice::fillAudioBuffer(float* output, int frameCount)
     const uint64_t base = frameCounter_.load(std::memory_order_relaxed);
 
     if (useLoop_.load(std::memory_order_acquire)) {
-        mixLoop(output, frameCount, base, vol);
+        if (loopReady_.load(std::memory_order_acquire))
+            mixLoop(loop_, loopRate_, output, frameCount, base, vol);
+        frameCounter_.store(base + static_cast<uint64_t>(frameCount),
+                            std::memory_order_relaxed);
+        return;
+    }
+    if (recordedActive()) {
+        const Take& loop = recLoop_[quality_.load(std::memory_order_relaxed)];
+        mixLoop(loop.data, loop.rate, output, frameCount, base, vol);
+        mixShots(output, frameCount, vol);
         frameCounter_.store(base + static_cast<uint64_t>(frameCount),
                             std::memory_order_relaxed);
         return;

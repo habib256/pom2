@@ -40,8 +40,9 @@
 //
 // Build gate: this file only compiles to something functional when
 // POM2_HAVE_SLIRP is defined (CMake sets it when pkg-config finds
-// `slirp`). Otherwise `create()` returns nullptr and callers fall back to
-// NullNetworkBackend, so the cards stay pluggable on a slirp-less build.
+// `slirp`). Otherwise `makeSlirpBackend()` returns nullptr and the caller
+// falls back to POM2's built-in network (BuiltinNatBackend.h — same
+// addresses, same fence), so a slirp-less build still has a transport.
 
 #ifndef POM2_SLIRP_NETWORK_BACKEND_H
 #define POM2_SLIRP_NETWORK_BACKEND_H

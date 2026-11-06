@@ -56,7 +56,7 @@ std::string explainUnknownDisk(const std::string& path)
     std::string size = ec ? std::string() : " (" + std::to_string(bytes / 1024) + " KB)";
     return quotedName(path) + size + " is not a disk image POM2 can read: its "
            "name and size match no Apple II disk format.\n\n"
-           "Apple II disk images end in .dsk, .do, .po, .nib or .woz (5.25-inch "
+           "Apple II disk images end in .dsk, .do, .po, .nib, .nb2 or .woz (5.25-inch "
            "floppies), .po, .2mg or .woz (3.5-inch disks), or .hdv / .2mg (hard "
            "disks) — or be one of those inside a .zip or a .gz, which POM2 opens "
            "itself. A .7z or .shk archive has to be unpacked first.";

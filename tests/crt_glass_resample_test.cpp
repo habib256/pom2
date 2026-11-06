@@ -269,6 +269,94 @@ bool checkPersistencePacing(pom2::CrtEffectStack& fx)
     return ok;
 }
 
+// ── 4. bloom: only bright light scatters, into a round halo ──────────────
+// A white block on black. With bloom off (the default) the black stays black
+// to the last code; with it on, the black beside the block is lit and the
+// glow falls away with distance. A block below the threshold scatters
+// nothing. And the halo is as wide as it is tall ON THE SCREEN, whatever the
+// source grid's own aspect (280x192 here, shown 4:3).
+std::vector<uint8_t> blockOnBlack(int w, int h, uint8_t level)
+{
+    std::vector<uint8_t> v(static_cast<size_t>(w) * h * 4, 0);
+    for (size_t i = 3; i < v.size(); i += 4) v[i] = 255;
+    for (int y = h / 2 - 16; y < h / 2 + 16; ++y)
+        for (int x = w / 2 - 24; x < w / 2 + 24; ++x) {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            v[i] = v[i + 1] = v[i + 2] = level;
+        }
+    return v;
+}
+
+bool checkBloom(pom2::CrtEffectStack& fx)
+{
+    constexpr int W = 280, H = 192, OW = 840, OH = 630;       // 3x, 4:3
+    const auto lit = [&](const pom2::NtscParams& p, uint8_t level) {
+        fx.setParams(p);
+        uploadSrc(blockOnBlack(W, H, level), W, H);
+        GLuint out = 0;
+        for (int i = 0; i < 3; ++i) out = fx.process(gTex, W, H, OW, OH);
+        return out ? readTex(out, OW, OH) : std::vector<uint8_t>{};
+    };
+    const auto px = [&](const std::vector<uint8_t>& img, int x, int y) {
+        return int(img[(static_cast<size_t>(y) * OW + x) * 4]);
+    };
+    // The block spans x 348..492 and y 262..368 in output pixels.
+    const int cy = OH / 2, cx = OW / 2, right = 492, top = 368;
+
+    pom2::NtscParams off = neutral();
+    const auto plain = lit(off, 255);
+    if (plain.empty()) { std::printf("FAIL process() returned 0\n"); return false; }
+    bool ok = true;
+    if (px(plain, right + 12, cy) != 0 || px(plain, cx, cy) < 250) {
+        std::printf("FAIL without bloom: beside the block %d (want 0), inside %d\n",
+                    px(plain, right + 12, cy), px(plain, cx, cy));
+        ok = false;
+    }
+
+    pom2::NtscParams on = neutral();
+    on.bloom = 1.0f; on.bloomRadius = 4.0f; on.bloomThreshold = 0.5f;
+    const auto glow = lit(on, 255);
+    const int near = px(glow, right + 6, cy), far = px(glow, right + 30, cy),
+              gone = px(glow, right + 120, cy);
+    std::printf("  halo beside a white block: %d at 6 px, %d at 30 px, %d at 120 px\n",
+                near, far, gone);
+    if (!(near > 20 && near > far && far >= gone && gone == 0)) {
+        std::printf("FAIL the halo must be lit beside the block and fall to nothing\n");
+        ok = false;
+    }
+    // Round on the screen: the same glow the same distance above the block.
+    const int above = px(glow, cx, top + 6);
+    if (std::abs(above - near) > std::max(8, near / 4)) {
+        std::printf("FAIL the halo is not round: %d beside, %d above\n", near, above);
+        ok = false;
+    }
+
+    // Below the threshold nothing scatters. The cut is a quadratic knee that
+    // starts at HALF the threshold (a hard cut bands as content crosses it),
+    // so "below" means below the knee's foot: 0.20 against a foot of 0.25.
+    // A level inside the knee (0.35) scatters a little, by design — and far
+    // less than its share of what white scatters.
+    const auto dim = lit(on, 50);
+    if (px(dim, right + 6, cy) != 0) {
+        std::printf("FAIL a block under the knee has a halo (%d)\n",
+                    px(dim, right + 6, cy));
+        ok = false;
+    }
+    const int inKnee = px(lit(on, 90), right + 6, cy);
+    if (inKnee * 8 > near) {
+        std::printf("FAIL a block inside the knee glows %d against %d for white\n",
+                    inKnee, near);
+        ok = false;
+    }
+    // …and the knob at zero is the picture without the feature.
+    on.bloom = 0.0f;
+    if (lit(on, 255) != plain) {
+        std::printf("FAIL bloom = 0 changes the picture\n");
+        ok = false;
+    }
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -306,10 +394,12 @@ int main()
     const bool b = checkFirstFramePersistence(fx);
     std::printf("[3] persistence follows host time, not the present rate\n");
     const bool c = checkPersistencePacing(fx);
+    std::printf("[4] bloom: bright light scatters into a round halo\n");
+    const bool d = checkBloom(fx);
 
     glfwDestroyWindow(win);
     glfwTerminate();
-    if (!a || !b || !c) { std::printf("crt_glass_resample: FAILED\n"); return 1; }
+    if (!a || !b || !c || !d) { std::printf("crt_glass_resample: FAILED\n"); return 1; }
     std::printf("crt_glass_resample: OK\n");
     return 0;
 }

@@ -903,7 +903,7 @@ void MainWindow::renderWelcomePanelWindow()
     ImGui::BulletText("Click an empty drive to import a disk without rebooting.");
     ImGui::TextDisabled("Save a session or enable Automatic resume to keep imported disks and changes.");
 #else
-    ImGui::BulletText("Drag a .woz / .moof / .dsk / .po / .nib / .hdv / .2mg onto this window.");
+    ImGui::BulletText("Drag a .woz / .moof / .dsk / .po / .nib / .nb2 / .hdv / .2mg onto this window.");
     ImGui::BulletText("Or File → Disk Library to browse bundled images.");
     ImGui::BulletText("Or launch from a terminal: POM2 path/to/game.woz");
     ImGui::TextDisabled("POM2 auto-routes each image to Disk II, SmartPort 3.5\" or ProDOS HDV.");

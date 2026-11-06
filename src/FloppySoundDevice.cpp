@@ -132,6 +132,30 @@ bool FloppySoundDevice::loadSamples(const std::string& dir, FormFactor ff)
     return allLoaded;
 }
 
+int FloppySoundDevice::loadExtras(const std::string& dir)
+{
+    namespace fs = std::filesystem;
+    static const char* const kNames[EXTRA_COUNT] = {
+        "525_door_open.wav", "525_door_close.wav", "525_head_stop.wav" };
+    // Withdraw first: the audio thread must not start a voice on a vector
+    // that is about to be replaced.
+    extraMask_.store(0, std::memory_order_release);
+    uint32_t mask = 0;
+    int loaded = 0;
+    for (int i = 0; i < EXTRA_COUNT; ++i) {
+        Sample s;
+        if (!loadOneWav((fs::path(dir) / kNames[i]).string(), s)) continue;
+        extras_[static_cast<size_t>(i)] = std::move(s);
+        mask |= 1u << i;
+        ++loaded;
+    }
+    extraMask_.store(mask, std::memory_order_release);
+    if (loaded)
+        pom2::log().info("FloppySound", "loaded " + std::to_string(loaded) +
+                         " drive extra(s) (door / head stop) from " + dir);
+    return loaded;
+}
+
 bool FloppySoundDevice::loadOneWav(const std::string& path, Sample& out)
 {
     if (!pom2::virtualIIContainerComplete(path)) return false;
@@ -346,8 +370,25 @@ void FloppySoundDevice::latch(bool inserting)
     // MAME: 3.5" inserts and ejects have always clicked. 5.25" ones have
     // not — DiskIICard keeps startup restore silent, and a latch() from
     // the user mount path must not grow a new thunk on the default bank.
-    if (formFactor_ != FormFactor::FF35) return;
+    if (formFactor_ != FormFactor::FF35) {
+        // …unless the door recordings are on this machine (loadExtras):
+        // then a 5.25" door is heard, and it is a door, not a click.
+        if (!samplesLoaded_.load(std::memory_order_acquire)) return;
+        if (!hasExtra(inserting ? EXTRA_DOOR_CLOSE : EXTRA_DOOR_OPEN)) return;
+        std::lock_guard<std::mutex> lk(cmdMtx_);
+        pushCommandLocked({CmdKind::Door, inserting, 0});
+        return;
+    }
     click();
+}
+
+void FloppySoundDevice::bump(uint64_t emuCycles)
+{
+    if (bank_.load(std::memory_order_acquire) != Bank::Mame) return;
+    if (!samplesLoaded_.load(std::memory_order_acquire)) return;
+    if (!hasExtra(EXTRA_HEAD_STOP)) return;
+    std::lock_guard<std::mutex> lk(cmdMtx_);
+    pushCommandLocked({CmdKind::Bump, false, emuCycles});
 }
 
 void FloppySoundDevice::ioError()
@@ -508,6 +549,28 @@ void FloppySoundDevice::drainCommands()
             clickPos_    = 0.0;
             break;
         }
+        case CmdKind::Door: {
+            const int which = c.withDisk ? EXTRA_DOOR_CLOSE : EXTRA_DOOR_OPEN;
+            if (!hasExtra(which)) break;
+            const bool doorSounding =
+                extraIdx_ == EXTRA_DOOR_OPEN || extraIdx_ == EXTRA_DOOR_CLOSE;
+            if (doorSounding) extraQueued_ = which;       // open, THEN close
+            else { extraIdx_ = which; extraPos_ = 0.0; }  // a door outranks a bump
+            break;
+        }
+        case CmdKind::Bump: {
+            if (!hasExtra(EXTRA_HEAD_STOP)) break;
+            if (extraIdx_ == EXTRA_DOOR_OPEN || extraIdx_ == EXTRA_DOOR_CLOSE) break;
+            // A recalibration bangs the stop every few milliseconds of
+            // emulated time. Let a bang ring ~12 ms before the next restarts
+            // it, or forty of them are one click repeated into a buzz.
+            const Sample& stop = extras_[EXTRA_HEAD_STOP];
+            const double held = 0.012 * static_cast<double>(stop.sourceRate);
+            if (extraIdx_ == EXTRA_HEAD_STOP && extraPos_ < held) break;
+            extraIdx_ = EXTRA_HEAD_STOP;
+            extraPos_ = 0.0;
+            break;
+        }
         case CmdKind::Latch:
         case CmdKind::IoError:
         case CmdKind::Chassis:
@@ -606,6 +669,9 @@ void FloppySoundDevice::clearVoices()
     attackLeft_ = 0;
     clickActive_ = false;
     clickPos_ = 0.0;
+    extraIdx_ = -1;
+    extraPos_ = 0.0;
+    extraQueued_ = -1;
     viiMotor_ = false;
     viiRotPos_ = 0.0;
     viiRotFade_ = 0;
@@ -716,6 +782,11 @@ void FloppySoundDevice::drainVirtualII(const Cmd& c)
             viiChassisPos_ = 0.0;
             viiPopOnAfter_ = false;
         }
+        break;
+    case CmdKind::Door:
+    case CmdKind::Bump:
+        // The MAME bank's extras (loadExtras). This bank has its own lid
+        // recordings (Latch) and none of the stop.
         break;
     }
 }
@@ -998,6 +1069,34 @@ void FloppySoundDevice::fillAudioBuffer(float* output, int frameCount)
         }
     }
 
+    // ── Door / head stop (loadExtras) ───────────────────────────────────
+    mixExtra(output, frameCount, gain);
+
     audioFrameCounter_.fetch_add(static_cast<uint64_t>(frameCount),
                                  std::memory_order_relaxed);
+}
+
+void FloppySoundDevice::mixExtra(float* out, int frames, float gain)
+{
+    int done = 0;
+    while (extraIdx_ >= 0 && done < frames) {
+        const Sample& s = extras_[static_cast<size_t>(extraIdx_)];
+        const size_t  n = s.data.size();
+        const double rate = static_cast<double>(s.sourceRate) /
+                            static_cast<double>(hostSampleRate());
+        if (n < 2 || !(rate > 0.0) || rate > 1e6) { extraIdx_ = -1; break; }
+        for (; done < frames; ++done) {
+            if (extraPos_ >= static_cast<double>(n - 1)) break;
+            const size_t k = static_cast<size_t>(extraPos_);
+            const float  f = static_cast<float>(extraPos_ - static_cast<double>(k));
+            out[done] += (s.data[k] + f * (s.data[k + 1] - s.data[k])) * gain;
+            extraPos_ += rate;
+        }
+        if (extraPos_ >= static_cast<double>(n - 1)) {
+            // Finished: the door that was waiting, if any, follows at once.
+            extraIdx_    = extraQueued_;
+            extraQueued_ = -1;
+            extraPos_    = 0.0;
+        }
+    }
 }

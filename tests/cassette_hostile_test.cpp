@@ -373,6 +373,15 @@ void testIicC060IsNotTheDeck()
     deck.setAudioAvailable(false);
     mem.setCassetteDevice(&deck);
 
+    // What $C060 IS on a //c: the 80/40 switch, bit 7 = 1 in the 40-column
+    // position ([B] Apple IIc Technical Reference, Table 4-1).
+    expect(!mem.isIIcPlus(), "the probe ROM is a plain //c");
+    mem.setIic40ColumnSwitch(false);
+    expect((mem.memRead(0xC060) & 0x80) == 0, "//c 80 position: $C060 bit 7 clear");
+    mem.setIic40ColumnSwitch(true);
+    expect((mem.memRead(0xC060) & 0x80) != 0, "//c 40 position: $C060 bit 7 set");
+    mem.setIic40ColumnSwitch(false);
+
     // $C02x is ROMBANK on a //c and must not record.
     deck.armRecording();
     for (int i = 0; i < 4; ++i) { mem.advanceCycles(100); (void)mem.memRead(0xC020); }

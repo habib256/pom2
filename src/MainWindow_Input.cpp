@@ -1170,7 +1170,7 @@ void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
     // ignoring it, and say why in the dialog every refusal uses.
     tapeStatusMessage =
         "Dropped file is neither a disk image "
-        "(.dsk/.do/.d13/.po/.nib/.woz/.moof/.hdv/.2mg) nor a known ROM dump";
+        "(.dsk/.do/.d13/.po/.nib/.nb2/.woz/.moof/.hdv/.2mg) nor a known ROM dump";
     tapeStatusUntil = lastFrameTime + 4.0;
     if (!archiveError.empty()) {
         tapeStatusMessage = "Drop failed: " + archiveError;

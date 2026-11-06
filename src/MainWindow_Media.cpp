@@ -42,6 +42,7 @@
 #include "Block512Backing.h"
 #include "CffaCard.h"
 #include "Disk35Image.h"
+#include "DiskBuilder.h"
 #include "DiskIICard.h"
 #include "DiskImage.h"
 #include "DriveRackMount.h"
@@ -52,6 +53,7 @@
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "ProDOSBlockCard.h"
+#include "ProDOSDiskFs.h"
 #include "ProDOSHardDiskCard.h"
 #include "ProDOSVolume.h"
 #include "ResourcePaths.h"
@@ -71,6 +73,7 @@
 #include <cctype>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -533,6 +536,87 @@ bool MainWindow::insertBlankDiskette(int drive, const std::string& path,
     pom2::log().info("Disk II",
         "new blank diskette (unformatted) in slot " +
         std::to_string(target->getSlot()) + " drive " +
+        std::to_string(bay + 1) + ": " + file);
+    return true;
+}
+
+bool MainWindow::insertFormattedDiskette(int drive, int format,
+                                         std::string& pathUsed, std::string& errOut)
+{
+    pathUsed.clear();
+    errOut.clear();
+    DiskIICard* target = nullptr;
+    for (auto* c : diskIICards()) if (c && c->getSlot() == 6) { target = c; break; }
+    if (!target) target = primaryDiskII();
+    if (!target) { errOut = "no Disk II card in the current config"; return false; }
+    const int bay = (drive == 1) ? 1 : 0;
+
+    // The bytes first: nothing is created on disk for a format that fails.
+    const bool prodos = format == 2;
+    std::vector<uint8_t> bytes;
+    if (prodos) {
+        bytes = pom2::prodosfs::ProDOSDisk::format(280, "BLANK", errOut);
+        if (bytes.empty()) return false;
+        const std::vector<uint8_t> boot = pom2::diskbuild::notBootableSector();
+        std::copy(boot.begin(), boot.end(), bytes.begin());
+    } else {
+        bytes = pom2::diskbuild::blankDos33();
+    }
+    if (bytes.size() != static_cast<std::size_t>(DiskImage::kBytesPerImage)) {
+        errOut = "could not build the disk";
+        return false;
+    }
+
+    // The same create-or-next as the unformatted diskette: `createBlankFile`
+    // is an exclusive create, so the name is ours before a byte is written
+    // and a file that got there first is never replaced.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::string root = "disks_5.4";
+    for (const char* r : { "disks_5.4", "../disks_5.4", "../../disks_5.4" })
+        if (fs::is_directory(r, ec)) { root = r; break; }
+    const std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+#if defined(_WIN32)
+    localtime_s(&tmv, &now);
+#else
+    localtime_r(&now, &tmv);
+#endif
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+    std::string file;
+    for (int n = 0; n < 100 && file.empty(); ++n) {
+        const std::string cand = root + (prodos ? "/prodos-" : "/dos33-") + stamp +
+            (n ? ("-" + std::to_string(n)) : std::string()) + (prodos ? ".po" : ".dsk");
+        std::string err;
+        if (DiskImage::createBlankFile(cand, err)) { file = cand; break; }
+        if (!fs::exists(cand, ec)) { errOut = err; return false; }   // a real failure
+    }
+    if (file.empty()) { errOut = "could not find a free name in " + root; return false; }
+
+    bool written = false;
+    {
+        std::fstream f(file, std::ios::binary | std::ios::in | std::ios::out);
+        f.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+        f.flush();
+        written = static_cast<bool>(f);
+    }
+    if (!written) {
+        fs::remove(file, ec);
+        errOut = "cannot write " + file;
+        return false;
+    }
+    const auto mounted = storageCoordinator_->mountDiskII(
+        *controller, *settings, target->getSlot(), bay, file, /*seekTrackZero=*/false);
+    if (!mounted.ok) {
+        fs::remove(file, ec);                 // made moments ago, used by nothing
+        errOut = mounted.error;
+        return false;
+    }
+    pathUsed = file;
+    pom2::log().info("Disk II", std::string("new ") + (prodos ? "ProDOS" : "DOS 3.3") +
+        " data disk in slot " + std::to_string(target->getSlot()) + " drive " +
         std::to_string(bay + 1) + ": " + file);
     return true;
 }

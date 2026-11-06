@@ -157,6 +157,8 @@ uniform float uShadowStrength; // 0..1
 uniform float uLuminanceGain;  // post-glass re-brighten, 1.0 = neutral
 uniform float uCenterLighting; // vignette: 1.0 = flat (off), <1 darkens edges
 uniform float uPhosphorGamma;  // CRT phosphor response γ: 1.0 = flat (off)
+uniform sampler2D uBloomTex;   // blurred bright part of the picture
+uniform float uBloom;          // 0 = off (uBloomTex is then not sampled)
 
 // Catmull-Rom cubic weight (4-tap per axis). Used when the CRT pass upscales
 // the low-res Apple II framebuffer so scanlines/mask sit on smooth colour
@@ -368,6 +370,13 @@ void main()
         rgb *= atten;
     }
 
+    // ── Bloom (halation) ──────────────────────────────────────────
+    // Light scattered in the faceplate: added AFTER the scanlines and the
+    // mask, because it is what fills the dark between them beside a lit dot.
+    if (uBloom > 0.0) {
+        rgb += texture(uBloomTex, clamp(uv, 0.0, 1.0)).rgb * uBloom;
+    }
+
     // ── Center lighting / vignette (OpenEmulator order: after mask) ───
     // lighting = cuv·(1/cl − 1); rgb *= exp(−dot(lighting)). cl = 1.0 → 0 →
     // exp(0) = 1 (flat, the OE Apple II default); lower cl darkens the edges.
@@ -446,6 +455,46 @@ void main()
 }
 )GLSL";
 
+// Bloom pre-pass: one program run twice. First with uThreshold >= 0 — the
+// bright-pass folded into the horizontal Gaussian's taps, so the vertical leg
+// blurs an already bright-passed picture and no pass is spent on the
+// threshold alone — then with uThreshold < 0 for the vertical leg.
+// [D] libretro glsl-shaders/bloom (hunterk, public domain); the knee and the
+//     folding are Casso's (`bloom_h.hlsl` @ 2d899adf).
+// The nine weights are no one's: they are row 12 of Pascal's triangle with
+// its two outermost terms dropped — 924, 792, 495, 220, 66 over 4070.
+const char* kBloomFragmentShader = R"GLSL(
+in vec2 vUv;
+out vec4 fragColor;
+
+uniform sampler2D uSrc;
+uniform vec2  uStep;        // uv step of one tap, along this pass's axis
+uniform float uThreshold;   // >= 0: bright-pass the taps; < 0: plain blur
+
+vec3 tap(vec2 uv)
+{
+    vec3 c = texture(uSrc, clamp(uv, 0.0, 1.0)).rgb;
+    if (uThreshold < 0.0) return c;
+    // Only bright pixels scatter. A hard cut would band as content crosses
+    // the threshold, so the low end is a quadratic knee.
+    float knee = max(uThreshold * 0.5, 0.0001);
+    float lum  = max(c.r, max(c.g, c.b));
+    float soft = clamp(lum - uThreshold + knee, 0.0, 2.0 * knee);
+    float over = max(soft * soft / (4.0 * knee), lum - uThreshold);
+    return c * (over / max(lum, 0.0001));
+}
+
+void main()
+{
+    vec3 acc = tap(vUv) * 0.227027;
+    acc += (tap(vUv + uStep)       + tap(vUv - uStep))       * 0.1945946;
+    acc += (tap(vUv + uStep * 2.0) + tap(vUv - uStep * 2.0)) * 0.1216216;
+    acc += (tap(vUv + uStep * 3.0) + tap(vUv - uStep * 3.0)) * 0.054054;
+    acc += (tap(vUv + uStep * 4.0) + tap(vUv - uStep * 4.0)) * 0.016216;
+    fragColor = vec4(acc, 1.0);
+}
+)GLSL";
+
 } // namespace
 
 CrtEffectStack::CrtEffectStack() = default;
@@ -467,6 +516,11 @@ void CrtEffectStack::destroyGL()
     if (outputTex[0] || outputTex[1]) glDeleteTextures(2, outputTex);
     if (bwFbo)     glDeleteFramebuffers(1, &bwFbo);
     if (bwTex)     glDeleteTextures(1, &bwTex);
+    if (bloomFbo[0] || bloomFbo[1]) glDeleteFramebuffers(2, bloomFbo);
+    if (bloomTex[0] || bloomTex[1]) glDeleteTextures(2, bloomTex);
+    if (bloomProgram) pom2::deleteShaderProgram(bloomProgram);
+    bloomFbo[0] = bloomFbo[1] = bloomTex[0] = bloomTex[1] = 0;
+    bloomProgram = 0;
     if (vbo)       glDeleteBuffers(1, &vbo);
     if (vao)       glDeleteVertexArrays(1, &vao);
     if (bwProgram) pom2::deleteShaderProgram(bwProgram);
@@ -517,6 +571,8 @@ bool CrtEffectStack::initialize()
     uLuminanceGain = glGetUniformLocation(program, "uLuminanceGain");
     uCenterLighting = glGetUniformLocation(program, "uCenterLighting");
     uPhosphorGamma = glGetUniformLocation(program, "uPhosphorGamma");
+    uBloomTex      = glGetUniformLocation(program, "uBloomTex");
+    uBloom         = glGetUniformLocation(program, "uBloom");
 
     // Bandwidth pre-pass. Optional: if it fails to compile the stack stays
     // usable and the knob simply does nothing (bwProgram == 0 disables it),
@@ -532,6 +588,20 @@ bool CrtEffectStack::initialize()
         } else {
             pom2::log().warn("CRT",
                 "analog-bandwidth pre-pass unavailable: " + bwErr);
+        }
+    }
+
+    // Bloom pre-pass. Optional in the same way: without it the knob does
+    // nothing and the glass pass is what it was.
+    {
+        std::string blErr;
+        bloomProgram = compileShaderProgram(kVertexShader, kBloomFragmentShader, &blErr);
+        if (bloomProgram) {
+            uBlSrc       = glGetUniformLocation(bloomProgram, "uSrc");
+            uBlStep      = glGetUniformLocation(bloomProgram, "uStep");
+            uBlThreshold = glGetUniformLocation(bloomProgram, "uThreshold");
+        } else {
+            pom2::log().warn("CRT", "bloom pre-pass unavailable: " + blErr);
         }
     }
 
@@ -660,6 +730,90 @@ unsigned int CrtEffectStack::applyBandwidth(unsigned int srcTex,
     return bwTex;
 }
 
+unsigned int CrtEffectStack::applyBloom(unsigned int srcTex, int srcW, int srcH)
+{
+    if (bloomProgram == 0 || !(params.bloom > 0.0f) || srcW <= 0 || srcH <= 0 ||
+        outW <= 0 || outH <= 0)
+        return 0;
+
+    if (bloomTex[0] == 0 || srcW != bloomW_ || srcH != bloomH_) {
+        if (bloomTex[0] == 0) {
+            glGenTextures(2, bloomTex);
+            glGenFramebuffers(2, bloomFbo);
+        }
+        bool complete = true;
+        for (int i = 0; i < 2; ++i) {
+            glBindTexture(GL_TEXTURE_2D, bloomTex[i]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, srcW, srcH, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glBindFramebuffer(GL_FRAMEBUFFER, bloomFbo[i]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, bloomTex[i], 0);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                complete = false;
+        }
+        if (!complete) {
+            // Same rule as the bandwidth pass: give the knob up, keep the glass.
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDeleteFramebuffers(2, bloomFbo);
+            glDeleteTextures(2, bloomTex);
+            pom2::deleteShaderProgram(bloomProgram);
+            bloomFbo[0] = bloomFbo[1] = bloomTex[0] = bloomTex[1] = 0;
+            bloomProgram = 0;
+            pom2::log().warn("CRT", "bloom FBO incomplete — knob disabled");
+            return 0;
+        }
+        bloomW_ = srcW; bloomH_ = srcH;
+    }
+
+    // One tap = `bloomRadius` dots of the 560-dot line, whatever the source's
+    // own width, and the same distance on the SCREEN down the picture — so
+    // the halo is round and keeps its share of the picture at any window
+    // size and in every video mode.
+    const float stepX = params.bloomRadius / 560.0f;
+    const float stepY = stepX * float(outW) / float(outH);
+
+    // The taps fall between texels: the source is sampled bilinearly here
+    // whatever filter the caller left on it, and gets that filter back.
+    GLint prevMin = GL_NEAREST, prevMag = GL_NEAREST;
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &prevMin);
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &prevMag);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glUseProgram(bloomProgram);
+    glActiveTexture(GL_TEXTURE0);
+    if (uBlSrc >= 0) glUniform1i(uBlSrc, 0);
+    glViewport(0, 0, srcW, srcH);
+    glBindVertexArray(vao);
+
+    // Horizontal, bright-passed.
+    glBindFramebuffer(GL_FRAMEBUFFER, bloomFbo[0]);
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    if (uBlStep      >= 0) glUniform2f(uBlStep, stepX, 0.0f);
+    if (uBlThreshold >= 0) glUniform1f(uBlThreshold, std::clamp(params.bloomThreshold, 0.0f, 1.0f));
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // Vertical.
+    glBindFramebuffer(GL_FRAMEBUFFER, bloomFbo[1]);
+    glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+    if (uBlStep      >= 0) glUniform2f(uBlStep, 0.0f, stepY);
+    if (uBlThreshold >= 0) glUniform1f(uBlThreshold, -1.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, prevMin);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, prevMag);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return bloomTex[1];
+}
+
 unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
                                      int dstW, int dstH)
 {
@@ -743,6 +897,8 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     unsigned int glassSrc = srcTex;
     if (const unsigned int filtered = applyBandwidth(srcTex, srcW, srcH))
         glassSrc = filtered;
+    // The halo of the picture as the tube receives it (after the cable).
+    const unsigned int bloomed = applyBloom(glassSrc, srcW, srcH);
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo[writeIdx]);
     glViewport(0, 0, outW, outH);
@@ -766,6 +922,13 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, firstFrame ? glassSrc : outputTex[readIdx]);
     glUniform1i(uPrevFrame, 1);
+    // Unit 2 always holds SOMETHING valid (the source when bloom is off):
+    // an unbound sampler is undefined on some GLES drivers even when the
+    // branch that reads it is not taken.
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, bloomed ? bloomed : glassSrc);
+    if (uBloomTex >= 0) glUniform1i(uBloomTex, 2);
+    if (uBloom    >= 0) glUniform1f(uBloom, bloomed ? std::clamp(params.bloom, 0.0f, 1.0f) : 0.0f);
 
     if (uSrcSize     >= 0) glUniform2f(uSrcSize, float(srcW), float(srcH));
     if (uOutSize     >= 0) glUniform2f(uOutSize, float(outW), float(outH));
@@ -809,6 +972,8 @@ unsigned int CrtEffectStack::process(unsigned int srcTex, int srcW, int srcH,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, prevMagFilter);
 
     // Don't leave our private textures bound on any unit.
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);

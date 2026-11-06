@@ -59,6 +59,17 @@ public:
 
     /// Power switched on or off, for the relay/idle hum.
     virtual void power(bool on) = 0;
+
+    /// The print quality the head is working in changed: 0 correspondence
+    /// (the ImageWriter's "standard"), 1 draft, 2 near letter quality. The
+    /// three do not sound alike — the head makes one, two or more passes at
+    /// different speeds — and a recorded bank has a take for each. Default:
+    /// ignored, which is what a synthesiser with one head model does.
+    virtual void printQuality(int tier) { (void)tier; }
+
+    /// The user tore the paper off at the perforation. Not something the
+    /// guest can do; the host calls it when it clears the sheet.
+    virtual void tearOff() {}
 };
 
 #endif // POM2_PRINTER_SOUND_SINK_H

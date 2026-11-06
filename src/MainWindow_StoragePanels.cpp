@@ -63,6 +63,7 @@
 #include "SystemProfile.h"
 #include "StatusLed.h"
 #include "StorageCoordinator.h"
+#include "WozCompat.h"
 
 #include "imgui.h"
 
@@ -145,7 +146,7 @@ void MainWindow::renderDiskPanelWindow()
                 if (!entry.is_regular_file(ec)) continue;
                 const std::string ext = entry.path().extension().string();
                 if (ext != ".dsk" && ext != ".do" && ext != ".po" &&
-                    ext != ".nib" && ext != ".woz") continue;
+                    ext != ".nib" && ext != ".nb2" && ext != ".woz") continue;
                 pom2::DiskController_ImGui::LibraryEntry e;
                 e.displayName = fs::relative(entry.path(), root, ec).string();
                 if (e.displayName.empty()) e.displayName = name;
@@ -197,6 +198,18 @@ void MainWindow::renderDiskPanelWindow()
             snap.fileWriteProtected = card->isFileWriteProtected();
             if (card->isDiskLoaded()) {
                 const DiskImage& img = card->driveImage(0);
+                snap.integrityWarning = img.integrityWarning();
+                // What the image says it is for, against the machine it is
+                // in (WozCompat.h). RAM: 64K with the language card, 128K
+                // with the //e's and //c's auxiliary bank, plus RamWorks.
+                const Memory& mem = controller->memory();   // stateMutex is held
+                const unsigned ramK = mem.isIIE()
+                    ? 128u + (mem.ramWorksBanks() > 1 ? (mem.ramWorksBanks() - 1) * 64u : 0u)
+                    : 64u;
+                snap.machineWarning = pom2::woz::machineWarning(
+                    img.wozCompatibleHardware(), img.wozRequiredRamK(),
+                    pom2::wozHardwareBit(activeProfile),
+                    std::string(pom2::profileConfig(activeProfile).displayName), ramK);
                 snap.prodosOrder = img.getSectorOrder() == DiskImage::SectorOrder::ProDOS;
                 snap.sectorOrderChoosable = !img.isNib() && !img.isWoz() &&
                                             !img.is13Sector();
@@ -458,7 +471,20 @@ void MainWindow::renderDiskLibraryWindow()
     // cannot land on a disk the user already owns, and only this side knows
     // the library root. A rescan afterwards so the new disk appears in the
     // list the user is looking at.
-    if (r.requestNewBlankDisk) {
+    if (r.requestNewBlankDisk && r.requestNewBlankFormat != 0) {
+        std::string made, err;
+        if (insertFormattedDiskette(r.requestNewBlankDrive, r.requestNewBlankFormat, made, err)) {
+            noteLibraryRecent(made);
+            diskLibrary->requestRescan();
+            tapeStatusMessage = std::string("New ") +
+                (r.requestNewBlankFormat == 2 ? "ProDOS" : "DOS 3.3") +
+                " data disk in drive " + std::to_string(r.requestNewBlankDrive + 1) +
+                " (no operating system on it): " + made;
+        } else {
+            tapeStatusMessage = "New disk failed: " + err;
+        }
+        tapeStatusUntil = lastFrameTime + 6.0;
+    } else if (r.requestNewBlankDisk) {
         std::string made, err;
         if (insertBlankDiskette(r.requestNewBlankDrive, {}, made, err)) {
             noteLibraryRecent(made);
@@ -1441,7 +1467,7 @@ void MainWindow::renderDiskFileDialog()
         ImGui::Text("Target: Disk II slot %d", popupCard->getSlot());
     }
     ImGui::TextUnformatted("Path to a 5.25\" image —"
-                           " .dsk / .do / .d13 / .po / .nib / .woz."
+                           " .dsk / .do / .d13 / .po / .nib / .nb2 / .woz."
                            " Images are writable by default unless the file"
                            " or image container is write-protected.");
     if (popupPanel) {
@@ -1461,7 +1487,7 @@ void MainWindow::renderDiskFileDialog()
         const auto& listing = mediaDirListing(
             "disks_5.4",
             { "disks_5.4", "../disks_5.4", "../../disks_5.4" },
-            { ".dsk", ".do", ".po", ".nib", ".woz" }, /*recursive=*/false);
+            { ".dsk", ".do", ".po", ".nib", ".nb2", ".woz" }, /*recursive=*/false);
         if (!listing.dir.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("%s/", listing.dir.c_str());

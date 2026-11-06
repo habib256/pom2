@@ -144,6 +144,11 @@ public:
         /// holds the disk you booted, and the one you format is the other
         /// one — which is also what `INIT HELLO,D2` says.
         int         requestNewBlankDrive = 1;
+        /// What is on the new diskette: 0 nothing at all (unformatted), 1 an
+        /// empty DOS 3.3 data disk, 2 an empty ProDOS volume. The two
+        /// formatted ones carry no operating system (POM2 ships none): they
+        /// are data disks, and say so if booted (DiskBuilder.h).
+        int         requestNewBlankFormat = 0;
         // The notch (MediaNotch.h): the user flipped the write-protect of
         // THIS image — mounted or not, it is the disk's property. The host
         // applies it through StorageCoordinator::setMediaNotch (file bit +

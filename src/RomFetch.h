@@ -18,14 +18,19 @@
 // own archive on archive.org (kPom2RomArchiveUrl, one zip), then, for any
 // entry it cannot supply, from RetroBIOS
 // (https://github.com/Abdess/retrobios, bios/Apple/Apple II plus MAME's
-// a2mouse romset under bios/Arcade/MAME).
+// card romsets under bios/Arcade).
 //
 // Since RetroBIOS PR #75 (merged 2026-09-14) the collection covers every
 // dump POM2 probes and can legally point a user at: the //c / //c+
 // firmware, the Liron and Workstation Card images, the ThunderClock+,
 // CFFA 65C02 and TransWarp EPROMs, and the European character
-// generators. What it still cannot serve is alternate SPELLINGS of names
-// that are served (`342-0135-b.64.rom` and `341-0265-a.chr.rom` behind
+// generators. It dropped 26 of them on 2026-10-20/22 ("copies only an
+// install provides" — POM2 0.9.9 did bundle them) and took them back with
+// PR #86 (merged 2026-11-05) once POM2 1.1.0 shipped no firmware at all;
+// that PR also added the DAN ][ EPROM, so since then RetroBIOS serves the
+// WHOLE catalogue again, on its `main` as at the pin. What it still cannot
+// serve is alternate SPELLINGS of names
+// that are served (`342-0135-b.64.rom` and `342-0133-a.chr.rom` behind
 // the //e Unenhanced pair, ClockCard's markadev filename, the
 // TransWarp's) plus one real gap: the FR-Canadian UNENHANCED character
 // ROM, which has no upstream copy. Every destRel maps onto a name in
@@ -60,14 +65,16 @@ struct RomFetchEntry {
     const char* destRel;       ///< As probed everywhere else: "roms/apple2e.rom"
     const char* label;         ///< Shown in the panel while this item runs.
     std::size_t expectedSize;  ///< Reject the download on a mismatch. 0 = any.
-    const char* url;           ///< raw.githubusercontent.com file or zip, or kPom2RomArchiveUrl (archive-only); null = import-only.
+    const char* url;           ///< raw.githubusercontent.com file or zip, or kPom2RomArchiveUrl (archive-only — none today); null = import-only.
     /// Single zip member to extract. Null when `url` is already the dump —
-    /// which, since RetroBIOS PR #75 published loose copies, is every entry
-    /// but nine: the mouse slot eprom, the Super Serial Card EPROM, the 1981
-    /// Grappler EPROM, the Apple Parallel Interface PROM, the unenhanced
-    /// //e firmware and the four Videx Videoterm dumps live only inside MAME
-    /// romsets (a2mouse.zip, a2ssc.zip, a2grappler.zip, a2pic.zip,
-    /// apple2e.zip, a2vidtrm.zip).
+    /// which, since RetroBIOS PR #75 published loose copies, is most
+    /// entries. The others live only inside MAME romsets: the mouse slot
+    /// eprom, the Super Serial Card EPROM, the 1981 Grappler EPROM, the
+    /// Apple Parallel Interface PROM, the unenhanced //e firmware, the four
+    /// Videx Videoterm dumps (a2mouse.zip, a2ssc.zip, a2grappler.zip,
+    /// a2pic.zip, apple2e.zip, a2vidtrm.zip), and the later cards — Slinky,
+    /// Applicard, UltraTerm, CCS 7710 (a2memexp, a2aplcrd, a2ulttrm,
+    /// a2ultrme, ccs7710). `rom_fetch` names every one of them.
     const char* zipMember;
     /// Null-terminated extra members concatenated AFTER `zipMember`, in
     /// order. The unenhanced //e is the case: MAME keeps that firmware as
@@ -118,7 +125,18 @@ constexpr const char* kRetroBiosSourceUrl =
 /// SHA-256 gate below still checks every byte. Moving the pin is a
 /// deliberate act: point it at a commit where every URL resolves, then run
 /// the `rom_fetch_live` probe (it downloads the whole catalog).
-#define POM2_RETROBIOS_COMMIT "f71b00615d30daccb394e3e917d5ee5c3e21fd73"
+///
+/// The pin, and why it moved:
+///   f71b0061  2026-09 → 2026-11-06. The last commit before the removal;
+///             from 2026-10-20 it was the only place 22 of the dumps existed.
+///   441d4129  since 2026-11-06. The merge of PR #86, which restored them:
+///             a commit of RetroBIOS's `main` line, so the catalogue no
+///             longer hangs on history `main` had left behind. Two card
+///             romsets had moved meanwhile (a2mouse.zip and a2ssc.zip, from
+///             bios/Arcade/MAME to bios/Arcade/Arcade) and their URLs
+///             followed; the CCS 7710 PROMs and the DAN ][ EPROM gained a
+///             RetroBIOS source (romArchiveOnly).
+#define POM2_RETROBIOS_COMMIT "441d41294bf85357a512df0c7880e9e22eda0ee2"
 #define POM2_RETROBIOS_RAW \
     "https://raw.githubusercontent.com/Abdess/retrobios/" POM2_RETROBIOS_COMMIT "/"
 
@@ -145,10 +163,12 @@ const std::vector<RomFetchEntry>& romFetchCatalog();
 /// (No entry is import-only since 2026-11-01; the predicate stays for one.)
 bool romDownloadable(const RomFetchEntry& e);
 
-/// True when `e.url` IS the POM2 archive: a dump RetroBIOS has no copy of
-/// (the CCS 7710 PROMs, the DAN ][ EPROM). Served from the archive's member
-/// like every other entry, but with no fallback — when the archive is down
-/// its error is the archive's, and RetroBIOS is not asked.
+/// True when `e.url` IS the POM2 archive: a dump RetroBIOS has no copy of.
+/// Served from the archive's member like every other entry, but with no
+/// fallback — when the archive is down its error is the archive's, and
+/// RetroBIOS is not asked. NO entry is archive-only since 2026-11-06 (the
+/// CCS 7710 PROMs and the DAN ][ EPROM were, until RetroBIOS PR #86); the
+/// predicate stays for the next dump only POM2's archive holds.
 bool romArchiveOnly(const RomFetchEntry& e);
 
 /// The member of the POM2 archive that holds `e`: "roms/" + its file name.

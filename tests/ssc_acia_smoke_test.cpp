@@ -47,6 +47,8 @@
 //   * Programmed reset (write to $C0n9) preserves parity bits 5-7 in
 //     cmdReg — MAME `mos6551.cpp:264-270`.
 
+#include "SlotBus.h"
+#include "SlotPeripheral.h"
 #include "SuperSerialCard.h"
 
 #include <cassert>
@@ -54,6 +56,8 @@
 #include <cstdint>
 #include <chrono>
 #include <cstdio>
+#include <memory>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -377,9 +381,14 @@ void testProgrammedResetPreservesParity()
 void testControlRegBaud()
 {
     SuperSerialCard ssc(2);
-    // Index 0 = 16x external clock → unconstrained in POM2.
+    // Index 0 = "16 times external clock" (SSC manual, Table A-7), and on
+    // this card the 16x clock is the 1.8432 MHz crystal: 115,200 baud. It is
+    // what ADTPro programs ($10) for its fastest setting. POM2 used to pace
+    // nothing at all here.
+    ssc.deviceSelectWrite(kControlAddr, 0x10);
+    assert(std::abs(ssc.bytesPerSecond() - 11520.0) < 1e-6);
     ssc.deviceSelectWrite(kControlAddr, 0x00);
-    assert(ssc.bytesPerSecond() == 0.0);
+    assert(std::abs(ssc.bytesPerSecond() - 11520.0) < 1e-6);
 
     // Index 14 = 9600 baud. 1.8432 MHz / (12 * 16) = 9600 / 10 = 960 bps.
     ssc.deviceSelectWrite(kControlAddr, 0x0E);
@@ -1212,6 +1221,98 @@ void testSscDecodesA2AndA3()
     std::printf("  ok: SSC decodes A2 and A3; a //c port mirrors and has no DIP\n");
 }
 
+// [B] SSC manual, Table 4-5 and Table A-7: bit 0 of DIPSW2 is the CTS pin,
+// "true when 0". It is a line, not a switch.
+void testDipSwitch2CarriesCts()
+{
+    SuperSerialCard ssc(2);
+    // Nothing on the connector: the card's own pull-ups hold CTS true.
+    assert((ssc.deviceSelectRead(0x2) & 0x01) == 0);
+
+    ssc.setInputLinesForTest(true, true, false);            // CTS drops
+    assert((ssc.deviceSelectRead(0x2) & 0x01) == 1);
+    assert((ssc.deviceSelectRead(0x0) & 0x01) == (ssc.deviceSelectRead(0x1) & 0x01) &&
+           "$C0n0 is both banks ANDed, CTS bit included");
+    ssc.setInputLinesForTest(true, true, true);             // and comes back
+    assert((ssc.deviceSelectRead(0x2) & 0x01) == 0);
+
+    // A saved switch value cannot pin the line either way, and the other
+    // seven bits are untouched by it.
+    ssc.setDipSwitches(0xFC, 0x53);
+    assert(ssc.dipSwitch2() == 0x52);
+    assert(ssc.deviceSelectRead(0x2) == 0x52);
+    ssc.setInputLinesForTest(true, true, false);
+    assert(ssc.deviceSelectRead(0x2) == 0x53);
+    ssc.setDipSwitches(0xFC, 0x52);
+    assert(ssc.deviceSelectRead(0x2) == 0x53 && "still the pin, not the setting");
+
+    // A //c port has no switch buffers at all: nothing to read CTS from.
+    SuperSerialCard port(1);
+    port.setBuiltInPort(true);
+    port.setInputLinesForTest(true, true, false);
+    assert(port.deviceSelectRead(0x2) == 0xFF);
+    std::printf("  ok: $C0n2 bit 0 is the CTS pin, true when 0\n");
+}
+
+namespace {
+/// A card with an expansion ROM and nothing else: the Apple II convention,
+/// to hold against the SSC's.
+struct PlainRomCard final : SlotPeripheral {
+    std::string_view name() const override { return "plain"; }
+    uint8_t deviceSelectRead(uint8_t) override { return 0xFF; }
+    void    deviceSelectWrite(uint8_t, uint8_t) override {}
+    uint8_t slotRomRead(uint8_t) override { return 0x11; }
+    uint8_t expansionRomRead(uint16_t) override { return 0x22; }
+    bool    takesC800() const override { return true; }
+};
+}  // namespace
+
+// [B] SSC manual p. 45: the $C800 latch "is set by an access to the $Csxx
+// space, and is reset by access to the $CFxx space or by a reset". POM2 let
+// go at $CFFF only, and kept the window across a Ctrl-Reset.
+void testC800LatchFollowsTheManual()
+{
+    SlotBus bus;
+    bus.plug(2, std::make_unique<SuperSerialCard>(2));
+    bus.plug(5, std::make_unique<PlainRomCard>());
+
+    // The SSC: any address of $CFxx, read or write.
+    for (uint16_t release : { uint16_t{0xCF00}, uint16_t{0xCF80}, uint16_t{0xCFFE},
+                              uint16_t{0xCFFF} }) {
+        (void)bus.slotRomRead(0xC200);
+        assert(bus.getActiveExpansionSlot() == 2);
+        (void)bus.expansionRomRead(0xCEFF);
+        assert(bus.getActiveExpansionSlot() == 2 && "$CExx is ROM, not the release page");
+        (void)bus.expansionRomRead(release);
+        assert(bus.getActiveExpansionSlot() == -1 && "SSC: a read anywhere in $CFxx lets go");
+
+        (void)bus.slotRomRead(0xC200);
+        bus.expansionRomWrite(release, 0x00);
+        assert(bus.getActiveExpansionSlot() == -1 && "SSC: so does a write");
+    }
+    // …and RESET.
+    (void)bus.slotRomRead(0xC200);
+    assert(bus.getActiveExpansionSlot() == 2);
+    bus.reset(false);
+    assert(bus.getActiveExpansionSlot() == -1 && "SSC: RESET clears its latch");
+
+    // The convention, on a card that says nothing: $CFFF and only $CFFF,
+    // and the claim survives a RESET (unsourced for cards in general — the
+    // SSC's rule must not have become everybody's).
+    (void)bus.slotRomRead(0xC500);
+    assert(bus.getActiveExpansionSlot() == 5);
+    (void)bus.expansionRomRead(0xCF00);
+    bus.expansionRomWrite(0xCF80, 0x00);
+    assert(bus.getActiveExpansionSlot() == 5 && "another card keeps the window at $CF00");
+    bus.reset(false);
+    assert(bus.getActiveExpansionSlot() == 5);
+    assert(bus.expansionRomRead(0xCFFF) == 0x22 && "the releasing read is still the owner's");
+    assert(bus.getActiveExpansionSlot() == -1);
+    bus.reset(true);
+    std::printf("  ok: the SSC lets go of $C800 on all of $CFxx and on RESET; "
+                "another card only at $CFFF\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
@@ -1223,6 +1324,8 @@ int main()
     testEchoRequiresDtr();
     testSevenBitWordAndParityError();
     testDipSwitchLayout();
+    testDipSwitch2CarriesCts();
+    testC800LatchFollowsTheManual();
     testOverrunAndRdrClear();
     testProgrammedResetPreservesParity();
     testControlRegBaud();

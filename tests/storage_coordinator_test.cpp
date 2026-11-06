@@ -19,6 +19,7 @@
 // SlotBus owns every card. The coordinator may return an ephemeral view to a
 // caller holding the machine lock, but must never cache it across a re-plug.
 
+#include "SyncGapWrite.h"
 #include "CffaCard.h"
 #include "Disk35Image.h"
 #include "DiskIICard.h"
@@ -724,9 +725,9 @@ int main()
                 auto staged = std::make_unique<DiskImage>();
                 std::string err;
                 assert(DiskIICard::prepareDisk(diskPath, true, *staged, err));
-                const std::uint8_t cur = staged->nibbleAt(track, nibble);
-                staged->writeNibbleAt(
-                    track, nibble, static_cast<std::uint8_t>(cur ^ 0x01));
+                // In a sync gap at or after `nibble` (SyncGapWrite.h): a bit
+                // flipped inside a field made the track unsaveable.
+                assert(pom2test::writeInSyncGap(*staged, track, nibble) >= 0);
                 assert(staged->hasUnsavedChanges());
                 return staged;
             };
@@ -762,11 +763,15 @@ int main()
                 std::shared_ptr<DiskImage> doomed = card->takeEjectWriteBack(0);
                 assert(doomed);
                 assert(!card->isDiskLoaded(0));
-                auto intruder = stageDirty(8, 20);   // before the truncation
-                // Truncating the source is the deterministic, portable save
-                // failure (same trick as disk_writeback_smoke_test).
+                auto intruder = stageDirty(8, 20);   // before the removal
+                // Removing the source is the deterministic, portable save
+                // failure: the unchanged tracks cannot come from a file that
+                // is gone. (It used to be a truncation — but a file that is
+                // still there and no longer what the mount read is now an
+                // external change, which SUCCEEDS into a sibling:
+                // MediaAutosave.h, pinned by media_external_change.)
                 std::error_code ec;
-                std::filesystem::resize_file(diskPath, 1, ec);
+                std::filesystem::remove(diskPath, ec);
                 assert(!ec);
                 std::string err2;
                 assert(!DiskIICard::commitEjectWriteBack(*doomed, err2));

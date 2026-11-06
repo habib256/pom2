@@ -124,6 +124,19 @@ public:
     /// takes it — MAME `a2bus.h:145` `take_c800()` defaults to false and
     /// only a card with an expansion ROM overrides it (`a2ssc.cpp:50` etc.).
     bool takesC800() const override { return true; }
+    /// The enable latch lets go on $CFFE as well as $CFFF, and RESET clears
+    /// it.
+    /// [B] The Liron's schematic as reverse-engineered from a board
+    ///     (steve-chamberlin/fpga-disk-controller, `liron.sch`) — a third
+    ///     party's reading of the card, not Apple's drawing: /HISTROBE is a
+    ///     74LS30 over IOSTROBE, A5..A10 and the AND of A1..A4 (A0 is not
+    ///     decoded), and the latch's clear is a 74LS20 over /HISTROBE and
+    ///     /RES.
+    /// [C] The EPROM agrees on the width: $CFFE and $CFFF are both $FF.
+    /// [F] The RESET half rests on that one schematic. Settled by: a
+    ///     continuity check from pin 31 to IC2 on a real card.
+    bool releasesC800At(uint16_t offset) const override { return offset >= 0x7FE; }
+    bool releasesC800OnReset() const override { return true; }
 
     void advanceCycles(int cycles) override;
     void onReset() override;

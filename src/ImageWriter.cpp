@@ -463,6 +463,7 @@ void ImageWriter::resetPrinter()
     // draft at power-up. `docs/audits/parite-imagewriter-2026-11-01.md`,
     // constat 4.
     quality_      = Quality::Draft;
+    if (sound_) sound_->printQuality(static_cast<int>(quality_));
     // The 630's tab rack is part of the reset — its ESC 2 exists precisely
     // because tabs otherwise survive everything.
     diabloTabs_.clear(); diabloVTabs_.clear();
@@ -1810,6 +1811,7 @@ bool ImageWriter::processCommandChar(uint8_t ch)
         if      (sel == 1) quality_ = Quality::Draft;
         else if (sel == 2) quality_ = Quality::NLQ;
         else               quality_ = Quality::Correspondence;
+        if (sound_) sound_->printQuality(static_cast<int>(quality_));
         break;
     }
 
@@ -1992,9 +1994,11 @@ bool ImageWriter::processCommandChar(uint8_t ch)
     // `docs/audits/parite-imagewriter-2026-11-01.md`, constat 5.
     case 0x6d:                                  // ESC m  = ESC a 0
         if (modelProfile().qualityTiers) quality_ = Quality::Correspondence;
+        if (sound_) sound_->printQuality(static_cast<int>(quality_));
         break;
     case 0x4d:                                  // ESC M  = ESC a 2
         if (modelProfile().qualityTiers) quality_ = Quality::NLQ;
+        if (sound_) sound_->printQuality(static_cast<int>(quality_));
         break;
     case 0x3d: break;                           // internal font ID
     case 0x24: customFont_ = 0; break;          // ESC $  standard font

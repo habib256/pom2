@@ -112,6 +112,25 @@ public:
     bool loadVirtualII(const std::string& dir, std::string* error = nullptr);
     bool virtualIIReady() const { return viiReady_.load(std::memory_order_acquire); }
 
+    /// Three recordings the MAME set does not have, for the 5.25" drive:
+    /// the door opening, the door closing, and the carriage hitting the
+    /// track-0 stop. Optional and independent — each one that is found in
+    /// `dir` (`525_door_open.wav`, `525_door_close.wav`, `525_head_stop.wav`)
+    /// gives the MAME bank a voice it otherwise lacks; a missing one leaves
+    /// that event silent, as it always was. Nothing here is shipped: the
+    /// only known source is OpenEmulator's Shugart SA400 set, whose licence
+    /// is not stated for the recordings, so `tools/install_drive_extras.py`
+    /// fetches them onto the user's machine and they stay there
+    /// (`roms/floppy_extras/`, never packaged). Returns how many loaded.
+    int loadExtras(const std::string& dir);
+    bool hasExtra(int which) const
+    {
+        return (extraMask_.load(std::memory_order_acquire) >> which) & 1u;
+    }
+    enum Extra : int { EXTRA_DOOR_OPEN = 0, EXTRA_DOOR_CLOSE, EXTRA_HEAD_STOP, EXTRA_COUNT };
+    /// Audio-thread view, for the tests: the extra voice now sounding, or -1.
+    int audioExtra() const { return extraIdx_; }
+
     /// Check a recording with the same decoder and limits as the loader.
     static bool canDecodeSample(const std::string& path);
 
@@ -160,6 +179,10 @@ public:
     /// 5.25" drive stays silent — Disk II inserts never clicked. On the
     /// Virtual ][ bank this is the lid-close or lid-open recording.
     void latch(bool inserting) override;
+    /// The carriage against the track-0 stop. Heard only when the head-stop
+    /// extra is loaded (`loadExtras`); silent on the bare MAME bank and on
+    /// the Virtual ][ one.
+    void bump(uint64_t emuCycles) override;
     /// Virtual ][ "I-O Error". No-op on the MAME bank.
     void ioError() override;
     /// Power switch. The first call plays PopOn; a later one plays PopOff
@@ -247,7 +270,9 @@ private:
 
     // ─── Command queue (CPU → audio) ────────────────────────────────────
     enum class CmdKind : uint8_t {
-        MotorOn, MotorOff, Step, Click, Latch, IoError, Chassis
+        MotorOn, MotorOff, Step, Click, Latch, IoError, Chassis,
+        Door,   ///< MAME bank + door extra: withDisk = closing
+        Bump    ///< MAME bank + head-stop extra
     };
     struct Cmd {
         CmdKind  kind;
@@ -358,6 +383,17 @@ private:
     // Click (insert / eject) — MAME bank.
     double clickPos_ = 0.0;
     bool   clickActive_ = false;
+
+    // The extras (loadExtras): one voice, since a door and a head bang do
+    // not happen together. A door that arrives while another is sounding
+    // waits its turn — a disk swap is "open, then close", not the second
+    // cutting the first.
+    std::array<Sample, EXTRA_COUNT> extras_{};
+    std::atomic<uint32_t> extraMask_{0};
+    int    extraIdx_    = -1;
+    double extraPos_    = 0.0;
+    int    extraQueued_ = -1;
+    void mixExtra(float* out, int frames, float gain);
 
     // Virtual ][ voices. Audio thread only; `clearVoices` drops them on a
     // bank change. The motor loop is one Disk II revolution (~208 ms).

@@ -852,9 +852,12 @@ public:
     /// What a $C000 read would answer, without promoting a queued key.
     uint8_t keyLatchPeek() const  { return keyboard_.latchMirror(); }
     void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
-    /// The //c keyboard's 40/80-column switch, read at $C060 bit 7 (set =
-    /// 40 columns). A physical key on the machine, not a soft switch: no
-    /// reset touches it. POM2's default is the 80 position.
+    /// The //c keyboard's 80/40-column switch, read at $C060 bit 7 (set =
+    /// 40 columns, switch down — [B] //c Technical Reference, Table 4-1; the
+    /// citations are at the read, Memory.cpp). A physical key on the
+    /// machine, not a soft switch: no reset touches it. POM2's default is
+    /// the 80 position. The //c Plus has no such switch ([B] same manual,
+    /// 2nd ed.): there the read answers 0 whatever this holds.
     void setIic40ColumnSwitch(bool forty) { iic40ColSwitch_ = forty; }
     bool iic40ColumnSwitch() const { return iic40ColSwitch_; }
     void releaseHeldKeys()        { keyboard_.releaseHeldKeys(); }

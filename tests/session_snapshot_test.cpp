@@ -534,6 +534,11 @@ void writableWozSessions()
         // the same way: the surface is a loop and no Apple drive has an
         // index sensor, so the guest cannot tell. A bit-cell track keeps
         // its origin and round-trips as is.
+        // The rotation is exact in TICKS, which is what the file holds. Seen
+        // in LSS cycles it is exact to one cycle: a cycle is 176/45 ticks
+        // (DiskImage.h, fluxBusHz_), so floor((t - t0)·r) and
+        // floor(t·r) - floor(t0·r) may differ by one. Hence the tolerance on
+        // a FLUX track, and none on a bit-cell one.
         auto expected = f.disk->driveImage(0).fluxEvents(qt);
         if (flux && !expected.empty() && expected.front() != 0) {
             const int period = f.disk->driveImage(0).trackPeriod(qt);
@@ -549,7 +554,13 @@ void writableWozSessions()
             std::fprintf(stderr, "writable WOZ: %s\n", f.error.c_str()); assert(false);
         }
         assert(!f.disk->driveImage(0).isWriteProtected());
-        if (f.disk->driveImage(0).fluxEvents(qt) != expected) {
+        const auto& restored = f.disk->driveImage(0).fluxEvents(qt);
+        bool same = restored.size() == expected.size();
+        for (size_t i = 0; same && i < expected.size(); ++i) {
+            const int d = restored[i] - expected[i];
+            same = flux ? (d >= -1 && d <= 1) : d == 0;
+        }
+        if (!same) {
             std::fprintf(stderr, "writable WOZ flux=%d period=%d\n  expected:", int(flux), f.disk->driveImage(0).trackPeriod(qt));
             for (int e : expected) std::fprintf(stderr, " %d", e);
             std::fprintf(stderr, "\n  got:     ");

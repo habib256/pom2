@@ -72,6 +72,13 @@ public:
         /// With `writeBackEnabled` this tells the panel WHY the guest sees
         /// a read-only disk — the notch on the sleeve, or the host toggle.
         bool        fileWriteProtected = false;
+        /// `DiskImage::integrityWarning()`: the image loaded damaged and is
+        /// held read-only for that reason, not because of a flag or a notch.
+        std::string integrityWarning;
+        /// WozCompat.h `machineWarning`: the image is marked for another
+        /// machine, or asks for more RAM than this one has. A hint — the
+        /// disk is mounted and runs regardless. Empty when there is none.
+        std::string machineWarning;
         /// A plain 143 360-byte sector image (not NIB/WOZ/2IMG/13-sector):
         /// the only kind whose DOS/ProDOS order can be chosen by hand.
         bool        sectorOrderChoosable = false;

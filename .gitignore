@@ -91,6 +91,7 @@ imgui.ini
 # stay tracked; a NEW one is added with `git add -f` after checking its licence.
 /roms/*
 !/roms/floppy_samples/
+!/roms/printer_samples/
 /disks_5.4/
 /disks_3.5/
 /hdv/

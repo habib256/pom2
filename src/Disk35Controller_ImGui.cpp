@@ -138,7 +138,11 @@ void renderDriveBlock(int                                       driveIdx,
     // (MediaAutosave.h); "unsaved" is left for a disk that will not be saved.
     if (!drv.persistenceError.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "(save failed)");
+        // "diverted": the writes are safe, in a copy beside an image another
+        // program changed (MediaAutosave.h) — not a failure, not "saved" either.
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           drv.persistenceState == "diverted" ? "(saved to a copy)"
+                                                             : "(save failed)");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", drv.persistenceError.c_str());
     } else if (drv.hasUnsavedChanges) {

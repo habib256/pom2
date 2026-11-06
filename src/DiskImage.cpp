@@ -611,6 +611,9 @@ bool DiskImage::loadNibFromBuffer(const uint8_t* data, std::size_t len,
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
     hostReadOnly_      = false;
+    integrityWarning_.clear();
+    wozCompatibleHardware_ = 0;
+    wozRequiredRamK_ = 0;
     sectorOrder = SectorOrder::Dos33;     // not meaningful for .nib
     dirty.fill(false);
     anyDirty    = false;
@@ -658,6 +661,9 @@ bool DiskImage::loadSectorImageFromBuffer(const uint8_t* data, std::size_t len,
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
     hostReadOnly_      = false;
+    integrityWarning_.clear();
+    wozCompatibleHardware_ = 0;
+    wozRequiredRamK_ = 0;
     // Non-WOZ images always use the standard 4 µs bit cell — clear any
     // WOZ2 INFO value left by a previous image in this (reused) drive slot.
     optimalBitTiming = 32;
@@ -674,6 +680,7 @@ bool DiskImage::loadFile(const std::string& imgPath)
     if (!saveDirty()) return false;
     // Heap, not stack — see the NOTE on class DiskImage (512 KB macOS threads).
     auto replacement = std::make_unique<DiskImage>();
+    replacement->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
     replacement->writeBackEnabled = writeBackEnabled;
     if (!replacement->loadFileUnchecked(imgPath)) {
         lastError = replacement->lastError;
@@ -685,6 +692,9 @@ bool DiskImage::loadFile(const std::string& imgPath)
 
 bool DiskImage::loadFileUnchecked(const std::string& imgPath)
 {
+    // Stat BEFORE the read: a writer that slips in between is then seen as
+    // an external change at the first commit instead of being missed.
+    pom2::MediaFileStamp stamp = pom2::stampMediaFile(imgPath, /*withHash=*/false);
     // Slurp the whole file once; detectFormat needs the magic bytes and
     // size, and each per-format loader takes a buffer slice.
     std::ifstream f(imgPath, std::ios::binary);
@@ -814,6 +824,9 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath)
         twoImgTrailerRaw.clear();
     }
 
+    if (stamp.known) stamp.hash = pom2::hashMediaBytes(bytes.data(), bytes.size());
+    fileStamp_ = ok ? stamp : pom2::MediaFileStamp{};
+
     // Host-filesystem write protection, folded in last so no per-format
     // loader can clear it (they all reset `fileWriteProtected` on entry).
     hostReadOnly_ = ok && hostFileIsReadOnly(imgPath);
@@ -830,6 +843,7 @@ bool DiskImage::loadFile(const std::string& imgPath, SectorOrder order)
 {
     if (!saveDirty()) return false;
     auto replacement = std::make_unique<DiskImage>();
+    replacement->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
     replacement->writeBackEnabled = writeBackEnabled;
     if (!replacement->loadFileUnchecked(imgPath, order)) {
         lastError = replacement->lastError;
@@ -845,6 +859,7 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
     // file and pipes it straight to the sector-image loader regardless
     // of what `detectFormat` would have concluded. Useful for a future
     // "Force DOS / Force ProDOS" UI option when the auto-detect mis-fires.
+    pom2::MediaFileStamp stamp = pom2::stampMediaFile(imgPath, /*withHash=*/false);
     std::ifstream f(imgPath, std::ios::binary);
     if (!f) {
         lastError = "Cannot open " + imgPath;
@@ -876,6 +891,8 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
     const bool ok = loadSectorImageFromBuffer(buf.data(), buf.size(),
                                               order, /*volume=*/254, imgPath);
     sectorOrderForced_ = ok;
+    if (stamp.known) stamp.hash = pom2::hashMediaBytes(buf.data(), buf.size());
+    fileStamp_ = ok ? stamp : pom2::MediaFileStamp{};
     hostReadOnly_ = ok && hostFileIsReadOnly(imgPath);
     if (hostReadOnly_) {
         pom2::log().info("Disk II",
@@ -901,9 +918,9 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath, SectorOrder order)
 //
 // File layout (both versions):
 //   12-byte header: magic "WOZ1\xFF\n\r\n" or "WOZ2\xFF\n\r\n"
-//                  + 4-byte CRC32 of the rest of the file (LE; we skip
-//                    validation — corrupt CRC is rare in practice and
-//                    MAME's behaviour is to load anyway, log a warning).
+//                  + 4-byte CRC32 of the rest of the file (LE; 0 = "not
+//                    computed"). It IS validated: a mismatch mounts the
+//                    image write-protected with `integrityWarning()` set.
 //   chunks: 4-byte chunk_id + 4-byte LE length + payload, repeated.
 //           Mandatory: INFO, TMAP, TRKS. Optional: META, WRIT, FLUX.
 //
@@ -961,12 +978,19 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         lastError = "WOZ header sentinel bytes wrong";
         loaded = false; return false;
     }
-    // Bytes 8..11 = CRC32 of bytes [12..EOF). Verbatim port of MAME
-    // `as_dsk.cpp:10-23` `crc32r` (reversed-polynomial 0xedb88320,
-    // bit-reflected output). The spec allows CRC=0 as a sentinel
-    // meaning "not computed by the imager"; MAME's `as_dsk.cpp:275-277`
-    // rejects on mismatch unless the stored CRC is zero — we match
-    // that policy.
+    // Bytes 8..11 = CRC32 of bytes [12..EOF).
+    // [B] WOZ 2.1 reference, "Header" (applesaucefdc.com/woz/reference2/) —
+    //     "CRC32 of all remaining data in the file … A crc of 0x00000000
+    //     indicates that no CRC has been calculated for the file."
+    // [D] MAME as_dsk.cpp:275-277 @ mame0287 — rejects the image on a
+    //     mismatch. POM2 did the same until 2026-11-05, and that was the
+    //     wrong default for a preservation format: one flipped byte in a
+    //     META chunk made every track of the disk unreachable. A mismatch
+    //     now MOUNTS, write-protected, with the reason on record — the
+    //     readable tracks stay readable and nothing is written over the
+    //     damage (a save would stamp a fresh CRC on it).
+    // [D] Casso WozLoader.cpp:581-596 @ 2d899adf — read-only on mismatch.
+    std::string integrity;   // why this image is held read-only; empty = sound
     {
         const uint32_t expected =
             static_cast<uint32_t>(buf[ 8])        |
@@ -974,23 +998,13 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             (static_cast<uint32_t>(buf[10]) << 16) |
             (static_cast<uint32_t>(buf[11]) << 24);
         if (expected != 0) {
-            uint32_t crc = 0xFFFFFFFFu;
-            for (size_t i = 12; i < wozSize; ++i) {
-                crc ^= buf[i];
-                for (int b = 0; b < 8; ++b) {
-                    crc = (crc & 1u)
-                            ? (crc >> 1) ^ 0xEDB88320u
-                            : (crc >> 1);
-                }
-            }
-            crc = ~crc;
+            const uint32_t crc = wozCrc32(buf.data() + 12, wozSize - 12);
             if (crc != expected) {
                 char msg[96];
                 std::snprintf(msg, sizeof(msg),
                     "WOZ CRC32 mismatch (header=$%08X, computed=$%08X)",
                     expected, crc);
-                lastError = msg;
-                loaded = false; return false;
+                integrity = msg;
             }
         }
     }
@@ -1056,6 +1070,16 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
                 if (obt >= 8 && obt <= 64) {
                     optimalBitTiming = obt;
                 }
+            }
+            // [B] WOZ 2.1 reference, INFO +40 "Compatible Hardware" and +42
+            //     "Required RAM" (both uint16 LE, INFO version 2). Kept as
+            //     the image states them; what to say about them is
+            //     WozCompat.h's.
+            if (infoVersion >= 2 && len >= 44) {
+                wozCompatibleHardware_ = static_cast<uint16_t>(
+                    buf[dataOff + 40] | (buf[dataOff + 41] << 8));
+                wozRequiredRamK_ = static_cast<uint16_t>(
+                    buf[dataOff + 42] | (buf[dataOff + 43] << 8));
             }
             // INFO+38 (v2) boot_sector_format: 2 = 13-sector only. This
             // is what routes a DOS 3.2 .woz to the 13-sector boot PROM —
@@ -1180,13 +1204,14 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     //     revolution, a "1" turned into a "0" at the seam (audit
     //     parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1).
     //
-    // POM2 storage: LSS-cycle timestamps in fluxStream[qt] (1 LSS
-    // cycle = 4 ticks = 500 ns). Synthesise bitStream[qt] sized to
-    // `(total_ticks + 31) / 32` cells with a 1 at every cell that
-    // contains at least one flux event, so trackBitLength /
-    // trackPeriod / bitAt continue to return sensible values.
-    // Exact 125 ns positions are kept for writes; the read path sees
-    // their 500 ns LSS-cycle projection in fluxStream.
+    // POM2 storage: the exact 125 ns positions in wozQtFluxTicks[qt]
+    // — the surface, kept for writes and for the save — and their
+    // projection onto LSS cycles in fluxStream[qt], which is what the
+    // read path sees (`projectFluxTrack`; an LSS cycle is 3.911 ticks
+    // on an NTSC machine, not 4 — DiskImage.h, fluxBusHz_). bitStream[qt]
+    // is synthesised with a 1 at every cell that holds a flux event, so
+    // trackBitLength / trackPeriod / bitAt keep returning sensible
+    // values. The projection is made on first use, not here.
     auto loadFluxTrack = [&](int qt, uint8_t fidx) -> bool {
         const size_t hdrOff = trksOff + static_cast<size_t>(fidx) * 8;
         const size_t trksEnd = trksOff + trksLen;
@@ -1207,12 +1232,14 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             totalTicks += buf[dataOff + i];
         if (totalTicks == 0) return false;
 
-        // 1 LSS cycle = 4 ticks. Synthetic cells follow the image's
-        // nominal cell width (`lssCyclesPerCell()`, honouring INFO+39
-        // optimal_bit_timing) so the bit-cell view stays aligned with
-        // bit-cell TRKS tracks of the same image.
+        // Synthetic cells follow the image's nominal cell width
+        // (`lssCyclesPerCell()`, honouring INFO+39 optimal_bit_timing)
+        // so the bit-cell view stays aligned with bit-cell TRKS tracks
+        // of the same image.
         const int      cyc       = lssCyclesPerCell();
-        const uint64_t periodLss = (totalTicks + 3) / 4;
+        if (totalTicks > static_cast<uint64_t>(INT32_MAX)) return false;
+        const uint64_t periodLss = static_cast<uint64_t>(
+            fluxPeriodToLss(static_cast<int64_t>(totalTicks)));
         const size_t   cellCount =
             static_cast<size_t>((periodLss + cyc - 1) / cyc);
         if (cellCount == 0 || cellCount > kMaxTrackBits) return false;
@@ -1221,39 +1248,33 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         if (allocation > kMaxExpandedBytes - expandedBytes) return false;
         expandedBytes += allocation;
 
-        auto& bits = bitStream[qt];
-        auto& flux = fluxStream[qt];
         auto& ticks = wozQtFluxTicks[qt];
-        bits.assign(cellCount, 0);
-        flux.clear();
-        flux.reserve(trackSize);          // upper bound
         ticks.clear();
-        ticks.reserve(trackSize);
+        ticks.reserve(trackSize);         // upper bound
 
         uint64_t cpos = 0;                // cumulative ticks
         for (uint32_t i = 0; i < trackSize; ++i) {
             const uint8_t step = buf[dataOff + i];
             cpos += step;
-            if (step != 0xFF && i != trackSize - 1) {
-                const int64_t lssCycle = static_cast<int64_t>(cpos / 4);
+            if (step != 0xFF && i != trackSize - 1)
                 ticks.push_back(static_cast<int>(cpos));
-                flux.push_back(static_cast<int>(lssCycle));
-                const size_t cell = static_cast<size_t>(lssCycle / cyc);
-                if (cell < bits.size()) bits[cell] = 1;
-            }
         }
         // The closing transition (last byte, non-255) sits at position 0.
         if (buf[dataOff + trackSize - 1] != 0xFF &&
-            (ticks.empty() || ticks.front() != 0)) {
+            (ticks.empty() || ticks.front() != 0))
             ticks.insert(ticks.begin(), 0);
-            flux.insert(flux.begin(), 0);
-            bits[0] = 1;
-        }
-        bitStreamValid[qt]  = true;
-        fluxStreamValid[qt] = true;        // populated directly, skip expand
+        // The LSS-cycle view is projected on first use (expandTrackFlux /
+        // expandTrackBits → projectFluxTrack): the drive that takes this
+        // image may run from another clock than the one assumed here
+        // (setFluxClockHz), and projecting 160 quarter tracks twice is
+        // work the mount would do under the machine's lock.
+        bitStream[qt].clear();
+        fluxStream[qt].clear();
+        bitStreamValid[qt]  = false;
+        fluxStreamValid[qt] = false;
         // Record the TRUE revolution period — the tick-delta sum, the
         // same total MAME accumulates for a flux track (`as_dsk.cpp:
-        // 61-81`). `trackPeriod` must serve this rather than
+        // 61-81` @ mame0287). `trackPeriod` must serve this rather than
         // `cellCount × cyc`: the ceil-rounded synthetic cell count
         // multiplied back out overshoots by up to `cyc-1` LSS cycles,
         // and for optimal_bit_timing ≠ 32 the old 8-cycle hard-coding
@@ -1277,6 +1298,10 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     int populatedSlots = 0;
     int populatedWholeTracks = 0;
     int populatedFluxSlots = 0;
+    // Quarter-tracks the index names but whose record cannot be read. They
+    // used to be skipped in silence and the image mounted WRITABLE, so the
+    // first save rewrote a file whose table was already inconsistent.
+    std::vector<int> damagedQts;
     for (int qt = 0; qt < kQuarterTracks; ++qt) {
         // FLUX path: highest precedence for v2.1+ images.
         if (haveFlux && fluxFidx[qt] != 0xFF) {
@@ -1287,6 +1312,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
                 continue;
             }
             // fall through to bit-cell stream if flux parse fails
+            damagedQts.push_back(qt);
         }
         const uint8_t trkIdx = tmap[qt];
         if (trkIdx == 0xFF) continue;     // quarter-track absent
@@ -1298,7 +1324,10 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             // WOZ1 fixed-slot layout. Each TRK is exactly 6656 bytes.
             const size_t slotOff = trksOff + static_cast<size_t>(trkIdx) * 6656;
             const size_t trksEnd = trksOff + trksLen;
-            if (slotOff > trksEnd || trksEnd - slotOff < 6656) continue;
+            if (slotOff > trksEnd || trksEnd - slotOff < 6656) {
+                damagedQts.push_back(qt);
+                continue;
+            }
             bitDataOff   = slotOff;
             bitDataBytes = 6646;
             bitCount     = readU16LE(slotOff + 6648);
@@ -1307,11 +1336,20 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             // file-absolute block offsets.
             const size_t hdrOff = trksOff + static_cast<size_t>(trkIdx) * 8;
             const size_t trksEnd = trksOff + trksLen;
-            if (hdrOff > trksEnd || trksEnd - hdrOff < 8) continue;
+            if (hdrOff > trksEnd || trksEnd - hdrOff < 8) {
+                damagedQts.push_back(qt);
+                continue;
+            }
             const uint32_t startBlock = readU16LE(hdrOff + 0);
             const uint32_t blockCount = readU16LE(hdrOff + 2);
             const uint32_t bc         = readU32LE(hdrOff + 4);
-            if (startBlock == 0 || blockCount == 0 || bc == 0) continue;
+            // An all-zero TRK is an EMPTY record, not a broken one: the
+            // quarter-track is simply absent. A half-filled one is damage.
+            if (startBlock == 0 && blockCount == 0 && bc == 0) continue;
+            if (startBlock == 0 || blockCount == 0 || bc == 0) {
+                damagedQts.push_back(qt);
+                continue;
+            }
             bitDataOff   = static_cast<size_t>(startBlock) * 512;
             bitDataBytes = static_cast<size_t>(blockCount) * 512;
             bitCount     = bc;
@@ -1322,11 +1360,13 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         // (bitStream stores one BYTE per bit). expandedBytes caps the
         // aggregate across bit-cell and FLUX slots — duplicate map entries
         // could otherwise multiply even a legal track.
-        if (bitCount == 0
-            || bitCount > kMaxTrackBits
+        if (bitCount == 0) continue;      // WOZ1 slot never written: absent
+        if (bitCount > kMaxTrackBits
             || bitCount > bitDataBytes * 8
             || bitDataOff > wozSize || bitDataBytes > wozSize - bitDataOff) {
-            // Defensive: skip malformed track rather than aborting load.
+            // Skip the malformed track rather than aborting the load — the
+            // rest of the disk is still worth reading — but remember it.
+            damagedQts.push_back(qt);
             continue;
         }
         if (bitCount > kMaxExpandedBytes - expandedBytes) {
@@ -1366,6 +1406,9 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // loadFile, but bit-aligned since WOZ tracks need not start on a
     // nibble boundary. DiskIICard keys serving13_/boot-PROM choice on
     // is13Sector(), which loadWoz previously never set.
+    // A FLUX track 0 has its cells projected on first use; this is it.
+    if (!boot13 && wozQtFluxPeriodTicks[0] != 0 && !bitStreamValid[0])
+        projectFluxTrack(0);
     if (boot13) {
         sectorsPerTrack_ = kSectorsPerTrack13;
     } else if (bitStreamValid[0]) {
@@ -1404,6 +1447,29 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // splice modified bitStream[qt] back into these bytes and rewrite
     // the file in one shot. `buf` is no longer needed after this.
     wozRaw = std::move(buf);
+    // A damaged image is read, never written (see integrityWarning()).
+    if (!damagedQts.empty()) {
+        std::sort(damagedQts.begin(), damagedQts.end());
+        damagedQts.erase(std::unique(damagedQts.begin(), damagedQts.end()),
+                         damagedQts.end());
+        std::string list;
+        for (std::size_t i = 0; i < damagedQts.size() && i < 8; ++i) {
+            char one[16];
+            std::snprintf(one, sizeof(one), "%s%d.%02d", i ? ", " : "",
+                          damagedQts[i] / 4, (damagedQts[i] % 4) * 25);
+            list += one;
+        }
+        if (damagedQts.size() > 8) list += ", ...";
+        if (!integrity.empty()) integrity += "; ";
+        integrity += std::to_string(damagedQts.size()) +
+                     " track record(s) unreadable (track " + list + ")";
+    }
+    integrityWarning_ = integrity;
+    if (!integrityWarning_.empty()) {
+        fileWriteProtected = true;
+        pom2::log().warn("Disk II", imgPath + " is damaged and was mounted "
+                         "write-protected: " + integrityWarning_);
+    }
     // FLUX tracks retain their original tick positions for lossless splices.
     // fileWriteProtected is folded into isWriteProtected(); WOZ now
     // participates in the same writeBackEnabled / fileWriteProtected
@@ -1437,6 +1503,10 @@ void DiskImage::eject()
     twoImgTrailerRaw.clear();
     fileWriteProtected = false;
     hostReadOnly_ = detachedSession_ = false;
+    integrityWarning_.clear();
+    wozCompatibleHardware_ = 0;
+    wozRequiredRamK_ = 0;
+    fileStamp_ = {};
     optimalBitTiming = 32;   // WOZ2 INFO value must not leak into the next image
     path.clear();
     // Half-framed nibble / destination slot from the ejected medium must not
@@ -1654,7 +1724,18 @@ void DiskImage::computeCellWidths(int track, uint8_t* widths) const
     std::fill_n(widths, kNibblesPerTrack, uint8_t{8});
     const auto& buf = tracks[track];
     if (nibFormat) { computeNibSyncWidths(buf.data(), widths); return; }
+    computeSyncRunWidths(buf.data(), widths);
+}
 
+const int* DiskImage::logicalForPhysical(SectorOrder order)
+{
+    return order == SectorOrder::ProDOS ? kProDosLogicalForPhysical
+                                        : kDos33LogicalForPhysical;
+}
+
+void DiskImage::computeSyncRunWidths(const uint8_t* buf, uint8_t* widths)
+{
+    std::fill_n(widths, kNibblesPerTrack, uint8_t{8});
     // Circular maximal-run scan: walk once from just past a non-$FF
     // anchor; every maximal $FF run is then seen contiguously (including
     // the one wrapping the index seam), and members of runs ≥ kSyncMinRun
@@ -1689,6 +1770,11 @@ void DiskImage::expandTrackBits(int qt) const
 {
     if (qt < 0 || qt >= kQuarterTracks) return;
     const int slot = qtSlot(qt);
+    // A FLUX quarter track's cells are a projection of its ticks.
+    if (wozFormat && wozQtFluxPeriodTicks[slot] != 0) {
+        projectFluxTrack(slot);
+        return;
+    }
     // For WOZ images, slot == qt and the bit data was already populated
     // by `loadWoz`; `bitStreamValid[slot]` is true so callers short-
     // circuit before reaching here. Defensive bail in case of a refactor.
@@ -1780,7 +1866,13 @@ uint8_t DiskImage::bitAt(int qt, int bitIdx) const
 // 4` (since optimal_bit_timing is in 125 ns units and 1 LSS cycle =
 // 500 ns). Non-WOZ formats and WOZ1 keep the 32→8 default.
 //
-// ── The 500 ns is nominal, and the surface runs 2.2 % fast. KNOWN. ──────
+// ── The 500 ns is nominal, and a BIT track runs 2.2 % fast. KNOWN. ──────
+//
+// Bit-cell tracks only: a FLUX track records time, and since 2026-11-06 its
+// ticks are converted with the true LSS cycle (DiskImage.h, fluxBusHz_). A
+// bit track records cells and a NOMINAL width; 8 LSS cycles per 4 µs cell
+// is a convention, and it is the cell a Disk II writes ([C] DOS 3.3 RWTS:
+// a nibble every 32 cycles).
 //
 // MAME clocks the LSS at `A2BUS_1M_CLOCK*2` = 2 043 600 Hz
 // (`a2diskiing.cpp` device_add_mconfig; `wozfdc.cpp:331` counts cycles at
@@ -1822,6 +1914,12 @@ void DiskImage::expandTrackFlux(int qt) const
 {
     if (qt < 0 || qt >= kQuarterTracks) return;
     const int slot = qtSlot(qt);
+    // A FLUX quarter track is not derived from cells: its events are the
+    // surface's own, projected from 125 ns ticks.
+    if (wozFormat && wozQtFluxPeriodTicks[slot] != 0) {
+        projectFluxTrack(slot);
+        return;
+    }
     auto& flux = fluxStream[slot];
     flux.clear();
     if (!bitStreamValid[slot]) expandTrackBits(qt);
@@ -1879,17 +1977,33 @@ const std::vector<int>& DiskImage::fluxEvents(int qt) const
 // When `revolutionStart < 0` we fall back to the pre-anchor behaviour
 // (`fromLssCycle mod track_period`) — used during boot before any
 // motor-on (`mon_w(false)`) transition anchors the drive.
+//
+// NOT equivalent on its own: MAME's `m_rev_time` is one constant, POM2's
+// `track_period` is per track. The caller makes up the difference by
+// re-basing the anchor on every head step (`DiskIICard::carryAngleAcrossStep`).
 namespace {
 
-// ── Weak-bit noise (MAME `floppy.cpp:1176-1245`) ─────────────────────────
+// ── Weak-bit noise ───────────────────────────────────────────────────────
 //
-// A read amplifier with no flux to lock onto does not sit quiet: its
-// comparator reference decays and it starts following its own noise. MAME
-// models the threshold as `m_amplifier_freakout_time` (`floppy.cpp:293`,
-// 16 µs), and any gap between two consecutive transitions at or beyond it
-// makes the zone "weak": `cache_weakness_setup` sets `m_cache_weak`, and
-// `get_next_transition` then serves ONE hash-drawn blip per zone per
-// revolution instead of silence —
+// A read channel with no flux to follow emits spurious pulses. By grade
+// (DEV § Storage, "Weak bits are a 30 % draw", has the long form):
+// [B] WOZ 2.1 reference, "Freaking Out Like a MC3470": while a 4-bit window
+//     of the track's bits is zero, output a random bit, "roughly 30%" of
+//     them 1. The ONE primary statement of a density — POM2's since
+//     2026-11-06 (`kWeakOnes`); it was MAME's 50 %.
+// [B] MC3470 data sheet: fixed gain, no AGC — the "amplifier hunts" story
+//     has no support in the chip.
+// [D] MAME `floppy.cpp` @ mame0287: freakout time 16 µs (:275),
+//     `cache_weakness_setup` (:1110-1125), the walk below (:1132-1152) at
+//     50 %. AppleWin @ 4a43bcdb and Casso @ 2d899adf use 30 %.
+// [A] None found; no known protection counts the ones.
+// [F] Not taken: the reference's PLACEMENT (first fake bit 12 µs after the
+//     last transition; this walk starts at 18 µs). Settled by: a flux
+//     capture of a real drive over a weak-bit track.
+//
+// MAME's walk: any gap between two consecutive transitions at or beyond the
+// threshold makes the zone "weak", and `get_next_transition` then serves
+// hash-drawn blips instead of silence —
 //
 //     m_cache_weak_start = m_cache_start_time + 16 µs;
 //     interval = (from_when - weak_start) / 4 µs;
@@ -1900,8 +2014,9 @@ namespace {
 //         ++interval;
 //     }
 //
-// — a ~50 %-density pulse train at 4 µs spacing for the WHOLE length of the
-// zone, which is what makes a weak-bit protection read differently on two
+// — a pulse train at 4 µs spacing for the WHOLE length of the zone (MAME
+// tests bit 0 of the hash; POM2 tests `kWeakOnes`), which is what makes a
+// weak-bit protection read differently on two
 // passes over the same surface. Without it the "unreliable" bytes those
 // protections check came back identical every revolution, so the check
 // either always passed or always failed instead of being a coin toss.
@@ -1920,11 +2035,14 @@ constexpr int64_t kWeakGapLss  = 32;   // 16 µs — m_amplifier_freakout_time
 constexpr int64_t kWeakCellLss = 8;    // 4 µs
 constexpr int64_t kWeakHalfLss = 4;    // 2 µs
 
-/// MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
-/// + interval_index)`, of which only bit 0 is used ("50 % chance of a
-/// transition in this 4 µs interval"). Deterministic in (revolution,
-/// zone, interval), so a rewind re-reads the same surface the same way
-/// while two consecutive revolutions differ — which is the whole point.
+/// The share of 4 µs intervals of a weak zone that carry a pulse: 30 % of
+/// 2^32, against the hash's upper half. See the block above for its source.
+constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
+
+/// After MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
+/// + interval_index)`. Deterministic in (revolution, zone, interval), so a
+/// rewind re-reads the same surface the same way while two consecutive
+/// revolutions differ — which is the whole point. `weakPulse` is the draw.
 inline uint64_t weakHash(int64_t revolution, int64_t zone, int64_t interval)
 {
     uint64_t h = static_cast<uint64_t>(revolution) * 0x9E3779B97F4A7C15ull;
@@ -1935,6 +2053,11 @@ inline uint64_t weakHash(int64_t revolution, int64_t zone, int64_t interval)
     h *= 0xBF58476D1CE4E5B9ull;
     h ^= h >> 32;
     return h;
+}
+
+inline bool weakPulse(int64_t revolution, int64_t zone, int64_t interval)
+{
+    return (weakHash(revolution, zone, interval) >> 32) < kWeakOnes;
 }
 
 }  // namespace
@@ -2021,8 +2144,8 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
 
     // Weak zone — see the comment block above this function. MAME does NOT
     // serve one blip and then go quiet: `get_next_transition` walks the zone
-    // in 4 µs intervals from `from_when` and returns the first one whose
-    // hash bit is set, i.e. a ~50 %-density pulse train for as long as the
+    // in 4 µs intervals from `from_when` and returns the first one the hash
+    // draws, i.e. a pulse train (30 % of the intervals) for as long as the
     // zone lasts. Serving a single blip per revolution (and none at all
     // whenever the caller asked after it had passed — measured: 2 of every 4
     // revolutions on a one-event track) left the sequencer shifting zeros,
@@ -2050,7 +2173,7 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
         int64_t weakTime = weakStart + interval * kWeakCellLss + kWeakHalfLss;
         while (weakTime < endTime) {
             if (weakTime > fromLssCycle
-                && (weakHash(revIndex, prevPos, interval) & 1ull))
+                && weakPulse(revIndex, prevPos, interval))
                 return weakTime;
             weakTime += kWeakCellLss;
             ++interval;
@@ -2535,9 +2658,11 @@ void DiskImage::writeDataField13(uint8_t*& dst, const uint8_t* src)
 // ── Decoder ─────────────────────────────────────────────────────────────
 
 bool DiskImage::decodeNibbles(const TrackBuffer& buf, int expectedTrack,
-                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes])
+                              uint8_t outSectors[kSectorsPerTrack][kSectorBytes],
+                              uint32_t* decodedMask)
 {
     bool decodedAny = false;
+    if (decodedMask) *decodedMask = 0;
 
     // Wrap-around scan: walk 2× the track length so a sector that
     // straddles the buffer end can be matched. Index modulo'd into buf.
@@ -2627,6 +2752,7 @@ bool DiskImage::decodeNibbles(const TrackBuffer& buf, int expectedTrack,
                     outSectors[curSector][b] = static_cast<uint8_t>((high6[b] << 2) | lo);
                 }
                 decodedAny = true;
+                if (decodedMask) *decodedMask |= 1u << curSector;
             }
             // Skip past the data field (3 + 343 + 3 epilogue = 349).
             i += 348;
@@ -2638,9 +2764,11 @@ bool DiskImage::decodeNibbles(const TrackBuffer& buf, int expectedTrack,
 }
 
 bool DiskImage::decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
-                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes])
+                                uint8_t outSectors[kSectorsPerTrack13][kSectorBytes],
+                                uint32_t* decodedMask)
 {
     bool decodedAny = false;
+    if (decodedMask) *decodedMask = 0;
     auto at = [&](int i) -> uint8_t {
         return buf[((i % kNibblesPerTrack) + kNibblesPerTrack) % kNibblesPerTrack];
     };
@@ -2708,6 +2836,7 @@ bool DiskImage::decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
                 }
                 out[255] = static_cast<uint8_t>((nv[409] << 3) | (nv[0] & 7));
                 decodedAny = true;
+                if (decodedMask) *decodedMask |= 1u << curSector;
             }
             i += 3 + 411 + 3 - 1;          // skip prologue + data + epilogue
             curSector = -1;
@@ -2717,99 +2846,10 @@ bool DiskImage::decodeNibbles13(const TrackBuffer& buf, int expectedTrack,
     return decodedAny;
 }
 
-namespace {
-// Atomic-ish file replace for the write-back paths. Every saveDirty
-// branch used to open the USER'S SOURCE FILE with std::ios::trunc and
-// write in place: an ENOSPC / removable-media / I/O failure mid-write
-// left the original truncated — and since the dirty flags survive a
-// failure, the retry then pre-filled its buffer from the now-truncated
-// file and wrote zeros over the remaining tracks. Write a sibling temp
-// file instead (same directory → same filesystem → POSIX rename is
-// atomic) and only replace the original once the write fully succeeded.
-template <typename Emit>
-bool writeFileAtomic(const std::string& path, std::string& lastError,
-                     Emit&& emit)
-{
-    // Unique per process AND per call. A fixed `<image>.pom2tmp` is the name
-    // EVERY POM2 instance derives, so two of them saving the same image (a
-    // second window, a headless run) opened one temp file with trunc,
-    // interleaved their writes, and whichever renamed last published a disk
-    // made of both. See pom2::tempSiblingPath.
-    const std::string tmp = pom2::tempSiblingPath(path).string();
-    // The temp name is derived from a target the caller validated, but gets
-    // none of that scrutiny itself, and `ofstream(trunc)` follows symlinks.
-    // Anything already sitting at <image>.pom2tmp is our own crash debris or
-    // somebody else's redirection — see `prepareTempPath`, and
-    // `Disk35Image::saveDirty`, which has always done this.
-    std::error_code prepEc;
-    if (!pom2::prepareTempPath(tmp, prepEc)) {
-        lastError = "Temp path unusable " + tmp + ": " + prepEc.message();
-        return false;
-    }
-    {
-        std::ofstream wf(tmp, std::ios::binary | std::ios::out | std::ios::trunc);
-        if (!wf) { lastError = "Cannot open " + tmp + " for write"; return false; }
-        emit(wf);
-        wf.flush();
-        wf.close();
-        if (!wf) {
-            lastError = "Short write on " + tmp;
-            std::error_code ec;
-            std::filesystem::remove(tmp, ec);
-            return false;
-        }
-    }
-    // The rename replaces the inode, so without the helper the image would
-    // inherit the temp file's umask-derived mode. It reads the image's mode
-    // AT the rename, under the notch's lock (MediaNotch.h).
-    std::error_code ec;
-    if (!pom2::replaceMediaFileAtomic(tmp, path, ec)) {
-        lastError = "Cannot replace " + path + ": " + ec.message();
-        std::error_code ec2;
-        std::filesystem::remove(tmp, ec2);
-        return false;
-    }
-    // Browser build: mark IDBFS dirty for images under /persistent; the
-    // frame loop flushes that mount to IndexedDB. Uploaded /uploads images
-    // are MEMFS only: retain them through a session or Automatic resume.
-    // No-op natively — the rename + fsync above is already durable.
-    pom2::markPersistentStateDirty();
-    return true;
-}
-}  // namespace
+// The file work of a write-back — `commitWriteBack`, the atomic replace, the
+// sector decode and its refusal, the WOZ fallback — is DiskImage_WriteBack.cpp.
 
 namespace {
-
-/// A dirty track whose nibble stream no longer decodes cannot be written back
-/// to a SECTOR format at all — .dsk/.do/.po hold decoded sectors, so there is
-/// nowhere to put a stream the decoder cannot parse.
-///
-/// What used to happen was worse than failing: the track was skipped, the
-/// remaining tracks were written, `dirty` was cleared and the function
-/// returned true, logging "Saved 0 modified track(s)". `hasUnsavedChanges()`
-/// went false and `getLastError()` stayed empty, so the eject path saw a clean
-/// success — and the guest's sector silently reverted to its previous
-/// contents. A guest whose write splice damaged the very data field it was
-/// writing lost it with a success message rather than a retryable error.
-///
-/// Failing keeps the dirty flags set, so nothing is thrown away and the user
-/// can retry. Turning write-back off is the escape hatch if the track is
-/// permanently unparseable: saveDirty is then a no-op that succeeds, and the
-/// disk ejects.
-bool reportUndecodable(const std::vector<int>& tracks, std::string& lastError)
-{
-    std::string list;
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        if (i) list += ", ";
-        list += std::to_string(tracks[i]);
-    }
-    lastError = "track " + list + " was modified but its nibble stream no "
-                "longer decodes into sectors, so it cannot be written back to "
-                "this format. Nothing was saved and the changes are kept in "
-                "memory; retry, or turn write-back off to eject without saving.";
-    pom2::log().warn("Disk II", "Save refused — " + lastError);
-    return false;
-}
 
 /// The WOZ counterpart of `reportUndecodable`: a dirty quarter-track whose
 /// bit stream has no slot to go back into (no TRKS entry captured at load, an
@@ -2869,9 +2909,6 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
 
     // .woz: splice each dirty quarter-track's bit cells back into wozRaw
     // at the offset captured at load time; the whole file is the payload.
-    // Per Applesauce WOZ 2.1 spec the header CRC32 is allowed to be zero
-    // ("not computed by the imager"); we use that sentinel so a reader
-    // that mismatches our recomputed CRC doesn't reject the file.
     if (wozFormat) {
         if (wozRaw.size() < 12) {
             lastError = "WOZ raw buffer missing (load did not populate)";
@@ -2923,15 +2960,15 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
             }
             ++dirtyQts;
         }
-        // Zero the CRC32 sentinel — readers will skip CRC validation
-        // (matches MAME `as_dsk.cpp:275-277` and the loadWoz path here
-        // which treats CRC==0 as "not computed").
+        // The header CRC no longer describes these bytes. It is zeroed here
+        // ("not computed") and recomputed at commit time, off the lock, over
+        // the payload that reaches the file (`wozCrc`).
         wozRaw[ 8] = 0; wozRaw[ 9] = 0; wozRaw[10] = 0; wozRaw[11] = 0;
         out.kind    = PendingWriteBack::Kind::Whole;
         out.payload = wozRaw;
+        out.wozCrc  = true;
         out.summary = "Saved " + std::to_string(dirtyQts) +
-                      " modified quarter-track(s) to " + path +
-                      " (.woz, CRC zeroed)";
+                      " modified quarter-track(s) to " + path + " (.woz)";
     } else if (nibFormat) {
         // .nib: the raw nibble buffers verbatim. CNib2 source images use 6384
         // bytes/track instead of 6656; the load path padded each track up to
@@ -2985,6 +3022,7 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
             out.trackNumbers.push_back(t);
             out.trackNibbles.push_back(tracks[t]);
         }
+        out.surface.assign(tracks.begin(), tracks.end());
         out.summary = " modified track(s) to " + path +
                       (is13Sector() ? std::string(" (13-sector)")
                        : twoImgFormat ? std::string(" (2IMG envelope preserved)")
@@ -3002,6 +3040,7 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
     if (lineage_ == 0) lineage_ = pom2::nextMediaCaptureSeq();
     out.lineage = lineage_;
     out.path  = path;
+    out.mounted = fileStamp_;
     // The point of no return for the rewind ring. Nibble writes do not bump
     // the media epoch (the ring captures them), but this payload is bound for
     // the FILE, and a rewind across it left a file of two timelines — a ProDOS
@@ -3009,93 +3048,6 @@ bool DiskImage::takeWriteBack(PendingWriteBack& out)
     // leaves no window for a scrub to reach back past it.
     pom2::noteMediaWrite();
     return true;
-}
-
-bool DiskImage::commitWriteBack(PendingWriteBack&& pending, std::string& error)
-{
-    error.clear();
-    if (!pending.valid) return true;
-    // In capture order: the background autosave and the eject / swap / flush
-    // paths commit from different threads (MediaAutosave.h). The same lock
-    // also serialises the sector formats' read-modify-write of the file.
-    return pom2::commitMediaInOrder(pending.path, pending.lineage, pending.seq, error,
-        [&pending](std::string& err) {
-        const auto emit = [&pending](std::ofstream& wf, const uint8_t* data,
-                                     std::size_t n) {
-            if (!pending.header.empty())
-                wf.write(reinterpret_cast<const char*>(pending.header.data()),
-                         static_cast<std::streamsize>(pending.header.size()));
-            wf.write(reinterpret_cast<const char*>(data),
-                     static_cast<std::streamsize>(n));
-            if (!pending.trailer.empty())
-                wf.write(reinterpret_cast<const char*>(pending.trailer.data()),
-                         static_cast<std::streamsize>(pending.trailer.size()));
-        };
-
-        if (pending.kind == PendingWriteBack::Kind::Whole) {
-            if (!writeFileAtomic(pending.path, err, [&](std::ofstream& wf) {
-                    emit(wf, pending.payload.data(), pending.payload.size());
-                }))
-                return false;
-            pom2::log().info("Disk II", pending.summary);
-            return true;
-        }
-
-        // Sector formats: read the existing file, decode the dirty tracks on
-        // top of it, write it back. The pre-fill is what keeps a sector that
-        // fails to decode (or that the guest never rewrote) at its old bytes.
-        // For an enveloped source the payload starts past the header.
-        const bool is13 = pending.kind == PendingWriteBack::Kind::Sectors13;
-        const std::size_t imageBytes = is13 ? kBytesPerImage13 : kBytesPerImage;
-        const int perTrack = is13 ? kSectorsPerTrack13 : kSectorsPerTrack;
-        std::vector<uint8_t> bytes(imageBytes, 0);
-        {
-            std::ifstream rf(pending.path, std::ios::binary);
-            if (!rf ||
-                !rf.seekg(static_cast<std::streamoff>(pending.header.size())) ||
-                !rf.read(reinterpret_cast<char*>(bytes.data()),
-                         static_cast<std::streamsize>(imageBytes))) {
-                err = "Cannot preserve unchanged tracks: source image "
-                      "is missing or truncated: " + pending.path;
-                return false;
-            }
-        }
-        // 16-sector: the file holds LOGICAL sectors, the track PHYSICAL ones,
-        // through the DOS or ProDOS skew. 13-sector: file offset =
-        // (track*13 + S)*256 where S is the address-field sector number
-        // (decodeNibbles13 indexes by S), so no skew.
-        const int* skew = (pending.order == SectorOrder::ProDOS)
-                          ? kProDosLogicalForPhysical
-                          : kDos33LogicalForPhysical;
-        const auto fileSector = [&](int t, int p) -> uint8_t* {
-            const int s = is13 ? p : skew[p];
-            return bytes.data() +
-                   (static_cast<std::size_t>(t) * perTrack + s) * kSectorBytes;
-        };
-        int decodedTracks = 0;
-        std::vector<int> undecodable;
-        for (std::size_t i = 0; i < pending.trackNumbers.size(); ++i) {
-            const int t = pending.trackNumbers[i];
-            uint8_t sectors[kSectorsPerTrack][kSectorBytes];
-            for (int p = 0; p < perTrack; ++p)
-                std::memcpy(sectors[p], fileSector(t, p), kSectorBytes);
-            const bool ok = is13
-                ? decodeNibbles13(pending.trackNibbles[i], t, sectors)
-                : decodeNibbles(pending.trackNibbles[i], t, sectors);
-            if (!ok) { undecodable.push_back(t); continue; }
-            for (int p = 0; p < perTrack; ++p)
-                std::memcpy(fileSector(t, p), sectors[p], kSectorBytes);
-            ++decodedTracks;
-        }
-        if (!undecodable.empty()) return reportUndecodable(undecodable, err);
-        if (!writeFileAtomic(pending.path, err, [&](std::ofstream& wf) {
-                emit(wf, bytes.data(), bytes.size());
-            }))
-            return false;
-        pom2::log().info("Disk II", "Saved " + std::to_string(decodedTracks) +
-                                    pending.summary);
-        return true;
-    });
 }
 
 std::shared_ptr<pom2::MediaCommitOperation>
@@ -3117,7 +3069,7 @@ DiskImage::pollAutosave(pom2::MediaCommitExecutor& executor, bool force)
     if (!capture->valid) return autosave_.inFlight();
     return autosave_.start(executor, [capture] {
         pom2::MediaCommitResult r;
-        r.ok = commitWriteBack(std::move(*capture), r.error);
+        r.ok = commitWriteBack(std::move(*capture), r.error, &r.divertedTo);
         return r;
     });
 }
@@ -3128,10 +3080,9 @@ pom2::MediumPersistence DiskImage::persistence() const
     p.loaded  = loaded;
     p.pending = loaded && anyDirty;
     p.path    = path;
-    p.state   = autosave_.state(loaded, anyDirty,
-                                writeBackEnabled && !fileWriteProtected && !detachedSession_);
+    autosave_.describe(p, loaded, anyDirty,
+                       writeBackEnabled && !fileWriteProtected && !detachedSession_);
     if (detachedSession_) p.state = "session";
-    p.error   = autosave_.error();
     return p;
 }
 
@@ -3290,7 +3241,7 @@ DiskSlotClass classifyDiskForSlot(const std::string& path)
     // .image (it even special-cases .dsk for write protection), so an 800K
     // .dsk used to be handed to the 5.25" loader and refused with a message
     // listing only 5.25" sizes.
-    if (ext == ".dsk" || ext == ".do" || ext == ".nib"
+    if (ext == ".dsk" || ext == ".do" || ext == ".nib" || ext == ".nb2"
         || ext == ".d13") {
         if (ext == ".dsk" && (sz == 819200 || sz == 409600 || sz == 1474560))
             return DiskSlotClass::Sony35;

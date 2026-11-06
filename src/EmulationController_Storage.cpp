@@ -161,6 +161,10 @@ bool EmulationController::syncFloppyMedia(std::string& error)
     for (auto& write : writes) {
         const auto result = write.op->wait();
         if (!result.ok) fail(write.path + ": " + result.error);
+        // The writes are on disk, but NOT in the file the caller is about to
+        // read: a sync that reported success here would be a lie.
+        else if (!result.divertedTo.empty())
+            fail(write.path + ": " + pom2::describeDiversion(result.divertedTo));
     }
     {
         auto state = lockState();   // publish completion (retire dirty flags)

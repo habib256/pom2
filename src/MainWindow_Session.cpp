@@ -360,25 +360,7 @@ void MainWindow::persistSession(bool flushMedia)
     printerCoordinator_->persistGrappler(*settings, *controller);
     settings->setBool  ("nsclock_enable",  controller->noSlotClock().isEnabled());
     settings->setInt   ("nsclock_slot",    controller->noSlotClock().slot());
-    if (ntscFx) {
-        const auto& p = ntscFx->getParams();
-        settings->setFloat("ntsc_brightness",  p.brightness);
-        settings->setFloat("ntsc_contrast",    p.contrast);
-        settings->setFloat("ntsc_saturation",  p.saturation);
-        settings->setFloat("ntsc_hue",         p.hue);
-        settings->setFloat("ntsc_sharpness",   p.sharpness);
-        settings->setFloat("ntsc_persistence", p.persistence);
-        settings->setFloat("ntsc_scanlines",   p.scanlines);
-        settings->setFloat("ntsc_barrel",      p.barrel);
-        settings->setFloat("ntsc_shadow_strength", p.shadowMaskStrength);
-        settings->setFloat("ntsc_luminance_gain", p.luminanceGain);
-        settings->setFloat("ntsc_center_lighting", p.centerLighting);
-        settings->setFloat("ntsc_phosphor_gamma", p.phosphorGamma);
-        settings->setFloat("ntsc_rgb_bandwidth_mhz", p.rgbBandwidthMHz);
-        settings->setInt  ("ntsc_shadow_mask", static_cast<int>(p.shadowMask));
-        settings->setBool ("ntsc_pal",         p.palMode);
-        settings->setBool ("ntsc_text_sharp",  p.textSharp);
-    }
+    saveCrtSettings();
     settings->setBool  ("crt_effects_enabled", crtEffectsEnabled);
     settings->setBool  ("monitor_artwork", monitorArtworkEnabled);
     if (voxel3d_) {

@@ -176,6 +176,20 @@ public:
     /// keeps reporting the device as opened; `nextLoadPeriodFrames()` is
     /// the remembered rung.
     bool reconfigurePeriod(uint32_t periodFrames);
+    /// Close and open the device again at the current period, keeping every
+    /// source — for a device that went away or changed under the session
+    /// (`AudioDeviceWatch.h` decides when). UI thread, like the call above.
+    /// False when nothing could be opened; `quiet` then keeps the failure out
+    /// of the log, for the periodic retries of a machine with no output.
+    /// Never in the browser.
+    bool reopen(bool quiet = false);
+    /// True for a device meant to reach the host's output, opened or not.
+    bool hostMode() const { return hostMode_; }
+    /// Signals from the backend since the last call (cleared by the read):
+    /// the output was rerouted to another device; the device stopped without
+    /// POM2 asking. Set on a backend thread, read by the UI thread.
+    bool takeRerouted() { return rerouted_.exchange(false, std::memory_order_relaxed); }
+    bool takeStopped()  { return stopped_.exchange(false, std::memory_order_relaxed); }
     static constexpr bool appliesAtNextLoad()
     {
 #ifdef __EMSCRIPTEN__
@@ -187,8 +201,14 @@ public:
     uint32_t nextLoadPeriodFrames() const { return nextLoadPeriodFrames_; }
 
 private:
-    bool initAudio(uint32_t periodFrames);
+    bool initAudio(uint32_t periodFrames, bool quiet = false);
     void shutdownAudio();
+    bool hostMode_ = false;
+    std::atomic<bool> rerouted_{false};
+    std::atomic<bool> stopped_{false};
+    /// True while POM2 itself is closing the device, so the backend's
+    /// "stopped" is not taken for a device that went away.
+    std::atomic<bool> closing_{false};
     static Platform detectPlatform();
 
     std::vector<AudioSource*> sources;
@@ -224,6 +244,10 @@ private:
                                   const void* pInput, uint32_t frameCount);
     static void miniaudioLogCallback(void* pUserData, uint32_t level,
                                      const char* pMessage);
+    /// `notification` is a `const ma_device_notification*`; untyped here
+    /// because miniaudio declares that struct anonymously, so it cannot be
+    /// forward-declared and this header does not include miniaudio.
+    static void notificationCallback(const void* notification);
 };
 
 #endif // POM2_AUDIO_DEVICE_H

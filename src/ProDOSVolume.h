@@ -173,9 +173,12 @@ bool isHostSafeProDOSName(const std::string& name);
 /// The line between "a file the guest really has" and "bytes no ProDOS ever
 /// wrote". `isHostSafeProDOSName` is strictly narrower — it additionally
 /// refuses what the HOST cannot take (a DOS device name, a leading dot) — and
-/// the write-back uses the gap between the two: a legal name the host refuses
-/// is lost user data and fails the save (`ProDOSDecodeResult::filesUnsaved`),
-/// while an illegal one is a crafted or corrupt entry that is merely skipped.
+/// the write-back uses the gap between the two. A legal name that starts with
+/// a period is written under an escaped host spelling and comes back intact
+/// (`.PROFILE` ⇄ `%2ePROFILE#040000`, the CiderPress escape — A2osX owns such
+/// a file). A legal name the host refuses outright (a device name) is lost
+/// user data and fails the save (`ProDOSDecodeResult::filesUnsaved`), while
+/// an illegal one is a crafted or corrupt entry that is merely skipped.
 /// Failing on the latter would let one hostile image jam every future save.
 bool isProDOSLegalName(const std::string& name);
 

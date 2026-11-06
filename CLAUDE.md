@@ -137,7 +137,11 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   `$2000`, silently relocating a file that round-tripped. CP/M is the
   exception the convention names: a CP/M file carries NO type, so the
   extension decides and only the `.TXT` text marker appears
-  (`CpmDiskFs.h`). **Attributes are NOT in the name** — write-protection is
+  (`CpmDiskFs.h`). One escape rides on it, CiderPress's own `%xx`: a
+  guest name that starts with a period (A2osX's `.PROFILE`) leaves the
+  ProDOS host folder as `%2ePROFILE#040000` — never a host dotfile — and
+  comes back intact; only a leading dot, only on a tagged file name or a
+  directory. **Attributes are NOT in the name** — write-protection is
   the host read-only bit, the same rule as the notch above, one level down:
   the host folder maps it both ways, so a guest `LOCK` follows the file out
   of POM2. Pinned by `host_file_tag`, `cpm_disk_fs` and
@@ -160,6 +164,21 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   overwrite a newer one. The capture bumps the rewind epoch; the poll pauses
   during a scrub. `/status` adds `floppy_storage`. → DEV § Background floppy
   persistence; test `floppy_autosave`.
+- **A commit never replaces a file it does not recognise, and never saves
+  half a track** *(2026-11-05)*. Before writing, `commitMediaInOrder` checks
+  the image file against what the mount read or what this process last wrote
+  there (`MediaFileStamp`: time and size, then the contents). Changed by
+  another program → the file is left alone and the guest's whole disk goes to
+  `<name>.guest-<timestamp><ext>` for the rest of the mount (state
+  `diverted`; `POST /disk/sync` fails, naming the copy). A sector image
+  (`.dsk`/`.do`/`.po`) takes a dirty track only when **every** sector decodes;
+  otherwise the commit fails and the surface is first saved as
+  `<image>.recovered.woz`. A WOZ that loads damaged (bad CRC, unreadable track
+  record) mounts **read-only** — `DiskImage::integrityWarning()` — and a save
+  writes a real CRC. So a test that dirties a track must not break a sector
+  (write in a sync gap), and one that rewrites a mounted image from outside
+  will find its bytes intact and POM2's in the sibling. File work:
+  `DiskImage_WriteBack.cpp`. Pinned by `media_external_change`.
 - **A rewind may never cross an irreversible write** — the rewind ring never
   captures block-device (up to 32 MiB), 3.5" (800 KB) or writable-WOZ media, so
   rolling RAM back over a ProDOS SAVE would cross-link the volume. Instead every
@@ -199,11 +218,13 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   server, which reads a loopback peer with no `Origin` as native. Both are
   fenced by default: `W5100Device::checkDestination` (127/8, 0/8, 169.254/16,
   224/4, 240/4 refused as `SOCK_CLOSED` + `TIMEOUT`; no privileged or
-  POM2-owned local port) and `SlirpOptions::allowHostLoopback` — which
+  POM2-owned local port), `nat::routeDestination` for the built-in NAT (the
+  gateway 10.0.2.2 is NOT an alias for 127.0.0.1 — it is in the design this
+  NAT follows, Casso's) and `SlirpOptions::allowHostLoopback` — which
   also drops, in `SlirpBackend::transmit`, any guest frame
   naming 127/8, 0/8 or 169.254/16 directly, because libslirp's own
   `disable_host_loopback` only refuses the `10.0.2.2` alias route. One opt-in
-  drives both — settings key **`uthernet_allow_loopback`** (default false;
+  drives all three — settings key **`uthernet_allow_loopback`** (default false;
   **`uthernet_slirp_restricted`** additionally locks slirp to its virtual
   services). Opting one card out only moves the escape to the other.
   → [DEV § Uthernet II](DEV.md#uthernet-ii-w5100)
@@ -254,7 +275,7 @@ cmake --build build --parallel 3 # → build/POM2
 
 `POM2_CPU_CLOCK_HZ = 1 022 727` (14.31818 MHz / 14). UI 60 Hz; the CPU worker's `cyclesPerFrame` comes from the active profile (`CpuClock.h`: 17045 NTSC / **20313 PAL — the default profile is PAL**), and `EmulationController`'s bare initialiser (17045) only holds until the first `applyProfile`. Single `stateMutex` guards CPU + Memory.
 
-**No copyrighted firmware or third-party disk in the repo or a desktop package** *(2026-10-29)*. `roms/` tracks only `floppy_samples/` (MAME, BSD); the disk folders track only the author's own GPL software (A2FILECMD 1.0, pom2games titles incl. `DIRTBIKE.dsk`) and French Touch's GPL DIX (`DIX-fix.po` in `disks_3.5/`, the unpatched one only in `floppyemu/` for the browser) — the demos left `disks_5.4/` (the two ctest opens, `DD.dsk` + `fastloader.woz`, are in the test-media archive); `pic/` is the author's own photos + MIT drive art. Every dump and third-party disk the tests open is in **archive.org `pom2_media_202611`** — `tools/fetch_test_media.py` downloads it and checks each file against `tools/test_media.sha256` (CI runs it in every build/test job; run it once in a fresh clone). `.gitignore` covers `roms/*`, `disks_5.4/`, `disks_3.5/`, `hdv/`, `floppyemu/`, `cassettes/`: a new disk of your own goes in with `git add -f` after checking its licence. Apple's Disk II boot + P6 PROMs are no longer embedded in `DiskIICard.cpp`: without `roms/disk2.rom` a card boots with **POM2's own boot PROM** (`DiskIIBootRom.h`, written from the boot protocol; its read routine sits on the grid ProDOS's block 0 copies and patches, so DOS 3.3 and ProDOS both boot; pinned `diskii_pom2_boot_prom`), and a test that needs Apple's loads it (`tests/DiskIIRoms.h`). Without `diskii_p6.rom`, .dsk/.po/.nib run the legacy gate and a WOZ is read by **POM2's own sequencer** (`DiskIICard::ownSequencerStep`, a data separator written from observable behaviour — the same nibble stream and hold windows as Apple's P6, and for RWTS-shaped writes the same flux; pinned `diskii_own_sequencer`). Desktop packages carry **no** ROM (`stage_data.sh --verify` fails one that does); the WASM bundle alone keeps the //c + //e base (`apple2c-32Kv0.rom`, `apple2e.rom`, `apple2e_char.rom`, `mouse_341-0270-c.bin` as `wasm` entries — neither Disk II PROM: POM2's own boot PROM and sequencer replace them) because a browser cannot fetch from archive.org (no CORS). A desktop install asks once, at the first launch that finds catalogued dumps missing, to download the rest (`MainWindow_RomOffer.cpp`, setting `rom_download_offered`; any time later: ROM Status → Download missing ROMs, or drop a dump on the window, `RomImport.h`). **Source order** (`RomFetch.h`): POM2's archive on archive.org (`pom2_firm.zip`, one download), then — per entry it cannot supply — RetroBIOS at a **pinned** commit (on its `main` 22 of the 49 dumps no longer exist: `docs/audits/retrobios-gap-2026-10-29.md`). Every file SHA-256-gated whatever its source. Default profile is **`Apple //e Enhanced PAL`**, then `Apple ][+` when no //e ROM is found, then **`Apple //c PAL`** when only the //c firmware is (a fresh package); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
+**No copyrighted firmware or third-party disk in the repo or a desktop package** *(2026-10-29)*. `roms/` tracks only `floppy_samples/` (MAME, BSD); the disk folders track only the author's own GPL software (A2FILECMD 1.0, pom2games titles incl. `DIRTBIKE.dsk`) and French Touch's GPL DIX (`DIX-fix.po` in `disks_3.5/`, the unpatched one only in `floppyemu/` for the browser) — the demos left `disks_5.4/` (the two ctest opens, `DD.dsk` + `fastloader.woz`, are in the test-media archive); `pic/` is the author's own photos + MIT drive art. Every dump and third-party disk the tests open is in **archive.org `pom2_media_202611`** — `tools/fetch_test_media.py` downloads it and checks each file against `tools/test_media.sha256` (CI runs it in every build/test job; run it once in a fresh clone). `.gitignore` covers `roms/*`, `disks_5.4/`, `disks_3.5/`, `hdv/`, `floppyemu/`, `cassettes/`: a new disk of your own goes in with `git add -f` after checking its licence. Apple's Disk II boot + P6 PROMs are no longer embedded in `DiskIICard.cpp`: without `roms/disk2.rom` a card boots with **POM2's own boot PROM** (`DiskIIBootRom.h`, written from the boot protocol; its read routine sits on the grid ProDOS's block 0 copies and patches, so DOS 3.3 and ProDOS both boot; pinned `diskii_pom2_boot_prom`), and a test that needs Apple's loads it (`tests/DiskIIRoms.h`). Without `diskii_p6.rom`, .dsk/.po/.nib run the legacy gate and a WOZ is read by **POM2's own sequencer** (`DiskIICard::ownSequencerStep`, a data separator written from observable behaviour — the same nibble stream and hold windows as Apple's P6, and for RWTS-shaped writes the same flux; pinned `diskii_own_sequencer`). Desktop packages carry **no** ROM (`stage_data.sh --verify` fails one that does); the WASM bundle alone keeps the //c + //e base (`apple2c-32Kv0.rom`, `apple2e.rom`, `apple2e_char.rom`, `mouse_341-0270-c.bin` as `wasm` entries — neither Disk II PROM: POM2's own boot PROM and sequencer replace them) because a browser cannot fetch from archive.org (no CORS). A desktop install asks once, at the first launch that finds catalogued dumps missing, to download the rest (`MainWindow_RomOffer.cpp`, setting `rom_download_offered`; any time later: ROM Status → Download missing ROMs, or drop a dump on the window, `RomImport.h`). **Source order** (`RomFetch.h`): POM2's archive on archive.org (`pom2_firm.zip`, one download), then — per entry it cannot supply — RetroBIOS at a **pinned** commit (`441d4129` since 2026-11-06, the merge of RetroBIOS PR #86: its `main` serves the whole catalogue again, after three weeks in which 22 dumps existed only at the old pin — `docs/audits/retrobios-gap-2026-10-29.md`; a pin all the same, because `main` has moved under the catalogue once). Every file SHA-256-gated whatever its source. Default profile is **`Apple //e Enhanced PAL`**, then `Apple ][+` when no //e ROM is found, then **`Apple //c PAL`** when only the //c firmware is (a fresh package); see [System profiles](#system-profiles) for ROM probe order and the default slot map.
 
 ## Subsystem map
 
@@ -276,27 +297,30 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
 | CP/M file system on a 140 KB image + host tool `pom2_cpm` (ls/get/put/rm). **Text is converted** — CP/M text is CR LF, ends at `^Z` and fills whole 128-byte records; a CP/M file carries no type, so the extension decides (`--text`/`--binary` override) and a file taken off as text is named `.TXT` | `CpmDiskFs.h/.cpp`, `pom2_cpm.cpp` | — |
 | DOS 3.3 file system on a 140 KB image + host tool `pom2_dos33` (ls/get/put/rm, `list` = an **A or I** program as text); File ▸ Save BASIC listing (the **Applesoft or Integer BASIC** program in RAM, as text — Applesoft from TXTTAB `$67/$68`, Integer from PP `$CA/$CB` up to HIMEM `$4C/$4D`, gated on `looksLikeProgram`) | `Dos33DiskFs.h/.cpp`, `ApplesoftListing.h/.cpp`, `IntegerBasicListing.h/.cpp`, `pom2_dos33.cpp`, `MainWindow_BasicListing.cpp` | — |
+| ProDOS volume edited **in place** + host tool `pom2_prodos` (ls/get/put/rm/mkdir/list; `.po`/`.hdv` any size, 140 KB `.dsk`/`.do`). All-or-nothing: a refused change leaves the image byte-identical | `ProDOSDiskFs.h/.cpp`, `pom2_prodos.cpp` | [§ Host disk tools](DEV.md#host-disk-tools-pom2_disk-pom2_prodos-pom2_dos33-pom2_cpm) |
+| Disk builder + host tool `pom2_disk` (new: formatted empty DOS 3.3 / ProDOS data disk; boot: a disk that starts a binary with no OS; info / recover: a WOZ's own account, and a healthy copy of a damaged one). **No Apple code**: a blank disk booted by mistake prints `NOT A STARTUP DISK`. Also behind the Disk Library's New Blank | `DiskBuilder.h/.cpp`, `WozRecover.h/.cpp`, `WozCompat.h`, `pom2_disk.cpp` | [§ Host disk tools](DEV.md#host-disk-tools-pom2_disk-pom2_prodos-pom2_dos33-pom2_cpm) |
+| What a host file becomes on `put` — AppleSingle unwrapped, type from the name, an Applesoft **listing tokenized** (rules from the ROM's PARSE `$D559`); shared by `pom2_dos33` and `pom2_prodos` | `HostFileImport.h/.cpp`, `ApplesoftTokenizer.h/.cpp`, `AppleSingle.h/.cpp` | [§ Host disk tools](DEV.md#host-disk-tools-pom2_disk-pom2_prodos-pom2_dos33-pom2_cpm) |
 | Memory + IIe paging + RamWorks | `Memory.h/.cpp` (keyboard latch + paste FIFO → `Keyboard.h/.cpp`; game port → `PaddleInputs.h`; write/read watchpoints → `MemoryWatch.cpp`; beam-time video RAM for the display → `MemoryVideoLog.cpp`) | [§ Memory](DEV.md#memory) |
 | Display (HGR / DHGR / 80-col) | `Apple2Display.h/.cpp` | [§ Display](DEV.md#display) |
 | Composite NTSC shader (OpenEmulator-style) | `NtscPostProcessor.*`, `OpenGLShader.*` | [§ Composite NTSC shader](DEV.md#composite-ntsc-shader-colorcompositeoe) |
 | AppleWin NTSC (CPU IIR-LUT) | `AppleWinNtsc.h/.cpp` | [§ AppleWin NTSC](DEV.md#applewin-ntsc-colorapplewin) |
-| CRT glass pass (scanlines, mask, vignette, phosphor γ) | `CrtEffectStack.*` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack) |
+| CRT glass pass (scanlines, mask, vignette, phosphor γ, glow) — its settings are **per monitor**: a built-in preset per display mode plus the fields the user changed on it (`crt_<monitor>_<field>`; absent = the preset; panel in `MainWindow_CrtPanel.cpp`) | `CrtEffectStack.*`, `CrtPresets.h` | [§ CRT effect stack](DEV.md#universal-crt-effect-stack-crteffectstack), [§ per monitor](DEV.md#crt-settings-per-monitor-crtpresetsh) |
 | Le Chat Mauve RGB — one catalog key `chatmauve`, five variants by the `chatmauve_variant` setting (Féline · Adaptateur //c · Eve with `$C0B0-$C0BF` + CPREG auto-write · RVB Graph with `$C0F0+S+U+K` + `$C70F-Bn` colour registers, from its manual · Video-7) | `LeChatMauveCard.h/.cpp` (state), `Apple2Display_ChatMauve.cpp` (painters), `LeChatMauve_ImGui.*`, `docs/chatmauve_plan.md` | [§ Le Chat Mauve](DEV.md#le-chat-mauve-lechatmauvecard) |
 | Videx Videoterm 80-column card (][ / ][+, slot 3, ROM-gated) — catalog `videoterm`; HD6845S register file; its 720×216 picture replaces the Apple's while TEXT + AN0 (`DisplayState::an0`). **Dropped from the plan on every `iieMode` profile** (`SlotConfigurationCoordinator::resolve`, the saved key kept): a //e's 80 columns are built in, and the card's `$C0Bx` decode would cut the Chat Mauve's Eve window | `VidexVideotermCard.h/.cpp`, `Hd6845Crtc.h/.cpp`, `CardVideoSource.h` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | Card Monitor — the monitor switch for a card with its own picture (soft video switch / Apple video / card video, setting `card_monitor_switch`) + a second monitor, opened as a tab beside the Apple II Screen when such a card is plugged (the screen stays in front and cannot be closed) | `MainWindow_CardMonitor.cpp`, `Apple2Display::CardMonitor` | [§ Videx Videoterm](DEV.md#videx-videoterm-videxvideotermcard) |
 | VidHD — IIgs Super Hi-Res on a //e (any slot, no ROM) — catalog `vidhd`; latches `$C022/$C029/$C034/$C035` writes, SHR (NEWVIDEO `$C0`) paints 640×400 from the CPU's aux bank through `CardVideoSource`. **Dropped on ][ / ][+ and //c** | `VidHDCard.h/.cpp` | [§ VidHD](DEV.md#vidhd-vidhdcard) |
-| Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed); the device buffer is a ladder climbed on late callbacks (`AudioBufferPolicy.h`: 256 frames on a desktop, 1024 on a Linux ARM board, 2048/4096 in the browser; Audio panel ▸ Device buffer pins a rung) | `AudioDevice.*`, `AudioBufferPolicy.h`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Device buffer](DEV.md#device-buffer-a-ladder-climbed-on-late-callbacks-2026-11-01), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
+| Speaker / Cassette / Audio bus (stereo; mono sources are pan-placed); the device buffer is a ladder climbed on late callbacks (`AudioBufferPolicy.h`: 256 frames on a desktop, 1024 on a Linux ARM board, 2048/4096 in the browser; Audio panel ▸ Device buffer pins a rung); a lost or changed output device is re-opened (`AudioDeviceWatch.h`: reroute, unexpected stop, or 2 s without a callback) | `AudioDevice.*`, `AudioBufferPolicy.h`, `AudioDeviceWatch.h`, `SpeakerDevice.*`, `CassetteDevice.*` | [§ Audio](DEV.md#audio), [§ Device buffer](DEV.md#device-buffer-a-ladder-climbed-on-late-callbacks-2026-11-01), [§ Stereo bus](DEV.md#stereo-bus-2026-08-01) |
 | Mockingboard A/C + Sound II | `Mockingboard.h/.cpp` + `Via6522.h` + `Ay3_8910.h` + `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard), [§ Sound II](DEV.md#mockingboardcard-variantsoundii) |
 | Phasor (2×VIA, 4×AY, 2×SSI263AP) | `PhasorCard.h/.cpp` + `AyPsgSynth.h` | [§ Phasor](DEV.md#phasor-applied-engineering) |
 | AY PSG audio-thread synth (shared: generators, mixer, band-limiting, DC) | `AyPsgSynth.h` | [§ Mockingboard](DEV.md#mockingboard) |
-| SSI263 speech chip | `Ssi263.h/.cpp` + `Ssi263PhonemeData.h/.cpp` | [§ SSI263](DEV.md#ssi263--echo-street-electronics) |
+| SSI263 speech chip — two voices: the 62 recorded phonemes (default) or a register-driven formant synthesiser that follows the pitch and filter registers (port of Casso's, constants grade F; Mixer ▸ Speech chip voice, setting `ssi263_voice`) | `Ssi263.h/.cpp` + `Ssi263PhonemeData.h/.cpp`, `Ssi263Formant.h/.cpp` | [§ SSI263](DEV.md#ssi263--echo-street-electronics) |
 | Cricket / Echo (SSI263) — catalog `echoplus` | `EchoPlusCard.h/.cpp` | [§ EchoPlusCard](DEV.md#echopluscard-cricket--ssi263-class--catalog-echoplus) |
 | Echo+ (TMS5220C LPC + 2×AY, single VIA) — catalog `echoplus_tms` | `EchoPlusTMS5220Card.h/.cpp` | [§ EchoPlusTMS5220Card](DEV.md#echoplustms5220card) |
 | Grappler+ (Orange Micro, ROM-gated) — catalog `grappler` | `GrapplerCard.h/.cpp` | [§ Grappler+](DEV.md#grappler-orange-micro) |
 | Grappler (1981) — `grappler1` · Apple Parallel Interface — `pic` (ROM-gated; their printer is a `CentronicsPrinter`) | `GrapplerClassicCard.*`, `AppleParallelCard.*`, `CentronicsPrinter.*` | [printer-detection §§ 8-9](docs/printer-detection.md#8-grappler-1981) |
 | Printer side of a slot, read/set from outside (CLI, HTTP, library) + per-slot bus-access log + stream→PNG | `PrinterPortControl.*`, `SlotBus.h` (`enableAccessLog`), `PrinterRender.*`, `AiControlServer_Printer.cpp` | [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
-| Floppy mechanical sounds (MAME WAV samples; optional Virtual ][ bank, never packaged) | `FloppySoundDevice.h/.cpp` | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
-| Printer mechanical sounds (synthesised grains; optional user-supplied Virtual ][ loop) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
+| Floppy mechanical sounds (MAME WAV samples; optional Virtual ][ bank, never packaged; optional 5.25" door + track-0 stop "extras" fetched locally by `tools/install_drive_extras.py` — OpenEmulator's, licence not stated, never packaged) | `FloppySoundDevice.h/.cpp`, `FloppySoundSink.h` (`bump`) | [§ Floppy sounds](DEV.md#floppy-mechanical-sounds) |
+| Printer mechanical sounds (synthesised grains; a RECORDED ImageWriter II bank shipped in `roms/printer_samples/`, CC BY 4.0, default when present — setting `printer_sound_recorded`; optional user-supplied Virtual ][ loop) | `PrinterSoundDevice.*`, `PrinterSoundSink.h` | [§ Printer sound](DEV.md#printer-sound-printersounddevice) |
 | TransWarp accelerator (Applied Engineering) — catalog `transwarp` | `TranswarpCard.h/.cpp` | [§ TransWarp](DEV.md#transwarp-applied-engineering) |
 | Zip Chip — 6502-socket accelerator (not a slot), setting `zip_chip`, Machine menu; Memory's `$C0xx` slow path only | `ZipChip.h/.cpp`, `CpuSocketAccelerator.h` | [§ Zip Chip](DEV.md#zip-chip-cpu-socket-zipchip) |
 | FASTChip //e — the other socket accelerator (0.2-16.6 MHz, `$C06A-$C06F`, from a2heaven's User's Guide), setting `fast_chip` + `fast_chip_speed`; one socket, so it and the Zip Chip exclude each other | `FastChip.h/.cpp` | [§ FASTChip](DEV.md#fastchip-e-cpu-socket-fastchip) |
@@ -325,7 +349,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Apple II Workstation Card (LocalTalk coprocessor: own 65C02 + RAM + SCC) — catalog `workstation` | `WorkstationCard.h/.cpp` | [§ Workstation Card](DEV.md#apple-ii-workstation-card-workstationcard) |
 | Uthernet I (CS8900A NIC) | `UthernetCard.*`, `Cs8900aDevice.*` | [§ Uthernet I](DEV.md#uthernet-i-cs8900a) |
 | Uthernet II (W5100 hardware TCP/IP) | `UthernetIICard.*`, `W5100Device.*` | [§ Uthernet II](DEV.md#uthernet-ii-w5100) |
-| Ethernet host transport (libslirp, optional — Linux/macOS) | `NetworkBackend.h`, `SlirpNetworkBackend.*` | [§ Network backends](DEV.md#network-backends) |
+| Ethernet host transport — libslirp where the build has it, else **POM2's built-in NAT** (no library: ARP, DHCP, ping, DNS answered from the host resolver, UDP + TCP relays; same 10.0.2.x numbering, same loopback fence — the gateway is NOT the host's loopback). Setting `ethernet_backend`: `slirp` = "the NAT, whichever the build has" · `builtin` · `loopback` · `none` | `NetworkBackend.h`, `SlirpNetworkBackend.*`, `BuiltinNatBackend.*`, `Nat*.{h,cpp}` | [§ Network backends](DEV.md#network-backends), [§ built-in](DEV.md#the-built-in-virtual-network-builtinnatbackend) |
 | Host sockets (POSIX / Winsock, one compat header) | `SocketCompat.h`, `SocketUtil.h` | [§ Host sockets](DEV.md#host-sockets-posix--winsock) |
 | Host serial ports (POSIX termios / Win32 DCB) | `SerialPort.h/.cpp` | [§ Host serial](DEV.md#host-serial-ports-serialport) |
 | Helper-process supervision (POSIX fork / Win32 CreateProcess) | `ChildProcess.h/.cpp` | [§ FujiNet](DEV.md#fujinet-sp-over-slip-relay) |
@@ -448,7 +472,14 @@ slot 7 a window slot 5's SmartPort ROM needed. The overriding cards are:
 `GrapplerCard`, `GrapplerClassicCard` and `SlinkyCard` only while their
 expansion ROM is loaded (`SuperSerialCard` claims for parity
 with `a2ssc.cpp:50`, and serves Apple's EPROM there when
-`roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`.
+`roms/ssc_341-0065-a.bin` is present — `$FF` without it). Released at `$CFFF`,
+and RESET keeps the claim — the latch Apple recommends has no RESET input
+(Apple II Reference Manual 1979, Fig. 8). **Both are per-card facts**, read
+off each schematic (`SlotPeripheral::releasesC800At` / `releasesC800OnReset`):
+the Super Serial Card lets go on any `$CFxx` and on RESET, the two Grapplers
+on `$CFF0-$CFFF`, the Liron on `$CFFE-$CFFF` and on RESET, the CFFA 2.0 on
+`$CFEF` as well as `$CFFF`. A card nobody read keeps the default. Pinned
+`c800_release`; table in DEV § Super Serial Card.
 
 In IIe mode the same map applies but most of `$0000-$BFFF` can route to aux 64 KB under paging switches — see table at top of `Memory.h`.
 
@@ -508,7 +539,7 @@ Three classes of reset (+ one boot shortcut), mirroring MAME's split:
 |---|---|---|---|
 | `softReset()` | F11, toolbar, AI `/reset?kind=soft` | RAM survives. IIe-class wipes full MMU/IOU/LC; II/II+ leaves LC + display untouched (kbd strobe only). CPU `SP -= 3`, I flag set, PC loaded from the `$FFFC/$FFFD` vector; on a **65C02** D is also cleared (MAME `ow65c02.lst:814`), NMOS leaves it alone. | `reset_w(true→false)` |
 | `hardReset()` | F12, toolbar, AI `/reset?kind=hard`, `applyProfile` step 11 | RAM survives; CPU additionally zeros A/X/Y, SP = $FF, P = $24 \| I. **II/II+**: display/LC preserved (same as soft reset). **IIe-class**: full MMU wipe; **TEXT and MIXED survive, the DHGR/AN3 latch does NOT** — Sather, *Understanding the Apple IIe* p. 7-3, note 1 to Fig. 7.1: "All soft switches except KEYSTROBE, TEXT, and MIXED are reset when the RESET' line drops low", and MAME `reset_w` clears `m_an3` citing the same figure. POM2 kept DHGR until 2026-11-01, citing both of them for the opposite rule. The ROM's RESET handler is what goes back to text. Pinned `video_scanner_sather`. | `reset_w` + register wipe |
-| `coldBoot()` | Toolbar power, AI `/reset?kind=cold`, MainWindow ctor, "Insert + boot" | Wipes user RAM + LC + aux with `00 FF 00 FF…` MAME pattern; full reset; hard reset CPU. | `machine_start` + `machine_reset` |
+| `coldBoot()` | Toolbar power, AI `/reset?kind=cold`, MainWindow ctor, "Insert + boot" | Wipes user RAM + LC + aux with `00 FF 00 FF…` (MAME's fill — a deterministic stand-in, **not** a measured pattern: real machines differ from each other, DEV § Power-on RAM pattern); full reset; hard reset CPU. | `machine_start` + `machine_reset` |
 | `bootFromSlot(N)` | HDV / SmartPort / Disk II Library "Boot" | coldBoot-equivalent (inlined; also arms the //c on-board SmartPort iff N=5, re-bases the cassette via `resetCpuSide()`, clears the debugger transient + resyncs the debug hook, and clears the rewind ring) then `PC = $C000 + N*256` after validating JSR-dispatch trio ($Cn01=$20, $Cn03=$00, $Cn05=$03 — Apple II Ref Manual Appx C). $Cn07 NOT validated (SmartPort cards have $00, the //c block stub $01; the HDV card has $3C like AppleWin's). Mismatch → falls back to `coldBoot`. **Slot 5 on a //c+** is not entered directly: its `$C500` only finds the rear-port device from the ROM's own reset scan, so that case is a `hardReset` (`Memory::iicPlusBootsSlot5ByReset`). | Synthetic shortcut |
 
 Keyboard wiring:

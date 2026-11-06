@@ -262,7 +262,7 @@ const std::vector<RomFetchEntry>& catalogStorage()
         // Two of the three entries left that need unzip/tar: RetroBIOS has no
         // loose copy of the mouse SLOT eprom, only MAME's a2mouse romset.
         { "roms/mouse_341-0270-c.bin", "Mouse card slot EPROM", 2048,
-          POM2_RETROBIOS_RAW "bios/Arcade/MAME/a2mouse.zip",
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2mouse.zip",
           "341-0270-c.4b", nullptr, 0u, nullptr,
           "7f8e50c0e8a409991264201f9300f109b872b68e09c43f3e6c26af35fd8b89af", 0u },
         // Same story for the Super Serial Card EPROM: RetroBIOS only has it
@@ -298,7 +298,7 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "4.ic4.bin", nullptr, 0x8A497A48u, "MAME a2videoterm (4.ic4.bin)",
           "4d03bd0934ab39cb18f22444e0361f91d1984131759c07010398ad5cf84397c0", 0u },
         { "roms/ssc_341-0065-a.bin", "Super Serial Card EPROM (341-0065-A)", 2048,
-          POM2_RETROBIOS_RAW "bios/Arcade/MAME/a2ssc.zip",
+          POM2_RETROBIOS_RAW "bios/Arcade/Arcade/a2ssc.zip",
           "341-0065-a.bin", nullptr, 0xB7539D4Cu, "MAME a2ssc",
           "4fa1323ba31f4bd562486838397b7744257c126806766e360876720daca6e2aa", 0u },
         // The Slinky is ROM-gated (no ROM, empty slot) and RetroBIOS has it
@@ -331,23 +331,26 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "chs_5604.bin", nullptr, 0x3FB4E90Au, "MAME a2ultrme",
           "cbbfd3d07be729795d2b5a2bcdb1f1daf01af945f2f80430a5666bb7f0fedcd0", 0u },
 
-        // ── Archive-only: probed by a card, RetroBIOS has no copy ──────
-        // The CCS 7710's PROMs and the DAN ][ EPROM come from POM2's
-        // archive alone (pom2_firm, 2026-11-01): `url` is the archive and
-        // `zipMember` the member romArchiveMember() names, so the primary
-        // path serves them like any entry and the fetch loop asks nothing
-        // else for them (romArchiveOnly). Both cards run POM2's own page
-        // without them, and a dropped dump is still identified and
-        // installed under the name the card probes. From 2026-10-31 to
-        // 2026-11-01 (the first item dark) they were import-only, url null.
+        // ── The CCS 7710's PROMs and the DAN ][ EPROM ─────────────────
+        // Both cards run POM2's own page without them. Until 2026-11-06
+        // these three were ARCHIVE-ONLY (`url` = POM2's archive, no
+        // fallback: romArchiveOnly), because RetroBIOS had no copy. Since
+        // its PR #86 (merged 2026-11-05) it does: the 7710-03 pair inside
+        // MAME's ccs7710 romset, the DAN ][ EPROM loose (ThorstenBr's
+        // open-source Apple2Card, zlib). So they are ordinary entries now —
+        // the archive first, RetroBIOS when it cannot supply them — and no
+        // entry of the catalogue is archive-only any more.
         { "roms/ccs7710_03h.u5", "CCS 7710 PROM 7710-03 (high, U5)", 256,
-          kPom2RomArchiveUrl, "roms/ccs7710_03h.u5", nullptr, 0xA2CDB6BDu, "CCS 7710-03",
+          POM2_RETROBIOS_RAW "bios/Arcade/MAME/ccs7710.zip",
+          "7710-03h.u5", nullptr, 0xA2CDB6BDu, "MAME ccs7710 (7710-03h.u5)",
           "1e303244535c4f00f2c6758ab4c9416414e5228639921a5b1b3277ccea529bf3", 0u },
         { "roms/ccs7710_03l.u6", "CCS 7710 PROM 7710-03 (low, U6)", 256,
-          kPom2RomArchiveUrl, "roms/ccs7710_03l.u6", nullptr, 0x18E3983Fu, "CCS 7710-03",
+          POM2_RETROBIOS_RAW "bios/Arcade/MAME/ccs7710.zip",
+          "7710-03l.u6", nullptr, 0x18E3983Fu, "MAME ccs7710 (7710-03l.u6)",
           "1af47c6f8c45af30483fd84bae77994583753a0268ca43c2c8f5b45fa4b4a04e", 0u },
         { "roms/dan2_eprom.bin", "DAN ][ Controller EPROM", 512,
-          kPom2RomArchiveUrl, "roms/dan2_eprom.bin", nullptr, 0xB1C3860Fu, "ThorstenBr DAN ][",
+          POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/dan2_eprom.bin",
+          nullptr, nullptr, 0xB1C3860Fu, "ThorstenBr DAN ][",
           "c64413319243ecab3e2a93a9f5e93702d372b32dd265fa13d45c38298a3a2130", 0u },
 
         // ── Reference dumps (no POM2 card reads them yet) ─────────────

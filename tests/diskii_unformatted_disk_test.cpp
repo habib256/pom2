@@ -109,6 +109,31 @@ bool typeUntil(Machine& m, const char* text, const char* want, int slices) {
     return false;
 }
 
+// Type a command and run until `want` shows up BELOW its echo — i.e. until
+// DOS has answered it. `typeUntil` alone is satisfied by anything already on
+// the screen, the echo included: `SAVE POM2,D2` contains "POM2" and a `]`
+// sits on every line above it, so the two waits that followed the SAVE each
+// returned after one slice and the write-back ran two emulated seconds into
+// the SAVE — a race the old save lost quietly (a sector caught half written
+// kept the file's previous bytes) and the whole-track rule refuses out loud.
+// It surfaced on 2026-11-05, when carrying the angle across a head step moved
+// the SAVE's rotational waits by a revolution.
+bool typeUntilAnswered(Machine& m, const char* text, const char* want, int slices) {
+    std::string echo(text);
+    while (!echo.empty() && (echo.back() == '\r' || echo.back() == '\n')) echo.pop_back();
+    m.mem.pasteRawKeys(text, std::strlen(text));
+    for (int i = 0; i < slices; ++i) {
+        runCycles(*m.cpu, 1000000);
+        const std::string s = scrapeTextPage(m.mem.data());
+        const auto at = s.rfind(echo);
+        if (at == std::string::npos) continue;
+        const auto eol = s.find('\n', at);
+        if (eol != std::string::npos && s.find(want, eol) != std::string::npos)
+            return true;
+    }
+    return false;
+}
+
 int fail(Machine& m, const char* gate, const char* what) {
     std::fprintf(stderr, "FAIL [%s gate]: %s\n%s\n", gate, what,
                  scrapeTextPage(m.mem.data()).c_str());
@@ -218,11 +243,11 @@ int runScenario(const std::string& romPath, const std::string& promPath,
         return fail(m, gate, "INIT reported success and wrote nothing");
 
     // 3. It is a real disk now.
-    if (!typeUntil(m, "CATALOG,D2\r", "HELLO", 400))
+    if (!typeUntilAnswered(m, "CATALOG,D2\r", "HELLO", 400))
         return fail(m, gate, "the freshly formatted disk does not CATALOG its greeting");
-    if (!typeUntil(m, "SAVE POM2,D2\r", "]", 300))
+    if (!typeUntilAnswered(m, "SAVE POM2,D2\r", "]", 300))
         return fail(m, gate, "SAVE onto the freshly formatted disk never returned");
-    if (!typeUntil(m, "CATALOG,D2\r", "POM2", 400))
+    if (!typeUntilAnswered(m, "CATALOG,D2\r", "POM2", 400))
         return fail(m, gate, "the saved program is not in the catalog");
 
     // And the format reaches the file: write-back decodes the tracks the

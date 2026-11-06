@@ -51,6 +51,13 @@ public:
     /// does. Virtual ][ ships two recordings and overrides this.
     virtual void latch(bool inserting) { (void)inserting; click(); }
 
+    /// The stepper pulled the carriage against the track-0 stop: the head was
+    /// asked to go where it cannot. This is the rattle a Disk II makes at
+    /// every boot, when DOS recalibrates by stepping outward far more times
+    /// than there are tracks. `emuCycles` as for `step`. Default is silence —
+    /// the MAME bank has no recording of it.
+    virtual void bump(uint64_t emuCycles) { (void)emuCycles; }
+
     /// The drive itself reported a failed transfer (a SmartPort read or
     /// write that did not land). A Disk II never sees this: the guest
     /// checksums raw nibbles. Default is silence — only the Virtual ][

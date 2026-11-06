@@ -27,16 +27,26 @@
 //   3. an accelerated budget (the //c+ at 4×) moves the emulated CPU clock but
 //      NOT the drives — the IWM counts crystal ticks, which no accelerator
 //      speeds up, and a 4× revolution would be unreadable;
-//   4. back to NTSC restores the constants.
+//   4. back to NTSC restores the constants;
+//   5. a Disk II's medium learns the same clock: a WOZ FLUX track counts
+//      125 ns ticks and the sequencer half bus cycles, so the ratio between
+//      them is the machine's (DiskImage.h, fluxBusHz_) — for a disk already
+//      in the drive and for one inserted afterwards, and never an
+//      accelerator's.
 
 #include "CpuClock.h"
+#include "DiskIICard.h"
 #include "EmulationController.h"
 #include "LironCard.h"
 #include "Sony35Drive.h"
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -84,6 +94,37 @@ bool zonesMatch(pom2::Sony35Drive& d, int64_t clock)
 
 }  // namespace
 
+// A WOZ 2.1 with one FLUX track of 1600 ticks (200 us): the smallest file
+// that makes `trackPeriod` depend on the tick-to-cycle ratio.
+std::string writeFluxWoz()
+{
+    std::vector<uint8_t> woz(2048 + 8 + 160, 0);
+    auto put = [&](size_t at, const char* id, uint32_t len) {
+        for (int i = 0; i < 4; ++i) woz[at + i] = static_cast<uint8_t>(id[i]);
+        for (int i = 0; i < 4; ++i) woz[at + 4 + i] = static_cast<uint8_t>(len >> (8 * i));
+    };
+    const uint8_t magic[8] = {'W','O','Z','2', 0xFF, 0x0A, 0x0D, 0x0A};
+    for (int i = 0; i < 8; ++i) woz[i] = magic[i];         // CRC 0 = not checked
+    put(12, "INFO", 60);
+    woz[20] = 3; woz[21] = 1; woz[57] = 1; woz[59] = 32;   // v3, 5.25", 1 side, 4 us
+    woz[66] = 4; woz[68] = 1;                              // FLUX at block 4
+    put(80, "TMAP", 160);
+    for (int i = 0; i < 160; ++i) woz[88 + i] = 0xFF;
+    put(248, "TRKS", 1280 + 512);
+    woz[256] = 3; woz[258] = 1; woz[260] = 9;              // block 3, 9 deltas
+    const uint8_t deltas[9] = {33, 33, 31, 255, 255, 255, 255, 255, 228};
+    for (int i = 0; i < 9; ++i) woz[1536 + i] = deltas[i];
+    put(2048, "FLUX", 160);
+    for (int i = 0; i < 160; ++i) woz[2056 + i] = 0xFF;
+    woz[2056] = 0;
+    const std::filesystem::path p =
+        std::filesystem::temp_directory_path() / "pom2_standard_clock_flux.woz";
+    std::ofstream(p, std::ios::binary)
+        .write(reinterpret_cast<const char*>(woz.data()),
+               static_cast<std::streamsize>(woz.size()));
+    return p.string();
+}
+
 int main()
 {
     const int64_t ntsc = POM2_TIMING_NTSC.cpuClockHz;
@@ -128,6 +169,54 @@ int main()
     expect(zonesMatch(controller.sony35Internal(), ntsc), "NTSC again");
     expect(zonesMatch(const_cast<pom2::Sony35Drive&>(liron->drive(0)), ntsc),
            "NTSC again on the Liron");
+
+    // 5. The Disk II's medium. 1600 ticks = 200 us: 409.1 LSS cycles on an
+    //    NTSC machine, 406.3 on a PAL one (a revolution lasts until its last
+    //    tick is over, so 410 and 407) — and 400 only on a 1 MHz bus.
+    {
+        const std::string fluxPath = writeFluxWoz();
+        auto* disk2 = new DiskIICard();
+        {
+            auto st = controller.lockState();
+            st.memory().slotBus().plug(6, std::unique_ptr<SlotPeripheral>(disk2));
+        }
+        controller.setVideoStandard(VideoStandard::NTSC);
+        bool inserted = false;
+        {
+            auto st = controller.lockState();
+            inserted = disk2->insertDisk(0, fluxPath);
+        }
+        expect(inserted, "the FLUX test image mounts");
+        expect(disk2->driveImage(0).fluxClockHz() == ntsc &&
+               disk2->driveImage(0).trackPeriod(0) == 410,
+               "NTSC: a mounted FLUX track runs on 176/45 ticks per LSS cycle");
+        controller.setVideoStandard(VideoStandard::PAL);
+        expect(disk2->driveImage(0).fluxClockHz() == pal &&
+               disk2->driveImage(0).trackPeriod(0) == 407,
+               "PAL reaches the disk already in the drive");
+        controller.setCyclesPerFrame(4 * POM2_TIMING_PAL.cyclesPerFrame);
+        controller.setVideoStandard(VideoStandard::PAL);
+        expect(disk2->driveImage(0).fluxClockHz() == pal,
+               "an accelerator does not move the flux time base");
+        controller.setCyclesPerFrame(POM2_TIMING_PAL.cyclesPerFrame);
+        controller.setVideoStandard(VideoStandard::PAL);
+        {
+            auto st = controller.lockState();
+            inserted = disk2->insertDisk(1, fluxPath);
+        }
+        expect(inserted && disk2->driveImage(1).fluxClockHz() == pal &&
+               disk2->driveImage(1).trackPeriod(0) == 407,
+               "PAL reaches a disk inserted afterwards");
+        controller.setVideoStandard(VideoStandard::NTSC);
+        expect(disk2->driveImage(1).trackPeriod(0) == 410, "NTSC again on the Disk II");
+        {
+            auto st = controller.lockState();
+            disk2->ejectDisk(0);
+            disk2->ejectDisk(1);
+        }
+        std::error_code ec;
+        std::filesystem::remove(fluxPath, ec);
+    }
 
     if (failures) { std::printf("device_standard_clock: %d failure(s)\n", failures); return 1; }
     std::printf("device_standard_clock OK\n");

@@ -712,9 +712,12 @@ void MainWindow::renderMenuBar()
                     "Each reads bit 7 = 1 with the key UP. SW2 is the common one;\n"
                     "Zardax wants PADDL2/3; Format-II and Sandy's want SW0/SW1.");
         }
-        if (pom2::profileConfig(activeProfile).noPhysicalSlots) {
+        if (pom2::profileConfig(activeProfile).noPhysicalSlots &&
+            activeProfile != pom2::SystemProfile::AppleIIcPlus) {
             // The //c keyboard's 80/40 key, read at $C060 (Memory.h). A
             // latching key on the real machine, so it is a setting, not state.
+            // Not on a //c Plus: that machine has no such switch (its
+            // Technical Reference, 2nd ed.), so the item is not offered.
             bool forty = settings->getBool("iic_40col_switch", false);
             if (ImGui::MenuItem("40/80 switch in the 40-column position", nullptr, &forty)) {
                 settings->setBool("iic_40col_switch", forty);

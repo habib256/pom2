@@ -246,14 +246,18 @@ bool checkFluxTrackPeriod(uint8_t obt) {
     //   1536  FLUX chunk at block 3 (8 + 160 FIDX) → 1864
     //   2048  flux delta stream at block 4
     const std::vector<uint8_t> deltas = { 100, 100, 0xFF, 55, 100, 45 };
-    // totalTicks = 655 → periodLss = ceil(655/4) = 164.
-    // Events at cumulative ticks 100, 200, 510, 610 → LSS 25, 50, 127, 152
+    // totalTicks = 655. A tick is 125 ns and an LSS cycle half a bus cycle —
+    // 488.9 ns on the NTSC machine a bare image assumes, 176/45 ticks, not 4
+    // (DiskImage.h, fluxBusHz_; until 2026-11-06 this pinned the flat /4:
+    // period 164, events 25, 50, 127, 152). So the period is
+    // ceil(655 × 45/176) = 168, and the events at cumulative ticks 100, 200,
+    // 510, 610 fall in LSS cycles 25, 51, 130, 155
     // (0xFF = no-flux continuation), PLUS the final byte: [B] WOZ 2.1
     // reference, TRKS — "Each byte represents a single flux transition";
     // the last one closes the loop at 655 ≡ 0. Five transitions, not four
     // (audit parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1).
-    const int expectedPeriod = 164;
-    const std::vector<int> expectedFlux = { 0, 25, 50, 127, 152 };
+    const int expectedPeriod = 168;
+    const std::vector<int> expectedFlux = { 0, 25, 51, 130, 155 };
 
     std::vector<uint8_t> woz;
     woz.insert(woz.end(), {'W', 'O', 'Z', '2', 0xFF, 0x0A, 0x0D, 0x0A});
@@ -327,7 +331,7 @@ bool checkFluxTrackPeriod(uint8_t obt) {
     }
     // Wrap math runs through the same period: past the last event the
     // next transition is the first event of the NEXT revolution.
-    const int64_t wrapped = img.getNextTransition(0, 153);
+    const int64_t wrapped = img.getNextTransition(0, expectedFlux.back() + 1);
     if (wrapped != expectedPeriod + expectedFlux.front()) {
         std::printf("FAIL: FLUX obt=%u wrap → %lld, expected %d\n",
                     static_cast<unsigned>(obt),

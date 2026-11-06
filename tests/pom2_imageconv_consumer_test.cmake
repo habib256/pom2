@@ -24,9 +24,21 @@ endfunction()
 
 _step("imageconv install" "${CMAKE_COMMAND}" --install "${POM2_BINARY_DIR}"
       --prefix "${_prefix}" --component pom2_imageconv_sdk --config "${POM2_TEST_CONFIG}")
+# The installed archives carry the PARENT build's instrumentation, so under
+# POM2_SANITIZE the consumer must link the same runtime or every __asan_* /
+# __ubsan_* symbol is undefined. Same rule, same reason, as
+# pom2_core_sdk_consumer_test.cmake — this test was written without it and
+# failed the nightly asan-ubsan leg (issue #20, 2026-11-05).
+set(_sanitize_flags)
+if(POM2_TEST_SANITIZE)
+    list(APPEND _sanitize_flags
+        "-DCMAKE_CXX_FLAGS=-fsanitize=${POM2_TEST_SANITIZE}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${POM2_TEST_SANITIZE}")
+endif()
 _step("imageconv consumer configure" "${CMAKE_COMMAND}"
       -S "${POM2_SOURCE_DIR}/examples/pom2_imageconv_consumer" -B "${_build}"
-      "-DCMAKE_PREFIX_PATH=${_prefix}" "-DCMAKE_BUILD_TYPE=${POM2_TEST_CONFIG}")
+      "-DCMAKE_PREFIX_PATH=${_prefix}" "-DCMAKE_BUILD_TYPE=${POM2_TEST_CONFIG}"
+      ${_sanitize_flags})
 _step("imageconv consumer build" "${CMAKE_COMMAND}" --build "${_build}" --config "${POM2_TEST_CONFIG}")
 
 set(_exe "${_build}/pom2_imageconv_consumer${POM2_TEST_EXECUTABLE_SUFFIX}")

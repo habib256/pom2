@@ -102,6 +102,7 @@ namespace pom2 {
     class CrtEffectStack;
     class Voxel3DRenderer;
     struct NtscParams;
+    namespace crt { class Overrides; }
     class DiskController_ImGui;
     class DiskLibrary_ImGui;
     class CffaCard;
@@ -265,6 +266,15 @@ public:
     /// `--blank-disk`. UI thread only, like every other mount here.
     bool insertBlankDiskette(int drive, const std::string& path,
                              std::string& pathUsed, std::string& errOut);
+
+    /// A new FORMATTED, empty data disk into drive `drive` of the Disk II:
+    /// `format` 1 = DOS 3.3 (a .dsk), 2 = ProDOS (a .po, volume /BLANK).
+    /// The file gets a generated name in the library folder, is created
+    /// exclusively (never over a disk the user owns), and is then mounted
+    /// like any other image — unlike the unformatted one, this state IS the
+    /// file's, so it persists. No operating system is on it (DiskBuilder.h).
+    bool insertFormattedDiskette(int drive, int format,
+                                 std::string& pathUsed, std::string& errOut);
 
     /// Write everything the next launch needs into the settings store and
     /// commit it (MainWindow_Session.cpp). Called from the destructor on the
@@ -553,6 +563,15 @@ private:
     // stays alive across mode toggles so persistence state isn't lost
     // when the user briefly flips to another mode and back.
     std::unique_ptr<pom2::NtscPostProcessor> ntscFx;
+    // The glass settings PER MONITOR (CrtPresets.h): a built-in preset for
+    // each display mode plus the fields the user changed on it. `ntscFx`'s
+    // parameters are always the resolution of `crtMonitor_` — never written
+    // directly, or the next change of display mode would lose the edit.
+    std::unique_ptr<pom2::crt::Overrides> crtOverrides_;
+    int crtMonitor_ = -1;               ///< pom2::crt::Monitor behind ntscFx's params
+    void loadCrtSettings();             ///< MainWindow_CrtPanel.cpp
+    void saveCrtSettings();
+    void syncCrtMonitor();              ///< follow the display mode; cheap, every frame
     // Universal CRT effect stack (Phase 3): applies the same scanline /
     // shadow-mask / barrel / persistence / BCS layers to the framebuffer of
     // ANY colour mode (not just ColorCompositeOE). Opt-in via the menu;

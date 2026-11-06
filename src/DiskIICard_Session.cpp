@@ -148,5 +148,6 @@ void DiskIICard::applySessionState(SessionRestore&& prepared)
     } scope{iwm_};
     if (iwm_) iwm_->setRestoring(true);
     for (int d = 0; d < kDriveCount; ++d) images[d] = std::move(*prepared.media[d]);
+    syncFluxClock();
     loadSnapshotState(prepared.runtime.data(), prepared.runtime.size());
 }

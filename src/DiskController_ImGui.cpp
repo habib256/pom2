@@ -119,7 +119,25 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
         // just reports "disk is write-protected" and nothing connects that
         // to a host checkbox — Print Shop refusing to save its own Setup
         // looked like a bug in the emulator for exactly this reason.
-        if (snap.fileWriteProtected) {
+        if (!snap.machineWarning.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+            ImGui::TextWrapped("%s", snap.machineWarning.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The image says which machines its software is known\n"
+                                  "to run on. It is a hint from whoever imaged the disk:\n"
+                                  "nothing is refused, and the disk may work here anyway.\n"
+                                  "If it does not, this is the first thing to try.");
+        }
+        if (!snap.integrityWarning.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "Read-only: this image is damaged");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s\n\nIt was mounted so its readable tracks "
+                                  "can still be used, and nothing is written "
+                                  "to it: a save would hide the damage.",
+                                  snap.integrityWarning.c_str());
+        } else if (snap.fileWriteProtected) {
             ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.4f, 1.0f),
                                "Read-only: the image itself is "
                                "write-protected (WOZ/2IMG flag)");
@@ -217,7 +235,11 @@ DiskController_ImGui::FrameResult DiskController_ImGui::render(
     // (MediaAutosave.h); "unsaved" is left for a disk that will not be saved.
     if (!snap.persistenceError.empty()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "(save failed)");
+        // "diverted": the writes are safe, in a copy beside an image another
+        // program changed (MediaAutosave.h) — not a failure, not "saved" either.
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           snap.persistenceState == "diverted" ? "(saved to a copy)"
+                                                             : "(save failed)");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", snap.persistenceError.c_str());
     } else if (snap.hasUnsavedChanges) {

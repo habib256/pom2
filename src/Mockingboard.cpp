@@ -754,8 +754,9 @@ void MockingboardCard::onUnplug()
 // ─── Rewind / snapshot ──────────────────────────────────────────────────────
 // VIA + AY register/timer state — the audible music state of the card. The
 // SSI263 (Sound II) is captured too, including its phoneme playback cursor
-// (Ssi263::appendSnapshot), and its A/!R→VIA1.CA1 IRQ latch is restored via
-// the VIA's ifr. Blob is self-describing (magic + version + present mask) so
+// (Ssi263::appendSnapshot), and its A/!R→VIA2.CA1 IRQ latch (the SECOND
+// 6522 — see the wiring note in the SSI263 IRQ path below) is restored via
+// that VIA's ifr. Blob is self-describing (magic + version + present mask) so
 // a foreign card on this slot ignores it. Both Mockingboard and Phasor reuse
 // Via6522/Ay3_8910::append/loadSnapshot.
 void MockingboardCard::appendSnapshotState(std::vector<uint8_t>& out) const

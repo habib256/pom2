@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include "Block512Backing.h"
+#include "MediaAutosave.h"
 #include "MediaWritePolicy.h"
 
 #include <array>
@@ -240,6 +241,8 @@ public:
         /// WOZ/MOOF 3.5": the track capture phase 2 serialises into `bytes`
         /// (Disk35Image::PendingWriteBack::bitstream).
         std::shared_ptr<const Disk35Bitstream> bitstream;
+        /// The file as the mount read it (MediaAutosave.h, "External change").
+        pom2::MediaFileStamp mounted{};
     };
 
     /// Phase 1 of a two-phase FLUSH (no eject), with `stateMutex` held: lift

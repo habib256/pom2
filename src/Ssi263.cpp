@@ -336,7 +336,11 @@ void Ssi263::applyPlaybackEvent(uint8_t reg, uint8_t val)
     }
     case REG_FILFREQ:
     case 5: case 6: case 7: aFilFreq_ = val; break;
-    default: break;   // INFLECT / RATEINF synthesis is outside the fixed PCM model
+    // The recorded phonemes ignore these two; the formant voice is made of
+    // them (the pitch is the 12 inflection bits they share).
+    case REG_INFLECT: aInflect_ = val; break;
+    case REG_RATEINF: aRateInf_ = val; break;
+    default: break;
     }
 }
 
@@ -352,6 +356,8 @@ void Ssi263::fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
         aDurPhon_ = durPhon_;
         aCttrAmp_ = cttrAmp_;
         aFilFreq_ = filFreq_;
+        aInflect_ = inflect_;
+        aRateInf_ = rateInf_;
         aMode_    = mode_;
         aPrimed_  = true;
     }
@@ -375,7 +381,8 @@ void Ssi263::fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
             if (ahead < static_cast<double>(n))
                 n = std::max(1, static_cast<int>(ahead));
         }
-        renderSamples(output + i, n, sampleRate, aCttrAmp_, aFilFreq_, aDurPhon_, aMode_);
+        renderSamples(output + i, n, sampleRate, aCttrAmp_, aFilFreq_, aDurPhon_, aMode_,
+                      aInflect_, aRateInf_);
         i     += n;
         cycle += static_cast<double>(n) * cyclesPerSample;
     }
@@ -383,14 +390,41 @@ void Ssi263::fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
 
 void Ssi263::fillAudio(float* output, int frameCount, uint32_t sampleRate)
 {
-    renderSamples(output, frameCount, sampleRate, cttrAmp_, filFreq_, durPhon_, mode_);
+    renderSamples(output, frameCount, sampleRate, cttrAmp_, filFreq_, durPhon_, mode_,
+                  inflect_, rateInf_);
 }
+
+std::atomic<uint8_t> Ssi263::voice_{static_cast<uint8_t>(Ssi263::Voice::Recorded)};
 
 void Ssi263::renderSamples(float* output, int frameCount, uint32_t sampleRate,
                            uint8_t cttrAmp, uint8_t filFreq,
-                           uint8_t durPhon, SsiMode mode)
+                           uint8_t durPhon, SsiMode mode,
+                           uint8_t inflect, uint8_t rateInf)
 {
     if (frameCount <= 0 || sampleRate == 0) return;
+    if (voice() == Voice::Formant) {
+        if (formantStale_.exchange(false, std::memory_order_relaxed)) formant_.reset();
+        Ssi263FormantVoice::Params p;
+        p.phoneme      = static_cast<uint8_t>(playbackPhoneme_ & PHONEME_MASK);
+        p.amplitude    = cttrAmp & AMPLITUDE_MASK;
+        p.articulation = static_cast<uint8_t>((cttrAmp & ARTICULATION_MASK) >> 4);
+        // [B] data sheet, Register Input Formats: I11 is R/I bit 3, I10-I3
+        //     the Inflection register, I2-I0 R/I bits 2-0.
+        p.inflection   = static_cast<uint16_t>(((rateInf & 0x08) ? 0x800 : 0) |
+                                               (static_cast<uint16_t>(inflect) << 3) |
+                                               (rateInf & 0x07));
+        p.filter       = filFreq;
+        p.xckHz        = static_cast<double>(xckHz_);
+        // Power-down and FILFREQ = $FF are silence, as for the recordings —
+        // reached through the release, not a cut. A phoneme otherwise sounds
+        // for as long as it is the latched one: the chip repeats it.
+        p.sounding     = (cttrAmp & CONTROL_MASK) == 0 && filFreq != FILTER_FREQ_SILENCE;
+        formant_.render(output, frameCount, sampleRate, p);
+        return;
+    }
+    // The other voice left its filters wherever they were; start clean if
+    // the user switches back to it.
+    formantStale_.store(true, std::memory_order_relaxed);
     if ((cttrAmp & CONTROL_MASK) != 0) return;      // power-down
     const uint8_t amp = cttrAmp & AMPLITUDE_MASK;
 

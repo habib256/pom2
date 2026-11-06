@@ -366,6 +366,11 @@ void testClassifier()
     assert(classifyDiskForSlot(makeFile(dir, "a.dsk", 143360)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.do",  143360)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.nib", 232960)) == DiskSlotClass::Floppy525);
+    // The 6384-per-track nibble dump has an extension of its own. The loader
+    // always knew the format by its size; the pickers and this classifier
+    // only knew `.nib`, so a `.nb2` could not be chosen at all.
+    assert(classifyDiskForSlot(makeFile(dir, "a.nb2", 223440)) == DiskSlotClass::Floppy525);
+    assert(classifyDiskForSlot(makeFile(dir, "A.NB2", 223440)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.woz", 200000)) == DiskSlotClass::Floppy525);
     assert(classifyDiskForSlot(makeFile(dir, "a.moof", 200000)) == DiskSlotClass::Sony35);
     assert(classifyDiskForSlot(makeFile(dir, "a.d13", 116480)) == DiskSlotClass::Floppy525);

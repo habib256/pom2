@@ -138,3 +138,71 @@ void DiskIICard::stopSpindle()
     }
     if (sound_) sound_->motor(false, images[activeDrive].isLoaded());
 }
+
+// ── The angle survives a head step ──────────────────────────────────────
+// A disk turns as one piece: when the head moves to another track, the same
+// RADIUS of the platter is under it, so the head is the same FRACTION of a
+// revolution past the index on the new track as it was on the old one.
+//
+// [B] WOZ 2.1 reference, "Cross-Track Synchronization"
+//     (applesaucefdc.com/woz/reference2/, fetched 2026-11-05) — "you need to
+//     start the new bitstream at the same relative bitstream position …
+//     account for the fact that track lengths are inconsistent on a disk due
+//     to fluctuations in drive speed … new_position = current_position *
+//     new_track_length / current_track_length. Remember to maintain the bit
+//     position even when on an empty track (TMAP value of 0xFF) … using a
+//     fake length of 51,200 bits (6400 bytes) works very well."
+// [D] MAME imagedev/floppy.cpp find_position @ mame0287 — gets the same
+//     result for free: every track is stretched to one fixed `m_rev_time`,
+//     so an offset in TIME is already a fraction of a turn.
+//
+// POM2 is not MAME here. It gives each bit cell a fixed duration, so a
+// track's period is its cell count times that duration and the tracks of one
+// WOZ do NOT share a revolution time. The angle was kept as
+// `(now - anchor) mod period`, an offset in cycles, and the anchor was left
+// alone by a step — so the offset carried over, not the fraction. From 90 %
+// of a 50,000-cell track the head arrived at 86.5 % of its 52,000-cell
+// neighbour: 3.5 % of a turn, some 220 nibbles, in the wrong place. Software
+// that times one track against another read a different sector than on the
+// machine. Until 2026-11-05 the comment at `getNextTransition` claimed
+// parity with `find_position`; the arithmetic matched, the premise did not.
+//
+// The anchor (or, with the spindle stopped, the remembered position) is
+// re-based so the fraction holds. Rounded to nearest, not truncated: a seek
+// is up to 160 steps and a floor would walk the platter backwards by half a
+// cycle each. No state is added, so snapshots are unchanged. Two tracks of
+// one length are left alone, which is every .dsk/.do/.po as loaded; once the
+// guest writes to such an image its tracks drift apart by a few cells (the
+// period is the PADDED cell count, and a write lays its own sync runs down),
+// and the carry then applies there too, by ratios within 0.1 % of 1.
+void DiskIICard::carryAngleAcrossStep(int drive, int fromQt, int toQt)
+{
+    if (!validDrive(drive)) return;
+    const DiskImage& img = images[drive];
+    if (!img.isLoaded()) return;
+    const auto periodOf = [&img](int qt) -> int64_t {
+        const int p = img.trackPeriod(qt);
+        return p > 0 ? p : kEmptyTrackPeriodLss;
+    };
+    const int64_t from = periodOf(fromQt), to = periodOf(toQt);
+    if (from == to) return;
+    const auto rescale = [from, to](int64_t pos) {
+        pos %= from;
+        if (pos < 0) pos += from;
+        return ((pos * to + from / 2) / from) % to;
+    };
+    int64_t& anchor = revolutionStartLssCycle[drive];
+    if (anchor == kNeverRev) {
+        stoppedPosition[drive] = rescale(stoppedPosition[drive]);
+        return;
+    }
+    const int64_t now = static_cast<int64_t>(lssCycle);
+    if (now < anchor) return;
+    const int64_t pos = rescale(now - anchor);
+    // In the first revolution after power-on `now` can be smaller than the
+    // new position, and the anchor it would take is negative — which reads as
+    // `kNeverRev`, the same limit the spin-up resume has. The angle is left
+    // as it was for that one step; nothing moves the head off track 0 that
+    // early (the boot's recalibration pushes it against the stop).
+    if (now >= pos) anchor = now - pos;
+}

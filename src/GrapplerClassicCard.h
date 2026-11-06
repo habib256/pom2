@@ -67,6 +67,16 @@ public:
     uint8_t slotRomRead      (uint8_t low8) override;
     uint8_t expansionRomRead (uint16_t offset) override;
     bool    takesC800() const override { return romLoaded_; }
+    /// The enable latch lets go on ALL of $CFF0-$CFFF, and RESET does not
+    /// touch it.
+    /// [B] Grappler Interface Operator's Manual (Orange Micro), schematic:
+    ///     the latch (a 74LS279 section of U3) is set by /IO SEL and reset by
+    ///     U5, a 74LS30 over A4..A10 and /IO STB inverted — A0-A3 are not
+    ///     decoded. /RES reaches another section of U3 only.
+    /// [C] The EPROM agrees: $CFF0-$CFFF holds a copyright string
+    ///     ("(C) SEC 08/16/81") no code reads.
+    /// [D] MAME `grappler.cpp` @ mame0287 releases on $CFFF alone.
+    bool    releasesC800At(uint16_t offset) const override { return offset >= 0x7F0; }
     void    onReset() override;
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;

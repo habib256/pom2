@@ -26,6 +26,7 @@
 #include "Mockingboard.h"
 #include "PhasorCard.h"
 #include "PrinterSoundDevice.h"
+#include "Ssi263.h"
 #include "Settings.h"
 #include "SlotBus.h"
 #include "SpeakerDevice.h"
@@ -118,14 +119,19 @@ AudioCoordinator::~AudioCoordinator()
 
 void AudioCoordinator::registerSource(AudioSource* source)
 {
-    if (!source || !device_.isAvailable() || contains(source)) return;
+    // A host device that is not open RIGHT NOW still takes the source: it
+    // may open later (AudioDeviceWatch re-opens a lost output), and a source
+    // dropped here was silent for the rest of the session even then. An
+    // offline device never opens, and keeps refusing as it always did.
+    if (!source || contains(source)) return;
+    if (!device_.isAvailable() && !device_.hostMode()) return;
     device_.addSource(source);
     sources_.push_back(source);
 }
 
 void AudioCoordinator::unregisterAll()
 {
-    if (device_.isAvailable()) {
+    if (device_.isAvailable() || device_.hostMode()) {
         for (AudioSource* source : sources_) device_.removeSource(source);
     }
     sources_.clear();
@@ -444,6 +450,14 @@ void AudioCoordinator::restore(Settings& settings,
     printer.setVolume(settings.getFloat("printer_sound_volume", 0.35f));
     printer.setMuted(settings.getBool("printer_sound_muted", false));
     printer.pan.store(settings.getFloat("printer_sound_pan", 0.0f));
+    // The SSI 263's voice: the recorded phonemes unless the user asked for
+    // the formant synthesiser (Ssi263Formant.h — unvalidated, but it sings).
+    Ssi263::setVoice(settings.getString("ssi263_voice", "recorded") == "formant"
+                         ? Ssi263::Voice::Formant : Ssi263::Voice::Recorded);
+    // The recorded ImageWriter II takes, when they are on this machine: the
+    // default, because a recording of the real head beats a model of one.
+    printer.setRecorded(settings.getBool("printer_sound_recorded", true) &&
+                        printer.recordedReady());
 
     // Virtual ][ recordings, when the local set decoded. Absent key, or a
     // folder that is not on this machine, stays on the MAME samples.
@@ -486,6 +500,10 @@ void AudioCoordinator::persist(Settings& settings,
     settings.setFloat("printer_sound_volume", printer.volume());
     settings.setBool("printer_sound_muted", printer.muted());
     settings.setFloat("printer_sound_pan", printer.pan.load());
+    // Only when the bank is here: without it "synthesised" is not a choice
+    // the user made, and writing false would stick once the files arrive.
+    if (printer.recordedReady())
+        settings.setBool("printer_sound_recorded", printer.recorded());
     // Without the recordings on this machine the mixer cannot offer
     // Virtual ][, so running on MAME is not a choice the user made: keep
     // whatever the file says. Writing "mame" here made a session without
@@ -583,10 +601,40 @@ void AudioCoordinator::pinBuffer(std::uint32_t frames)
 void AudioCoordinator::tick()
 {
     using P = pom2::AudioBufferPolicy;
-    if (pinnedFrames_ != 0 || !device_.isAvailable() || climbDeferred_) return;
     using clock = std::chrono::steady_clock;
     static const auto t0 = clock::now();
     const double now = std::chrono::duration<double>(clock::now() - t0).count();
+
+    // A device that went away, or that the system swapped for another: open
+    // it again (AudioDeviceWatch.h). Before the ladder, and whether or not a
+    // device is open — "none could be opened" is one of the cases.
+    if (!AudioDevice::appliesAtNextLoad()) {
+        AudioDeviceWatch::Input in;
+        in.nowSec    = now;
+        in.hostMode  = device_.hostMode();
+        in.available = device_.isAvailable();
+        in.callbacks = device_.callbacks();
+        in.rerouted  = device_.takeRerouted();
+        in.stopped   = device_.takeStopped();
+        const AudioDeviceWatch::Reason why = deviceWatch_.poll(in);
+        if (why != AudioDeviceWatch::Reason::None) {
+            // One line when a machine has no output; the retries are silent.
+            const bool quiet = why == AudioDeviceWatch::Reason::Unavailable &&
+                               deviceWatch_.failures() > 0;
+            const bool ok = device_.reopen(quiet);
+            deviceWatch_.reopened(ok, now);
+            if (ok)
+                pom2::log().info("Audio", std::string("output re-opened: ") +
+                                 AudioDeviceWatch::describe(why));
+            else if (!quiet)
+                pom2::log().warn("Audio", std::string(AudioDeviceWatch::describe(why)) +
+                                 " and none could be opened; retrying in the background");
+            windowStartSec_ = -1.0;        // late callbacks of the old device
+            return;
+        }
+    }
+
+    if (pinnedFrames_ != 0 || !device_.isAvailable() || climbDeferred_) return;
     const std::uint64_t late = device_.lateCallbacks();
     if (windowStartSec_ < 0.0 || now - windowStartSec_ > P::kWindowSec) {
         windowStartSec_    = now;

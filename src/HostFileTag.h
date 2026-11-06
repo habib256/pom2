@@ -54,6 +54,47 @@ std::string hostFileTag(std::uint8_t type, std::uint16_t aux);
 /// untouched when the name carries none.
 bool stripHostFileTag(std::string& name, std::uint8_t& type, std::uint16_t& aux);
 
+// ------------------------------------------------- the leading-dot escape
+//
+// A guest name may start with a period; a host name POM2 writes may not.
+//
+// [B] ProDOS 8 Technical Reference Manual § 2.1: a filename "may contain
+//     capital letters (A-Z), digits (0-9), and periods (.), and it must
+//     begin with a letter". That is the MLI's rule, not the directory's: the
+//     entry is 15 free bytes, and a system that does not go through the
+//     stock MLI check can put a period first.
+// [C] A2osX 0.95 does: its release image (A2osX-0.95-STABLE.800.po) carries
+//     /ROOT/.PROFILE — the one entry of its 238 that does not begin with a
+//     letter — and reads it by that name, so "rename it inside the guest"
+//     is not an answer.
+// The host side must still never receive a dotfile from a guest (`.git`,
+// `.bashrc`, and a folder scan that then hides them). So the period is
+// ESCAPED on the way out and restored on the way in, with the escape of the
+// convention the tag comes from:
+// [B] CiderPress II manual, § NAPS (fadden/CiderPress2 docs/Manual-cp2.md
+//     @ 49b67b40): "The escape sequence is '%' followed by the two-digit
+//     hexadecimal representation of the character", un-escaped "when the
+//     file is added with NAPS enabled" — for a name that carries its tag.
+//
+//     .PROFILE (TXT)  ⇄  %2ePROFILE#040000
+//
+// Three deliberate limits. It is the ONE escape POM2 writes and the one it
+// reads: a `%` anywhere else in a host name means what it always meant. A
+// FILE is un-escaped only when tagged, as NAPS says, so a host file somebody
+// calls `%2eNOTES.txt` keeps the name it always got — which is why an
+// escaped file always leaves with its tag, never an extension. A DIRECTORY
+// cannot carry a tag (NAPS does not escape directory names at all), so
+// there the prefix alone decides; that part is POM2's own.
+// Until 2026-11-06 the ProDOS host folder counted such an entry as lost data
+// and every save of the folder failed.
+
+/// `.NAME` → `%2eNAME`. `name` must start with a period.
+std::string hostEscapeLeadingDot(const std::string& name);
+
+/// Takes a leading `%2e` / `%2E` off `hostName`. False, and the name left
+/// alone, when it has none or when nothing would remain.
+bool stripHostLeadingDotEscape(std::string& hostName);
+
 // ------------------------------------------------- extensions and types
 
 /// ProDOS file type an extension names: `.bas` $FC, `.bin` $06, `.sys` $FF,

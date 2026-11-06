@@ -724,6 +724,7 @@ bool LironCard::prepareFlushBay(int bay, PendingBayFlush& out,
     out.path  = std::move(pending.path);
     out.bytes = std::move(pending.bytes);
     out.bitstream = std::move(pending.bitstream);
+    out.mounted = pending.mounted;
     return true;
 }
 
