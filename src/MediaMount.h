@@ -159,6 +159,18 @@ bool imageMountedElsewhere(EmulationController& ctrl, const std::string& path,
 bool imageMountedElsewhereAt(EmulationController& ctrl, int slot, int index,
                              const std::string& path, std::string& error);
 
+/// One FOLDER, one bay — the same rule for a host directory served as a
+/// synthesised ProDOS volume (bug hunt 2026-11-01 round 2, MED-1). Two bays
+/// serving one tree each keep their own snapshot: after the first guest
+/// write each flush sees the other's output as host-newer and copies it to
+/// `.pom2-conflicts/` for ever, and two decodes interleave their writes.
+/// True, with `error` set, when `folder` is already served by a bay other
+/// than (`slot`, `bay`) — compared as a directory (`/work` and `/work/`, a
+/// symlink and its target are one folder), never as the bay's label. Takes
+/// the state lock only to copy strings; the `stat`s run unlocked.
+bool hostFolderMountedElsewhereAt(EmulationController& ctrl, int slot, int bay,
+                                  const std::string& folder, std::string& error);
+
 /// The restore-time half of the same rule: after every persisted path has
 /// been loaded inline, keep each image in the first drive or bay (slot
 /// order) that holds it and eject it from the others, appending a line per

@@ -322,11 +322,22 @@ jobs:
       # floor plus RUN_SERIAL on the wall-clock tests, tests/CMakeLists.txt),
       # so the runner's real width is safe to use — and using it is what keeps
       # the fix honest, since a two-wide run would hide a regression of it.
+      # The suite must leave the source tree as it found it: a test that
+      # boots a tracked image without copying it first, or a probe that
+      # writes into the cwd, used to leave a green run and a dirty tree.
+      - name: Record the source tree before ctest
+        run: |
+          tools/check_tracked_unchanged.sh --self-test
+          tools/check_tracked_unchanged.sh --record build/tree-before-ctest.state
+
       - name: Run ctest
         working-directory: build
         run: |
           set -o pipefail
           ctest --output-on-failure --parallel $(nproc) | tee ctest-console.log
+
+      - name: The suite modified no file in the tree
+        run: tools/check_tracked_unchanged.sh --compare build/tree-before-ctest.state
 
       # A skip on a tree that carries its ROMs and media means something the
       # test needs went missing (TODO G5-15). The two GL tests are allowed to
@@ -461,9 +472,15 @@ jobs:
             exit 1
           fi
 
+      - name: Record the source tree before ctest
+        run: tools/check_tracked_unchanged.sh --record build/tree-before-ctest.state
+
       - name: Run ctest
         working-directory: build
         run: ctest --output-on-failure --parallel 3
+
+      - name: The suite modified no file in the tree
+        run: tools/check_tracked_unchanged.sh --compare build/tree-before-ctest.state
 
   windows:
     name: Windows build + portable core tests (no packaging)

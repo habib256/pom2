@@ -24,6 +24,11 @@ namespace pom2 {
 
 namespace {
 std::mutex registryMutex;
+// Keyed by hostNameMapKey(folder), not the raw string: "/x/f" and "/x/f/"
+// (or "/x/./f") are one folder, and a build recorded under one spelling and
+// taken under another missed its entry and leaked it (MED-5, bug hunt
+// 2026-11-01 round 2). All callers pass one string today; the key makes it
+// not matter.
 std::map<std::string, fs::file_time_type> scanStarts;                  // folder -> last build's start
 std::map<std::string, std::shared_ptr<const HostNameMap>> nameMaps;   // folder -> last build's names
 }  // namespace
@@ -45,19 +50,19 @@ std::uint64_t hostNameMapHash(const std::vector<std::uint8_t>& bytes)
 void recordFolderScanStart(const std::string& hostFolder)
 {
     std::lock_guard<std::mutex> lk(registryMutex);
-    scanStarts[hostFolder] = fs::file_time_type::clock::now();
+    scanStarts[hostNameMapKey(hostFolder)] = fs::file_time_type::clock::now();
 }
 
 void recordFolderNameMap(const std::string& hostFolder, std::shared_ptr<const HostNameMap> map)
 {
     std::lock_guard<std::mutex> lk(registryMutex);
-    nameMaps[hostFolder] = std::move(map);
+    nameMaps[hostNameMapKey(hostFolder)] = std::move(map);
 }
 
 std::optional<fs::file_time_type> takeFolderScanStart(const std::string& hostFolder)
 {
     std::lock_guard<std::mutex> lk(registryMutex);
-    const auto it = scanStarts.find(hostFolder);
+    const auto it = scanStarts.find(hostNameMapKey(hostFolder));
     if (it == scanStarts.end()) return std::nullopt;
     const auto t = it->second;
     scanStarts.erase(it);
@@ -67,7 +72,7 @@ std::optional<fs::file_time_type> takeFolderScanStart(const std::string& hostFol
 std::shared_ptr<const HostNameMap> takeFolderNameMap(const std::string& hostFolder)
 {
     std::lock_guard<std::mutex> lk(registryMutex);
-    const auto it = nameMaps.find(hostFolder);
+    const auto it = nameMaps.find(hostNameMapKey(hostFolder));
     if (it == nameMaps.end()) return nullptr;
     auto m = std::move(it->second);
     nameMaps.erase(it);

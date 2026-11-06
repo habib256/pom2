@@ -155,13 +155,34 @@ void hexdiff(const Blob& a, const Blob& b)
 
 int failures = 0;
 
+// A card may write NO snapshot state only if it is named here, with the
+// reason. An empty blob used to be printed and passed, which turned six of
+// the seven contract phases off for that card with no failure (bug hunt
+// 2026-11-01 round 2, test quality #1): a card that LOST its snapshot
+// override would have gone green.
+const std::map<std::string, const char*> kStateless = {
+    {"FourPlayCard",    "four joysticks read live from the host; no latch"},
+    {"SamCard",         "an 8-bit DAC; its stamped output is dropped on a time jump (onTimeJump)"},
+    {"PrinterCard",     "synthetic printer; what it printed is irreversible, nothing latched"},
+    {"WorkstationCard", "bare, with no firmware nothing runs; Workstation+ROM carries state"},
+};
+
 void check(const Entry& e)
 {
     // ---- P1: round-trip fidelity ------------------------------------
     auto a = e.make();
     drive(*a, 0x1234567u);
     Blob ba = cap(*a);
-    if (ba.empty()) { std::printf("  %-22s NO SNAPSHOT STATE (empty blob)\n", e.name); }
+    if (ba.empty()) {
+        const auto why = kStateless.find(e.name);
+        if (why == kStateless.end()) {
+            std::printf("  %-22s FAIL: no snapshot state (empty blob) and not declared "
+                        "stateless in kStateless\n", e.name);
+            ++failures;
+        } else {
+            std::printf("  %-22s stateless by design: %s\n", e.name, why->second);
+        }
+    }
     else {
         auto b = e.make();
         b->loadSnapshotState(ba.data(), ba.size());
@@ -430,7 +451,10 @@ int main()
         { "smartport35", { "SmartPort35+ROM", fromFactory("smartport35", 5) } },
     };
     for (const auto& [key, e] : withFirmware) {
-        if (!e.make()) { std::printf("[%s] skipped: no %s firmware here\n", e.name, key); continue; }
+        // SKIP at the line start, so tools/check_ctest_skips.sh sees it: the
+        // old "[Name] skipped:" shape matched none of its patterns, and a
+        // missing dump silently dropped that card's firmware half on CI.
+        if (!e.make()) { std::printf("SKIP %s: no %s firmware here\n", e.name, key); continue; }
         cards.push_back(e);
     }
 

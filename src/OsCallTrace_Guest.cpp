@@ -385,6 +385,7 @@ void OsCallTrace::cpm65Step(uint16_t pc)
         c.sp  = uint8_t(s + 2);
         c.fn  = y;
         c.arg = xa;
+        if (reoffered(cpmPending_, c)) return;   // DBG-2
         c.text = fmt("$%04X BDOS ", uint16_t(jsrLast - 2)) + t;
         abandon(cpmPending_, c.sp, 0xFF, "CPM65");
         if (y == 0) { emit("CPM65 " + c.text); return; }   // never comes back

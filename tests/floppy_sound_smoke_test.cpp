@@ -51,9 +51,19 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Find roms/floppy_samples/ relative to the test binary's likely cwd.
+// Find roms/floppy_samples/. The source tree first: the samples are TRACKED
+// (MAME's, BSD), so their absence is a broken checkout, not a skip — the
+// cwd-relative probes below used to turn a run from the wrong directory into
+// "14 of 15 cases skipped" under a green exit (bug hunt 2026-11-01 round 2,
+// test quality #1).
 std::string findSampleDir()
 {
+#ifdef POM2_TEST_SOURCE_DIR
+    {
+        const std::string p = std::string(POM2_TEST_SOURCE_DIR) + "/roms/floppy_samples";
+        if (fs::is_directory(p)) return p;
+    }
+#endif
     static const char* candidates[] = {
         "roms/floppy_samples",
         "../roms/floppy_samples",
@@ -606,11 +616,9 @@ int main()
 
     const std::string dir = findSampleDir();
     if (dir.empty()) {
-        std::puts("WARN  roms/floppy_samples/ not found relative to CWD —");
-        std::puts("      sample-dependent assertions skipped. The path probe");
-        std::puts("      walks ., .., ../.., ../../.. — run from repo root or");
-        std::puts("      build/.");
-        return 0;
+        std::puts("FAIL  roms/floppy_samples/ not found — the samples are tracked,");
+        std::puts("      so this is a broken checkout, not a skip.");
+        return 1;
     }
     std::printf("Using sample dir: %s\n", dir.c_str());
 

@@ -10,6 +10,198 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-06 — RESET leaves the IRQ line to its drivers; quiet skips speak; in-test time bounds scale
+
+**CPU-2: RESET no longer wipes the wire-OR IRQ mask.** The mask is POM2's
+model of the /IRQ line, which the devices drive. RESET reaches that line only
+through devices that have a RESET pin, and every reset path already runs their
+`onReset` before the CPU's. I checked all thirteen IRQ-asserting cards: each
+one with a reset-capable chip releases its contribution there. Clearing the
+mask as well modelled nothing, and it desynced the CPU from the one chip with
+no RESET pin, the CCS 7710's 6850. The CPU forgot the interrupt while the card
+still believed it held the line, and because `assertIrq` is edge-tracked, the
+card could never raise it again. `ccs7710_card` now checks both resets: the
+IRQ survives, can be released, and can be raised again.
+
+**Quiet skips speak (test quality #1).**
+- `floppy_sound_smoke` found its tracked samples only through cwd-relative
+  probes. Run from the wrong directory, 14 of its 15 cases became a "WARN …
+  skipped" and the test exited 0. It now reads the source tree, and a missing
+  sample directory is a failure.
+- `card_snapshot_contract` passed any card whose snapshot came back empty,
+  which switched six of the seven contract phases off for that card. An empty
+  blob now fails unless the card is listed in `kStateless`, with its reason.
+  Four are listed: FourPlay, SAM, the synthetic printer, and the Workstation
+  card without firmware.
+- The same test's "[X+ROM] skipped:" line matched none of the skip detector's
+  patterns. It now says `SKIP`, and Videoterm+ROM, whose firmware is
+  deliberately absent, is allow-listed.
+- Six //c tests looped over the three //c ROMs and dropped a missing one
+  silently. All three ROMs are in `tools/test_media.sha256`, so each missing
+  one is now announced, and CI's skip check fails on it.
+
+**In-test time bounds scale (test quality #3).** CI's sanitizer job scales
+every ctest TIMEOUT by 6, but about fifteen bounds *inside* the tests were
+literals: "came back within 60 ms", a 20 ms TTL between two calls, the ACIA's
+burst cap. `tests/TestTimeScale.h` reads `POM2_TEST_TIME_SCALE`, which the
+final CMake sweep now passes to every test with the same value. Only bounds of
+the "it returned promptly" kind are scaled. The ACIA cap instead grows with
+what its own write loop took at 1920 B/s. Eight tests that had come to assert
+wall clock since the list was written joined `POM2_WALLCLOCK_TESTS`. That list
+is now applied at the end of the file, because half of them are declared
+after the point where it used to run.
+
+## 2026-11-06 — Ten more from the round-2 hunt: the decode budget, CP/M R/O, a bounded LISTEN probe, the OS trace, raw receive
+
+Ten items from the "Then" list of
+[bug-hunt-2026-11-01-round2](docs/audits/bug-hunt-2026-11-01-round2.md). Each
+is pinned by a test that fails on the old code; I checked every one by
+mutation.
+
+- **MED-4: the ProDOS decode charged its 512 MiB *write* budget for every file
+  it read**, including the unchanged ones it then skipped. A folder of large
+  unchanged files exhausted the budget, refused the rest, and failed the whole
+  write-back for good, naming files that were fine. The budget is now charged
+  when a file is really written, after `hostFileHolds` has said whether the
+  host already has those bytes. A separate 1 GiB bound (twice the build's
+  staging limit) still caps what one decode may materialise from a crafted
+  volume. `prodos_decode_safety` checks forty 15 MiB sparse files plus one new
+  file, and costs no disk.
+- **MED-3: `pom2_cpm` ignored CP/M's R/O attribute** (t1', bit 7 of
+  directory byte 9). `rm` and `put` now refuse a read-only file, as CP/M's
+  BDOS does, and say how to clear it (`STAT name $R/W`). Pinned in
+  `cpm_disk_fs`.
+- **NET-3: LISTEN's "is this port taken" probe was a blocking `connect()` on
+  the CPU thread under `stateMutex`.** Against a listener whose accept backlog
+  is full, the SYN is dropped, not refused. Measured here, the machine and
+  the window froze together for 7.8 s. The probe is now non-blocking with a
+  50 ms bound, and no answer within the bound counts as "taken". Pinned in
+  `uthernet2_w5100`, which saturates a real loopback backlog (129 connects on
+  macOS, 2-3 on Linux).
+- **DBG-2: the OS-call trace decoded an MLI, SmartPort or CP/M-65 entry twice**
+  when it was offered twice: after a debugger stop on it, or an IRQ taken
+  there. `abandon()` then closed the first copy with a bogus
+  `-> (no return)`. These three now share the guard the BDOS and Monitor
+  halves already had (`OsCallTrace::reoffered`). Pinned in `os_call_trace`.
+- **NET-2: MACRAW/IPRAW frames were staged only on an `Sn_RX_RSR` read**, so
+  the mode-independent RECV interrupt never fired on its own. `poll()` now
+  stages one frame per service, but only while every raw ring has room for
+  the largest frame. Pulling into a full ring would drop frames the lazy path
+  used to leave queued. Pinned in `uthernet2_w5100`.
+- **NET-4: LISTEN outside SOCK_INIT tore a live socket down** and raised
+  TIMEOUT on it. It is now ignored. The datasheet only defines LISTEN from
+  SOCK_INIT, so the silicon's answer here is graded F in the code, with what
+  would settle it. Pinned in `w5100_socket_seam`.
+- **SP-1: the SmartPort hub called `setSony35(nullptr)` for a selected 3.5"
+  connector with no drive on it.** That also cleared the 5.25" disk that
+  DiskIICard binds to the shared IWM. It now calls `releaseSony35()`. Pinned
+  in `iwm_stale_sony`.
+- **SES-3:** `noteTimeJump()` now starts at slot 0, as the rewind capture
+  loop does.
+- **CPU-3:** a FASTChip snapshot no longer overwrites the host's power-on
+  speed (`fast_chip_speed`), matching what ZipChip already did.
+- **MED-5:** the ProDOS host-name registry is keyed by `hostNameMapKey`, so
+  two spellings of one folder find one entry.
+
+**Left open, on purpose** (CPU-2, first listed here, was taken in the entry
+above once every card's `onReset` had been checked):
+- **SES-2:** no reachable trigger was found.
+- **DBG-4:** a performance claim that has not been measured.
+- **CPU-4:** needs MAME's accelerator decode, read at a pinned revision,
+  before either side can be called right.
+
+## 2026-11-06 — Run gets past an IRQ; the suite leaves the tree alone; a --speed fix withdrawn
+
+**A `--speed` fix, withdrawn (CPU-1 stays open).** At a speed other than 1×
+the cards' phase-0 clock stays nominal while the CPU clock is scaled, so a
+VIA-T1 tune runs at half tempo against the raster at 2×. Handing the cards the
+speed-scaled clock was written, passed its own test, and was withdrawn before
+commit. `device_standard_clock` failed on it, and the reason is worth more
+than the fix: `setStandardClock` is two things. Read as a *ratio* to the CPU
+clock (the VIAs, the Disk II sequencer, the SoftCard Z80), it must follow the
+speed. Read as an *absolute* rate that turns physical time into cycles (the
+Sony platter's RPM, a FLUX track's 125 ns ticks, the SSI263's XCK), it must
+not, or at 2× a FLUX disk and a 3.5" platter turn half as fast as the
+sequencer and the IWM expect. The fix needs machine time and wall time
+separated in the card clock API, one card at a time (DEV § Mockingboard).
+
+**Run gets past a breakpoint when an IRQ comes first (DBG-1).** Resuming
+grants the breakpoint under the PC one instruction of amnesty. It was spent
+when the instruction was *offered*. An IRQ taken at that boundary ran its
+handler, came back through RTI and offered the instruction again with no
+amnesty left. Run then re-stopped at the same breakpoint having executed
+nothing, and with a level-triggered IRQ still asserted it could never get past.
+The amnesty is now retired in `onStepCompleted`, once the instruction has
+really run. This mirrors the 2026-11-01 `stepSkipFirst_` fix.
+`debugger_banks_cases.h` asserted the offer-based rule and now models the
+interrupt. A new `testResumeAmnestySurvivesAnInterrupt` fails on the old code
+with "$10 = 00".
+
+**The suite leaves the source tree as it found it.**
+`tools/check_tracked_unchanged.sh` records `git status` plus a hash of
+`git diff HEAD` before ctest and compares them after, on the Linux and macOS
+legs. A tree that was dirty before the run passes, as long as the run does not
+touch it further. The rule it enforces is old: a test that boots a tracked
+image copies it first, and a probe writes under `probeOutDir()`. Nothing
+checked it, so a test that wrote into a tracked disk left a green suite and a
+dirty tree. Its `--self-test` runs in CI with six cases, four of them negative
+controls. It needs only bash 3.2 and git.
+
+## 2026-11-06 — One folder, one bay; DISCON keeps the tail
+
+**One folder, one bay (MED-1, bug hunt 2026-11-01 round 2).** A host folder
+could be served into two bays at once, for instance `--prodos-folder /work`
+plus a GUI mount of `/work`. Each bay kept its own snapshot, so every flush
+saw the other's output as host-newer and filled `.pom2-conflicts/` for ever.
+Worse, the synth commit never took `imageCommitMutex`, so two decodes of one
+tree interleaved their writes after the losing blocks had already been retired
+clean. That was real data loss. `mountBlockBytes` now refuses the second bay
+(`pom2::hostFolderMountedElsewhereAt`). The comparison is on the directory,
+through a new `MediaBayInfo::hostFolder`, and not on the bay's
+`"[host folder] /work"` label, which would have compared `/work` and `/work/`
+as different strings. The synth branch of `commitWriteBack` now takes the
+commit mutex as a backstop. Pinned in `storage_coordinator`, which fails with
+the refusal disabled.
+
+**DISCON keeps the tail from CLOSE_WAIT (NET-1).** After a peer half-closed,
+a guest's short SEND parked a tail and raised SEND_OK. The guest's DISCON then
+took the abortive arm and dropped that tail with the fd. This is the ordinary
+HTTP/1.0 and IRC shape. DISCON now waits in LAST_ACK (FIN_WAIT from
+ESTABLISHED, as before) until the tail drains. Two siblings came with it. The
+deferred close never raised Sn_IR DISCON, so a driver following the
+datasheet's "First method" (§ 5.2.1.1) waited for ever. A tail that can no
+longer be sent now ends in TIMEOUT, as § 4.2 says a failed termination does.
+Sources: W5100 datasheet v1.1.6 and RFC 793 (DEV § Uthernet II). Pinned in
+`w5100_socket_seam`.
+
+## 2026-11-06 — A compatibility corpus with a pass rate (VALIDATION-006)
+
+**The compatibility corpus (VALIDATION-006).** `pom2_corpus` boots every title
+of `tests/corpus/corpus.manifest` headless through the SDK facade, plays its
+keys and emulated seconds, hashes the frame at each check and compares it with
+`tests/corpus/corpus.expected`. It reports a pass rate over titles and over
+checks. The first manifest starts with DIX: the menu, then automatic mode with
+one check per part (16 checks over 26.5 emulated minutes, ~22 s of host time),
+followed by the author's tracked titles and Digidream. Result: 8/8 titles,
+24/24 checks ([corpus-2026-11-07](docs/audits/corpus-2026-11-07.md)). Two
+decisions are worth keeping:
+
+- **The firmware is part of the expectation.** Each recorded check carries a
+  fingerprint of the dumps that produced it. A run with other dumps *skips*
+  the title and names both fingerprints. Without that, a machine with a
+  different Disk II PROM would report a regression POM2 did not make.
+- **It detects change, not correctness.** A frame was judged right by eye when
+  it was blessed (`--frames` writes the PNGs). The check only says whether it
+  moved. That is enough to separate "my CPU-001 change moved DIX" from "it did
+  not", which is the gate CPU-001 asked for. As a control, reverting the
+  Mockingboard's `syncToCpuCycle()+1` (the OLDSKOOL fix) fails 15 of DIX's
+  16 checks.
+
+ctest runs the `ci` titles (`corpus_ci`, DIX's menu and first part, under a
+second) and the grammar with each refusal (`corpus_manifest`). Media are copied
+before they are mounted. Absent media or firmware is a skip with its reason,
+never a failure. → [tests/corpus/README.md](tests/corpus/README.md).
+
 ## 2026-11-06 — See the picture through the CRT panel while dragging (UI-014)
 
 A mouse drag on a floating CRT slider makes the panel translucent (25% of

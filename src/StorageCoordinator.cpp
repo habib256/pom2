@@ -758,6 +758,13 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountBlockBytes(
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
+    // One folder, one bay (MED-1) — the folder sibling of the "one image, one
+    // drive" check `mountMediaBay` makes. Before the flush below: a refused
+    // mount must leave the outgoing medium exactly as it was.
+    if (pom2::hostFolderMountedElsewhereAt(controller, slot, bay, hostFolder,
+                                           result.error))
+        return result;
+
     // Flush the OUTGOING image first, and off the lock. `loadImageFromBytes`
     // saves whatever is mounted before replacing it, so the host-folder mount
     // (this function's only caller) held `stateMutex` across the previous

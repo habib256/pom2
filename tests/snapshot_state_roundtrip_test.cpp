@@ -199,6 +199,13 @@ int main()
             constexpr size_t kIouNow    = 43;   // + the four 558 timers (2026-10-28)
             constexpr size_t kIouLegacy = 4;
             size_t end = shortBlob.size();
+            // The Joyport trailer (2026-11-06) closes the blob and is never
+            // empty: 5 bytes behind its length. A pre-2026-09-06 build wrote
+            // none of it, so it goes first.
+            constexpr size_t kJoyport = 5;
+            CHECK(end >= kJoyport + 4 && shortBlob[end - kJoyport - 4] == kJoyport,
+                  "the Joyport section closes the trailer");
+            end -= kJoyport + 4;
             while (end >= 4 && shortBlob[end - 1] == 0 && shortBlob[end - 2] == 0 &&
                    shortBlob[end - 3] == 0 && shortBlob[end - 4] == 0)
                 end -= 4;                       // a zero-length section

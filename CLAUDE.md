@@ -120,7 +120,9 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   flips it, and **ctest sets it for every test** because dozens of tests boot
   the tracked images and the cards commit dirty media in their destructors —
   a test or probe that boots a tracked image must copy it first if it wants
-  writes). A legacy `*_writeback = false` key is migrated once at restore:
+  writes — and CI checks it: `tools/check_tracked_unchanged.sh` records the
+  tree before ctest and fails the job if the run changed a tracked file or
+  left one outside `build/`). A legacy `*_writeback = false` key is migrated once at restore:
   the disk it protected gets the notch and the flag reverts. The one opt-in
   left is the ProDOS host folder sync (a real directory, a different hazard).
   Pinned by `media_notch`, `media_write_default` and `storage_coordinator`.
@@ -380,6 +382,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
 | OS-call trace — ProDOS MLI, SmartPort, Apple Pascal BIOS, Monitor (COUT/GETLN), Applecorn's BBC MOS, CP/M-65 (6502) + CP/M BDOS (card Z80, `Z80Observer`) + the cards' own lines (Disk II head: `CardTraceSink`, `SlotBus::setCardTrace`); Debugger panel, `pom2_headless --trace-*`, probe `os_trace_probe` | `OsCallTrace.h/.cpp`, `OsCallTrace_Guest.cpp`, `CardTraceSink.h` | [§ OS-call trace](DEV.md#os-call-trace-oscalltracehcpp) |
 | Resumable sessions (v7, automatic profile/firmware/card reconstruction, detached media and program tapes) | `SessionArchive.*`, `SessionSnapshot.*`, `SessionMachine.*`, `SessionCards.*`, `SessionLoadQueue.*`, `SessionFiles.*`, `CassetteDevice_Session.cpp` | [Session contract](docs/session-format.md) |
+| Compatibility corpus — `pom2_corpus` boots `tests/corpus/corpus.manifest` through the SDK facade, hashes a frame per check against `corpus.expected` (firmware-fingerprinted; other dumps = skip), prints a pass rate; `--bless`, `--frames`, `--report`; ctest `corpus_ci` + `corpus_manifest` | `pom2_corpus.cpp`, `CorpusManifest.h/.cpp`, `tests/corpus/` | [README](tests/corpus/README.md) |
 | Clock & threading | `EmulationController.h/.cpp` | [§ Threading](DEV.md#clock--threading) |
 | Thread exception barrier (every long-lived thread) | `ThreadGuard.h` | [§ Threading](DEV.md#thread-exception-barrier-threadguardh) |
 | System profiles | `SystemProfile.h/.cpp` | [§ Profiles](DEV.md#profile-switching-internals) |

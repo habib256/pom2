@@ -1,0 +1,27 @@
+# POM2 compatibility corpus - recorded frames (VALIDATION-006).
+# Written by `pom2_corpus --bless`; see tests/corpus/README.md.
+# <title> <check> <frame hash> fw=<firmware fingerprint>
+a2filecmd-dos33 menu 58adb5d944317d91 fw=dd709ebbd095
+a2filecmd-prodos menu 715a46af37bd4ac1 fw=80f2bfe3de5f
+chromabreak title 9b3a938f60a5698d fw=dd709ebbd095
+digidream running a242b77b98095d51 fw=dd709ebbd095
+dirtbike title f679c57b8bcda4b8 fw=dd709ebbd095
+dix-auto crazy-cycles 4d5ea01bcd2a43ac fw=80f2bfe3de5f
+dix-auto crazy-cycles-2 9534d286d23b2563 fw=80f2bfe3de5f
+dix-auto digidream 19e7963d74d708f7 fw=80f2bfe3de5f
+dix-auto digidream-sid ea43fff362f11e79 fw=80f2bfe3de5f
+dix-auto mad-effect 00096f091c718a2d fw=80f2bfe3de5f
+dix-auto mad-effect-2 6cc0348d0833bcfd fw=80f2bfe3de5f
+dix-auto mad-effect-3 cd88fe41185fc260 fw=80f2bfe3de5f
+dix-auto menu d39b645d49a53d6b fw=80f2bfe3de5f
+dix-auto oldskool-fort-et-vert 6ec076be2e180aae fw=80f2bfe3de5f
+dix-auto one-more-thing baa60587438e21ed fw=80f2bfe3de5f
+dix-auto plasmagoria 7cd9ef66635bf340 fw=80f2bfe3de5f
+dix-auto question-of-frames 007904c3cc7e6749 fw=80f2bfe3de5f
+dix-auto raster-bars 73bfb6d61c03baa0 fw=80f2bfe3de5f
+dix-auto scroll-scroll-scroll eebc46022b5e6d88 fw=80f2bfe3de5f
+dix-auto unlimited-bobs 51d4050f84b4e465 fw=80f2bfe3de5f
+dix-auto unreeeal-superhero-3 3e7673cfa31db61e fw=80f2bfe3de5f
+dix-menu menu d39b645d49a53d6b fw=80f2bfe3de5f
+dix-menu unlimited-bobs 51d4050f84b4e465 fw=80f2bfe3de5f
+micro-sokoban title a552809cee43bead fw=dd709ebbd095

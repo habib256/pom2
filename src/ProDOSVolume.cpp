@@ -63,6 +63,14 @@ constexpr std::size_t kMaxVolumeBlocks   = 65535; // ProDOS total_blocks is 16-b
 // The decode side bounds what a crafted volume — many 16 MB seedlings on one
 // block — can make the host write (bug hunt 2026-10-23).
 constexpr std::size_t kMaxLogicalBytes   = std::size_t{512} << 20;
+// What one decode may READ OUT of the volume (materialise, sparse holes
+// zero-filled) — a separate bound from what it may WRITE (kMaxLogicalBytes,
+// charged only when a file is really written). Charging the write budget for
+// every file read made a folder of large unchanged files exhaust it and fail
+// the whole write-back for good, naming a file that was fine (MED-4, bug
+// hunt 2026-11-01 round 2). Twice the write budget: a build stages at most
+// kMaxLogicalBytes unchanged, and the guest may add as much again.
+constexpr std::size_t kMaxDecodeReadBytes = 2 * kMaxLogicalBytes;
 
 constexpr std::uint8_t kStorageSeedling     = 0x1;
 constexpr std::uint8_t kStorageSapling      = 0x2;
@@ -1040,24 +1048,28 @@ inline std::uint32_t rd24(const std::uint8_t* p)
 // refuses a competing writer instead of overwriting that writer's copy.
 enum class FileWriteResult { Unchanged, Written, Exists, Error };
 
+/// Does the host file at `path` hold exactly `bytes`? Size first, then the
+/// contents; false for a file that is absent or unreadable.
+bool hostFileHolds(const fs::path& path, const std::vector<std::uint8_t>& bytes)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const auto sz = static_cast<std::size_t>(in.tellg());
+    if (sz != bytes.size()) return false;
+    std::vector<std::uint8_t> have(sz);
+    in.seekg(0, std::ios::beg);
+    in.read(reinterpret_cast<char*>(have.data()), static_cast<std::streamsize>(sz));
+    return in && have == bytes;
+}
+
 FileWriteResult writeFileAtomic(const fs::path& dest,
                                 const std::vector<std::uint8_t>& bytes,
                                 std::string& err, bool createOnly = false)
 {
     std::error_code ec;
     if (fs::exists(dest, ec)) {
-        std::ifstream in(dest, std::ios::binary);
-        if (in) {
-            in.seekg(0, std::ios::end);
-            const auto sz = static_cast<std::size_t>(in.tellg());
-            if (sz == bytes.size()) {
-                std::vector<std::uint8_t> have(sz);
-                in.seekg(0, std::ios::beg);
-                in.read(reinterpret_cast<char*>(have.data()),
-                        static_cast<std::streamsize>(sz));
-                if (in && have == bytes) return FileWriteResult::Unchanged;
-            }
-        }
+        if (hostFileHolds(dest, bytes)) return FileWriteResult::Unchanged;
         if (createOnly) return FileWriteResult::Exists;
     }
     if (ec) { err = "cannot inspect " + dest.string() + ": " + ec.message(); return FileWriteResult::Error; }
@@ -1228,7 +1240,8 @@ struct DecodeWalk {
     std::size_t                       totalBlocks = 0;
     std::unordered_set<std::uint16_t> expanded;
     std::size_t                       dirsLeft    = kMaxDecodeDirs;
-    std::size_t                       bytesLeft   = kMaxLogicalBytes;
+    std::size_t                       bytesLeft   = kMaxLogicalBytes;    // written
+    std::size_t                       readLeft    = kMaxDecodeReadBytes; // materialised
     ProDOSDecodeResult&               r;
     bool                              ioFailed    = false;
     /// Mount-time stamp: host files newer than this are preserved, not
@@ -1656,15 +1669,15 @@ void decodeOneDir(DecodeWalk& w,
                 if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
-            if (eof > w.bytesLeft) {
+            if (eof > w.readLeft) {
                 pom2::log().warn("ProDOSVol",
-                    "decode: " + std::to_string(kMaxLogicalBytes >> 20) +
-                    " MB written this pass — not writing " + name);
+                    "decode: " + std::to_string(kMaxDecodeReadBytes >> 20) +
+                    " MB read this pass — not reading " + name);
                 ++r.filesSkipped;
                 if (isProDOSLegalName(name)) noteUnsaved(r, name);
                 continue;
             }
-            w.bytesLeft -= eof;
+            w.readLeft -= eof;   // the WRITE budget is charged at the write
 
             std::vector<std::uint8_t> data;
             data.reserve(eof);
@@ -1924,6 +1937,14 @@ void decodeOneDir(DecodeWalk& w,
                         w.ioFailed = true;
                         return;
                     }
+                    if (data.size() > w.bytesLeft) {   // MED-4: charged at the write
+                        pom2::log().warn("ProDOSVol",
+                            "decode: " + std::to_string(kMaxLogicalBytes >> 20) +
+                            " MB written this pass — no conflict copy of " + name);
+                        noteUnsaved(r, name);
+                        ++r.filesSkipped;
+                        continue;
+                    }
                     fs::path copy;
                     std::string conflictError;
                     for (unsigned suffix = 0; suffix < 10000; ++suffix) {
@@ -1947,6 +1968,7 @@ void decodeOneDir(DecodeWalk& w,
                         w.ioFailed = true;
                         return;
                     }
+                    w.bytesLeft -= data.size();
                     ++r.filesConflicted;
                     if (r.conflictNames.size() < 4)
                         r.conflictNames.push_back(name);
@@ -1956,6 +1978,19 @@ void decodeOneDir(DecodeWalk& w,
                     ++r.filesSkipped;
                     continue;
                 }
+            }
+            // The write budget bounds what the host is MADE to write. A file
+            // whose bytes the host already holds costs nothing (MED-4); one
+            // that would be written past the budget is refused before its
+            // rename, so a refusal leaves the host file exactly as it was.
+            if (data.size() > w.bytesLeft &&
+                !hostFileHolds(renameFrom.empty() ? dest : renameFrom, data)) {
+                pom2::log().warn("ProDOSVol",
+                    "decode: " + std::to_string(kMaxLogicalBytes >> 20) +
+                    " MB written this pass — not writing " + name);
+                ++r.filesSkipped;
+                noteUnsaved(r, name);
+                continue;
             }
             bool renamed = false;
             if (!renameFrom.empty()) {
@@ -1986,6 +2021,7 @@ void decodeOneDir(DecodeWalk& w,
             }
             if (wr == FileWriteResult::Written) {
                 ++r.filesWritten;
+                w.bytesLeft -= std::min(w.bytesLeft, data.size());
                 noteWriteTime(dest, w.stamp, w.newest);
             } else if (renamed) {
                 ++r.filesWritten;          // same bytes, new metadata
@@ -2090,7 +2126,7 @@ ProDOSDecodeResult decodeVolumeToFolder(
     // volume's size bounds the directories a decode can create; a smaller
     // budget (2048) silently dropped the guest's files past it (STORAGE-014 #4).
     DecodeWalk walk{ image, totalBlocks, {}, std::max(kMaxDecodeDirs, totalBlocks),
-                     kMaxLogicalBytes, r, false,
+                     kMaxLogicalBytes, kMaxDecodeReadBytes, r, false,
                      preserveNewerThan, stickyPreserved, convertText, {},
                      fs::file_time_type::clock::now(), {} };
     // Resolved ONCE, before anything is written: every destination is checked

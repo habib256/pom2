@@ -54,6 +54,12 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
 ### Highest
 
 - **CPU-1 — a non-stock `--speed` scales the CPU clock but not the bus clock.**
+  *2026-11-06: a fix (the speed-scaled clock as the bus clock) was written and
+  WITHDRAWN before commit — `setStandardClock` is also the absolute rate the
+  Sony platter, the FLUX time base and the SSI263 XCK convert physical time
+  with, and those must stay nominal or a 3.5" / FLUX disk stops reading at 2×.
+  Needs machine time and wall time separated in the card clock API (DEV §
+  Mockingboard). Still open.*
   `EmulationController.cpp:89` hands every card `setStandardClock(vt.cpuClockHz)`,
   the *unscaled* nominal, while the CPU clock is scaled by
   `baseCyclesPerFrame_ / vt.cyclesPerFrame`. At toolbar 2× a 6522 T1 latch needs
@@ -68,7 +74,8 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
   as faster too. `device_clock_fanout` only ever exercises ratio 1, which is why
   nothing caught it.
 - **MED-1 — one host folder can be served into two bays, and both write it
-  back.** `StorageCoordinator::mountBlockBytes` never applies the "one image,
+  back.** *Fixed 2026-11-06 (CHANGELOG): the mount refuses a second bay on one
+  folder, and the synth commit takes `imageCommitMutex`.* `StorageCoordinator::mountBlockBytes` never applies the "one image,
   one drive" rule its file-image sibling applies at `:690`. Each bay keeps its
   own snapshot, so after the first guest write each flush sees the other's
   output as host-newer and copies every differing file into
@@ -81,7 +88,8 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
   label `"[host folder] /work"`, so `sameImageFile` would compare strings and
   miss `/work` vs `/work/`.
 - **NET-1 — `DISCON` from `SOCK_CLOSE_WAIT` drops the TX tail the guest was
-  told was sent.** `W5100Device.cpp:719-730` gates the graceful close on
+  told was sent.** *Fixed 2026-11-06 (CHANGELOG): LAST_ACK until the tail
+  drains; the deferred close raises DISCON.* `W5100Device.cpp:719-730` gates the graceful close on
   `SOCK_ESTABLISHED` only. `sendData` allows CLOSE_WAIT, so a short write parks
   the remainder in `pendingTx` *and raises SEND_OK*; the guest then issues
   DISCON, takes the `else` arm, and `clearSocket` discards the tail with the fd
@@ -90,7 +98,8 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
 
 ### Then
 
-- **DBG-1 — the resume amnesty is spent on an offer an interrupt preempts**, so
+- **DBG-1 — the resume amnesty is spent on an offer an interrupt preempts**,
+  *fixed 2026-11-06 (CHANGELOG: retired in `onStepCompleted`)*, so
   Run re-stops at the same breakpoint having executed nothing; with a
   level-triggered IRQ still asserted, Run can never make progress. The fix is
   the mirror of the one the 2026-11-01 hunt applied to `stepSkipFirst_` —
@@ -98,36 +107,36 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
   `debugger_banks_cases.h:70-72` updated, which asserts today's offer-based
   semantics while the real run loop always calls `onStepCompleted`.
 - **DBG-2 — the OS trace decodes a call twice when its entry is offered
-  twice** (a debugger stop at `$BF00`, or an interrupt taken there), and
+  twice** *Fixed 2026-11-06 (`OsCallTrace::reoffered`).* (a debugger stop at `$BF00`, or an interrupt taken there), and
   `abandon()`'s `<=` then closes the first copy with a bogus `-> (no return)`.
   `onZ80Instruction` and `monStep` already carry the guard; MLI, SmartPort and
   CP/M-65 were missed.
 - **NET-2 — MACRAW/IPRAW frames are staged only when the guest reads
-  `Sn_RX_RSR`.** `poll()` drives the receive side for host-socket modes only, so
+  `Sn_RX_RSR`.** *Fixed 2026-11-06 (`poll()` stages one frame per service while the rings have room).* `poll()` drives the receive side for host-socket modes only, so
   the mode-independent `Sn_IR` RECV the 2026-09-08 fix added still never fires
   on its own and an interrupt-shaped raw driver waits for ever. The documented
   intent is in `DEV.md` § Uthernet II; the register plumbing landed, the driving
   did not.
 - **NET-3 — the LISTEN port-squat probe is a blocking `::connect()` on the CPU
-  thread under `stateMutex`** (`W5100HostSockets.cpp:139-146`). Against a
+  thread under `stateMutex`** *Fixed 2026-11-06 (non-blocking, 50 ms bound; no answer = taken).* (`W5100HostSockets.cpp:139-146`). Against a
   saturated loopback accept backlog the SYN is dropped rather than refused, so
   it blocks for the kernel's retry ladder — tens of seconds with the machine
   *and* the window frozen together. `connectBounded` is one include away.
   Needs the `uthernet_allow_loopback` opt-in.
-- **MED-3 — `pom2_cpm` ignores the CP/M R/O attribute** and deletes or
+- **MED-3 — `pom2_cpm` ignores the CP/M R/O attribute** *Fixed 2026-11-06.* and deletes or
   overwrites a file CP/M itself refuses to touch; `list()` already decodes the
   flag and `ls` prints it. The DOS 3.3 sibling honours its lock bit.
 - **MED-4 — the ProDOS decode charges its 512 MB budget for files it then
-  skips**, so a volume of mostly-unchanged sparse files exhausts the budget,
+  skips** *Fixed 2026-11-06 (the write budget is charged at the write; a separate 1 GiB read bound).*, so a volume of mostly-unchanged sparse files exhausts the budget,
   reports `filesUnsaved`, and fails the whole write-back permanently — naming a
   file that is fine.
-- **SP-1 — `SmartPortHub::recalcActiveDevice` calls `setSony35(nullptr)`**,
+- **SP-1 — `SmartPortHub::recalcActiveDevice` calls `setSony35(nullptr)`** *Fixed 2026-11-06 (`releaseSony35()` for an empty connector).*,
   which also clears the IWM's 5.25" `DiskImage` pointer — the exact call the
   surrounding comment forbids and `releaseSony35()` exists to avoid. Reachable
   on a stock //c+ (the external Sony drives are null by default). No
   guest-visible symptom could be constructed, because the //c-class authority
   split already withholds those accesses from the Disk II; report as hardening.
-- **NET-4 — `LISTEN` from a non-INIT state tears the socket down** instead of
+- **NET-4 — `LISTEN` from a non-INIT state tears the socket down** *Fixed 2026-11-06 (ignored outside SOCK_INIT; grade F, settled by a real card).* instead of
   being ignored, killing a live accepted connection and raising TIMEOUT on it.
   The stock `ioLibrary_Driver` guards the register write itself, so real
   software is unlikely to reach it.
@@ -144,20 +153,22 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
   still budgets for the 64 KiB memcpy it opened with. Only ~40 disassembly rows
   and the listed breakpoints ever read `snap.banks`. Not measured — the claim is
   from call counts, not a profile.
-- **SES-3 — `noteTimeJump()` skips slot 0** while the rewind snapshot captures
+- **SES-3 — `noteTimeJump()` skips slot 0** *Fixed 2026-11-06.* while the rewind snapshot captures
   and restores `SLOT0`. No current slot-0 card overrides `onTimeJump`, so
   nothing is lost today; it is a one-token divergence from the capture loop.
 - **CPU-2 — `M6502::softReset()`/`hardReset()` wipe the wire-OR IRQ mask**,
+  *fixed 2026-11-06 (the mask is left to the devices; all 13 IRQ cards
+  checked)*,
   which models nothing (RESET does not clear a 6502's IRQ *input*) and desyncs
   the CPU's view of the line from the one card that deliberately models a chip
   with no reset pin — the CCS 7710's 6850, the only IRQ-asserting card with no
   `onReset` override. Narrow: a rebooting guest usually re-inits the control
   register, which republishes.
-- **CPU-3 — `FastChip::loadSnapshotState` restores `powerOnSpeed_`**, a host
+- **CPU-3 — `FastChip::loadSnapshotState` restores `powerOnSpeed_`** *Fixed 2026-11-06.*, a host
   setting the sibling `ZipChip` deliberately refuses to restore for the same
   reason. The Machine menu then disagrees with `state.cfg` until the slider is
   touched again.
-- **MED-5 — `ProDOSHostNameMap`'s registry keys on the raw folder string**,
+- **MED-5 — `ProDOSHostNameMap`'s registry keys on the raw folder string** *Fixed 2026-11-06.*,
   bypassing the `hostNameMapKey()` normaliser that exists for it. All four
   producers pass the same string today, so no live failure could be built;
   latent trap plus a small unbounded leak when a build's mount then fails.
@@ -173,7 +184,9 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
 
 Ranked by how much false confidence each removes.
 
-1. **~33 sub-case skips exit 0.** With the detector widened (TQ-H1) the next
+1. **~33 sub-case skips exit 0.** *2026-11-06: the remaining quiet ones fixed
+   — `floppy_sound_smoke`, `card_snapshot_contract`, six //c ROM loops; the
+   rest already print a shape the detector sees.* With the detector widened (TQ-H1) the next
    step is the tests themselves: roughly 21 gate on fixtures that **are** in
    `tools/test_media.sha256` and should be fatal, and ~12 are genuine
    host-capability gates (symlinks, hard links, `chmod` as root, a
@@ -194,7 +207,9 @@ Ranked by how much false confidence each removes.
    run on a runner. This is a manifest action (add it to
    `tools/test_media.sha256` and the `pom2_media_202611` item), independent of
    any test edit.
-3. **`POM2_TEST_TIMEOUT_SCALE` does not reach inside the tests.** CI's nightly
+3. **`POM2_TEST_TIMEOUT_SCALE` does not reach inside the tests.** *Fixed
+   2026-11-06 (`tests/TestTimeScale.h`, eight tests added to
+   `POM2_WALLCLOCK_TESTS`).* CI's nightly
    sanitizer job sets `=6` on a machine the project itself measured as 5.9×
    slower, while ~15 in-test wall-clock bounds are plain literals
    (`sp_over_slip_link:521` `ms < 60`, `ssc_acia_smoke:1071` `n <= 120`,

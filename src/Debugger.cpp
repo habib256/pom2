@@ -251,6 +251,8 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     // The stepped JSR has executed (an interrupt entry reports through
     // onInterruptEntered instead): its callee's frame is the one to follow.
     if (stepSkipFirst_ && pc == stepJsrPc_) stepSkipFirst_ = false;
+    // The resumed instruction has executed: its amnesty is spent (DBG-1).
+    if (resumeSkipArmed_ && pc == resumeSkip_) resumeSkipArmed_ = false;
     if (cycles <= 0) return;
     if (profiling_) {
         auto& entry = profile_[{pc, curBank_}];
@@ -400,12 +402,17 @@ bool Debugger::onInstruction(uint16_t pc)
 
     // Resuming from a stop: the PC still points at the instruction that
     // stopped us, so without this the same breakpoint fires forever and Run
-    // does nothing. One instruction of amnesty, cleared on use.
-    if (resumeSkipArmed_ && pc == resumeSkip_ && curBank_ == resumeBank_) {
-        resumeSkipArmed_ = false;
+    // does nothing. One instruction of amnesty — RETIRED in onStepCompleted,
+    // once that instruction has really executed, not here on the offer. An
+    // IRQ/NMI taken at this boundary runs its handler first and the
+    // instruction is offered again after the RTI; consuming the amnesty on
+    // the first offer re-stopped Run at the same breakpoint having executed
+    // nothing, and with a level-triggered IRQ still asserted Run could never
+    // get past it (bug hunt 2026-11-01 round 2, DBG-1 — the mirror of the
+    // stepSkipFirst_ fix above). The handler's own instructions sit at other
+    // addresses and leave it armed.
+    if (resumeSkipArmed_ && pc == resumeSkip_ && curBank_ == resumeBank_)
         return false;
-    }
-    resumeSkipArmed_ = false;
 
     if (transientHit) {
         // Transients are one-shot by construction — step-over must not leave

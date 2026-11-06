@@ -50,6 +50,7 @@
 //      unplugged USB device looks like to the slave side.
 
 #include "SerialPort.h"
+#include "TestTimeScale.h"
 
 #include <cassert>
 #include <thread>
@@ -223,7 +224,7 @@ void testReadTimeout()
 
     assert(n == 0);                 // timeout, NOT an error
     assert(ms >= 130);              // it really waited...
-    assert(ms < 600);               // ...and it really came back
+    assert(ms < 600 * pom2test::timeScale());   // ...and it really came back
     assert(p.isOpen());             // and the port is still usable
 
     p.close();
@@ -328,7 +329,7 @@ void testWriteDeadlineBoundsTheWholeCall()
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
         assert(!ok && "a 64 KB write nobody drains cannot succeed");
         if (ms > 600) std::printf("  write against a stuck peer took %lld ms\n", (long long)ms);
-        assert(ms <= 600 && "the 250 ms budget bounds the whole call");
+        assert(ms <= 600 * pom2test::timeScale() && "the 250 ms budget bounds the whole call");
     }
     {
         std::atomic<bool> stop{false};
@@ -342,7 +343,7 @@ void testWriteDeadlineBoundsTheWholeCall()
         stopper.join();
         assert(!ok);
         if (ms > 600) std::printf("  stop landed after %lld ms\n", (long long)ms);
-        assert(ms <= 600 && "a stop must land inside a write in flight");
+        assert(ms <= 600 * pom2test::timeScale() && "a stop must land inside a write in flight");
     }
     std::puts("  ok: write deadline bounds the call, stop lands inside it");
 }

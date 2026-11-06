@@ -56,6 +56,11 @@ struct MediaBayInfo
     std::string kindLabel;        // media kind in this bay ("3.5\" 800K",
                                   // "ProDOS HDV", …); empty = use card label
     std::string path;             // mounted image path ("" = nothing mounted)
+    /// The host directory a synthesised ProDOS volume is served from, as the
+    /// backing holds it ("" = not a host folder). `path` is only the label
+    /// ("[host folder] /work") and cannot be compared as a file: the "one
+    /// folder, one bay" rule (`pom2::hostFolderMountedElsewhereAt`) reads this.
+    std::string hostFolder;
     std::string lastError;        // last mount/load error ("" = none)
     uint32_t    blockCount       = 0;
     bool        loaded           = false;

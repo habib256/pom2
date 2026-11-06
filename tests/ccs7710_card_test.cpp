@@ -93,6 +93,37 @@ void testAcia()
     std::printf("[ OK ] 6850: decode, reset, spool, receive queue, IRQs\n");
 }
 
+// CPU-2 (bug hunt 2026-11-01 round 2): the 6850 has no RESET pin, so an
+// interrupt it holds survives RESET — and the CPU must still see it. The CPU
+// reset used to wipe the wire-OR mask while the card, whose `assertIrq` is
+// edge-tracked, still believed it held the line: the IRQ was lost, and the
+// card could never raise it again.
+void testIrqSurvivesReset()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    auto owned = std::make_unique<Ccs7710Card>(2);
+    Ccs7710Card& c = *owned;
+    mem.slotBus().plug(2, std::move(owned));
+    c.deviceSelectWrite(0x0, 0x03);   // master reset
+    c.deviceSelectWrite(0x0, 0x95);   // 8N1 /16, receive interrupt enabled
+    c.receive('z');
+    const uint32_t bit = 1u << 2;
+    CHECK((cpu.getIrqSourceMask() & bit) && "the received byte raises slot 2's IRQ");
+    mem.slotBus().reset();            // the order of every reset path:
+    cpu.softReset();                  // devices first, then the CPU
+    CHECK((cpu.getIrqSourceMask() & bit) && "Ctrl-Reset: a 6850 with no RESET pin keeps its IRQ");
+    mem.slotBus().reset();
+    cpu.hardReset();
+    CHECK((cpu.getIrqSourceMask() & bit) && "hard reset: same");
+    c.deviceSelectRead(0x1);          // reading the data clears the request
+    CHECK(!(cpu.getIrqSourceMask() & bit) && "and the card can still release it");
+    c.receive('y');
+    CHECK((cpu.getIrqSourceMask() & bit) && "and raise it again");
+    std::printf("[ OK ] 6850: an interrupt survives RESET, as the chip has no RESET pin\n");
+}
+
 uint16_t rowBase(int r) { return uint16_t(0x0400 + (r % 8) * 0x80 + (r / 8) * 0x28); }
 
 std::string screen40(Memory& m)
@@ -378,6 +409,7 @@ int main()
 {
     testAcia();
     testSpoolIsPrintedOutput();
+    testIrqSurvivesReset();
     testFirmwareAgainstProm();
     testTerminalModeAgainstProm();
     testProms();

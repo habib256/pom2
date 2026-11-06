@@ -22,6 +22,7 @@
 // by a guest looping OPEN over hostnames faster than DNS could answer.
 
 #include "W5100NameResolver.h"
+#include "TestTimeScale.h"
 
 #include <atomic>
 #include <cassert>
@@ -89,13 +90,13 @@ void testFailureExpires()
         ++calls;
         return answer.load();
     });
-    resolver.setFailureTtl(std::chrono::milliseconds(20));
+    resolver.setFailureTtl(std::chrono::milliseconds(20 * pom2test::timeScale()));
 
     assert(resolver.resolve("late.test", 1000).status == Status::Failed);
     assert(resolver.resolve("late.test", 1000).status == Status::Failed);
     assert(calls == 1);                       // still inside the lifetime
     answer = 0x0100000Au;
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    std::this_thread::sleep_for(std::chrono::milliseconds(40 * pom2test::timeScale()));   // past the TTL
     const auto r = resolver.resolve("late.test", 1000);
     assert(r.status == Status::Resolved && r.address == 0x0100000Au);
     assert(calls == 2);

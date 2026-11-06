@@ -52,6 +52,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -697,6 +698,57 @@ void testBreakpointOnInterruptHandlerEntry()
     }
 
     std::printf("[ OK ] a breakpoint on an interrupt handler's entry fires\n");
+}
+
+// ── 12b. Run from a breakpoint survives an interrupt taken first (DBG-1) ──
+// Resuming arms one instruction of amnesty for the breakpoint the PC sits
+// on. It was spent on the OFFER, so when an IRQ was taken at that boundary
+// the handler ran, the RTI came back, the instruction was offered again with
+// no amnesty left, and Run re-stopped at the same breakpoint having executed
+// nothing — for ever, with a level-triggered IRQ still asserted (bug hunt
+// 2026-11-01 round 2). It is spent when the instruction executes now.
+void testResumeAmnestySurvivesAnInterrupt()
+{
+    //   $0300  INC $10    E6 10      ← the breakpoint
+    //   $0302  JMP $0300  4C 00 03
+    //   $0400  RTI        40         (the IRQ handler)
+    Memory mem;
+    M6502  cpu(&mem);
+    pom2::Debugger dbg;
+    const uint8_t prog[] = {0xE6, 0x10, 0x4C, 0x00, 0x03};
+    for (uint16_t i = 0; i < sizeof prog; ++i) mem.writeRamUnchecked(0x0300 + i, prog[i]);
+    mem.writeRamUnchecked(0x0400, 0x40);
+    mem.writeRamUnchecked(0x0010, 0x00);
+    (void)mem.memRead(0xC08B);             // LC RAM in, for the vector
+    (void)mem.memRead(0xC08B);
+    mem.memWrite(0xFFFE, 0x00);
+    mem.memWrite(0xFFFF, 0x04);
+
+    dbg.addBreakpoint(0x0300);
+    cpu.setDebugHook(&dbg);
+    cpu.setProgramCounter(0x0300);
+    cpu.setStatusRegister(0x20);           // I clear
+    cpu.run(100);
+    assert(dbg.stopRequested() && cpu.getProgramCounter() == 0x0300);
+
+    // Run, as the controller does it: amnesty, clear the hit, go — with an
+    // IRQ pending, so the boundary at $0300 takes it before the INC.
+    dbg.armResumeFrom(0x0300);
+    dbg.clearHit();
+    cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+    cpu.run(1);                            // the IRQ entry, nothing at $0300
+    assert(cpu.getProgramCounter() == 0x0400 && "the IRQ was taken first");
+    cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, false);   // the handler's acknowledge
+    cpu.run(1000);
+    if (mem.memRead(0x0010) != 0x01) {
+        std::printf("FAIL: Run re-stopped at the breakpoint without executing it "
+                    "($10 = %02X) — the amnesty went to the interrupt\n",
+                    mem.memRead(0x0010));
+        std::exit(1);
+    }
+    assert(dbg.stopRequested() && cpu.getProgramCounter() == 0x0300 &&
+           "one turn of the loop, then the breakpoint again");
+    std::printf("[ OK ] Run from a breakpoint survives an interrupt taken first\n");
 }
 
 // ── 13. An un-hooked CPU is not perturbed by the interrupt-entry split ───
@@ -1697,6 +1749,7 @@ int main()
     testReadWatchStopsAndTheReadHappened();
     testUnwatchedReadDoesNotStop();
     testBreakpointOnInterruptHandlerEntry();
+    testResumeAmnestySurvivesAnInterrupt();
     testInterruptEntryUnchangedWithoutAHook();
     testTransientIsDisarmedByStopAndReset();
     testIdleHookIsDetachedOnResume();

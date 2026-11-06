@@ -1415,8 +1415,9 @@ void EmulationController::noteTimeJump()
     //
     // Mockingboard / Phasor serialize their VIA + AY + SSI263 state through
     // the SLOTn sections; a card with stamped output and no snapshot (the
-    // S.A.M. DAC) drops its queue in onTimeJump().
-    for (int s = 1; s <= 7; ++s)
+    // S.A.M. DAC) drops its queue in onTimeJump(). From slot 0, the //e aux
+    // slot, as the rewind capture loop is (SES-3).
+    for (int s = 0; s < SlotBus::kSlotCount; ++s)
         if (SlotPeripheral* p = mem.slotBus().peripheral(s)) p->onTimeJump();
     if (spk)  spk->reset();
     if (tape) tape->resetForTimeJump();

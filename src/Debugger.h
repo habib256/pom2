@@ -206,7 +206,9 @@ public:
 
     /// Suppress the breakpoint at `pc` for exactly one instruction. Resuming
     /// from a stop would otherwise re-trigger the same breakpoint forever,
-    /// because the PC still points at it.
+    /// because the PC still points at it. Spent when that instruction
+    /// EXECUTES (onStepCompleted at `pc`), not when it is offered: an
+    /// interrupt taken first offers it again after the RTI (DBG-1).
     void armResumeFrom(uint16_t pc) { resumeSkip_ = pc; resumeBank_ = hit_.valid() && hit_.pc == pc ? hit_.pcBank : resolveBank(pc); resumeSkipArmed_ = true; }
 
     /// Drop every per-TIMELINE transient. Called when the machine jumps in

@@ -520,6 +520,7 @@ MediaBayInfo LironCard::bayInfo(int bay) const
     if (blk.isLoaded()) {
         info.kindLabel         = "ProDOS HDV";
         info.path              = blk.path();
+        info.hostFolder        = blk.hostFolder();
         info.lastError         = blk.lastError();
         info.blockCount        = static_cast<uint32_t>(blk.blockCount());
         info.loaded            = true;

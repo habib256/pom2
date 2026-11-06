@@ -159,6 +159,39 @@ void testMli()
     CHECK(!dbg.armed());
 }
 
+// DBG-2 (bug hunt 2026-11-01 round 2): an entry offered twice — a debugger
+// stop on $BF00 (offered again on Run), an IRQ taken there (offered again
+// after the RTI) — decoded the call twice, and abandon()'s `<=` closed the
+// first copy with a bogus "-> (no return)". One call, one line.
+void testMliEntryOfferedTwice()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    pom2::Debugger dbg;
+    dbg.setMemory(&mem);
+    dbg.osCalls().bind(&cpu, &mem);
+    dbg.osCalls().setMli(true);
+    cpu.setDebugHook(&dbg);
+    installMliStub(mem);
+    poke(mem, 0x0800, {
+        0x20, 0x00, 0xBF, 0xC8, 0x00, 0x09,         // JSR MLI / OPEN / $0900
+        0x4C, 0x06, 0x08,                           // JMP *
+    });
+    poke(mem, 0x0900, { 0x03, 0x10, 0x09, 0x00, 0x1C, 0x00 });
+    mem.memWrite(0x0910, 13);
+    pokeStr(mem, 0x0911, "/PRODOS/HELLO");
+    cpu.setStackPointer(0xFF);
+    cpu.setProgramCounter(0x0800);
+    cpu.run(1);                                     // the JSR
+    CHECK(cpu.getProgramCounter() == 0xBF00);
+    dbg.osCalls().on6502Instruction(0xBF00);        // the first offer, then
+    for (int i = 0; i < 100; ++i) cpu.run(1);       // the second, and the rest
+    const auto l = lines(dbg.osCalls());
+    CHECK(l.size() == 1 && l[0] == "MLI  $0800 OPEN \"/PRODOS/HELLO\" buf=$1C00 -> ref=1");
+    if (l.size() != 1) dump(dbg.osCalls());
+}
+
 void testMliNoReturn()
 {
     Memory mem;
@@ -611,6 +644,7 @@ int main()
 {
     testMli();
     testStackWrapAndClear();
+    testMliEntryOfferedTwice();
     testMliNoReturn();
     testBdos();
     testSmartPort();

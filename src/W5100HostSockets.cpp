@@ -135,12 +135,29 @@ public:
         // stays, because a guest server re-LISTENs on its port after every
         // connection and TIME_WAIT would refuse it; what is refused instead
         // is a port where something on this host already answers.
+        //
+        // The probe is BOUNDED (NET-3, bug hunt 2026-11-01 round 2). It runs
+        // on the CPU thread under stateMutex, and a blocking connect() to a
+        // listener whose accept backlog is full is not refused — the SYN is
+        // dropped and the kernel retries for tens of seconds, the machine and
+        // the window frozen together. Non-blocking, one short wait: a refusal
+        // (nobody there) answers at once on loopback; no answer within the
+        // bound is a listener that cannot take us, so the port is taken too.
         {
+            constexpr int kProbeMs = 50;
             socket_t probe = ::socket(AF_INET, SOCK_STREAM, 0);
             if (isValidSocket(probe)) {
-                const bool taken = ::connect(probe,
-                    reinterpret_cast<sockaddr*>(&local),
-                    static_cast<socklen_c>(sizeof(local))) == 0;
+                bool taken = false;
+                if (setNonBlocking(probe)) {
+                    if (::connect(probe, reinterpret_cast<sockaddr*>(&local),
+                                  static_cast<socklen_c>(sizeof(local))) == 0) {
+                        taken = true;
+                    } else if (errInProgress(lastSocketError())) {
+                        const WaitResult w = waitSocket(probe, SocketWait::Write, kProbeMs);
+                        taken = w == WaitResult::Timeout ||
+                                (w == WaitResult::Ready && connectResult(probe) == 0);
+                    }
+                }
                 closeHostSocketValue(probe);
                 if (taken) return false;
             }

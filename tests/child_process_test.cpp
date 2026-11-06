@@ -34,6 +34,7 @@
 // binary in a child mode whose console handler records receipt of Ctrl+C.
 
 #include "ChildProcess.h"
+#include "TestTimeScale.h"
 
 #include <cassert>
 #include <cstdint>
@@ -139,7 +140,7 @@ void testGracefulCtrlC(int argc, char** argv)
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - before).count();
     assert(waitForFile(stopped.c_str(), 1000));
-    assert(elapsed < 1500); // hard fallback would consume the full grace period
+    assert(elapsed < 1500 * pom2test::timeScale()); // hard fallback would consume the full grace period
     assert(!p.isRunning());
 
     DeleteFileA(stopped.c_str());
@@ -219,7 +220,7 @@ void testStopTerminates()
     assert(!p.isRunning());
     // SIGTERM should have done it well inside the grace period — if we had to
     // fall through to SIGKILL this would sit at the full 1000 ms.
-    assert(ms < 900);
+    assert(ms < 900 * pom2test::timeScale());
 }
 
 // ── 3. A child that ignores SIGTERM is killed anyway ─────────────────────
@@ -561,7 +562,7 @@ void testStopDetachedDoesNotWait()
                         std::chrono::steady_clock::now() - t0).count();
 
     // stop() would have sat here for the whole 2 s grace and then some.
-    assert(ms < 100 && "stopDetached() waited for the child");
+    assert(ms < 100 * pom2test::timeScale() && "stopDetached() waited for the child");
     // The object owns nothing any more, so its own destructor has nothing to
     // do either — that is what makes it safe in a destructor under the lock.
     assert(!p.isRunning());
@@ -616,7 +617,7 @@ void testDrainDetachedKillsTheGroup()
                         std::chrono::steady_clock::now() - t0).count();
     // The worker's own grace is 2 s; drainDetached must cut it short, not
     // sit through it.
-    assert(ms < 1400 && "drainDetached() waited out the full grace period");
+    assert(ms < 1400 * pom2test::timeScale() && "drainDetached() waited out the full grace period");
 
     // And the whole GROUP is gone — the shell AND its `sleep` grandchild,
     // which is the one that holds the loopback port in production. The

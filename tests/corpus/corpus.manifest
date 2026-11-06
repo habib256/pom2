@@ -1,0 +1,98 @@
+# POM2 compatibility corpus (VALIDATION-006) — the titles pom2_corpus boots.
+# Grammar and workflow: tests/corpus/README.md. Media paths are relative to
+# the source tree; a title whose media is absent is SKIPPED with the reason.
+
+# ── DIX (French Touch, GPL) — the priority benchmark (docs/test_corpus.md).
+# The fresh-install map minus what DIX does not touch: Mockingboard A/C in 2
+# (DIX scans for it), the 3.5" SmartPort in 5, Le Chat Mauve Féline in 7.
+# The menu is up at ~17 s; LEFT wraps choice 0 to 16, "all demos in
+# automatic mode", and every part then runs on its own timer. One check ~30 s
+# into each part (part starts from dix_auto_tour_probe, 2026-11-06).
+
+title dix-menu iie-pal ci dix
+  mockingboard 2
+  smartport 1 disks_3.5/DIX-fix.po sha256=e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df
+  rgb 7 feline
+  run 25
+  check menu
+  key LEFT
+  run 1
+  key RETURN
+  run 30
+  check unlimited-bobs
+
+title dix-auto iie-pal dix
+  mockingboard 2
+  smartport 1 disks_3.5/DIX-fix.po sha256=e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df
+  rgb 7 feline
+  run 25
+  check menu
+  key LEFT
+  run 1
+  key RETURN
+  run 30
+  check unlimited-bobs           # t = 56 s
+  run 118
+  check scroll-scroll-scroll     # 174
+  run 69
+  check crazy-cycles             # 243
+  run 124
+  check question-of-frames       # 367
+  run 76
+  check plasmagoria              # 443
+  run 103
+  check raster-bars              # 546
+  run 119
+  check crazy-cycles-2           # 665
+  run 259
+  check one-more-thing           # 924
+  run 99
+  check mad-effect               # 1023
+  run 122
+  check mad-effect-2             # 1145
+  run 112
+  check unreeeal-superhero-3     # 1257
+  run 121
+  check mad-effect-3             # 1378
+  run 44
+  check digidream                # 1422
+  run 109
+  check oldskool-fort-et-vert    # 1531
+  run 59
+  check digidream-sid            # 1590
+
+# ── The author's own GPL software, tracked in the tree.
+
+title dirtbike iie-pal games
+  diskii 1 disks_5.4/DIRTBIKE.dsk sha256=75acf488632d50d00de5d1cb62f1c078013357dcfd10f575c13c380e9520c58a
+  run 60
+  check title
+
+title micro-sokoban iie-pal games
+  diskii 1 disks_5.4/MICRO-SOKOBAN.dsk sha256=db611bc0a5112b36ada3ddcf6581b2186453dffdeb5a721b0949952ae2e7dcf4
+  run 20
+  check title
+
+title chromabreak iie-pal games
+  diskii 1 disks_5.4/CHROMABREAK.po sha256=cabba4d7cd7efc00f2b5e7fc9b040431ec8a66c93daa099a01035c05b215c54f
+  run 20
+  check title
+
+title a2filecmd-dos33 iie tools
+  diskii 1 disks_5.4/A2FILECMD-DOS3.3-1.0.dsk sha256=cac2980efba928a888086ac40a7d97ca34de56e3db6ada5744048b5f0a33aa67
+  run 45
+  check menu
+
+title a2filecmd-prodos iie tools
+  hdd 1 hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-1.0.2mg sha256=0059b589ecc8a96e44ec966d34e075e92ed1a1144f9a4b7b2fe5268a746a4ab7
+  boot 7
+  run 15
+  check menu
+
+# ── From the test-media archive (tools/fetch_test_media.py).
+
+title digidream iie-pal demos
+  mockingboard 4
+  diskii 1 disks_5.4/demo/digidream/DD.dsk sha256=d7b5fbb9ffc1fa35709c560ddcc2238861726a194381294b3dab0339e96bedd5
+  run 30
+  check running

@@ -30,9 +30,11 @@ Eleven domains swept read-only on `b9818f5d`; ten defects fixed and pinned,
 ~20 more verified and deferred, plus a four-part audit of the test suite
 itself — [evidence](docs/audits/bug-hunt-2026-11-01-round2.md). The three
 deferred items worth scheduling first: a non-stock `--speed` leaves every slot
-card's phase-0 bus clock unscaled (CPU-1), one host folder can be served into
-two bays with both writing it back (MED-1), and a W5100 `DISCON` from
-`SOCK_CLOSE_WAIT` drops the TX tail the guest was told was sent (NET-1). On the
+card's phase-0 bus clock unscaled (CPU-1, open: the first fix was withdrawn, see
+DEV § Mockingboard); one host folder could be
+served into two bays with both writing it back (MED-1, fixed 2026-11-06); a
+W5100 `DISCON` from `SOCK_CLOSE_WAIT` dropped the TX tail the guest was told
+was sent (NET-1, fixed 2026-11-06). On the
 test side: ~33 sub-case skips still exit 0 (the detector now sees them), and
 `disks_3.5/The New Print Shop 800K.po` is referenced by `iic_external_smartport`
 but is in no manifest, so one of its "five boots" has never run.
@@ -46,8 +48,7 @@ criterion. Move an item when its next action or dependency changes.
 
 | Task | Next action |
 |---|---|
-| [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | **The cycle exact, not the instruction exact** — a cycle-stepped core issuing one bus access per cycle in silicon order, so a write's placement *within* an instruction exists. This is what lets the beam-raced PAL French Touch / DIX demos be calibrated against the hardware instead of tuned through three independent per-device offsets (Disk II `getCurrentInstructionCycles`, Mockingboard `syncToCpuCycle()+1`, the 6522 T1 −1 bias). Design the microsequences from MAME's `.lst` tables as a **separate** core (a branch on the bus path costs 13-16 %); Harte per-cycle bus ordering is the gate. **Do VALIDATION-006 first** — without a recorded DIX expectation an improvement cannot be told from a regression. Not yet known: which DIX effects, if any, are currently mis-timed. |
-| [VALIDATION-006](docs/backlog/validation.md#validation-006) | Build the headless corpus runner, DIX first; record the first pass rate. |
+| [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | **The cycle exact, not the instruction exact** — a cycle-stepped core issuing one bus access per cycle in silicon order, so a write's placement *within* an instruction exists. This is what lets the beam-raced PAL French Touch / DIX demos be calibrated against the hardware instead of tuned through three independent per-device offsets (Disk II `getCurrentInstructionCycles`, Mockingboard `syncToCpuCycle()+1`, the 6522 T1 −1 bias). Design the microsequences from MAME's `.lst` tables as a **separate** core (a branch on the bus path costs 13-16 %); Harte per-cycle bus ordering is the gate. The recorded DIX expectation now exists (VALIDATION-006, done 2026-11-06): `pom2_corpus --tag dix` checks one frame per part, and a one-cycle Mockingboard regression fails 15 of its 16 checks — so a change can be told apart, but whether a changed frame is *better* still needs eyes or a capture. Not yet known: which DIX effects, if any, are currently mis-timed. |
 | [DISPLAY-002](docs/backlog/display.md#display-002) | Add ALTCHAR / MouseText hash pins from the tracked `apple2e_char*.rom`. |
 | [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Re-profile a ][+ banner, then prototype the page-dispatch table against `bus_fastpath`. |
 | [STORAGE-014](docs/backlog/storage.md#storage-014) | Test a host-folder bay dirtied during each phase-2 commit, or record the residue as an accepted limit. |

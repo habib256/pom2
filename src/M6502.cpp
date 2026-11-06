@@ -2038,13 +2038,20 @@ void M6502::hardReset(void)
     xRegister = 0;
     yRegister = 0;
     halted = waiting_ = false;
-    // RESET drops any pending NMI edge and clears the IRQ source mask.
-    // Every reset path deasserts the device side first (slotBus().reset()
-    // runs the onReset hooks, resetSoftSwitches clears the VBL source), so
-    // the mask restarts in lock-step with the devices — and
-    // Memory::resetSoftSwitches documents exactly this contract.
+    // RESET drops any pending NMI edge. It does NOT touch the IRQ source
+    // mask: that mask is POM2's model of the wire-OR'd /IRQ line, an input
+    // the devices drive, and RESET reaches the line only through the devices
+    // that have a RESET pin. Every reset path runs their side first
+    // (slotBus().reset() calls the onReset hooks, each of which releases its
+    // contribution; resetSoftSwitches clears the VBL source), so the mask
+    // already says what the devices say. Clearing it here as well modelled
+    // nothing and DESYNCED the two (CPU-2, bug hunt 2026-11-01 round 2): a
+    // chip with no RESET pin — the CCS 7710's 6850 — kept its interrupt
+    // while the CPU forgot it, and since `assertIrq` is edge-tracked the card
+    // could never raise the line again.
+    // [B] MOS MCS6500 Hardware Manual (1976): /IRQ is a level input; RESET
+    //     sets the I flag (done above), which is what masks it at start-up.
     NMI = 0;
-    irqSourceMask.store(0, std::memory_order_relaxed);
 
     // Don't wipe the stack page on F12. Real 6502 reset only decrements
     // SP (the BRK-emulating reset sequence pushes PC/P without storing),
@@ -2072,10 +2079,8 @@ void M6502::softReset(void)
     }
     halted = waiting_ = false;
     // Same interrupt-latch policy as hardReset: RESET drops a pending NMI
-    // edge and clears the source mask (devices were deasserted by the
-    // slot-bus reset that precedes the CPU reset on every path).
+    // edge and leaves the IRQ line to the devices that drive it (CPU-2).
     NMI = 0;
-    irqSourceMask.store(0, std::memory_order_relaxed);
     // Real 6502 reset sequence is a faked BRK that pushes PC + P
     // WITHOUT writing to the stack page (the read/write line stays
     // high), but decrements SP by 3. POM2 used to snap SP=$FF which

@@ -85,8 +85,9 @@ open paddles, reset, IIc exclusion, snapshots/rewind, old blobs and malformed
 state refusal. `joystick_two_players` also checks the production host routing
 for digital contacts, D-pad, velocity independence, cancellation and hotplug.
 
-The optional game probe requires locally supplied media; ordinary CTest
-reports it skipped. Use a copy of the image, kept outside the repository:
+The optional game probe requires locally supplied media, so it is a manual
+probe, not a ctest test: build it with `cmake --build build --target probes`.
+Use a copy of the image, kept outside the repository:
 
 ```sh
 POM2_MEDIA_WRITE_DEFAULT=protected build/tests/test_sirius_joyport_game \
@@ -109,8 +110,8 @@ POM2_MEDIA_WRITE_DEFAULT=protected build/tests/test_sirius_joyport_bandits \
 ```
 
 The optional final argument writes PPM captures of the ready state, a shot,
-the shield and the prolonged gameplay run. Default CTest skips this probe
-without media arguments. Sources: [Bandits directory](https://mirrors.apple2.org.za/ftp.apple.asimov.net/images/games/action/bandits/)
+the shield and the prolonged gameplay run. Like the game probe it is built by
+the `probes` target and is not a ctest test. Sources: [Bandits directory](https://mirrors.apple2.org.za/ftp.apple.asimov.net/images/games/action/bandits/)
 (`bandits-fixed.zip`) and [Sirius collection](https://mirrors.apple2.org.za/ftp.apple.asimov.net/images/games/collections/sirius/)
 (`BANDITS.dsk`). The runs used the II+ ROM SHA-256
 `fc3e9d41e9428534a883df5aa10eb55b73ea53d2fcbb3ee4f39bed1b07a82905`.

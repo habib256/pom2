@@ -99,6 +99,36 @@ std::vector<MountedImageLocation> mountedImageLocations(EmulationController& ctr
     return out;
 }
 
+bool hostFolderMountedElsewhereAt(EmulationController& ctrl, int slot, int bay,
+                                  const std::string& folder, std::string& error)
+{
+    if (folder.empty()) return false;
+    std::vector<MountedImageLocation> served;   // path = the bay's host folder
+    {
+        auto st = ctrl.lockState();
+        const SlotBus& bus = st.memory().slotBus();
+        for (int s = 0; s < SlotBus::kSlotCount; ++s) {
+            auto* m = dynamic_cast<MountableMediaCard*>(bus.peripheral(s));
+            if (!m) continue;
+            for (int b = 0; b < m->bayCount(); ++b) {
+                if (s == slot && b == bay) continue;   // the bay being replaced
+                const MediaBayInfo info = m->bayInfo(b);
+                if (info.loaded && !info.hostFolder.empty())
+                    served.push_back({s, b, info.hostFolder});
+            }
+        }
+    }
+    for (const auto& where : served) {
+        if (!Block512Backing::sameFile(where.path, folder)) continue;
+        error = folder + " is already served in slot " + std::to_string(where.slot) +
+                ", bay " + std::to_string(where.bay + 1) +
+                " — two volumes of one folder would each write their own view "
+                "of it back";
+        return true;
+    }
+    return false;
+}
+
 std::vector<std::string> mountedImagePaths(EmulationController& ctrl)
 {
     std::vector<std::string> out;

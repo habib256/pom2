@@ -499,7 +499,12 @@ src/M6502.cpp                            2359
 # the escape and its sources are in HostFileTag.*; here, the three call
 # sites that use it (naming pass, subdirectory branch, file branch).
 #   src/ProDOSVolume.cpp: 2146 -> 2151 (+5)
-src/ProDOSVolume.cpp                     2151
+# 2026-11-06 (MED-4): the decode's write budget is charged at the write, not
+# at the read — the check before the rename and the conflict copy, the
+# charge after, a separate read bound and `hostFileHolds` (factored out of
+# writeFileAtomic, which now calls it). All inside the decode walk.
+#   src/ProDOSVolume.cpp: 2151 -> 2187 (+36)
+src/ProDOSVolume.cpp                     2187
 # 2026-10-24 (ARCH-004): the snapshot trailer — appendSnapshotState /
 # loadSnapshotState — moved to MemorySnapshot.cpp, the seam named here since
 # 2026-09-07.
@@ -537,7 +542,12 @@ src/Memory.cpp                           2311
 # the capture a buffer touched off the lock (prefaultCaptureBuffer lives in
 # MediaMount.cpp; only the one-line hand-over per driver is here).
 #   src/StorageCoordinator.cpp: 2433 -> 2449 (+16)
-src/StorageCoordinator.cpp               2449
+# 2026-11-06 (MED-1): mountBlockBytes refuses a host folder another bay
+# already serves, before its flush — the folder sibling of the "one image,
+# one drive" check mountMediaBay makes three functions up. The rule itself
+# lives in MediaMount.cpp; only the call and its comment are here.
+#   src/StorageCoordinator.cpp: 2449 -> 2456 (+7)
+src/StorageCoordinator.cpp               2456
 # 2026-10-31: src/TMS9918.cpp is POM1's TMS9918 VDP (the same author's
 # Apple-1 emulator), imported nearly verbatim for the E-Z Color card so the
 # two copies can be kept in sync. Splitting it here would break that diff;
@@ -562,4 +572,13 @@ src/Scc8530Device.cpp                    2080
 # 2026-11-01 (parity campaign): src/W5100Device.cpp crossed the watch
 # threshold with the Ctrl-Reset, RECV re-raise and DISCON-IRQ fixes and
 # their graded comments. One chip, one TU.
-src/W5100Device.cpp                      2030
+# 2026-11-06 (NET-1): DISCON from CLOSE_WAIT waits in LAST_ACK for the owed
+# tail, the deferred close raises Sn_IR DISCON, a failed tail ends in
+# TIMEOUT — each with its [B] datasheet / RFC 793 citation, which is most of
+# the growth. Same chip, same TU.
+#   src/W5100Device.cpp: 2030 -> 2057 (+27)
+# 2026-11-06 (NET-2, NET-4): poll() stages raw frames on its own while the
+# rings have room; LISTEN outside SOCK_INIT is ignored, graded F with what
+# would settle it.
+#   src/W5100Device.cpp: 2057 -> 2085 (+28)
+src/W5100Device.cpp                      2085
