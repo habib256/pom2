@@ -27,8 +27,9 @@
 // POM2's own sequencer — what the controller does when there is no P6
 // table (Apple's 341-0028-A is not redistributed). Not a re-encoding of that
 // table: a data separator and a bit shifter written from the behaviour the
-// guest and the disk can observe, measured on Apple's sequencer as a black
-// box (lss_window_probe, lss_write_probe).
+// guest and the disk can observe — [C] measured on Apple's P6 table
+// (341-0028-A) run as a black box in POM2's own LSS (lss_window_probe,
+// lss_write_probe), not on a drive.
 //
 // One cell clock, 8 LSS cycles (4 us), runs in every mode, so writing picks
 // up the phase reading left off, as the hardware's does.

@@ -22,6 +22,7 @@
 #include "Settings.h"
 
 #include "imgui.h"
+#include "imgui_internal.h" // TempInputIsActive: Ctrl-click edits must stay opaque
 
 #include <algorithm>
 #include <cfloat>
@@ -228,6 +229,9 @@ void MainWindow::renderNtscSettingsWindow()
     const pom2::NtscParams base   = pom2::crt::preset(mon);
     bool changed = false;      // a control moved
     bool restored = false;     // a control went back to its preset
+    // Vertex range of the mouse-dragged slider row. The draw list is rebuilt
+    // each frame, so opacity restores immediately on release/close/collapse.
+    int draggedRowFirst = -1, draggedRowEnd = -1;
 
     // ── Scope notes ──────────────────────────────────────────────────────
     // What actually applies right now. Kept terse and dim: it is reference
@@ -305,6 +309,7 @@ void MainWindow::renderNtscSettingsWindow()
         auto slider = [&](const char* text, const char* id, float* v,
                           float lo, float hi, const char* tip,
                           const char* fmt = "%.2f") {
+            const int rowFirst = ImGui::GetWindowDrawList()->VtxBuffer.Size;
             const Field f = pom2::crt::fieldAt(p, v);
             const bool mine = label(text, f, tip, fmt);
             ImGui::SameLine(labelW);
@@ -312,6 +317,11 @@ void MainWindow::renderNtscSettingsWindow()
             if (ImGui::SliderFloat(id, v, lo, hi, fmt,
                                    ImGuiSliderFlags_AlwaysClamp))
                 changed = true;
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) &&
+                !ImGui::TempInputIsActive(ImGui::GetItemID())) {
+                draggedRowFirst = rowFirst;
+                draggedRowEnd = ImGui::GetWindowDrawList()->VtxBuffer.Size;
+            }
             if (mine && ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 ov.clear(mon, f);
                 restored = true;
@@ -444,6 +454,21 @@ void MainWindow::renderNtscSettingsWindow()
     }
     if (changed || restored)
         ntscFx->setParams(shown(ov.resolve(mon, p)));   // `p` carries PAL / sharp text
+
+    if (draggedRowFirst >= 0 && !ImGui::IsWindowDocked()) {
+        // Fade only this window, including its already-drawn background and
+        // title bar. Global style alpha would also affect popups and would
+        // need last-frame state before Begin(). Keep the active row readable.
+        // Docked panels do not cover the picture and share their host's bg.
+        auto& vertices = ImGui::GetWindowDrawList()->VtxBuffer;
+        for (int i = 0; i < vertices.Size; ++i) {
+            if (i >= draggedRowFirst && i < draggedRowEnd) continue;
+            ImU32& colour = vertices[i].col;
+            const ImU32 alpha = (colour & IM_COL32_A_MASK) >> IM_COL32_A_SHIFT;
+            colour = (colour & ~IM_COL32_A_MASK) |
+                (static_cast<ImU32>(alpha * 0.25f) << IM_COL32_A_SHIFT);
+        }
+    }
 
     ImGui::End();
 }

@@ -64,6 +64,7 @@
 //                                and detached media; see docs/session-format.md.
 //   Printer/slot-log routes and full response shapes are listed in DEV.md.
 //   POST /speed               → body {"cycles_per_frame":N} OR {"preset":"1x|2x|max"}
+//   GET  /screen/text         → JSON Apple text RAM, columns/rows/first_row/page
 //   GET  /screen.ppm          → P6 RGB of the emulated framebuffer at native
 //                             dimensions; no window chrome; 503 without display
 //   POST /mouse               → body {"dx":?,"dy":?} signed Apple-cursor delta
@@ -326,6 +327,7 @@ private:
     void handleSnapshotSave(socket_t fd, const Request& req);
     void handleSnapshotLoad(socket_t fd, const Request& req);
     void handleSpeed   (socket_t fd, const Request& req);
+    void handleScreenText(socket_t fd, const Request& req);
     void handleScreen  (socket_t fd, const Request& req);
     void handleMouse   (socket_t fd, const Request& req);
     // AiControlServer_Printer.cpp — docs/printer-detection.md.

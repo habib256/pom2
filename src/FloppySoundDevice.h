@@ -421,8 +421,8 @@ private:
     std::atomic<float> volume_{0.6f};
     std::atomic<bool>  muted_{false};
     // Profile-specific pitch multiplier for motor samples. 1.0 = native
-    // (original Disk II Shugart). MainWindow bumps to ~1.4 on //c / //c+
-    // to approximate the Sony internal drive's faster spin-up.
+    // (the MAME Disk II samples). MainWindow bumps to ~1.4 on //c / //c+
+    // — [F] an ear setting, see MainWindow::floppyMotorPitchForProfile.
     std::atomic<float> motorPitch_{1.0f};
     /// Emulated CPU clock the step-cadence classifier divides by. UI/worker
     /// thread writes (setCpuClock), audio thread reads (drainCommands).

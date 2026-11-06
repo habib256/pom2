@@ -1276,7 +1276,7 @@ float MainWindow::floppyMotorPitchForProfile(pom2::SystemProfile p)
         case pom2::SystemProfile::AppleIIc:
         case pom2::SystemProfile::AppleIIcPlus:
         case pom2::SystemProfile::AppleIIcPAL:
-            return 1.4f;       // Sony internal drive ≈ 40% faster spin-up
+            return 1.4f;       // [F] ear setting — see MainWindow.h
         default:
             return 1.0f;       // original Disk II Shugart — native rate
     }

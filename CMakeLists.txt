@@ -29,7 +29,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # consumer cannot start its own drifting copy.
 #
 # Outputs, all CMake lists:
-#   POM2_BUNDLE_DIRS   folders copied whole            ("roms" "fonts")
+#   POM2_BUNDLE_DIRS   folders copied whole            ("fonts" "pic")
 #   POM2_BUNDLE_FILES  "<src>|<dst>" pairs             ("pic/x.jpg|pic/x.jpg")
 #   POM2_BUNDLE_WASM   browser-only folders            ("floppyemu")
 #   POM2_BUNDLE_DENY   paths that may never be packaged ("disks_5.4" "hdv")
@@ -290,6 +290,7 @@ set(SOURCES
     src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
+    src/MemoryGamePort.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
@@ -400,6 +401,8 @@ set(SOURCES
     src/MainWindow_Media.cpp
     src/MainWindow_Chrome.cpp
     src/MainWindow_Screen.cpp
+    src/ScreenshotExport.cpp
+    src/ScreenshotExport.h
     src/RetroArtwork.cpp
     src/MainWindow_Input.cpp
     src/MainWindow_SlotConfig.cpp
@@ -720,6 +723,7 @@ set(POM2_FRONTEND_HEADERS
     src/IconsFontAwesome6.h
     src/CrtPresets.h
     src/KeyChord.h
+    src/KeyboardJoystick.h
     src/Mat4.h
     src/MouseCoordinator.h
     src/MouseGrab.h
@@ -810,6 +814,8 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_Media.cpp
     src/MainWindow_Chrome.cpp
     src/MainWindow_Screen.cpp
+    src/ScreenshotExport.cpp
+    src/ScreenshotExport.h
     src/RetroArtwork.cpp
     src/MainWindow_Input.cpp
     src/MainWindow_SlotConfig.cpp
@@ -860,6 +866,7 @@ set(POM2_MACHINE_HEADERS
     src/MemoryProfile.h
     src/MemoryWatchSink.h
     src/PaddleInputs.h
+    src/SiriusJoyport.h
     src/SlotPeripheral.h
     src/CardTraceSink.h
 )
@@ -875,6 +882,7 @@ set(POM2_MACHINE_SOURCES
     src/M6502_Undoc.cpp
     src/Z80.cpp
     src/Memory.cpp
+    src/MemoryGamePort.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
@@ -1644,6 +1652,7 @@ set(POM2_CORE_SOURCES
     src/PremiumSoftCard.cpp
     src/SoftCardZ80.cpp
     src/Memory.cpp
+    src/MemoryGamePort.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
@@ -2089,6 +2098,7 @@ add_executable(pom2_headless
     src/M6502_Undoc.cpp
     src/MachineSnapshot.cpp
     src/Memory.cpp
+    src/MemoryGamePort.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp
@@ -2251,6 +2261,7 @@ add_executable(pom2_bench
     src/M6502.cpp
     src/M6502_Undoc.cpp
     src/Memory.cpp
+    src/MemoryGamePort.cpp
     src/MemoryCpuView.cpp
     src/MemorySnapshotEnvironment.cpp
     src/MemorySnapshotValidation.cpp

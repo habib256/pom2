@@ -165,6 +165,26 @@ Five disks are ready in **File → Disk Library**:
 
 ## Handy controls
 
+To play without a controller, enable **Keyboard joystick (arrows, X/Z)**
+in the **Joystick** panel. Arrows control movement, **X** is fire 1 and
+**Z** fire 2. These keys then stop typing into the Apple II; turn the option
+off to type them again. Menus and text fields keep their normal keyboard
+controls. The choice is remembered between launches.
+
+For two-player joystick games, choose **Second joystick → Automatic (another
+controller)** in the same panel, or select a controller explicitly. Each pad
+then controls one player, with A/B as fire. Set it back to **Off** to use both
+sticks of one controller again.
+
+Each paddle's **Mode** can also be **Velocity (hold position)**, with adjustable
+speed and a **Centre** button, or **Absolute (throttle)** for a throttle axis
+or trigger. The default remains **Joystick**.
+
+For compatible games such as **Wavy Navy**, choose **Sirius Joyport → Atari:
+left socket**, then select Joyport in the game. A/B fires; stick or D-pad
+moves. The optional second controller uses the right socket. On IIe, enable
+after boot to avoid its self-test. [Scope and validation](docs/hardware/sirius-joyport.md).
+
 | Key | Action |
 |---|---|
 | **F6** (hold) | Rewind (enable Record in Machine → Rewind first) |

@@ -84,9 +84,11 @@ public:
     /// R8 bits 1-0 == 11: Interlace Sync AND Video (MAME mc6845.cpp:81
     /// `MODE_INTERLACE_AND_VIDEO`). The HD6845S then paints BOTH fields'
     /// rasters into one frame, so a character row is R9 + 2 rasters tall, not
-    /// R9 + 1 — the datasheet puts it as "when the total number of rasters is
-    /// RN, RN-2 shall be programmed" (quoted in mc6845.cpp:1278-1280, where
-    /// `m_interlace_adjust = 2`).
+    /// R9 + 1 — [B] Hitachi U70 data book (1985) p. 454, R9 in Interlace
+    /// Sync & Video mode: "when total number of rasters is RN, RN-2 shall be
+    /// programmed" ([D] MAME quotes it, mc6845.cpp:1278-1280,
+    /// `m_interlace_adjust = 2`). The HD46505R manual (HLN014) gives RN-1 with
+    /// RN even for the same mode — a different part; POM2 models the HD6845S.
     bool interlaceAndVideo() const { return (r_[8] & 0x03) == 0x03; }
     /// Rasters per character row, interlace adjust included. R8 was latched
     /// and read by nothing, so every interlaced row was one raster short: the

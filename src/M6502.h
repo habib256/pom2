@@ -395,10 +395,11 @@ private :
     template <int N> void BBRn(void);
     template <int N> void BBSn(void);
 
-    // WDC 65C02 WAI / STP. WAI currently consumes three cycles and
-    // falls through; it does not implement a waiting latch.
+    // WDC 65C02 WAI / STP (superset table only; the NCR part the Apple
+    // runs decodes $CB/$DB as 1-cycle NOPs). WAI parks on the `halted`
+    // latch with `waiting_` set until NMI or an IRQ line is asserted
+    // ([D] MAME ow65c02.lst:875-881 @ mame0287, `wai_imp`; MEMORY-004, 2026-10-24).
     // STP sets the sticky halted latch, ignoring IRQ/NMI until reset.
-    // See the implementations for timing and the WAI approximation.
     void WAI(void);
     void STP(void);
 

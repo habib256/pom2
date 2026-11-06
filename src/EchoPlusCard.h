@@ -44,10 +44,10 @@
 //   $C0(8+s)X      unused (device-select range — Echo II had no soft
 //                  switches, unlike Phasor)
 //
-// Default slot: 4 (same as Mockingboard). Pluggable in any slot via
-// Slot Configuration. Pairs naturally with a Mockingboard A/C at
-// slot 4 + Echo+ at slot 2 (or vice versa) — the Apple II's standard
-// "Mockingboard handles music, Echo+ handles speech" combo.
+// No default slot: not in the fresh-install map; pluggable in any slot via
+// Slot Configuration. Pairs naturally with a Mockingboard A/C (slot 2 by
+// default) — the Apple II's standard "Mockingboard handles music, Echo+
+// handles speech" combo.
 //
 // Audio uses the imported 62-phoneme PCM data (see Ssi263.h), with a
 // 5 ms host gain ramp. Muting leaves the chip's playback timeline running.

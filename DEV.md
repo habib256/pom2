@@ -4,9 +4,13 @@ Implementation notes: MAME refs, non-obvious gotchas, pinned smoke
 tests. Orientation + memory map + profile table → `CLAUDE.md`. User
 walkthrough → `README.md`. Fix history + rationale → `CHANGELOG.md`.
 
-Convention: each subsystem cites the MAME file + line range it ports
-from. When MAME upstream renames a path (e.g. `wozfdc.cpp` `bus/a2bus
-→ machine`), refresh refs in a pass.
+Convention: the silicon is the reference, and every hardware claim carries
+its evidence grade and source — `[A]` measured … `[F]` unknown, the table
+and the rules are in `CLAUDE.md` § Conventions. MAME is one grade-D source
+among several: a MAME citation names its revision (tag or commit), and it
+never overrules a datasheet, a ROM or a measurement. Older sections still
+carry bare `file:line` MAME references from before that rule; the standing
+audit `docs/audits/BRIEF-parite-amont.md` pins them a subsystem at a time.
 
 ## Table of contents
 
@@ -14,12 +18,13 @@ from. When MAME upstream renames a path (e.g. `wozfdc.cpp` `bus/a2bus
 - [Memory](#memory)
 - [Display](#display)
 - [Audio](#audio) · [Mockingboard](#mockingboard) · [Floppy mechanical sounds](#floppy-mechanical-sounds)
+- [TransWarp](#transwarp-applied-engineering) · [Zip Chip](#zip-chip-cpu-socket-zipchip) · [FASTChip //e](#fastchip-e-cpu-socket-fastchip)
 - [Slot bus & IRQ aggregation](#slot-bus--irq-aggregation)
 - [Storage](#storage) · [ProDOSHardDiskCard](#prodosharddiskcard-hdv--synthetic-block-model) · [CffaCard](#cffacard-cffa-20--mame-faithful-ide) · [SmartPortCard](#smartportcard-e-liron-class)
 - [IWM (//c+ on-board)](#iwm-c-on-board)
 - [SmartPort 3.5" stack](#smartport-35-stack)
 - [Peripherals](#peripherals) · [SSC](#super-serial-card-slot-2--telnet-bridge) · [4play](#4play-fourplaycard) · [Workstation Card](#apple-ii-workstation-card-workstationcard) · [Z8530 SCC](#zilog-z8530-scc-scc8530device) · [Network backends](#network-backends) · [Uthernet I](#uthernet-i-cs8900a) · [Uthernet II](#uthernet-ii-w5100) · [ClockCard](#prodos-clock-card-slot-4) · [MouseCard](#mouse-card) · [Joystick / paddles](#joystick--paddles)
-- [UI (ImGui)](#ui-imgui)
+- [UI (ImGui)](#ui-imgui) · [Logging](#logging-loggerh)
 - [Host control center](#host-control-center-slot-configuration--floppy-emu)
 - [Profile switching internals](#profile-switching-internals)
 - [CLI (CliDispatcher)](#cli-clidispatcher)
@@ -84,11 +89,10 @@ page cross) and lengths against hand-entered MOS and W65C02S tables, the
 dummy reads, `JMP ($xxFF)` on both), IRQ/NMI/BRK/reset timing and flags,
 decimal mode on both, the Z80's interrupt layer (HALT+IM1/NMI/IM2, RETN,
 the EI shadow, R) and the SoftCard's translation and DMA hand-over.
-Reported, not changed: `$CB`/`$DB` are WAI/STP on POM2's CMOS table
-where every 65C02 Apple shipped (Rockwell/GTE/NCR) executes a 1-cycle NOP
-— a stray `$DB` halts POM2 and not a real //e (an explicit project
-choice, the table is the WDC variant); `WAI` charges 3 cycles and falls
-through instead of waiting; `getCycleCountNow()` over-reads by the last
+Reported then: `$CB`/`$DB` were WAI/STP on POM2's CMOS table and `WAI`
+fell through after three cycles — both since settled (the Apple's 65C02 now
+runs the NCR table, where `$CB`/`$DB` are 1-cycle NOPs, see below; `WAI`
+waits since 2026-10-24, MEMORY-004). Still true: `getCycleCountNow()` over-reads by the last
 instruction's cycles between steps (harmless to its mid-instruction
 callers, ≤14 cycles once for the Mockingboard/Phasor reset anchors).
 The DMA-release debugger defect from the same report was corrected on
@@ -97,14 +101,21 @@ hook/hit reconciliation and stop check. `debugger` covers the stop, toolbar
 resume and cancelled-transient hook detachment after hand-back.
 
 Full NMOS 6502 + 65C02 (STZ / BRA / INA / DEA / PHX-PLY / BIT-imm /
-TSB / TRB / JMP (abs,X), zp-indirect) + Rockwell RMB/SMB/BBR/BBS +
-WDC WAI is a three-cycle fallthrough approximation; STP halts until reset.
-Klaus Dormann clean.
-`setCpuMode(NMOS)` re-overrides four KIL column-2 entries
-($02/$22/$42/$62) back to halt, remaps the eight $xB-column
-immediates ($0B/$2B/$4B/$6B/$8B/$AB/$CB/$EB) as `UnoffImm`
-(2-byte NOPs), and re-points `$5C/$DC/$FC` to `UnoffAbsX`
-(page-cross penalty). 65C02 undoc-NOP cycles: imm=2, zp,X=4,
+TSB / TRB / JMP (abs,X), zp-indirect). **Two 65C02 tables**: the
+Rockwell/WDC superset (RMB/SMB/BBR/BBS, `WAI` waits for an interrupt, `STP`
+halts until reset) is what a bare `M6502` runs and what a TransWarp's own
+65C02 runs (`cmosSubstitute_`); the emulated Apple runs the **NCR** part —
+`EmulationController` and `Pom2Core` call `setNcr65C02(true)`, and
+`applyDispatch` turns `$x7`/`$xF`/`$CB`/`$DB` into 1-byte, 1-cycle NOPs
+([B] //c Technical Reference, Appendix A, NCR 65C02 data sheet; see
+[§ Debugger](#debugger-debuggerhcpp-debugger_imgui)). Klaus Dormann clean.
+`setCpuMode(NMOS)` restores the twelve NMOS JAMs to halt (the reserved
+$02/$22/$42/$62 and the eight (zp) opcodes $12/$32/…/$F2), re-points
+`$5C/$DC/$FC` to `UnoffAbsX` (page-cross penalty), then
+`installNmosUndocumented()` (`M6502_Undoc.cpp`) installs the undocumented
+opcodes with their results — the eight $xB-column immediates
+($0B/$2B/$4B/$6B/$8B/$AB/$CB/$EB) are ANC/ANC/ALR/ARR/ANE/LXA/SBX/USBC, no
+longer 2-byte NOPs. 65C02 undoc-NOP cycles: imm=2, zp,X=4,
 abs,X=4, zp=3 ($5C left at 8). Pinned: `cmos_6502_smoke_test`,
 `klaus_65c02_extended_test` (PASSES @ `$24F1`),
 `cpu_cycle_count_test`. `setProgramCounter()` is the Klaus harness
@@ -142,8 +153,9 @@ systematic offset, not drift — and no pin. What the core actually follows:
 
 The three `AMONT FAUX` are against MAME's Apple 65C02 table; the core is
 right and must not be "aligned". The one bug that slice found is in the
-debugger, not the core: its disassembler and assembler decode a
-Rockwell/WDC 65C02 on the NCR part Apple shipped (fix in progress).
+debugger, not the core: its disassembler and assembler decoded a
+Rockwell/WDC 65C02 on the NCR part Apple shipped — fixed 2026-11-01, the
+listing now follows `M6502::instructionSet()` ([§ Debugger](#debugger-debuggerhcpp-debugger_imgui)).
 
 ### Tom Harte 65x02 ProcessorTests (cycle-exact gate)
 
@@ -159,31 +171,32 @@ caught indirectly via stack RAM). This is exactly the timing-bug class
 `cpu_cycle_count_test` was built for, generalised to every opcode × 10 000
 states.
 
-Results below are historical **full 256-opcode** sweeps of both variants
+Results below are **full 256-opcode** sweeps of both variants
 (`tests/fetch_tomharte.sh <variant> <dir> --all`), not just the gated subset.
 These are matching corpus files, not a count of documented instructions or
 proof of per-access bus ordering; passing NMOS files include unofficial NOPs:
 
-- **NMOS 6502** (`6502/v1`): **178 opcode files passed in the recorded sweep**
-  (1 780 000 vectors), incl. decimal ADC/SBC + the NMOS `JMP (ind)` page bug.
-  (2026-10-21: the 66 non-JAM files of those 78 now pass too — see the top
-  of this section.) The 78 failing files were exactly the undocumented opcodes with observable
-  side effects (SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC/ANC/ALR/ARR/XAA/SBX/SHY/SHX/
-  TAS/LAS + the 12 JAMs), which POM2 models as length/cycle-correct NOP
-  placeholders by design. The undocumented *NOPs* ($x3/$x7/$xB/$xF, $04/$44/
-  $64, $0C/$1C/…, $80/$82/$89/$C2/$E2) do pass.
+- **NMOS 6502** (`6502/v1`): **244 of 256 opcode files pass** — every
+  documented opcode (decimal ADC/SBC and the NMOS `JMP (ind)` page bug
+  included), the undocumented NOPs, and since 2026-10-21 the 66 undocumented
+  opcodes with results (SLO/RLA/SRE/RRA/SAX/LAX/DCP/ISC/ANC/ALR/ARR/XAA/SBX/
+  SHY/SHX/TAS/LAS…, see the top of this section). The **12 JAMs** are the only
+  files left: POM2 halts on them and models nothing beyond that.
 - **WDC 65C02** (`wdc65c02/v1` — the only published variant with Rockwell bit
-  ops AND WAI/STP, = POM2's table): **100% on 255 of 256 opcodes**
+  ops AND WAI/STP, = POM2's *superset* table, the one a bare `M6502` runs;
+  the Apple itself runs the NCR subset): **100% on 255 of 256 opcodes**
   (2 530 000 vectors), decimal SBC included — see the interdigit-carry fix
   below. `69` (ADC) is silicon-exact on both CPUs.
 - **`$5C` is the one remaining CMOS divergence, and it is deliberate**: POM2
-  charges 3 bytes / **8 cycles**, matching MAME (`ow65c02.lst` `nop_c_aba` =
-  7 `read_pc()` + `prefetch()`) and the standard 65C02 unused-opcode tables.
-  All three of Harte's 65C02 variants say 4 cycles, but that corpus is
-  generated from "an implementation that conforms to available documentation"
-  (upstream README) rather than from silicon, and it invites discrepancy
-  reports. **MAME wins** per this project's source-of-truth rule, so
-  `5c : 0/10000` in a full CMOS sweep is expected, not a regression.
+  charges 3 bytes / **8 cycles**. [B] WDC W65C02S data sheet, Table 5-2 (opcode
+  matrix): 3 bytes, 8 cycles. [D] MAME `ow65c02.lst` `nop_c_aba` @ `370d8dffb7`
+  (7 `read_pc()` + `prefetch()`) agrees. All three of Harte's 65C02 variants
+  say 4 cycles, but that corpus is [D] too — generated from "an implementation
+  that conforms to available documentation" (upstream README), not from
+  silicon — and a D never overrules a B. So `5c : 0/10000` in a full CMOS
+  sweep is expected, not a regression. Still [F] for the part Apple shipped:
+  the W65C02S table is WDC's, not NCR's; a run of `$5C` on a real //c or
+  enhanced //e would settle it (no Apple II software executes it).
 
 **Decimal SBC is CPU-part-specific** (fixed 2026-07-30). The WDC 65C02 lets
 the low nibble's `-6` decimal adjustment **borrow into the high nibble** —
@@ -210,7 +223,7 @@ because file `02` poisoned the other 254. Curated-subset runs never noticed
 `halted` plus `waiting_`; `step()`'s halted branch — the one test the hot path
 already makes — lifts it when NMI or any IRQ source is asserted and falls into
 the normal interrupt poll: NMI or an unmasked IRQ vectors, a masked IRQ
-resumes after the WAI (MAME `ow65c02.lst:797-803`). It used to fall through
+resumes after the WAI ([D] MAME `ow65c02.lst:875-881` `wai_imp` @ `mame0287`). It used to fall through
 after three cycles. A snapshot stores `M6502::haltCode()` — 0 running, 1
 STP/KIL, 2 WAI — in the byte that was a bool, so an older reader sees a
 waiting CPU as halted. `bench_identity` unchanged; pinned in
@@ -445,8 +458,8 @@ cycles:
   "Softcard 16-sector disk (Microsoft 1980)" 44K v2.20 master (Asimov
   `images/cpm/os/`).
 - `softcard_cpm_boot_iie` — //e + IIe paging: `disks_5.4/dsk/cpm60k.dsk`
-  = 60K v2.23. Validated against the MAME `apple2ee -sl4 softcard`
-  oracle — banner byte-identical.
+  = 60K v2.23. Cross-checked against [D] MAME `apple2ee -sl4 softcard`
+  — banner byte-identical.
 
 Sysgen gotchas the bring-up surfaced (they *look* like emulation bugs and
 are not): the 56K/60K sysgens print through the **IIe 80-col firmware**,
@@ -508,7 +521,7 @@ Z80 (its WAIT line on the card): the instruction is undone and re-run, with
 the bytes it already took replayed (`fetched_`, in the snapshot), and a held
 Z80 loses its time. The first `OUT` ends boot mode and is not delivered.
 Pinned by `softcard2_card`; the boot half needs
-`disks_5.4/dsk/softcard2_cpm228b.dsk` (not yet in the test-media archive)
+`disks_5.4/dsk/softcard2_cpm228b.dsk` (in the test-media archive)
 and also boots it on a ][+ whose console is a Videx Videoterm in slot 3.
 
 **The 6502 BIOS calls in the trace** *(2026-10-31)*. Under CP/M the Z80
@@ -649,9 +662,9 @@ from the host.
 (`7710-03h.u5`/`l.u6`, MAME `ROM_NIBBLE`: each holds one nibble of every
 byte) load from `roms/ccs7710_03h.u5` + `roms/ccs7710_03l.u6` and execute —
 the reference (Abstraction Levels: `ccs7710`, L2). RetroBIOS has no
-`ccs7710` set, so they are not in the ROM catalogue (`rom_fetch` requires
-every catalogued dump to be downloadable — they go in when POM2's ROM
-archive carries them), and a tree without them, or `ccs7710_firmware` = "pom2" (the
+`ccs7710` set; they are catalogued from POM2's own ROM archive
+("CCS 7710-03 (POM2 archive only)", `RomMissingEffect::Degraded`), and a
+tree without them, or `ccs7710_firmware` = "pom2" (the
 panel's switch, a restart), serves POM2's own page (`ccs7710_pom2`, H1),
 written from the 7710-03's disassembly (its comment block is the
 behavioural spec): the serial-card ID kept byte for byte (`BIT $FF58 / BVS
@@ -777,8 +790,11 @@ All //c/+ memory quirks behind `MemoryProfile`
 `Memory::iicProfile_` is **null on II/II+/IIe** → one `if
 (iicProfile_)` branch on the hot path, zero virtual calls. Profile
 owns: alt firmware (16 KB), ROMBANK flag, //c+ flag, 2 KB MIG
-gate-array (`migRead`/`migWrite`, verbatim MAME
-`apple2e.cpp:532-624`), IWM/SmartPort hub pointers. Dispatcher
+gate-array (`migRead`/`migWrite`, ported from [D] MAME
+`apple2e.cpp:593-699` @ `mame0287` — **except** the drive selects:
+[C] //c+ ROM `$E603`/`$E503`/`$E4F2` writes `$CE40` to select the 3.5" and
+`$CE60` the 5.25", the reverse of MAME's `mig_w`, which kept the firmware
+from finding any Sony on the rear port; POM2 follows the ROM), IWM/SmartPort hub pointers. Dispatcher
 delegates: `forcesIntCxRom`, `romBankToggle($C028)`,
 `onResetSoftSwitches`, `ioReadIWM/ioWriteIWM ($C0E0-$C0EF)`,
 `internalRomRead/Write` ($C100-$CFFF under INTCXROM, incl. //c+ MIG
@@ -925,8 +941,12 @@ key callback routes those even when ImGui has focus.
 
 **IOUDIS** (`$C07E` SET / `$C07F` CLR; on //c the whole
 `$C078-$C07F` range decodes SET/CLR by parity — every even address
-sets, every odd clears). Init `true` every reset (MAME
-`apple2e.cpp:1224`). Writes effective only on //c-class
+sets, every odd clears). Init `true` on every reset — a deliberate
+divergence: [D] MAME sets it only in `machine_reset`
+(`apple2e.cpp:1215` @ `mame0287`), not in `reset_w` (Ctrl-Reset). [F]
+Unverified: settled by the IIc Technical Reference or a //c read of
+`$C07E` after Ctrl-Reset (`resetSoftSwitches`, audit
+`docs/audits/parite-apple2e-2026-11-01.md`). Writes effective only on //c-class
 (`Memory::iicProfile_` non-null; MAME `:2569-2587` gates `m_isiic`).
 
 **RDIOUDIS is //c-class only, and it carries the floating bus** *(corrected
@@ -935,11 +955,11 @@ cases `$78/$7A/$7C/$7E`) and returns `(ioudis ? 0x80 : 0) | uFloatingBus7`; a
 plain //e's `c000_r` has **no `$7E` case at all** and falls through to the
 bare floating bus. POM2 answered on every IIe-class machine and returned a
 clean `$00`/`$80` with bits 0-6 zeroed — a value the real bus never shows.
-`Memory.cpp:1833-1836` now gates on `iicProfile_` and ORs
+`Memory::softSwitchAccess` (the `$C078-$C07F` read branch) now gates on `iicProfile_` and ORs
 `floatingBus() & 0x7F` in, and the read mirrors decode by parity like the
 write side (even = RDIOUDIS; odd = RDDHIRES, bit 7 = !DHGR, also //c-only). Pinned by
 `iic_ioudis_dhgr`. The sibling `$C060` read had lost the same bits while its
-own `$C068` mirror kept them (`Memory.cpp:1714-1727`, MAME
+own `$C068` mirror kept them (`Memory::softSwitchAccess`, MAME
 `apple2e.cpp:2177-2185`).
 
 **The //c's ACIAs never read as the floating bus** *(2026-10-06)*. Its two
@@ -987,6 +1007,7 @@ Pooyan read `$4D-$4F`) and repeatable runs.
 
 Latch + strobe live in `pom2::Keyboard` under its own `mtx_`. UI
 `queueKey()` sets strobe high. CPU reads `$C000` via `softSwitchAccess()` →
+`Memory::readKeyLatch()` (`MemoryPaste.cpp`, the line-at-a-time paste hold) →
 `Keyboard::readLatch()` (lock-free unless a paste byte is handed over).
 Strobe stays high until `$C010`.
 
@@ -999,18 +1020,20 @@ strobe alone outran the SoftCard II CP/M's 256-byte type-ahead ring (55 of
 
 ### Reset architecture
 
-- **`resetSoftSwitches()`** — full reset: display state, LC flags,
-  `iieMemMode`, `intC8Rom`, `iicRomBank`, IOUDIS=true, RamWorks
-  bank 0. Forces `MF_INTCXROM` on //c-class (`iicProfile_`). Called by
-  `coldBoot()`, `bootFromSlot()`, `pom2::switchProfile` steps 3-4
-  (`ProfileSwitch.cpp`), and `resetSoftSwitchesWarm()` when `iieMode` is
-  on. It also drops the VBL IRQ, AN1/AN2 and any in-flight paste
-  (`keyboard_.reset()`).
-- **`resetSoftSwitchesWarm()`** — Ctrl-Reset / F12 on II/II+; F11/F12
-  on IIe. On `iieMode` delegates to full reset (MAME `apple2e.cpp:1453-
-  1508`). On II/II+ does only keyboard-strobe clear — **LC + display
-  switches survive** (MAME `apple2.cpp:325-331`). `hardReset()` uses
-  this path too (only CPU A/X/Y are zeroed).
+- **`resetSoftSwitches(warm = false)`** — the //e-class reset list:
+  display state, LC flags, `iieMemMode`, `intC8Rom`, IOUDIS=true, AN0-AN2,
+  the VBL IRQ. Forces `MF_INTCXROM` on //c-class (`iicProfile_`). With
+  `warm`, TEXT and MIXED survive (DHGR/AN3 never does — Sather IIe p. 7-3),
+  the //c ROMBANK and the RamWorks bank are kept, and only an in-flight
+  paste is cancelled; cold, RamWorks returns to bank 0 and
+  `keyboard_.powerOn()` runs. Cold callers: `coldBoot()`, `bootFromSlot()`,
+  `pom2::switchProfile` (`ProfileSwitch.cpp`).
+- **`resetSoftSwitchesWarm()`** — Ctrl-Reset / F11 / F12. On `iieMode` it
+  runs `resetSoftSwitches(true)` (MAME `apple2e.cpp:1453-1508`). On II/II+
+  it only cancels an in-flight paste — **LC, display switches, keyboard
+  strobe and key byte all survive** ([B] Sather, *Understanding the Apple
+  II* Fig. 7.7; MAME `apple2.cpp:325-331`). `hardReset()` uses this path
+  too; the CPU side then zeroes A/X/Y, sets SP = $FF and P = $24 | I.
 
 CPU side: `M6502::hardReset()` doesn't wipe stack `$0100-$01FF`
 (MAME `reset_w` doesn't touch RAM); `M6502::softReset()` decrements
@@ -1077,8 +1100,9 @@ card's own picture — 720×216 for a Videx Videoterm, see
 [§ Videx Videoterm](#videx-videoterm-videxvideotermcard), 640×400 for a
 VidHD's Super Hi-Res, see [§ VidHD](#vidhd-vidhdcard)
 ) RGBA. Reads `Memory::getDisplayState()` (mutex copy) + flat RAM.
-UI uploads via `glTex(Sub)Image2D`. Text flash via
-`frame_number() & 0x10` (MAME parity).
+UI uploads via `glTex(Sub)Image2D`. Text flash: on a //e the emulated
+frame count (`frame_number() & 0x10`, 16-frame half period at the machine's
+own 50/60 Hz); on a ][ / ][+ a 2 Hz 555 astable whatever the standard.
 
 Ten `HiResMode`:
 - `ColorNTSC` — 7-bit sliding artifact window →
@@ -1165,7 +1189,7 @@ uses the offset fallback (first 512 bytes). Getting this
 backwards inverts the entire normal range — and because the glyph SHAPES are
 unaffected, it is invisible in a screenshot of ordinary text.
 
-**Whether there is lowercase.** POM2 previously read "2 KB" as "no
+**Whether there is lowercase.** POM2 once read "2 KB" as "no
 lowercase" and folded a-z onto A-Z at render time
 (`Apple2Display::lookupCsbitsGlyph`). That is correct for the stock
 II/II+ generator and exactly wrong for the **Videx LOWER CASE CHIP**
@@ -1174,9 +1198,12 @@ whose entire reason to exist is those glyphs. The test comes from the Videx
 manual's own description of the stock part: *"Characters 80 — BF are
 identical to characters C0 — FF"*. A generator that adds lowercase breaks
 that equality, so `loadCharRom` compares the two 512-byte blocks and
-publishes the answer as `Memory::charRomHasLowercase()`; the display folds
-on that, not on the size. Pinned by `videx_lowercase_char_rom`, which runs
-both dumps and checks the fold, the bit order and the ranges.
+publishes the answer as `Memory::charRomHasLowercase()`. The display no
+longer folds at all *(2026-09-08, bug hunt #10 — § Phosphor rules below)*:
+it draws whatever the dump holds at the code, which on a stock 2513 is the
+punctuation real hardware shows; only the tests read
+`charRomHasLowercase()` now. Pinned by `videx_lowercase_char_rom`,
+which runs both dumps and checks the equality, the bit order and the ranges.
 
 Catalog key `videx_lc`, file `roms/Videx Lower Case Chip ROM.bin`. The chip
 is a II/II+ part: on a //e lowercase is already in the machine.
@@ -1184,8 +1211,8 @@ is a II/II+ part: on a //e lowercase is already in the machine.
 ### DHGR (IIe, `eightyCol && hiRes && dhgr && !textMode`)
 
 `renderDhgr` interleaves aux (dots `c*14..+6`) with main (`+7..+13`)
-per byte → 560-dot stream. Three color paths, matching MAME
-`apple2video.cpp`:
+per byte → 560-dot stream. Three color paths (the composite one matching
+MAME `apple2video.cpp`; the Chat Mauve one deliberately not, see below):
 
 - **`ColorNTSC`** — composite artifact: 7-bit sliding window over
   560 dots → `kArtifactColorLut[128]` → `rotl4b(value, absX+1)` →
@@ -1237,8 +1264,9 @@ earlier four-strobe model came from a forum thread about a different card.
 Rules and page numbers: [chatmauve_plan § 3.6](docs/chatmauve_plan.md#36-the-rvb-graph-ii--ii).
 
 The French RGB adapters and their US cousin, as ONE card with a **variant**
-(`chatmauve_variant` = `feline` | `iic` | `eve` | `video7`; //c-class
-profiles default to `iic`, the others to `feline`). The research — manuals,
+(`chatmauve_variant` = `feline` | `iic` | `eve` | `video7` | `rvb`; a
+//c-class profile is forced to `iic` whatever the setting, the others
+default to `feline`). The research — manuals,
 the Video-7 patent, the Eve's PLA dump, fenarinarsa's measurements, and
 Purplesoft's own code — is `docs/chatmauve_plan.md`; this section is the
 model as built (P0-P2, 2026-09-01).
@@ -1332,13 +1360,12 @@ event log, so a mid-frame `$C05E/$C05F` reclock paints each band with the
 latch of its own moment (`renderDhgr` reads the band's value through
 `bandLatch_`/`dhgrModeFor`). Pinned by `chatmauve_latch_split`.
 
-**Not yet** (plan P3-P6): the Eve's `$C0Bx` switches still land per frame
-(they push no video events), the PLS100 is decoded but is a dot router —
-its colour semantics live downstream (plan § 3.5.1, closed as bounded);
-the RVB Graph variant models only its four documented `$C0F0-$C0F3` mode
-strobes (colour/mono × white/green text — the colour registers need the
-manual); the //c adapter's inferred-80COL quirk has no grounded mechanism
-on record. `tests/purplesoft_eve_probe.cpp` boots the maker's demo disks
+**Not yet** (plan P5-P6; P3 closed as bounded, P4 done): the Eve's `$C0Bx`
+switches still land per frame (they push no video events); the PLS100 is
+decoded but is a dot router — its colour semantics live downstream (plan
+§ 3.5.1), so SPEC1/SPEC2 stay the manual's prose and DASH renders as
+HRAPPLEII; the //c adapter's inferred-80COL quirk (P5) has no grounded
+mechanism on record. `tests/purplesoft_eve_probe.cpp` boots the maker's demo disks
 (Purplesoft, Extasie, Arlequin via `POM2_PROBE_DISK`) for the visual
 check (see `docs/test_corpus.md` § 5).
 
@@ -1401,8 +1428,9 @@ the band (`$C052` at scanline 170, the French Touch raster shape).
 `patchMixedTextBand` evaluates its `bandSplit` before consulting the end
 state so the per-segment path is reachable. Pinned by
 `mixed_band_beam_split` (HGR at five split lines, lo-res, DHGR, the OE-GPU
-routing flag, two controls). `state.an3` is a dead field, written and never
-read.
+routing flag, two controls). `state.an3` is read by no painter (the RGB
+card keeps its own latch); it is only carried to snapshots and to the SDK's
+display view (`Pom2Core.cpp`).
 
 `Memory` logs display soft-switch edges (`$C050-$C057`, `$C05E/$C05F`,
 IIe `$C00C/$C00D` 80COL, `$C000/$C001` 80STORE, `$C00E/$C00F` ALTCHAR)
@@ -1414,7 +1442,7 @@ the bare `getDisplayState()` survives only as the pre-first-frame fallback
 (`frameCounter == 0`, which is how the display tests drive the class with no
 clock). **A stopped machine publishes no frames**, so since 2026-09-07 both
 paths run the frame-start state through
-`Apple2Display::applyIdleSwitchOverride` (`Apple2Display.cpp:411-426`): while
+`Apple2Display::applyIdleSwitchOverride` (`Apple2Display.cpp`): while
 `cpuIdle_`, it diffs the live `mem.getDisplayState()` against the snapshot
 taken at the last run (`liveStateAtRun_`) and folds only the changed mode
 fields — `textMode, mixedMode, page2, hiRes, eightyCol, an3, altChar, dhgr,
@@ -1426,7 +1454,7 @@ debugger or the memory editor changed the content but never the mode.
 not refresh `liveStateAtRun_` and switch the override off. The gate is
 `frameCounter` — the emulated video-frame index,
 `cycles / (65 × scanlinesPerFrame)` — compared against `lastRenderFrame_`
-(`Apple2Display.cpp:506-533`), so stepping keeps the
+(the `cpuIdle_` gate in `Apple2Display::render`), so stepping keeps the
 override and only real running drops it. Pinned by
 `display_persistence_smoke`.
 
@@ -1523,7 +1551,7 @@ TEXT waveform right, same line).
 
 **Horizontal (mid-scanline-column) splits** *(RGBA done 2026-06-09; composite
 done 2026-06-09)*. Both replays now resolve switches **per byte column**.
-`VideoEvent.emuCycle` (`Memory.h:627`) already carries the CPU cycle — only the
+`VideoEvent.emuCycle` (`Memory.h`) already carries the CPU cycle — only the
 horizontal position was discarded — so `Apple2Display::frameCycleToPos(emuCycle)`
 maps it to `{scanline, byteCol}` with `byteCol = clamp((emuCycle % 65) − 24, 0,
 40)` (the 40-byte visible window opens at horizontal cycle 25; the −24 is one
@@ -1538,7 +1566,12 @@ drew one character cell right of the TV-set art (user-confirmed, both RGB and
 composite). HiRes (`$C056/$C057`) is NOT shifted — it is a graphics-mode/address
 switch, fetch-side like PAGE2, and MAD EFFECT flips lo/hi-res mid-line to place
 its beam-raced picture; shifting HiRes pulled those regions one cell too far left
-(regression caught 2026-09-02). TextMode / MixedMode / 80Col also stay on −24.
+(regression caught 2026-09-02). TEXT and MIXED land one column RIGHT of a
+PAGE2 flip made on the same cycle — `hpos − 23` *(2026-11-01)*: [A] tomcw,
+AppleWin GH#656, real //e PAL photos; [B] Sather, *Understanding the Apple
+IIe* p. 8-12 (GR delayed two scanner clocks); `beamColForEvent` carries the
+citations, audit `docs/audits/parite-apple2video-2026-11-01.md`. 80Col and
+80STORE stay on −24.
 The HiRes/PAGE2 half is pinned by `raster_switch_kind_offset`; the AN3/DHGR −1 is
 validated against the live demo. The shared
 `forEachBeamSegment(frameStart, events, paint)` builds, per visible scanline, the
@@ -1581,10 +1614,10 @@ also split mid-line, in both outputs:
 
 Pinned by `horizontal_split_560`, which checks the IIe "DHGR left, 80-col text
 right, same line" split in *both* the RGBA framebuffer and the composite signal.
-**Scope-out:** a split that MIXES a 40-col (280, `frame`) and an 80-col (560,
-`frame80`) segment on one scanline targets different buffers and is undefined
-(the last segment's `useFrame80` wins); and the exact transition cycle within a
-character clock is a later refinement.
+**Scope-out:** the exact transition cycle within a character clock is a later
+refinement. (A frame that MIXES 280-wide and 560-wide segments is no longer
+undefined: `renderBeamRacing` pins it to the 560 domain with `force560_`, see
+§ Beam-racing above.)
 
 ### 80-col text
 
@@ -1718,10 +1751,11 @@ rule (`cardVidexVideotern.go:131-139`). POM2: `VidexVideotermCard::ownsScreen`
   one of those link lines. Through `CardVideoSource.h` the display links
   nothing new. The painter lives in the card, the switch rule too, and the
   publish step (`renderCardPicture`) is inline in `Apple2Display.h` — the
-  `.cpp` is at its `tools/file_size_budget.txt` ceiling.
+  `.cpp` is close to its `tools/file_size_budget.txt` ceiling.
 
-**ROMs** (none tracked; RomFetch pulls all four from RetroBIOS
-`bios/Arcade/MAME/a2vidtrm.zip`, CRC + SHA-256 gated):
+**ROMs** (none tracked; RomFetch pulls all four — POM2's archive.org
+`pom2_firm.zip` first, else RetroBIOS `bios/Arcade/MAME/a2vidtrm.zip` —
+CRC + SHA-256 gated):
 
 | `roms/` file | MAME member | CRC32 | Role |
 |---|---|---|---|
@@ -1747,10 +1781,12 @@ AN0 set, `]` and `PRINT 6*7` → `42` in the card's VRAM, 720 × 216 published;
 Ctrl-Reset → AN0 clear, 40 columns), plus the catalog sweeps
 `card_snapshot_contract` and `slot_configuration_coordinator`.
 
-**Not modelled.** The 6845's light pen, interlace modes and status register;
-a raster-accurate CRTC (a mid-frame R12/R13 write shows next frame); the
-Videoterm's optional soft-switch hardware beyond the TEXT+AN0 rule; the
-other character sets; the //e-era "Videx UltraTerm" (`a2ultraterm`).
+**Not modelled.** The 6845's light pen and status register (interlace sync &
+video IS modelled: R9 + 2 rasters per row, blink counted in fields — see the
+table above); a raster-accurate CRTC (a mid-frame R12/R13 write shows next
+frame); the Videoterm's optional soft-switch hardware beyond the TEXT+AN0
+rule; the other character sets. The //e-era UltraTerm is its own card,
+[§ Videx UltraTerm](#videx-ultraterm-videxultratermcard).
 
 ### VidHD (`VidHDCard`)
 
@@ -2043,7 +2079,7 @@ pass and `NtscPostProcessor` also resized their FBOs without clamping to
 `GL_MAX_TEXTURE_SIZE` or re-checking completeness afterwards, so a 5K dock on a
 4096-px driver (a Pi/V3D, typically) painted garbage in **silence** — the
 allocation simply failed and the shader sampled nothing. Both now clamp
-(`CrtEffectStack.cpp:452`) and re-check
+(`GL_MAX_TEXTURE_SIZE`, `CrtEffectStack.cpp`) and re-check
 `glCheckFramebufferStatus(...) == GL_FRAMEBUFFER_COMPLETE`, logging the limit
 they hit. The bandwidth-FBO failure path leaked its program (`bwProgram = 0`
 without a delete), and `GL_UNPACK_ALIGNMENT` was left at 1 for ImGui — both
@@ -2077,7 +2113,8 @@ fixed.
   half of the CRT phosphor model; `persistence` is the *temporal* half. γ > 1
   deepens shadows for more CRT-like contrast, γ < 1 lifts them. Default
   identity keeps every existing golden/parity test untouched. Slider range
-  0.6–2.6, persisted `ntsc_phosphor_gamma`.
+  0.6–2.6, persisted per monitor as `crt_<monitor>_phosphor_gamma` (the old
+  global `ntsc_phosphor_gamma` is migrated once).
 - **Glow** (`bloom`, default 0 = off; `bloomRadius`, `bloomThreshold`) is a
   second **pre-pass** at source resolution *(2026-11-05)*: the bright part of
   the picture — above a threshold, through a quadratic knee that starts at
@@ -2186,7 +2223,7 @@ ping-pong history is undefined, so persistence is 0 on exactly that frame.
 Otherwise the retention per pass is `persistence ^ (dt · refreshHz)`
 (`crtRetention`): the knob is what one 50/60 Hz machine frame keeps, the pass
 runs per host present. All three pinned by `crt_glass_resample` (a real GL 3.2 context, exit 77 where
-none can be made — which is what CI gets). (3) The voxel grid is sized from
+none can be made; CI's `gl-software` job runs it on Xvfb + Mesa llvmpipe). (3) The voxel grid is sized from
 its tap — under OE-GPU the demod output, always 560 wide — not from the
 framebuffer; `MainWindow_Screen.cpp` carries the tap's own size. No pin:
 that file links into POM2 alone. History: CHANGELOG 2026-09-09.
@@ -2195,8 +2232,10 @@ that file links into POM2 alone. History: CHANGELOG 2026-09-09.
 
 **Faithful port** of AppleWin's CPU-side NTSC composite simulation
 (`source/NTSC.cpp::initChromaPhaseTables`, by Sheldon Simms / Tom
-Charlesworth / Michael Pohoreski — GPL v2+). Per the project convention
-(AppleWin = source of truth) the algorithm, IIR filter coefficients
+Charlesworth / Michael Pohoreski — GPL v2+). This display mode *is*
+AppleWin's filter by definition, so for this mode only, AppleWin's code is
+the reference for the algorithm (a [D] source — faithfulness to AppleWin,
+not evidence about what a real monitor shows): the IIR filter coefficients
 (`NTSC.cpp:115-132`), YIQ→RGB matrix and white/black/grey special-casing
 are ported line-for-line and cited inline in `src/AppleWinNtsc.cpp`.
 
@@ -2265,9 +2304,11 @@ and take `<seed> <iters>` for a longer soak.
 
 Three design points, each learned the hard way:
 
-- **Seeds are synthesised, never read from `disks_5.4/` or `hdv/`.** Not one
-  disk file is tracked by git, so a corpus-reading fuzzer tests *nothing* on a
-  fresh clone or in CI — and passes, which is the worst possible failure.
+- **Seeds are synthesised, never read from `disks_5.4/` or `hdv/`.** Those
+  folders track only a handful of the author's own disks; the rest come from
+  the test-media archive, so a corpus-reading fuzzer would test whatever a
+  given checkout happens to hold — nothing, on a fresh clone — and pass,
+  which is the worst possible failure.
 - **Seeds are valid containers, not noise.** Random bytes are rejected at the
   magic and never reach the walker where a bug would be. `fuzz_snapshot`
   prints its acceptance rate and asserts a floor on it, so a change that starts
@@ -2494,8 +2535,8 @@ Two contracts, so cards migrate one at a time:
   `speaker_pan`, `cassette_pan`, `floppy_sound_pan[_35]`).
 - **Stereo** — `fillAudioBufferStereo(l, r, n)` returns true when the
   source filled two planes itself; `pan` is then ignored, because the
-  card's wiring is the authority. Mockingboard and Phasor implement it;
-  both keep the mono path as `0.5 * (L + R)`, which is *bit-for-bit* the
+  card's wiring is the authority. Mockingboard, Phasor and the Echo+
+  (TMS5220) implement it; the first two keep the mono path as `0.5 * (L + R)`, which is *bit-for-bit* the
   pre-stereo render (`/3` per side folds to the old `/6`, `/6` per side
   to the old `/12`).
 
@@ -2539,7 +2580,8 @@ clamped to what is there; the zero-crossing threshold is the signal mean
 (a linear pre-pass, clamped to ±0.9 × peak), so a line-in rip riding on a DC
 bias decodes; a capture auto-started inside `toggleOutput()` records its
 baseline post-toggle, in phase with real hardware and `--rec`; `$C060`/`$C068`
-never reach the deck on a //c, where that address is the 40/80-column switch.
+never reach the deck on a //c-class machine: the 80/40-column switch on a //c,
+reserved (bit 7 reads 0) on a //c Plus, which has no such switch.
 Pinned by `cassette_hostile`. Known limits: 24-bit PCM is refused with an
 accurate message; a rewind across a live capture keeps `recordedDurations`
 (cassette output never bumps the media epoch — a design call, documented in
@@ -2635,8 +2677,9 @@ Pinned by `mockingboard_bus_edges`, `testUndrivenResetPinFloatsHigh`,
 `mockingboard_audio_quality::testPwmSubSamplePlacement`.
 
 Sweet Microsystems: two 6522 VIAs each driving an AY-3-8910. No ROM
-— VIAs decoded in slot ROM window (`$Cn00-$Cn0F` VIA#1,
-`$Cn80-$Cn8F` VIA#2) via `slotRomWrite`.
+— VIAs decoded in the slot ROM window, A7 selecting the VIA (`$Cn00-$Cn7F`
+VIA#1, `$Cn80-$CnFF` VIA#2, A0-A3 the register, A4-A6 partial-decode mirrors)
+via `slotRomRead`/`slotRomWrite`.
 
 VIA → AY (Sweet; [D] AppleWin `Mockingboard.cpp:350-353`, `:253` @ 6c579da5):
 ```
@@ -2658,9 +2701,11 @@ clear_int(INT_T1)` — no counter transfer, no restart; an earlier
 POM2 note claimed the opposite). IER bit 7 set-vs-
 clear (`$C0` enables, `$40` disables). **T1's PB7 square wave (ACR.7) and
 port-A input latching on a CA1 edge (ACR.0) are modelled** as of 2026-09-07 —
-`t1Pb7` (`Via6522.h:127`, MAME `m_t1_pb7`) is OR'd into `readPortB()`
+`t1Pb7` (`Via6522.h:131`, MAME `m_t1_pb7`) is OR'd into `readPortB()`
 *ignoring DDRB* (`6522via.cpp:605-630`), forced low by a T1C-H write
-(`:934`) and high on a one-shot underflow (`:544-549`); the continuous-mode
+(`:934`) and **toggled** on the armed one-shot underflow (MAME `mame0287`
+`:544-549` forces it high; die analysis and VICE toggle it — table above);
+the continuous-mode
 toggle handles a lazy sync that crossed several periods at once, which is
 POM2's own problem and not MAME's — and since 2026-09-08 (bug hunt #8) that
 collapse counts underflows with a **ceiling**, not floor+1: a slice ending
@@ -2670,8 +2715,10 @@ disk-turbo path rest on (pinned in `via_t1_continuous_period`). Same pass:
 **an ACR write leaves a running T1 alone**. MAME's re-arm on the switch to
 continuous round-trips the counter through a uint16, which is the identity
 except in the two cycles before an underflow, where 0/1 wrap to $FFFE/$FFFF
-and the pending interrupt moves 65536 cycles out; only a *stopped* T1 is
-re-armed now, which is also the W65C22's own behaviour (`via_t2_timing`). `latchPortAOnCa1()` (`Via6522.h:536`,
+and the pending interrupt moves 65536 cycles out. Since 2026-10-27 an ACR
+write arms nothing at all, not even a *stopped* T1 — only a T1CH write arms
+it ([A] mb-audit T6522_1 on real Mockingboards; die analysis, VICE; MAME
+master dropped the re-arm too — table above). `latchPortAOnCa1()` (`Via6522.h:579`,
 `6522via.cpp:1107-1110`) runs *before* IFR.CA1 is raised, and `latchedPortA()`
 is what a read returns. The **complete** not-modelled list lives at
 `Via6522.h:30-43` and is now honest about what is missing and why: the SR
@@ -2682,16 +2729,21 @@ this model has no CB1 for; PB6 pulse counting for T2 (ACR.5 is honoured as
 "stop counting phase 2", but no POM2 card wires PB6); and port-B external
 inputs (`readPortB()` pulls DDR=0 pins high — the AY read strobe is on port
 A, which does have `setPortAInput`). PCR is partly modelled: CA1 edge select
-and CA2-mode IFR masking are honoured. **T2 underflow IRQ fires at `TIMER2_VALUE +
-IFR_DELAY` (= N+3)** matching MAME `6522via.cpp:959` (POM2's
-`advance()` crosses < 0 at N+1, so T2CH pre-biases the counter by
-`IFR_DELAY-1 = 2`). This is the per-frame sync French Touch / DIX
+and CA2-mode IFR masking are honoured. **T2 underflow: IFR.T2 at N+2, /IRQ at
+N+3.** The T2CH write pre-biases the counter by 2 so `advance()` raises the
+flag at N+2 ([A] mb-audit T6522_11), and `ifrFresh_` holds it off the pin one
+cycle, which lands the interrupt where MAME's `TIMER2_VALUE + IFR_DELAY`
+(`6522via.cpp:959` @ `mame0287`) puts it — see *6522 timer flag vs /IRQ
+pin* above. This is the per-frame sync French Touch / DIX
 drive: `T2 = 7512 − latency`, IRQ → mid-scanline beam-race. Pinned
 by `via_t2_timing`; PB7 and the port-A latch by `via_t1_continuous_period`.
 
 **AY-3-8910 synthesis** runs on the audio thread inside inner
-`AudioSrc`. CPU updates regs under `mtx`; the callback snapshots both
-banks (32 B), releases, synthesises lock-free. The generators, mixer
+`AudioSrc`. The CPU queues every register write with its emuCycles stamp
+(`AyEventRing`); the callback takes the due events under `mtx` (plus a
+32-byte snapshot of both banks only to seed its own `liveRegs` on the first
+fill and after a timeline break), releases, and synthesises lock-free while
+replaying them. The generators, mixer
 and band-limiting live in **`AyPsgSynth.h`, shared with `PhasorCard`**
 (extracted 2026-08-01 — the two cards had carried verbatim copies and
 drifted). 17-bit LFSR `x^17 + x^14 + 1`; MAME-verbatim 4-flag envelope
@@ -2791,7 +2843,8 @@ restore falls back to. Pinned: `mockingboard_smoke`,
 `pom2::Ssi263` (`Ssi263.h/.cpp`) — Silicon Systems Inc. SSI263A
 phoneme speech synth, shared chip model used by both
 `EchoPlusCard` (standalone, slot ROM at `$Cs00-$Cs04`) and
-`MockingboardCard` `Variant::SoundII` (chip at `$Cs40-$Cs44`,
+`MockingboardCard` `Variant::SoundII` (chip on every A6-set address,
+`$Cs40-$Cs7F` and `$CsC0-$CsFF`, register = A0-A2 — § Variant::SoundII,
 A/!R wired to **VIA2**.CA1 — the second 6522, as the code and AppleWin have
 it; this line said VIA1 until 2026-11-05).
 
@@ -2808,8 +2861,8 @@ outputs and its 131 071 period, tone at period 0, all 64 R7 mixer values,
 the read masks byte for byte, the volume table within 1 dB, the
 band-limiting budget, the stereo fold-down. History: CHANGELOG 2026-09-09
 (bug hunt #16). The SSI duration/PCM path now follows AppleWin's primary
-audio consumption loop, including CTL-latched frame mode. Still open: the
-`EchoPlusTMS5220Card` now follows MAME's VIA/PSG and C0n0 TMS5220C map. Phasor now carries both SSI263APs: A6/A5 select
+audio consumption loop, including CTL-latched frame mode. The
+`EchoPlusTMS5220Card` follows MAME's VIA/PSG and C0n0 TMS5220C map. Phasor now carries both SSI263APs: A6/A5 select
 primary/secondary writes in native and compatibility modes, independently
 of VIA aliases. Native reads require A7=A4=0, expose D7 over floating low
 bits and follow AppleWin secondary precedence when both are selected.
@@ -2880,8 +2933,12 @@ incomplete group outputs silence. PA uses entry 0's length with zero data.
 
 The IRQ period is `ceil(F * cpuClockHz / 22050)` CPU cycles, rounded only
 at the final conversion. Playback repeats on the same native frame grid.
-Host resampling remains sample-hold; RATEINF pitch/inflection and
-articulation are not synthesized. The arbitrary DirectSound lead-out and
+Host resampling remains sample-hold; with the recorded voice (the default)
+RATEINF pitch/inflection and articulation are not synthesized. A second
+voice, `ssi263_voice = formant` (Mixer ▸ Speech chip voice;
+`Ssi263Formant.h/.cpp`, a port of Casso's synthesiser, its constants [F]),
+computes the sound from the registers: the inflection value is the pitch and
+FILFREQ moves the vocal tract. The arbitrary DirectSound lead-out and
 host-buffer latency are not added to guest IRQ timing. An active CPU clock
 change rescales remaining cycles to preserve real time. Old snapshots keep
 their stored CPU countdown/source offset; no layout change is needed.
@@ -2995,22 +3052,22 @@ the user-visible label is now "Cricket / Echo (SSI263)". See
 [§ EchoPlusTMS5220Card](#echoplustms5220card) for the real Echo+ chipset.
 
 `advanceCycles` ticks the chip and asserts slot IRQ on A/!R edge;
-host writes to $00/$01/$02 release the IRQ. Default slot 4, pluggable
-in any slot via Slot Configuration. Pairs naturally with a
-Mockingboard A/C at slot 4 + Echo+ at slot 2 (the standard "MB for
-music, Echo+ for speech" combo).
+host writes to $00/$01/$02 release the IRQ. Pluggable in any slot via
+Slot Configuration; pairs naturally with a Mockingboard A/C (slot 2 on the
+fresh-install map) in another slot — the standard "MB for music, speech
+card for speech" combo.
 
 **Audio**: live. `Ssi263::fillAudio` pulls samples from the 62-phoneme
 PCM blob in `Ssi263PhonemeData.cpp` (~313 KB, ported verbatim from
 AppleWin `source/SSI263Phonemes.h` — LGPL → GPL3 compat), resamples
-from the chip's native 22050 Hz to the host audio rate via a simple
-linear cursor, scales by the AMP register (R3[3:0]). Power-down
+from the chip's native 22050 Hz to the host audio rate by sample-and-hold
+(`resampleAccum_`), scales by the AMP register (R3[3:0]). Power-down
 (CTL=1) and the `FILTER_FREQ_SILENCE` sentinel ($FF in R4) squelch
 output. The audio thread reads the chip's register banks + playback
 cursor under the host card's mutex. Pinned by `ssi263_smoke` test 6
 (RMS > 0.005 on a real phoneme; 0.0 in both squelch paths).
 
-**UI**: Devices → Echo+ panel. Mode + IRQ enable + A/!R + power-down
+**UI**: Devices ▸ Sound ▸ Echo+. Mode + IRQ enable + A/!R + power-down
 state + current phoneme + duration countdown (cycles + ms) + the 5
 register banks.
 
@@ -3172,13 +3229,14 @@ pri/sec/both/none), telemetry counters, 4-AY non-silent mix +
 mute path, **clockScale ×2 pitch doubling measured by
 zero-crossing** (target 2.0, observed ~2.01).
 
-**UI**: Devices → Phasor panel. Banner with current mode (MB / Phasor
+**UI**: Devices ▸ Sound ▸ Phasor. Banner with current mode (MB / Phasor
 / EchoPlus — color-coded), clock multiplier, slot IRQ, volume, the
 device-select mode-switch addresses for the slot. 2 columns of VIA
 telemetry (T1 counter / ACR / IFR / IER), 4 columns of AY register
 banks with R0/R1/R2/R3/R4/R5/R6 channel periods + R8/R9/R10 volume
 decoded for quick read. In MB-compat mode the secondary AY columns
-(AY1, AY3) carry a "(MB-compat: silent)" tag so the user understands
+(the panel numbers the chips 0-3, so its AY1 and AY3 — AY2/AY4 in this
+section's 1-based naming) carry a "(MB-compat: silent)" tag so the user understands
 why those banks stay zero even with a music driver running.
 
 ### Floppy mechanical sounds
@@ -3200,8 +3258,15 @@ floppy_sound_device`. 20 source WAVs (10 × 5.25" + 10 × 3.5") in
 miniaudio. `latch(inserting)` (default: `click()`) is the insert/eject
 mechanism — `Sony35Drive::emitInsertClick` and, for 5.25",
 `EmulationController::noteFloppyLatch` from the user mount/eject paths;
-`FloppySoundDevice::latch` stays silent for a 5.25" on the MAME bank.
-`ioError()` (default no-op) is fired by `SmartPortCard` on a block error.
+`FloppySoundDevice::latch` stays silent for a 5.25" on the bare MAME bank,
+and plays a door when the optional extras are installed (below).
+`ioError()` (default no-op) is fired by `SmartPortCard` on a block error;
+`bump(emuCycles)` by `DiskIICard` when the head is driven past track 0.
+
+**Optional extras** — a 5.25" door open/close and a track-0 head stop,
+OpenEmulator's recordings (licence not stated), fetched into
+`roms/floppy_extras/` by `tools/install_drive_extras.py`, never packaged.
+`FloppySoundDevice::loadExtras`; without them both hooks are silent.
 
 **Step/seek decision** (MAME parity): `step(newTrack, emuCycles)`
 measures gap in emulated CPU cycles (MAME `floppy.cpp:~1532-1540`).
@@ -3229,7 +3294,7 @@ wall-clock. Device defers audible transition by `kMotorOffHoldMs`
 
 **CPU ↔ audio**: mutex-guarded `std::vector<Cmd>` queue, capped at
 `kMaxCommands` (4096). CPU pushes `MotorOn/MotorOff/Step/Click/Latch/
-IoError/Chassis`; audio thread drains at top of `fillAudioBuffer` (into a
+IoError/Chassis/Door/Bump`; audio thread drains at top of `fillAudioBuffer` (into a
 reused `cmdScratch_`, no per-buffer allocation).
 
 **Hook points in `DiskIICard`**: `seekPhaseW` records the step and the
@@ -3258,7 +3323,7 @@ separate lid close / open, a boot chirp on motor-on, the I/O-error grunt
 on a SmartPort block failure, the matrix-printer loop while the head is
 moving, and PopOn / PopOff on cold boot (the first boot of a process is
 PopOn only; a later cold boot is a power cycle). 5.25" inserts stay silent
-on the MAME bank. Pinned by `virtual_ii_sound` with synthesised WAVs, so
+on the MAME bank unless the door extras are installed. Pinned by `virtual_ii_sound` with synthesised WAVs, so
 the suite does not need the commercial files.
 
 **Clock fan-out** *(bug hunt #10, CHANGELOG 2026-09-08)*.
@@ -3307,7 +3372,8 @@ path through a real 6502; DC decay; reset).
 
 **Sampled per chunk** *(2026-09-09)*. Both frame loops
 (`EmulationController::workerLoop` and `tickFrame`) budget the frame in
-BASE cycles and re-read `SlotBus::cpuSpeedMultiplier()` under the lock at
+BASE cycles and re-read `Memory::cpuSpeedMultiplier()` (a fast slot card's
+multiplier, else the CPU-socket accelerator's) under the lock at
 every 4096-cycle chunk: `chunk = min(4096, ceil(remainingBase × m))`,
 `doneBase += ran / m`, so a slow window that opens mid-frame slows the rest
 of that frame (`transwarp_chunk_sampling`). `scaledFrameBudget()` stays for
@@ -3373,8 +3439,9 @@ is unchanged — the same reason the //c Plus profile runs at 4× with a working
 drive. They are modelled because they are what the board does.
 
 **ROM shadow**, ROM-gated on `roms/ae_transwarp_1.4.bin` (4096 B, CRC32
-`afe37f55`, MAME `ROM_START(warprom)`; **shipped since 2026-09-16** — it
-reached RetroBIOS and `roms/` at the same time). The overlay is the card's
+`afe37f55`, MAME `ROM_START(warprom)`; in the ROM catalogue since
+2026-09-16, when it reached RetroBIOS — downloaded like every firmware, not
+tracked in the repository since 2026-10-29). The overlay is the card's
 **boot firmware**, not a patched Monitor: W65C02 code with every vector at
 `$F000` that tests RAM, copies itself to `$1000`, writes `$C072` to drop the
 overlay, reads and checks the Apple ROM (`$F800` = `4A 08 20`) through the
@@ -3434,7 +3501,8 @@ targets linking `Memory.cpp` gain no link dependency). Memory calls it on the
 `memWrite`, both just before the soft-switch dispatch — and only while
 `iieMode` with no //c profile, or on the //c Plus (`Memory::activeAccel`). The RAM fast path is
 untouched (PERFORMANCE §§ 8.2/8.5). `Memory::cpuSpeedMultiplier()` = the
-SlotBus (TransWarp) multiplier × the chip's; the controller's three chunk
+SlotBus (TransWarp) multiplier while a slot card runs fast, otherwise the
+chip's — not their product (that gave ~14× with both fitted); the controller's three chunk
 sites sample it there, so the emuCycles fan-out (`applyAcceleratorClock`)
 works unchanged and the AYs/6522s stay on the stock bus clock.
 
@@ -3510,12 +3578,16 @@ frame runs 141 474 cycles = 8.3 × 17 045).
   = LC hook, 1-7 = expansion).
 - `$C100-$C7FF` slot ROM (256 B/slot 1-7).
 - `$C800-$CFFF` shared expansion ROM, claimed by the **first** slot to
-  touch `$CnXX` while the window is unowned. `$CFFF` deactivates the
-  active slot — after that slot served the access: a read returns the
+  touch `$CnXX` while the window is unowned — and only if its card
+  `takesC800()`. `$CFFF` deactivates the active slot (a card may let go on
+  more, per its schematic — `SlotPeripheral::releasesC800At`: any `$CFxx` on
+  the Super Serial Card, `$CFF0-$CFFF` on the Grapplers, `$CFFE-$CFFF` on the
+  Liron, `$CFEF` too on the CFFA 2.0; RESET releases it only where
+  `releasesC800OnReset` says so — SSC, Liron) — after that slot served the access: a read returns the
   owner's `expansionRomRead(0x7FF)`, a write reaches its
   `expansionRomWrite(0x7FF)` (MAME `c800_r`/`c800_w` in `apple2.cpp` and
   `apple2e.cpp`); only an unowned window reads the floating bus. Auto-latch
-  on slot-ROM access.
+  on slot-ROM access (gated as above).
 
 `advanceCycles()` forwards to every plugged card. Ctrl-Reset
 propagates `onReset()`.
@@ -3528,8 +3600,8 @@ propagates `onReset()`.
   (`:2970-2987`), `c080_r` (`:2883-2918`), `c800_r` (`:3137-3155`) — and
   the value a real machine puts there is whatever the video scanner just
   fetched. `Memory` installs the source at construction
-  (`Memory.cpp:72`, `SlotBus::setFloatingBusSource`) and `openBus()`
-  (`SlotBus.h:312`) uses it on the slow path only. A **standalone**
+  (`Memory.cpp:70`, `SlotBus::setFloatingBusSource`) and `openBus()`
+  (`SlotBus.h:353`) uses it on the slow path only. A **standalone**
   `SlotBus` — a unit test that never installs a source — keeps the old
   `$FF`, which is what lets the harness note in
   [§ IWM/3.5"](#smartport-35-stack) stay true.
@@ -3538,7 +3610,7 @@ propagates `onReset()`.
   across `$C100-$C7FF` handed the expansion ROM to whichever slot the scan
   ended on. Upstream claims only while `m_cnxx_slot == CNXX_UNCLAIMED`
   (`apple2e.cpp:216`) and releases at `$CFFF`. `claimExpansion()`
-  (`SlotBus.h:301`) is called from the read and write paths only when the
+  (`SlotBus.h:340`) is called from the read and write paths only when the
   slot's card returns true from `SlotPeripheral::takesC800()` (MAME
   `take_c800`, default false). Pinned by `slot_bus_smoke`;
   `iie_memory_smoke` was updated for the new open-bus value.
@@ -3566,12 +3638,14 @@ MouseCard and SSC dropped `cpu_`.
 
 ### Hand-written slot ROMs (`SlotRomAsm.h`)
 
-Six cards have no ROM dump and synthesise their `$Cn00` page: `SmartPortCard`,
-`ProDOSHardDiskCard`, `FujiNetCard`, `PrinterCard`, `SuperSerialCard`, and
-`GrapplerCard`'s fallback stub. (`ClockCard` writes nine fixed signature bytes;
-`DiskIICard`'s boot PROM is a verbatim dump. Neither is assembled.)
+Every page POM2 writes itself is assembled with it: `SmartPortCard`,
+`ProDOSHardDiskCard`, `FujiNetCard` and `PrinterCard`, which have no dump, and
+— as the fallback when their dump is not in `roms/` — `SuperSerialCard`,
+`GrapplerCard`, `ClockCard` (ThunderClock), `Ccs7710Card`, `Dan2Card` and the
+Disk II's own boot PROM (`DiskIIBootRom.h`). `PascalPrinterRom.h` holds the
+Pascal entry points `PrinterCard` and `GrapplerCard` share.
 
-Until 2026-08-28 all six wrote the page as a byte list with every **address in
+Until 2026-08-28 the six cards of the time wrote the page as a byte list with every **address in
 it computed by hand**:
 
 ```cpp
@@ -3665,13 +3739,13 @@ fallback; the synthetic or 256-byte ThunderClock ROM) whose
 devices answer true unconditionally) — otherwise a `PR#1` latches
 `$C800-$CFFF` to slot 1 and the Liron / SmartPort / SSC / CFFA firmware
 reads `$FF`. Pinned in `grappler_card_smoke` and `clock_card_smoke` (the
-latter through a `makeForTest(..., probeDump=false)` seam, since the tree
-ships the EPROM).
+latter through a `makeForTest(..., probeDump=false)` seam, since a
+developer's `roms/` may hold the EPROM — downloaded, no longer tracked).
 
 ## Storage
 
 **The outgoing medium is written off the lock too** *(2026-09-08, bug hunt
-#11)*. `StorageCoordinator::flushOutgoingBay` runs before a mount replaces a
+#11)*. `flushOutgoingBay` (a free function in `StorageCoordinator.cpp`) runs before a mount replaces a
 bay: phase 1 takes the lock and captures the dirty payload
 (`prepareEjectBay`), phase 2 commits unlocked, phase 3 on failure puts the
 dirty set back (`restoreBayDirty`) and the mount is refused — the same
@@ -3691,7 +3765,7 @@ user draws: `pom2_dos33`, `pom2_prodos` and `pom2_cpm` work **inside** a disk
 (files); `pom2_disk` works on the disk **itself** (make one, inspect one,
 repair one). Each `main()` is a few hundred lines over a library that is
 tested without it; `disk_tools_smoke` (a CMake script, so it runs on Windows)
-then drives the three as a user types them.
+then drives three of them — `pom2_disk`, `pom2_dos33`, `pom2_prodos` (not `pom2_cpm`) — as a user types them.
 
 | Library | What it owns | Test |
 |---|---|---|
@@ -3807,7 +3881,7 @@ ACI/WAV destination, not modification of the loaded program tape.
 | `.nib` CNib2 223 440 (35 × 6384) | 5.25" `DiskImage` | ✅ | ✅ | `disk_cnib2_smoke` (load **and** write-back: the 6656 pad must truncate back to 6384, or the next load misdetects the format) |
 | `.d13` 116 480 (13-sector, 5-and-3) | 5.25" `DiskImage` | ✅ | ✅ | `d13_roundtrip_smoke` |
 | `.2mg` wrapping DOS / ProDOS / nib | 5.25" `DiskImage` | ✅ | ✅ | `disk_2mg_writeback_smoke` (header + trailer preserved byte-for-byte) |
-| `.woz` 5.25" (WOZ1 / WOZ2, bit cells) | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke` — dirty quarter-tracks spliced back, header CRC32 zeroed per Applesauce 2.1 |
+| `.woz` 5.25" (WOZ1 / WOZ2, bit cells) | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke` — dirty quarter-tracks spliced back, header CRC32 recomputed over the payload written (since 2026-11-05; it used to be zeroed) |
 | `.woz` 5.25" **carrying FLUX tracks** | 5.25" `DiskImage` | ✅ | ✅ | `woz_writeback_smoke`: preserves untouched 125 ns flux positions, encodes delta bytes, grows full TRKS slots, updates the FLUX chunk offset, and honors INFO write protection |
 | Raw `.po` / ProDOS-order `.2mg`, 409 600 / 819 200 bytes (400/800 KiB) | 3.5" `Disk35Image`, SmartPort/Liron or native Sony | ✅ | ✅ | `disk35_atomic_save`, `moof35_load`; 2IMG envelope preserved |
 | Raw `.dsk` / `.image`, 400/800 KiB | 3.5" `Disk35Image` | ✅ | ✅ | Same raw payload and write-back as `.po`; protection follows media policy and file permissions |
@@ -3874,7 +3948,7 @@ DOS". Skew tables (physical → logical):
 
 **The extension is a hint; the content decides.** `.po` means ProDOS order
 and everything else DOS order, unless the bytes say otherwise
-(`detectFormat`, the "143 360-byte image" branch, `DiskImage.cpp:433-524`). Two sniffs, one per
+(`detectFormat`, the "143 360-byte image" branch). Two sniffs, one per
 operating system, each armed only by its own signature so neither can trip
 on the other's disk:
 
@@ -3962,9 +4036,9 @@ kind** *(2026-09-09, bug hunt #15)*. `restoreMediaFromSettings` gates each
 mount on `is_regular_file`, and all five branches warn "persisted path not
 found" (`storage_restore_missing_path`) — `persistSessionSettings` then
 writes `""` over the key at quit. The commonest cause is a relative path
-saved from one working directory and reloaded from another. Still open:
-the SmartPort/generic loops probe `../` and `../../` and the other three
-do not — same key, different behaviour by card.
+saved from one working directory and reloaded from another. Since 2026-10-24 (ARCH-006) every branch resolves the key through one rule,
+`resolvePersistedMediaPath` (`StorageCoordinator_Persist.cpp`), which also
+probes `../` and `../../` for a relative path.
 
 **The pure half lives apart** *(2026-09-17, TODO G5-4)*.
 `StorageCoordinator_Persist.cpp` holds everything that reads the bus and
@@ -4148,8 +4222,8 @@ payload that reaches the file (`PendingWriteBack::wozCrc`,
 `DiskImage::wozCrc32`). Zero was legal ("no CRC has been calculated", WOZ 2.1
 reference, grade B) and discarded the file's only integrity check at the first
 guest write. 3.5" WOZ/MOOF (`Disk35Image`) still refuses a CRC mismatch —
-same change owed there. Salvaging a damaged WOZ into a sound copy is not
-done.
+same change owed there. Salvaging a damaged WOZ into a sound copy is done off-line, never at mount:
+`pom2_disk recover` (`WozRecover.*`, § Host disk tools).
 
 ### Two-phase media mount (`MediaMount.h/.cpp`)
 
@@ -4189,7 +4263,7 @@ road — see *Eject and flush are three-phase* below):
 
 1. **The outgoing flush stays under the lock.** If the medium being ejected has
    unsaved changes, `installDisk` still commits it inline
-   (`flushOutgoingForSwap`, `DiskIICard.cpp:463-475`, called at `:504`) and still refuses the
+   (`DiskIICard::flushOutgoingForSwap`, called from `installDisk` and `insertDisk`) and still refuses the
    swap when that commit fails. Moving it out would mean either swapping before
    knowing whether the old medium could be written — losing the user's changes
    when it cannot — or handing the dirty image back for the caller to commit,
@@ -4212,17 +4286,17 @@ the file the user cares about. It now has the same shape, one phase longer
 because a failure has to be undoable:
 
 * **Phase 1, locked** — `MountableMediaCard::prepareEjectBay(bay, out, err)`
-  (`MountableMediaCard.h:203`) / `prepareFlushBay` (`:183`) *capture* the
+  / `prepareFlushBay` (`MountableMediaCard.h`) *capture* the
   payload: the dirty-block set as a `Block512Backing::PendingWriteBack` (block bays) or
   the whole image as a `PendingBayFlush` (3.5" bays). Opt-in by design — a card that does not
   override them returns false with an EMPTY payload and the caller falls back
-  to the inline form. Implemented by `SmartPortCard.cpp:1220/1247`,
-  `ProDOSBlockCard.h:141`, `ProDOSHardDiskCard.cpp:224`, `LironCard.cpp:641/659`.
+  to the inline form. Implemented by `SmartPortCard`, `ProDOSBlockCard`, `ProDOSHardDiskCard` and
+  `LironCard`.
 * **Phase 2, unlocked** — `Block512Backing::commitWriteBack` writes and
   `fsync`s. This is where the 800 KB / 32 MB and the `fsync` live, off the
   machine lock.
 * **Phase 3, locked again** — re-resolve the card from the SlotBus (it may have
-  been unplugged while the lock was open, `StorageCoordinator.cpp:915-926`) and
+  been unplugged while the lock was open) and
   either retire the bay or, on failure, put the medium back:
   `DiskIICard::restoreEjected`, `restoreFlushBayDirty`. **A failed commit leaves
   the disk loaded and dirty**, so a retry loses nothing — it used to only log a
@@ -4259,13 +4333,13 @@ because a failure has to be undoable:
   itself. The autosave capture (`takeWriteBack`) reserves nothing — it keeps
   the dirty flags until the file lands, so an adopt's own flush covers it.
 
-Drivers: `StorageCoordinator.cpp:414` (`flushOutgoingBay`, before a mount),
-`:752` (the host-folder mount's outgoing image), `:859` (bay eject), `:1022`
-(`setMediaBayType`), `:1559` (`ejectAllMedia` — the last inline holdout,
-converted the same day), `:2052` (`flushAll`'s Liron capture). The **firmware** 3.5" eject cannot block at all,
+Drivers, all in `StorageCoordinator.cpp`: `flushOutgoingBay` (before a
+mount), `mountBlockBytes` (the host-folder mount's outgoing image),
+`ejectMediaBay`, `setMediaBayType`, `ejectAllMedia` (the last inline holdout,
+converted the same day) and `flushAll` (its Liron capture). The **firmware** 3.5" eject cannot block at all,
 so it hands the payload to `EmulationController::WriteBackQueue`
-(`EmulationController.h:456-506`, its `Disk35WriteBack` thread spawned at
-`EmulationController.cpp:564`) and `Sony35Drive::ejectPending_`
+(`EmulationController.h`, its `Disk35WriteBack` thread spawned in
+`EmulationController.cpp`) and `Sony35Drive::ejectPending_`
 holds the mechanical eject until the sink reports the
 file landed. The host eject (`EmulationController::eject35`) drains the
 queue first when that flag is up: the medium it would find is already clean,
@@ -4298,7 +4372,7 @@ is now split at the seam that matters —
   makes **no syscalls** but one: everything it needs is in the struct. The
   exception is a same-file remount — `sameFile` (two stats) and, on a match, a
   re-read under the lock, dirty or not, because the block autosave can clear the
-  dirty set between the phases (`Block512Backing.cpp:137-181`).
+  dirty set between the phases (`Block512Backing::adoptImage`).
 
 `ProDOSBlockCard` and `SmartPortUnit` each carry a matching `adoptImage`;
 `CffaCard`, `ProDOSHardDiskCard` and `SmartPortHdvUnit` forward it to their
@@ -4336,13 +4410,13 @@ too.
 
 Every write-back path — `DiskImage`, `Disk35Image`, `Block512Backing`,
 `ProDOSVolume`, plus `Settings`, `PrinterHistory`, `CassetteDevice` and the
-ImageWriter exports (`ImageWriterPdf.cpp:192`, through `writeFileAtomic`) —
+ImageWriter exports (`ImageWriterPdf.cpp`, through `writeFileAtomic`) —
 writes a **sibling temp file** in the same directory ⇒ same filesystem ⇒ the
 rename cannot fail cross-device, carries the original's permissions onto it,
 then commits through `pom2::replaceFileAtomic`.
 
 The temp name is **unique per process and per call** (`tempSiblingPath`,
-`AtomicFileReplace.h:204`): `<path>.<pid>-<counter>.pom2tmp`. A fixed
+`AtomicFileReplace.h`): `<path>.<pid>-<counter>.pom2tmp`. A fixed
 `<target>.tmp` meant two POM2 instances on one `$HOME` — or one instance
 writing the same image twice — truncated each other's in-flight write and
 published a file made of both. `prepareTempPath` still runs on the result:
@@ -4376,9 +4450,9 @@ name is what makes the write safe, and it is also what makes the leftovers
 unrecognisable: a POM2 killed mid-write leaves `<target>.<pid>-<n>.pom2tmp`
 next to the user's disk image for ever, and inside a **served ProDOS folder**
 that file is scanned into the next volume as a guest-visible file.
-`sweepStaleTempSiblings` (`AtomicFileReplace.h:302-333`) removes them: the
-config directory once at startup (`main.cpp:262`) and an image's own directory
-on mount (`sweepMountDirDebris`, `StorageCoordinator.cpp:363`). `*.pom2tmp` is
+`sweepStaleTempSiblings` (`AtomicFileReplace.h`) removes them: the
+config directory once at startup (`main.cpp`) and an image's own directory
+on mount (`sweepMountDirDebris`, `StorageCoordinator.cpp`). `*.pom2tmp` is
 also in `.gitignore` and in the manifest's `denyglob`, so debris can reach
 neither the repo nor a package.
 
@@ -4413,7 +4487,7 @@ too. In-process only. Pinned in `atomic_file_replace`.
 
 **A commit bumps the media epoch** *(2026-09-16, bug hunt)*. Every
 `DiskImage::takeWriteBack` capture — WOZ included, so every save path and the
-autosave — calls `pom2::noteMediaWrite()` (`DiskImage.cpp:2981`). A nibble
+autosave — calls `pom2::noteMediaWrite()` (in `DiskImage::takeWriteBack`). A nibble
 write in memory still does not — the ring captures it and a rewind is meant
 to undo it — but a rewind across the commit restored old tracks with their
 dirty flags clear and the file ended up mixing two timelines. Since 2026-09-19 the floppy autosave commits mid-session on every
@@ -4440,7 +4514,7 @@ magic → 35×6656 NIB → 35×6384 CNib2 → 116 480-byte 13-sector → 143 360
   name length [1..63], terminator + reserved zeros) — only when stripping
   turns an unrecognised length into a recognised one or exposes 2IMG/WOZ
   magic, because ordinary images match the predicate by chance
-  (`DiskImage.cpp:211-240`).
+  (`DiskImage::detectFormat`).
 - **CNib2** (35×6384): pad to 6656/track on load with `$FF` (sync),
   truncate to 6384 on save.
 - **Volume number**: per-image (2IMG flags or default $FE), threaded
@@ -4498,13 +4572,19 @@ prologue `D5 AA B5`, data prologue `D5 AA AD`, 411-nibble data) +
 (`roms/disk2_13.rom`) at `$Cn00` while a 13s disk is mounted
 (`serving13_ = any 13s && bootRom13Loaded`). 13-sector disks
 **force the bit-level LSS** — the 341-0009 read loop is tighter
-than the legacy 32-cycle gate. The **read sequencer stays 16-sector
-P6** (341-0028); the LSS is encoding-agnostic, 5-and-3 decode is
+than the legacy 32-cycle gate. The **read sequencer stays the 16-sector
+one** — Apple's P6 (341-0028) when `diskii_p6.rom` is loaded, else POM2's
+own (`ownSequencerStep`); the LSS is encoding-agnostic, 5-and-3 decode is
 software (boot PROM + DOS 3.2 RWTS). Pinned: `dos32_boot_trace`.
 
 ### `.woz`
 
-Verbatim port of MAME `lib/formats/woz_dsk.cpp`. WOZ stores raw bit
+Started as a port of [D] MAME `lib/formats/woz_dsk.cpp`; the reference is
+now the format's own specification, [B] WOZ 2.1 reference
+(applesaucefdc.com), cited in `DiskImage.cpp` / `DiskImageWozFlux.cpp`. Where
+the two differ the spec wins: header CRC checked (a damaged WOZ mounts
+read-only), FLUX converted at the machine's own LSS cycle, weak bits at the
+spec's ~30 % — all below. WOZ stores raw bit
 cells — survives copy protections that tweak timing. WOZ1 (160 ×
 6656-byte slots, `bit_count` @+6648 u16) and WOZ2 (160 × 8-byte TRK
 headers, data at `starting_block × 512`, `bit_count` u32). Bits
@@ -4514,10 +4594,13 @@ protection positions (Locksmith, David-DOS) are preserved.
 
 **Write-back**: `loadWoz()` snapshots file to `wozRaw` +
 per-qt-track `(byteOff, byteLen, bitCount)`; `writeFlux()` splices
-into `bitStream[qt]`; `takeWriteBack()` repacks + zeros CRC32
-(Applesauce "not computed" sentinel) and `commitWriteBack()` commits through `writeFileAtomic`
+into `bitStream[qt]`; `takeWriteBack()` repacks, and `commitWriteBack()`
+recomputes the header CRC32 over the payload that reaches the file (since
+2026-11-05; it used to write 0, the "not computed" value — § A damaged WOZ
+mounts read-only) and commits through `writeFileAtomic`
 — sibling temp + `fsync` + rename, re-emitting the 2IMG/MacBinary envelope
-around `wozRaw` when `twoImgFormat` (`DiskImage.cpp:2845-2906` capture, `:2993-3012` commit). It has never
+around `wozRaw` when `twoImgFormat` (capture `DiskImage::takeWriteBack` in
+`DiskImage.cpp`, commit in `DiskImage_WriteBack.cpp`). It has never
 rewritten in place.
 `isWriteProtected()` honours `INFO.write_protected`, the notch
 (host read-only bit) and the process write-back default. `DiskIICard::insertDisk` forces
@@ -4560,7 +4643,7 @@ transition at 0 was overwritten saves **rotated** onto its first remaining
 transition (no Apple drive has an index sensor; not measured on a capture);
 a track with no transition cannot exist in this format and reloads as a
 single pulse at 0. Pinned by `moof35_load` (seam inside a data field),
-`woz_writeback` (byte-for-byte rewrite, rotation) and `woz_bit_timing`.
+`woz_writeback_smoke` (byte-for-byte rewrite, rotation) and `woz_bit_timing_smoke`.
 `docs/audits/parite-flopimg-as_dsk-wozfdc-2026-11-01.md`.
 
 ### FLUX tracks: ticks fall on the machine's own LSS cycles *(2026-11-06)*
@@ -4598,8 +4681,8 @@ Pinned by `woz_writeback_smoke` (`testFluxTimeBase`: both ratios, a write
 that survives save + reload, an idempotent rewrite; the mechanics tests run on
 a 1 MHz bus where a cycle is exactly 4 ticks) and `device_standard_clock`
 (the card tells a mounted disk, and one inserted afterwards). **Not verified:
-no real FLUX image is in the corpus** — the tree holds one WOZ and it has no
-FLUX chunk.
+no real FLUX image is in the corpus** — the test-media archive holds one WOZ
+(`fastloader.woz`, a WOZ1, so no FLUX chunk) and the tree none.
 
 ### WOZ2 `optimal_bit_timing`
 
@@ -4690,7 +4773,8 @@ demands the same nibbles after. Pinned: `diskii_own_sequencer` (same stream
 hash, hold windows and 12 M-cycle boot as Apple's P6, and the same flux from
 32 RWTS-shaped write bursts). Pinned:
 `diskii_pom2_boot_prom` (Apple's PROM as the control).
-PROM autodetects slot via `JSR $FF58 / TSX / LDA $0100,X`. Soft
+Apple's PROM autodetects its slot via `JSR $FF58 / TSX / LDA $0100,X`;
+POM2's is generated for its slot. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,
 Q7L/Q7H.
 
@@ -4720,9 +4804,10 @@ track_period`. Pinned: `disk_drive2_smoke`,
 
 ### DiskII multi-instances
 
-**Eight** card keys may sit in more than one slot —
-`SlotConfigurationCoordinator::isMultiInstance` (`SlotConfigurationCoordinator.cpp:119-138`)
-returns true for the storage cards `diskii`, `cffa`, `smartport35` and `liron`
+**Ten** card keys may sit in more than one slot —
+`SlotConfigurationCoordinator::isMultiInstance`
+returns true for the storage cards `diskii`, `cffa`, `cffa3`, `smartport35`,
+`superdrive` and `liron`
 and, since 2026-09-12 (bug hunt #19, TRIBU's two Mockingboards), the sound
 cards `mockingboard`, `mockingboard_c`, `phasor` and `echoplus`; every other
 key is red-flagged as a duplicate. (`firstOccurrence` is gone. The Slot Config panel's own
@@ -4735,7 +4820,7 @@ Two Disk II cards load the same `disk2.rom` + `diskii_p6.rom`. Per-card
 
 **Primary**: there is no cached card list. `MainWindow::diskIICards()` queries
 the SlotBus live, in slot-ascending order, and `MainWindow::primaryDiskII()`
-(`MainWindow.h:1333`) is the lowest-slot one. Per-slot persistence:
+is the lowest-slot one. Per-slot persistence:
 `disk_path_slotN[_drive2]` / `disk_writeback_slotN`, the key spelled in exactly one
 place (`pom2::diskIIPathSettingKey`, `StorageCoordinator.h`). Primary also
 writes legacy unsuffixed keys for older builds. A profile switch captures
@@ -4745,9 +4830,12 @@ from live cards before tear-down. **IWM wiring**: only slot-6
 
 ### Two read paths
 
-- **Bit-level LSS** (explicitly loaded P6 dump or any mounted WOZ) —
-  verbatim port of MAME `machine/wozfdc.cpp` + flux-event subset
-  of `imagedev/floppy.cpp`. MAME `cycles` = 2× CPU clock.
+- **Bit-level LSS** (explicitly loaded P6 dump, any mounted WOZ, or a
+  13-sector disk served with its boot PROM) — a port of MAME
+  `machine/wozfdc.cpp` + flux-event subset of `imagedev/floppy.cpp`, not
+  verbatim: the write head follows ENABLE, every flush site re-bases the
+  burst, the revolution anchor moves (§§ below), and with no P6 dump
+  `ownSequencerStep` replaces the table lookup (§ DiskIICard). MAME `cycles` = 2× CPU clock.
   `lssSync(extra)` catches up from `lssCycle` to `cyclesLimit =
   cpuCycleTotal*2 + extra`. PULSE from
   `DiskImage::getNextTransition(track, lssCycle)` (event @
@@ -4787,8 +4875,10 @@ source `$FF $00 $FF`).
 ### Flux-event view
 
 `fluxEvents(track)` + `trackPeriod(track)` — one event per "1" cell
-at LSS-cycle `cellIdx*8 + 4`. `getNextTransition` verbatim MAME
-`floppy_image_device::get_next_transition`, wraps across revs.
+at LSS-cycle `cellIdx*8 + 4`. `getNextTransition` follows [D] MAME
+`floppy_image_device::get_next_transition` and wraps across revs; unlike
+MAME, the revolution anchor moves (per-track padded period, re-based on
+every head step — the next two paragraphs).
 `writeFlux(track, start, end, count, transitions)` splices flux
 window back into nibble buffer.
 
@@ -4891,8 +4981,9 @@ nibble buffer. Pinned by `diskii_unformatted_disk`, whose companion
 `diskii_format_smoke` only ever proved POM2 could RE-format.
 
 **Both read gates must make that noise** *(2026-09-16)*. The **legacy
-32-cycle nibble gate** (taken when no `diskii_p6.rom` is loaded — a harness,
-not the shipped app) would hand an erased `$00` slot straight to the CPU,
+32-cycle nibble gate** (taken when no `diskii_p6.rom` is loaded and no WOZ is
+mounted — since packages carry no ROM, that includes a fresh install and the
+browser) would hand an erased `$00` slot straight to the CPU,
 and `LDA $C08C,X / BPL -3` would wait for ever instead of reaching I/O
 ERROR. `legacyAdvance` serves `legacyNoiseNibble()` — the same
 hash-of-the-cycle-cursor shape as `advanceNoise`, for the same
@@ -4927,7 +5018,7 @@ and `LDA $C08C,X / BPL` span for ever. That is the empty-drive hang one step
 further in: MAME's read amplifier picks up noise off unwritten oxide, and so
 does POM2 now. The substitution is in the **controller**, not the image:
 `DiskIICard::lssSync` calls `advanceNoise()` when the next transition is
-`kFluxNever` (`DiskIICard.cpp:1435-1438`) — **read mode only**, because a
+`kFluxNever` — **read mode only**, because a
 write must not be fed invented transitions.
 
 **Weak bits are a 30 % draw** *(density 2026-11-06; it was 50 %)*. Past
@@ -4959,8 +5050,9 @@ tracks for the 5.25" SD drive; `kQuarterTracks - 4`, track 39), not to the
 image's, so every TMAP slot `loadWoz` fills is reachable; past a 35-track
 `.dsk`'s data the expander yields an empty stream and the position reads as
 amplifier noise, which is what the surface holds. Noted, not changed: `.nib`
-bytes get flat 8-cell timing (no self-sync slip); a WOZ CRC mismatch is
-refused where AppleWin warns. Off-track positions on non-WOZ images serve
+bytes get flat 8-cell timing (no self-sync slip); a 3.5" WOZ/MOOF CRC mismatch is
+still refused (`Disk35Image`); the 5.25" loader mounts it read-only since
+2026-11-05 (§ A damaged WOZ mounts read-only). Off-track positions on non-WOZ images serve
 the whole track under the head, `DiskImage::wholeTrackOf`: 4k..4k+2 are
 track k and 4k+3 is track k+1, AppleWin's `PhaseToTrack` (`ceil(phase) >>
 1` on half-track phases; MAME leaves them empty instead). Until 2026-10-24
@@ -4991,8 +5083,9 @@ moment the new content padded its sync run differently — see
 `disk_writeflux_framing`; `POM2_TRACE_WRITEFLUX=1` dumps each splice
 window. Note `disk_write_controller_smoke` exercises the **legacy**
 32-cycle gate (it never calls `loadLssRom`), so it cannot cover this
-path — the shipped app bundles `roms/diskii_p6.rom` and always runs the
-LSS/flux one.
+path — the LSS/flux path runs whenever `roms/diskii_p6.rom` is loaded or a
+WOZ is mounted. Packages carry no ROM since 2026-10-29, so a `.dsk` on a
+fresh install (and always in the browser) runs the legacy gate.
 
 **Every flush site re-bases the burst, and a stepper pulse is a flush
 site** *(2026-09-09, bug hunt #12)*. A burst is spliced as
@@ -5203,11 +5296,12 @@ firmware. The ATA-class port now lives as `CffaCard` (below).
 
 Storage shared with `CffaCard` via `Block512Backing.{h,cpp}`: in-mem
 image, 2IMG envelope (header+trailer preserved), medium WP,
-dirty-block tracking, opt-in host-file write-back, host-folder synth
+dirty-block tracking, host-file write-back (on by default since 2026-09-08 — `pom2::mediaWritableByDefault()`; protection is the image's notch), host-folder synth
 volumes. Both cards implement `pom2::ProDOSBlockCard` (image-mgmt
 iface) so HDV Library / disk-turbo / persistence target uniformly via
-`MainWindow::hdvDevice()` (prefers CFFA when plugged). Also
-implements `MountableMediaCard` as a single fixed bay.
+`MainWindow::hdvDevice()` (the coordinator's `preferredBlock()`: CFFA
+outranks HDV). Also implements `MountableMediaCard` over its two drives
+(`bayCount()` = `kDrives`, see Two drives above).
 
 Pinned: `hdv_card_smoke`, `hdv_writeback_smoke` (header/trailer/WP/
 opt-in round-trip), `hdv_mass_storage_smoke` (32 MB boundary, 16-bit
@@ -5232,8 +5326,9 @@ Ported from MAME `bus/a2bus/a2cffa.cpp`.
   `Block512Backing`, isomorphic to MAME `ata_interface_device` cs0
   access: `cs0_r/cs0_w(reg)`, 16-bit data register at reg 0.
   IDENTIFY DEVICE ($EC), READ SECTOR(S) ($20/$C4), WRITE SECTOR(S)
-  ($30/$C5), LBA28. Unknown commands no-op. DRQ/BSY/DRDY PIO; no
-  DMA/IRQ/CHS. Reusable for future Vulcan/Zip/Focus. Pinned:
+  ($30/$C5), INITIALIZE DEVICE PARAMETERS ($91), LBA28 and CHS
+  (through the geometry $91 latches, 16 × 63 by default). Unknown
+  commands complete with no data phase. DRQ/BSY/DRDY PIO; no DMA/IRQ. Reusable for future Vulcan/Zip/Focus. Pinned:
   `ata_block_device_test`.
 
   **Gotcha**: CFFA firmware sizes partitions from IDENTIFY **words
@@ -5262,16 +5357,17 @@ Ported from MAME `bus/a2bus/a2cffa.cpp`.
   implemented and is closed as out of scope in the standing decisions.
   Mounts via HDV Library.
 
-Pinned: `cffa_card_smoke` (ROM-gated). Full MAME oracle: `mame
+Pinned: `cffa_card_smoke` (ROM-gated). MAME cross-check ([D]): `mame
 apple2ee -sl7 cffa2 -hard1 <img>` (romset `~/mame_roms/cffa2/`).
 
 ### SmartPortCard (//e Liron-class)
 
 **Eight bays, a configurable unit count** *(2026-09-08, after A2retroNET —
 the A2Pico firmware that presents up to eight 32 MB volumes as one
-SmartPort controller)*. `kMaxUnits` is 8; `unitCount()` (2, 4, 6 or 8,
-`setUnitCount`, default **8** since 2026-09-11 — `kDefaultUnits`, the
-ceiling, like the Liron's; 2 before — persisted as `smartport_slotN_units`) is what
+SmartPort controller)*. `kMaxUnits` is 14 since 2026-09-27 (8 before);
+`unitCount()` (an even count from 2 to 14, `setUnitCount`, default **8**
+since 2026-09-11 — `kDefaultUnits`; 2 before — persisted as
+`smartport_slotN_units`) is what
 the card **answers for**: STATUS unit 0's device count, the SmartPort unit
 range the $CE00 engine accepts, `bayCount()` for the media rows. Units 0/1
 stay ProDOS's drive 1/2 of the slot; units 2+ only exist for the guest
@@ -5284,7 +5380,8 @@ eight per-unit records; a v1/v2 blob's two still load and the other bays
 are reset. The panel draws `unitCount` rows and offers the count next to
 the slot. Pinned by `smartport_eight_units` (boots A2DeskTop's 800K image
 off unit 0 with seven synthesised volumes behind it, reads DEVLST off the
-main bank as the boot runs: eight devices at 8, two at 2).
+main bank as the boot runs: eight devices at 8, two at 2). Snapshot v4
+carries fourteen per-unit records (v3 eight, v1/v2 two).
 The legacy streaming registers obey the same count: `$C0n0` unit-select
 folds on `unitCount()`, not `kMaxUnits`, so no bay outside `bayCount()` is
 reachable (`smartport_unit_visibility`, with the positive control that
@@ -5297,7 +5394,7 @@ Card" (Liron / 670-0186) for //e / II+ / II / //c. Default slot 5.
 
 **Device-select protocol** (`$C0nX`):
 ```
-$C0n0 write  drive select (0 / 1)
+$C0n0 write  unit select (value mod unitCount())
 $C0n1 write  block LO byte
 $C0n2 write  block HI byte
 $C0n3 read   next byte (auto-incr 512 B)
@@ -5392,8 +5489,8 @@ the dump's own `$Cn13-$Cn1F` survive.
 on-board $C500 stub keeps the synthetic `$Cn07=$01` so the //c boot scan
 never SmartPort-enumerates it (project_iic_smartport_boot).
 
-Per-unit `streamOffset_` (one per unit, 2 units) wraps every 512 B;
-drive-select latches `activeUnit_` and resets stream offset.
+Per-unit `streamOffset_` (one per unit, `kMaxUnits` = 14) wraps every
+512 B; unit-select latches `activeUnit_` and resets stream offset.
 
 **Slot ROM** (`buildRom`, 256 B with slot baked in):
 ```
@@ -5404,20 +5501,26 @@ $Cn05     $03
 $Cn07     $01                    ProDOS non-removable block device
                                   (NOT $3C — that is the Disk II marker;
                                   see "Stub fixes" below)
-$CnFE     $17                    features/units mask: read+WRITE+status,
-                                  2 units (was $13 = read-only to a
-                                  capability-inspecting utility)
+$CnFC-FD  $00 $00                size in blocks: $0000 = ask STATUS
+                                  (as the real Liron page)
+$CnFE     $1F                    features/units mask: format+read+WRITE+
+                                  status, 2 units (was $13, then $17)
 $CnFF     $50                    driver entry offset
 $Cn0A     JMP $Cn50              (real-HW driver entry, see below)
 $Cn0D     BIT $CFFF              SmartPort entry: drop INTC8ROM first…
 $Cn10     JMP $CE00              …then into the $C800-bank handler
 $Cn20-..  boot (load blk 0 of drv 1 → $0800)
-$Cn50-..  ProDOS driver
-$CnE0-..  error halt
+$Cn50-..  ProDOS driver (dispatch; STATUS and FORMAT/bad command
+          jump to $CD10 / $CD60 in the $C800 bank)
+$CnE0-E2  spare (the old boot-failure halt; boot failure is now
+          the $C800-bank scan test, see § boot failure)
 ```
 
-Driver examines ProDOS `$43` unit byte: bit 7 = drive (0 → drv 1, 1 →
-drv 2). Write probes `$C0n4` bit 6 first; returns `$2B` (WP) without
+Driver maps the ProDOS `$43` unit byte to a bay through `$CD80` in the
+card's `$C800` bank — the Liron's own decode ([C] `roms/liron.rom` `$CC1E`):
+bay = D + 2 × (slot bits of `$43` ≠ the card's slot), so ProDOS's slot-2
+mirror of units 3-4 reaches them (2026-10-25; bit 7 alone listed one
+image twice). Write probes `$C0n4` bit 6 first; returns `$2B` (WP) without
 touching memory if WP. STATUS tests only bit 7 (no media → `$28`); a
 locked bay still returns the block count, so ON_LINE names it.
 
@@ -5433,7 +5536,7 @@ stays `$50`). Pinned by `smartport_unidisk_entry`.
 HDV-flavoured `SmartPortHdvUnit` wraps `Block512Backing` (2IMG/dirty/
 WP/write-back for free). Per-unit settings persist as
 `smartport_slotN_unitK_{type,path,writeback}`. Card implements
-`MountableMediaCard` over its 2 units.
+`MountableMediaCard` over its `unitCount()` units (`bayCount()`).
 
 **One write-protect rule per card** (2026-09-07, TODO.md R1 settled). A unit
 is write-protected when its medium is **or** when write-back is off — the
@@ -5515,7 +5618,7 @@ Three paths, by ROM:
 - **Stub fixes** (`SmartPortCard::buildRom`): `$Cn07` = `$01` (ProDOS
   non-removable block device), NOT `$3C` — `$3C` is the Disk II
   marker and made //c treat slot 5 as a second Disk II. ProDOS STATUS
-  call (cmd `$00`, `$CnC0` routine) returns block count in X/Y via
+  call (cmd `$00`, routine at `$CD10` in the card's `$C800` bank) returns block count in X/Y via
   `$C0n5/$C0n6` so ProDOS ONLINE / BITSY size it correctly.
 
 - **Routing** (`MainWindow`): `routeMount35` uses SmartPort on all
@@ -5524,7 +5627,7 @@ Three paths, by ROM:
   slot card (masked, unbootable). Profile //c gains a `smartport35`
   built-in at slot 5; //c+ already had one.
 
-Pinned: `iic_onboard_smartport_test` (armed ROM-hole gating + block
+Pinned: `iic_onboard_smartport_smoke` (armed ROM-hole gating + block
 I/O via `Memory`); `iic_dual_boot_trace` (headless diagnostic for the
 garble). See `project_iic_smartport_boot`.
 
@@ -5548,7 +5651,8 @@ map, see `Sony35Drive.cpp` header) are:
 0x3  EjectOff   no-op (MAME)
 0x4  DirPrev    directionIn_ = true (step toward track 0)
 0x6  MotorOff   if ( motorOn_) sound_->motor(false, hasDisk)
-0x7  EjectOn    flush write-back, then completeEject() → sound_->latch(false)
+0x7  EjectOn    queue write-back (sink); completeEject() → sound_->latch(false)
+                 only once it lands (or inline with no sink)
 ```
 `moved` gates so head bumps at track 0 or 79 don't click. Motor
 transitions edge-only.
@@ -5606,7 +5710,7 @@ presenting itself as writable:
 * The bitmap marked **every** block within `total_blocks` as used, so ProDOS
   reported zero free blocks and the guest got DISK FULL for a two-block file
   on an otherwise empty volume. The build now adds bounded slack
-  (`ProDOSVolume.cpp:816-818`): 10 % of the content, at least 64 blocks
+  (`slackBlocks`, `ProDOSVolume.cpp`): 10 % of the content, at least 64 blocks
   (32 KB) and at most 4096 (2 MB), given back first if it would push the
   volume past `kMaxVolumeBlocks`. It is usable rather than decorative because
   `decodeVolumeToFolder` walks the directory graph and writes back every
@@ -5617,7 +5721,7 @@ presenting itself as writable:
 * `mountTime_` was set once at load. The *flush* path leaves the medium
   mounted, so after the first flush the files it had just rewritten were
   "host-newer" and the guest's SECOND save was preserved away as if the user
-  had edited behind POM2's back. `Block512Backing.cpp:383-404` re-stamps the
+  had edited behind POM2's back. `Block512Backing::saveDirty` re-stamps the
   volume with the commit's own timestamp on every synth flush — a failed one
   too, since a half-finished pass leaves the files it did write host-newer.
 
@@ -5628,7 +5732,7 @@ device names (`CON`, `AUX`, …) are rejected by `isHostSafeProDOSName`.
 filter ran on decode only, so a host `aux.txt` was published to the guest as
 `AUX`, the user edited it, and the write-back refused the name and returned
 `ok == true`: an edit lost with no error anywhere. The steering now happens on
-the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp:214-222`) appends an
+the way **in** — `sanitiseProDOSName` (`ProDOSVolume.cpp`) appends an
 `X` to any DOS device stem (`isDosDeviceStem`: `CON/PRN/AUX/NUL`, `COM1-9`,
 `LPT1-9`), so the file enters the volume as `AUXX` and round-trips.
 
@@ -5654,13 +5758,12 @@ with nothing rewritten.
 
 **And a write-back that could not place a file now fails and names it.**
 `ProDOSDecodeResult` carries `filesUnsaved` + `unsavedNames`
-(`ProDOSVolume.h:76-90`); a **legal** ProDOS name the host refuses sets them
-and the result is `ok == false` with the names in `error`
-(`ProDOSVolume.cpp:1663-1678`). A **crafted** entry — `../PWNED`, an embedded
+(`ProDOSVolume.h`); a **legal** ProDOS name the host refuses sets them
+and the result is `ok == false` with the names in `error`. A **crafted** entry — `../PWNED`, an embedded
 NUL — is still skipped quietly and counted in `filesSkipped`, deliberately: a
 hostile image must not be able to jam every future save by making one entry
 permanently unsaveable. The decode destination is checked too
-(`destStaysInsideRoot`, `:1103-1118`): a symlink, or a path that
+(`destStaysInsideRoot`): a symlink, or a path that
 `weakly_canonical` puts outside the served root, is refused rather than
 followed — `create_directories` used to dereference exactly the symlink the
 scan had deliberately hidden. Dotfiles are refused on both sides, so a guest
@@ -5691,20 +5794,20 @@ the name the HGR Paint editor saves under) produced a *second* file
 `PIC.bin` on every flush, because nothing on disk was called that, and the
 next mount served `PIC` + `PIC.1`. A guest `BSAVE X,A$2000` lost its load
 address (the next `BLOAD X` landed at `$0000`); an AppleWorks document
-(`$1A`) came back as a BIN AppleWorks no longer listed. `hostNameFor`
-(`ProDOSVolume.cpp:908`) now uses the extension only when the build would
+(`$1A`) came back as a BIN AppleWorks no longer listed. `hostNameForType`
+(`HostFileTag.cpp`, shared since the host exchange convention) now uses the extension only when the build would
 derive exactly that (type, aux) pair back from it and composes the
 `NAME#TTAAAA` tag otherwise.
 
 **And the decode finds each entry's source file by replaying the build's
 naming pass.** The mapping from host file to ProDOS name is a function of the
-directory listing alone — `nameHostDir` (`ProDOSVolume.cpp:433`) is that pass,
+directory listing alone — `nameHostDir` (`ProDOSVolume.cpp`) is that pass,
 and both sides call it. So for any entry the decode knows which host file it
 came from, however lossy the sanitisation was: `README!` → `README.`,
 `Hello World.txt` → `HELLO.WORLD`, a third `Foo*.bin` → `FOO..1`. A source
-whose derived (type, aux) equals the entry's is written **in place**
-(`:1465`); one whose pair differs is the guest's metadata change and is
-**renamed** to a host name that carries it (`:1516`) — `doc.bin` turned into
+whose derived (type, aux) equals the entry's is written **in place**;
+one whose pair differs is the guest's metadata change and is
+**renamed** to a host name that carries it — `doc.bin` turned into
 an AppleWorks document becomes `DOC#1A0000`, not a second file beside
 `doc.bin`. Before the replay the decode composed a host name from the ProDOS
 name and, finding no such file, wrote a new one beside the source —
@@ -6085,7 +6188,7 @@ at the restored head.
 Sound II variant) register/timer state through the same `SlotPeripheral`
 hook — `Via6522::appendSnapshot/loadSnapshot` (25 B; v1 blobs are 24 B,
 `portAIn` absent), `Ay3_8910` (34 B),
-`Ssi263` (30 B: 5 registers + phoneme playback cursor) — shared across
+`Ssi263` (31 B; v1 blobs are 30 B: 5 registers + phoneme playback cursor) — shared across
 cards, with LE packing in `ByteIO.h`. So music *and* speech survive a
 rewind, not just the speaker flush.
 
@@ -6097,8 +6200,8 @@ re-anchors the cursor and keeps the generators running (re-seeding would
 put every envelope back at the top of its ramp), a card reset or a queue
 overflow still re-seeds them. Pinned by `mockingboard_bus_edges`.
 
-**Disk writes** (`rewind_disk_write`): DiskIICard's snapshot is v2 —
-it also carries the writable nibble track buffers
+**Disk writes** (`rewind_disk_write`): since DiskIICard's snapshot v2
+(v5 today) it also carries the writable nibble track buffers
 (`DiskImage::append/loadMediaSnapshot`, gated on a loaded,
 physically-writable, non-WOZ disk) so a disk WRITE is undone on a
 rewind. The rewind delta codec keeps this near-zero until a track is
@@ -6116,11 +6219,13 @@ the disk, and the next allocation cross-links them. Capturing megabytes per
 frame was never the answer; the chosen policy is the safe minimum — **a rewind
 may never CROSS such a write**. Every one of those paths bumps
 `pom2::mediaWriteEpoch()` at the storage leaf (`pom2::noteMediaWrite`,
-`Block512Backing.h:76-84`, called from `Block512Backing.cpp:663/682`,
-`Disk35Image.cpp:267`, `DiskImage.cpp:2213` (writable WOZ), the FujiNet
-block writes in `FujiNetCard.cpp` and `PrinterCoordinator.cpp:182` — printed
-output is irreversible too), and `EmulationController::noteMediaWrite`
-(`EmulationController.cpp:1261`) compares it at the ring's capture point and
+`Block512Backing.h`, called from `Block512Backing`'s block writes,
+`Disk35Image` / `Disk35Image_Bitstream.cpp`, the writable-WOZ paths in
+`DiskImage.cpp` / `DiskImageWozFlux.cpp`, `VsDriveProtocol.cpp`, the FujiNet
+block writes, and every printer path — `PrinterCoordinator`, `PrinterCard`,
+`GrapplerCard`, `CentronicsPrinter`, the SSC and CCS 7710 taps, FujiNet's
+printer unit — printed output is irreversible too), and
+`EmulationController::noteMediaWrite` compares it at the ring's capture point and
 clears the history when it moved, so the timeline restarts *after* the write.
 One atomic load per captured frame (acquire, pairing with the release on the
 bump: the bump can come from the 3.5" write-back thread or the UI), and it covers write paths that do
@@ -6142,10 +6247,10 @@ move-assigning, so the scratch keeps its capacity (`rewind_delta`).
 **What else the 2026-09-07 pass added to the snapshot.** Sixteen fields were
 restoring CPU + RAM against devices left on the abandoned timeline:
 
-* **Disk II v4** (`kDiskIISnapVersion = 4`, `DiskIICard.cpp:869`) carries the
+* **Disk II v4** (`kDiskIISnapVersion`, 4 then, 5 today) carries the
   in-flight **write burst** — `writeBuffer`/`writePosition`/`writeStartTime`/
   `writeLineActive`, variable-length, header + `count` 8-byte flux stamps
-  (`DiskIICard.cpp:812-870, 955-968`). `lssCycle` was already saved; without
+  (`DiskIICard::appendSnapshotState`). `lssCycle` was already saved; without
   the burst a rewind during a DOS SAVE punched a hole in the sector, and with
   write-back on that hole reached the `.dsk`. Pre-v4 blobs restore with an idle
   controller.
@@ -6158,7 +6263,8 @@ restoring CPU + RAM against devices left on the abandoned timeline:
   **`NoSlotClock`** gained one at all: its bit-serial key matcher and readout
   cursor are walked over many accesses, so half a match is a real state.
 * **Memory's IOU trailer** grew two bytes at the end, under the same
-  grow-at-the-end rule (`Memory.cpp:956-967`): `vblWasActive`, the edge
+  grow-at-the-end rule (`MemorySnapshot.cpp`, split out of `Memory.cpp` on
+2026-10-24): `vblWasActive`, the edge
   detector behind the //c VBL IRQ (it defaults to true, so a restore taken
   inside the blanking interval re-armed the edge and fired one spurious IRQ —
   the frame sync a //c PAL French Touch demo races against), and
@@ -6168,13 +6274,15 @@ restoring CPU + RAM against devices left on the abandoned timeline:
   — the slot-side partner of `intC8Rom`, which no section carried (SLOTn is
   per-card state, not the bus latch). A restore whose PC sat inside a
   card's expansion ROM — a SmartPort/Liron driver, the SSC firmware; seven
-  cards take the window — fetched the floating bus across the whole 2 KB.
+  cards took the window then, eleven card classes today — fetched the floating bus across the whole 2 KB.
   `SlotBus::restoreExpansionOwner` validates: a blob naming an empty slot
   or a card whose `takesC800()` is false restores as unclaimed. Older
   blobs stop before the byte and keep the live owner. Pinned by
-  `mem_paging_latch_snapshot`. (`SlotBus::reset()` deliberately keeps the
-  owner where MAME's `machine_reset` unclaims it — a behaviour decision
-  left as is, flagged.)
+  `mem_paging_latch_snapshot`. (`SlotBus::reset()` keeps the owner unless
+  the owner's latch takes RESET — a per-card fact read off each schematic,
+  `SlotPeripheral::releasesC800OnReset`; [B] Apple II Reference Manual 1979,
+  Fig. 8, the recommended latch has no RESET input. MAME's `machine_reset`
+  unclaims it, [D]. See CLAUDE.md § Memory map, `c800_release`.)
 * **SmartPort identity**: `SmartPortCard` restored a primed 512-byte write
   block with no media identity, so swapping a bay and rewinding committed the
   old block to the new disk.
@@ -6337,7 +6445,17 @@ documentation + polish rather than new plumbing.
 
 ## IWM (//c+ on-board)
 
-`IWMDevice.{h,cpp}` — verbatim MAME `machine/iwm.{h,cpp}`. Full state
+`IWMDevice.{h,cpp}` — a port of MAME `machine/iwm.{h,cpp}`, identical to
+[D] `mame0287` for the bit windows, `read_register_update_delay`, `mode_w`,
+`data_w` and the read/write state machines, side-effect order included. It
+is **not** verbatim, deliberately: the state machine runs on the controller's
+own 7.16 MHz FCLK (`POM2_IWM_TICKS_PER_CPU_CYCLE`), Q3 is not modelled — on
+a motor-off during a synchronous write MAME's timeout counts Q3 ticks (~4.1 s)
+where the FCLK timing gives 1.17 s, and POM2 follows the FCLK; a drive with
+no flux returns amplifier noise (`noiseTransition`) where MAME shifts zeros;
+the catch-up is bounded (`kMaxSyncCatchUpTicks`). Each is justified in the
+code. Audit and per-citation verdicts:
+`docs/audits/parite-iwm-2026-11-01.md`. Full state
 machine (`MODE_IDLE/ACTIVE/DELAY` for `m_active`; `MODE_READ/WRITE`
 for `m_rw`; `S_IDLE/SR_WINDOW_EDGE_0/SR_WINDOW_EDGE_1` for read bit
 walker; `SW_WINDOW_LOAD/MIDDLE/END/UNDERRUN` for write). Drives flux
@@ -6411,13 +6529,12 @@ reachable from a `.pom2snap` three ways: `Memory`'s //c+ IWM section,
 
 Two independent guards, because either alone is a single point of failure:
 
-- **The blob is rejected** (`IWMDevice::loadSnapshotState`,
-  `IWMDevice.cpp:1104-1150`) when a mode word is not an enum value, when a
+- **The blob is rejected** (`IWMDevice::loadSnapshotState`) when a mode word is not an enum value, when a
   tick count would overflow the `× POM2_IWM_TICKS_PER_CPU_CYCLE` conversion,
   or when the gap exceeds `kRevolutionTicks` (`:92`) *while a walking mode is
   active*. A rejected section fails the load; it does not silently zero.
 - **The walker is bounded** at `kMaxSyncCatchUpTicks = 4 × kRevolutionTicks`
-  (`:109`, applied `:759-771`) with a one-shot warning, so the *honest* path
+  (`:109`, applied in `sync()`) with a one-shot warning, so the *honest* path
   that reaches a large gap — an idle drive re-enabled after minutes — cannot
   hang either. Four revolutions is more history than any read needs and
   bounded work.
@@ -6699,7 +6816,7 @@ port travels in snapshots as a self-identifying tail of the //c-class
 profile's blob (`XSP2`: its private IWM behind a length, the bus state,
 the phase byte and a four-byte media mask; `XSP1`, with a one-byte mask,
 still loads), and `LironCard` carries the same for its own IWM and
-bus (`LIR1`). The rewind ring snapshots every frame and a block transfer
+bus (`LIR2` since 2026-10-17; `LIR1` still loads). The rewind ring snapshots every frame and a block transfer
 spans several, so "start clean on restore" had meant a rewind landing
 inside one handed the firmware an empty reply; a blob without the tail
 still restores and starts the port clean.
@@ -6816,18 +6933,50 @@ rounding uses round-to-nearest on decode side; encoder uses floor on
 integer-truncated `2.024 → 2` pushed every transition one cell early
 and lost the first sector's addr marker.
 
-*UI / CLI / persistence*. `Disk35Controller_ImGui` (2 Sony slots:
-internal = on-board //c+; external = SmartPort daisy-chain).
+*UI / CLI / persistence*. `Disk35Controller_ImGui` (3 Sony slots:
+internal = on-board //c+; external 1 and 2 = the daisy-chain).
 Mount/Eject, last-error, scanner picks up `.po`/`.2mg`/`.woz` of the right size
 under `disks_3.5/`. Toggle
-`show_disk35_panel`. CLI: `--35-disk1/--35-disk2`; settings:
-`disk35_path_1/_2`.
+`show_disk35_panel`. CLI: `--35-disk1/--35-disk2/--35-disk3`; settings:
+`disk35_path_1/_2/_3` (+ `disk35_connected_2/_3` for the external drives).
 
 Pinned: `smartport_35_smoke` — load + size guard, SENSE
 empty/in-slot, motor strobe, hub recalc (devsel=1+35sel=true AND
 devsel=2+intdrive=true), phase fwd, marker placement (12+12 on track
 0), full encode→flux→splice→decode→block-readback round trip, WP
 short-circuit.
+
+### Sony and intelligent UniDisk identification (2026-09-27)
+
+Apple 3.5 (Sony) is an IWM mechanism; UniDisk 3.5 is an intelligent
+SmartPort device. Floppy Emu implements either depending on its selected
+mode, and its SmartPort HD mode is intelligent too. The UI and mount routes
+keep these identities distinct. Liron accepts intelligent UniDisk / HD,
+not Apple 3.5 or a physical Apple 5.25 drive. See the
+[BMOW manual](https://www.bigmessowires.com/femu-instructions.pdf).
+
+External Sony mechanisms start disconnected; mounting attaches them, while
+ejecting only removes their media. Connection settings persist separately
+and may be changed in the Sony panel once affected disks are ejected. This
+prevents a ghost empty Sony from preceding an intelligent UniDisk.
+
+The //c+ has an internal Sony and can address two external Sony drives.
+They occupy S5D1, S5D2 and S2D1 respectively. The real ROM selects the
+external 3.5 path with STA $CE40, and the 5.25 path with STA $CE60; this
+differs from MAME's mig_w levels. Sony motor commands are latched by LSTRB,
+not IWM enable. Real-ROM ProDOS MLI OPEN/READ/CLOSE tests verify each
+external Sony, while DOS 3.3 write/read verifies the 5.25 path. A third
+Sony snapshot section is appended after the historical mouse section.
+See [Apple TIL 03435](https://www.savagetaylor.com/TIL/TIL03435.pdf) for
+physical chain ordering and supported combinations: Sony first, intelligent
+UniDisk / HD next, 5.25 last. The three-external-floppy limit is distinct
+from logical HD units supplied by an intelligent emulator.
+
+SmartPortCard now supports fourteen logical units (default remains eight).
+ProDOS has fourteen device-table entries total, shared with /RAM and other
+controllers; the configured chain size is not a promise that all volumes
+will be visible. Snapshot v4 carries fourteen records; v3 retains its eight
+and v1/v2 their two when loaded.
 
 ## Peripherals
 
@@ -6980,8 +7129,8 @@ changed: POM2 ships SW2-6 (interrupts) on where MAME's DIP default is off —
 a shipped-default policy, documented at `irqSwitchOn_`; the receiver
 accepts bytes with DTR de-asserted, which `testEchoRequiresDtr` pins
 deliberately for the `IN#2` console; and the RDR read clears `IRQ_RDRF`
-where MAME's `read_rdr` does not call `update_irq()` — the safer superset,
-only the in-code comment attributing it to MAME is wrong.
+where MAME's `read_rdr` does not call `update_irq()` — since fixed: an RDR
+read no longer releases the IRQ, only a status read does (MEMORY-004).
 
 **BINARY is honoured once agreed** *(2026-09-08, bug hunt #6)*.
 `telnetBinaryRx_` / `telnetBinaryTx_` record what was agreed per direction;
@@ -6999,7 +7148,7 @@ is the RDR latch: the last byte received, `$00` after a hardware reset.
 Hand-assembled slot ROM (used when the EPROM is absent), `$C200-$C2FF`: autodetect bytes (`$Cn05=$38`,
 `$Cn07=$18`, `$Cn0B=$01`, `$Cn0C=$31`); `$Cn00` jumps over them to a
 dispatcher at `$Cn11`, which tells PR# from IN# by CSW and enters the PR#
-bind (`$Cn20`) or the IN# bind (`$Cn40`). Both program cmd=`$0B` first.
+bind (`$Cn28`) or the IN# bind (`$Cn50`). Both program cmd=`$0B` first.
 PR#2 hooks CSWL/CSWH (`$36/$37`) → `$C2B0`; IN#2 hooks KSWL/KSWH
 (`$38/$39`) → `$C2E0` (load + ORA #$80). Reset clears rings.
 
@@ -7031,16 +7180,17 @@ against MAME `bus/a2bus/a2ssc.cpp`:
   memory-mapped DSW2 — `irqSwitchOn_` (`SuperSerialCard.h`,
   `setIrqDipEnabled`). It had been read as DSW2 bit `$20`, which upstream
   assigns to **Data Bits** (SW2:2), so the two settings moved together.
-- **DSW1 reads `$FC`** (`SuperSerialCard.h:488`) — the 19200 the card claims
+- **DSW1 defaults to `$FC`** (`lastDip1`, `SuperSerialCard.h:566`; communications
+  mode — printer mode sets bits 0-1, above) — the 19200 the card claims
   in the panel. The old `$A8` decoded as 2400, so the documented rate and the
   advertised rate disagreed.
 - **Echo needs DTR.** `echoLoopback = echoMode_ && dtrAsserted_`
-  (`SuperSerialCard.cpp:467`): upstream gates the echo path on `!m_dtr`, and
+  (`SuperSerialCard.cpp:508`): upstream gates the echo path on `!m_dtr`, and
   POM2's own TDR path already honoured DTR, so echo mode was the one way to
   transmit on a card the guest had hung up.
 - **7-bit receive and parity are modelled** — `receiveDataMask()`
-  (`:573-577`) masks the RDR to `wordLength_`, `evaluateRxFraming()`
-  (`:579-607`) computes the parity the PMC bits ask for (odd / even / mark /
+  (`:645`) masks the RDR to `wordLength_`, `evaluateRxFraming()`
+  (`:651`) computes the parity the PMC bits ask for (odd / even / mark /
   space) and raises `SR_PARITY_ERROR`. A 7-bit driver used to see the eighth
   bit of every byte.
 
@@ -7060,7 +7210,7 @@ Pinned in `ssc_acia_smoke`.
 null-modem / USB-serial cable with DCD and DSR strapped: the status pins
 read active whatever the peer does and a connect/disconnect raises no
 DCD/DSR interrupt. It exists for A2 File Cmd's VDrive bench: the harness
-`pom2_playtest --ssc PORT` (in pomadventure) plugs the card raw and tied,
+`pom2_playtest --ssc PORT` (in pom2adventure) plugs the card raw and tied,
 and without it the bench's "host gone" case killed ProDOS with
 `RESTART SYSTEM - $01`. Pinned in `ssc_acia_smoke`.
 
@@ -7200,7 +7350,9 @@ burst changes 1 513 cells of a selected drive and none of a deselected one.
 
 `MemoryProfile_IIcClass.cpp` (`ioReadIWM` / `ioWriteIWM`) mirrors
 `$C0E0-$C0EF` into the on-board IWM — but **only on the //c+**
-(`isPlus_`), and that gate is load-bearing.
+(`isPlus_`), and that gate is load-bearing. (A 32 KB plain //c routes the
+same switches to `IIcExternalSmartPort`'s own register tracker instead —
+§ The //c external 3.5" port — never to the `IWMDevice`.)
 
 MAME wires `A2BUS_IWM` at sl6 for 32 KB //c-class machines as *the*
 controller, replacing the Disk II. POM2 does not: `iwmAuthoritative`
@@ -7225,8 +7377,8 @@ machines put an IWM behind the same soft switches: `$C0nE` returning
 read. A real Disk II controller has no mode register at all (MAME's
 `wozfdc` has no such state), so on a ][+ or a //e those hooks were answering
 for hardware that is not there: a `STA $C08F,X` latched guest data and the
-next `$C0nE` read handed it back. `setIwmHost(bool)` (`DiskIICard.h:368`)
-gates all three, and `SlotCardFactory.cpp:119` sets it from
+next `$C0nE` read handed it back. `setIwmHost(bool)` (`DiskIICard.h:408`)
+gates all three, and `SlotCardFactory.cpp:128` sets it from
 `profileConfig(request.profile).noPhysicalSlots` — the //c and //c+ are
 exactly the IWM-host class. The flag **defaults to true** so a hand-built
 card in a test keeps the old behaviour, which is what `iicplus_boot35`
@@ -7235,7 +7387,7 @@ relies on; only the factory path narrows it.
 Two smaller wozfdc-parity fixes landed with it: the `$C0nC` read in write
 mode no longer skips `lssSync(1)` (`wozfdc.cpp:206-212` ends *every* even
 offset with it), and the phase-1 write interlock is modelled —
-`writingInhibited()` (`DiskIICard.h:679`) is MAME's
+`writingInhibited()` (`DiskIICard.h:852`) is MAME's
 `floppy_image_device::writing_disabled`, `m_wpt || (m_phases & 2)`
 (`floppy.cpp:1254-1259`): a drive whose phase-1 coil is energised cannot
 write, which is how the //c's firmware parks a head safely.
@@ -7282,10 +7434,11 @@ that energises PH1+PH3 keeps its reads.
 ### Host sockets (POSIX / Winsock)
 
 `src/SocketCompat.h` is the ONE place that answers "POSIX or Winsock?".
-Four TUs consume it — `W5100Device` (Uthernet II TCP/UDP),
-`SuperSerialCard` (telnet bridge), `AiControlServer` (HTTP control API),
-`SpTcpTransport` (the FujiNet SP-over-SLIP TCP pipe) —
-and `SocketUtil.h` (the accept/SIGPIPE idioms) is built on top of it.
+Its consumers — `W5100Device` with `W5100HostSockets` /
+`W5100NameResolver` (Uthernet II TCP/UDP/DNS), `SuperSerialTcpTransport` (the
+SSC telnet bridge), `AiControlServer` (HTTP control API), `SpTcpTransport`
+(the FujiNet SP-over-SLIP TCP pipe), `FujiNetNetDevice`, `TnfsClient` and
+`NatHostSockets` (the built-in NAT) — and `SocketUtil.h` (the accept/SIGPIPE idioms) is built on top of it.
 `POM2_HAS_SOCKETS` is now 0 for **Emscripten only**; Windows is a full
 host-socket target since 2026-08-01.
 
@@ -7429,10 +7582,10 @@ second drive (the drivers disk is not redistributed — the test SKIPs without
 it and its header says where it comes from).
 
 That split is why `Memory`'s inline ROM-read fast path carries
-`!(noSlotClock_ && !iieMode && addr >= 0xF800)` (`Memory.h:293`) — it only has
+`!(noSlotClock_ && !iieMode && addr >= 0xF800)` (`Memory.h:421`) — it only has
 to step aside for the II/II+ window; the //e / //c hooks live inside the
 INTCXROM / SLOTC3ROM branches, and the //e `$C100-$CFFF` fast path that
-serves those (`Memory.h:316-319`) is skipped whenever a No-Slot Clock is
+serves those (`Memory.h:446-447`) is skipped whenever a No-Slot Clock is
 fitted (`!noSlotClock_`).
 
 Time source is injectable (`NoSlotClock::TimeFn`) so the test can pin a
@@ -7482,7 +7635,7 @@ chunked body used to read as empty, so `/reset {"kind":"soft"}` ran a HARD
 reset), `Content-Length` must be all digits, and only a native client's
 token guess counts toward the 429 brake — a browser page (`Origin`) or a
 rebound `Host` is refused by policy and no longer keeps the real agent locked
-out (`AiControlServer.cpp:522-530`, `:732-739`).
+out (`AiControlServer.cpp:589-614`, `:843-853`).
 
 **Bug hunt 2026-10-23**: "no `Origin`" was not "not a browser". A cross-site
 no-cors GET or HEAD — `<img src="http://127.0.0.1:6503/status">` on any open
@@ -7515,15 +7668,15 @@ limits exposure to local processes.
   secret, not an origin proof.
 - **No CORS header is emitted anywhere** — a native client needs none, and
   `Access-Control-Allow-Origin: *` would make a cross-origin brute force
-  readable. The compare is constant-time (`checkAuth`, `:686-696`), and
+  readable. The compare is constant-time (`checkAuth`, `:750-798`), and
   `kAuthFailureLimit = 5` failures inside `kAuthWindowMs = 5000` arm a 429
   lockout for the rest of the window (`authBackoffArmed` /
-  `noteAuthFailure`, `:223-248`), so a human-typed secret cannot be ground
-  down. The panel's **Generate** button — `generateToken()` (`:256-267`)
+  `noteAuthFailure`, `:263-300`), so a human-typed secret cannot be ground
+  down. The panel's **Generate** button — `generateToken()` (`:302-314`)
   draws 32 characters from a 31-symbol ambiguity-free alphabet (~160 bits)
   out of `std::random_device` — and it warns below `kMinTokenLength = 16`.
 - **`--ai-control` honours the configured token.**
-  `MainWindow::startAiControlFromCli` (`MainWindow.cpp:881-920`) uses
+  `MainWindow::startAiControlFromCli` (`MainWindow.cpp:965-1004`) uses
   `ai_control_token`, with `$POM2_AI_CONTROL_TOKEN` overriding it; with
   neither set it runs the way the panel does — token-less on loopback behind
   the fence — and **says so in the log**.
@@ -7555,6 +7708,7 @@ while this table and the handler implementations give the detailed contract):
 | `/session/save`, `/session/load` | POST | `{"path":"game.pom2session"}`; save captures the supported machine/media bundle atomically, load reconstructs profile, firmware and cards after detached validation; desktop loads use the UI owner-thread queue. See [session limits](docs/session-format.md) |
 | `/speed` | POST | `{"cycles_per_frame":N}` (1–2000000) or `{"preset":"1x\|2x\|max"}`; 1x/2x follow active PAL/NTSC timing, max selects 1000000 cycles/frame |
 | `/screen.ppm` | GET | binary PPM of the live framebuffer |
+| `/screen/text` | GET | JSON of motherboard text RAM (`text`, `columns`, `rows`, `first_row`, `page`, `source`) |
 | `/mouse` | POST | `dx`/`dy` clamp to ±127/call; `x`/`y` override the corresponding delta as 8-bit counters, `btn` sets the button, `reset` clears accumulated counters; supports both Mouse Cards and the //c IOU mouse |
 | `/printer-port[?slot=N]` | GET / POST | the printer side of one slot, or of every `ssc`/`grappler`/`grappler1`/`pic` slot / `{"slot":N,"set":"k=v,…"}`, the `--printer-port` option language |
 | `/slot-log?slot=N` | GET / POST | drain slot N's bus-access log / `{"slot":N,"enable":1[,"capacity":C]}` (capacity 1-4194304) or `{"slot":N,"enable":0}` |
@@ -7602,6 +7756,19 @@ response's `queued` counts accepted output characters; zero is possible when
 full. It does not mean the guest consumed them. Clearing the strobe permits
 the next `$C000` read to promote a queued character.
 
+`GET /screen/text` requires the same authentication as other routes and rejects
+POST with 405. It does not require a renderer. Response fields are `ok`,
+`source: "apple_text_memory"`, `text` (JSON-escaped ASCII), `columns` (40/80),
+`rows` (24/4/0), `first_row` (zero-based, 20 in mixed mode, otherwise 0) and
+`page` (1/2, the resolved video page). Rows end in `\n`; trailing spaces are
+removed, blank rows preserved. Pure graphics returns `text: "", rows: 0`.
+The controller lock covers RAM capture, then is released before socket I/O.
+The shared decoder also serves File → Copy screen text and headless
+`--screen-text` (`--text-dump` alias). It uses video aux bank 0, not the CPU's
+selected RamWorks bank. This is current motherboard text state, not OCR:
+custom character ROMs, video-card RAM and per-scanline mode splits are outside
+its scope; MouseText is `?`.
+
 `/screen.ppm` renders the current emulated framebuffer and returns a P6 header
 followed by width × height RGB triplets, with no alpha channel. Read the
 dimensions from the header: video modes and card displays can differ. The
@@ -7627,7 +7794,7 @@ Three rules the media handlers follow (2026-09-07):
   `handleDiskEject` is composed outside the lock scope.
 - **A swap invalidates the rewind ring**, as the 19 host-side mount paths
   do (`invalidateRewindForMediaChange`): `ctrl_->rewind().clear()` under
-  the same lock that performs the swap (`:1291`, `:1387`).
+  the same lock that performs the swap (`:1454`, `:1551`).
 - **The card is re-checked for identity, not null.** The mount reads the
   file unlocked (the two-phase rule), and a profile switch or a Slot Config
   change may rebuild the slot meanwhile, so both handlers re-resolve the
@@ -7913,7 +8080,16 @@ had drifted by two months before the parity audit caught it
 | `c80d0854` | 2026-10-14 | **Mostly.** Auto Enables now *gates* the transmitter and receiver (`receiveAllowed` / `transmitAllowed` / `resumeTransmit`) instead of rewriting WR3 D0 / WR5 D3 from the pins. **Not taken**: RR2B reporting no pending interrupt as a channel-B special receive condition. |
 | `ee22203c` | 2026-10-07 | **Yes** (the loopback half, taken late). In Local Loopback the external RxD pin is ignored; Auto Echo is the exception. |
 
-**One deliberate divergence, upward.** The WR14 **hardware**-reset value is
+**Two deliberate divergences, upward.** *Transmit word length* (2026-11-06):
+[B] Zilog Z8030/Z8530 SCC Technical Manual 00-2057-03 (1986) § 7.1.6,
+Table 7-3 — transmit bits/character are WR5 D6-D5, independent of WR3's
+receive length, and "in the Six or Seven Bits/Character modes, unused data
+bits are ignored". MAME's `update_serial` (`z80scc.cpp:2849` @ `mame0287`)
+builds one diserial frame from the RECEIVE length for both directions; POM2
+followed it until `docs/audits/provenance-P1a-guess-arbitrary-2026-11-06.md`
+caught it (Rx 8 / Tx 7 sent `$C1` in 10 bit times instead of `$41` in 9).
+`txWordLength` now sizes the transmit frame and masks the async byte.
+`AMONT FAUX`, pinned by `scc8530_smoke`. *WR14 reset*: the WR14 **hardware**-reset value is
 `0x20` here, not MAME's `0x30`: [B] the Am8530H/Am85C30 Technical Manual
 (AMD, 1992), Table 7-3 and Figure 2-4, clears WR14 bits 4-0 on a hardware
 reset, and bit 4 is Local Loopback. MAME sets it, which would leave a freshly
@@ -7990,9 +8166,9 @@ a counter, N raises and one raise are indistinguishable.
 **SDLC is the one part that is NOT a MAME port.** MAME does not model it —
 `do_sccreg_wr4` logs *"SDLC - not implemented"* and every CRC reset code in
 WR0 is a no-op there — so POM2 models it from the Zilog SCC/ESCC user manual
-(UM010902) instead. That is a **deliberate, documented deviation from the
-MAME-is-the-oracle rule**, and every site that does it is marked
-`SDLC (datasheet, not MAME)` so the boundary is visible while reading.
+(UM010902) instead: a [B] primary document where MAME, a [D], has nothing.
+Every site is marked `SDLC (datasheet, not MAME)` so the boundary between
+the MAME port and the datasheet model stays visible while reading.
 
 What is modelled is what a byte seam can carry: frame delimitation, the Tx
 Underrun/EOM latch that closes a frame, Sync/Hunt and Enter Hunt, address
@@ -8032,7 +8208,7 @@ Two things learned by watching it that are worth not rediscovering:
   → `docs/backlog/cards.md` § CARDS-002
 
 **The Ext/Status latch must be refreshed, not only released** *(2026-09-07)*.
-`updateExtInt` (`Scc8530Device.cpp:421-449`, MAME
+`updateExtInt` (`Scc8530Device.cpp:443-471`, MAME
 `z80scc_device::update_extint`, `z80scc.cpp:793`) keeps upstream's `else`
 branch (`z80scc.cpp:1189-1197`, *"Update latched value to match current
 status"*): without it, once a second source moves while the first is
@@ -8040,8 +8216,8 @@ pending, the latch and the live status never agree again and the
 Workstation ROM's ISR at `$EE13` loops for ever. Pinned in `scc8530_smoke`.
 
 **MAME master's interrupt-block fixes, carried forward** *(2026-09-29)*.
-The port is pinned at 588eeb33; upstream has since fixed six things POM2
-now takes from master (`z80scc.cpp`, lines cited in the source): a WR9
+The port was then pinned at 588eeb33 (the table above is the current pin);
+upstream had since fixed six things POM2 took from master (`z80scc.cpp`, lines cited in the source): a WR9
 channel reset clears only *that* channel's IP/IUS and RR3 bits
 (`reset_interrupts(int index)` — the pin wiped both channels on "Channel A
 Reset" and none on "Channel B Reset"); turning a source off in WR1 withdraws
@@ -8054,12 +8230,13 @@ still locks); and the receive ring is `3 + 1` slots, so the chip's three
 characters fit (the pin overran on the third). Snapshot v4 carries the
 4-slot ring; a v3 blob restores with its ring re-laid in read order.
 
-**One MAME divergence deliberately kept.** On receive overrun MAME writes the
-offending byte into the slot the write pointer is parked on and sets Overrun
-in the *error* FIFO, but never advances past it — so that slot is unreachable
-and RR1 D5 never surfaces through a data read. Real silicon discards the byte
-and reports the error. POM2 reproduces MAME, and `scc8530_smoke` pins that
-choice so a future change to it is deliberate.
+**Receive overrun follows the chip, no longer the old pin.** The pinned
+MAME wrote the offending byte into the parked sentinel slot, so RR1 D5 never
+surfaced through a data read. POM2 now does what Zilog documents and MAME
+master (`19d729b6`) does: the overrunning character overwrites the **newest**
+FIFO entry, which carries the Overrun flag — *"only the character that has
+been written over is flagged"* (RR1 D5). `scc8530_smoke`
+(`testReceiveFifoOverrun`) pins it.
 
 Pinned by `tests/scc8530_smoke_test.cpp` (`scc8530_smoke`): reset values, the
 two-step register pointer including Point High, the card firmware's RR3 poll,
@@ -8124,9 +8301,8 @@ also answered locally. Desktop settings enable the local `N:` by default;
 it implements plain HTTP, while disks, CONFIG and clock services remain
 peer-backed. See the implementation details below for the network seam.
 
-**Sources.** MAME has no FujiNet device, so the project's usual "MAME = source
-of truth" rule does not apply; this is stated in the file headers so the
-deviation is deliberate rather than sloppy. The references are the FujiNet wiki
+**Sources.** MAME has no FujiNet device, so there is no [D] MAME port to
+follow here (`FujiNetCard.h` says so). The references are the FujiNet wiki
 page *"Apple II SP over SLIP"* (revision of 2025-01-25, normative for framing
 and the request/response tables), the FujiNet fork of AppleWin
 (`source/SmartPortOverSlip.cpp`, `source/devrelay/**`,
@@ -8169,8 +8345,10 @@ the round trip, write the response back into RAM, set A/X/Y. The trailing
 no FujiNet answers it **continues the autostart slot scan** (`JMP $FABA`)
 instead of erroring — without that, a FujiNet card in slot 7 would break
 booting from the Disk II in slot 6 whenever the FujiNet is not running. Slot 7
-is the default precisely because the //e scans it first, so a machine with a
-FujiNet attached boots straight into its CONFIG.
+is the CLI's preferred slot precisely because the //e scans it first, so a
+machine with a FujiNet attached boots straight into its CONFIG — but on a fresh
+install slot 7 holds Le Chat Mauve, and `--fujinet` then falls back to the
+first free slot (`--fujinet-slot N` to choose).
 
 **Enumeration** is the SmartPort daisy-chain sweep: INIT unit 1, 2, … until one
 answers non-zero. *Deliberate divergence from the reference:* the AppleWin fork
@@ -8203,7 +8381,7 @@ called from the CPU worker (`FujiNetCard`'s `$C0xx` path) and the UI, while
 `stop()` destroys that transport — a use-after-free, not a stale read. They
 could not simply take `callMtx_`: that is held for the whole SmartPort round
 trip, so the UI would park behind a silent peer just to paint a status dot.
-A second mutex, `transportMtx_` (`SpOverSlipLink.h:256`), guards the pointer
+A second mutex, `transportMtx_` (`SpOverSlipLink.h:260`), guards the pointer
 alone, with the order stated where it is declared and at both acquisition
 sites: **`callMtx_` → `transportMtx_`, never the reverse.** `transact()`'s
 write and read share ONE budget (`setWriteDeadlineMs`,
@@ -8402,7 +8580,7 @@ the `fujinet-go-apple2-desktop` firmware serving a TNFS-hosted image):
   own guarded worker now (`FujiNetNetDevice.cpp:424-427`, tag `FujiNetN`), and
   the deadline stayed for the reason that outlives the lock: a fetch that
   cannot end is a socket and a thread that never go away. `cancel` is noticed
-  within one `kWaitSliceMs = 100` slice (`FujiNetNetDevice.cpp:169`). Two traps, both
+  within one `kWaitSliceMs = 100` slice (`FujiNetNetDevice.cpp:181`). Two traps, both
   measured rather than assumed: `SO_SNDTIMEO` does **not** bound `connect()`
   (macOS, 192.0.2.1 — 75 s against an 8 s request), and a per-recv timeout
   never bounds a *transfer*, so a server drip-feeding one byte just inside it
@@ -8493,9 +8671,11 @@ vcpkg does carry a libslirp port, but `SlirpNetworkBackend`'s poll loop
 is written against POSIX `poll()` over the fds libslirp returns, and that
 port cannot be verified without a Windows libslirp build to test against.
 CMake therefore does not even look for libslirp on WIN32 — a documented
-absence beats a wall of missing-header errors.
+absence beats a wall of missing-header errors. *(Superseded 2026-11-05: the
+built-in NAT below carries the Uthernet I's frames on Windows; the default
+`slirp` setting resolves to it where libslirp is absent.)*
 
-Three implementations:
+Four implementations:
 
 - **`NullNetworkBackend`** — always available, `isValid()` false. Frames
   are dropped, nothing arrives. Keeps the cards pluggable and
@@ -8506,6 +8686,9 @@ Three implementations:
 - **`SlirpNetworkBackend`** (`SlirpNetworkBackend.h/.cpp`) — libslirp
   user-mode NAT. **Optional build dep**, gated on `POM2_HAVE_SLIRP`
   which CMake sets when `pkg-config` finds `slirp`.
+- **`BuiltinNatBackend`** (`makeBuiltinNatBackend`) — POM2's own user-mode
+  NAT over the portable sockets, in every desktop build; see
+  [below](#the-built-in-virtual-network-builtinnatbackend).
 
 **Why libslirp and not TAP/pcap.** Both classic ways to bridge Ethernet
 need root (`CAP_NET_ADMIN` / `CAP_NET_RAW`). libslirp terminates the
@@ -8634,10 +8817,10 @@ guest carrying its own IP stack could open `10.0.2.2:<port>` and slirp
 re-opened it as `127.0.0.1:<port>` on the host — the Uthernet II's SSRF
 (§ [Uthernet II](#uthernet-ii-w5100)) by a second route, and the two had to
 be closed together or the escape simply moves cards. `SlirpOptions`
-(`SlirpNetworkBackend.h:69-94`) carries the two knobs, both defaulting to the
+(`SlirpNetworkBackend.h:70-95`) carries the two knobs, both defaulting to the
 safe answer: `allowHostLoopback` (false → `cfg.disable_host_loopback = 1`)
 and `restricted` (false — the guest may still reach the LAN and the
-internet). `makeEthernetBackend` (`MainWindow_SlotConfig.cpp:377-399`) reads
+internet). `makeEthernetBackend` (`MainWindow_SlotConfig.cpp:449-479`) reads
 them from `uthernet_allow_loopback` and `uthernet_slirp_restricted`; the
 first key is shared with `W5100Device::setAllowLoopback`, because it is one
 user decision about one perimeter. Nothing else changes: the LAN, the
@@ -8654,9 +8837,10 @@ any IPv4 frame whose destination is 127/8, 0/8 or 169.254/16 while
 `W5100Device::checkDestination`: 224/4 and 255.255.255.255 must stay, or the
 guest's DHCP DISCOVER never reaches slirp's own server. Pinned by
 `slirp_loopback_fence` (four cases including the opt-in; exit 77 without
-libslirp). The same policy now lives in three files — `W5100Device`,
-`FujiNetNetDevice`, the backend — a drift risk to keep in mind when one of
-them changes; the three are not interchangeable (an IPRAW DHCP broadcast
+libslirp). The same policy now lives in four places — `W5100Device`,
+`FujiNetNetDevice`, the slirp backend and the built-in NAT's
+`nat::routeDestination` — a drift risk to keep in mind when one of them
+changes; they are not interchangeable (an IPRAW DHCP broadcast
 must pass the backend and would fail `checkDestination`).
 
 **A CS8900A reset clears the decoded multicast hash mask** *(same hunt)*.
@@ -8666,10 +8850,10 @@ copy, which was only rebuilt from a LAF byte write; a driver that resets
 and wants no groups never writes the LAF, so the previous driver's groups
 stayed live behind a register reading zero — the `recvControl_` defect of
 2026-09-07, one member over. `uthernet_cs8900_smoke` gained the case.
-Recorded, not fixed (needs a ruling, since it looks like a faithful port
-of MAME/VICE's `should_accept`): the multicast I/G bit is tested as
-`buffer[0] & 0x80` where 802.3 puts it in bit 0, so a real multicast MAC
-is admitted through the hash filter instead of `MulticastA`.
+The multicast I/G bit, recorded here at the time as `buffer[0] & 0x80` (as
+MAME/VICE's `should_accept` reads it), was fixed on 2026-10-18: `shouldAccept`
+tests bit 0, where 802.3 and the CS8900A datasheet put it, so a real
+multicast MAC goes through `MulticastA` — a [B] over a [D].
 
 ### Uthernet I (CS8900A)
 
@@ -8714,29 +8898,26 @@ driver idiom "read `$C0n8` until it returns 0" sees frames and `TxEvent`
 signals `TxOK`. The inbound queue is byte-capped (~4 KB, as on the chip)
 and drops the **arriving** frame while counting `RxMISS` + BufEvent; a
 reset re-decodes the address filter `RxCTL` drives. The `readRxBuffer`
-advance asymmetry is **not** a defect — it is MAME's order, deliberate and
-pinned; `Skip_1` and the PacketPage frame-buffer window are left as MAME
-parity, with no oracle to arbitrate them. Details that each disarm the ISQ
-when wrong (round 3):
-
-**2026-10-18 correction:** The CS8900A datasheet §4.4.6 and §5.2.5
-identifies `RxCFG.Skip_1` as a committed receive-frame discard. That part of
-the preceding MAME-parity note is superseded; the PacketPage window note
-remains historical context.
+advance asymmetry is **not** a defect — it is MAME's order ([D]), deliberate
+and pinned. `RxCFG.Skip_1` follows the datasheet: [B] CS8900A data sheet
+§§ 4.4.6, 5.2.5 — a committed receive-frame discard (since 2026-10-18; it
+had been left as MAME parity). The PacketPage frame-buffer window is still
+MAME parity, [D] with no higher source read for it. Details that each disarm
+the ISQ when wrong (round 3):
 
 - **`RxMISS` is BufEvent bit 10, not bit 9.** `kBufEventRxMiss = 0x0400`
-  (`Cs8900aDevice.cpp:91`); bit 9 (`$0200`) is `TxUnderrun`.
+  (`Cs8900aDevice.cpp:92`); bit 9 (`$0200`) is `TxUnderrun`.
 - **BufEvent and RxMISS clear on read**, on the way *out* of the access so
   the word the guest is fetching is the one it gets
-  (`sideEffectsAfterReadPp`, `Cs8900aDevice.cpp:800-816`) — the "read until
+  (`sideEffectsAfterReadPp`, `Cs8900aDevice.cpp:880-910`) — the "read until
   0" idiom's exit condition.
 - **The ISQ latch and a direct `RxEvent` read share one staged frame**
-  (`isqStagedFrame_`, `Cs8900aDevice.cpp:692-734`), not two consumers of one
+  (`isqStagedFrame_`, `Cs8900aDevice.cpp:763-879`), not two consumers of one
   queue.
 - **`TxOK` follows the transmitter, not the backend.** It is gated on
-  `txEnabled_` alone (`Cs8900aDevice.cpp:517-536`) — upstream's condition —
-  so a card with no host transport (the default on Windows, where libslirp
-  is not built) still completes a transmit.
+  `txEnabled_` alone (`Cs8900aDevice.cpp:560`) — upstream's condition —
+  so a card with no host transport (`ethernet_backend = none`, or a build
+  with neither libslirp nor sockets) still completes a transmit.
 
 **Deltas from MAME**, all deliberate:
 
@@ -8755,7 +8936,7 @@ remains historical context.
   `0xEDB88320`), which is the same function.
 
 **Snapshot**: the whole 4 KB PacketPage rides along. That sounds heavy
-for a 60 Hz rewind ring until you notice `RewindBuffer.cpp:31-149`
+for a 60 Hz rewind ring until you notice `RewindBuffer.cpp:33-170`
 XOR-deltas it — a mostly-idle NIC costs a handful of bytes per frame. The
 *inbound frame queue* is deliberately NOT saved: it mirrors host network
 state that has moved on by the time a rewind replays, and restoring it
@@ -8858,7 +9039,7 @@ reachable from the stock driver:
 
 **Both `Sn_TX` pointer conventions are accepted** *(2026-09-07, round 3)*:
 a driver may let `Sn_TX_WR` run free or mask it into the ring itself.
-`stagedTxBytes(rd, wr, size)` (`W5100Device.cpp:82-91`) takes the unmasked
+`stagedTxBytes(rd, wr, size)` (`W5100Device.cpp:88`) takes the unmasked
 difference when it *can* be a byte count (`wr - rd <= size`) and the modulo
 when it cannot, so both conventions produce the same length.
 
@@ -8869,12 +9050,12 @@ which reads a loopback peer with no `Origin` as native. The same escape
 exists through libslirp's virtual router at `10.0.2.2`, so the two are
 fenced together (§ [Network backends](#network-backends)).
 
-`checkDestination(addr, allowLoopback)` (`W5100Device.cpp:167-182`) refuses
+`checkDestination(addr, allowLoopback)` (`W5100Device.cpp:170`) refuses
 `0/8`, `127/8`, `169.254/16`, `224/4` and `240/4`; RFC 1918 stays allowed,
 because a LAN is what a period network client is for. A refusal is reported
 in the chip's own language — `clearSocket()` → `SOCK_CLOSED` plus `TIMEOUT`
 in `Sn_IR` — the failure every driver already handles. `localPortAllowed()`
-(`:201-212`) additionally refuses a guest-chosen source port below 1024 or
+(`:205`) additionally refuses a guest-chosen source port below 1024 or
 one POM2 itself listens on (6503 AI server, 6502 SSC telnet, 1985 FujiNet SP);
 it falls back to an ephemeral port and logs once rather than failing the
 socket. The UDP bind no longer carries `SO_REUSEADDR`
@@ -8882,24 +9063,24 @@ socket. The UDP bind no longer carries `SO_REUSEADDR`
 `INADDR_ANY` share a port a host program already held, and siphon its
 datagrams.
 
-The opt-in is `setAllowLoopback(bool)` (`W5100Device.h:299`), default
+The opt-in is `setAllowLoopback(bool)` (`W5100Device.h:301`), default
 **false**, driven by the `uthernet_allow_loopback` setting
-(`MainWindow_SlotConfig.cpp:438-439`) — the same key that opens libslirp's, since
+(`MainWindow_SlotConfig.cpp:511-512`) — the same key that opens libslirp's, since
 opting one card out only moves the escape to the other.
 
 **Virtual DNS is a channel, so it is validated and rate-limited.** The
 length-prefixed name the guest writes went to `getaddrinfo()` raw and at any
 rate, and reached a log line with its control bytes intact — an exfiltration
 path out of a machine that is otherwise fenced. `isValidHostname`
-(`W5100Device.cpp:110-130`) enforces the RFC 1123 charset and the 253/63
+(`W5100Device.cpp:119`) enforces the RFC 1123 charset and the 253/63
 length limits, and `W5100NameResolver::takeRateToken`
-(`W5100NameResolver.cpp:73-88`) is a token bucket — `kResolvesPerSecond = 4`,
+(`W5100NameResolver.cpp:74`) is a token bucket — `kResolvesPerSecond = 4`,
 burst 16 — consumed only on a cache miss.
 
 **Declined with reasons** (reviewed, not defects): `Sn_MR` MULTI/ND is a
 feature POM2 does not offer rather than a wrong answer; the PacketPage
-frame-buffer window and `Rdy4TxNOW`-on-the-odd-read are datasheet-correct or
-MAME-parity with no oracle to arbitrate.
+frame-buffer window and `Rdy4TxNOW`-on-the-odd-read are datasheet-correct
+([B]) or MAME parity ([D]) with no higher source read for them.
 
 **Snapshot**: only the datasheet-defined regions are saved — the reserved
 holes (`$0030-$03FF`, `$0800-$3FFF`) carry nothing and would just bloat
@@ -8992,11 +9173,11 @@ sled off the page. Pinned by `printer_card_smoke` and `grappler_card_smoke`.
 **Free-slot pick on II / II+ / //e** via the Slot Configuration panel.
 It is **not** a //c/+ built-in: those profiles place a real serial
 `ssc` at slot 1 ("printer port") and slot 2 ("modem port"), matching
-the //c hardware (`SystemProfile.cpp:169-170,222-223`, `cfgAppleIIc /
+the //c hardware (`SystemProfile.cpp:176-177,232-233`, `cfgAppleIIc /
 cfgAppleIIcPlus`). POM2 *used to* substitute a synthetic parallel
 PrinterCard at the //c slot-1 built-in, but that diverged from the
 real //c serial printer port (and from MAME's `apple2c`) and was
-reverted — see the comment at `SystemProfile.cpp:164-168`.
+reverted — see the comment at `SystemProfile.cpp:168-175`.
 
 Pinned: `printer_card_smoke` — ROM fingerprint + data-port spool
 semantics + CPU-driven `PR#1` + 3 COUT-style writes flow.
@@ -9057,8 +9238,8 @@ Pinned by `grappler_printer_state`.
 **Bank switching is modelled.** Real Grappler+ exposes the upper
 2 KB of its 4 KB EPROM via a bank-select write. POM2 mirrors this:
 a data-port write with `low4 & 0x01` set raises `romBankHigh_`
-(`GrapplerCard.cpp:201`); the expansion window then serves the upper
-2 KB (`rom_[(offset & 0x7FF) | 0x800]`, `GrapplerCard.cpp:239`).
+(`GrapplerCard.cpp:216`); the expansion window then serves the upper
+2 KB (`rom_[(offset & 0x7FF) | 0x800]`, `GrapplerCard.cpp:254`).
 Any `$CnXX` **read or write** drops the bank low; the flag round-trips
 through snapshot. `grappler_card_smoke` asserts both banks are
 distinguishable.
@@ -9125,7 +9306,7 @@ a terminal.
   would clobber an existing PNG and show two history rows of the same image.
   It resumes **from the directory, not only from the index**:
   `highestPageFileNumber()` scans the directory and
-  `resumeCountersFromDirectory()` (`PrinterHistory.cpp:146-181`) advances
+  `resumeCountersFromDirectory()` (`PrinterHistory.cpp:171`) advances
   both counters past it, on both paths — including the two that skip the
   sweep (a bad index, a missing one), where a counter left at 1 would
   overwrite the oldest printout.
@@ -9141,9 +9322,9 @@ index is written on the next page) and every PNG is left where it is. The
 writer thread has a liveness predicate: if it died, the wait fails instead
 of hanging the window, and the respawn re-checks that liveness **under the
 same lock that pushes the page** (`startWriter`,
-`PrinterHistory.cpp:403-421`), because `writerAlive_` is cleared during the
+`PrinterHistory.cpp:443`), because `writerAlive_` is cleared during the
 old writer's unwinding. A writer that dies disowns its queue on the way out
-(its `AliveGuard`, `:427-454`), moving every unwritten item into
+(its `AliveGuard`, `:498`), moving every unwritten item into
 `failedFiles_` so the page is *reported lost* rather than silently held.
 
 Capped at 200 pages, deleting the PNGs as well as the rows — an emulator left
@@ -9151,11 +9332,16 @@ running must not quietly fill a disk.
 
 ### Printer sound (`PrinterSoundDevice`)
 
-The head buzz, the carriage-return sweep and the platen motor use
-**synthesised noise grains by default**, ported from mikedaley/web-a2e
-`printer-sound.js` (MIT, Shawn Bullock). An optional user-supplied Virtual ][
-"Matrix Printer" recording can replace the grains with a loop, as described
-below. The recording is not bundled; synthesis remains available without it.
+**Three voices, in this order of precedence.** (1) The optional
+user-supplied Virtual ][ "Matrix Printer" loop, when `mechanical_sound_bank =
+virtual2` and it decoded (below) — the user's explicit choice. (2) **Recorded
+ImageWriter II takes**, the default whenever `roms/printer_samples/` is present
+(it ships, CC BY 4.0, Scott Lawrence's ImageWriterIISimulator recordings —
+`roms/printer_samples/README.txt`): `PrinterSoundDevice::loadRecordedBank`,
+setting `printer_sound_recorded` (default true), Mixer ▸ "Recorded ImageWriter
+II sounds". (3) Otherwise the head buzz, the carriage-return sweep and the
+platen motor are **synthesised noise grains**, ported from mikedaley/web-a2e
+`printer-sound.js` (MIT, Shawn Bullock) — the rest of this section.
 
 **Why grains.** A dot-matrix impact is a short broadband NOISE click, not a
 tone: the head energy sits near the basic printing frequency (~900-1000 Hz)
@@ -9254,11 +9440,12 @@ motion the guest asked for and ejects unconditionally — the C. Itoh head
 does, and `imagewriter_smoke`'s `ESC R 999 <FF>` case pins it — while
 `formFeed()` is the front-panel button with the panel's own "not if the
 sheet is blank" rule; the ESC/P and Diablo 630 parsers route the guest's
-`$0C` the first way. Noted, not fixed (`docs/backlog/cards.md` §
-CARDS-011): `findPostScriptInterpreter` returns nothing on a stock Apple
-Silicon Homebrew because `/opt/homebrew/bin` is group-writable and
-`ChildProcess::findOnPath` refuses such directories — deliberate, but the
-user sees "install Ghostscript" with Ghostscript installed.
+`$0C` the first way. Fixed since (commit `cdc8db20`):
+`findPostScriptInterpreter` used to find nothing on a stock Apple Silicon
+Homebrew because `/opt/homebrew/bin` is group-writable by `admin` and
+`ChildProcess::findOnPath` refused such directories; on macOS a directory
+writable only by the `admin` (gid 80) or `wheel` (gid 0) group is now
+accepted — any other group, and the world bit, are still refused.
 
 **The DMP eats `ESC g`'s graphics body** *(2026-09-08)*. A head drops a
 command it has no hardware for after collecting its parameters
@@ -9308,10 +9495,14 @@ a backslash ending a `//` comment continues it onto the next line (`$5C` is
 `\`), which silently dropped one glyph per bank into a fixed-size array; and
 the row comments contain `{` and `}`, which broke a brace-walk parser.
 
-**Four heads (phase C).** `IwModelProfile` is a four-row table —
-ImageWriter II, ImageWriter I, Apple DMP, plus the Epson FX-80 (whose row
-exists mainly to carry `escP` and its own bank — see below) — and
-`setModel()` power-cycles into one. The three C. Itoh heads share the
+**Four heads (phase C)** — eleven since: `IwModelProfile` (`kModels`,
+`ImageWriter.cpp:168`) has a row per `IwModel` — ImageWriter II, ImageWriter
+I, Apple DMP, Epson FX-80, C. Itoh Prowriter 8510A, NEC PC-8023A, Epson
+MX-80, MX-80 with Graftrax, RX-80, and the LaserWriter's Diablo 630 and
+PostScript modes (`IwLineage`: C. Itoh, ESC/P, Diablo, PostScript — the
+last delegated to Ghostscript; [docs/printer_plan_2.md](docs/printer_plan_2.md)).
+At phase C it was the first four (the FX-80's row existing mainly to carry
+`escP` and its own bank — see below), and `setModel()` power-cycles into one. The three C. Itoh heads share the
 8510 command set (the II is a backward-compatible
 superset), so what varies is DATA, not code paths: which ROM banks exist,
 whether there is a four-band colour ribbon, which ESC codes the head has no
@@ -9366,13 +9557,15 @@ via `drainSpoolFrom(consumed, out)`, and `ImageWriter_ImGui` shows the
 resulting page. Card → cable → printer, in that order, exactly like the
 real desk.
 
-**Source of truth: greg-kennedy/ImageWriter** (`imagewriter.cpp` — the
+**Ported from greg-kennedy/ImageWriter** ([D] `imagewriter.cpp` — the
 GSport / KEGS / DOSBox lineage by Christopher G. Mason), itself written
 against Apple's *ImageWriter II Technical Reference Manual*
 (ISBN 0-201-17766-8) and *ImageWriter LQ Reference Manual*
 (ISBN 0-201-17751-X). Command dispatch, the soft-switch model, the
 density tables and the colour encoding are line-for-line ports with the
-reference's line ranges cited in the code.
+reference's line ranges cited in the code. Where the port and Apple's
+manual disagree, the manual ([B]) wins — see the deliberate deviations and
+the bug hunt #4 corrections below.
 
 **Page raster** — one byte per pixel, `yyyxxxxx`: low 5 bits = ink
 intensity (31 = full), top 3 bits = ribbon band. The bands are chosen so
@@ -9569,10 +9762,11 @@ outruns even the catch-up rate must not grow the heap without bound.
 Truncating a printout is bad; freezing the emulator is worse. Pinned by
 `testBoundedCatchUp`.
 
-**One printer, four possible feeds.** `pumpImageWriter()` arbitrates —
+**One printer, six possible feeds.** `pumpImageWriter()` arbitrates —
 `PrinterCard` outranks `GrapplerCard`, which outranks a `grappler1` /
 `pic` (`SourceKind::Parallel`); the parallel cards outrank the FujiNet
-printer unit, which outranks the SSC tap. The policy lives in
+printer unit, which outranks a CCS 7710 (`SourceKind::Serial6850`), which
+outranks the SSC tap. The policy lives in
 `PrinterCoordinator::drainImageWriter`, and the coordinator keeps ONE drain
 cursor. Everything hard about that is the handover,
 so it lives in `printerFeedCursor()` (`PrinterFeedCursor.h`), header-only
@@ -9708,8 +9902,8 @@ claimed — until then the parameter byte printed as a glyph.
 accepts for transmit (i.e. past the DTR gate — a byte the transmitter
 drops never reaches the paper either) into a host-visible spool with the
 exact `drainSpoolFrom` shape of the parallel cards, and
-`pumpImageWriter()` consumes it as a third source with parallel cards
-outranking it (a IIe with both keeps parallel routing). The tap defaults ON for a card in printer mode (on a //c, for slot 1, the
+`pumpImageWriter()` consumes it as the lowest-ranked source, every other
+feed outranking it (a IIe with both keeps parallel routing). The tap defaults ON for a card in printer mode (on a //c, for slot 1, the
 port it hard-wires to the printer — a stock //c prints via `PR#1` with zero
 configuration) and is persisted per slot as
 `ssc_printer_tap_slotN`. Enabling that path surfaced a real firmware
@@ -9830,8 +10024,8 @@ only forces TIE), and `tcr_r` returns with `TCR_PSC` **set** (`m68705.h:86`).
 The Apple mouse dump's MOR is `$40` — TOPT set, PS = 0, so the prescaler
 divides by **one** — not the TIMER_PGM path at ÷128 (the firmware only
 ever touches TCR bits 6 and 7). `configureTimerFromMor()`
-(`M68705P3.cpp:134-141`) reads the byte, and `run()` returns
-`cycles - icount` (`:966`) so the 11-cycle interrupt vector charge is
+(`M68705P3.cpp:126`) reads the byte, and `run()` returns
+`cycles - icount` (`:960`) so the 11-cycle interrupt vector charge is
 billed. `m68705_decode_smoke` measures the period between two `$07F8`
 vectors and pins the two answers apart (256 vs 32768 MCU cycles).
 History: CHANGELOG 2026-09-07.
@@ -10073,11 +10267,14 @@ Apple II joystick, and stick 2 → PADL(2/3).
 
 The panel's **Detect** picks the raw axis that moves furthest (> 0.5) from
 where it sat when the button was clicked. Inversion is per paddle, and each
-pair passes through the same deadzone/square-gate transform. **Paddle RC** in
-`Memory::softSwitchAccess`: `$C064-$C067`
-returns `0x80` while `(cycleCounter - paddleLatchCycle) <
-paddleValue × 11`. `$C070` arms latch. 11-cycle constant = rough
-Apple II RC step.
+pair passes through the same deadzone/square-gate transform. **Paddle RC**
+lives in `PaddleInputs.h` (Memory keeps only the call): `$C064-$C067` read
+`0x80` while the stock cycles since the `$C070` strobe are below
+`pulseCycles(value) = value × 11 + 2`. The 11 is the Monitor's PREAD loop
+(one count per pass, ~10.78 µs — MAME's 10 800 ns to three figures), the
++2 is Sather's `+ 100` Ω floor; elapsed time is in STOCK cycles
+(`Memory::stockCyclesBetween`) because the 558 is an RC timer, so an
+accelerator does not make the paddles read low.
 
 **Square gate (`applySquareGate`, default on, key `joystick_square_gate`).**
 A modern analog stick rides in a *round* gate: a full diagonal only reaches
@@ -10113,8 +10310,9 @@ see § Host control).
 ## UI (ImGui)
 
 `MainWindow` — menu bar + screen + emulation panel + on-demand
-panels. Owns the screen GL texture. Auto-plugs Disk II in slot 6 if
-`roms/disk2.rom` exists. F9 (screenshot), F11 (soft reset), F12
+panels. Owns the screen GL texture. The slot-6 Disk II comes from the
+default slot map (`kDefaultCards[]`), with or without `roms/disk2.rom` —
+without it the card boots with POM2's own PROM. F9 (screenshot), F11 (soft reset), F12
 (hard reset) routed unconditionally even when ImGui has focus.
 
 ### Slot Configuration: two interaction models, made visible
@@ -10182,7 +10380,7 @@ invisible precisely because nothing held them together:
 * The palette and the menus carried **different labels for the same window**
   ("Disk II drive" vs "Disk II (slot 6)").
 
-**`PanelCatalog.h` is now the one list**: 38 rows of `{id, title, menu group,
+**`PanelCatalog.h` is now the one list**: 38 rows when it landed, 40 today, of `{id, title, menu group,
 settings key, shortcut, tooltip}`. `PanelRegistry` binds each row to the `bool`
 that holds its visibility, plus two optional runtime bits — an availability
 predicate (`smartPortCard != nullptr` greys the row) and a dynamic title (the
@@ -10250,7 +10448,7 @@ outside a body refers to it.
 
 ### The MainWindow family
 
-`MainWindow.cpp` was 8316 lines. It is ~1470, and holds only what a
+`MainWindow.cpp` was 8316 lines. It is ~1620, and holds only what a
 composition root should: construction, destruction, the dock, and the frame
 loop. Everything else is a sibling TU named for what it owns.
 
@@ -10283,7 +10481,7 @@ ImGui. None of them owns a card: `SlotBus` does, and a coordinator that needs
 one re-resolves it under `lockState()` at the moment it acts — the rule that
 survives a topology rebuild.
 
-* **`SlotConfigurationCoordinator`** (`SlotConfigurationCoordinator.h`, 209 lines)
+* **`SlotConfigurationCoordinator`** (`SlotConfigurationCoordinator.h/.cpp`)
   — the two *non-topology* configuration values: `effectivePlan_` (the settings
   after profile fixtures and the multi-instance policy) and `draft_` (staged UI
   edits, never applied implicitly). Owns `kDefaultCards[]` and `isMultiInstance`.
@@ -10298,39 +10496,41 @@ survives a topology rebuild.
   the middle is recovered by `abandonLocked` (back to Stable, endpoints
   published again), which `MainWindow`'s two rebuild entry points call
   before reporting the failure with the machine paused.
-* **`SlotProvisioningCoordinator`** (179 lines) — additive, session-only slot
+* **`SlotProvisioningCoordinator`** — additive, session-only slot
   provisioning for explicit boot intent (`ensureHdvBootTarget`,
   `ensureSmartPortBootTarget`). It never tears a topology down and never
   rewrites the user's slot plan.
-* **`StorageCoordinator`** (1973 lines, the largest and the only one near the
-  2000-line watch band) — storage topology and lifecycle: cross-card media
+* **`StorageCoordinator`** (the largest by far: `StorageCoordinator.cpp` is
+  ~2450 lines, past the 2000-line watch line and held at its ceiling by
+  `tools/file_size_budget.txt`, with four `StorageCoordinator_*.cpp`
+  siblings — chains, HDV bays, the notch, persistence) — storage topology and lifecycle: cross-card media
   discovery, the three-phase flush/eject policy above, session-only
   auto-provisioning state, and the one definition of the
   `disk_path_slot<N>[_drive2]` settings key (`pom2::diskIIPathSettingKey`).
-* **`AudioCoordinator`** (444 lines) — host audio policy: the whole
+* **`AudioCoordinator`** — host audio policy: the whole
   `AudioSource` registration inventory (Mockingboard / Phasor / EchoPlus /
   EchoPlusTms5220) plus per-card volume and mute, resolving live cards under the
   machine lock so a profile rebuild cannot leave the audio callback holding a
   dangling card.
-* **`PrinterCoordinator`** (280 lines) — host printer-cable policy: it discovers
+* **`PrinterCoordinator`** — host printer-cable policy: it discovers
   every interface card (PrinterCard / Grappler / FujiNet / SuperSerial), picks
   exactly one by physical priority, drains it, and reports the sources it
   ignored. Its drain also bumps `pom2::mediaWriteEpoch()` — printed output is
   irreversible, so a rewind may not cross it.
-* **`NetworkCoordinator`** (263 lines) — the host side of the FujiNet relay: one
+* **`NetworkCoordinator`** — the host side of the FujiNet relay: one
   snapshot/apply pair for the panel with the card re-resolved under the lock
   each time, plus the host-only state that has no emulated counterpart (serial
   device scan, helper program paths, status line).
-* **`DevicePanelCoordinator`** (314 lines) — the frontend's immutable view of
+* **`DevicePanelCoordinator`** — the frontend's immutable view of
   slot devices: an `InventorySnapshot` of which slot holds Chat Mauve /
   SmartPort / FujiNet / Uthernet I & II / printer / Grappler / clock / serial,
   captured under `lockState()` so an ImGui panel sees only Snapshot +
   FrameResult and never a raw card pointer.
-* **`MouseCoordinator`** (120 lines) — the renderer-free host-mouse boundary:
+* **`MouseCoordinator`** — the renderer-free host-mouse boundary:
   which mouse card kind is plugged (None / MAME / AppleWin), the AppleWin
   inspector snapshot and the ProDOS screen-holes snapshot, and the routing of
   host pointer input — without retaining a SlotBus alias.
-* **`DebugCoordinator`** (70 lines) — the memory viewer instance and its
+* **`DebugCoordinator`** — the memory viewer instance and its
   two-phase contract at the emulation-state boundary: read under the lock,
   write after unlocking.
 
@@ -10371,9 +10571,11 @@ test. Fixing the paths exposed a second defect underneath: `disk_boot_smoke`'s
 break condition never fired, so it compared page `$08` after DOS had booted
 and run HELLO. The convention is now uniform — **77 means skipped**, every
 other non-zero value means failed — and it is applied as a **directory-wide
-sweep** over the `TESTS` directory property (`tests/CMakeLists.txt:6817-6833`)
+sweep** over the `TESTS` directory property (the `get_property(... DIRECTORY
+PROPERTY TESTS)` block at the end of `tests/CMakeLists.txt`)
 rather than test by test, so a new `add_test()` cannot forget it. Related, and
-for the same reason: `ci.yml` asserts the suite still declares **241** tests
+for the same reason: `ci.yml` asserts the suite still declares a floor of tests (**241** then,
+**300** today)
 (the download-gated Klaus/zexall oracles used to deregister in silence behind
 an `if(EXISTS)`), its "no test depends on machine ROM dumps" line was false
 (~70 test files open `roms/`) and is gone, `cpu_cycle_count` fails without
@@ -10404,8 +10606,8 @@ several need media that is not in the tree and a few take minutes — so they
 are deliberately outside ctest. But "not a test" had drifted into "not
 buildable in practice": nobody knows the target names, and a corpus sweep
 concluded *"no built binary can boot an HDV"* while `hdv_boot_dump` sat in the
-tree compiling fine. `make probes` (`tests/CMakeLists.txt:6851-6904`) builds
-all **24**, added through `if(TARGET)` so a probe gated on a missing
+tree compiling fine. `make probes` (`POM2_PROBE_TARGETS`, near the end of `tests/CMakeLists.txt`)
+builds all of them (**24** then, **35** today), added through `if(TARGET)` so a probe gated on a missing
 dependency drops out instead of failing configuration, and registering no
 test. Two probe-hygiene fixes with it: `pom2test::probeOutDir()`
 (`tests/ProbeOutDir.h`) resolves `--out` → `$POM2_PROBE_OUT` →
@@ -10436,8 +10638,8 @@ Two mechanisms keep it this way, and they are different on purpose:
 
 * `tools/check_file_sizes.sh` is the general ratchet — a recorded ceiling per
   file, which may fall and may not rise. `MainWindow.cpp` left it entirely:
-  at ~1520 it is below the 2000-line watch threshold, as is every sibling
-  (the largest is `MainWindow_StoragePanels.cpp` at ~1800).
+  at ~1620 it is below the 2000-line watch threshold, as is every sibling
+  (the largest is `MainWindow_StoragePanels.cpp` at ~1870).
 * `pom2_enforce_mainwindow_line_limit()` is a **hard cap at configure time**:
   any `src/MainWindow*.cpp` over 2000 lines fails `cmake`. Family-wide on
   purpose — the failure mode was never "MainWindow.cpp grows", it was "the
@@ -10467,7 +10669,7 @@ out.
 is open (so `enabled`/`checked` track live machine state) and dispatches the
 returned id in `MainWindow::runCommand`. One list, one switch — deliberately not
 a callback registry, because the value of the palette is that every command is
-visible in one place when you read the source. The ~38 **panel** toggles are the
+visible in one place when you read the source. The ~40 **panel** toggles are the
 exception, and for the same reason rather than against it: they come from the
 panel registry above, which is itself one readable table — keeping them here
 meant a second copy of it, and a third in `runCommand`'s dispatch.
@@ -10579,18 +10781,21 @@ Groups by size first and hashes only within same-size buckets, so a
 
 ### CRT Settings panel UX
 
-`MainWindow::renderNtscSettingsWindow`. The panel is a master ON/OFF toggle
-plus the 13 glass/demodulation knobs:
+`MainWindow::renderNtscSettingsWindow` (`MainWindow_CrtPanel.cpp`). The panel
+is a master ON/OFF toggle, the Monitor II frame tick and the seventeen
+glass/demodulation knobs of the monitor on screen:
 
-- **No look presets.** A preset row (Clean / Composite TV / Trinitron / Arcade)
-  used to be the primary control; it was removed because one click overwrote
-  the entire glass block, which made the panel's state hard to reason about.
-  The struct defaults plus **"Reset to defaults"** are the only starting
-  points now.
-- The 13 sliders sit under an **`Advanced`** header opened by default
-  (`ImGuiTreeNodeFlags_DefaultOpen`) — with the presets gone they are the only
-  controls, so a collapsed header would leave the panel empty on open. Grouped
-  `Picture` / `Phosphor` / `Glass` / `Demodulation`.
+- **No look-preset row.** A preset row (Clean / Composite TV / Trinitron /
+  Arcade) used to be the primary control; it was removed because one click
+  overwrote the entire glass block, which made the panel's state hard to
+  reason about. Since 2026-11-05 each display mode has its own built-in
+  preset and a moved control is stored for that monitor alone; right-click
+  puts that one control back. There is no global "Reset to defaults" button
+  any more ([§ CRT settings per monitor](#crt-settings-per-monitor-crtpresetsh)).
+- The sliders sit under an **`Advanced`** header opened by default
+  (`ImGuiTreeNodeFlags_DefaultOpen`) — they are the only controls, so a
+  collapsed header would leave the panel empty on open. Grouped
+  `Picture` / `Phosphor` / `Glow` / `Glass` / `Analog link`.
 - **Default barrel is `0.02`** (`NtscParams::barrel`, `NtscPostProcessor.h`) —
   a hint of tube curvature rather than the visible `0.05` warp it shipped with.
 - **Labels lead the sliders.** ImGui's native `SliderFloat` puts its label on
@@ -10599,6 +10804,12 @@ plus the 13 glass/demodulation knobs:
   `SameLine(labelW)` + `SetNextItemWidth(-FLT_MIN)`. `labelW` is *measured*
   from the widest label so it survives the UI zoom.
 - Two decimals, not three — `0.055` on a perceptual knob was false precision.
+- While a floating-panel slider is mouse-dragged, its window vertices use
+  25% of their normal alpha, except the active label/slider row. This is
+  applied after drawing so the background/title bar also fade, without
+  changing global style or popup opacity. The next frame rebuilds the draw
+  list: release, collapse and close need no persistent fade state. Docked
+  panels and slider temporary-text input are excluded.
 
 **The contradictory status messaging is the substantive fix.** A green
 "CRT Effects: ON" banner sat directly above a red "Shader unavailable — POM2
@@ -10703,7 +10914,10 @@ geometry, and the scale chain. It replaced a bare `ImGui::StyleColorsDark()`.
 leaves `WindowBg` at alpha 0.94. Over a black boot screen that's invisible;
 over a running HGR game every panel turns translucent and the content behind
 bleeds through (CRT Settings sliders were legible *on top of* Disk Library
-rows). Every background in the palette is alpha 1.0.
+rows). Every background in the palette is alpha 1.0. The deliberate, temporary
+exception is the floating CRT panel during a mouse slider drag (UI-014): its
+draw-list alpha drops so the underlying picture can be judged, while the
+active row retains its normal opacity. The palette itself remains opaque.
 
 **Surface ramp — the ordering carries meaning.** `kBg0` window → `kBg1`
 popup → `kBgBar` menu bar → `kBg2/3/4` raised (frames, buttons, tabs, in
@@ -10768,14 +10982,16 @@ configuration resolution and unchanged-save behavior.
 ### MainWindow Pimpl-light
 
 `MainWindow.h` is forward-decl-only for every plugin/panel/controller
-— includes only `M6502.h`, `Apple2Display.h` (HiResMode), `Mat4.h`
-(`OrbitCamera` member), `MouseGrab.h`, `Pom2Theme.h`,
-`PrinterScreenDump.h` (each for a by-value member) and `imgui.h`.
-32 owning members behind
+— it includes only the headers of by-value members (`M6502.h`,
+`Apple2Display.h`, `Mat4.h`, `MouseGrab.h`, `Pom2Theme.h`,
+`PrinterScreenDump.h`, `PanelRegistry.h`, `SlotConnectors.h`,
+`PostScriptRender.h`, … — its include block is the list) and `imgui.h`.
+Plugins, panels and coordinators are owning members behind
 `std::unique_ptr<T>` (plus a `vector<unique_ptr<>>` of disk panels);
 ctor/dtor/accessor bodies out-of-line so
 unique_ptr destruction sees a complete type. Compile-time: `touch
-CassetteDeck_ImGui.h` → 2 TUs rebuild; `touch MainWindow.h` → 4 TUs.
+CassetteDeck_ImGui.h` → 3 TUs rebuild; `touch MainWindow.h` → the ~24 TUs
+of the MainWindow family (4 before the split into siblings).
 
 No `*Card` pointer is cached at all any more: the accessors
 (`MainWindow::primaryDiskII()`, `primaryHdvCard()`, `hdvDevice()`, …) resolve
@@ -10783,20 +10999,34 @@ from the SlotBus on each call, and any pointer they hand back is non-owning
 and raw — `SlotBus` owns the cards, and a topology rebuild must not leave a
 stale one behind.
 
-- **MemoryViewer_ImGui** — hex + ASCII over 64 KB. Reads via
-  `Memory::data()` under `stateMutex` (held by MainWindow during
-  `render()`) so viewer never triggers soft-switch side effects.
-  Edits go through `Memory::memWrite` (ROM protection applies).
+- **MemoryViewer_ImGui** — hex + ASCII over 64 KB. Once per frame, under
+  the caller's state lock, it copies what the CPU would fetch
+  (`Memory::snapshotCpuView` — the banked view, not the flat
+  `Memory::data()` mirror), so the viewer never triggers soft-switch side
+  effects. Edits go through `Memory::memWrite` (ROM protection applies),
+  via `DebugCoordinator` after the read lock is released.
   Per-byte change-flash via frame-counter delta. Search: hex
   sequences and ASCII (raw + high-bit-set).
 - **Disassembler6502** — stateless `(mem*, pc) → mnemonic + length`.
 - **main.cpp** — GLFW char/key callbacks gated by ImGui keyboard
   capture so editing widgets don't leak into Apple II.
-- **Screenshot (F9)** — `screenshot_NNN.ppm` in cwd.
+- **Screenshot (F9)** — `screenshot_NNN.png` in `userDataDir()/screenshots`,
+  through the atomic temp + rename path. `ScreenshotExport` encodes native RGB
+  pixels outside the machine/demod locks; the numbering scan includes old PPMs.
+  The `POM2` [PNG iTXt](https://www.w3.org/TR/2025/REC-png-3-20250624/#11iTXt)
+  chunk contains UTF-8 JSON (`schema: 1`): `software`, `machine` (profile key),
+  `monitor` (CrtPresets key), `video_standard`, `width`, `height`, `crt_enabled`
+  and `crt` (all resolved CrtPresets fields plus `pal_mode` and `text_sharp`).
+  `capture_stage: "framebuffer_before_gl_effects"` and
+  `gl_effects_applied: false` distinguish these context settings from baked-in
+  effects. OE GPU capture schedules CPU demodulation before copying pixels.
+  No media paths are recorded. Headless and HTTP PPM capture contracts remain
+  unchanged. Pinned by `screenshot_export` (pixels, UTF-8, CRCs, numbering and
+  failure paths).
 
 ### HGR / DHGR Paint editor (hgrpaint/, shared with POM1)
 
-Tools → *HGR Paint Editor* / *HGR Sprite Editor*. The editor itself (`src/hgrpaint/`, ~5 k lines:
+Tools → *HGR Paint Editor* / *HGR Sprite Editor*. The editor itself (`src/hgrpaint/`, ~7 k lines:
 canvas/tools/undo/clipboard + the ii-pix-style image importer with CAM16-UCS
 perceptual dithering) is the **portable module shared verbatim with POM1** —
 it only talks to the emulator through the `hgrpaint::IHgrPaintHost` seam.
@@ -11033,12 +11263,13 @@ internal header to slot 3.
 firmware, which the boot code calls) until a program writes into the page.
 MAME's `c400_int_r` / `c400_w` do the same with `m_mockingboard4c`. POM2's
 latch is `Memory::iicExpansionAwake_`: set by a write routed to
-`peripheralForIicRomPage`, cleared by `resetSoftSwitches` (every //c reset),
-carried in the paging snapshot section (byte 10). Pinned by
+`peripheralForIicRomPage`, cleared by `clearRam` (power-on / cold boot only —
+Ctrl-Reset leaves it awake, as MAME's `reset_w` does), carried in the paging
+snapshot section (byte 10). Pinned by
 `iic_mockingboard_4c`.
 
 The other face of that latch: once awake, the 4c hides the mouse firmware
-until the next reset, and with it the //c's only VBL interrupt source —
+until the next power cycle, and with it the //c's only VBL interrupt source —
 `$C019` on a //c is the VBLINT *latch* (IIc Tech Note #9), which a poller
 never sees set while VBL interrupts are off. A2osX 0.95 trips over exactly
 this: its Z80-card probe writes `$C400`, its mouse search then finds no
@@ -11189,19 +11420,22 @@ POM2 degrades *silently* to a working higher one when its dump is absent, and
 `docs/lle_vs_hle.md` § "Keeping a level once you have it" names that as a
 structural hole. The column reports **degraded**, not merely missing, from the
 card accessors: `DiskIICard::usingBitLss` (the honest test — a mounted WOZ
-forces the bit-level path even with no `diskii_p6.rom`, using the embedded
-default P6), `ClockCard::romFromDump`, `GrapplerCard::isRomLoaded`,
+forces the bit-level path even with no `diskii_p6.rom`, read by POM2's own
+sequencer, `DiskIICard::ownSequencerStep`), `ClockCard::romFromDump`, `GrapplerCard::isRomLoaded`,
 `SmartPortCard::isLironRomLoaded`.
 
-**Four switchable boundaries**, expressed as a choice of *level* rather than of
+**Six switchable boundaries**, expressed as a choice of *level* rather than of
 catalog key: Mouse Card (L0 MAME ⇄ H1 AppleWin), ProDOS block storage (L2 CFFA
 ⇄ H1 HDV), printer interface (L2 Grappler+ ⇄ H1 synthetic), colour pipeline
-(L1 OpenEmulator ⇄ H1 artifact LUT). The first three go through
+(L1 OpenEmulator ⇄ H1 artifact LUT), and two firmware switches — the CCS
+7710's PROMs ⇄ POM2's page (`ccs7710_firmware`) and the DAN ][ EPROM ⇄ POM2's
+page (`dan2_firmware`), both through `pom2::applySettingWithRebuild`. The three
+card swaps go through
 `MainWindow::swapSlotCardVariant`, which swaps the card **in place, in the slot
 it already occupies** (moving it would be a second unasked-for change, and slot
 numbers are baked into most software) and then rebuilds via
 `restartEmulationFromSettings` under the same persist/rollback contract as Slot
-Config's Apply. The fourth is a render-path change and is instant. A side whose
+Config's Apply. The colour pipeline is a render-path change and is instant. A side whose
 dump is missing is greyed: offering a switch that would silently land on the
 fallback would repeat the exact mistake the panel exists to expose.
 
@@ -11321,8 +11555,8 @@ Status, never planned by `romsToFetch()`. The mapping lives in `romFetchCatalog(
 `destRel` is a path `SystemProfile` / `RomCatalog` / `CharRomCatalog`
 already looks for (pinned by `rom_fetch`). Existing files are skipped
 (`findResource`); new ones land in `writableRomsDir()`: POM2's own `roms/`
-— the first one in the search roots outside the per-user data dir, where the
-shipped //c firmware lives (beside the binary,
+— the first one in the search roots outside the per-user data dir (beside
+the binary,
 `./roms` in a checkout) — when `romsDirTakesDownloads` accepts it: writable
 and **not inside a macOS `.app`** (a file added under `Contents/` breaks a
 notarized bundle's seal, and updating a Mac app replaces the bundle, ROMs
@@ -11404,8 +11638,9 @@ Verdicts are deliberately unequal:
   when `apple2e_unenh.rom` is absent — previously only a log line.
 
 CRC-32 (IEEE, reflected) is implemented locally: POM2 links no zlib,
-and the WOZ path only ever writes the "not computed" sentinel, so
-there was nothing to borrow.
+and when this landed the WOZ path only wrote the "not computed" sentinel,
+so there was nothing to borrow. (A WOZ save writes a real CRC since
+2026-11-05, with its own `DiskImage::wozCrc32`.)
 
 **Import by content** *(2026-10-29)* — `RomImport.{h,cpp}`. A dump the user
 already has rarely carries the name POM2 probes (MAME's `341-0270-c.4b`,
@@ -11498,12 +11733,16 @@ ships `cffa20ee02.bin` for a 6502 and `cffa20eec02.bin` for a 65C02, which
 differ in 1979 of 4096 bytes); set after the rebuild, the answer would be
 the OUTGOING machine's. `setVideoStandard` (step 10) also computes
 `emulatedCpuClockHz()` = the standard's clock × `baseCyclesPerFrame /
-cyclesPerFrame` (4× on the //c+, exactly 1 everywhere else) and hands THAT
+cyclesPerFrame` (exactly 1 on every profile since 2026-10-21, when the //c+'s
+4× became a `ZipChip` that reaches the fan-out through
+`applyAcceleratorClock`; it was 4× there before) and hands THAT
 to the speaker, cassette, floppy sounds and every slot card; the Slot
 Config re-plug reads the same value, and the toolbar's 1× bucket is the
 profile's stock budget. Pinned by `device_clock_fanout` and
-`slot_card_factory`. Left open: the //c+'s video frame is still 17030 CPU
-cycles, so its beam sweeps 4× per UI frame.
+`slot_card_factory`. Closed since: an accelerator's multiplier scales the video clock back
+(`Memory::setVideoClockRatio(1 / mul)` in `applyAcceleratorClock` — the beam
+keeps the crystal's time), so the //c+'s beam no longer sweeps 4× per UI
+frame.
 
 `SystemProfile.h/.cpp`. Pinned: `system_profile_smoke`.
 
@@ -11517,13 +11756,14 @@ stand-in makes it differ, so `applyProfile` runs — and `applyProfile` is what
 actually installs the PAL video standard, the 20313-cycle frame budget and the
 `setCpuClock` sweep over every slot card. Setting `activeProfile =
 AppleIIePAL` directly would skip all of that and leave a //e running at 60 Hz
-while the UI claimed PAL. The default degrades to the auto-probe when no //e
-ROM was found (`iiePresent == false`), and `--ii-plus` still wins over both.
+while the UI claimed PAL. The default becomes `iic-pal` when no //e ROM was found but the //c firmware
+was (`iicOnly` — a fresh package), degrades to the auto-probe when neither
+was, and `--ii-plus` still wins over all of them.
 
 The matching **default slot map** is `kDefaultCards[]` in
-`SlotConfigurationCoordinator.cpp:56`, consumed by its `resolve()` at `:141`
-and applied by `MainWindow::plugSlotsFromSettings` (which now lives in
-`MainWindow_SlotConfig.cpp:130`): sl1 `grappler`, sl2 `mockingboard`, sl3
+`SlotConfigurationCoordinator.cpp`, consumed by its `resolve()` and applied
+by `MainWindow::plugSlotsFromSettings` (which now lives in
+`MainWindow_SlotConfig.cpp`): sl1 `grappler`, sl2 `mockingboard`, sl3
 empty, sl4 `mouseaw`, sl5 `smartport35`, sl6 `diskii`, sl7 `chatmauve` — a
 default only, overridden by any `slot_N_card` key. **Slot 3 is empty by
 design**: on a //e the 80-column card is not a slot card at all (internal
@@ -11568,7 +11808,7 @@ lock the same five slots — sl1 + sl2 (the two on-board serial ports as
 `ssc`), sl4 (`iicmouse`, the native IOU mouse — firmware at `$C400` on the
 //c, `$C700` on the //c+), sl5 (`smartport35`) and sl6 (`diskii`); sl3
 and sl7 stay free, except that the //c PAL profile also locks sl7 to
-`chatmauve` (`SystemProfile.cpp:296`). `plugSlotsFromSettings` overrides `slotCards[s]` with forced
+`chatmauve` (`SystemProfile.cpp`). `plugSlotsFromSettings` overrides `slotCards[s]` with forced
 cardKey regardless of persisted `slot_N_card`. `renderSlotConfigPanel`
 renders locked slots disabled with "built-in" badge. Pinned:
 `testBuiltInSlots`.
@@ -11576,7 +11816,7 @@ renders locked slots disabled with "built-in" badge. Pinned:
 **//c+ MIG + IWM handshake** (//c+-only): alt firmware (bank 1)
 drives a MIG gate-array + IWM. POM2 models the minimum for cold boot:
 
-- **MIG** (MAME `apple2e.cpp:598-704 mig_r/mig_w`). Profile hosts
+- **MIG** ([D] MAME `apple2e.cpp:593-699 mig_r/mig_w` @ `mame0287`). Profile hosts
   `migRam[0x800]`, `migPage`, `migIntDrive`, `migHdSel`; routes two
   MIG windows in bank-1 expansion ROM **only when `isIIcPlus &&
   iicRomBank`**:
@@ -11668,7 +11908,8 @@ the same step:
 CLI `--preset` triggers the same path (after legacy auto-probe —
 wins). Aliases: `apple2`, `apple2plus`, `iie-u` / `iieunenhanced` /
 `apple2e-1983`, `apple2e`, `apple2c`, `apple2cplus`, `//e-u`, `//e`,
-`//c`, `//c+`, plus the PAL keys `iie-pal` / `iiepal` / `apple2e-pal` /
+`//c`, `//c+`, plus the PAL keys `iie-u-pal` / `iieupal` / `iie-unenh-pal` /
+`//e-u-pal` / `apple2e-1983-pal` / `frenchtouch`, `iie-pal` / `iiepal` / `apple2e-pal` /
 `//e-pal` and `iic-pal` / `iicpal` / `apple2c-pal` / `//c-pal` /
 `chatmauve`. `cpu_mode_override` = `auto|nmos|65c02`.
 
@@ -11710,7 +11951,7 @@ external 1, external 2), `--blank-disk [drive:]path`,
 `--session-save`/`--session-load`,
 `--fujinet[=PORT]`/`--fujinet-serial[=DEV]`/`--fujinet-slot N`,
 `--slot N=KEY`, `--printer-port N:k=v,…`,
-`--rgb-card-invert-bit7[=on|off]`, `--trace-brk` (logged no-op),
+`--rgb-card-invert-bit7[=on|off]`, `--trace-brk` (BRK state + PC trace to the log, `M6502::setDebugBrkTrace`),
 `-h`/`--help`, `-v`/`--version`.
 `printUsage()` is the source of truth.
 
@@ -11731,10 +11972,13 @@ bootDiskPath`; `--kiosk` → `CliPlan::kiosk`. `main.cpp`:
   `DiskIICard::insertDisk` + `bootFromSlot`.
 
 - **HDV auto-provision**: an HDV needs an HDV/SmartPort card. A saved
-  config may have only Disk II cards. `ensureHdvCardForBoot()` plugs a
-  `ProDOSHardDiskCard` into a free slot (prefers 7) for the session
-  if none present. Plug **not persisted** — user's GUI config stays
-  untouched.
+  config may have only Disk II cards. `ensureHdvCardForBoot()` asks
+  `SlotProvisioningCoordinator::ensureHdvBootTarget`, which first reuses a
+  plugged CFFA, HDV, SmartPort or Liron card, and only then plugs a
+  `ProDOSHardDiskCard` into a free slot (searched from 7) for the session.
+  On a //c-class profile it never plugs one — slot cards are masked by the
+  forced INTCXROM there — and refuses unless the built-in slot-5 SmartPort
+  exists. Plug **not persisted** — user's GUI config stays untouched.
 
 - **No persistence in kiosk**: the shutdown `settings->save()`
   (`MainWindow_Session.cpp`) is gated `if (!settingsReadOnly())` — true in
@@ -11794,7 +12038,9 @@ bootDiskPath`; `--kiosk` → `CliPlan::kiosk`. `main.cpp`:
   outside the read-only `state.cfg`), sorted by name-proximity so the
   mounted title's other sides float to the top (● marks the mounted disk,
   matched canonically so relative launch paths still hit). **ACTIONS**
-  holds Restart (`bootFromSlot`) / Keyboard / ROM folders / Quit.
+  holds Restart (`bootFromSlot`, `coldBoot` with no Disk II) / Keyboard /
+  ROM folders / Exit kiosk (back to the windowed GUI, machine running —
+  `toggleKioskMode`) / Quit.
   Activating a 5.25" hot-swaps it **in place, no reboot** (`insertDisk`
   under `stateMutex` — flip-disk gesture) and keeps the menu open so a
   Restart can follow; a 3.5"/HDV routes through `insertAndBootImage` and
@@ -12163,7 +12409,7 @@ BDOS $94C3 F_SFIRST ????????.??? -> A=$00
 - **Switches.** `EmulationController::setOsCallTrace(pom2::OsTraceKinds)`
   (under the lock); the Debugger panel's "OS calls and traces" section (copy
   to the clipboard); `pom2_headless --trace-mli/-bdos/-sp/-pascal/-monitor/
-  -disk` print to stderr (that tool is a ][+); `os_trace_probe` (`probes`
+  -disk` print to stderr (a ][ / ][+, or a //e with `--iie`); `os_trace_probe` (`probes`
   target) boots a //e enhanced on a 5.25" or 3.5" disk with any of them.
   4000 lines are kept. A time jump drops the open calls. Any 6502 trace arms
   the Debugger hook (`OsCallTrace::any6502`). The field is `pascalBios`, not
@@ -12222,13 +12468,16 @@ reports `child died on signal 6`.
 
 ## Package payload — `packaging/bundle.manifest`
 
-**ROMs (2026-10-29).** A package carries only the //c minimum of `roms/`
-(`apple2c-32Kv0.rom`, `apple2e_char.rom`, `floppy_samples/`), listed as
-`file` entries — the tree stays complete in the repository for tests and
-source builds. `MainWindow`'s constructor then defaults to the //c PAL
-(probe order //e → ][+ → //c), and `MainWindow_RomOffer.cpp` asks once to
-fetch the rest. The release boot smoke passes `--rom` from the checkout,
-since `pom2_headless` only runs a ][.
+**ROMs (2026-10-29).** A desktop package carries **no** firmware: `roms/`
+holds only `floppy_samples/`, `printer_samples/` and the README, and
+`stage_data.sh --verify` fails any other file there. The //c and //e ROMs
+(`apple2c-32Kv0.rom`, `apple2e.rom`, `apple2e_char.rom`,
+`mouse_341-0270-c.bin`) are `wasm` entries, for the browser alone. Dumps come
+from `tools/fetch_test_media.py` in a checkout and from
+`MainWindow_RomOffer.cpp`'s first-launch offer in a package. `MainWindow`'s
+constructor probes //e → ][+ → //c and falls back to the //c PAL when only
+the //c firmware resolves (the browser bundle). The release boot smoke passes
+`--rom` from the checkout, since the package has no ROM to boot.
 
 **One list, four consumers.** What ships inside a package used to be spelled
 out by hand in four places — `CMakeLists.txt`'s `install()` rules,
@@ -12242,7 +12491,7 @@ photography nothing reads), the desktop packages carried neither.
 
 | kind | meaning |
 |---|---|
-| `dir`  | copy the whole tree (`roms`, `fonts`) |
+| `dir`  | copy the whole tree (`roms/floppy_samples`, `fonts`) |
 | `file` | copy one file, optionally renaming (`packaging/roms_README.txt roms/README.txt`) |
 | `wasm` | browser build ONLY — never in a desktop package |
 | `deny` | must NEVER appear in any package; the guard asserts it |
@@ -12253,8 +12502,9 @@ git tracks: two ROM `.zip` archives sitting in `roms/` shipped in a
 locally-built WASM bundle, where nothing would have noticed them (CI builds
 from a clean checkout, so its bundle differed from the committed one). Those
 two archives **are** git-tracked — the comment that called them untracked was
-wrong, and was corrected on 2026-09-07; untracking them is the maintainer's
-call, and the manifest keeps them out of packages either way.
+wrong, and was corrected on 2026-09-07. They have since left git with the
+rest of the firmware (2026-10-29: `roms/` tracks only the floppy and printer
+samples); the manifest keeps any archive out of packages either way.
 
 **`deny` is enforced by all three parsers, not only the verifier**
 *(2026-09-07)*. It used to be checked by `--verify` alone — at `-maxdepth 4`,
@@ -12267,9 +12517,11 @@ at any depth** (`foo.ZIP/` used to be invisible twice over: wrong case, and a
 directory). CMake gets there by translating each glob into a case-insensitive
 REGEX — `install(DIRECTORY)`'s `PATTERN` is a case-sensitive *name* glob and
 does not apply to directories, so `pom2_glob_to_ci_regex` builds a `[aA]`
-class per letter (`CMakeLists.txt:39-60`). `--verify` also now **fails a
-payload directory that holds only its own README**: that is a package with
-zero ROMs, and the old non-empty check passed it. Six new negative controls in
+class per letter (`CMakeLists.txt`). `--verify` also now **fails a payload
+directory that holds only notes** (README/LICENSE-class files): that is an
+empty payload, and the old non-empty check passed it — and, since
+2026-10-29, any file in `roms/` beyond the samples and the README (no
+firmware in a desktop package). Six new negative controls in
 `--self-test` cover the cases.
 
 Consumers:
@@ -12338,12 +12590,14 @@ capture. A screenshot with no positive frame count runs 300 frames;
 before the flat-colour check, so an exit-3 capture can still be inspected.
 That check establishes only a nonuniform image, not a successful guest OS
 boot. Capture skips the SSC TCP listener and setup paste. Interactive mode
-requires a resolved Disk II PROM and disk, starts the SSC listener on port
+requires a disk (with no `disk2.rom` the card boots POM2's own PROM), starts the SSC listener on port
 6502 by default and queues `PR#2\rIN#2\r` after six emulated seconds; use
 `--port`, `--paste-after`, `--setup` or `--no-setup` to change those defaults.
 The legacy disk probe is `disks_5.4/dos33_master.dsk`; packages require an
 explicit `--disk` to select a curated image. `--rom` changes the firmware
-file without applying a desktop profile or enabling IIe memory mode.
+file without applying a desktop profile or enabling IIe memory mode (`--iie`
+does the latter; the CPU follows the dump — NMOS on a ][, a ][+ and an
+unenhanced //e).
 
 **The browser demo deploys from CI, not from the branch** (2026-08-23).
 `ci.yml`'s `wasm` job stages the bundle it just built under `_site/wasm/`
@@ -12382,10 +12636,11 @@ last sixteen `add_test` calls appended since 2026-09-07, which therefore
 ran with media writable and their own timeouts; the sweeps are the last
 thing in the file under a banner, and `test_property_sweep` reads the
 generated `CTestTestfile.cmake` back so the next append cannot miss them.
-Noted, not fixed: `POM2_CORE_SOURCES` lists three files twice;
-`coverage.sh --update` lowers the floor unconditionally despite its
-header; `check_file_sizes.sh` never sees `.hpp`/`.cc`/`.inl` or anything
-outside `src/` and `tests/`.
+Noted then, all three fixed since (ARCH-005, 2026-10-24): `POM2_CORE_SOURCES`
+listed three files twice; `coverage.sh --update` lowered the floor
+unconditionally (it now needs `--lower`); `check_file_sizes.sh` never saw
+`.hpp`/`.cc`/`.inl` or anything outside `src/` and `tests/` (it now scans
+`include/` and `examples/` too, every first-party extension).
 
 ## WebAssembly (browser build)
 
@@ -12402,8 +12657,9 @@ Pages, plain S3). The CPU worker thread is replaced by
 `main.cpp` (look for `#ifdef __EMSCRIPTEN__`). Trade-off vs the
 native build: no POM2 CPU worker thread. Audio is delivered through
 miniaudio's Web Audio backend — a ScriptProcessorNode, so the callback runs
-on the main thread between frames; hence a 2048-frame period there (256 on
-the desktop), and jitter buffers (Mockingboard / Phasor `targetLag`) that
+on the main thread between frames; hence a 2048-frame starting period there
+(4096 on mobile, 256 on the desktop — `AudioBufferPolicy.h`, a ladder climbed
+on late callbacks), and jitter buffers (Mockingboard / Phasor `targetLag`) that
 add the callback's own span. See CHANGELOG 2026-10-23.
 
 **The canvas is the whole page.** `wasm/shell.html` sizes it to the
@@ -12429,14 +12685,15 @@ backing store is in CSS pixels (no `GLFW_SCALE_TO_MONITOR`), as before.
   [§ Browser persistence](#browser-persistence-idbfs) for the three
   parts, none of which is optional.
 - `--preload-file roms@/roms …` — the payload `packaging/bundle.manifest`
-  lists (the //c minimum of `roms`, `fonts`, the whole `pic/` folder,
+  lists (the `wasm` ROMs — //c, //e, //e character, mouse — and the
+  floppy/printer samples, `fonts`, the whole `pic/` folder,
   curated `bundled_disks/` files, plus browser-only `wasm floppyemu`),
   baked into `POM2.data` at build time
   (the old `POM2_WASM_BUNDLE` list was never read and is gone). The 3.5" library is opt-in via
   `-DPOM2_WASM_BUNDLE_DISKS=ON` (appends `disks_3.5`; `disks_5.4` +
   `hdv` are excluded — too large).
 - `pom2_headless` target is skipped under EMSCRIPTEN
-  (`if(NOT EMSCRIPTEN)` at `CMakeLists.txt:1589`) — no TCP listener,
+  (the `if(NOT EMSCRIPTEN)` around `add_executable(pom2_headless`, `CMakeLists.txt`) — no TCP listener,
   no terminal.
 
 **Compile-out gates** (host-socket bridges, guarded by
@@ -12495,7 +12752,7 @@ during testing, not theorised.
 
 The symbols stay declared so every caller still links — only the
 implementation degrades. **Rule for editors of these two files**
-(`Pom2Build.h:70-78`): guard host-socket code with
+(`Pom2Build.h`, the `POM2_HAS_SOCKETS` comment): guard host-socket code with
 `#if POM2_HAS_SOCKETS`, **not** `#ifndef __EMSCRIPTEN__` (the latter
 silently assumed "not a browser therefore POSIX", which broke the
 Windows build); new socket calls must have a no-socket branch
@@ -12598,7 +12855,10 @@ The short version of the tooling:
   device, no sockets, no wall-clock pacing → two runs retire the same
   instruction count. It prints FNV-1a hashes of RAM and of the framebuffer;
   **those hashes are the contract**: an optimisation that moves one is a
-  behaviour change, and POM2 is cycle-accurate. `pom2_headless` is a telnet
+  behaviour change — the emulation is deterministic down to the cycle count,
+  so a pure optimisation cannot move them. (Determinism, not cycle-accuracy:
+  the core is instruction-stepped, with sub-instruction cycle offsets only
+  where a device needs them — [§ CPU](#cpu).) `pom2_headless` is a telnet
   console and cannot be used for this.
 - **callgrind** over that binary, `--auto=yes` for line-level attribution.
   Profile *two* shapes at least — the hot spots with the drive spinning and
@@ -12620,37 +12880,5 @@ second inlined `advanceCycles`, a second exit and a per-instruction
 `debugHook_` load. That measured **+2.46 %** on every workload — a paired
 bisect, 32 of 33 runs, p = 0.00003. The shape that keeps the fix and the speed
 tests `interruptCycles` **first**, so `debugHook_` is never loaded on the
-common path, and falls into a single tail (`M6502.cpp:2298-2313`). RAM and
+common path, and falls into a single tail (the end of `M6502::step`). RAM and
 framebuffer hashes identical.
-
-### Sony and intelligent UniDisk identification (2026-09-27)
-
-Apple 3.5 (Sony) is an IWM mechanism; UniDisk 3.5 is an intelligent
-SmartPort device. Floppy Emu implements either depending on its selected
-mode, and its SmartPort HD mode is intelligent too. The UI and mount routes
-keep these identities distinct. Liron accepts intelligent UniDisk / HD,
-not Apple 3.5 or a physical Apple 5.25 drive. See the
-[BMOW manual](https://www.bigmessowires.com/femu-instructions.pdf).
-
-External Sony mechanisms start disconnected; mounting attaches them, while
-ejecting only removes their media. Connection settings persist separately
-and may be changed in the Sony panel once affected disks are ejected. This
-prevents a ghost empty Sony from preceding an intelligent UniDisk.
-
-The //c+ has an internal Sony and can address two external Sony drives.
-They occupy S5D1, S5D2 and S2D1 respectively. The real ROM selects the
-external 3.5 path with STA $CE40, and the 5.25 path with STA $CE60; this
-differs from MAME's mig_w levels. Sony motor commands are latched by LSTRB,
-not IWM enable. Real-ROM ProDOS MLI OPEN/READ/CLOSE tests verify each
-external Sony, while DOS 3.3 write/read verifies the 5.25 path. A third
-Sony snapshot section is appended after the historical mouse section.
-See [Apple TIL 03435](https://www.savagetaylor.com/TIL/TIL03435.pdf) for
-physical chain ordering and supported combinations: Sony first, intelligent
-UniDisk / HD next, 5.25 last. The three-external-floppy limit is distinct
-from logical HD units supplied by an intelligent emulator.
-
-SmartPortCard now supports fourteen logical units (default remains eight).
-ProDOS has fourteen device-table entries total, shared with /RAM and other
-controllers; the configured chain size is not a promise that all volumes
-will be visible. Snapshot v4 carries fourteen records; v3 retains its eight
-and v1/v2 their two when loaded.

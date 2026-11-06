@@ -554,7 +554,11 @@ src/hgrpaint/HgrPaintEditor.cpp          2656
 # the loopback guard, WR14 reset against the AMD table — and the graded
 # comments that back each against MAME's reading. One chip, one TU: the
 # register file and the two channels share every state the comments cite.
-src/Scc8530Device.cpp                    2071
+# 2026-11-06: the transmitter takes WR5's word length instead of WR3's
+# (txWordLength + the async mask, Zilog manual § 7.1.6 — MAME's single
+# receive-sized frame was wrong; provenance-P1a). Comments compacted first.
+#   src/Scc8530Device.cpp: 2071 -> 2080 (+9)
+src/Scc8530Device.cpp                    2080
 # 2026-11-01 (parity campaign): src/W5100Device.cpp crossed the watch
 # threshold with the Ctrl-Reset, RECV re-raise and DISCON-IRQ fixes and
 # their graded comments. One chip, one TU.

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// MainWindow_RomOffer — the first-launch "download the Apple II ROMs?" offer.
+// MainWindow_RomOffer — first-launch offer and on-screen firmware recovery.
 //
 // A desktop package carries no firmware at all (packaging/bundle.manifest:
 // every dump is copyrighted); they are fetched — POM2's archive.org archive,
@@ -29,6 +29,10 @@
 #include "MainWindow.h"
 
 #include "IconsFontAwesome6.h"
+#include "EmulationController.h"
+#include "Memory.h"
+#include "ResourcePaths.h"
+#include "SystemProfile.h"
 #include "Logger.h"
 #include "PanelCatalog.h"
 #include "RomFetch.h"
@@ -92,11 +96,7 @@ void MainWindow::renderRomDownloadOffer()
         settings->save();
     };
     if (ImGui::Button(ICON_FA_DOWNLOAD " Download", ImVec2(160, 0))) {
-        remember();
-        if (!romStatusPanel)
-            romStatusPanel = std::make_unique<pom2::RomStatus_ImGui>();
-        show(pom2::PanelId::RomStatus) = true;
-        romStatusPanel->startDownload();
+        openRomSetup(true);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -106,4 +106,92 @@ void MainWindow::renderRomDownloadOffer()
     }
     ImGui::EndPopup();
 #endif
+}
+
+void MainWindow::openRomSetup(bool download)
+{
+    // Panels are not rendered in kiosk mode. Leave it before opening setup;
+    // the session's settings-read-only policy remains in force.
+    if (kiosk_) toggleKioskMode();
+    if (!romStatusPanel)
+        romStatusPanel = std::make_unique<pom2::RomStatus_ImGui>();
+    show(pom2::PanelId::RomStatus) = true;
+    if (download) {
+        // An explicit screen-button click also answers the first-launch offer.
+        romOfferChecked_ = true;
+        if (settings && !settingsReadOnly() &&
+            !settings->getBool("rom_download_offered", false)) {
+            settings->setBool("rom_download_offered", true);
+            settings->save();
+        }
+        romStatusPanel->startDownload();
+    }
+}
+
+void MainWindow::reloadMissingFirmware()
+{
+    std::string path;
+    for (const auto& candidate : pom2::profileConfig(activeProfile).romProbeOrder) {
+        path = pom2::findResource(candidate);
+        if (!path.empty()) break;
+    }
+    if (path.empty()) path = romPath;
+    // Stage the bytes unlocked, then install the SAME bytes under the lock.
+    // No second file open or filesystem probe can stall the CPU/UI here.
+    Memory::AppleIIRomImage image;
+    std::string error;
+    if (!Memory::prepareAppleIIRom(path.c_str(), image, error)) {
+        romStatus = error;
+        return;
+    }
+    bool loaded;
+    {
+        auto state = controller->lockState();
+        loaded = state.memory().loadAppleIIRom(
+            image, pom2::profileUsesLowerRomHalf(activeProfile));
+        if (!loaded) error = state.memory().getLastError();
+    }
+    if (!loaded) {
+        romStatus = error;
+        return;
+    }
+    romPath = path;
+    romLoaded_ = true;
+    romStatus = "loaded: " + path;
+    controller->hardReset();
+}
+
+void MainWindow::renderMissingFirmwareNotice()
+{
+    const auto& profile = pom2::profileConfig(activeProfile);
+    // A child remains part of the screen's dock/window ordering, unlike a
+    // top-level overlay that would cover menus. It scrolls on small screens.
+    if (ImGui::BeginChild("##missingFirmware", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        ImGui::TextUnformatted("Firmware missing");
+        ImGui::TextWrapped("%.*s", static_cast<int>(profile.displayName.size()),
+                           profile.displayName.data());
+        ImGui::Spacing();
+        if (kiosk_) {
+            ImGui::TextWrapped("This machine needs a system ROM before it can start.");
+            if (ImGui::Button("Open firmware setup")) openRomSetup(false);
+        } else {
+#ifdef __EMSCRIPTEN__
+            ImGui::TextWrapped("Select a machine whose firmware is bundled, or restore "
+                               "a supported session. ROM downloads are unavailable in the browser.");
+#else
+            const bool busy = romStatusPanel && romStatusPanel->downloadRunning();
+            ImGui::TextWrapped("Download the ROMs or drop your ROM file onto this window. "
+                               "After downloading, choose Reload ROM.");
+            ImGui::BeginDisabled(busy);
+            if (ImGui::Button("Download missing ROMs")) openRomSetup(true);
+            if (ImGui::Button("Reload ROM")) reloadMissingFirmware();
+            ImGui::EndDisabled();
+            if (busy) ImGui::TextWrapped("Downloading ROMs. Progress and Cancel are in ROM Status.");
+#endif
+            if (ImGui::Button("ROM status / details")) openRomSetup(false);
+        }
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", romStatus.c_str());
+    }
+    ImGui::EndChild();
 }

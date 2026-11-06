@@ -193,6 +193,12 @@ void MainWindow::renderJoystickPanelWindow()
     if (!show(pom2::PanelId::Joystick)) return;
 
     pom2::JoystickPanel_ImGui::Snapshot snap;
+    {
+        auto st = controller->lockState();
+        snap.joyportMode = st.memory().joyportMode();
+        snap.joyportAvailable = !st.memory().isIIcClass();
+        snap.gamePortConnected = st.memory().gamePortConnected();
+    }
     for (int h = 0; h < JoystickInput::kHostCount; ++h) {
         const auto& d = joystick->deviceState(h);
         if (!d.present) continue;
@@ -207,40 +213,71 @@ void MainWindow::renderJoystickPanelWindow()
         snap.hosts.push_back(std::move(hd));
     }
     const auto& cf = joystick->binding();
+    snap.mode = cf.mode;
+    snap.velocitySpeed = cf.velocitySpeed;
+    snap.automaticHost = joystick->hostPreference() == JoystickInput::kAutomaticHost;
+    snap.keyboard = cf.keyboard;
+    snap.secondHost = cf.secondHost;
+    snap.secondResolvedHost = joystick->secondHostIndex();
+    snap.secondSource = cf.secondSource;
     snap.hostIdx    = cf.hostIdx;
     snap.deadzone   = cf.deadzone;
     snap.invert     = cf.invert;
     snap.squareGate = cf.squareGate;
     snap.source     = cf.source;
     for (int i = 0; i < 4; ++i) snap.appleIIPaddle[i] = joystick->paddleValue(i);
-    for (int i = 0; i < 3; ++i) snap.appleIIButton[i] = joystick->buttonDown(i);
+    for (int i = 0; i < 3; ++i) snap.appleIIButton[i] = joystick->gamePortButton(i);
+    if (keyboardJoystick_.active()) {
+        for (int i = 0; i < 2; ++i) {
+            snap.appleIIPaddle[i] = keyboardJoystick_.paddle(i);
+            snap.appleIIButton[i] |= keyboardJoystick_.button(i);
+        }
+    }
 
     auto result = joystickPanel->render("Joystick", show(pom2::PanelId::Joystick), snap);
+    if (result.centreMask) joystick->centrePaddles(result.centreMask);
     if (result.changed) {
+        controller->lockState().memory().setJoyportMode(result.joyportMode);
         auto& bind = joystick->binding();
-        const bool hostPicked = (result.hostIdx != bind.hostIdx);
-        bind.hostIdx    = result.hostIdx;
+        if (bind.keyboard != result.keyboard) keyboardJoystick_.setActive(false);
+        bind.keyboard = result.keyboard;
+        bind.secondHost = result.secondHost;
+        bind.secondSource = result.secondSource;
+        if (result.hostPicked) {
+            if (result.automaticHost) joystick->useAutomaticBinding();
+            else {
+                bind.hostIdx = result.hostIdx;
+                joystick->markBindingExplicit();
+            }
+        }
         bind.deadzone   = result.deadzone;
         bind.invert     = result.invert;
         bind.squareGate = result.squareGate;
         bind.source     = result.source;
-        // Picking a device — "(none)" included — is a decision, and the
-        // auto-binder must stop overruling it. See markBindingExplicit().
-        if (hostPicked) joystick->markBindingExplicit();
+        bind.mode = result.mode;
+        bind.velocitySpeed = result.velocitySpeed;
         // The whole binding persists, not just the square gate: deadzone,
         // invert and the chosen pad were re-derived from defaults on every
         // launch, so a user with drift dialled out got it back each session.
         if (settings) {
+            settings->setInt("joystick_joyport", result.joyportMode);
+            settings->setBool ("joystick_keyboard", bind.keyboard);
+            settings->setInt("joystick_second_host", bind.secondHost);
+            for (int i = 0; i < 2; ++i)
+                settings->setInt("joystick_second_source_" + std::to_string(i), bind.secondSource[i]);
             settings->setBool ("joystick_square_gate", bind.squareGate);
-            settings->setInt  ("joystick_host",        bind.hostIdx);
+            settings->setInt  ("joystick_host", joystick->hostPreference());
             settings->setFloat("joystick_deadzone",    bind.deadzone);
             settings->setBool ("joystick_invert_x",    bind.invert[0]);
             settings->setBool ("joystick_invert_y",    bind.invert[1]);
             settings->setBool ("joystick_invert_right_x", bind.invert[2]);
             settings->setBool ("joystick_invert_right_y", bind.invert[3]);
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < 4; ++i) {
                 settings->setInt("joystick_source_pdl" + std::to_string(i),
                                  bind.source[i]);
+                settings->setInt("joystick_mode_pdl" + std::to_string(i), bind.mode[i]);
+                settings->setFloat("joystick_speed_pdl" + std::to_string(i), bind.velocitySpeed[i]);
+            }
         }
     }
 }

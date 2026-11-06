@@ -199,8 +199,8 @@ public:
     /// there, so the window has to carry reads as well as writes.
     int iicRomWindowPage() const override { return 4; }
     /// Which PSG sits in the two sockets. Slot cards carry AY-3-8913s; the
-    /// Mockingboard 4c carries an AY-3-8912 ([A] mb-audit issue #22 measured
-    /// an AY38912A/P pulled from a 4c). Read-back differs per part —
+    /// Mockingboard 4c carries an AY-3-8912 ([A] tomcw, mb-audit issue #22,
+    /// 2026-07-26: two Microchip AY38912A/P pulled from a 4c). Read-back differs per part —
     /// `Ay3_8910.h`. Set by whoever seats the card as a 4c.
     void setAyChip(pom2::Ay3_8910::Chip chip);
     void    advanceCycles(int cycles) override;

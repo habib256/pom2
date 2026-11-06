@@ -1397,6 +1397,38 @@ void testLocalLoopbackIgnoresTheExternalPin()
     std::printf("  ok: local loopback ignores the external RxD pin\n");
 }
 
+// [B] Zilog SCC manual 00-2057-03 § 7.1.6: the transmit length is WR5 D6-D5,
+// not WR3's receive length, and unused data bits do not reach the line.
+// POM2 followed MAME's single receive-length frame for both directions
+// (provenance-P1a-guess-arbitrary-2026-11-06, finding 1).
+void testTransmitUsesWr5WordLength()
+{
+    Scc8530Device scc;
+    scc.setPclk(Scc8530Device::kDefaultPclk);
+
+    const uint16_t tc = timeConstant(Scc8530Device::kDefaultPclk, 9600, 16);
+    writeReg(scc, A, 4, 0x44);      // x16, 1 stop bit, no parity
+    writeReg(scc, A, 3, 0xC1);      // Rx enable, Rx 8 bits
+    writeReg(scc, A, 11, 0x50);     // Rx + Tx clock from BRG
+    writeReg(scc, A, 12, static_cast<uint8_t>(tc & 0xFF));
+    writeReg(scc, A, 13, static_cast<uint8_t>(tc >> 8));
+    writeReg(scc, A, 14, 0x03);     // BRG source PCLK + enable, no loopback
+    writeReg(scc, A, 5, 0x28);      // Tx enable, Tx 7 bits
+
+    std::vector<uint8_t> sent;
+    scc.setTxCallback([&](int, uint8_t d) { sent.push_back(d); });
+
+    scc.dataWrite(A, 0xC1);
+    // 1 start + 7 data + 1 stop = 9 bit times, not the receive-sized 10.
+    const uint64_t frameCycles = (9ull * Scc8530Device::kDefaultPclk) / 9600ull;
+    scc.tick(frameCycles - 1);
+    assert(sent.empty());
+    scc.tick(2);
+    assert(sent.size() == 1);
+    assert(sent[0] == 0x41);        // bit 7 is not one of the 7 data bits
+    std::printf("  ok: the transmitter frames and masks with WR5's length\n");
+}
+
 int main()
 {
     testHardwareResetValues();
@@ -1427,6 +1459,7 @@ int main()
     testSnapshotV3FifoRestores();
     testWr5PinOnlyChangeKeepsTransmitting();
     testWr1FirstCharModeArmsItself();
+    testTransmitUsesWr5WordLength();
     testLocalLoopbackIgnoresTheExternalPin();
     std::printf("OK scc8530_smoke\n");
     return 0;

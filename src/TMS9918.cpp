@@ -168,8 +168,8 @@ void TMS9918::reset()
 void TMS9918::resetPin()
 {
     regs.fill(0);
-    // Power-on backdrop: white. Empirical observation on Claudio's Replica-1
-    // 1:1 silicon (2026-05-12): hardReset boots into a white-on-white screen
+    // Power-on backdrop: white. [A] one observation, Claudio's Replica-1 with a
+    // real TMS9918A (2026-05-12): hardReset boots into a white-on-white screen
     // (white backdrop, display ON appears white because pattern table holds
     // unpredictable bits that mostly render through the bistable VRAM). POM1
     // emulates the visual result by setting R7 = $0F (colour 15 = white) on
@@ -605,8 +605,8 @@ uint8_t TMS9918::readControl()
     // 5th-sprite flag (bit 6) AND the collision flag (bit 5). Bits 0..4
     // (5th-sprite index / last-walked slot) keep their value until the sprite
     // scanner rewrites them. Sources, all in agreement:
-    //   - TI datasheet §2.2: "The 5S bit is cleared to 0 after the status
-    //     register is read or the VDP is externally reset."
+    //   - [B] TI TMS9918A Data Manual (1982) § 2.3.3 p. 2-11: 5S "is cleared to
+    //     a 0 after the status register is read or the VDP is externally reset."
     //   - Nouspikel: "The first 3 bits of this register are automatically
     //     reset as 0 when the register is read."
     //   - openMSX VDP::readStatusReg case 0: SpriteChecker::resetStatus()
@@ -638,7 +638,7 @@ void TMS9918::advanceCycles(int cycles)
     // F flag (bit 7) and the per-frame sprite-engine status scan fire at
     // the START of VBlank — the moment the beam crosses from line 191 into
     // line 192 (real silicon: flag goes high during vertical retrace, see
-    // TMS9918A datasheet §3.5.1). The 6502 idiom for VBlank-synced VRAM
+    // [B] TMS9918A data manual § 2.3.1 p. 2-11). The 6502 idiom for VBlank-synced VRAM
     // bursts depends on this:
     //
     //     @wait_vbl: BIT $CC01      ; clear stale F + N := bit 7
@@ -894,7 +894,7 @@ void TMS9918::renderTextLineRaw(int line, uint32_t* lineBuf,
                                 uint16_t vramMask, uint32_t backdrop)
 {
     // Text mode: 240 pixels wide centred in 256 with ASYMMETRIC borders
-    // per the TMS9918A datasheet and meisei vdp.c:475-510:
+    // per [B] TMS9918A data manual Table 3-3 p. 3-8 and [D] meisei vdp.c:475-510:
     //   left border  = 6 pixels of backdrop
     //   text content = 40 cols × 6 px = 240 pixels
     //   right border = 10 pixels of backdrop
@@ -1768,8 +1768,8 @@ void TMS9918::scanSpritesForLine(int line)
         // Visible on this line.
         if (visible == 4) {
             // 5S latches only while F (bit 7) is still clear AND 5S itself
-            // is not already set — TMS9918A datasheet ("5th sprite detection
-            // is only active when F flag is zero"); openMSX SpriteChecker::
+            // is not already set — [B] data manual § 2.3.3 p. 2-11 ("and the
+            // frame flag is equal to a 0"); [D] openMSX SpriteChecker::
             // checkSprites1: `if ((status & 0xC0) == 0)`. Once F rises at
             // VBlank and the program hasn't read status yet, later 5th-sprite
             // conditions are NOT recorded, exactly as silicon.

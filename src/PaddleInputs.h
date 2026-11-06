@@ -114,7 +114,7 @@ public:
         // Kraft plug: [B] Sather p. 7-4 ("the three pushbutton inputs ... are
         // actually TTL inputs") and pp. 7-9/7-10 ("the two pull-down
         // resistors in a paddle set are installed in the plug" — two, for
-        // PB0 and PB1). [A] AppleWin GH#1234, measured: a bare ][+ reads
+        // PB0 and PB1). [A] (by report) AppleWin GH#1234, users' machines: a bare ][+ reads
         // 1 1 1 1 on $C061-$C063, a //e enhanced 1 0 0 1, a Kraft joystick
         // leaves SW2 high. [D] MAME 14c441d5 and AppleWin agree. POM2 read 0
         // here — the mame0287 rule, since corrected upstream — so a program

@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "JoystickInput.h"
+#include "SiriusJoyport.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
@@ -27,6 +28,27 @@
 #include <cstring>
 
 JoystickInput::JoystickInput() = default;
+
+namespace {
+float finiteAxis(float value, bool invert)
+{
+    if (!std::isfinite(value)) return 0;
+    return std::clamp(invert ? -value : value, -1.0f, 1.0f);
+}
+
+float independentAxis(float value, float deadzone)
+{
+    const float dz = std::isfinite(deadzone) ? std::clamp(deadzone, 0.0f, 0.9f) : 0.1f;
+    const float magnitude = std::fabs(value);
+    if (magnitude <= dz) return 0;
+    return std::copysign((magnitude - dz) / (1.0f - dz), value);
+}
+}
+
+float JoystickInput::validVelocitySpeed(float speed)
+{
+    return std::isfinite(speed) ? std::clamp(speed, 0.1f, 4.0f) : 1.0f;
+}
 
 void JoystickInput::applySquareGate(float& x, float& y)
 {
@@ -84,6 +106,8 @@ void JoystickInput::poll()
         d.axis.fill(0.0f);
         d.buttons.fill(false);
         d.snesButtons = 0;
+        d.gamepad = false;
+        d.playerFire = false;
 
         if (browserPads <= 0 || h >= browserPads) { d.seeded = false; continue; }
 
@@ -104,6 +128,7 @@ void JoystickInput::poll()
         // W3C "standard" layout: axes 0/1 = left stick, 2/3 = right stick.
         // Anything else is a raw layout, resolved like an unmapped desktop pad.
         if (std::strcmp(gp.mapping, "standard") == 0) {
+            d.gamepad = true;
             for (int i = 0; i < kAxes; ++i) d.axis[i] = d.raw[i];
             // Standard L2/R2 are analog BUTTONS 6/7 (0..1): put them on the
             // -1 (released) .. +1 scale the desktop triggers use.
@@ -117,6 +142,7 @@ void JoystickInput::poll()
             d.buttons[i] = (i < gp.numButtons) &&
                            (gp.digitalButton[i] || gp.analogButton[i] >= 0.5);
         }
+        d.playerFire = d.buttons[0] || (d.gamepad && d.buttons[1]);
         // W3C standard Gamepad layout, in SNES serial order.
         const int snesMap[] = {0, 2, 8, 9, 12, 13, 14, 15, 1, 3, 4, 5};
         for (int bit = 0; bit < 12; ++bit) {
@@ -125,11 +151,14 @@ void JoystickInput::poll()
                 d.snesButtons |= static_cast<uint16_t>(1u << bit);
         }
     }
+    autoBindIfUnconfigured();
 #else
     for (int h = 0; h < kHostCount; ++h) {
         const int jid = GLFW_JOYSTICK_1 + h;
         DeviceState& d = devices[h];
         d.snesButtons = 0;
+        d.gamepad = false;
+        d.playerFire = false;
         if (!glfwJoystickPresent(jid)) {
             d.present = false;
             d.name.clear();
@@ -155,6 +184,9 @@ void JoystickInput::poll()
         resolveRawSticks(d);
         GLFWgamepadstate mapped{};
         if (glfwGetGamepadState(jid, &mapped)) {
+            d.gamepad = true;
+            d.playerFire = mapped.buttons[GLFW_GAMEPAD_BUTTON_A] == GLFW_PRESS ||
+                           mapped.buttons[GLFW_GAMEPAD_BUTTON_B] == GLFW_PRESS;
             d.axis = {mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_X],
                       mapped.axes[GLFW_GAMEPAD_AXIS_LEFT_Y],
                       mapped.axes[GLFW_GAMEPAD_AXIS_RIGHT_X],
@@ -177,7 +209,9 @@ void JoystickInput::poll()
         for (int i = 0; i < kButtons; ++i) {
             d.buttons[i] = (btns && i < btnCount && btns[i] == GLFW_PRESS);
         }
+        if (!d.gamepad) d.playerFire = d.buttons[0];
     }
+    autoBindIfUnconfigured();
 
     // ── UI-navigation edges for the on-screen (kiosk) disk selector ──────
     // Read the *standard* gamepad mapping of the bound pad so Start / A / B /
@@ -274,30 +308,29 @@ void JoystickInput::poll()
 
 void JoystickInput::autoBindIfUnconfigured()
 {
-#ifdef __EMSCRIPTEN__
-    if (active.hostIdx >= 0 && active.hostIdx < kHostCount &&
-        devices[active.hostIdx].present) {
-        return;
-    }
-    for (int h = 0; h < kHostCount; ++h) {
-        if (devices[h].present) {
-            active.hostIdx = h;
-            autoBindDone = true;
-            return;
+    // Do not promote player 2 when player 1 disconnects. Explicit "none"
+    // also remains none, on desktop and browser alike.
+    if (!autoBindDone && active.hostIdx < 0) {
+        for (int h = 0; h < kHostCount; ++h) {
+            if (devices[h].present && h != active.secondHost) {
+                active.hostIdx = h;
+                autoBindDone = true;
+                break;
+            }
         }
     }
-    active.hostIdx = -1;
-#else
-    if (autoBindDone) return;
-    if (active.hostIdx >= 0) return;
-    for (int h = 0; h < kHostCount; ++h) {
-        if (devices[h].present) {
-            active.hostIdx = h;
-            autoBindDone = true;
-            return;
+    const auto available = [&](int h) {
+        return h >= 0 && h < kHostCount && h != active.hostIdx && devices[h].present;
+    };
+    if (!twoPlayers()) secondResolvedHost_ = -1;
+    else if (active.secondHost != kAutomaticHost)
+        secondResolvedHost_ = available(active.secondHost) ? active.secondHost : -1;
+    else if (!available(secondResolvedHost_)) {
+        secondResolvedHost_ = -1;
+        for (int h = 0; h < kHostCount; ++h) {
+            if (available(h)) { secondResolvedHost_ = h; break; }
         }
     }
-#endif
 }
 
 void JoystickInput::stickToPaddles(float x, float y, const Binding& b,
@@ -375,8 +408,77 @@ float JoystickInput::sourceValue(const DeviceState& d, int src)
     return 0.0f;                                   // SrcNone / unknown
 }
 
+bool JoystickInput::sourceAvailable(const DeviceState& d, int source)
+{
+    if (!d.present || !validSource(source) || source == SrcNone) return false;
+    if (source >= SrcRaw0) return source - SrcRaw0 < d.rawCount;
+    if (d.gamepad) return true;
+    int sticks = 0, triggers = 0;
+    for (int i = 0; i < d.rawCount && i < kRawAxes; ++i)
+        if (d.restsLow[i]) ++triggers; else ++sticks;
+    if (source == SrcTriggerL || source == SrcTriggerR)
+        return source - SrcTriggerL < triggers;
+    return source - SrcStick1X < sticks;
+}
+
+int JoystickInput::paddleHost(int paddle) const
+{
+    return paddle >= 2 && twoPlayers() ? secondResolvedHost_ : active.hostIdx;
+}
+
+int JoystickInput::paddleSource(int paddle) const
+{
+    return paddle >= 2 && twoPlayers() ? active.secondSource[paddle - 2] : active.source[paddle];
+}
+
+void JoystickInput::centrePaddles(unsigned mask)
+{
+    for (int i = 0; i < kAxes; ++i)
+        if (mask & (1u << i)) paddlePositions_[i].value = 128;
+}
+
+void JoystickInput::advancePaddles(double seconds, unsigned enabledMask)
+{
+    // Host control, not machine timing: turbo must not change hand sensitivity.
+    // Discard long stalls (focus changes, debugger stops), never catch up later.
+    const double dt = std::isfinite(seconds) && seconds > 0 && seconds <= 0.1 ? seconds : 0;
+    for (int i = 0; i < kAxes; ++i) {
+        auto& position = paddlePositions_[i];
+        const int host = paddleHost(i), source = paddleSource(i);
+        const bool available = host >= 0 && host < kHostCount &&
+                               sourceAvailable(devices[host], source);
+        const int resolvedHost = available ? host : -1;
+        const bool changed = position.host != resolvedHost || position.source != source ||
+                             position.mode != active.mode[i] || position.invert != active.invert[i];
+        position.host = resolvedHost; position.source = source;
+        position.mode = active.mode[i]; position.invert = active.invert[i];
+        if (!available || changed || active.mode[i] != Velocity) position.value = 128;
+        if (!available || changed || active.mode[i] != Velocity || !(enabledMask & (1u << i))) continue;
+        const float axis = independentAxis(finiteAxis(sourceValue(devices[host], source),
+                                                       active.invert[i]), active.deadzone);
+        position.value = std::clamp(position.value + axis *
+            validVelocitySpeed(active.velocitySpeed[i]) * 255.0 * dt, 0.0, 255.0);
+    }
+}
+
 uint8_t JoystickInput::paddleValue(int paddleIdx) const
 {
+    if (paddleIdx < 0 || paddleIdx >= kAxes) return 128;
+    if (active.mode[paddleIdx] == Velocity) {
+        const int host = paddleHost(paddleIdx), source = paddleSource(paddleIdx);
+        const auto& position = paddlePositions_[paddleIdx];
+        if (host < 0 || host >= kHostCount || !sourceAvailable(devices[host], source) ||
+            position.host != host || position.source != source || position.mode != Velocity ||
+            position.invert != active.invert[paddleIdx]) return 128;
+        return static_cast<uint8_t>(std::lround(position.value));
+    }
+    if (paddleIdx >= 2 && paddleIdx < kAxes && twoPlayers()) {
+        if (secondResolvedHost_ < 0) return 128;
+        Binding pair = active;
+        pair.source[2] = active.secondSource[0];
+        pair.source[3] = active.secondSource[1];
+        return paddleValue(devices[secondResolvedHost_], pair, paddleIdx);
+    }
     if (active.hostIdx < 0 || active.hostIdx >= kHostCount) return 128;
     return paddleValue(devices[active.hostIdx], active, paddleIdx);
 }
@@ -384,6 +486,17 @@ uint8_t JoystickInput::paddleValue(int paddleIdx) const
 uint8_t JoystickInput::paddleValue(const DeviceState& d, const Binding& b, int paddleIdx)
 {
     if (!d.present || paddleIdx < 0 || paddleIdx >= kAxes) return 128;
+    if (b.mode[paddleIdx] == Velocity) return 128;
+    if (b.mode[paddleIdx] == Absolute) {
+        if (!sourceAvailable(d, b.source[paddleIdx])) return 128;
+        return axisToPaddle01(finiteAxis(sourceValue(d, b.source[paddleIdx]), b.invert[paddleIdx]));
+    }
+    // A throttle or velocity axis must never influence its neighbour's
+    // deadzone or square gate. Legacy joystick pairs keep their old law.
+    if (b.mode[paddleIdx ^ 1] != Joystick) {
+        return axisToPaddle01(independentAxis(
+            finiteAxis(sourceValue(d, b.source[paddleIdx]), b.invert[paddleIdx]), b.deadzone));
+    }
     const int firstAxis = paddleIdx & ~1;
     Binding pair = b;
     pair.invert[0] = b.invert[firstAxis];
@@ -403,4 +516,45 @@ bool JoystickInput::buttonDown(int buttonIdx) const
     const DeviceState& d = devices[active.hostIdx];
     if (!d.present) return false;
     return d.buttons[buttonIdx];
+}
+
+// Host policy: two players share the port's first two fire lines. No extra
+// guest hardware is invented, and the second pad never types keyboard keys.
+bool JoystickInput::gamePortButton(int buttonIdx) const
+{
+    if (twoPlayers()) {
+        if (buttonIdx < 0 || buttonIdx > 1) return false;
+        const int host = buttonIdx == 0 ? active.hostIdx : secondResolvedHost_;
+        return host >= 0 && host < kHostCount && devices[host].present &&
+               devices[host].playerFire;
+    }
+    if (play_.valid)
+        return buttonIdx == 0 ? play_.button0 : buttonIdx == 1 && play_.button1;
+    return buttonDown(buttonIdx);
+}
+
+uint8_t JoystickInput::joyportContacts(int player) const
+{
+    using S = pom2::SiriusJoyport;
+    if (player < 0 || player > 1 || (player == 1 && !twoPlayers())) return 0;
+    const int host = player == 0 ? active.hostIdx : secondResolvedHost_;
+    if (host < 0 || host >= kHostCount || !devices[host].present) return 0;
+    const auto& d = devices[host];
+    float axes[2]{};
+    for (int i = 0; i < 2; ++i) {
+        const int src = player == 0 ? active.source[i] : active.secondSource[i];
+        if (sourceAvailable(d, src))
+            axes[i] = independentAxis(finiteAxis(sourceValue(d, src), active.invert[player * 2 + i]), active.deadzone);
+    }
+    // Host policy, not Joyport electronics: half deflection closes a switch.
+    uint8_t result = d.playerFire ? S::Fire : 0;
+    if (axes[0] < -0.5f || (d.snesButtons & (1u << 6))) result |= S::Leftward;
+    if (axes[0] >  0.5f || (d.snesButtons & (1u << 7))) result |= S::Rightward;
+    if (axes[1] < -0.5f || (d.snesButtons & (1u << 4))) result |= S::Up;
+    if (axes[1] >  0.5f || (d.snesButtons & (1u << 5))) result |= S::Down;
+    // Opposing host sources cancel; physical CX40 sticks cannot close both.
+    if ((result & (S::Leftward | S::Rightward)) == (S::Leftward | S::Rightward))
+        result &= ~(S::Leftward | S::Rightward);
+    if ((result & (S::Up | S::Down)) == (S::Up | S::Down)) result &= ~(S::Up | S::Down);
+    return result;
 }

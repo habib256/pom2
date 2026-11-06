@@ -266,6 +266,19 @@ void testSessionActions()
     fs::remove(path, ec);
 }
 
+// --trace-brk used to be parsed and then dropped ("not yet wired in M6502")
+// although M6502 had the trace all along: the runner must switch it on.
+void testTraceBrkEnablesTheCpuTrace()
+{
+    EmulationController ctrl;
+    { auto st = ctrl.lockState(); st.cpu().setDebugBrkTrace(false); }
+    pom2::CliAction trace{};
+    trace.kind = pom2::CliAction::Kind::TraceBrk;
+    pom2::runDeferredActions({trace}, ctrl);
+    auto st = ctrl.lockState();
+    check(st.cpu().getDebugBrkTrace(), "--trace-brk turns the CPU's BRK trace on");
+}
+
 }  // namespace
 
 int main()
@@ -277,6 +290,7 @@ int main()
     testHealthySequenceStillRuns();
     testResolveSaveTapePath();
     testSessionActions();
+    testTraceBrkEnablesTheCpuTrace();
 
     if (failures) {
         std::printf("cli_runner: %d failure(s)\n", failures);

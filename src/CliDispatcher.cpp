@@ -203,7 +203,7 @@ void printUsage()
         "  --run <addr>               Jump to addr\n"
         "  --paste <file>             Feed file contents to keyboard (<=4096)\n"
         "  --step <N>                 Queue N single steps; does not wait before next action\n"
-        "  --trace-brk                (accepted, not yet wired in M6502)\n"
+        "  --trace-brk                log CPU state + PC trace on every BRK\n"
         "  --play / --rec / --rewind  Cassette transport\n"
         "  --snapshot-save <path>     Write snapshot\n"
         "  --snapshot-load <path>     Restore CPU/RAM on the matching machine\n"

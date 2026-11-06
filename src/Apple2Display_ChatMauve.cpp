@@ -69,7 +69,7 @@ namespace {
 // Chat Mauve too — they're never grays on plain HGR.
 //
 // Indexing convention: kChatMauveHGR[msb][bit_pair]. Colour values from
-// AppleWin `RGBMonitor.cpp::PaletteRGB_Feline` (same empirical capture
+// [D] AppleWin `RGBMonitor.cpp::PaletteRGB_Feline` @ 3e8054b462 (same capture
 // of a real Le Chat Mauve "Feline" board used by kChatMauveLoResPalette
 // — kept in sync so HGR and lo-res share the same visual identity).
 constexpr std::array<std::array<uint32_t, 4>, 2> kChatMauveHGR = {{

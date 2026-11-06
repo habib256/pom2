@@ -27,7 +27,10 @@
 #include "MainWindow.h"
 
 #include "Apple2Display.h"
-#include "AtomicFileReplace.h"
+#include "ScreenshotExport.h"
+#include "CrtPresets.h"
+#include "SystemProfile.h"
+#include "Version.h"
 #include "CrtEffectStack.h"
 #include "EmulationController.h"
 #include "IconsFontAwesome6.h"
@@ -59,77 +62,35 @@ void MainWindow::saveScreenshot()
     // WRITES frame80, and the AI control server's /screen.ppm handler runs
     // the identical demod on its own thread holding only demodMutex. Lock
     // order stateMutex → demodMutex, never the other way (Apple2Display.h).
+    syncCrtMonitor();
+    pom2::ScreenshotMetadata metadata;
+    metadata.software = "POM2 " POM2_VERSION_STRING;
+    metadata.machine = std::string(pom2::profileKey(activeProfile));
+    if (crtMonitor_ >= 0 && crtMonitor_ < int(pom2::crt::kMonitors))
+        metadata.monitor = pom2::crt::monitorKey(static_cast<pom2::crt::Monitor>(crtMonitor_));
+    metadata.crtEnabled = crtEffectsEnabled;
+    if (ntscFx) metadata.crt = ntscFx->getParams();
     int w = 0, h = 0;
     std::vector<uint32_t> pixels;
     {
         std::lock_guard<std::mutex> lk(controller->stateMutex());
         std::lock_guard<std::mutex> demodLk(display->demodMutex());
+        metadata.videoStandard = controller->memory().videoStandard() ==
+            VideoStandard::PAL ? "PAL" : "NTSC";
+        display->demodCompositeForCapture();
         w = display->width();
         h = display->height();
         const uint32_t* src = display->pixels();
         pixels.assign(src, src + w * h);
     }
 
-    // Where: `userDataDir()/screenshots`, not the process working directory.
-    // F9 used to drop screenshot_NNN.ppm wherever POM2 happened to be started
-    // — a read-only bundle directory in a packaged build, and someone else's
-    // source tree in a dev one.
-    //
-    // Which name: SCAN the directory for the highest existing index instead
-    // of walking a `static int` up from 0. The counter never went back down,
-    // so once 1000 files existed every further capture overwrote _999
-    // forever, and a fresh session with 300 existing shots re-scanned from
-    // zero on every press.
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path dir = pom2::userDataDir() / "screenshots";
-    fs::create_directories(dir, ec);
-    if (ec) {
-        tapeStatusMessage = "Screenshot: cannot create " + dir.string();
-        tapeStatusUntil   = lastFrameTime + 3.0;
-        pom2::log().warn("Screenshot", tapeStatusMessage);
-        return;
-    }
-
-    long next = 0;
-    {
-        std::error_code iterEc;
-        for (const auto& entry : fs::directory_iterator(dir, iterEc)) {
-            const std::string name = entry.path().filename().string();
-            if (name.rfind("screenshot_", 0) != 0) continue;
-            if (entry.path().extension() != ".ppm") continue;
-            if (name.size() <= 11 + 4) continue;      // no digits between
-            const std::string digits = name.substr(11,
-                name.size() - 11 - 4);   // strip prefix and ".ppm"
-            if (digits.empty() ||
-                digits.find_first_not_of("0123456789") != std::string::npos)
-                continue;
-            const long idx = std::strtol(digits.c_str(), nullptr, 10);
-            if (idx >= next) next = idx + 1;
-        }
-    }
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "screenshot_%03ld.ppm", next);
-    const fs::path out = dir / buf;
-
-    // PPM "P6" — binary RGB, 1 row per scanline. Apple2Display's pixels
-    // are 0xAABBGGRR (RGBA little-endian); strip alpha and swizzle to RGB.
-    // Serialised into memory, then committed through the same durable
-    // temp + rename path as every other POM2 write-back: a screenshot
-    // interrupted mid-write used to leave a truncated .ppm behind.
-    std::string ppm = "P6\n" + std::to_string(w) + " " + std::to_string(h) +
-                      "\n255\n";
-    const size_t header = ppm.size();
-    ppm.resize(header + static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
-    for (size_t i = 0; i < pixels.size(); ++i) {
-        const uint32_t p = pixels[i];
-        ppm[header + i * 3 + 0] = static_cast<char>( p        & 0xFF);
-        ppm[header + i * 3 + 1] = static_cast<char>((p >>  8) & 0xFF);
-        ppm[header + i * 3 + 2] = static_cast<char>((p >> 16) & 0xFF);
-    }
-    if (!pom2::writeFileAtomic(out, ppm.data(), ppm.size(), ec)) {
-        tapeStatusMessage = "Screenshot: cannot write " + out.string();
-        tapeStatusUntil   = lastFrameTime + 3.0;
+    // Compression and file I/O happen only after both machine locks are released.
+    std::filesystem::path out;
+    std::string error;
+    if (!pom2::saveScreenshotPng(pom2::userDataDir() / "screenshots", w, h,
+                                pixels, metadata, out, error)) {
+        tapeStatusMessage = "Screenshot: " + error;
+        tapeStatusUntil = lastFrameTime + 3.0;
         pom2::log().warn("Screenshot", tapeStatusMessage);
         return;
     }
@@ -297,10 +258,20 @@ void MainWindow::renderScreenWindow()
 
 void MainWindow::drawScreenImage()
 {
-    // The glass look follows the display mode, whoever changed it (menu,
-    // palette, CLI, the AI control server).
+    // Keep the framebuffer current for capture/debugging even when setup UI
+    // replaces its on-screen presentation.
     syncCrtMonitor();
     uploadScreenTexture();
+    if (!romLoaded_) {
+        // This is host UI, not guest pixels: no mouse-card mapping, capture,
+        // voxel navigation or CRT post-effects while setup controls own it.
+        screenHovered_ = false;
+        mouseAbsoluteActive_ = false;
+        screenRectMin = screenRectMax = ImVec2(0, 0);
+        if (mouseGrabbed_) setMouseGrab(false);
+        renderMissingFirmwareNotice();
+        return;
+    }
 
     // OpenEmulator-style composite path: when the user selected
     // ColorCompositeOE AND Apple2Display produced a 14.318 MHz signal

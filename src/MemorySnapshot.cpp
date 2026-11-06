@@ -250,6 +250,13 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         putU32(static_cast<uint32_t>(sect.size()));
         putBytes(sect.data(), sect.size());
     }
+    // Optional v1 Joyport trailer: physical selection + external contacts.
+    // AN0/AN1 already travel in the paging trailer above.
+    putU32(5);
+    const uint8_t joy[] = {1, static_cast<uint8_t>(joyport_.mode()),
+                          joyport_.contacts(0), joyport_.contacts(1),
+                          static_cast<uint8_t>(paddles_.connected())};
+    putBytes(joy, sizeof joy);
 }
 
 bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
@@ -258,6 +265,7 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
     // Direct callers (including rewind) need the same all-or-nothing
     // refusal as files. This scans headers/device state, not RAM contents.
     if (!validateSnapshotState(data, n, savedRamWorksBanks)) return false;
+    joyport_ = {}; // older snapshots predate this peripheral
     // Default the report to "stock aux, no RamWorks": a blob that never
     // reaches the bank field (too short, malformed) must not look like a
     // 128-bank capture to the caller that decides whether to refuse it.
@@ -495,6 +503,12 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             std::memcpy(&r, &v[2], sizeof r);
             vAnchorCpu_ = v[0]; vAnchorVideo_ = v[1]; vRatio_ = r;
             vblNextEventCycle_ = 0;
+            return true;
+        })) return false;
+    if (!readSection([&](const uint8_t* p, size_t) {
+            joyport_.setMode(p[1]);
+            joyport_.setContacts(0, p[2]); joyport_.setContacts(1, p[3]);
+            paddles_.setConnected(p[4] != 0);
             return true;
         })) return false;
     return true;

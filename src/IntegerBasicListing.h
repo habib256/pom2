@@ -24,7 +24,7 @@
 //     <length>  <line number, 2 bytes LE>  <item> ...  <$01>
 //
 // `length` counts the WHOLE line, its own byte and the closing $01 included,
-// so the next line starts at `lineStart + length` — measured on the two
+// so the next line starts at `lineStart + length` — [C] measured on the two
 // Integer BASIC programs of `disks_5.4/dsk/saturn128k_software.dsk`:
 // `09 05 00 | 4D 36 B9 A8 03 | 01` is line 5, nine bytes, `CALL -936`
 // (`B9 A8 03` is the constant: the marker, then 936 as $03A8 — not a

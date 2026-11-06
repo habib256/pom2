@@ -848,6 +848,46 @@ void testSpeed(EmulationController& ctrl, pom2::AiControlServer& /*srv*/)
     std::puts("  speed: OK");
 }
 
+void testScreenText(EmulationController& ctrl, pom2::AiControlServer& srv,
+                    Apple2Display& display)
+{
+    // RAM text remains available with no renderer attached.
+    srv.attach(&ctrl, nullptr, nullptr, nullptr);
+    {
+        auto st = ctrl.lockState();
+        auto& m = st.memory();
+        m.resetSoftSwitches();
+        for (uint16_t a = 0x400; a < 0x800; ++a) m.memWrite(a, 0xA0);
+        m.memWrite(0x400, 0xA2); // quote
+        m.memWrite(0x401, 0xDC); // backslash
+    }
+    auto r = oneShot(kTestPort,
+        "GET /screen/text HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 200);
+    assert(r.body.find("\"source\":\"apple_text_memory\"") != std::string::npos);
+    assert(r.body.find("\"columns\":40") != std::string::npos);
+    assert(r.body.find("\"rows\":24") != std::string::npos);
+    assert(r.body.find("\"first_row\":0") != std::string::npos);
+    assert(r.body.find("\"page\":1") != std::string::npos);
+    const std::string escaped = std::string("\"text\":\"") + "\\\"" + "\\\\" + "\\n";
+    assert(r.body.find(escaped) != std::string::npos);
+    assert(r.body.find('\n') == std::string::npos); // newlines are escaped
+    r = oneShot(kTestPort,
+        "POST /screen/text HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n");
+    assert(r.status == 405);
+    {
+        auto st = ctrl.lockState();
+        st.memory().memWrite(0xC050, 0);
+        st.memory().memWrite(0xC052, 0);
+    }
+    r = oneShot(kTestPort,
+        "GET /screen/text HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert(r.status == 200 && r.body.find("\"text\":\"\"") != std::string::npos);
+    assert(r.body.find("\"rows\":0") != std::string::npos);
+    srv.attach(&ctrl, &display, nullptr, nullptr);
+    std::puts("  screen text: OK");
+}
+
 // Regression: applyProfile() / restartEmulationFromSettings() rebuild the
 // machine with stop()…tear down cards…start() while the CPU worker thread
 // is ALREADY running. start() then can't re-spawn the thread, so it must
@@ -1240,6 +1280,7 @@ int main()
     testMouseEndpoint    (ctrl, srv);
     testPrinterEndpoints (ctrl, srv);
     testAuthHardening    (ctrl, srv);
+    testScreenText      (ctrl, srv, display);
     testStartResumesMode (ctrl);   // last: it spawns the CPU worker thread
 
     testStopInterruptsBlockedResponse(srv);

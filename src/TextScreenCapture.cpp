@@ -17,6 +17,7 @@
 // Text screen capture — see TextScreenCapture.h.
 
 #include "TextScreenCapture.h"
+#include "Apple2Display_Internal.h"
 
 #include <vector>
 
@@ -36,8 +37,8 @@ std::uint16_t rowAddress(int row, bool page2)
 
 char textScreenChar(std::uint8_t screenByte, bool altCharset)
 {
-    // `Apple2Display`'s `resolveGlyph`, which is what decides what the
-    // renderer draws. Normal video is $80-$FF, inverse $00-$3F and flashing
+    // Conventional Apple text encoding (the renderer's ASCII fallback,
+    // not its character-ROM path). Normal is $80-$FF, inverse $00-$3F, flashing
     // $40-$7F; the two halves of each range select the $40-$5F or the
     // $20-$3F ASCII block, and only $E0-$FF reaches lowercase.
     std::uint8_t ascii;
@@ -98,6 +99,28 @@ std::string captureTextScreen(const TextScreenSource& src)
         out += '\n';
     }
     return out;
+}
+
+CapturedScreenText captureTextScreen(const Memory& memory)
+{
+    const auto state = memory.getDisplayState();
+    const auto* aux = memory.videoAuxData();
+    TextScreenSource source;
+    source.main = [&memory](uint16_t addr) { return memory.peekMainRam(addr); };
+    source.aux = [aux](uint16_t addr) { return aux[addr]; };
+    source.page2 = a2disp::videoTextPage2(state);
+    source.eightyCols = memory.isIIE() && state.eightyCol;
+    source.altCharset = memory.isIIE() && state.altChar;
+    CapturedScreenText result;
+    result.columns = source.eightyCols ? 80 : 40;
+    result.page = source.page2 ? 2 : 1;
+    result.rows = state.textMode ? 24 : (state.mixedMode ? 4 : 0);
+    result.firstRow = result.rows == 4 ? 20 : 0;
+    for (int row = result.firstRow; row < result.firstRow + result.rows; ++row) {
+        result.text += captureTextScreenRow(source, row);
+        result.text += '\n';
+    }
+    return result;
 }
 
 std::string trimCapturedText(const std::string& text)

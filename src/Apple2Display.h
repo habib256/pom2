@@ -73,7 +73,9 @@ public:
     // mode (BW560 / Mixed / Chunky / COL140) selects the sub-variant.
     // The three Mono variants render the same bit stream as luminance
     // through a phosphor tint: White is a reference monitor, Green
-    // approximates Apple's standard P31 CRT, Amber adds long persistence
+    // approximates a P31 phosphor ([E] the tint and its CIE values in
+    // Apple2Display.cpp have no source; settled by JEDEC TEP116 or a
+    // colorimeter on a Monitor II), Amber adds long persistence
     // (history-buffer lerp) on top of an amber tint.
     enum class HiResMode {
         ColorNTSC,              // MAME composite_color_mode=0, LUT row 0
@@ -869,7 +871,8 @@ private:
     // Address of the first byte of HGR scanline `y` in the active page.
     static uint16_t hgrRowAddress(int y, bool page2);
 
-    // Apple II lo-res palette (16 colours, IIGS-corrected approximation).
+    // Apple II lo-res palette (16 colours) — [D] MAME apple2_palette[] @
+    // mame0287, from the "Apple II Video Display Theory" spreadsheet.
     static const uint32_t kLoResPalette[16];
     // Le Chat Mauve / Video-7 lo-res palette — 16 distinct colours with
     // visually distinct grays at indices 5 and 10 (the "Chat Mauve

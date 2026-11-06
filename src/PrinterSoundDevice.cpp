@@ -17,9 +17,12 @@
 // PrinterSoundDevice implementation — see the header for the grain model and
 // why the scheduling cursor's cap is load-bearing.
 //
-// Values below are the reference's (web-a2e `printer-sound.js`), kept rather
-// than re-tuned: they came from spectral measurements of real dot-matrix
-// printers, and guessing differently would only make it sound less like one.
+// Values below are the reference's, kept rather than re-tuned: [D] web-a2e
+// `src/js/printer/printer-sound.js:86-96` @ 345455a292. Only the energy band
+// is attributed to literature there ("Spectral measurements (Backes et al;
+// JSPE noise studies)": print-head energy near ~900-1000 Hz, skirt to
+// ~5 kHz) — a citation web-a2e relays and POM2 has not opened. [F] The grain
+// durations, Q, peaks and spacing carry no source in web-a2e either.
 
 #include "PrinterSoundDevice.h"
 #include "Logger.h"

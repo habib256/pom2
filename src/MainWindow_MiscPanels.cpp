@@ -843,50 +843,8 @@ void MainWindow::renderWelcomePanelWindow()
 
         ImGui::Spacing();
 #ifndef __EMSCRIPTEN__
-        if (ImGui::Button("Reload ROM (re-probe folders)")) {
-            // Resolve and read with NO lock held. `findResource` stats every
-            // candidate in every search directory, and the read that follows
-            // is a file the user may have just dropped onto a network share;
-            // both used to run inside `lockState()`, which the CPU worker
-            // takes every 4096 cycles and the UI thread takes to paint.
-            // Re-resolve from the active profile so dropping the
-            // profile-specific dump in is picked up without a relaunch.
-            std::string newRom;
-            for (const auto& cand : pom2::profileConfig(activeProfile).romProbeOrder) {
-                std::string r = pom2::findResource(cand);
-                if (!r.empty()) { newRom = r; break; }
-            }
-            if (newRom.empty()) newRom = romPath;  // last-known path
-            // The read itself: `Memory::loadAppleIIRom` takes a PATH, so the
-            // install below still opens the file — this pass is what makes
-            // that second open a warm-cache memcpy instead of a disk (or
-            // network) round trip under the lock, and it is also where an
-            // unreadable file is discovered, with nothing blocked behind it.
-            bool readable = false;
-            {
-                std::ifstream probe(newRom, std::ios::binary);
-                if (probe) {
-                    probe.seekg(0, std::ios::end);
-                    readable = probe.tellg() > 0;
-                }
-            }
-            bool ok = false;
-            if (readable) {
-                auto st = controller->lockState();
-                // See MainWindow_Chrome.cpp: the //c-vs-//e 32 KB slicing is a
-                // property of the profile, never of the file.
-                ok = st.memory().loadAppleIIRom(
-                    newRom.c_str(), pom2::profileUsesLowerRomHalf(activeProfile));
-                if (ok) romPath = newRom;
-            } else {
-                romStatus = "cannot read " + newRom;
-            }
-            if (ok) {
-                controller->hardReset();
-                romStatus  = std::string("loaded: ") + romPath;
-                romLoaded_ = true;
-            }
-        }
+        if (ImGui::Button("Reload ROM (re-probe folders)"))
+            reloadMissingFirmware();
         ImGui::SameLine();
 #endif
         ImGui::TextDisabled("(%s)", romStatus.c_str());

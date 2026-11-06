@@ -725,9 +725,11 @@ void Memory::resetSoftSwitches(bool warm)
     // IOUDIS = true. Upstream sets it ONLY in `machine_reset`
     // (`apple2e.cpp:1215` @ tag `mame0287`): `reset_w`, the Ctrl-Reset
     // path, leaves it alone (1440-1511, unchanged on master). POM2
-    // applies it on EVERY reset, which is a deliberate divergence still
-    // unverified against the IIc Technical Reference (CHANGELOG, "//c
-    // reset"). The comment here used to claim upstream did the same —
+    // applies it on EVERY reset — the //c's end state: [B] IIc Technical Ref.
+    // 2nd ed. p. 50 (reset turns IOUDis on, "the same for any type of reset");
+    // [C] //c ROM $FA62 -> $C41C, STA $C078 at $C467. The FIRMWARE sets it; [F]
+    // whether the IOU itself presets it is unknown (probe a //c's IOU at reset).
+    // The comment here used to claim upstream did the same —
     // caught by `docs/audits/parite-apple2e-2026-11-01.md`.
     // It gates the IOU/mouse softswitches off until the firmware clears
     // it via $C07F. Shared by IIe, IIc, IIc+ even though IIe ignores
@@ -771,8 +773,8 @@ void Memory::clearRam()
     // [D] MAME `apple2.cpp:290-291` @ mame0287, from commit b24ab572 (2019),
     //     "AppleWin-like memory fill; fixes hang in Joust": never measured.
     // [B] Sather, UtA II p. 4-19: "much of RAM goes to a state of all zeroes".
-    // [A] Real machines disagree with each other (Westgate's survey, AppleWin
-    //     #206): it depends on the DRAM maker and the board.
+    // [A] (by report) Real machines disagree: AppleWin #206 (Michael Mahon,
+    //     relayed). [E] That it depends on the DRAM maker and the board.
     // [F] Any one machine's pattern. Settled by: a RAM dump taken before the
     //     cold start runs. Until 2026-11-06 this said real DRAM "settles
     //     into" the fill, which nothing supports.
@@ -1356,34 +1358,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // unexposed — POM2 is II/II+/IIe-class only.
     if (low >= 0x61 && low <= 0x6F) {
         const uint8_t mirrored = static_cast<uint8_t>(0x60 | (low & 0x07));
-        const uint8_t bit7 = [&]() -> uint8_t {
-            switch (mirrored) {
-                case 0x61: return paddles_.button0(!iieMode) ? 0x80 : 0x00;
-                case 0x62: return paddles_.button1(!iieMode) ? 0x80 : 0x00;
-                // Shift-key mods: //e (not //c) and ][/][+ wirings, PaddleInputs.h.
-                case 0x63: return paddles_.button2(iieMode && !iicProfile_, !iieMode) ? 0x80 : 0x00;
-                case 0x64: case 0x65: case 0x66: case 0x67: {
-                    const int idx = mirrored - 0x64;
-                    if (const int w = paddles_.wiredPaddle(idx, !iieMode); w >= 0) return w ? 0x80 : 0x00;
-                    return paddles_.discharging(idx, stockSincePaddleStrobe(idx)) ? 0x80 : 0x00;
-                }
-                case 0x60:
-                    // $C068 mirrors $C060 (cassette comparator) per the
-                    // same `.mirror(0x8)` cited above — only a literal
-                    // $C060 access takes the dedicated branch earlier.
-                    // Returning a hard 0 here clamped bit 7 low, so a
-                    // tape-read loop polling $C068 never saw the
-                    // comparator flip and entropy loops keyed on N were
-                    // deterministic.
-                    // Fenced off the //c the same way the literal $C060
-                    // branch above is — the mirror must not be the back
-                    // door into a deck the machine does not have.
-                    return (cassette && !iicProfile_)
-                        ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
-                        : static_cast<uint8_t>(iicProfile_ ? 0x00 : 0x80);
-                default: return 0;  // unreachable: mirrored ∈ $60-$67
-            }
-        }();
+        const uint8_t bit7 = gamePortReadBit7(mirrored);
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
     }
 
@@ -1893,8 +1868,6 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
         // Shadow mode (or no IWM/media): IWM state advanced, but the
         // byte returned to the CPU comes from the slot-6 DiskIICard LSS.
     }
-    // Eve-class Le Chat Mauve registers live in slot-3 device-select
-    // space ($C0B8-$C0BB — $C0B8/9 Color TEXT, $C0BA/B HGR Duochrome).
     // Le Chat Mauve Eve switches, $C0B0-$C0BF — slot 3's window, forwarded
     // to the card only while slot 3 is free (Memory.h, chatMauveBlockedBySlot3).
     if (addr >= 0xC0B0 && addr <= 0xC0BF && !chatMauveBlockedBySlot3())

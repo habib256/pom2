@@ -115,6 +115,7 @@ enum : uint8_t {
     WR5_CRC16               = 0x04,
     WR5_TX_ENABLE           = 0x08,
     WR5_SEND_BREAK          = 0x10,
+    WR5_TX_WORD_LENGTH_MASK = 0x60,   // Tx bits/char — see txWordLength
     WR5_DTR                 = 0x80,
 };
 
@@ -1448,12 +1449,19 @@ int Scc8530Device::rxWordLength(int index) const
     }
 }
 
-/// The frame `update_serial` hands diserial, measured in half-bit periods:
-/// `set_data_frame(1 start, rxWordLength, parity, stopBits)`
-/// (z80scc.cpp:2882). Half-bits because WR4 can ask for 1.5 stop bits.
-/// Note MAME passes the *receive* word length for both directions, and
-/// keeps the start bit even in the sync modes where WR4 D3-D2 = 00 — this
-/// port reproduces both, rather than second-guessing the oracle.
+/// [B] Zilog SCC Technical Manual 00-2057-03 § 7.1.6, Table 7-3 p. 7-8: Tx
+/// bits/char are WR5 D6-D5 (00=5, 01=7, 10=6, 11=8; [D] MAME z80scc.cpp:1413
+/// @ mame0287). [F] "5 or less" taken as 5 — the sub-5-bit encoding is not modelled.
+int Scc8530Device::txWordLength(int index) const
+{
+    static constexpr int kBits[4] = {5, 7, 6, 8};
+    return kBits[(ch_[index].wr5 & WR5_TX_WORD_LENGTH_MASK) >> 5];
+}
+
+/// The TRANSMIT frame in half-bit periods (1.5 stop bits is legal), sized
+/// from WR5 per the manual — NOT from WR3 as MAME's `update_serial`
+/// (z80scc.cpp:2849 @ mame0287) does for both directions (AMONT FAUX, DEV §
+/// Z8530). The start bit kept in sync modes (WR4 D3-D2 = 00) is MAME's, [F].
 int Scc8530Device::frameHalfBits(int index) const
 {
     const Channel& c = ch_[index];
@@ -1465,9 +1473,9 @@ int Scc8530Device::frameHalfBits(int index) const
     // would make every byte 9/8 too long and put the transmit timing out by
     // 12 %, which a 230.4 kbit/s LocalTalk driver would notice.
     if (sdlcMode(index))
-        return 2 * rxWordLength(index);
+        return 2 * txWordLength(index);
 
-    int halfBits = 2 * (1 + rxWordLength(index) + ((c.wr4 & WR4_PARITY_ENABLE) ? 1 : 0));
+    int halfBits = 2 * (1 + txWordLength(index) + ((c.wr4 & WR4_PARITY_ENABLE) ? 1 : 0));
 
     switch (c.wr4 & WR4_STOP_BITS_MASK) {
     case WR4_STOP_BITS_1:   halfBits += 2; break;
@@ -1557,8 +1565,9 @@ void Scc8530Device::traComplete(int index)
         c.traRate = c.brgRate;
     }
 
-    const uint8_t sent = c.txShiftData;
     const bool sdlc = sdlcMode(index);
+    // [B] Zilog § 7.1.6: "unused data bits are ignored" — async sends only txWordLength bits.
+    const uint8_t sent = sdlc ? c.txShiftData : static_cast<uint8_t>(c.txShiftData & ((1u << txWordLength(index)) - 1u));
 
     if ((c.wr5 & WR5_TX_ENABLE) && !(c.wr5 & WR5_SEND_BREAK)) {
         // SDLC (datasheet, not MAME): in a framed mode the byte belongs to

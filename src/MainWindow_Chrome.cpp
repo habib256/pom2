@@ -24,6 +24,7 @@
 // panels itself, which is what stopped the two drifting apart.
 
 #include "MainWindow.h"
+#include "TextScreenCapture.h"
 
 #include "AudioCoordinator.h"
 #include "AudioDevice.h"
@@ -425,6 +426,19 @@ void MainWindow::renderMenuBar()
             bootHdvImage();
         }
         ImGui::EndDisabled();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy screen text")) {
+            pom2::CapturedScreenText captured;
+            {
+                auto st = controller->lockState();
+                captured = pom2::captureTextScreen(st.memory());
+            }
+            // Clipboard I/O must not hold the machine lock.
+            if (captured.rows > 0) ImGui::SetClipboardText(captured.text.c_str());
+            tapeStatusMessage = captured.rows > 0 ? "Screen text copied"
+                : "No Apple text rows in the current graphics mode";
+            tapeStatusUntil = lastFrameTime + 3.0;
+        }
 #ifndef __EMSCRIPTEN__
         // Reload ROM re-reads the ROM file from disk. Useful on native (swap
         // a roms/ file, reload without restarting); pointless under WASM,
@@ -675,7 +689,7 @@ void MainWindow::renderMenuBar()
                     "lower case. The game port's own button 2 is cut off.");
         }
         {
-            bool plugged = settings->getBool("game_port_connected", true);
+            bool plugged = controller->lockState().memory().gamePortConnected();
             if (ImGui::MenuItem("Joystick plugged into the game port", nullptr, &plugged)) {
                 settings->setBool("game_port_connected", plugged);
                 if (!settingsReadOnly()) settings->save();

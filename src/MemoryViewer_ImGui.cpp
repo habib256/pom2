@@ -242,13 +242,12 @@ void MemoryViewer_ImGui::renderRegionBanner()
                        std::min(startAddress + bytesPerRow * displayRows - 1, 0xFFFF),
                        name);
 
-    // Clarify the Language Card overlay: the viewer reads the flat memory mirror
-    // (Memory::data()), while the CPU bus may see Language Card RAM at $D000-$FFFF
-    // depending on $C080-$C08F latch state.
+    // The grid is the CPU's view (snapshotCpuView): at $D000-$FFFF it already
+    // shows Language Card RAM or ROM as the $C080-$C08F latches select. The
+    // bus summary says which one the reader is looking at.
     if (memory && startAddress >= 0xD000) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", memory->busStateSummary().c_str());
-        ImGui::TextDisabled("Note: $D000-$FFFF view is the flat mirror; LC RAM may differ.");
     }
 }
 

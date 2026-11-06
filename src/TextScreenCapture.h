@@ -31,8 +31,8 @@
 // Videoterm's own 80 columns live in the CARD's RAM, not the Apple's), and
 // anything in a graphics mode. It is the Apple's text page, nothing else.
 //
-// Addressing and decoding are taken from POM2's own display rather than
-// written a second time — the renderer is the oracle for what is on screen:
+// Addressing follows the motherboard video scanner. Character decoding is
+// a conventional ASCII interpretation, not a decode of a custom character ROM:
 //
 //   * rows interleave as `base + $80*(y%8) + $28*(y/8)`, base $400 or $800
 //     (`Apple2Display::textRowAddress`);
@@ -41,7 +41,8 @@
 //   * 80 columns iff the machine is a //e-class and 80COL is on, and then
 //     **aux RAM holds the EVEN columns, main RAM the odd ones**, both at
 //     offset `col/2` (AppleWin's scanner convention, as `paintText80`);
-//   * the byte → character mapping is `resolveGlyph`'s, including ALTCHAR.
+//   * inverse/flashing attributes are discarded; MouseText becomes `?`.
+// International/custom character ROM glyphs and raster splits are not decoded.
 
 #ifndef POM2_TEXT_SCREEN_CAPTURE_H
 #define POM2_TEXT_SCREEN_CAPTURE_H
@@ -49,6 +50,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+
+class Memory;
 
 namespace pom2 {
 
@@ -67,7 +70,7 @@ struct TextScreenSource {
     bool altCharset = false;   ///< `state.altChar`
 };
 
-/// The ASCII character the character generator draws for `screenByte`.
+/// Conventional ASCII interpretation of `screenByte` (ignores glyph ROM).
 ///
 /// `'?'` for a cell with no ASCII equivalent, which under ALTCHAR means the
 /// MouseText range `$40-$5F` — those glyphs are arrows, a running man and a
@@ -81,6 +84,21 @@ std::string captureTextScreenRow(const TextScreenSource& src, int row);
 /// All 24 rows, each with its trailing blanks removed and ending in `'\n'`.
 /// Interior blank lines are kept — `trimCapturedText` is the separate step.
 std::string captureTextScreen(const TextScreenSource& src);
+
+/// Current motherboard text state, not the last rendered frame or card output.
+/// Rows are 24 in TEXT, 4 in MIXED (firstRow=20), zero in pure graphics.
+/// Each captured row ends in '\n'; only trailing spaces within rows are removed.
+struct CapturedScreenText {
+    std::string text;
+    int columns = 40;
+    int rows = 0;
+    int firstRow = 0;
+    int page = 1;
+};
+
+/// Caller must hold the controller state lock if a CPU worker can run.
+/// Reads RAM directly, without triggering bus side effects or read watches.
+CapturedScreenText captureTextScreen(const Memory& memory);
 
 /// Cut a capture down to what was actually written: no leading blank lines,
 /// no trailing blank lines, and a run of blank lines inside collapsed to one.

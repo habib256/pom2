@@ -20,7 +20,7 @@
 // drives with simple commands, so an Apple II gets HTTP without running a byte
 // of TCP/IP itself. POM2 normally relays that to a real FujiNet — but the
 // desktop firmware build answers the guest's open with success and then never
-// opens a socket at all (measured 2026-08-21 on the peer's own descriptors;
+// opens a socket at all ([C] observed 2026-08-21 on the peer's own descriptors;
 // the same firmware opens real TCP for TNFS on the same machine), so on that
 // peer `N:` is inert and no amount of relaying helps.
 //
