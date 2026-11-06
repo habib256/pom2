@@ -123,6 +123,78 @@ For the Disk Library follow-up, the requested order is
 [miniatures](docs/backlog/ui-debugger.md#ui-009), then
 [desktop file associations](docs/backlog/ui-debugger.md#ui-010).
 
+<a id="casso-possibilities"></a>
+
+## Possibilities — what is left of the Casso survey
+
+Recorded 2026-11-06. Casso (MIT, read at `2d899adf`) is another Apple II
+emulator — grade **D** evidence like any other, and for most of this list
+not evidence at all: these are host-side conveniences and test methods, not
+claims about the machine. What POM2 already took from the survey is in
+[CHANGELOG.md](CHANGELOG.md) (the built-in NAT, the per-monitor CRT presets,
+the SSI263 formant voice, the audio items, the write-integrity policy, the
+disk tools).
+
+**None of these is a task.** They have no ID, no domain entry and no
+acceptance criterion, and nothing here is scheduled. Taking one means giving
+it an ID in its domain file first, and re-reading Casso at a named revision
+if the *design* is what is being borrowed. Sizes are estimates made while
+reading, not measurements.
+
+### Sound
+
+| Possibility | Size | Note |
+|---|---|---|
+| Cassette: a more tolerant decoder, AIFF input, automatic speed-up while the tape runs, audio that stays in step under turbo | medium | Four separable pieces; the decoder is the one a real tape recording would exercise. |
+| Per-drive pan for the floppy sounds (drive 1 left, drive 2 right) | medium | The stereo bus already pan-places mono sources. |
+
+### Display
+
+| Possibility | Size | Note |
+|---|---|---|
+| The CRT settings panel fades while a slider is being dragged, so the picture under it stays visible | small | |
+| Scanlines with exact-area filtering (the `crt-pi` approach) | small | Overlaps [DISPLAY-010](docs/backlog/display.md#display-010) and the F2 item (cosine → sin²) in `display.md`; decide between them, do not stack them. |
+
+### Disks
+
+| Possibility | Size | Note |
+|---|---|---|
+| Offer to download the DOS 3.3 System Master and ProDOS, the way the ROMs are offered | medium | **Needs a decision first**: both are Apple's, and nothing copyrighted is hosted or packaged by POM2 (CLAUDE.md § Build & run). Until a source with a stated licence is named this stays a possibility. |
+
+### Input and interface
+
+| Possibility | Size | Note |
+|---|---|---|
+| A "firmware missing" notice on the machine's own screen, with the download button in it | small | The Welcome panel explains the missing ROM today, and the first-launch offer downloads; neither is where the user is looking when the screen says `NO ROM`. |
+| Keyboard arrows as a joystick, `X` and `Z` as its buttons | small | Opt-in: the arrows are Apple II keys. |
+| Sirius Joyport | small | The sense of AN0 is unsettled between the sources read — **F** until a named game selects the right half. Admission rule: name the game first. |
+| Drive widget: replace a disk by a click or a drop on the drive, say **why** a disk is locked (notch, header, damaged image, diverted), show the head position | small | The reasons already exist as states (`MediaNotch.h`, `DiskImage::integrityWarning()`, `diverted`). |
+| Screen text out of RAM: File ▸ Copy screen text, `GET /screen/text`, `pom2_headless --screen-text` | small | `TextScreenCapture.{h,cpp}` is written and compiled into five targets; nothing calls it and no test pins it. Its header names all three callers. The headless one makes text assertions possible in the corpus runner (VALIDATION-006). |
+| Screenshots as PNG carrying the machine, the monitor and the CRT settings as metadata | small | F9 writes `screenshot_NNN.ppm` today. |
+| A second player on PDL2/PDL3 from a second gamepad, pads assigned automatically | small to medium | One pad's right stick already drives PDL2/PDL3 (INPUT-002). |
+| Paddle in velocity mode; a throttle axis read as an absolute position | small | |
+| Key repeat as the //e does it (its own delay and rate); none on a ][+, which has a `REPT` key instead | small | Check the repeat timing against the //e keyboard encoder's documentation before porting Casso's numbers. |
+| Full screen: the menus come back when the pointer reaches the screen edge | small to medium | Kiosk has its own menu; this is for a full-screen session that is not a kiosk. |
+| Notice of a new release — a notice only, no download, no install | medium | A network request at launch: opt-in, and absent from the browser build. |
+
+### Test method
+
+| Possibility | Size | Note |
+|---|---|---|
+| "Seen by the guest" tests for the host disk tools: the tool writes, the real DOS / ProDOS reads it back | medium | The open item it would settle: `pom2_prodos` volumes have not been read by a real ProDOS. |
+| Harte vectors over **every** opcode on every build | small to medium | Today a SHA-256-pinned subset runs (`tests/tomharte_*.manifest`). |
+| A CI guard: the test run modified no tracked file | small | `git status --porcelain` after ctest. Cheap; it is the check behind the rule that a test booting a tracked image copies it first. |
+| A single-site mutation script (flip one line, expect one named test to fail) | small | Mutation controls are done by hand today. |
+| Corpus titles: Karateka, Choplifter, Lode Runner, Space Quarks, Border Zone, and the six FLUX-track titles | varies | The FLUX titles are the ones that matter: no real FLUX WOZ is in the corpus, so the 2026-11-06 time-base change is pinned on synthetic tracks only. Feeds [VALIDATION-006](docs/backlog/validation.md#validation-006). |
+
+### Seen and not taken
+
+- **Inbound port forwarding for the built-in network** — it opens a listening
+  port on the host, which is the opposite of the loopback fence (CLAUDE.md §
+  "The guest is inside the loopback perimeter"). Reopen only on a named need,
+  together with [NETWORK-010](docs/backlog/network.md#network-010), the
+  Uthernet II's own inbound `LISTEN`.
+
 <a id="backlog"></a>
 
 ## Backlog by domain
