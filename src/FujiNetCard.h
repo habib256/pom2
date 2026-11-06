@@ -32,8 +32,8 @@
 //
 // ── Sources ───────────────────────────────────────────────────────────────
 //
-// MAME HAS NO FUJINET DEVICE, so the project's usual "MAME = source of truth"
-// rule cannot apply here. The references are:
+// MAME HAS NO FUJINET DEVICE, so there is not even a grade-D MAME reading to
+// cross-check against. The references are (graded per CLAUDE.md):
 //
 //   * the protocol spec: FujiNet wiki "Apple II SP over SLIP", revision of
 //     2025-01-25 — normative for framing and the request/response tables;

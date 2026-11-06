@@ -995,10 +995,11 @@ public:
     uint32_t ramWorksBanks() const { return ramWorksBanks_; }
     uint8_t  ramWorksBank()  const { return ramWorksBank_; }
 
-    // IIe memory mode flags. Bit positions are arbitrary (we don't need to
-    // match AppleWin's MF_* layout); they only have to be stable for the
-    // life of the process. Tests pin the routing behaviour, not the flag
-    // values themselves.
+    // IIe memory mode flags. Bit positions are POM2's own (we don't need to
+    // match AppleWin's MF_* layout), but they are a FILE FORMAT: the word is
+    // written raw into machine snapshots and sessions (`MemorySnapshot.cpp`,
+    // `putU16(iieMemMode)`), so renumbering one silently remaps the paging of
+    // every saved snapshot. Tests pin the routing behaviour, not the values.
     static constexpr uint16_t MF_80STORE   = 0x0001;  // $C000/01
     static constexpr uint16_t MF_RAMRD     = 0x0002;  // $C002/03
     static constexpr uint16_t MF_RAMWRT    = 0x0004;  // $C004/05

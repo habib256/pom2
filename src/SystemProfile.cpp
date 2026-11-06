@@ -203,7 +203,7 @@ const ProfileConfig& cfgAppleIIcPlus()
         "Apple //c Plus (1988)",
         // //c+ shipped with a 32 KB ROM X4 (`apple2cp.rom`). The boot
         // path needs the MIG (Multidrive Interface Glue, MAME
-        // `apple2e.cpp:532-624 mig_r/mig_w`) and a proper IWM at
+        // `apple2e.cpp:593-699 mig_r/mig_w` @ mame0287) and a proper IWM at
         // $C0E0-$C0EF — see Memory's $CC00/$CE00 MIG window in
         // romswitch=on mode and the IWM hooks on DiskIICard. Falls
         // back to the older //c 32 KB dump if no //c+-specific ROM

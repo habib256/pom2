@@ -203,9 +203,14 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 pom2::log().info("CLI", "--step requested " + std::to_string(a.countI));
                 break;
             }
-            case CliAction::Kind::TraceBrk:
-                pom2::log().info("CLI", "--trace-brk: not yet wired in M6502");
+            case CliAction::Kind::TraceBrk: {
+                // Every BRK from here on logs the registers, six stack bytes,
+                // the recent control-flow trace and the bus state (M6502::BRK).
+                auto st = emu.lockState();
+                st.cpu().setDebugBrkTrace(true);
+                pom2::log().info("CLI", "--trace-brk: BRK trace enabled");
                 break;
+            }
             case CliAction::Kind::PlayTape: {
                 bool loaded = false;
                 {

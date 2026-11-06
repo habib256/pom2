@@ -17,8 +17,10 @@
 // ZipChip — Zip Technologies' Zip Chip, the 6502-socket accelerator, as
 // MAME models it in `src/mame/apple/apple2e.cpp` (the "4 MHz Zip Chip" CPU
 // type of `apple2_sysconfig_accel`, :3862-3872 — the same code that runs
-// the //c Plus's licensed built-in Zip). Line numbers below are mamedev/mame
-// master as fetched 2026-10-16.
+// the //c Plus's licensed built-in Zip). Line numbers below are [D]
+// mamedev/mame master as fetched 2026-10-16; re-checked 2026-11-06 at master
+// `b2a182f0b7` (2026-10-29), where :1315, :1537-1538, :2237-2244 and
+// :2562-2632 still fall. They do NOT fall on tag mame0287.
 //
 // ─── Register interface ($C05A-$C05F) ───────────────────────────────────
 //

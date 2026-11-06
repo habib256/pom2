@@ -389,7 +389,7 @@ Apple2Display::RasterPos Apple2Display::frameCycleToPos(uint64_t emuCycle,
     // c+1. Hence the effective mapping is one cycle earlier than the raw
     // window offset.
     //
-    // Measured, not assumed. Replaying French Touch's MAD EFFECT (GPLv3
+    // [C] Measured in POM2, not on hardware: replaying French Touch's MAD EFFECT (GPLv3
     // sources in disks_5.4/demo/madef/) and sweeping all 65 candidate
     // phases, the demo's 192 per-scanline lit-run starts ($C055 — their
     // column IS the silhouette it draws) land wholly inside the 40-column
@@ -1372,8 +1372,12 @@ void Apple2Display::renderTextChatMauveFgBg(Memory& mem,
 
 // ─── Lo-res mode ──────────────────────────────────────────────────────────
 
-// Palette verbatim from MAME `apple2video.cpp::apple2_palette[]` — the
-// reference sRGB values calibrated against real Apple II hardware. Same
+// [D] MAME `apple2video.cpp:832-854` @ mame0287 (`apple2_palette[]`) —
+// values identical. MAME's own source line is the "Apple II Video Display
+// Theory" spreadsheet (a derivation from the NTSC signal), NOT a
+// calibration against hardware as this comment used to say; POM2 has not
+// opened the spreadsheet. Settled by: a colorimeter on a real composite
+// monitor, or the spreadsheet's own method. Same
 // 16 indices drive both lo-res blocks and the artefact LUT in
 // renderHiRes() (the LUT looks up these very entries).
 const uint32_t Apple2Display::kLoResPalette[16] = {
@@ -1404,13 +1408,13 @@ const uint32_t Apple2Display::kLoResPalette[16] = {
 // Chat Mauve digital RGB decoder produces two visibly distinct tinted
 // grays (5 = olive-ish, 10 = mauve-ish) — *that* is the trademark.
 //
-// Values verbatim from AppleWin `RGBMonitor.cpp::PaletteRGB_Feline`
-// (commit ec3b03c, source-of-truth for Apple II RGB decoder emulation;
-// upstream tag "Feline" = the Le Chat Mauve "Feline" board, the most
-// commonly emulated variant). Per AppleWin's own comment block on the
-// table: "extracted from a white-balanced RGB video capture" of a real
-// card — so these are empirical pixel values, not a synthetic palette
-// choice. MAME has no separate Chat Mauve palette (its Video-7 RGB
+// [D] AppleWin `RGBMonitor.cpp::PaletteRGB_Feline` @ 3e8054b462 — values
+// identical, re-checked 2026-11-06 (the commit `ec3b03c` cited here before
+// does not exist in AppleWin's history). "Feline" = the Le Chat Mauve
+// Féline board. AppleWin's own comment on the table: "extracted from a
+// white-balanced RGB video capture" — a capture of a real card, but one
+// POM2 has not seen, so the grade stays D, not A. Settled by: a capture of
+// a Féline on POM2's side. MAME has no separate Chat Mauve palette (its Video-7 RGB
 // mode reuses the standard `apple2_palette[]`, which collapses the two
 // grays); we follow AppleWin instead because the whole point of
 // modelling Le Chat Mauve is the two-grays trademark.
@@ -2139,8 +2143,9 @@ void Apple2Display::renderDhgr(Memory& mem, const Memory::DisplayState& state,
                 // 560 path or the 140 path for its seven dots — patent
                 // FIG. 1) over the 140 path's 4-dot cell latch, which runs
                 // free on the line's grid whatever the mux does. The two
-                // boundary rules fenarinarsa measured on the //c adapter
-                // (AppleWin PR #837, `UpdateDHiResCellRGB`) fall out of it:
+                // boundary rules — [A] fenarinarsa, observed on his own //c
+                // adapter (AppleWin PR #837 text, 2020-09-24; code [D]
+                // `UpdateDHiResCellRGB`) — fall out of it:
                 //   * a colour cell that runs into a BW byte is CUT there
                 //     (the mux switched; the BW byte paints its own bits);
                 //   * a BW byte that runs into a colour byte has its LAST

@@ -34,7 +34,7 @@ namespace {
 //
 // MAME `ay8910.cpp:1077` runs its synthesis stream at `clock/8` and
 // increments tone/noise counters by 1 per sample. Datasheet output
-// freq is `clock/(16*TP)` — produced by a divide-by-2 T-flop on the
+// freq is `clock/(16*TP)` ([B] GI 1982 Data Catalog p. 5-21) — produced by a divide-by-2 T-flop on the
 // counter output (one toggle per `TP` counter ticks → output cycle =
 // `2*TP/(clock/8) = TP/(clock/16)` sec). POM2 matches MAME by stepping
 // counters at clock/8 and toggling on `counter >= TP`; the implicit

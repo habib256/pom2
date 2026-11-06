@@ -29,7 +29,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # consumer cannot start its own drifting copy.
 #
 # Outputs, all CMake lists:
-#   POM2_BUNDLE_DIRS   folders copied whole            ("roms" "fonts")
+#   POM2_BUNDLE_DIRS   folders copied whole            ("fonts" "pic")
 #   POM2_BUNDLE_FILES  "<src>|<dst>" pairs             ("pic/x.jpg|pic/x.jpg")
 #   POM2_BUNDLE_WASM   browser-only folders            ("floppyemu")
 #   POM2_BUNDLE_DENY   paths that may never be packaged ("disks_5.4" "hdv")

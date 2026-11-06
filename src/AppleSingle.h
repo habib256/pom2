@@ -28,14 +28,17 @@
 //     and "Put the data fork entry at the end of the file" — what encode does.
 //   - Appendix: readers "should understand version 1 ($00010000)", whose
 //     File Info is entry 7 instead of 8 + 11.
-// Version 1, which GS/ShrinkIt still writes, is not described by the note
-// beyond its Appendix; its layout is taken from [D] CiderPress II
-// DiskArc/Arc/AppleSingle_FileEntry.cs @ 49b67b40 (Apache-2.0), itself from
-// Apple II File Type Note $E0/0001, which POM2 could not fetch: the 16-byte
-// filler names the home file system ("ProDOS" padded with blanks), and for
-// ProDOS entry 7 is create date/time (4), modify date/time (4), access (2),
-// file type (2), aux type (4). [F] Unverified against the File Type Note;
-// settled by reading $E0/0001 or a GS/ShrinkIt-made file.
+// Version 1, which GS/ShrinkIt still writes, is not described by that note
+// beyond its Appendix; its layout is [B] Apple II File Type Note $E0/0001
+// (Matt Deatherage, rev. January 1991; read in the HTML conversion archived
+// at web.archive.org/web/2016/http://www.1000bit.it/support/manuali/apple/
+// technotes/ftyp/ftn.e0.0001.html): version $00010000; "Home File System:
+// 16 Bytes", "ProDOS" padded with blanks; "The File Info entry (Entry ID =
+// 7) ... For ProDOS files, the entry is 16 bytes long" — create date/time
+// (4), modify date/time (4), access (2), file type (2), aux type (4), every
+// field "Rev." i.e. stored big-endian ("reverse of normal 65816/6502
+// order"). [D] CiderPress II DiskArc/Arc/AppleSingle_FileEntry.cs @ 49b67b40
+// (Apache-2.0) reads it the same way.
 //
 // The input is UNTRUSTED (a file the user dropped on the window): every
 // offset and length is checked against the buffer in 64-bit arithmetic

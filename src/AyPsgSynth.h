@@ -37,8 +37,11 @@
 // (~127.8 kHz); MAME allocates a single stream at exactly that rate
 // (`ay8910.cpp:1298`, `stream_alloc(0, m_streams, master_clock / 8)`)
 // and advances all three counters together. The datasheet's
-// clock/(16*TP) tone formula comes out of a clock/8 counter because the
-// AY has a divide-by-2 output T-flop, which is the `^= 1` toggle here.
+// clock/(16*TP) tone formula ([B] GI 1982 Data Catalog p. 5-21: "first
+// counting down the input clock by 16, then ... by the programmed 12-bit
+// Tone Period") comes out of a clock/8 counter because the AY has a
+// divide-by-2 output T-flop, which is the `^= 1` toggle here — that internal
+// split is [D] MAME's; the data sheet states only the overall /16.
 //
 // ─── Band-limiting ───────────────────────────────────────────────────
 //
@@ -94,9 +97,11 @@
 namespace pom2 {
 namespace ay {
 
-/// Logarithmic 4-bit volume → linear amplitude. Westcott's 2001 measured
-/// AY-3-8910 output voltages (the dataset MAME carries as `ay8910_param`,
-/// `ay8910.cpp:695-712`), renormalised to 0..1. Index 0 is silence, index
+/// Logarithmic 4-bit volume → linear amplitude. [A] Matthew Westcott,
+/// comp.sys.sinclair, Dec 2001 — measured on an AY-3-8912 in a ZX Spectrum
+/// 128, not on an 8910/8913 (parite-ay8910-2026-11-01.md); relayed by [D]
+/// MAME `ay8910.cpp:695-712` (`ay8910_param`, f69af40d25 and later).
+/// Renormalised to 0..1. Index 0 is silence, index
 /// 15 the per-channel peak, so three channels at peak put one AY at 3.0.
 ///
 /// This is not MAME's `build_single_table` output. At revision

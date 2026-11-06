@@ -87,8 +87,10 @@ struct Ay3_8910
     uint8_t regs[kAyNumRegs] = {0};
     /// Low nibble: the register latch. Bit 7 (`kDeselected`): the last
     /// address latched had a non-zero high nibble, so the chip is not
-    /// selected — the AY-3-8910's mask-programmed 4-bit code is 0000 (GI
-    /// datasheet; MAME `ay8910_write_ym`, `m_active`). Kept in this byte so
+    /// selected — the AY-3-8910's mask-programmed 4-bit code is 0000 ([B] GI
+    /// 1982 Microelectronics Data Catalog p. 5-19: "Unless otherwise specified,
+    /// address bits DA7--DA4 are programmed to recognize only a 0000 code";
+    /// [D] MAME `ay8910_write_ym`, `m_active`). Kept in this byte so
     /// the snapshot layout does not move; every user masks with 0x0F.
     static constexpr uint8_t kDeselected = 0x80;
     uint8_t latchedAddr = kDeselected;

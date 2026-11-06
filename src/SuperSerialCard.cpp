@@ -669,7 +669,9 @@ void SuperSerialCard::evaluateRxFraming()
         ones = !ones;
 
     // PMC (MAME `mos6551.cpp:310-315` for the encoding). Only odd and even
-    // are CHECKED: the 6551 datasheet's PMC table reads "Mark parity bit
+    // are CHECKED: the R6551/SY6551 datasheet's PMC table reads (not re-opened
+    // by the 2026-11-06 audit; the W65C51N has no parity at all — its p. 13
+    // PMC rows all read "Use but no parity") "Mark parity bit
     // transmitted, parity check disabled" and the same for space. Checking
     // them flagged every byte of a 7M1 link — a common BBS setting — as a
     // parity error (bug hunt 2026-10-23).
@@ -727,7 +729,7 @@ void SuperSerialCard::onConnectionEdge(bool nowConnected)
     // (setModemLinesTied): the peer going away is silence, not NO CARRIER.
     // An explicit cable decides for itself: only a modem's carrier follows
     // the connection, and every other cable ignores it.
-    // [B] WDC W65C51N datasheet (2024) p. 13, "Data Carrier Detect (Bit 5)
+    // [B] WDC W65C51N datasheet (March 18, 2024) p. 10, "Data Carrier Detect (Bit 5)
     // and Data Set Ready (Bit 6)": "Whenever either of these inputs change
     // state, an immediate processor interrupt (IRQ) occurs, **unless bit 1 of
     // the Command Register (IRD) is set to a 1 to disable IRQB**." Same
@@ -1063,7 +1065,8 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                 // read time, so it clears for free; the sticky error flags
                 // need an explicit reset. It does NOT release the IRQ line:
                 // only a status read does (`read_status`, :282-299, and the
-                // 6551 data sheet). POM2 used to drop IRQ_RDRF here too,
+                // [B] W65C51N data sheet, Mar 2024, p. 10: Interrupt (Bit 7)
+                // "is cleared when the Status Register is read"). POM2 used to drop IRQ_RDRF here too,
                 // under a comment crediting MAME with it (MEMORY-004).
                 statusErrors_ &= ~uint8_t{SR_PARITY_ERROR |
                                           SR_FRAMING_ERROR |

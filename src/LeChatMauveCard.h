@@ -69,7 +69,9 @@
 //     $C00C,$C00C → 00 BW560      $C00D,$C00D → 11 COL140 (power-on)
 //     $C00C,$C00D → 01 Mixed      $C00D,$C00C → 10 Chunky160
 //
-// No precondition on TEXT/MIXED/HIRES (measured on the //c adapter). The
+// No precondition on TEXT/MIXED/HIRES — [B] the Video-7 patent states none;
+// [A] fenarinarsa, AppleWin PR #837: Prince of Persia's stuck BW560 after
+// the Jaffar scene is "the same on real hardware" (his //c adapter). The
 // enum value IS the latch value; `dhgrMode()` says what the variant makes
 // of it.
 //

@@ -39,10 +39,10 @@
 #               a 200 MB one carrying media that is not ours to redistribute.
 #   · boot      pom2_headless --frames 300 --screenshot — the PACKAGED binary
 #               runs 6502 code and draws a frame that is not one flat colour.
-#               `--help` proves none of that. Packages ship only the //c
-#               firmware DIX needs (bundle.manifest; the rest is fetched from
-#               RetroBIOS at first launch), and pom2_headless is a ][ harness,
-#               so the ][ ROM comes from the checkout with `--rom`.
+#               `--help` proves none of that. Desktop packages ship NO
+#               firmware (bundle.manifest; the user's ROMs are fetched at
+#               first launch), so the ][ ROM comes from the checkout with
+#               `--rom`.
 #
 # Triggers: push a version tag to cut a release; "Run workflow" for a dry run
 # (artifacts only, no Release). Both tag conventions fire, matching POM1: the

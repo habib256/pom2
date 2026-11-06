@@ -30,8 +30,9 @@ constexpr uint32_t    kIdRealName      = 3;
 constexpr uint32_t    kIdFileInfoV1    = 7;
 constexpr uint32_t    kIdProdosInfo    = 11;
 constexpr std::size_t kProdosInfoSize  = 8;    // [B] Figure 2-3
-constexpr std::size_t kFileInfoV1Size  = 16;   // [D] CiderPress II, see the header
-// [D] CiderPress II FS_PRODOS: the v1 home file system, blank-padded to 16.
+constexpr std::size_t kFileInfoV1Size  = 16;   // [B] File Type Note $E0/0001, see the header
+// [B] File Type Note $E0/0001 ("ProDOS" = $50726F444F5320202020202020202020):
+// the v1 home file system, blank-padded to 16; [D] CiderPress II FS_PRODOS agrees.
 constexpr char kHomeProdos[kFillerSize + 1] = "ProDOS          ";
 
 uint32_t be32(const uint8_t* p)

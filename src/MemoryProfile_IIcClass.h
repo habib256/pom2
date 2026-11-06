@@ -18,8 +18,9 @@
 // 32 KB //c rev-0/3/4, and //c+. Holds the //c-specific state that used
 // to live in Memory (alt-firmware bank, ROMBANK flag, //c+ MIG gate
 // array) and the on-board IWM / SmartPort hub pointers. The MIG decode
-// (`migRead`/`migWrite`) is a verbatim port of MAME
-// `apple2e.cpp:532-624` (apple2e_state::mig_r / mig_w).
+// (`migRead`/`migWrite`) is a port of [D] MAME
+// `apple2e.cpp:593-699` @ mame0287 (apple2e_state::mig_r / mig_w);
+// the 3.5"/5.25" selects deliberately follow the //c+ ROM instead [C].
 #pragma once
 
 #include "MemoryProfile.h"
@@ -87,7 +88,7 @@ private:
     bool     romBank_    = false;   // false = bank 0 (cold-start), true = bank 1
     bool     isPlus_     = false;   // //c+ — gates the MIG windows
 
-    // Apple MIG gate array (//c+). See MAME `apple2e.cpp:532-624`.
+    // Apple MIG gate array (//c+). See MAME `apple2e.cpp:593-699` @ mame0287.
     std::array<uint8_t, 0x800> migRam_{};
     uint16_t migPage_     = 0;
     bool     migIntDrive_ = false;

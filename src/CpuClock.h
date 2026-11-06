@@ -149,12 +149,13 @@ inline constexpr int POM2_IWM_TICKS_PER_CPU_CYCLE = 7;
 //                 NTSC board's divider applied to the PAL part.
 //   ~1 015 300 Hz MEASURED on a real PAL //e — "1.0153 MHz on a good 12
 //                 digit counter using a 100 ms gating time"
-//                 (applefritter, "PAL IIe cassette interface").
+//                 [A] afrb2, applefritter "PAL IIe cassette interface"
+//                 (node/33654, post #7 "Scope tests", 2024-02-06).
 //
 // Distance from that measurement: POM2 +0.032 %, MAME +0.164 %, crystal/14
 // +0.255 %. So the one piece of real-hardware evidence anyone has found
-// favours POM2's figure, by 5x over the MAME value this file cites as its
-// oracle above — and it also says the PAL board does NOT simply divide its
+// favours POM2's figure, by 5x over the MAME value cited above ([D], not an
+// oracle) — and it also says the PAL board does NOT simply divide its
 // crystal by 14, since 14.250 450/14 misses the measurement by the most.
 //
 // WHAT WE DO NOT KNOW: that is ONE hobbyist reading of ONE machine, not a
@@ -228,8 +229,10 @@ inline constexpr VideoTiming POM2_TIMING_PAL{
 // So a PAL Apple's picture is WIDER than its square pixels where an NTSC
 // one is much narrower — because 192 lines sit in a 312-line field, which
 // is why European machines showed those deep top and bottom borders. The
-// PAL number is unverified against any measurement; what would settle it is
-// a ruler on a Péritel-era monitor showing a known-square test pattern.
+// PAL number is [F]: a derivation, unverified against any measurement, and
+// its raster inputs (52 us active line, ~287.5 active lines) are standard
+// broadcast figures cited here without their document. What would settle
+// it is a ruler on a Péritel-era monitor showing a known-square test pattern.
 constexpr double kSatherNtscWindowAspect = 1.225;   // Sather, printed
 constexpr double kPom2PalWindowAspect    = 1.507;   // POM2's derivation
 
@@ -244,7 +247,8 @@ inline constexpr float measuredWindowAspect(VideoStandard standard)
 // bus access (switch OR store) on horizontal cycle `hpos` first reaches byte
 // column `hpos - kVideoAccessColumnOffset` of its line. The scanner fetches
 // column c in phi1 of hpos 25 + c, before the CPU's phi2, so an access AT
-// 25 + c is one column late — measured on MAD EFFECT, offsets 21..24 valid,
+// 25 + c is one column late — [C] measured in POM2 by replaying MAD EFFECT
+// (software tuned on real hardware, not a capture), offsets 21..24 valid,
 // 25 not (Apple2Display::frameCycleToPos). One constant, so the two consumers
 // cannot drift apart again (bug hunt 2026-11-01: the log used 25).
 //

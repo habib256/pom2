@@ -141,8 +141,10 @@ void ClockCard::onReset()
     // userOffsetActive / userOffsetSeconds deliberately SURVIVE a bus
     // RESET: the uPD1990AC on the ThunderClock+ is battery-backed (the
     // card carries an on-board NiCd; the chip's time counter keeps
-    // ticking with the machine powered off — uPD1990AC datasheet, V_BATT
-    // operation; mirrored by MAME `upd1990a.cpp` whose device_reset never
+    // ticking with the machine powered off — [B] NEC uPD1990AC data sheet
+    // (1983 NEC ICs for Consumer Use) p. 802, power-supply circuit: VDD held up
+    // by 3 x Ni-Cd behind a power-down protection circuit (the sheet has no
+    // "V_BATT" section; VDD = 2.0-5.5 V, p. 793); mirrored by MAME `upd1990a.cpp` whose device_reset never
     // touches the time counter). Wiping the user-set time here made every
     // Ctrl-Reset / profile switch forget a TIME_SET.
     // RESET disables the CARD's interrupt hardware (manual 5-2 point 2).
@@ -222,7 +224,7 @@ void ClockCard::latchTimeToShiftReg()
     // for fidelity: POM2 synthesises these nibbles from the HOST clock on
     // every read, so its RUNNING calendar is Gregorian. The chip's is not —
     // it corrects month lengths but "leap year is not automatically
-    // performed", so a real ThunderClock+ goes from 28 February to 1 March
+    // performed" ([B] p. 795), so a real ThunderClock+ goes from 28 February to 1 March
     // even in a leap year, where POM2 shows the 29th. Modelling that would
     // mean carrying the chip's own counter instead of the host's, which is
     // the one thing that makes POM2's clock survive a rewind. What a Time

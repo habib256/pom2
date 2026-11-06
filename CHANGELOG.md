@@ -10,6 +10,47 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-06 — The SCC transmits with WR5's word length; provenance P1/P2/P3/P5
+
+**Bug**: the Z8530 sized its transmit frame from WR3 — the RECEIVE length —
+and handed the whole data byte to the host. With Rx 8 / Tx 7 a guest writing
+`$C1` sent `$C1` in 10 bit times; the chip sends `$41` in 9. **Why**: MAME's
+`update_serial` builds one frame from the receive length for both directions,
+and the port copied it; the Zilog manual (§ 7.1.6, Table 7-3) puts the
+transmit length in WR5 D6-D5 and drops the unused bits. Small impact on an
+Apple II today — the Workstation Card's LocalTalk is SDLC, 8 bits both ways —
+but any async driver with differing lengths was wrong. Pinned in
+`scc8530_smoke` (`testTransmitUsesWr5WordLength`).
+
+Six provenance tranches ran (`docs/audits/provenance-P1a`, `-P1b`, `-P2`,
+`-P3`, `-P5a`, `-P5b`, all 2026-11-06), and their graded comment lines are
+applied. Two results worth keeping: of ~220 "measured" claims in `src/`, none
+is a measurement POM2 made on hardware — every grade A rests on a third
+party's observation, now named (mb-audit #22, AppleWin #837/#1234, CLK
+#1204, applefritter node 33654); and IOUDIS forced on every //c reset is now
+backed by the //c Technical Reference (2nd ed., p. 50) and the ROM
+(`$C467 STA $C078`), no longer "unverified".
+
+## 2026-11-06 — DEV.md drift pass; `--trace-brk` wired
+
+`DEV.md` was re-read section by section against the working tree and about
+240 statements corrected; `CLAUDE.md` (16) and eight stale code comments
+with it. **Why it mattered**: several sections contradicted
+themselves (the 6522 summary vs its own table, the RVB Graph "not yet" under
+the paragraph that models it, CFFA "no CHS"), several described landed work
+as missing (SmartPortCard at 8 units instead of 14, `pom2_disk recover`, the
+built-in NAT, the SSI263 formant voice, the recorded ImageWriter bank) or
+fixed bugs as open (CS8900A multicast, Ghostscript on ARM Homebrew, the WOZ
+CRC), packages were still said to carry ROMs, and MAME was still called the
+oracle in a dozen places — against the graded-evidence rule. The `//c+` MIG
+citation is now pinned (`apple2e.cpp:593-699` @ `mame0287`).
+
+`--trace-brk` was parsed and then logged as "not yet wired in M6502" although
+`M6502::setDebugBrkTrace` had existed all along; the runner now turns it on.
+Pinned in `cli_runner`. The Memory Viewer no longer tells the user that
+`$D000-$FFFF` is the flat mirror: it has read the CPU's view
+(`snapshotCpuView`) since the paged-view rework.
+
 ## 2026-11-06 — The nightly sanitizers were red on a link line, not on a bug (#20)
 
 The ASan/UBSan leg failed one test of 440, `pom2_imageconv_consumer`, with

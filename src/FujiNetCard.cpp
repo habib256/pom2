@@ -554,7 +554,8 @@ void FujiNetCard::handleSmartPortCall()
         // being forwarded, and that is a deliberate, narrow exception to
         // "relay everything".
         //
-        // The peer ABORTS on it. Measured 2026-08-21, three runs out of
+        // The peer ABORTS on it. [C] Observed on the FujiNet desktop firmware
+        // (the peer software, not hardware) 2026-08-21, three runs out of
         // three: the request is byte-identical in shape to the ones its
         // neighbouring units answer normally (`04 03 0D 00 00 00 …`, empty
         // control list), yet the firmware throws std::length_error out of
@@ -846,7 +847,7 @@ bool FujiNetCard::serveBuiltInNetwork(uint8_t command, uint8_t unit,
                                       " payload=$" + std::to_string(payload) + " : " + hex);
             }
             // The control list is aux1 (open mode), aux2 (translation), THEN
-            // the devicespec — measured off the wire from the FujiNet Contiki
+            // the devicespec — [C] measured off the wire from the FujiNet Contiki
             // browser: `04 00 4E 3A 68 74 74 70 ...` = mode 4, translation 0,
             // "N:http://…". Taking the whole list as the spec put two binary
             // bytes in front of the URL and every open failed with an empty

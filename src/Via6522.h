@@ -135,7 +135,9 @@ struct Via6522
     uint8_t latchA = 0xFF;
 
     /// RES clears every register EXCEPT the T1/T2 latches and counters and
-    /// SR (R6522 datasheet; MAME `6522via.cpp:415-449` device_reset never
+    /// SR ([B] WDC W65C22 data sheet § 3.9 "Reset (RESB)", p. 36: "Reset
+    /// clears all internal registers (except T1 and T2 counters and latches,
+    /// and the SR"; MAME `6522via.cpp:415-449` device_reset never
     /// touches m_t1l*/m_t2l*/m_sr; AppleWin `6522.cpp:39-61` keeps them on
     /// Ctrl-RESET). Only `powerCycle` puts them back to a deterministic
     /// $FFFF — AppleWin's choice, as a latch < ~7 defeats MB detection.
@@ -321,9 +323,9 @@ struct Via6522
         // T1 counter read-back bias is -1, NOT MAME's -IFR_DELAY (-2 on
         // our +2-biased counter): the visible line is `written + 1 -
         // elapsed` — the 6522 loads the counter on the phi2 AFTER the
-        // T1C-H write, so a read e cycles later shows N-(e-1). Measured,
-        // not assumed: French Touch's TRIBU (DIX anthology, GPLv3
-        // sources in disks_5.4/demo/unreeeal_superhero_3_tribute/)
+        // T1C-H write, so a read e cycles later shows N-(e-1).
+        // [C] French Touch's TRIBU, a chain tuned on the hardware (DIX
+        // anthology, GPLv3; github.com/Fr3nchT0uch/DIX TRIBU/Sources/main.a)
         // phase-locks five chained T1 IRQs per PAL frame by reading the
         // free-running counter mid-handler (`ADC $C404 … STA $C405`,
         // 21 cycles read→write) and re-arming with `TIMERn + readback`,
@@ -331,7 +333,7 @@ struct Via6522
         // APPLE II". Per-link period = TIMERn + 21 + 1 + bias-line: the
         // -1 bias holds the chain at exactly 20280 cycles/frame (drift
         // 0, as released on hardware); with MAME's -2 every link lost
-        // one cycle — POM2 measured -5 cycles/frame on the real disk,
+        // one cycle — POM2 running the real disk drifted -5 cycles/frame,
         // every raster edge crawling left one character cell every ~3
         // frames. The continuous auto-reload period stays latch+2
         // (`via_t1_continuous_period`, MAD EFFECT); the same -1 applies
@@ -356,7 +358,10 @@ struct Via6522
             // T1 cases above carry (commit c58528a) — the visible counter
             // line is `written + 1 - elapsed`, because the counter loads on
             // the phi2 AFTER the CxH write. T2 is the identical load/
-            // decrement silicon (W65C22 datasheet), so MAME's extra cycle is
+            // decrement silicon ([B] W65C22 data sheet § 2.9, p. 19: T2 one-shot
+            // "is similar to T1"; § 2.6, p. 17: T1 "will start counting down on
+            // the next PHI2 clock following the load" — the same one-cycle load
+            // for T2 is inferred from "similar", not stated), so MAME's extra cycle is
             // the same one-low divergence that made DIX rasters crawl on
             // T1; a beam-racer re-arming from a T2 read-back would drift
             // the same way. Unconditional, like T1, so the line stays
@@ -390,7 +395,8 @@ struct Via6522
         uint8_t events = 0;
         switch (reg & 0x0F) {
         case VIA_ORB: {
-            // [B] R6522 / W65C22 datasheet: an ORB store drives the output
+            // [B] W65C22 data sheet §§ 2.2, 2.4 (PB handshakes on writes only,
+            //     via CB1/CB2; the R6522 sheet was not re-opened): an ORB store drives the output
             //     pins from the new latch; a store of the SAME byte moves
             //     no pin, and the only write strobe the chip can emit is
             //     CB2 in handshake / pulse mode — which no card here wires

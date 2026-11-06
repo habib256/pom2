@@ -894,7 +894,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     }
     // The saved profile may want firmware this tree does not have (a //e
     // chosen before the ROMs went away): its switch is refused and nothing
-    // is loaded. Land on the //c the package does carry, as a restore.
+    // is loaded. Land on the //c firmware this tree does carry, as a restore.
     if (iicOnly && !romLoaded_ && activeProfile != pom2::SystemProfile::AppleIIcPAL) {
         restoringSavedProfile_ = true;
         applyProfile(pom2::SystemProfile::AppleIIcPAL);

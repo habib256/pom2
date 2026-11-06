@@ -592,8 +592,10 @@ private:
     // RETIRED active-display floor (kept only for reference). POM1 used to add
     // a 9c Graphics I/II minimum on top of the slot table, arguing the TI
     // datasheet ~8 µs rule (ceil(8.18)=9) better matched real DRAM settling
-    // than openMSX's shorter D28. Decision (June 2026): openMSX is the source
-    // of truth — the floor is removed and nextSlotDelayCycles() uses pure
+    // than openMSX's shorter D28. Decision (June 2026): the [D] openMSX slot
+    // table is followed — [B] the manual (§ 2.1.5, p. 2-4) gives only a range,
+    // "can vary from 2 to 8 microseconds", which bounds the delay without
+    // scheduling it — so the floor is removed and nextSlotDelayCycles() uses pure
     // slot-table + D28 timing. The constant is no longer applied anywhere.
     static constexpr int kMinActiveDrainCycles = 9;   // unused — see note above
 

@@ -74,7 +74,7 @@ Conséquences pratiques :
 | 19 | `a2memexp.cpp` | 12 | MAME | ✅ `parite-a2memexp-2026-11-01.md` — 3 MINEURS (pointeur partiel, $C0n2 après RESET, coldBoot), 2 AMONT FAUX, pin juste |
 | 20 | `flopimg.cpp` + `as_dsk.cpp` + `wozfdc.cpp` | 27 | MAME | ✅ `parite-flopimg-as_dsk-wozfdc-2026-11-01.md` — 1 MAJEUR (transition de couture FLUX perdue), 3 AMONT FAUX, `as_dsk` jamais existé |
 | 21 | `a2videoterm.cpp` + `a2pic.cpp` | 21 | MAME | ✅ `parite-a2videoterm-a2pic-2026-11-01.md` — 0 constat, 2 AMONT FAUX, reset PIC cité hors révision |
-| 22+ | ~58 autres fichiers | ~165 | mixte | ⬜ par paquets de 3-4 |
+| 22+ | ~58 autres fichiers | ~165 | mixte | ✅ en quatre paquets : `parite-queue-audio-2026-11-01.md`, `parite-queue-clock-net-printer-2026-11-01.md`, `parite-queue-storage-bus-cpu-2026-11-01.md`, `parite-queue-video-mouse-gameio-2026-11-01.md` — bilans et constats dans chacun |
 
 **801 citations, 82 fichiers amont.** `ow65c02.lst` est la table d'opcodes
 65C02 → `src/devices/cpu/m6502/`.

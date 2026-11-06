@@ -279,7 +279,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
     auto plugChatMauve = [&](int s) {
         // Which Chat Mauve: a //c-class machine has the rear DB-15 adapter,
         // a slotted machine defaults to the Féline; `chatmauve_variant`
-        // (feline | iic | eve | video7) overrides either.
+        // (feline | iic | eve | rvb | video7) chooses on a slotted machine; a
+        // //c-class one is forced to the adapter (below).
         using Variant = LeChatMauveCard::Variant;
         // A //c-class machine has no aux slot: its DB-15 takes the
         // Adaptateur IIc and nothing else — there the model is hardware,
@@ -711,8 +712,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         auto card = std::make_unique<MockingboardCard>(s, variant);
         // Seated on a //c's internal expansion connector (virtual slot 3 of
         // a slotless profile) this is the Mockingboard 4c, which carries an
-        // AY-3-8912 — [A] mb-audit issue #22 measured an AY38912A/P pulled
-        // from one. Every slot Mockingboard carries 8913s (the default).
+        // AY-3-8912 — [A] tomcw, mb-audit issue #22 (2026-07-26),
+        // measured two AY38912A/P pulled from one. Every slot Mockingboard carries 8913s (the default).
         // Read-back differs per part: `Ay3_8910.h`.
         if (s == 3 && pom2::profileConfig(activeProfile).noPhysicalSlots)
             card->setAyChip(pom2::Ay3_8910::Chip::Ay8912);

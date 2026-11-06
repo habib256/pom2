@@ -1343,7 +1343,7 @@ template void M6502::BBSn<6>(); template void M6502::BBSn<7>();
 void M6502::WAI(void)
 {
     // WDC `WAI` suspends the CPU until an IRQ or NMI is asserted. Crucial
-    // detail (MAME `ow65c02.lst:797-803`): WAI wakes even when I=1 —
+    // detail ([D] MAME `ow65c02.lst:875-881` @ mame0287, `wai_imp`): WAI wakes even when I=1 —
     // the wake is unconditional on the interrupt line, only the
     // vectoring step honours the I flag. Concretely, if WAI runs with
     // I=1 and IRQ is then asserted, execution continues at PC+1

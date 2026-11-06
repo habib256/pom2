@@ -263,7 +263,10 @@ uint8_t NoSlotClock::interceptRead(uint16_t addr, uint8_t romByte)
         // into its read loop got a garbled date rather than a shifted
         // one.
         // ...and it WRITES: A0 is the data bit, into the register bit this
-        // cycle transfers (DS1216 data sheet; MAME ds1216e). AppleWin drops
+        // cycle transfers ([B] DS1216E data sheet p. 5-23: after the 64-bit
+        // match it will "either receive data on Data In (A0) or transmit data
+        // on Data Out (DQ0), depending on the level of READ/WRITE (A2)";
+        // [D] MAME ds1216e). AppleWin drops
         // it — so a SET-TIME utility's clock reverted to host time.
         const uint64_t mask = uint64_t(1) << bitsRead_;
         writeShift_ = (addr & 1) ? (writeShift_ | mask) : (writeShift_ & ~mask);

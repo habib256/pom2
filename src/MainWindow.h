@@ -611,9 +611,11 @@ private:
     //   Square   — 1:1 logical pixels (the crisp emulator default)
     //   Crt43    — the raster's 4:3 monitor shape
     //   Integer  — Square snapped to an integer multiple (no scaling shimmer)
-    //   Measured — the shape a ruler finds on a correctly adjusted monitor,
-    //              which is none of the other three: 1.225:1 on NTSC and
-    //              ~1.507 on PAL, because the Apple fills only part of the
+    //   Measured — the window a correctly adjusted monitor shows, which is
+    //              none of the other three. [B] Sather, *Understanding the
+    //              Apple II* ch. 8 COMPUTES it from line/field timing (no
+    //              ruler): 1.225:1 on NTSC; [E] ~1.507 on PAL is POM2's own
+    //              derivation by the same method. The Apple fills only part of the
     //              raster. See `measuredWindowAspect` (CpuClock.h) for the
     //              derivation and the switch in `MainWindow_Screen.cpp`.
     enum class AspectMode { Square, Crt43, Integer, Measured };
@@ -1679,12 +1681,12 @@ private:
     /// `nmos` → NMOS; `65c02` → CMOS. Logged to console on each apply.
     M6502::CpuMode resolveCpuMode(M6502::CpuMode profileDefault) const;
 
-    /// Pick the motor-sound pitch multiplier for a profile. //c / //c+
-    /// use a Sony internal 5.25" drive that spins up faster and at a
-    /// higher pitch than the original Shugart-based Disk II — bumping
-    /// the motor pitch on those profiles approximates that without
-    /// dragging in a second sample set. All other profiles → 1.0
-    /// (native MAME Disk II samples).
+    /// Pick the motor-sound pitch multiplier for a profile: 1.4 on the
+    /// //c-class profiles, 1.0 elsewhere (native MAME Disk II samples).
+    /// [F] Unknown: that the //c's internal drive spins up faster or
+    /// sounds higher than a Disk II, and who made its mechanism, are
+    /// asserted with no source; 1.4 is an ear setting. Settled by: a
+    /// recording of a real //c internal drive next to a Disk II.
     static float floppyMotorPitchForProfile(pom2::SystemProfile p);
 
     // Paste helpers — feed text into the keyboard buffer.
