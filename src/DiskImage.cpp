@@ -1454,7 +1454,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
                          damagedQts.end());
         std::string list;
         for (std::size_t i = 0; i < damagedQts.size() && i < 8; ++i) {
-            char one[16];
+            char one[32];   // GCC -Wformat-truncation sizes two full ints: 26
             std::snprintf(one, sizeof(one), "%s%d.%02d", i ? ", " : "",
                           damagedQts[i] / 4, (damagedQts[i] % 4) * 25);
             list += one;
