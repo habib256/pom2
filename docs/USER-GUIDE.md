@@ -17,6 +17,17 @@ says "POM2 is damaged" instead and has no **Open Anyway**; run
 and launch `POM2.exe`; if SmartScreen appears, choose **More info → Run anyway**.
 Release downloads include `SHA256SUMS.txt` for integrity checks.
 
+If the selected machine has no system ROM, its screen shows **Firmware
+missing** with the active profile. On desktop, **Download missing ROMs** opens
+ROM Status and starts the existing downloader; that panel provides progress,
+cancellation and errors. After the download, **Reload ROM** searches the
+profile's ROM folders again and resets the machine on success. You can also
+drop your own ROM onto the window. Failed reloads leave the guidance visible.
+
+In kiosk mode, **Open firmware setup** returns to the interface and opens
+ROM Status. In the browser, the notice directs you to a machine with bundled
+firmware or a supported saved session; it offers no download button.
+
 The first desktop launch uses an enhanced PAL //e. Choose another machine in
 **Machine → Profile**, then drop an image onto the window or open **File → Disk
 Library**. Selecting a profile resets the emulated machine. **F10** toggles
@@ -90,6 +101,11 @@ Choose composite colour, crisp RGB, white, green or amber phosphor. In
 **Display → CRT Settings**, adjust the curve, persistence and screen effects
 until it feels like the monitor you remember. **Display → Monitor II frame**
 adds the familiar case around the picture.
+
+While you drag a slider in the floating CRT Settings panel, the panel becomes
+translucent so you can see the picture underneath. The active slider and its
+label stay readable. Release the mouse to restore opacity. Docked panels,
+keyboard adjustments and Ctrl-click numeric entry stay opaque.
 
 POM2 follows video changes as the emulated CPU makes them. That matters for
 split-screen games and demos that change modes while the beam crosses the
@@ -227,9 +243,85 @@ controls.
 For a mapped gamepad, B/Circle drives game-port button 0 and A/Cross drives
 button 1; PB2 stays released. The D-pad sends Apple II arrow keys, X/Square
 sends Space and Y/Triangle sends Return. Raw joysticks instead use buttons
-0/1/2 as the three game-port buttons. Choosing **(none)** in the Joystick
-panel keeps the paddles centred and buttons released; it disables automatic
-binding until you choose a device again.
+0/1/2 as the three game-port buttons. Choosing **(no physical controller)**
+in the Joystick panel disables automatic binding until you choose a device
+again; keyboard and mouse paddle options remain independent.
+
+For games that read two joysticks, set **Second joystick** to **Automatic
+(another controller)** or select a specific controller. The first pad drives
+PDL0/1 and the second PDL2/3, initially using its left stick. Each has its own
+source choices; **Detect** listens to the controller feeding that paddle.
+In this mode A/B (raw button 0) fire PB0 for player 1 and PB1 for player 2;
+neither physical pad drives PB2. Only the first pad navigates menus or types
+keys. Keyboard/mouse fire sources still feed the same PB0/PB1 lines.
+
+The **Joystick** selector also offers **Automatic (first available)**. Both
+preferences survive restart. Automatic player 2 keeps its assignment while
+connected; an explicitly selected controller is never replaced by another.
+Disconnecting either controller centres its axes and releases its fire button;
+the players do not swap and PDL2/3 do not fall back to the first pad. Host slots
+are saved, not controller serial numbers. Set **Second joystick** back to
+**Off** to restore the first pad's original PDL2/3 sources and button mapping.
+
+Under **Paddle sources**, each paddle also has a **Mode**:
+
+- **Joystick** keeps the normal stick response, including deadzone and square
+  gate when both axes of the pair use this mode.
+- **Velocity (hold position)** turns stick deflection into movement of a
+  virtual knob. Releasing the stick holds the reached position. **Speed** is
+  full-range travel per second at full deflection (0.1–4; default 1), and
+  **Centre** returns that paddle to 128. The stick's deadzone and inversion
+  still apply, independently for each axis.
+- **Absolute (throttle)** maps the selected axis directly over 0–255, with
+  inversion if requested, without deadzone, notch or square gate. Select a
+  raw throttle axis or L2/R2 as the source, or use **Detect** to find it.
+
+A pair with mixed modes treats its axes independently so moving a throttle
+does not alter the adjacent stick's response. Modes and speeds are saved;
+velocity positions start centred on launch. A source/controller/mode/inversion
+change or disconnect resets the affected position. Pause, menus, loss of focus
+and keyboard/mouse overrides stop velocity accumulation. Updates use host
+elapsed time, independent of emulation turbo; gaps over 100 ms are discarded
+instead of producing a catch-up movement. These modes apply to physical
+controller sources; keyboard and mouse retain their existing direct mapping.
+
+**Sirius Joyport** is an optional Atari digital adapter for II/II+/IIe games
+that explicitly support it. Start with **Atari: left socket** and select
+Joyport in the game (Wavy Navy: Z, then S to start). The first controller
+drives the left socket; **Second joystick** drives the right. Stick or D-pad
+moves, A/B fires; keyboard arrows and either X/Z can drive the left socket.
+Its D-pad/face buttons stop typing keys. Mouse and paddle position modes do
+not apply. The rear analogue sockets are not emulated.
+
+**Atari: right socket** forces the second controller. **Centre** lets the
+game select a socket; its AN0 polarity follows the manual's prose/BASIC but
+remains provisional because the manual's table contradicts them. Use a
+fixed socket for Wavy Navy. On IIe, enable after boot to avoid the real
+active-low inputs triggering self-test. Apple-key/Shift wiring is unavailable
+while Joyport is active. The option is unavailable on IIc. A disconnected
+game port must first be re-enabled in the Machine menu. Snapshots, rewind
+and sessions restore the selector, contacts and game-port connection; old
+states restore Joyport off.
+[Hardware evidence and game probe](hardware/sirius-joyport.md).
+
+**Bandits:** press Space when its introduction accepts input, then send
+**Ctrl+@** (NUL; **Ctrl+2** on a US keyboard layout) to select Joyport in
+play. Use **Atari: left socket**. Left/right move, A/B fires, and up activates
+the shield. The historical Ctrl+Shift+P chord is the command palette in POM2;
+plain Ctrl+P selects analogue controls. Both Asimov images passed the
+[gameplay probe](hardware/sirius-joyport.md#bandits-gameplay-probe).
+
+**Keyboard joystick (arrows, X/Z)** in that panel is off by default and
+remembered between launches. Arrows drive PDL0/1 to the endpoints, with
+opposite directions cancelling to centre; X fires PB0 and Z fires PB1.
+Keyboard axes take priority over mouse and physical-controller axes, while
+fire buttons combine with the other sources. PDL2/3 keep their normal routing.
+Desktop X/Z follow the keyboard layout (including AZERTY); the browser uses
+the physical X/Z positions. These six keys stop typing into the Apple II
+while the mode is active. Ctrl/Alt/Super shortcuts keep their normal meaning.
+Menus, text fields and loss of window focus release the keyboard joystick;
+press the keys again after returning to the game. SNES MAX disables this
+game-port mapping as well.
 
 With a **SNES MAX** card installed, the first two mapped gamepads feed its
 two SNES ports (D-pad, four face buttons, Select/Start and shoulder buttons).
@@ -552,10 +644,17 @@ On desktop, screenshots and printouts go into POM2's per-user data directory:
 | macOS | `~/Library/Application Support/POM2/` |
 | Windows | `%LOCALAPPDATA%\POM2\` |
 
-**F9** writes `screenshots/screenshot_NNN.ppm`, using binary P6 RGB at the
-renderer framebuffer's native dimensions. The capture contains the emulated
+**F9** writes `screenshots/screenshot_NNN.png`, using lossless RGB PNG at the
+renderer framebuffer's native dimensions. Numbering continues after existing
+PNG and legacy PPM captures, including across restarts. The capture contains the emulated
 picture before the GL CRT effects, monitor artwork and interface are drawn.
 The OpenEmulator GPU pipeline uses its CPU demodulation path for capture.
+The PNG embeds versioned JSON under the `POM2` international-text metadata
+key: POM2 version, machine profile, monitor/display-mode key, PAL/NTSC standard,
+CRT enabled state and the resolved CRT parameters. These settings describe
+the capture context; `gl_effects_applied: false` explicitly records that GL
+post-effects are not baked into the pixels. Metadata contains no media paths.
+
 The status message reports the saved path. In the browser, F9 writes into
 the virtual filesystem; it does not start a browser download.
 
@@ -689,6 +788,33 @@ server. It exposes CPU/memory inspection and editing, keyboard/mouse input,
 Disk II insertion, image synchronization and snapshot/session operations.
 See the [HTTP reference and examples](../DEV.md#ai-control-server-aicontrolserver)
 for request shapes, authentication, path limits and available routes.
+
+## Copy and inspect screen text
+
+**File → Copy screen text** copies the motherboard's Apple text rows to the
+clipboard. For automation, `GET /screen/text` returns the same text as JSON,
+and `pom2_headless --screen-text` prints it after the requested frames.
+`--text-dump` remains an alias, now with the same page and 80-column handling.
+
+The capture follows the current video switches: 24 rows in text mode, the
+bottom four rows in mixed mode, and no rows in pure graphics. Trailing spaces
+are removed from each row; blank rows and the final newline are preserved.
+In pure graphics the menu leaves the clipboard unchanged and reports that
+there are no Apple text rows.
+
+This reads text RAM, not pixels: inverse/flashing attributes are removed,
+MouseText becomes `?`, and custom/international character-ROM glyphs, raster
+splits and video cards' own text memory (such as Videx) are not decoded.
+The capture also works while the machine is paused. For example, with your
+ROM and DOS 3.3 disk:
+
+```sh
+build/pom2_headless --rom roms/apple2.rom --disk path/to/dos33.dsk \
+  --no-setup --frames 900 --type '10:HOME:PRINT 6*7\r' --screen-text
+```
+
+As with other headless captures, a completely flat framebuffer exits with
+code 3; an empty text capture in graphics mode alone is not an error.
 
 ## Build from source
 

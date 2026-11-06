@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "AiControlServer.h"
+#include "TextScreenCapture.h"
 #include "AiControlJson.h"
 #include "MediaMount.h"
 #include "Pom2Build.h"
@@ -889,6 +890,7 @@ void AiControlServer::handleClient(socket_t fd)
     if (req.path == "/session/save")         return handleSnapshotSave(fd, req);
     if (req.path == "/session/load")         return handleSnapshotLoad(fd, req);
     if (req.path == "/speed")                return handleSpeed(fd, req);
+    if (req.path == "/screen/text")          return handleScreenText(fd, req);
     if (req.path == "/screen.ppm")           return handleScreen(fd, req);
     if (req.path == "/mouse")                return handleMouse(fd, req);
     if (req.path == "/printer-port")         return handlePrinterPort(fd, req);
@@ -1758,6 +1760,23 @@ void AiControlServer::handleSpeed(socket_t fd, const Request& req)
     std::ostringstream oss;
     oss << "{\"cycles_per_frame\":" << ctrl_->getCyclesPerFrame() << "}";
     sendJsonOk(fd, oss.str());
+}
+
+void AiControlServer::handleScreenText(socket_t fd, const Request& req)
+{
+    if (req.method != "GET") { sendJsonError(fd, 405, "GET only"); return; }
+    if (!ctrl_) { sendJsonError(fd, 503, "no machine attached"); return; }
+    CapturedScreenText captured;
+    {
+        auto st = ctrl_->lockState();
+        captured = captureTextScreen(st.memory());
+    }
+    std::ostringstream body;
+    body << "{\"source\":\"apple_text_memory\",\"text\":\""
+         << jsonEscape(captured.text) << "\",\"columns\":" << captured.columns
+         << ",\"rows\":" << captured.rows << ",\"first_row\":" << captured.firstRow
+         << ",\"page\":" << captured.page << "}";
+    sendJsonOk(fd, body.str());
 }
 
 void AiControlServer::handleScreen(socket_t fd, const Request& /*req*/)

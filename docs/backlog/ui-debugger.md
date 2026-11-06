@@ -184,3 +184,54 @@ winning against gettext files. Linux/Windows positional disk arguments are
 handled by the CLI. This is implemented plumbing, not proof of an installed
 package's association behavior. Remaining: Windows registration, extension
 coverage (including `.moof`) and clean-host open/default-association checks.
+
+<a id="ui-011"></a>
+
+## UI-011 — Screen text capture integrations (completed 2026-11-06)
+
+File → Copy screen text, GET `/screen/text` and headless `--screen-text`
+now share the RAM decoder. Decoder and HTTP regressions pass, desktop/headless
+builds pass, and local DOS 3.3 BASIC runs validate 40/80 columns, mixed-mode
+text and empty output in pure graphics. `--text-dump` remains an alias.
+See [CHANGELOG](../../CHANGELOG.md) and the
+[usage and limitations](../USER-GUIDE.md#copy-and-inspect-screen-text).
+
+<a id="ui-012"></a>
+
+## UI-012 — PNG screenshots with capture metadata (completed 2026-11-06)
+
+F9, the toolbar and command palette now export native RGB PNG with machine,
+monitor and resolved CRT metadata, explicitly labelled before GL post-effects.
+Numbering includes legacy PPMs. Encoding and atomic file writes run outside
+machine locks. Pixel/UTF-8/CRC/numbering/error tests pass, macOS ImageIO decodes
+identical pixels, and the desktop build passes. Interactive F9 and browser
+execution were not exercised. See [CHANGELOG](../../CHANGELOG.md) and the
+[screenshot guide](../USER-GUIDE.md#screenshots-and-settings).
+
+<a id="ui-013"></a>
+
+## UI-013 — Missing firmware guidance on the machine screen (completed 2026-11-06)
+
+The screen shows the active profile and recovery actions while its system
+ROM is absent. Desktop buttons open the existing downloader/status panel and
+reload the system ROM after re-probing paths. Welcome shares that reload path:
+file reads occur outside the controller lock, installation uses staged bytes.
+Kiosk offers an exit to setup; the browser explains bundled profiles/sessions
+without offering a download. Loaded firmware/session state removes the notice.
+Guest mouse ownership is cleared while the notice is shown.
+
+Desktop build and the five existing ROM/profile/kiosk/input regressions pass.
+Interactive screen/kiosk/browser behavior was not exercised. See
+[CHANGELOG](../../CHANGELOG.md) and the [user guide](../USER-GUIDE.md).
+
+<a id="ui-014"></a>
+
+## UI-014 — See the picture while adjusting CRT sliders (completed 2026-11-06)
+
+Floating CRT panels use 25% alpha during a mouse slider drag, preserving the
+active label/slider row. The draw list is rebuilt on release, so no transient
+opacity can be saved or left behind. Docked panels and numeric text input
+are excluded; global style and popups are unaffected. Desktop build and diff
+checks pass; visual mouse/keyboard/browser interaction was not exercised.
+See [CHANGELOG](../../CHANGELOG.md) and the
+[display guide](../USER-GUIDE.md#the-glow-of-the-screen).

@@ -387,7 +387,7 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
 
     // ── Tooling ──────────────────────────────────────────────────────
     if (iconButton({ ICON_FA_CAMERA,       "Screenshot",
-                     "Save screenshot to ./screenshot_NNN.ppm  (F9)" })) {
+                     "Save PNG screenshot in the user-data screenshots folder  (F9)" })) {
         r.requestScreenshot = true;
     }
     ImGui::SameLine();

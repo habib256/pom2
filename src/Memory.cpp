@@ -1358,34 +1358,7 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
     // unexposed — POM2 is II/II+/IIe-class only.
     if (low >= 0x61 && low <= 0x6F) {
         const uint8_t mirrored = static_cast<uint8_t>(0x60 | (low & 0x07));
-        const uint8_t bit7 = [&]() -> uint8_t {
-            switch (mirrored) {
-                case 0x61: return paddles_.button0(!iieMode) ? 0x80 : 0x00;
-                case 0x62: return paddles_.button1(!iieMode) ? 0x80 : 0x00;
-                // Shift-key mods: //e (not //c) and ][/][+ wirings, PaddleInputs.h.
-                case 0x63: return paddles_.button2(iieMode && !iicProfile_, !iieMode) ? 0x80 : 0x00;
-                case 0x64: case 0x65: case 0x66: case 0x67: {
-                    const int idx = mirrored - 0x64;
-                    if (const int w = paddles_.wiredPaddle(idx, !iieMode); w >= 0) return w ? 0x80 : 0x00;
-                    return paddles_.discharging(idx, stockSincePaddleStrobe(idx)) ? 0x80 : 0x00;
-                }
-                case 0x60:
-                    // $C068 mirrors $C060 (cassette comparator) per the
-                    // same `.mirror(0x8)` cited above — only a literal
-                    // $C060 access takes the dedicated branch earlier.
-                    // Returning a hard 0 here clamped bit 7 low, so a
-                    // tape-read loop polling $C068 never saw the
-                    // comparator flip and entropy loops keyed on N were
-                    // deterministic.
-                    // Fenced off the //c the same way the literal $C060
-                    // branch above is — the mirror must not be the back
-                    // door into a deck the machine does not have.
-                    return (cassette && !iicProfile_)
-                        ? static_cast<uint8_t>(cassette->readTapeInput() & 0x80)
-                        : static_cast<uint8_t>(iicProfile_ ? 0x00 : 0x80);
-                default: return 0;  // unreachable: mirrored ∈ $60-$67
-            }
-        }();
+        const uint8_t bit7 = gamePortReadBit7(mirrored);
         return static_cast<uint8_t>(bit7 | (floatingBus() & 0x7F));
     }
 

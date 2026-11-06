@@ -66,6 +66,7 @@ src/MC6821.cpp
 src/MachineSnapshot.cpp
 src/MediaMount.cpp
 src/Memory.cpp
+src/MemoryGamePort.cpp
 src/MemoryProfile_IIcClass.cpp
 src/MemoryVideoLog.cpp
 src/MemoryViewer_ImGui.cpp

@@ -103,6 +103,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -357,6 +358,11 @@ set_tests_properties(system_profile_smoke PROPERTIES TIMEOUT 5)
 
 
 # ─── Joystick square-gate (Apple II corner reachability) ──────────────────
+add_executable(test_keyboard_joystick keyboard_joystick_test.cpp)
+target_include_directories(test_keyboard_joystick PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME keyboard_joystick COMMAND test_keyboard_joystick)
+set_tests_properties(keyboard_joystick PROPERTIES TIMEOUT 5)
+
 # Pins JoystickInput::applySquareGate + axisToPaddle01: a full diagonal must
 # expand to the true corner (255/255) so games like Wings of Fury can take
 # off. Compiling JoystickInput.cpp pulls its GLFW poll() path, so link GLFW
@@ -382,6 +388,24 @@ target_include_directories(test_joystick_navigation PRIVATE ${CMAKE_SOURCE_DIR}/
 target_link_libraries(test_joystick_navigation PRIVATE ${GLFW_TARGET})
 add_test(NAME joystick_navigation COMMAND test_joystick_navigation)
 set_tests_properties(joystick_navigation PROPERTIES TIMEOUT 5)
+
+add_executable(test_joystick_two_players
+    joystick_two_players_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/JoystickInput.cpp
+)
+target_include_directories(test_joystick_two_players PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_joystick_two_players PRIVATE ${GLFW_TARGET})
+add_test(NAME joystick_two_players COMMAND test_joystick_two_players)
+set_tests_properties(joystick_two_players PROPERTIES TIMEOUT 5)
+
+add_executable(test_joystick_paddle_modes
+    joystick_paddle_modes_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/JoystickInput.cpp
+)
+target_include_directories(test_joystick_paddle_modes PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_joystick_paddle_modes PRIVATE ${GLFW_TARGET})
+add_test(NAME joystick_paddle_modes COMMAND test_joystick_paddle_modes)
+set_tests_properties(joystick_paddle_modes PROPERTIES TIMEOUT 5)
 
 
 # ─── //c+ boot trace (diagnostic, no asserts) ─────────────────────────────
@@ -2557,6 +2581,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6456,6 +6481,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6515,6 +6541,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6578,6 +6605,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6639,6 +6667,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6701,6 +6730,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6763,6 +6793,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -6912,6 +6943,7 @@ add_executable(test_ai_control_server
     ai_control_server_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ProDOSHardDiskCard.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/TextScreenCapture.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
     ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
@@ -7267,6 +7299,7 @@ set_tests_properties(hdv_status_driver PROPERTIES TIMEOUT 10)
 add_executable(test_ai_mouse_hle_probe
     ai_mouse_hle_probe_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/TextScreenCapture.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
     ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
@@ -8984,6 +9017,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -10548,6 +10582,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/M6502.cpp
     ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
     ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
@@ -10925,6 +10960,7 @@ set_tests_properties(sony35_write_head PROPERTIES TIMEOUT 15)
 add_executable(test_ai_control_mem_bank
     ai_control_mem_bank_test.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/TextScreenCapture.cpp
     ${CMAKE_SOURCE_DIR}/src/AiControlServer_Printer.cpp
     ${CMAKE_SOURCE_DIR}/src/PrinterPortControl.cpp
     ${CMAKE_SOURCE_DIR}/src/CentronicsPrinter.cpp
@@ -11543,6 +11579,31 @@ add_executable(test_session_machine session_machine_test.cpp)
 target_link_libraries(test_session_machine PRIVATE pom2_core_test)
 add_test(NAME session_machine COMMAND test_session_machine)
 set_tests_properties(session_machine PROPERTIES TIMEOUT 30)
+
+pom2_add_headless_test(test_sirius_joyport
+    NAME sirius_joyport TIMEOUT 10
+    SOURCES sirius_joyport_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Optional external-media validation; missing arguments report SKIPPED.
+pom2_add_headless_test(test_sirius_joyport_game
+    NAME sirius_joyport_game TIMEOUT 30
+    SOURCES sirius_joyport_game_probe.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_sirius_joyport_bandits
+    NAME sirius_joyport_bandits TIMEOUT 30
+    SOURCES sirius_joyport_bandits_probe.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_text_screen_capture
+    NAME text_screen_capture TIMEOUT 10
+    SOURCES text_screen_capture_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_screenshot_export
+    NAME screenshot_export TIMEOUT 10
+    SOURCES screenshot_export_test.cpp ${CMAKE_SOURCE_DIR}/src/ScreenshotExport.cpp)
 
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.

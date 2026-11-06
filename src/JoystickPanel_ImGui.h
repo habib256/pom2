@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// JoystickPanel_ImGui — single-device joystick configuration panel.
-// One combo box picks which host pad feeds the Apple II game port.
+// JoystickPanel_ImGui — host controller configuration panel.
+// Select a pad for each Apple II paddle pair, or keep the single-pad default.
 // Below: deadzone, invert X/Y, live axis bars + button LEDs, and an
 // Apple II side mirror so the user can verify what BASIC will read
 // from PADL(...) and the PB$Cs.
@@ -50,6 +50,16 @@ public:
     };
 
     struct Snapshot {
+        int joyportMode = 0;
+        bool joyportAvailable = true;
+        bool gamePortConnected = true;
+        std::array<int, kAxes> mode{};
+        std::array<float, kAxes> velocitySpeed{1, 1, 1, 1};
+        bool automaticHost = true;
+        bool keyboard = false;
+        int secondHost = -1;
+        int secondResolvedHost = -1;
+        std::array<int, 2> secondSource{1, 2};
         std::vector<HostDevice> hosts;
 
         // Active binding, mirrored from JoystickInput::Binding.
@@ -66,6 +76,15 @@ public:
     };
 
     struct FrameResult {
+        int joyportMode = 0;
+        std::array<int, kAxes> mode{};
+        std::array<float, kAxes> velocitySpeed{1, 1, 1, 1};
+        unsigned centreMask = 0;
+        bool automaticHost = true;
+        bool hostPicked = false;
+        bool keyboard = false;
+        int secondHost = -1;
+        std::array<int, 2> secondSource{1, 2};
         bool  changed  = false;
         int   hostIdx  = -1;
         float deadzone = 0.10f;
@@ -80,6 +99,7 @@ private:
     // "Detect": the paddle whose source is being learned (-1 = none), and
     // the bound pad's raw axes when the button was clicked.
     int learning_ = -1;
+    int learningHost_ = -1;
     std::array<float, kRawAxes> learnBase_{};
 };
 

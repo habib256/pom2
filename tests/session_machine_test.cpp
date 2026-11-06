@@ -61,11 +61,16 @@ void profiles()
         }
         source->cpu().setProgramCounter(0x4567);
         source->memory().writeRamUnchecked(0x1234, uint8_t(profile));
+        source->memory().setJoyportMode(SiriusJoyport::Right);
+        source->memory().setJoyportContacts(1, SiriusJoyport::Fire);
         const auto archive = capture(*source);
         requireLoad(*target, archive);
         assert(target->machineId() == archive.machineId);
         assert(target->cpu().getCpuMode() == cfg.defaultCpu);
         assert(target->memory().isIIcClass() == cfg.noPhysicalSlots);
+        assert(target->memory().joyportMode() == SiriusJoyport::Right);
+        assert(target->memory().joyportActive() == !cfg.noPhysicalSlots);
+        if (!cfg.noPhysicalSlots) assert(!(target->memory().memRead(0xC061) & 0x80));
         assert(capture(*target).core == archive.core);
         if (profile == SystemProfile::AppleIIcPlus) {
             // Written before the //c Plus accelerator was modelled: the v1
@@ -74,6 +79,10 @@ void profiles()
             for (uint32_t version : {6u, 7u}) { old.version = version; requireLoad(*target, old); }
             assert(capture(*target).core == archive.core);
         }
+        source->memory().setGamePortConnected(false);
+        requireLoad(*target, capture(*source));
+        assert(target->memory().joyportMode() == SiriusJoyport::Right);
+        assert(!target->memory().gamePortConnected() && !target->memory().joyportActive());
     }
 }
 void legacyBundles()

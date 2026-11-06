@@ -35,11 +35,12 @@
 // BASIC setup paste; the SSC then stays a serial line (no keyboard sink), so
 // a CP/M program's RDR:/PUN: traffic is what the telnet client sees. The
 // console is typed with `--type <sec>:<text>`, at an emulated second, in
-// both modes; `--text-dump` prints the text page after a capture run.
+// both modes; `--screen-text` prints Apple text rows after a capture run.
 
 #include "AlsCpmCard.h"
 #include "SoftCardIICard.h"
 #include "Apple2Display.h"
+#include "TextScreenCapture.h"
 #include "ClockCard.h"
 #include "DiskIICard.h"
 #include "EmulationController.h"
@@ -143,8 +144,9 @@ void usage(const char* prog)
         "                        those frames. Exits non-zero if the capture is\n"
         "                        a single flat colour (exit 3). Defaults to 300\n"
         "                        frames when --frames is absent or zero.\n"
-        "  --text-dump           After the frames, print the 40-column text page\n"
-        "                        to stdout (24 lines, inverse/flash shown as is).\n"
+        "  --screen-text         Print Apple text rows (40/80 columns; mixed: bottom 4)\n"
+        "  --text-dump           Alias for --screen-text\n"
+        "                        To stdout; inverse/flash attributes removed.\n"
         "  --until <addr>        Stop when the CPU is about to execute <addr>\n"
         "                        ($C600, 0xC600 or decimal). The time limit is\n"
         "                        --cycles or --frames; 3600 frames (a minute)\n"
@@ -337,7 +339,7 @@ int main(int argc, char** argv)
             typed.push_back({ at, unescape(v.substr(colon + 1)), false });
         }
         else if (a == "--iie") iie = true;
-        else if (a == "--text-dump") textDump = true;
+        else if (a == "--text-dump" || a == "--screen-text") textDump = true;
         else if (a == "--trace-mli") trace.mli = true;
         else if (a == "--trace-bdos") trace.bdos = true;
         else if (a == "--trace-sp") trace.smartPort = true;
@@ -706,16 +708,8 @@ int main(int argc, char** argv)
             w, h, st.colours, st.differing, w * h);
 
         if (textDump) {
-            for (int r = 0; r < 24; ++r) {
-                const uint16_t base = uint16_t(0x0400 + (r % 8) * 0x80 + (r / 8) * 0x28);
-                char line[41];
-                for (int c = 0; c < 40; ++c) {
-                    const char ch = char(controller.memory().memRead(uint16_t(base + c)) & 0x7F);
-                    line[c] = (ch >= 0x20 && ch < 0x7F) ? ch : ' ';
-                }
-                line[40] = 0;
-                std::printf("%s\n", line);
-            }
+            const auto captured = pom2::captureTextScreen(controller.memory());
+            std::fwrite(captured.text.data(), 1, captured.text.size(), stdout);
         }
         if (!shotPath.empty()) {
             if (!writePpm(shotPath, w, h, display.pixels())) {

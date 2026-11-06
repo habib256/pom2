@@ -33,6 +33,7 @@
 #include "Apple2Display.h"  // HiResMode (toolbar color/mono toggle remembers submode)
 #include "Mat4.h"           // pom2::OrbitCamera member (3D voxel view)
 #include "AppleKeyLatch.h"
+#include "KeyboardJoystick.h"
 #include "MouseGrab.h"      // pom2::mousegrab::Context (mouseGrabContext)
 #include "Pom2Theme.h"      // pom2::UiAccent member (View ▸ Interface)
 #include "PostScriptRender.h" // pom2::PostScriptSpooler member (LaserWriter)
@@ -903,6 +904,9 @@ private:
     /// CONTROL|ALT on the right Alt and must not fire POM2's Ctrl+Alt chords
     /// nor press Solid-Apple.
     bool        rightAltDown_ = false;
+    pom2::KeyboardJoystick keyboardJoystick_;
+    bool inputWindowFocused_ = true;
+    bool keyboardJoystickAllowed() const;
     bool rightAltLevel3_ = false;   // Right Alt proven to be Linux AltGr (KeyChord.h)
     /// INPUT-003: `paddle_mouse` (default off) and `paddle_mouse_range`
     /// (percent of the screen that sweeps 0..255, default 100). PaddleMouse.h.
@@ -989,7 +993,7 @@ private:
     // auto-opened on first launch when no main ROM was found so a
     // newcomer sees where to drop firmware/disks instead of a bare
     // "NO ROM" screen. `romLoaded_` mirrors the last ROM-load result so
-    // the panel can show the no-ROM guidance prominently.
+    // the screen and Welcome panel can show firmware recovery actions.
     bool romLoaded_       = false;
     // Apple ][+ photo shown in the About dialog. Loaded lazily on first
     // open via stb_image; texture freed in ~MainWindow. `tried_` blocks
@@ -1459,6 +1463,9 @@ private:
     /// First-launch offer to fetch the ROMs a package does not carry
     /// (MainWindow_RomOffer.cpp). Asked once, remembered in settings.
     void renderRomDownloadOffer();
+    void renderMissingFirmwareNotice();
+    void reloadMissingFirmware();
+    void openRomSetup(bool download);
     bool romOfferChecked_ = false;
     int  romOfferMissing_ = 0;
     void renderPasteFileDialog();
@@ -1621,7 +1628,7 @@ private:
     void renderNtscSettingsWindow();
     void renderVoxelSettingsWindow();
     void renderAiControlPanelWindow();
-    void pollJoystickAndPushToMemory();
+    void pollJoystickAndPushToMemory(double deltaSeconds);
     void renderAboutDialog();
     void renderWelcomePanelWindow();
     /// Lazy-loads `pic/Apple_II_plus.jpg` into `aboutImageTex_` on the
@@ -1693,9 +1700,8 @@ private:
     void pasteFromClipboard();
     void pasteFromFile(const std::string& path);
 
-    // Write the current display framebuffer to ./screenshot_NNN.ppm. The
-    // sequence number auto-increments to avoid overwriting prior captures
-    // within the same session.
+    // Save a native PNG with machine/display/CRT metadata under the user-data
+    // screenshots directory. Numbering includes earlier PNG and PPM captures.
     void saveScreenshot();
 
     // Eject every loaded image (Disk II, HDV, SmartPort units, 3.5").

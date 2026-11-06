@@ -10,6 +10,85 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-06 — See the picture through the CRT panel while dragging (UI-014)
+
+A mouse drag on a floating CRT slider makes the panel translucent (25% of
+normal alpha), keeping the active slider row readable. The picture underneath
+can be judged while changing the control. Release restores opacity in the
+same frame; there is no saved option or previous-frame fade state. Docked
+panels, keyboard adjustments and Ctrl-click numeric entry stay opaque.
+
+Only this window's draw-list vertex alpha is changed after its controls are
+drawn. Global theme colors and popup opacity are untouched. Desktop build and
+diff checks pass; visual mouse/keyboard/browser interaction was not exercised.
+
+## 2026-11-06 — Recover missing firmware from the machine screen (UI-013)
+
+The Apple II screen now shows "Firmware missing", the active profile and
+recovery controls when no system ROM is loaded. Desktop users can start the
+existing ROM downloader, open its status/cancel panel and reload after the
+files arrive. Download/reload buttons are disabled during a download. The
+explicit download action also answers the first-launch offer. No automatic
+network operation was added.
+
+Kiosk users can leave full screen for firmware setup; a kiosk-launched session
+retains its settings-read-only policy. Browser users get bundled-profile and
+session guidance, without a nonfunctional download button. The notice clears
+guest mouse ownership and releases pointer capture. It disappears when the
+existing ROM/session-loaded flag becomes true; framebuffer updates continue
+for screenshots/debugging behind the host UI.
+
+Welcome and the screen share a re-probing reload helper. It stages ROM bytes
+outside the controller lock, installs them under the lock and resets after
+success; failures keep the notice and report the error. This also removes the
+old Welcome reload's second file open under the machine lock.
+
+Validation: desktop build passes; `rom_fetch`, `rom_import`, `profile_switch`,
+`cli_kiosk` and `key_chord_policy` pass. These are existing regression suites;
+interactive notice/kiosk/browser behavior was not exercised.
+
+## 2026-11-06 — PNG screenshots with machine/display context (UI-012)
+
+F9 and the existing screenshot actions now save RGB PNG instead of PPM.
+A versioned UTF-8 `POM2` iTXt chunk records the software version, machine
+profile, monitor mode, PAL/NTSC standard and all 19 resolved CRT parameters,
+plus the CRT master switch. It explicitly identifies the pre-GL framebuffer:
+settings are capture context, not a claim that scanlines, curvature or bloom
+are baked into the image. OE GPU captures request CPU demodulation, as the
+HTTP capture already does. No media paths enter the metadata.
+
+The export helper keeps compression and atomic writes outside machine locks.
+Numbering scans both PNG and legacy PPM captures and continues past 999;
+malformed/out-of-range counters and directory/write errors are handled.
+Toolbar text and the user guide now identify the real per-user destination.
+Headless and HTTP PPM outputs retain their existing contracts.
+
+Validation: `screenshot_export`, `crt_presets` and `test_property_sweep` pass;
+the desktop build passes. Round-trip tests check exact RGB pixels, UTF-8 JSON,
+all PNG chunk CRCs, locale-independent numbers, naming and errors. macOS
+ImageIO independently decodes identical pixels; Python JSON/zlib checks the
+metadata and CRCs. Interactive F9 and browser execution were not exercised.
+
+## 2026-11-06 — Screen text for clipboard and automation (UI-011)
+
+File → Copy screen text, GET `/screen/text` and `pom2_headless --screen-text`
+now use the existing text decoder through one side-effect-free RAM capture.
+The old `--text-dump` is an alias: it now honors page 2, 80STORE, 80 columns,
+ALTCHAR and mixed mode instead of always dumping main page 1 in 40 columns.
+The video aux bank remains RamWorks bank 0 regardless of the CPU's bank.
+Captures preserve blank rows and strip trailing spaces; pure graphics yields
+no text. HTTP includes row/column/page metadata, escapes text, rejects POST
+and works without a renderer. Clipboard/socket I/O happens outside the machine
+lock. Custom character-ROM glyphs, raster splits and card-owned text RAM are
+not decoded; MouseText is represented by `?`.
+
+Validation: `text_screen_capture`, `ai_control_server_smoke` and
+`test_property_sweep` pass; desktop and headless builds pass. Local DOS 3.3
+BASIC prints `42` in 40 columns, at column 70 in 80-column mode, and in the
+four-line mixed-mode window; full-screen HGR returns empty text, and both
+CLI spellings produce identical output. No ROM/disk fixture added. Clipboard
+interaction and browser clipboard permissions were not exercised.
+
 ## 2026-11-06 — The SCC transmits with WR5's word length; provenance P1/P2/P3/P5
 
 **Bug**: the Z8530 sized its transmit frame from WR3 — the RECEIVE length —
@@ -50,6 +129,136 @@ citation is now pinned (`apple2e.cpp:593-699` @ `mame0287`).
 Pinned in `cli_runner`. The Memory Viewer no longer tells the user that
 `$D000-$FFFF` is the flat mirror: it has read the CPU's view
 (`snapshotCpuView`) since the paged-view rework.
+
+## 2026-11-06 — Bandits gameplay validated with Joyport (INPUT-007)
+
+Both Asimov Bandits images now pass a reproducible local-media gameplay
+probe. It waits for the title's Space poll, then sends NUL to select Joyport
+in play. POM2 supplies this through Ctrl+@ (Ctrl+2 on a US layout); its host
+Ctrl+Shift+P opens the command palette. No emulator change or guest RAM
+patch was needed to get past the earlier title-only test.
+
+Eight cases pass for each fixed socket and the game's AN0-off centre
+selection: neutral, left/right limits, one held fire press, three separate
+presses, up for shield, down and inactive-socket isolation. Thirty seconds
+of continued play produce 77/80 shots on the fixed/collection images,
+consume shield energy and exercise death/respawn. The probe and optional
+screenshots require user-supplied media; default CTest reports skipped.
+[Reproduction and evidence](docs/hardware/sirius-joyport.md#bandits-gameplay-probe).
+
+## 2026-11-06 — Sirius Joyport, Atari digital mode (INPUT-007)
+
+Game-port reads live in `MemoryGamePort.cpp`, keeping the Joyport extension
+within the existing `Memory.cpp` size ceiling. CMake targets and the coverage
+source manifest include the extracted implementation.
+
+The Joystick panel can attach a Sirius Joyport on II/II+/IIe, with physical
+left/centre/right selection. Two chosen controllers feed separate sockets;
+stick or D-pad supplies directions and A/B fires. Keyboard arrows and X/Z
+can supply the left socket. Host controls are isolated from menu actions,
+focus/UI capture and guest keyboard injection. Paddle position modes and
+mouse input do not drive this digital adapter.
+
+Memory samples AN0/AN1 at each bus read, preserving active-low contacts,
+aliases and floating-bus low bits. Rear analogue sockets are empty; IIc
+does not expose the device. No synthetic reset bypass hides the IIe self-test
+condition. A versioned, prevalidated snapshot trailer preserves selection
+and contacts, including a disconnected game port, through snapshots, rewind
+and session reconstruction; old
+states restore Joyport off. Startup selection uses `joystick_joyport`.
+
+Wavy Navy's actual Joyport driver was exercised through both fixed sockets
+using temporary Asimov media; the boat moves left and right. Bus, host-input,
+snapshot and session regressions pass, and the desktop application builds.
+Centre polarity remains provisional: the original manual contradicts itself
+on AN0 and these single-stick games cannot settle it. Bandits gameplay was
+subsequently validated above; physical controller play and browser
+compilation remain unverified.
+[Evidence, limitations and reproducible probe](docs/hardware/sirius-joyport.md).
+
+## 2026-11-06 — Paddle velocity and absolute throttle axes (INPUT-006)
+
+Each paddle in the Joystick panel has three modes. Joystick is the unchanged
+default. Velocity integrates an independently deadzoned/inverted axis into
+a retained 0–255 position; returning the stick to rest stops motion without
+recentering. Each axis has its own speed (0.1–4 full ranges/s) and Centre
+button. Absolute maps the selected throttle/trigger/raw axis directly to
+0–255 without radial deadzone, notch or square gate. Mixed-mode pairs treat
+their joystick axis independently too, preventing the throttle from changing
+its neighbour's response.
+
+Velocity advances once per host frame, never on output/preview reads, and
+never faster because of CPU turbo. Pause, kiosk menus, keyboard capture,
+focus loss and keyboard/mouse overrides suspend the affected accumulators;
+invalid or >100 ms frame durations cannot cause catch-up motion. Missing
+sources, disconnects and host/source/mode/inversion changes reset to centre.
+Fractions are retained until output rounding, so control speed is independent
+of host frame rate. Non-finite input cannot poison the accumulator.
+
+`joystick_mode_pdl0..3` and `joystick_speed_pdl0..3` persist modes and speed,
+not transient positions. The source selection and two-controller routing
+are shared with the existing joystick modes. Host-side design, independent
+of Casso; no new emulated-hardware claim.
+
+Desktop build and six targeted tests passed: `joystick_paddle_modes`,
+`joystick_two_players`, `joystick_navigation`, `joystick_square_gate`,
+`keyboard_joystick`, `key_chord_policy`. The new test compares 30/144 Hz travel
+and exercises rest, bounds, suspension, remapping, reconnect, two controllers,
+absolute inversion and mixed modes. Physical play and browser compilation
+remain unverified for this change.
+
+## 2026-11-06 — Two controllers on the Apple game port (INPUT-005)
+
+The Joystick panel offers **Second joystick**, off by default: automatic
+assignment to another connected controller or an explicit host slot. Player 1
+drives PDL0/1, player 2 PDL2/3, each with independent source choices; Detect
+listens to the correct controller and cancels if its host assignment changes.
+The host button policy is one fire per player: mapped A/B (raw button 0) to
+PB0/PB1, with PB2 unused. Only the first pad navigates menus or types keys.
+Turning the second controller off restores the original single-pad sources
+and button mapping. SNES MAX retains its separate routing.
+
+Automatic player 2 keeps its slot while it is present. A missing explicit
+selection stays neutral, without stealing another controller or falling back
+to player 1's right stick; disconnecting player 1 does not promote player 2.
+An automatic preference is saved as such, not frozen to the resolved slot by
+an unrelated panel change. The first selector also offers Automatic again,
+and explicitly choosing no controller stays disabled, including in the
+browser. Selections use host slots, not persistent controller serial numbers.
+
+Settings: `joystick_host` now accepts -2 for automatic; `joystick_second_host`
+uses -1 for off, -2 for automatic or a host slot; `joystick_second_source_0/1`
+preserve the second controller's sources separately from the single-pad ones.
+No Casso implementation or hardware claim was borrowed.
+
+Desktop build and five targeted tests passed: `joystick_two_players`,
+`joystick_navigation`, `joystick_square_gate`, `keyboard_joystick`,
+`key_chord_policy`. Three simulated GLFW controllers exercise the actual poll
+and routing path, including hotplug and raw devices. Physical-controller play
+and browser compilation remain unverified for this change.
+
+## 2026-11-06 — Optional keyboard joystick (INPUT-004)
+
+The Joystick panel now offers **Keyboard joystick (arrows, X/Z)**, off by
+default and persisted as `joystick_keyboard`. It makes games playable without
+a physical controller: arrows drive PDL0/1, X fires PB0 and Z fires PB1.
+Opposite directions centre the axis; diagonals reach both endpoints.
+Keyboard axes take priority over mouse/pad axes, buttons combine with the
+existing sources, and PDL2/3 keep their routing.
+
+Consumed keys bypass both the Apple keyboard latch and AKD, including GLFW's
+separate character callback. Desktop X/Z follow the layout; browser uses the
+existing physical-key fallback. Ctrl/Alt/Super chords retain their normal
+meaning. Focus loss, UI keyboard capture and kiosk menus release held inputs;
+stale auto-repeat cannot start them again. SNES MAX keeps its existing
+exclusive controller policy. The physical-device selector now says **(no
+physical controller)** because that choice does not disable keyboard/mouse.
+
+Implemented independently as host policy in `KeyboardJoystick.h`, with no
+Casso code or machine-timing claim. Desktop build and four targeted tests
+passed: `keyboard_joystick`, `key_chord_policy`, `joystick_square_gate`,
+`joystick_navigation`. Interactive play and browser compilation remain
+unverified for this change.
 
 ## 2026-11-06 — The nightly sanitizers were red on a link line, not on a bug (#20)
 

@@ -354,8 +354,7 @@ MainWindow::MainWindow(bool forceIIPlus)
         romStatus = std::string(iiePresent ? "IIe (128K): " : "loaded: ") + romPath;
         romLoaded_ = true;
     } else {
-        romStatus = std::string("NO ROM (") + romPath +
-                    ") — only $D000-$FFFF stub is active";
+        romStatus = std::string("No system ROM loaded: ") + romPath;
         romLoaded_ = false;
         // First-launch newcomer with no firmware: greet them with the
         // Welcome panel (folders + expected filenames + Reload button)
@@ -560,6 +559,13 @@ MainWindow::MainWindow(bool forceIIPlus)
             // the pad the user chose, the deadzone they dialled and the two
             // invert flags all used to reset to defaults on every launch.
             auto& jb = joystick->binding();
+            jb.keyboard = settings->getBool("joystick_keyboard", false);
+            const int secondHost = settings->getInt("joystick_second_host", -1);
+            jb.secondHost = JoystickInput::validSecondHost(secondHost) ? secondHost : -1;
+            for (int i = 0; i < 2; ++i) {
+                const int source = settings->getInt("joystick_second_source_" + std::to_string(i), jb.secondSource[i]);
+                if (JoystickInput::validSource(source)) jb.secondSource[i] = source;
+            }
             jb.squareGate = settings->getBool("joystick_square_gate", jb.squareGate);
             jb.deadzone   = std::clamp(
                 settings->getFloat("joystick_deadzone", jb.deadzone), 0.0f, 0.9f);
@@ -571,8 +577,12 @@ MainWindow::MainWindow(bool forceIIPlus)
                 const int src = settings->getInt(
                     "joystick_source_pdl" + std::to_string(i), jb.source[i]);
                 if (JoystickInput::validSource(src)) jb.source[i] = src;
+                const int paddleMode = settings->getInt("joystick_mode_pdl" + std::to_string(i), JoystickInput::Joystick);
+                if (JoystickInput::validMode(paddleMode)) jb.mode[i] = paddleMode;
+                jb.velocitySpeed[i] = JoystickInput::validVelocitySpeed(settings->getFloat(
+                    "joystick_speed_pdl" + std::to_string(i), 1.0f));
             }
-            // -2 is "key absent": a fresh install must still auto-bind, and
+            // -2 is "automatic" (also the absent-key default), and
             // a persisted -1 means the user chose "(none)" and the
             // auto-binder has to keep its hands off (markBindingExplicit).
             const int host = settings->getInt("joystick_host", -2);
@@ -913,6 +923,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     // Is anything plugged into the game port (Machine menu)? Default yes.
     controller->lockState().memory().setGamePortConnected(
         settings->getBool("game_port_connected", true));
+    controller->lockState().memory().setJoyportMode(settings->getInt("joystick_joyport", 0));
     // The card monitor switch (Display ▸ Card Monitor).
     { auto st = controller->lockState(); applyCardMonitorSetting(); }
     // Profile-specific floppy motor pitch — applies only to the 5.25"
@@ -1381,7 +1392,7 @@ void MainWindow::render()
 #endif
     hostCursorWanted_ = false;
 
-    pollJoystickAndPushToMemory();
+    pollJoystickAndPushToMemory(deltaSeconds);
 
     // Windowed pointer capture needs a Mouse Card on the bus.
     // Every path that can take one away — Slot Configuration, a profile

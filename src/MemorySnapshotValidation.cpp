@@ -92,6 +92,10 @@ bool Memory::validateSnapshotState(const uint8_t* data, size_t n,
             std::memcpy(&r, &bits, sizeof r);
             return std::isfinite(r) && r > 0.0 && r <= 1.0;
         })) return false;
+    if (!section([](const uint8_t* p, size_t k) {
+            return k == 5 && p[0] == 1 && pom2::SiriusJoyport::validMode(p[1]) &&
+                   p[2] <= 31 && p[3] <= 31 && p[4] <= 1;
+        })) return false;
     // Unknown future trailers, like the apply path, are intentionally ignored.
     return true;
 }

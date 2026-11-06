@@ -76,6 +76,7 @@ public:
     /// (the first-launch offer calls it). No-op while a run is in progress
     /// and in the browser build.
     void startDownload();
+    bool downloadRunning() const { return fetchRunning_.load(); }
 
     /// Draw the window. `open` is the caller's show-flag (the title-bar
     /// close button clears it). `activeProfileName` is highlighted in the

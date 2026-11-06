@@ -10804,6 +10804,12 @@ glass/demodulation knobs of the monitor on screen:
   `SameLine(labelW)` + `SetNextItemWidth(-FLT_MIN)`. `labelW` is *measured*
   from the widest label so it survives the UI zoom.
 - Two decimals, not three — `0.055` on a perceptual knob was false precision.
+- While a floating-panel slider is mouse-dragged, its window vertices use
+  25% of their normal alpha, except the active label/slider row. This is
+  applied after drawing so the background/title bar also fade, without
+  changing global style or popup opacity. The next frame rebuilds the draw
+  list: release, collapse and close need no persistent fade state. Docked
+  panels and slider temporary-text input are excluded.
 
 **The contradictory status messaging is the substantive fix.** A green
 "CRT Effects: ON" banner sat directly above a red "Shader unavailable — POM2
@@ -10908,7 +10914,10 @@ geometry, and the scale chain. It replaced a bare `ImGui::StyleColorsDark()`.
 leaves `WindowBg` at alpha 0.94. Over a black boot screen that's invisible;
 over a running HGR game every panel turns translucent and the content behind
 bleeds through (CRT Settings sliders were legible *on top of* Disk Library
-rows). Every background in the palette is alpha 1.0.
+rows). Every background in the palette is alpha 1.0. The deliberate, temporary
+exception is the floating CRT panel during a mouse slider drag (UI-014): its
+draw-list alpha drops so the underlying picture can be judged, while the
+active row retains its normal opacity. The palette itself remains opaque.
 
 **Surface ramp — the ordering carries meaning.** `kBg0` window → `kBg1`
 popup → `kBgBar` menu bar → `kBg2/3/4` raised (frames, buttons, tabs, in
@@ -11001,7 +11010,19 @@ stale one behind.
 - **Disassembler6502** — stateless `(mem*, pc) → mnemonic + length`.
 - **main.cpp** — GLFW char/key callbacks gated by ImGui keyboard
   capture so editing widgets don't leak into Apple II.
-- **Screenshot (F9)** — `screenshot_NNN.ppm` in `userDataDir()/screenshots`, next free index.
+- **Screenshot (F9)** — `screenshot_NNN.png` in `userDataDir()/screenshots`,
+  through the atomic temp + rename path. `ScreenshotExport` encodes native RGB
+  pixels outside the machine/demod locks; the numbering scan includes old PPMs.
+  The `POM2` [PNG iTXt](https://www.w3.org/TR/2025/REC-png-3-20250624/#11iTXt)
+  chunk contains UTF-8 JSON (`schema: 1`): `software`, `machine` (profile key),
+  `monitor` (CrtPresets key), `video_standard`, `width`, `height`, `crt_enabled`
+  and `crt` (all resolved CrtPresets fields plus `pal_mode` and `text_sharp`).
+  `capture_stage: "framebuffer_before_gl_effects"` and
+  `gl_effects_applied: false` distinguish these context settings from baked-in
+  effects. OE GPU capture schedules CPU demodulation before copying pixels.
+  No media paths are recorded. Headless and HTTP PPM capture contracts remain
+  unchanged. Pinned by `screenshot_export` (pixels, UTF-8, CRCs, numbering and
+  failure paths).
 
 ### HGR / DHGR Paint editor (hgrpaint/, shared with POM1)
 

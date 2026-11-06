@@ -104,6 +104,10 @@ static_assert(pom2::keychord::kKeyBackslash== GLFW_KEY_BACKSLASH);
 static_assert(pom2::keychord::kKeyRBracket == GLFW_KEY_RIGHT_BRACKET);
 static_assert(pom2::keychord::kKeyFirstModifier == GLFW_KEY_LEFT_SHIFT);
 static_assert(pom2::keychord::kKeyLastModifier  == GLFW_KEY_MENU);
+static_assert(pom2::KeyboardJoystick::control(GLFW_KEY_LEFT, 0) == pom2::KeyboardJoystick::Left);
+static_assert(pom2::KeyboardJoystick::control(GLFW_KEY_RIGHT, 0) == pom2::KeyboardJoystick::Right);
+static_assert(pom2::KeyboardJoystick::control(GLFW_KEY_UP, 0) == pom2::KeyboardJoystick::Up);
+static_assert(pom2::KeyboardJoystick::control(GLFW_KEY_DOWN, 0) == pom2::KeyboardJoystick::Down);
 
 void MainWindow::injectAscii(uint8_t apple2Code)
 {
@@ -122,6 +126,7 @@ void MainWindow::onChar(unsigned int codepoint)
     // band, etc.) are read via ImGui::IsKeyPressed — the same keystroke must
     // not also land in the $C000 latch.
     if (kioskMenuOpen_) return;
+    if (keyboardJoystick_.suppressCharacter()) return;
     // K used to be swallowed in kiosk for the Select fallback, gated on
     // `kiosk_` rather than on the menu — so K simply never reached the guest
     // in kiosk mode. The fallback is F2 now (MainWindow_Kiosk.cpp), which no
@@ -196,6 +201,18 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
         (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL);
     if (characterKey && action == GLFW_RELEASE)
         controller->memory().setKeyHeld(static_cast<uint16_t>(key), false);
+
+    // Before AKD and character injection. onChar is a separate GLFW event:
+    // a consumed X/Z must suppress that event as well as this key event.
+    keyboardJoystick_.setActive(keyboardJoystickAllowed());
+    if (keyboardJoystick_.key(key,
+            pom2::KeyboardJoystick::control(key, layoutLetter(key, scancode)),
+            action != GLFW_RELEASE, action == GLFW_REPEAT,
+            (mods & (GLFW_MOD_CONTROL | GLFW_MOD_ALT | GLFW_MOD_SUPER)) != 0)) {
+        if (characterKey)
+            controller->memory().setKeyHeld(static_cast<uint16_t>(key), false);
+        return;
+    }
 
     // Open-Apple / Solid-Apple are read by the IIe/IIc/IIc+ firmware via
     // $C061/$C062 bit 7 (MAME `apple2e.cpp:2157-2169`) — the firmware itself
@@ -623,7 +640,9 @@ void MainWindow::toggleMouseGrab() { setMouseGrab(!mouseGrabbed_); }
 
 void MainWindow::onWindowFocus(bool focused)
 {
+    inputWindowFocused_ = focused;
     if (!focused) {
+        keyboardJoystick_.setActive(false);
         setMouseGrab(false);
         controller->memory().releaseHeldKeys();
     }
@@ -890,14 +909,28 @@ void MainWindow::renderPasteFileDialog()
     }
 }
 
-void MainWindow::pollJoystickAndPushToMemory()
+bool MainWindow::keyboardJoystickAllowed() const
 {
+    if (!joystick->binding().keyboard || !inputWindowFocused_ ||
+        ImGui::GetIO().WantCaptureKeyboard || kioskMenuOpen_) return false;
+    // SNES MAX owns the controllers; its current policy disconnects the
+    // analogue game-port sources, so do not eat keys for an inactive port.
+    for (int slot = 1; slot <= 7; ++slot)
+        if (dynamic_cast<pom2::SnesMaxCard*>(
+                controller->memory().slotBus().peripheral(slot))) return false;
+    return true;
+}
+
+void MainWindow::pollJoystickAndPushToMemory(double deltaSeconds)
+{
+    keyboardJoystick_.setActive(keyboardJoystickAllowed());
     bool snesMaxInstalled = false;
     for (int slot = 1; slot <= 7; ++slot)
         snesMaxInstalled |= dynamic_cast<pom2::SnesMaxCard*>(controller->memory().slotBus().peripheral(slot)) != nullptr;
     joystick->setSnesMaxMode(snesMaxInstalled);
     joystick->poll();
-    joystick->autoBindIfUnconfigured();
+    bool joyportActive = false;
+    { auto st = controller->lockState(); joyportActive = st.memory().joyportActive(); }
 
     // One-shot diagnostic when the bound pad (or its gamepad-mapping status)
     // changes: the kiosk Start-menu only works when gamepad-mapped=yes. If a
@@ -952,24 +985,52 @@ void MainWindow::pollJoystickAndPushToMemory()
                play.dpadLeft || play.dpadRight)
             : (joystick->buttonDown(0) || joystick->buttonDown(1) ||
                joystick->buttonDown(2));
+        if (joystick->twoPlayers()) anyHeld |= joystick->gamePortButton(1);
+        if (joyportActive)
+            anyHeld |= joystick->joyportContacts(0) || joystick->joyportContacts(1);
         if (snesMaxInstalled)
             for (int player = 0; player < 2; ++player)
                 anyHeld |= joystick->deviceState(player).snesButtons != 0;
         if (!anyHeld) kioskSwallowPad_ = false;
     }
     const bool suppressGame = menuActive || kioskSwallowPad_;
+    const bool mousePaddles = paddleMouseEnabled() && !mouseGrabbed_ &&
+                              !menuActive && !snesMaxInstalled;
+    unsigned velocityMask = 0;
+    if (!suppressGame && !snesMaxInstalled && !joyportActive && inputWindowFocused_ &&
+        !ImGui::GetIO().WantCaptureKeyboard &&
+        controller->getMode() == EmulationController::Mode::Running) {
+        velocityMask = (mousePaddles || keyboardJoystick_.active()) ? 0xC : 0xF;
+    }
+    joystick->advancePaddles(deltaSeconds, velocityMask);
 
     {
         auto st = controller->lockState();
         Memory& mem = st.memory();
+        for (int player = 0; player < 2; ++player) {
+            using S = pom2::SiriusJoyport;
+            uint8_t contacts = 0;
+            if (!suppressGame && !snesMaxInstalled && inputWindowFocused_ &&
+                !ImGui::GetIO().WantCaptureKeyboard) {
+                contacts = joystick->joyportContacts(player);
+                if (player == 0 && keyboardJoystick_.active()) {
+                    contacts &= S::Fire;
+                    const auto x = keyboardJoystick_.paddle(0), y = keyboardJoystick_.paddle(1);
+                    if (x == 0) contacts |= S::Leftward;
+                    if (x == 255) contacts |= S::Rightward;
+                    if (y == 0) contacts |= S::Up;
+                    if (y == 255) contacts |= S::Down;
+                    if (keyboardJoystick_.button(0) || keyboardJoystick_.button(1)) contacts |= S::Fire;
+                }
+            }
+            mem.setJoyportContacts(player, contacts);
+        }
         for (int i = 0; i < 4; ++i)
             mem.setPaddle(i, (menuActive || snesMaxInstalled) ? 128 : joystick->paddleValue(i));
 
         // INPUT-003: the host mouse as paddles 0/1 — over the pad, when the
         // option is on and the Mouse Card does not hold the pointer.
-        bool mouseButtons[2] = { false, false };
-        const bool mousePaddles = paddleMouseEnabled() && !mouseGrabbed_ &&
-                                  !menuActive && !snesMaxInstalled;
+        bool extraButtons[2] = { false, false };
         if (mousePaddles) {
             const ImVec2 p = ImGui::GetMousePos();
             const double range = paddleMouseRange();
@@ -978,23 +1039,25 @@ void MainWindow::pollJoystickAndPushToMemory()
             mem.setPaddle(1, pom2::paddlemouse::axisToPaddle(
                 p.y, screenRectMin.y, screenRectMax.y, range));
             if (screenHovered_) {            // a click on a panel is not fire
-                mouseButtons[0] = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-                mouseButtons[1] = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+                extraButtons[0] = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                extraButtons[1] = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            }
+        }
+
+        // Keyboard mode owns PDL0/1, even centred, so a mouse or a drifting
+        // physical stick cannot move the player behind the user's back.
+        if (keyboardJoystick_.active()) {
+            for (int i = 0; i < 2; ++i) {
+                mem.setPaddle(i, keyboardJoystick_.paddle(i));
+                extraButtons[i] |= keyboardJoystick_.button(i);
             }
         }
 
         if (suppressGame || snesMaxInstalled) {
             for (int i = 0; i < 3; ++i) mem.setPaddleButton(i, false);
-        } else if (play.valid) {
-            // Gamepad-mapped: only Cross/Circle are Apple game-port buttons;
-            // the other face buttons are keyboard keys (below), so PB2 is up.
-            mem.setPaddleButton(0, play.button0 || mouseButtons[0]);   // Circle → PB0
-            mem.setPaddleButton(1, play.button1 || mouseButtons[1]);   // Cross  → PB1
-            mem.setPaddleButton(2, false);
         } else {
-            // Raw pad (unknown layout): legacy buttons 0/1/2 → PB0/1/2.
             for (int i = 0; i < 3; ++i)
-                mem.setPaddleButton(i, joystick->buttonDown(i) || (i < 2 && mouseButtons[i]));
+                mem.setPaddleButton(i, joystick->gamePortButton(i) || (i < 2 && extraButtons[i]));
         }
     }
 
@@ -1052,7 +1115,7 @@ void MainWindow::pollJoystickAndPushToMemory()
     // reference across the two, as this function used to, is what made the
     // split invisible.
     Memory& mem = controller->memory();
-    if (suppressGame || snesMaxInstalled || !play.valid) {
+    if (suppressGame || snesMaxInstalled || joyportActive || !play.valid) {
         // Drop the auto-repeat history so a direction still held from menu
         // navigation re-arms cleanly (press-then-delay) once released.
         for (bool& h : padArrowHeld_) h = false;

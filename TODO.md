@@ -152,7 +152,6 @@ reading, not measurements.
 
 | Possibility | Size | Note |
 |---|---|---|
-| The CRT settings panel fades while a slider is being dragged, so the picture under it stays visible | small | |
 | Scanlines with exact-area filtering (the `crt-pi` approach) | small | Overlaps [DISPLAY-010](docs/backlog/display.md#display-010) and the F2 item (cosine → sin²) in `display.md`; decide between them, do not stack them. |
 
 ### Disks
@@ -165,14 +164,8 @@ reading, not measurements.
 
 | Possibility | Size | Note |
 |---|---|---|
-| A "firmware missing" notice on the machine's own screen, with the download button in it | small | The Welcome panel explains the missing ROM today, and the first-launch offer downloads; neither is where the user is looking when the screen says `NO ROM`. |
-| Keyboard arrows as a joystick, `X` and `Z` as its buttons | small | Opt-in: the arrows are Apple II keys. |
-| Sirius Joyport | small | The sense of AN0 is unsettled between the sources read — **F** until a named game selects the right half. Admission rule: name the game first. |
+| Sirius Joyport: centre selector polarity | small | Atari mode with fixed sockets is implemented ([INPUT-007](docs/backlog/input.md#input-007)), validated with Wavy Navy. AN0 follows the manual's prose/BASIC, contradicted by its table/Pascal; verify both physical Atari sockets with a two-controller title before treating centre as validated. Rear Apple analogue sockets remain outside this scope. |
 | Drive widget: replace a disk by a click or a drop on the drive, say **why** a disk is locked (notch, header, damaged image, diverted), show the head position | small | The reasons already exist as states (`MediaNotch.h`, `DiskImage::integrityWarning()`, `diverted`). |
-| Screen text out of RAM: File ▸ Copy screen text, `GET /screen/text`, `pom2_headless --screen-text` | small | `TextScreenCapture.{h,cpp}` is written and compiled into five targets; nothing calls it and no test pins it. Its header names all three callers. The headless one makes text assertions possible in the corpus runner (VALIDATION-006). |
-| Screenshots as PNG carrying the machine, the monitor and the CRT settings as metadata | small | F9 writes `screenshot_NNN.ppm` today. |
-| A second player on PDL2/PDL3 from a second gamepad, pads assigned automatically | small to medium | One pad's right stick already drives PDL2/PDL3 (INPUT-002). |
-| Paddle in velocity mode; a throttle axis read as an absolute position | small | |
 | Key repeat as the //e does it (its own delay and rate); none on a ][+, which has a `REPT` key instead | small | Check the repeat timing against the //e keyboard encoder's documentation before porting Casso's numbers. |
 | Full screen: the menus come back when the pointer reaches the screen edge | small to medium | Kiosk has its own menu; this is for a full-screen session that is not a kiosk. |
 | Notice of a new release — a notice only, no download, no install | medium | A network request at launch: opt-in, and absent from the browser build. |
@@ -194,6 +187,78 @@ reading, not measurements.
   "The guest is inside the loopback perimeter"). Reopen only on a named need,
   together with [NETWORK-010](docs/backlog/network.md#network-010), the
   Uthernet II's own inbound `LISTEN`.
+
+<a id="game-companions"></a>
+
+## Possibilities — game companions
+
+Recorded 2026-11-06, on the same terms as the list above: **not a task**, no
+ID and nothing scheduled. A companion is a window that reads one game's RAM
+to show what the game knows. It would be the first game-specific code in
+POM2, so taking it means deciding first that such code belongs here
+([scope decisions](docs/decisions/project-scope.md)) and keeping it out of
+the core (`src/companions/<game>/`).
+
+**The map is the point.** The idea worth keeping is an **automap**: a window
+that draws each map as the party explores it, with the avatar, a map picker
+and per-tile notes. Build it as **one engine fed by a per-game profile**, not
+as Nox-only code. A profile is data: how to recognise the game, the named
+addresses, and the map's regions. The engine comes in two levels:
+
+- **Trail map**: needs only position, i.e. map, X, Y, floor and facing. It
+  draws the squares visited and the walking direction. Any game whose position
+  is known gets one.
+- **Tile automap**: also needs the game's view window in RAM and its tile
+  graphics. The squares seen are drawn with the game's own tiles.
+
+**Apple II games only**, and only their Apple II release. Every address comes
+from that release running in POM2, never from a PC, C64 or GOG version of the
+same title. GridCartographer-Mapping mixes them: its Ultima IV profile reads
+the PC `avatar.exe`, its Ultima I-III profiles target GOG and its Realms of
+Antiquity profile the TI-99. None of those apply.
+
+| Possibility | Size | Note |
+|---|---|---|
+| The automap engine + **Nox Archaist** as its first profile (tile level) | medium | Modelled on [NoxArchaistCompanion](https://github.com/hasseily/NoxArchaistCompanion) (an AppleWin fork, read at `77fe10d`). It has **no licence**: reimplement from the RAM addresses, copy no code. Its region table derives from [GridCartographer-Mapping](https://github.com/hasseily/GridCartographer-Mapping) (MIT), which can be regenerated from there instead. Addresses checked: below. |
+| Profiles for **Ultima V** and **Wizardry I** (Apple II releases) | small each, once the engine exists | The MIT GameLink profiles in GridCartographer-Mapping already name their Apple II position bytes: Ultima V on page zero (`$00/$01` X/Y, `$09` floor, `$0A` location, `$0F` facing, `$1F8/$1F9` dungeon position), Wizardry I at `$7594-$759A`. These are grade **E** until read on the running game, the way Nox's were. Both give a trail map at once. Whether Ultima V also has a tile window in RAM is not known. The user has Ultima V. |
+| A **Deathlord** profile, Apple II release (tile level) | medium | [Deathlord-Companion](https://github.com/hasseily/Deathlord-Companion) (AGPL-3.0) has an automap: 64×64 maps, and dungeon levels of 16×16 packed four to a map, hence its zoom per quadrant. Reimplement from the addresses, as for Nox. |
+| A **RAM search** panel: search for a value, filter by "changed", "unchanged", "increased"…, over main and aux, results sent to the debugger's watches | small to medium | POM2 has none. It is how a new game's map gets a profile, e.g. the Apple II Wizardry V, which has no published one. It is game-agnostic, so it raises no scope question. "Freeze a value" would come with it and stays opt-in. |
+
+Seen around the same tools, **not** for now: a game text log from a hook on
+the game's print routine (NAC's conversation log), RetroAchievements (needs
+the RA team's approval, and its hardcore mode forbids rewind, state loads and
+`POST /mem` writes), and a GameLink bridge to Grid Cartographer (Windows
+only). Out of scope: changing a game's rules through CPU hooks
+([Deathlord-Relorded](https://github.com/hasseily/Deathlord-Relorded)).
+
+**What is already checked** — 2026-11-06, on a copy of the user's
+*Nox Archaist v1.3.7 MB4c* HDV, booted on `--preset iic` with
+`iic_expansion_card=mockingboard`, and read through `GET /mem`. The MB4c build
+moved none of these addresses:
+
+- Main RAM: map id `$2AF9`, map type `$267D` (`$FF` = combat, never observed),
+  avatar X/Y `$6CEB`/`$6CEC`, food and gold `$704F`/`$7051`. The 17×11 view is
+  at `$0800` and its visibility mask at `$08BB` (0 = visible). The avatar is
+  **not** in the view buffer.
+- Aux RAM: party names at `$1600 + k·$80 + $4B`, the "a game is loaded" gate.
+  Tiles are 14×16 HGR, 2 bytes per line, LSB on the left: `$7000 + N·$20` for
+  N < `$80`, `$8000 + (N−$80)·$80` frame 0 for animated ones. A view rebuilt
+  from these matched the screen.
+- NAC samples the RAM on the game's `$C000` read: sampled anywhere else, the
+  visibility mask is caught half cleared. In POM2 that would be a null hook on
+  `Memory`'s `$C0xx` slow path, checked with `pom2_bench` (unchanged hashes,
+  no measurable cost; `docs/PERFORMANCE.md` §§ 8.2/8.5).
+
+**Outline if taken**:
+1. The engine and the profile format, with no ImGui and pinned by a test on
+   synthetic RAM.
+2. The `$C000` hook, or whatever sampling point the profile names.
+3. A Tools panel (`PanelId::AutoMap`, `MainWindow_AutoMap.cpp`) that colours
+   tiles with POM2's own HGR decoder.
+
+Discovered maps are saved under `userConfigDir()`, **one set per game and per
+party** rather than NAC's single global set, so two games do not mix. The game
+and its version are told from RAM, not from the file name as NAC does.
 
 <a id="backlog"></a>
 

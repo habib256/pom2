@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // JoystickInput — GLFW host-side joystick polling, mapped to the Apple II
-// game port. ONE active joystick at a time:
+// game port. One host pad by default, optionally two (one per paddle pair):
 //
 //   first analog stick X → PADL(0)   ($C064)  — the Apple II joystick
 //   first analog stick Y → PADL(1)   ($C065)
@@ -24,7 +24,9 @@
 //   host btn 2           → PB2       ($C063, "shift mod" / third button)
 //
 // PADL(2)/PADL(3) — the second paddle pair — take the second stick by
-// default. Every paddle's source is configurable (Binding::source): none,
+// default. With secondHost enabled they use secondSource on another pad;
+// mapped A/B (raw button 0) then fire PB0 for player 1 and PB1 for player 2.
+// Every paddle's source is configurable: none,
 // stick 1/2 X/Y, the L2/R2 triggers or any raw host axis 0..7, and the
 // Joystick panel can learn it from a move.
 //
@@ -51,6 +53,11 @@ public:
     static constexpr int kAxes       = 4;      // left X/Y, right X/Y
     static constexpr int kButtons    = 3;      // PB0, PB1, PB2
     static constexpr int kRawAxes    = 8;      // raw host axes a paddle can take
+    static constexpr int kAutomaticHost = -2;
+    static bool validSecondHost(int host) { return host >= kAutomaticHost && host < kHostCount; }
+    enum PaddleMode : int { Joystick = 0, Velocity = 1, Absolute = 2 };
+    static bool validMode(int mode) { return mode >= Joystick && mode <= Absolute; }
+    static float validVelocitySpeed(float speed);
 
     /// Where one Apple II paddle reads from (Binding::source, persisted as
     /// `joystick_source_pdlN`). Raw axis k is `SrcRaw0 + k`.
@@ -79,6 +86,8 @@ public:
         bool seeded = false;
         std::array<bool,  kButtons> buttons{};
         uint16_t snesButtons = 0; // B,Y,Select,Start,Up,Down,Left,Right,A,X,L,R
+        bool gamepad = false;
+        bool playerFire = false; // mapped A/B, or raw button 0
     };
 
     // UI navigation edges, derived from the bound pad's *standard* gamepad
@@ -146,6 +155,12 @@ public:
         // Per paddle (PADL 0..3). Default: the Apple II joystick on the first
         // analog stick, the second paddle pair on the second.
         std::array<int, kAxes> source{ SrcStick1X, SrcStick1Y, SrcStick2X, SrcStick2Y };
+        bool keyboard = false;       // arrows + X/Z, opt-in host fallback
+        // -1 preserves single-pad routing; -2 chooses another connected pad.
+        int secondHost = -1;
+        std::array<int, 2> secondSource{ SrcStick1X, SrcStick1Y };
+        std::array<int, kAxes> mode{ Joystick, Joystick, Joystick, Joystick };
+        std::array<float, kAxes> velocitySpeed{1, 1, 1, 1}; // full ranges/second
     };
 
     JoystickInput();
@@ -156,14 +171,13 @@ public:
     /// do not rest low, in order; the first two that do are L2/R2. Pure.
     static void resolveRawSticks(DeviceState& device);
 
-    /// Refresh state from GLFW. Call once per UI frame.
+    /// Refresh devices, resolve bindings, then derive navigation. Once per UI frame.
     void poll();
     void setSnesMaxMode(bool enabled) { snesMaxMode_ = enabled; }
 
-    /// First-call auto-bind: if no host is bound yet and at least one is
-    /// present, attach the first present host. Lets the emulator "just
-    /// work" without going through the panel. No-op once the binding has
-    /// been decided — either by a previous auto-bind or by the user.
+    /// Resolve the first automatic binding once, and the second each poll.
+    /// Automatic player 2 keeps its slot while present; explicit selections
+    /// wait for that slot. Neither player can take the other's slot.
     void autoBindIfUnconfigured();
 
     /// "The binding is the user's now." Called by the Joystick panel when a
@@ -172,7 +186,11 @@ public:
     /// next frame: hostIdx = -1 is exactly the state autoBindIfUnconfigured
     /// treats as unconfigured, so it re-attached the first present pad and
     /// the game port went on reading a stick the user had just unplugged.
-    void markBindingExplicit() { autoBindDone = true; }
+    void markBindingExplicit() { autoBindDone = true; bindingExplicit_ = true; }
+    void useAutomaticBinding() { active.hostIdx = -1; autoBindDone = false; bindingExplicit_ = false; }
+    int hostPreference() const { return bindingExplicit_ ? active.hostIdx : kAutomaticHost; }
+    bool twoPlayers() const { return validSecondHost(active.secondHost) && active.secondHost != -1; }
+    int secondHostIndex() const { return secondResolvedHost_; }
 
     const DeviceState& deviceState(int hostIdx) const {
         if (hostIdx < 0 || hostIdx >= kHostCount) return devices[0];
@@ -182,14 +200,25 @@ public:
     Binding&       binding()       { return active; }
     const Binding& binding() const { return active; }
 
-    /// 0..3: PADL(n) through Binding::source; unavailable axes are centered.
+    /// 0..3: selected host/source for each pair; absent hosts are centred.
     uint8_t paddleValue(int paddleIdx) const;
-    /// Pure routing helper, also used by controller regression tests.
+    /// Advance retained positions once per host frame; bits in enabledMask
+    /// identify axes not suspended/overridden. Reads never advance time.
+    void advancePaddles(double seconds, unsigned enabledMask = 0xF);
+    void centrePaddles(unsigned mask = 0xF);
+    /// Pure position-mode routing; velocity needs instance state and returns
+    /// centre here. Also used by controller regression tests.
     static uint8_t paddleValue(const DeviceState& device, const Binding& binding,
                               int paddleIdx);
 
     /// 0..2. PB0/PB1/PB2 = bound host buttons 0/1/2.
     bool buttonDown(int buttonIdx) const;
+    /// Final physical-controller mapping: legacy single pad, or one fire
+    /// per player on PB0/PB1 in two-controller mode (PB2 unused).
+    bool gamePortButton(int buttonIdx) const;
+    /// Sirius contact mask; instantaneous configured axes + D-pad, A/B fire.
+    /// Player 2 requires a distinct second host. No velocity accumulation.
+    uint8_t joyportContacts(int player) const;
 
     /// In-game standard-mapping snapshot (D-pad + face buttons). `.valid` is
     /// false when the bound pad has no gamepad mapping (raw layout unknown).
@@ -234,10 +263,23 @@ public:
 private:
     /// Take a newly present pad's first sample as its rest position.
     static void seedRestingAxes(DeviceState& device);
+    int paddleHost(int paddle) const;
+    int paddleSource(int paddle) const;
+    static bool sourceAvailable(const DeviceState& device, int source);
+    struct PaddlePosition {
+        double value = 128;
+        int host = -1;
+        int source = SrcNone;
+        int mode = Joystick;
+        bool invert = false;
+    };
+    std::array<PaddlePosition, kAxes> paddlePositions_{};
 
     std::array<DeviceState, kHostCount> devices{};
     Binding active;
     bool    autoBindDone = false;
+    bool bindingExplicit_ = false;
+    int secondResolvedHost_ = -1;
 
     UiNav                       nav_{};
     GamepadPlay                 play_{};

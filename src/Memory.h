@@ -46,6 +46,7 @@
 #include "Keyboard.h"
 #include "MemoryWatchSink.h"
 #include "PaddleInputs.h"
+#include "SiriusJoyport.h"
 
 #include <array>
 #include <functional>
@@ -924,6 +925,13 @@ public:
     void setShiftKeyMod   (bool on)   { paddles_.setShiftKeyMod(on); }
     void setControlKey    (bool down) { paddles_.setControlKey(down); }
     void setGamePortConnected(bool on) { paddles_.setConnected(on); }
+    bool gamePortConnected() const { return paddles_.connected(); }
+    void setJoyportMode(int mode) { joyport_.setMode(mode); }
+    pom2::SiriusJoyport::Mode joyportMode() const { return joyport_.mode(); }
+    bool joyportActive() const {
+        return joyport_.mode() != pom2::SiriusJoyport::Off && !iicProfile_ && paddles_.connected();
+    }
+    void setJoyportContacts(int jack, uint8_t contacts) { joyport_.setContacts(jack, contacts); }
     void setIiShiftWiring (pom2::PaddleInputs::IiShiftWiring w) { paddles_.setIiShiftWiring(w); }
 
     // Reset — returns LC/MMU/IOU/video switches to cold-boot defaults.
@@ -1309,6 +1317,7 @@ private:
     // (one concern per file); the $C061-$C067 read path and $C070 forward to
     // `paddles_`, and the snapshot serialises its four 558 timers.
     pom2::PaddleInputs paddles_;
+    pom2::SiriusJoyport joyport_;
     // Cycle at which the current video frame started. Derived state, kept
     // incrementally by advanceCycles() so the per-instruction VBL check needs
     // no runtime-divisor modulo — see the comment there. Deliberately NOT
@@ -1519,8 +1528,7 @@ private:
     // 8 KB international character generator it is wired to the ROM's
     // A12, so it selects the live 4 KB font (`charRomBankOffset`).
     // AN0 drives a Videx Videoterm's soft video switch (see
-    // DisplayState::an0); AN1 has no external sink yet — it is tracked so a
-    // future GameI/O-style pin model can pick it up.
+    // DisplayState::an0); AN0/AN1 also select the Sirius Joyport jack/axis.
     // All three are cleared by `resetSoftSwitches` (the 74LS259's /CLR
     // rides the reset line) and carried in the snapshot trailer. AN0 is
     // `display.an0` since 2026-09-29 (a Videx Videoterm watches it).
@@ -1529,6 +1537,7 @@ private:
 
     void markRomRegion(uint16_t lo, uint16_t hi);
     uint8_t softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal);
+    uint8_t gamePortReadBit7(uint8_t mirrored);
     uint8_t languageCardSwitchAccess(uint16_t addr, bool isWrite);
     uint8_t languageCardRead(uint16_t addr) const;
     /// The RAM cell `languageCardWrite` would touch — bank 1/2 at $D000, the
