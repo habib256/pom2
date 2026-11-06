@@ -15,7 +15,7 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [VALIDATION-006](#validation-006) | 🟡 | Ready | Headless compatibility corpus with a published pass rate |
+| [VALIDATION-006](#validation-006) | ✅ | Done 2026-11-06 | Headless compatibility corpus with a published pass rate |
 | [VALIDATION-001](#validation-001) | 🟡 | Needs hardware oracle | Disk II opposing-magnet response on a real //c |
 | [VALIDATION-003](#validation-003) | 🟡 | Partial: make repeatable | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
@@ -25,7 +25,32 @@ an explicit request before scheduling.
 
 ## VALIDATION-006 — Headless compatibility corpus with a published pass rate
 
-**Priority:** 🟡 · **State:** Ready ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+**Priority:** ✅ · **State:** Done 2026-11-06 — `pom2_corpus`
+([tests/corpus/README.md](../../tests/corpus/README.md)); first pass rate
+recorded in [corpus-2026-11-07](../audits/corpus-2026-11-07.md). Retained
+here for stable incoming links.
+
+**Delivered.** `pom2_corpus` runs `tests/corpus/corpus.manifest` through the
+SDK facade (`pom2::Core`): a profile, the devices and media, a script of
+`run` / `key` / `type` / `check`, a frame hash per check compared with
+`tests/corpus/corpus.expected`, a pass rate over titles and over checks,
+`--bless`, `--frames`, `--report`. Media are copied before they are mounted;
+absent media, absent firmware and firmware other than the recorded run's are
+skips with the reason. ctest runs the `ci` titles (`corpus_ci`: DIX's menu and
+its first part) and the grammar (`corpus_manifest`). The first manifest is
+DIX in automatic mode (16 checks, one per part over 26.5 emulated minutes, in
+~22 s), DIX's menu, the author's four tracked titles and A2 File Cmd's two
+media, and Digidream from the test-media archive: 8 titles, 24 checks, 100 %
+on `5a3bbefd`. Reverting the Mockingboard's `syncToCpuCycle()+1` (the
+OLDSKOOL fix, 2026-09-02) fails 15 of DIX's 16 checks, so the corpus sees a
+one-cycle device-timing regression.
+
+**Left for later, by name:** the `docs/test_corpus.md` titles whose media are
+not in the tree or the archive (DROL, the Purplesoft and Extasie disks); the
+protected-disks set, once VALIDATION-003 records its WOZ SHA-256s; a //c-class
+title (the facade boots them, none is in the manifest yet); and the check
+itself stays a *change detector*. Whether a frame is right was decided by eye
+when it was blessed, and audio is not compared at all.
 
 **Acceptance criterion:** One command boots every title of a declared
 manifest headless on its profile, records a screen hash after a fixed number

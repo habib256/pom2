@@ -10,6 +10,34 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-06 — A compatibility corpus with a pass rate (VALIDATION-006)
+
+**The compatibility corpus (VALIDATION-006).** `pom2_corpus` boots every title
+of `tests/corpus/corpus.manifest` headless through the SDK facade, plays its
+keys and emulated seconds, hashes the frame at each check and compares it with
+`tests/corpus/corpus.expected`. It reports a pass rate over titles and over
+checks. The first manifest starts with DIX: the menu, then automatic mode with
+one check per part (16 checks over 26.5 emulated minutes, ~22 s of host time),
+followed by the author's tracked titles and Digidream. Result: 8/8 titles,
+24/24 checks ([corpus-2026-11-07](docs/audits/corpus-2026-11-07.md)). Two
+decisions are worth keeping:
+
+- **The firmware is part of the expectation.** Each recorded check carries a
+  fingerprint of the dumps that produced it. A run with other dumps *skips*
+  the title and names both fingerprints. Without that, a machine with a
+  different Disk II PROM would report a regression POM2 did not make.
+- **It detects change, not correctness.** A frame was judged right by eye when
+  it was blessed (`--frames` writes the PNGs). The check only says whether it
+  moved. That is enough to separate "my CPU-001 change moved DIX" from "it did
+  not", which is the gate CPU-001 asked for. As a control, reverting the
+  Mockingboard's `syncToCpuCycle()+1` (the OLDSKOOL fix) fails 15 of DIX's
+  16 checks.
+
+ctest runs the `ci` titles (`corpus_ci`, DIX's menu and first part, under a
+second) and the grammar with each refusal (`corpus_manifest`). Media are copied
+before they are mounted. Absent media or firmware is a skip with its reason,
+never a failure. → [tests/corpus/README.md](tests/corpus/README.md).
+
 ## 2026-11-06 — See the picture through the CRT panel while dragging (UI-014)
 
 A mouse drag on a floating CRT slider makes the panel translucent (25% of

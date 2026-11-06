@@ -30,6 +30,7 @@ src/ChildProcess.cpp
 src/CliDispatcher.cpp
 src/CliRunner.cpp
 src/ClockCard.cpp
+src/CorpusManifest.cpp
 src/CrtEffectStack.cpp
 src/Cs8900aDevice.cpp
 src/Debugger.cpp

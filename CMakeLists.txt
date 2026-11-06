@@ -678,6 +678,7 @@ set(POM2_DEVICES_SOURCES
 # that names SpOverSlipLink or FujiNetNetDevice.
 set(POM2_FOUNDATION_SOURCES
     src/SessionArchive.cpp
+    src/CorpusManifest.cpp
     src/CharRomDump.cpp
     src/ChildProcess.cpp
     src/SerialPort.cpp
@@ -685,6 +686,7 @@ set(POM2_FOUNDATION_SOURCES
 
 set(POM2_FOUNDATION_HEADERS
     src/SessionArchive.h
+    src/CorpusManifest.h
     src/SessionIO.h
     src/DriveSoundPolicy.h
     src/MediaWritePolicy.h
@@ -767,6 +769,7 @@ set(POM2_FRONTEND_SOURCES
     # and a headless runner are composition roots too, and classifying them
     # anywhere lower would just be a lie the guard then enforces.
     src/pom2_bench.cpp
+    src/pom2_corpus.cpp
     src/pom2_cpm.cpp
     src/pom2_disk.cpp
     src/pom2_dos33.cpp
@@ -2187,6 +2190,18 @@ add_executable(pom2_dos33
     src/HostFileTag.cpp
 )
 target_include_directories(pom2_dos33 PRIVATE ${POM2_SRC_DIR})
+
+# ─── pom2_corpus ──────────────────────────────────────────────────────────
+# The compatibility corpus (VALIDATION-006): boots every title of
+# tests/corpus/corpus.manifest headless through the SDK facade, hashes the
+# frame at each check and prints a pass rate. Links the SDK archive itself,
+# so it runs the machine a library consumer gets. tests/corpus/README.md.
+add_executable(pom2_corpus
+    src/pom2_corpus.cpp
+    src/CorpusManifest.cpp
+)
+target_include_directories(pom2_corpus PRIVATE ${POM2_SRC_DIR} ${POM2_GENERATED_DIR})
+target_link_libraries(pom2_corpus PRIVATE pom2_core)
 endif()
 
 # ─── pom2_prodos ──────────────────────────────────────────────────────────

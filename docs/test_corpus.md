@@ -25,6 +25,12 @@
 > glitch-free, the emulator is at the "cycle-exact demo" level; if DIX breaks,
 > the corpus below tells you *which* subsystem to dig into.
 
+> **Automated part — `pom2_corpus`** (2026-11-06, VALIDATION-006). The titles
+> whose media are in the tree or the test-media archive, DIX first, run
+> headless from `tests/corpus/corpus.manifest` and report a pass rate against
+> recorded frames: [tests/corpus/README.md](../tests/corpus/README.md). The
+> rows below remain the manual backlog and the reason each title is there.
+
 ## Contents
 
 - [1. CPU↔video accuracy (cycle-exact sync)](#1-cpuvideo-accuracy-cycle-exact-sync)

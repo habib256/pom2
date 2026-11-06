@@ -10138,6 +10138,20 @@ endif()
 # find_package(pom2_core) install contract, which needs an installable library
 # target that the v0.8.5 tree does not define.
 if(TARGET pom2_core_test)
+# The compatibility corpus's two files, parsed with no machine: the manifest
+# grammar with its refusals, the expectations round trip, the frame hash.
+pom2_add_headless_test(test_corpus_manifest
+    NAME corpus_manifest TIMEOUT 10 PORTABLE
+    SOURCES corpus_manifest_test.cpp ${CMAKE_SOURCE_DIR}/src/CorpusManifest.cpp)
+# …and the corpus itself, the `ci` titles (DIX's menu and first part): boots
+# them through pom2_corpus and compares with tests/corpus/corpus.expected.
+# 77 = nothing could run (no //e ROM, no DIX): a skip, not a pass.
+if(TARGET pom2_corpus)
+    add_test(NAME corpus_ci
+             COMMAND pom2_corpus --tag ci
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(corpus_ci PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+endif()
 pom2_add_headless_test(test_pom2_core_api
     NAME pom2_core_api TIMEOUT 10 PORTABLE
     SOURCES pom2_core_api_test.cpp
