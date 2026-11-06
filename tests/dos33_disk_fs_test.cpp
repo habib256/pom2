@@ -189,12 +189,12 @@ void testListing()
     // trailing space, the program's own with it.
     const auto listOf = [](const std::vector<uint8_t>& body,
                            pom2::applesoft::ListReport* report = nullptr) {
-        std::vector<uint8_t> prog = { 0x01, 0x08, 0x0A, 0x00 };   // link, line 10
-        prog.insert(prog.end(), body.begin(), body.end());
-        prog.insert(prog.end(), { 0x00, 0x00, 0x00 });
+        std::vector<uint8_t> bytes = { 0x01, 0x08, 0x0A, 0x00 };   // link, line 10
+        bytes.insert(bytes.end(), body.begin(), body.end());
+        bytes.insert(bytes.end(), { 0x00, 0x00, 0x00 });
         return pom2::applesoft::list(0, [&](uint16_t a) {
-            return a < prog.size() ? prog[a] : uint8_t(0);
-        }, prog.size(), report);
+            return a < bytes.size() ? bytes[a] : uint8_t(0);
+        }, bytes.size(), report);
     };
     // REM: the payload as stored, the typed space and no other.
     CHECK(listOf({ 0xB2, ' ', 'H', 'E', 'L', 'L', 'O' }) == "10 REM HELLO\n");
