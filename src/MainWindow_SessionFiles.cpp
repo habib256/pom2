@@ -15,6 +15,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "PrinterSoundDevice.h"
 #include "Apple2Display.h"
 #include "AudioCoordinator.h"
@@ -166,6 +167,7 @@ bool MainWindow::reconstructSessionMachine(const pom2::SessionArchive& session, 
             if (auto* a = dynamic_cast<EchoPlusCard*>(card)) mix(a, Kind::EchoPlus, 0.7f);
             if (auto* a = dynamic_cast<EchoPlusTMS5220Card*>(card)) mix(a, Kind::EchoPlusTms5220, 0.7f);
             if (auto* a = dynamic_cast<pom2::SamCard*>(card)) mix(a, Kind::Sam, 0.7f);
+            if (auto* a = dynamic_cast<pom2::PorteParoleCard*>(card)) mix(a, Kind::PorteParole, 0.7f);
             if (card->audioSource()) registerAudioSource(card->audioSource());
             if (live.keys[i] == "diskii") {
                 diskPanels.push_back(std::make_unique<pom2::DiskController_ImGui>());

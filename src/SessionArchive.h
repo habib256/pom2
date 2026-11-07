@@ -10,7 +10,7 @@ namespace pom2 {
 inline constexpr size_t kMaxSessionBytes = 32u * 1024u * 1024u;
 inline constexpr size_t kMaxSessionCardBytes = kMaxSessionBytes - 24;
 struct SessionArchive {
-    enum class Card : uint8_t { Empty, DiskII, Mockingboard, SoundII, SnesMax, Slinky, Clock, Serial, IIcMouse, ChatMauve, SmartPort, SonyMedia, HardDisk, Cffa, Transwarp, Phasor, EchoPlus, Sam, FourPlay, EchoTms };
+    enum class Card : uint8_t { Empty, DiskII, Mockingboard, SoundII, SnesMax, Slinky, Clock, Serial, IIcMouse, ChatMauve, SmartPort, SonyMedia, HardDisk, Cffa, Transwarp, Phasor, EchoPlus, Sam, FourPlay, EchoTms, PorteParole };
     struct Slot {
         Card kind = Card::Empty;
         std::vector<uint8_t> identity, state;

@@ -18,45 +18,12 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [CARDS-001](#cards-001) | 🟡 | Partial: catalog entries missing | Reconcile four card abstraction levels with the catalog |
 | [CARDS-002](#cards-002) | 🧊 | Frozen | Apple II Workstation Card — it boots, it is identified, and there is no network on the other end. |
 | [CARDS-006](#cards-006) | 🧊 | Frozen | Apple II SCSI / High-Speed SCSI + CHD |
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-011](#cards-011) | 🟢 | Done 2026-10-28 — move the register map to DEV.md, then archive (ID also reused at `CHANGELOG.md:945`) | ALS "The CP/M Card" (6 MHz Z80B, own 64 KB, CP/M Plus) |
-
-<a id="cards-001"></a>
-
-## CARDS-001 — Reconcile four card abstraction levels with the catalog
-
-**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `abstractionCatalog()` lacks `workstation`, `4play`, `transwarp`, `slinky`, `zipchip`, `sam`, `videoterm`, `vidhd`, `grappler1`, `pic`.
-
-**Acceptance criterion (after revalidation):** Keep liron, workstation, 4play and transwarp levels consistent between lle_vs_hle and abstractionCatalog, or archive if already aligned.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-695). Original dates and estimates are retained below.
-
-The original report found no row or catalog key for these cards. The current
-documentation has all four; the remaining catalog gaps are recorded below.
-
-| Card | Level | The seam to record |
-|---|---|---|
-| `liron` | **L2 firmware + L0 media path, H2 drive** — a composite | The UniDisk's drive-side 65C02 is not emulated; the protocol is the contract. Say explicitly that this is the strictly *lower* sibling of the `smartportcard` L2 veneer, since the picker now shows both |
-| `workstation` | **L0 CPU + L1 SCC, with no transport** | A third failure category, the one the FujiNet's "no peer" row also names: **the network on the other end does not exist.** Level is high; reach is zero |
-| `4play` | **L1 — and complete** | Nothing below the register to model. Needs an explicit *complete* marker, or "L1" reads as "something is missing" |
-| `transwarp` | **L1 registers / host retiming** (original proposed label) | The documented catalog classification is H1. CPU multiplier is sampled per 4096-cycle chunk, not once per frame (`transwarp_chunk_sampling`) |
-
-**Revalidated 2026-10-06 — half done.** `docs/lle_vs_hle.md` now has a row
-for all four (Liron L2, TransWarp H1, Workstation L0/L1, 4play L1); the
-levels it records differ from the table above for `liron` and `transwarp`.
-`abstractionCatalog()` (`src/AbstractionLevels_ImGui.cpp:119-358`) still has
-no `liron`, `workstation`, `4play` or `transwarp` key, so the picker still
-shows no level for them.
-
-**Code reconciliation 2026-10-19:** The older catalog claim is partly
-superseded: `abstractionCatalog()` now contains `liron` at L2. `workstation`,
-`4play` and `transwarp` still have no catalog row. The document already
-describes all four, so do not schedule their documentation as missing.
 
 <a id="cards-002"></a>
 

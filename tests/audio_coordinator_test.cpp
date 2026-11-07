@@ -263,7 +263,7 @@ int main()
     // hard-coded to 3 — the day the TMS scaffold grows an AudioSource it
     // must not fall off the end of the `index < legacy.size()` guard.
     static_assert(static_cast<std::size_t>(
-                      pom2::AudioCoordinator::CardKind::EchoPlusTms5220) <
+                      pom2::AudioCoordinator::CardKind::PorteParole) <
                       pom2::AudioCoordinator::kCardKindCount,
                   "legacy key table must cover every CardKind");
 

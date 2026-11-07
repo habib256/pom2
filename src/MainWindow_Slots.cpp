@@ -264,19 +264,6 @@ void MainWindow::renderSlotConfigPanel()
         // catalog (the LLE/HLE panel's source of truth — docs/lle_vs_hle.md
         // made live), so the picker says whether you are choosing silicon or
         // a service, and with its scope bucket from TODO.md's ruling.
-        auto absEntryFor = [](const std::string& key) -> const pom2::AbsEntry* {
-            if (key.empty()) return nullptr;
-            const char* id = key.c_str();
-            if (key == "smartport35" || key == "superdrive") id = "smartportcard";
-            else if (key == "printer")   id = "printercard";
-            else if (key == "mockingboard_c") id = "mockingboard";
-            else if (key == "phasor")    id = "mockingboard";
-            else if (key == "echoplus")  id = "ssi263";
-            else if (key == "echoplus_tms") id = "tms5220";
-            for (const auto& e : pom2::abstractionCatalog())
-                if (std::string(id) == e.id) return &e;
-            return nullptr;
-        };
         // Silicon or service, and nothing else. The tag used to read
         // "[L0 · LLE · core]": the L0-L2 sub-levels belong to the Abstraction
         // Levels panel, which is about them, and the scope word to TODO.md's
@@ -284,7 +271,7 @@ void MainWindow::renderSlotConfigPanel()
         // picker the pair was clutter that clipped the card's own name.
         auto levelTag = [&](const std::string& key) -> std::string {
             if (key.empty()) return {};
-            const auto* e = absEntryFor(key);
+            const auto* e = pom2::abstractionEntryForCardKey(key);
             if (!e) return {};
             return std::string("  [") +
                    (pom2::levelIsLle(e->level) ? "LLE" : "HLE") + "]";
@@ -362,7 +349,7 @@ void MainWindow::renderSlotConfigPanel()
                     const std::string itemLabel = ct.label + levelTag(ct.key);
                     if (ImGui::Selectable(itemLabel.c_str(), selected))
                         draft[s] = ct.key;
-                    if (const auto* ae = absEntryFor(ct.key);
+                    if (const auto* ae = pom2::abstractionEntryForCardKey(ct.key);
                         ae && ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s\n%s",
                                           pom2::levelName(ae->level),

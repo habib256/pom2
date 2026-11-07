@@ -51,7 +51,7 @@ bool encodeSessionArchive(const SessionArchive& session, std::vector<uint8_t>& o
     if (session.version >= 7) sessionio::blob(payload, session.cassette);
     for (const auto& slot : session.slots) {
         if (slot.identity.size() > 16384 || slot.state.size() > cardLimit ||
-            uint8_t(slot.kind) > uint8_t(session.version >= 7 ? SessionArchive::Card::EchoTms :
+            uint8_t(slot.kind) > uint8_t(session.version >= 7 ? SessionArchive::Card::PorteParole :
                       session.version >= 6 ? SessionArchive::Card::HardDisk :
                       session.version >= 4 ? SessionArchive::Card::SonyMedia :
                       session.version >= 3 ? SessionArchive::Card::Clock
@@ -109,7 +109,7 @@ bool decodeSessionArchive(const std::vector<uint8_t>& bytes, SessionArchive& out
     }
     for (auto& slot : staged.slots) {
         slot.kind = SessionArchive::Card(r.u8());
-        if (uint8_t(slot.kind) > uint8_t(staged.version >= 7 ? SessionArchive::Card::EchoTms :
+        if (uint8_t(slot.kind) > uint8_t(staged.version >= 7 ? SessionArchive::Card::PorteParole :
                       staged.version >= 6 ? SessionArchive::Card::HardDisk :
                       staged.version >= 4 ? SessionArchive::Card::SonyMedia :
                       staged.version >= 3 ? SessionArchive::Card::Clock

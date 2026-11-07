@@ -25,7 +25,7 @@ emulation at the same time (`ImageWriter`), or POM2-original **and** low-level
 ## The panel in the GUI
 
 `Help → Abstraction Levels (LLE / HLE)` renders this document's master table
-**live** (`AbstractionLevels_ImGui.*`, catalog + window; `MainWindow::
+**live** (`AbstractionCatalog.*` the catalog, `AbstractionLevels_ImGui.*` the window; `MainWindow::
 renderAbstractionPanel` supplies the machine state). Since 2026-08-30 the
 window is a single table — legend chips, a filter box, four columns — with all
 of this document's prose living in the row tooltips. It adds the two things a
@@ -53,10 +53,12 @@ Markdown file cannot:
 
 The catalog is static data mirroring the master table below. **Edit the two
 together**: the doc carries the evidence, the panel carries the conclusion.
-The catalog (`AbstractionLevels_ImGui.cpp`) is a
+The catalog (`AbstractionCatalog.cpp`) is a
 subset of this table — it has no rows for the SmartPort bus,
-the //c external port, the Grappler 1981, the PIC, the Videoterm, TransWarp,
-the Workstation Card, 4play, the printer sound or PostScript.
+the //c external port, the printer sound or PostScript, which are not cards
+the picker offers. Every card the Slot Configuration picker *does* offer has
+one, and `abstraction_catalog` fails the build's tests when a new card arrives
+without it (CARDS-001, 2026-11-07).
 
 ## The two axes
 
@@ -160,6 +162,12 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **TransWarp** (`transwarp`, `TranswarpCard`) | **H1** | The accelerator as a *policy*: `$C074` speed control, the `$F000` ROM-shadow window (`displaced_`, snapshotted since 2026-09-07) and a slow-cycle budget. No 65C02 at 3.6 MHz on its own clock domain | POM2 has one CPU core and one clock; a second clock domain is a much larger change than the observable behaviour justifies |
 | **Apple II Workstation Card** (`workstation`, `WorkstationCard`) | **L0/L1** | A **second 65C02 running its real dumped firmware** over its own `Memory::ForeignBus` map, with its own RAM and a `Scc8530Device`; boots to its power-on self-test and configures the SCC | LocalTalk's physical layer has no peer to talk to — the card runs, the wire is absent |
 | **4play** (`4play`, `FourPlayCard`) | **L1** | Lukazi's four-joystick card: the digital read register decode, no analogue path (there is none on the card) | — |
+| **SNES MAX** (`snesmax`, `SnesMaxCard`) | **L1** | Two SNES pads behind a latch, the seven-clock pulse and two serial shifters, after MAME `snesmax` + its `snes_ctrl/joypad` protocol; `$C0n0` drives bits 7-6 only and the rest of the byte is the floating bus, as in AppleWin's `SNESMAX.cpp` written by the card's designer (`SnesMaxCard.h`) | — nothing below the shift registers is visible |
+| **Zip Chip** (`zip_chip` setting, `ZipChip`) | **H1** | A CPU-socket accelerator as a *policy*, the TransWarp's shape: MAME `apple2e.cpp`'s Zip registers at `$C05A-$C05F` (the `$5A`×4 unlock, enable, slot/speaker slow-down mask, status reads) over the one CPU core. The //c Plus's built-in 4 MHz is this chip (`ZipChip.h`, line numbers pinned there to a MAME commit) | The cache is not modelled — one core, one clock |
+| **FASTChip //e** (`fast_chip` setting, `FastChip`) | **H1** | The other socket accelerator: the `$C06A-$C06F` registers of a2heaven's *FASTChip IIe User's Guide* v0.06 pp. 21-24 (unlock, enable, slot speeds, the 40-step speed table, the configuration pair) | The slow-down *lengths* are the Zip Chip's — the manual names the settings and gives no times; the RamWorks / RamFactor emulations and the "indefinite synchronous sequence" are not modelled (`FastChip.h`) |
+| **Memory Expansion Card "Slinky"** (`slinky`, `SlinkyCard`) | **L2** | Port of MAME `a2memexp` (Apple half): the 24-bit auto-incrementing pointer and data port, 1 MB, and Apple's **real 341-0344A ROM** — which *is* the RAM-disk driver — executing from `$Cn00` and `$C800`. ROM-gated: without the dump the slot is left empty | Only the 1 MB population: how a partly populated board aliases is in no source POM2 has (`SlinkyCard.h`) |
+| **Porte Parole** (`porteparole`, `PorteParoleCard` + `Mea8000`) | **L1** | Ediciel's French speech card from its manual (Annexe 5): an MEA8000 at `$C0n0` data / status and `$C0n1` command, A0 only, 4 MHz crystal, no ROM. The chip after MAME `mea8000.cpp` @ 5346a8ce, corrected where its data sheet and Philips TP101 disagree: every frequency scales with the crystal, pitch x 1.024, the first frame fades in, status D7 only (D0-D6 float), REQ's 2 µs and 8 ms-grid waits, 11-bit / 8-bit output (DEV § Porte Parole) | The noise source and coefficient quantisation are unknown (grade F); the optional 2 KB memory socket is not modelled |
+| **S.A.M.** (`sam`, `SamCard` + `Dac8Audio`) | **L1 — and complete** | Port of MAME `a2sam`: any `$C0nX` write drives an 8-bit DAC; the speech is S.A.M.'s own 6502 code, so every write is stamped with the exact CPU cycle it lands on and reconstructed by `Dac8Audio` | No ROM and nothing readable: the card's fidelity is its write timing |
 | **SoftCard Z80** — see the row above; the catalog key is `softcard` | | | |
 | **Le Chat Mauve** (`LeChatMauveCard`, variants Féline / Adaptateur //c / Eve / RVB Graph / Video-7) | **L1** | One catalog key, five variants by `chatmauve_variant` (`LeChatMauveCard.h:27-52`; `docs/chatmauve_plan.md`, P0–P2 landed). **RVB Graph** (II/II+): its manual's full programming model — control register `$C0F0+S+U+K` (text colour, dotted / four-colour, register lock), eight colour registers `$C70F-$C73F − Bn`. Patent 2-bit mode latch (AN3 clocks 80COL). **Féline / //c**: LCM HGR (2-bit cell + 3-bit window) and mixed DHGR (per-byte 560/140 mux, colour cell *cut* / last BW dot *repeated*) == AppleWin `RGBMonitor.cpp`, pinned `chatmauve_dot_rules`. **Eve**: sixteen `$C0B0-$C0BF` switches, CPREG auto-write into aux (`Memory::setAuxShadow`), table IX-1 from Purplesoft's own `& GR` tables, TXT16 (hi = background), TXTGREEN. **Video-7**: the four patent DHGR modes including 160 chunky. The cards are combinational on the 14 MHz stream; since 2026-09-02 the mode latch beam-races (each band painted with the latch of its own moment, pinned `chatmauve_latch_split`), the rest of the card state is still sampled **per frame** | Not a dot tap. Eve colour decoder is measured/manual rules: the public PLS100 was decoded (`tools/decode_eve_pla.py`) and turned out to be a dot router, so it cannot settle DASH (renders as HRAPPLE), SPEC1/2 or COL280 `main = LSB` (P3 closed as bounded). Mid-line `$C0Bx` and the in-cell dot position land at the frame (P6). //c adapter infers 80COL from VID7M/LDPS; POM2 reads the switch (P5). RVB Graph text-colour and HGR colour registers not modelled (P4, partial) |
 

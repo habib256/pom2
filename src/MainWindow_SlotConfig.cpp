@@ -55,6 +55,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "EmulationController.h"
 #include "FujiNetCard.h"
 #include "FujiNetCardFactory.h"
@@ -627,6 +628,20 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         st.memory().slotBus().plug(s, std::move(card));
     };
 
+    auto plugPorteParole = [&](int s) {
+        // Ediciel Porte Parole: an MEA8000 on $C0n0/$C0n1, no ROM. The CPU
+        // pointer places each access on its cycle (PorteParoleCard.h).
+        auto card = std::make_unique<pom2::PorteParoleCard>(s);
+        card->setSampleRate(controller->audio().getActualSampleRate());
+        card->setCpu(&st.cpu());
+        const auto mix = audioCoordinator_->restoreCardSettings(
+            *settings, pom2::AudioCoordinator::CardKind::PorteParole, s, 0.7f);
+        card->setVolume(mix.volume);
+        card->setMuted (mix.muted);
+        registerAudioSource(card->audioSource());
+        st.memory().slotBus().plug(s, std::move(card));
+    };
+
     auto plugEchoPlusTms = [&](int s) {
         auto card = std::make_unique<EchoPlusTMS5220Card>(s);
         card->setCpu(&st.cpu());
@@ -894,6 +909,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         else if (kind == "echoplus")    plugEchoPlus(s);
         else if (kind == "echoplus_tms") plugEchoPlusTms(s);
         else if (kind == "sam")         plugSam(s);
+        else if (kind == "porteparole") plugPorteParole(s);
         else if (kind == "grappler")    plugGrappler(s);
         else if (kind == "grappler1" || kind == "pic" || kind == "slinky") {
             auto made = slotCardFactory_->create(

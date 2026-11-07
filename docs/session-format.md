@@ -48,7 +48,10 @@ dropping its cards and disks.
   TMS5220C Echo+, S.A.M. and 4play. CFFA preserves partial READ, WRITE and
   IDENTIFY transfers, including whether completing the buffer advances the
   ATA taskfile. S.A.M. retains its existing audio-only snapshot contract:
-  its next CPU write supplies the DAC level.
+  its next CPU write supplies the DAC level. The Porte Parole (kind 20) saves
+  its MEA8000 whole — frame buffer, interpolation origins, resonator history,
+  noise/saw phase — so an utterance resumes mid-word; its host-rate audio
+  queue is not saved.
 - The machine snapshot's Memory trailer ends with an optional beam-clock
   section (24 bytes: CPU anchor, video anchor, video cycles per CPU cycle as
   an IEEE double). Under an accelerator the beam no longer follows the CPU
@@ -205,7 +208,9 @@ Slot kinds are 0 empty, 1 Disk II, 2 Mockingboard A/C, 3 Sound II, 4 SNES MAX,
 5 Slinky and 6 ThunderClock+ (v3+), 7 built-in serial, 8 IOU mouse,
 9 Le Chat Mauve, 10 SmartPort and 11 onboard Sony media (v4+),
 and 12 ProDOS HDV (v6+). Version 7 adds 13 CFFA, 14 TransWarp, 15 Phasor,
-16 SSI263 Echo+, 17 S.A.M., 18 4play and 19 TMS5220C Echo+.
+16 SSI263 Echo+, 17 S.A.M., 18 4play and 19 TMS5220C Echo+; 20 Porte Parole
+(MEA8000) joined v7 on 2026-11-07 — a build older than that refuses a session
+that carries it, with "invalid session card record", rather than misreading it.
 Configuration v1 is four bytes: version, No-Slot Clock present, enabled and
 slot (255 means no slot). Configuration v2 appends a socket-accelerator kind byte and one
 parameter: 1 = Zip Chip + its boot-fast flag, 2 = FASTChip //e + its power-on speed

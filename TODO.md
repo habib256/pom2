@@ -95,7 +95,6 @@ romsets, where noted).
 | [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen` answers POST: GET-only check (405) with a smoke assertion. |
 | [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
 | [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
-| [CARDS-001](docs/backlog/cards.md#cards-001) | Add the ten missing `AbsEntry` rows from `docs/lle_vs_hle.md`. |
 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | Add `frontend_device_panel_concurrency` and `drive_rack_interaction` to the TSan leg. |
 | [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | One more card-pointer panel under replug, or close. |
 | [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | An env-var table in `printUsage()`. |

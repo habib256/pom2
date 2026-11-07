@@ -493,6 +493,8 @@ set(SOURCES
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp
+    src/Mea8000.cpp
+    src/PorteParoleCard.cpp
     src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/WorkstationCard.cpp
@@ -544,6 +546,7 @@ set(SOURCES
     src/RomImport.cpp
     src/ZipMember.cpp
     src/RomStatus_ImGui.cpp
+    src/AbstractionCatalog.cpp
     src/AbstractionLevels_ImGui.cpp
     src/AppleIIeKeyboardLayout.cpp
     src/KeyboardSkin.cpp
@@ -639,6 +642,8 @@ set(POM2_DEVICES_SOURCES
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp
+    src/Mea8000.cpp
+    src/PorteParoleCard.cpp
     src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/SmartPort35Unit.cpp
@@ -851,6 +856,7 @@ set(POM2_FRONTEND_SOURCES
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
     src/RomStatus_ImGui.cpp
+    src/AbstractionCatalog.cpp
     src/AbstractionLevels_ImGui.cpp
     src/AppleIIeKeyboardLayout.cpp
     src/KeyboardSkin.cpp
@@ -1214,6 +1220,8 @@ set(HEADERS
     src/FastChip.h
     src/CpuSocketAccelerator.h
     src/SamCard.h
+    src/Mea8000.h
+    src/PorteParoleCard.h
     src/Dac8Audio.h
     src/Scc8530Device.h
     src/WorkstationCard.h
@@ -1800,6 +1808,8 @@ set(POM2_CORE_SOURCES
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
     src/SamCard.cpp
+    src/Mea8000.cpp
+    src/PorteParoleCard.cpp
     src/Dac8Audio.cpp
     src/Scc8530Device.cpp
     src/WorkstationCard.cpp

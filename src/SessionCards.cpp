@@ -6,6 +6,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "FourPlayCard.h"
 #include "Via6522.h"
 #include <algorithm>
@@ -25,6 +26,7 @@ bool describeAdditionalSessionCard(SlotPeripheral* card, SessionArchive::Slot& r
     else if (dynamic_cast<SamCard*>(card)) r.kind = Card::Sam;
     else if (dynamic_cast<FourPlayCard*>(card)) r.kind = Card::FourPlay;
     else if (dynamic_cast<EchoPlusTMS5220Card*>(card)) r.kind = Card::EchoTms;
+    else if (dynamic_cast<PorteParoleCard*>(card)) r.kind = Card::PorteParole;
     else return false;
     return true;
 }
@@ -41,6 +43,7 @@ std::unique_ptr<SlotPeripheral> makeAdditionalSessionCard(const SessionArchive::
     case Card::Sam: if (r.identity.empty()) return std::make_unique<SamCard>(slot); break;
     case Card::FourPlay: if (r.identity.empty()) return std::make_unique<FourPlayCard>(slot); break;
     case Card::EchoTms: if (r.identity.empty()) return std::make_unique<EchoPlusTMS5220Card>(slot); break;
+    case Card::PorteParole: if (r.identity.empty()) return std::make_unique<PorteParoleCard>(slot); break;
     default: break;
     }
     error = "invalid session expansion card identity"; return {};
@@ -83,5 +86,6 @@ void wireAdditionalSessionCard(EmulationController& c, SlotPeripheral* card)
     if (auto* p = dynamic_cast<EchoPlusCard*>(card)) { p->setCpu(&c.cpu()); p->setSampleRate(rate); }
     if (auto* p = dynamic_cast<SamCard*>(card)) { p->setCpu(&c.cpu()); p->setSampleRate(rate); }
     if (auto* p = dynamic_cast<EchoPlusTMS5220Card*>(card)) { p->setCpu(&c.cpu()); p->setSampleRate(rate); }
+    if (auto* p = dynamic_cast<PorteParoleCard*>(card)) { p->setCpu(&c.cpu()); p->setSampleRate(rate); }
 }
 }

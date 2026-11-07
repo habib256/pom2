@@ -14,6 +14,7 @@
 # pure data tables with no function, so llvm-cov carries no mapping for them
 # and they can never appear in the measured set — the first armed run
 # (2026-09-15) failed on exactly those three.
+src/AbstractionCatalog.cpp
 src/AiControlServer.cpp
 src/Apple2Display.cpp
 src/Apple2Display_Beam.cpp
@@ -65,6 +66,7 @@ src/M6502_Undoc.cpp
 src/M68705P3.cpp
 src/MC6821.cpp
 src/MachineSnapshot.cpp
+src/Mea8000.cpp
 src/MediaMount.cpp
 src/Memory.cpp
 src/MemoryGamePort.cpp
@@ -79,6 +81,7 @@ src/NoSlotClock.cpp
 src/OpenGLShader.cpp
 src/PanelRegistry.cpp
 src/PhasorCard.cpp
+src/PorteParoleCard.cpp
 src/PostScriptRender.cpp
 src/PrinterCard.cpp
 src/PrinterHistory.cpp
