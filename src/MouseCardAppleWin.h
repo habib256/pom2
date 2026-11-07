@@ -104,6 +104,8 @@ public:
     /// Header-inline on purpose: AiControlServer's /mouse endpoint drives
     /// this card without linking MouseCardAppleWin.o (see kCardName below),
     /// so the call must not need a symbol from this TU.
+    uint8_t hostCounterX() const { return hostSetX_; }   // see MouseCard
+    uint8_t hostCounterY() const { return hostSetY_; }
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button)
     {
         // Bank the motion HERE, per host update. The UI clamps each update

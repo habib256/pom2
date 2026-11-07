@@ -475,6 +475,7 @@ set(SOURCES
     src/FloppyEmuDevice.cpp
     src/FloppyEmu_ImGui.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/Pom2HgrPaintHost.cpp
     src/hgrpaint/Cam16.cpp
     src/hgrpaint/DhgrNtsc8Palette.cpp
@@ -698,6 +699,7 @@ set(POM2_FOUNDATION_HEADERS
     src/WozCompat.h
     src/AudioSource.h
     src/ByteIO.h
+    src/EventRing.h
     src/CharRomDump.h
     src/ChildProcess.h
     src/FloppySoundSink.h
@@ -832,6 +834,7 @@ set(POM2_FRONTEND_SOURCES
     src/Rewind_ImGui.cpp
     src/FloppyEmu_ImGui.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/Pom2HgrPaintHost.cpp
     src/hgrpaint/Cam16.cpp
     src/hgrpaint/DhgrNtsc8Palette.cpp
@@ -1091,6 +1094,7 @@ set(HEADERS
     src/Z80StateBlob.h
     src/SoftCardZ80.h
     src/ByteIO.h
+    src/EventRing.h
     src/Memory.h
     src/Debugger.h
     src/Debugger_ImGui.h
@@ -1187,6 +1191,7 @@ set(HEADERS
     src/ProDOSVolume.h
     src/Logger.h
     src/Settings.h
+    src/SessionSettings.h
     src/SettingRebuild.h
     src/SettingsList.h
     src/PersistentFs.h
@@ -1788,6 +1793,7 @@ set(POM2_CORE_SOURCES
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/SlotBus.cpp
     src/FourPlayCard.cpp
     src/SnesMaxCard.cpp

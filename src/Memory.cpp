@@ -70,6 +70,7 @@ Memory::Memory()
     // `memReadSlow`'s $Cxxx dispatch, never the fast bus (PERFORMANCE §§ 8.2/8.5).
     slots.setFloatingBusSource([this]() { return floatingBus(); });
     slots.setCycleSource([this]() { return getCycleCounter(); });
+    slots.setAccessCycleSource([this]() { return accessCycle(); });
     slots.setVblEdgeSource([this](uint64_t now) { return nextVblCpuCycle(now); });
     slots.setCycleCounterRef(&cycleCounter);
     slots.setAuxRamRef(aux.data());   // VidHD's SHR source; stable (RamWorks memcpys INTO aux)
@@ -687,6 +688,11 @@ void Memory::resetSoftSwitches(bool warm)
     display = DisplayState{};
     // Ctrl-Reset clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3: TEXT and
     // MIXED survive, DHGR/AN3 does NOT (Sather IIe p. 7-3; DEV § Soft switches).
+    // AN3 low with DHGR off is a pair no switch makes, but it lives a few
+    // instructions only: [C] every //e and //c RESET handler throws $C05F
+    // (AN3 high, DHIRES off) — enhanced //e $C2B0 via $FA62's GOTOCX,
+    // unenhanced $C234, //c and //c+ $FA75 — so a ROM reset always ends
+    // where Le Chat Mauve's `an3Prev = true` assumes (bug hunt 2026-11-07).
     if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; }
     // A reset wipes the beam-racing timeline: drop the logged events (stale
     // ones would paint ghost segments) and resync the frame-start snapshots.
@@ -760,8 +766,7 @@ void Memory::resetSoftSwitches(bool warm)
     // generator it is wired to the ROM's A12, so a stale AN2 left a
     // freshly-reset machine rendering the second 4 KB font
     // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
-    an1 = false;   // (AN0 is display.an0, cleared with `display` above)
-    an2 = false;
+    an1 = false;   // (AN0 and AN2 are in `display`, cleared above)
     // reset_w keeps the latch, so the //c Plus ROM sees Esc held through
     // Ctrl-Reset ($FD82); power-on re-strobes a key held (Keyboard::powerOn).
     if (warm) keyboard_.cancelPaste(); else keyboard_.powerOn();
@@ -1110,7 +1115,12 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         switch ((low - 0x58) >> 1) {
             case 0: { std::lock_guard<std::mutex> lk(stateMutex); display.an0 = on; break; }
             case 1: an1 = on; break;
-            case 2: an2 = on; break;
+            case 2: {
+                std::lock_guard<std::mutex> lk(stateMutex);
+                display.an2 = on;
+                pushVideoEventLocked(VideoEventKind::An2, on);
+                break;
+            }
         }
         if (iieMode && !iicProfile_ && (low == 0x5A || low == 0x5B)) {
             // POM2 overlay: $C05A/B doubles as VBL IRQ mask in IIe.
@@ -1866,7 +1876,9 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
     // `apple2e.cpp:6281-6302`.
     if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
         uint8_t v;
-        if (iicProfile_->ioReadIWM(addr, cycleCounter, v)) {
+        // At the access's own bus cycle, as the Disk II takes it: the
+        // instruction start sampled 3-6 cycles (1.5-3 Sony cells) early.
+        if (iicProfile_->ioReadIWM(addr, accessCycle(), v)) {
             // Not the Disk II's while the hub routes to a 3.5" (= ioWriteIWM).
             if (!iicProfile_->servesExternalSmartPort() && !iicProfile_->iwmRoutedTo35())
                 (void)slots.deviceSelectRead(addr);
@@ -2186,7 +2198,7 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         // sound + writeback gating).
         if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
             // A write the external port claimed is not the Disk II's (flux!).
-            if (iicProfile_->ioWriteIWM(addr, value, cycleCounter)) return;
+            if (iicProfile_->ioWriteIWM(addr, value, accessCycle())) return;
         }
         // Le Chat Mauve Eve registers — mirror of the memRead path so the
         // toggle reacts to STA $C0B9 and friends, not just LDA. Same

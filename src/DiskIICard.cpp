@@ -37,22 +37,13 @@ namespace {
 // hardware varies with the LSS state, but DOS 3.3 / ProDOS only need
 // average-rate accuracy because they re-sync on every D5-AA prologue.
 constexpr int kCyclesPerNibble  = 32;
-// MAME `floppy_image_device::seek_phase_w` clamps the head to
-// `(m_tracks-1)*4`, where `m_tracks` is the DRIVE's mechanical range —
-// 42 for the 5.25" SD drive the Disk II daisy-chains
-// (`imagedev/floppy.cpp`, floppy_525_sd::setup_characteristics) — NOT the
-// 35 tracks a .dsk file happens to carry. POM2 substituted the IMAGE
-// count and parked the head at quarter-track 136 (track 34), while
-// `loadWoz` populates all 160 TMAP slots (up to track 39.75): every
-// quarter-track above 136 was loaded and then unreachable, and a seek to
-// track 35+ silently kept re-reading TRACK 34's address fields instead.
-// Cap instead at the top whole track POM2's quarter-track storage can
-// hold — kQuarterTracks / 4 = 40 tracks — which is the same
-// `(tracks-1)*4` form with the drive's range in it. Past a 35-track
-// .dsk's data `expandTrackBits` yields an empty stream, so those
-// positions read as unformatted read-amplifier noise (`advanceNoise`),
-// which is what that part of the surface actually holds.
-constexpr int kQuarterTrackMax  = DiskImage::kQuarterTracks - 4;  // 156 = track 39
+// The head stops at the DRIVE's range, not the image's 35 tracks (MAME
+// `seek_phase_w` clamps at `(m_tracks-1)*4`, 42 tracks for floppy_525_sd);
+// POM2 once parked it at track 34 and re-read it for any seek past. Cap at the last quarter-track POM2 stores (159): every WOZ TMAP slot is
+// reachable (156 left 157-159 unreachable; bug hunt 2026-11-07). [D] MAME
+// 164 @ b2a182f0b7; [F] the real inner stop, settled by a seek count on a
+// drive. Past a .dsk's data the stream is empty: read-amplifier noise.
+constexpr int kQuarterTrackMax  = DiskImage::kQuarterTracks - 1;  // 159 = track 39.75
 
 // Apple's boot PROM (341-0027-A, "P5") and sequencer PROM (341-0028-A,
 // "P6", MAME layout — the scrambled address scheme of `wozfdc.cpp
@@ -846,7 +837,7 @@ void DiskIICard::pushIwmFloppy()
 // keeps the media near-zero until a track is actually written. Blob is
 // self-describing (magic + version) so a foreign card on this slot ignores it.
 namespace {
-constexpr uint8_t kDiskIISnapVersion = 5;
+constexpr uint8_t kDiskIISnapVersion = 6;   // v6: write framing (DiskIICard_Session.cpp)
 
 // FNV-1a 64 of the image path — the media identity stamped next to each
 // captured track buffer (v3). Restoring a media snapshot onto a drive
@@ -929,6 +920,7 @@ void DiskIICard::appendSnapshotState(std::vector<uint8_t>& out) const
     u8(static_cast<uint8_t>(seqCount_));
     u8(static_cast<uint8_t>((seqSeen_ ? 1 : 0) | (seqPending_ ? 2 : 0) |
                             (seqWriteBit_ ? 4 : 0)));
+    appendFramingTail(out);
 }
 
 void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -969,6 +961,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
             if (static_cast<std::size_t>(wp) * 8 > len - q) return;
             q += static_cast<std::size_t>(wp) * 8;
             if (version >= 5 && len - q < 2) return;
+            if (version >= 6 && !framingTailFits(data + q + 2, len - q - 2)) return;
         }
     }
 
@@ -1026,6 +1019,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
 
     // v2: per-drive writable media (present-flag byte, then the track buffers
     // when set). Only applied if the live drive actually holds a disk.
+    bool mediaApplied[kDriveCount] = {};
     if (version >= 2) {
         for (int d = 0; d < kDriveCount; ++d) {
             const uint8_t cap = g8();
@@ -1052,7 +1046,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
                             " holds a different disk than the one recorded");
                     }
                 }
-                if (apply)
+                if ((mediaApplied[d] = apply))
                     images[d].loadMediaSnapshot(data + p, DiskImage::kMediaSnapshotBytes);
                 p += DiskImage::kMediaSnapshotBytes;
             }
@@ -1088,6 +1082,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
         seqCount_ = 0;
         seqSeen_ = seqPending_ = seqWriteBit_ = false;
     }
+    loadFramingTail(version >= 6 ? data + p : nullptr, version >= 6 ? len - p : 0, mediaApplied);
 
     // The motor flag is a member, but the floppy sound device holds its own
     // spin state — restoring `motorOn` silently left the spindle sample

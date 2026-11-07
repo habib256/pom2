@@ -150,15 +150,16 @@ SmartPortBusUnit* SmartPortBusDevice::unitFor(uint8_t chainNumber) const
     // addressed to device 0 is not a thing on the wire (0 is the host's own
     // number — see buildReply's header) but a match on it would hand out a
     // unit nobody named.
-    for (int i = 0; i < unitCount_; ++i)
+    SmartPortBusUnit* u = nullptr;
+    for (int i = 0; i < unitCount_ && !u; ++i)
         if (ids_[static_cast<std::size_t>(i)] != 0 &&
             ids_[static_cast<std::size_t>(i)] == chainNumber)
-            return units_[static_cast<std::size_t>(i)];
+            u = units_[static_cast<std::size_t>(i)];
     // No INIT seen (a host that skips the scan): count from 1, as a chain
     // freshly powered next to a Liron would be numbered.
-    if (assigned_ == 0 && chainNumber >= 1 && chainNumber <= unitCount_)
-        return units_[static_cast<std::size_t>(chainNumber - 1)];
-    return nullptr;
+    if (!u && assigned_ == 0 && chainNumber >= 1 && chainNumber <= unitCount_)
+        u = units_[static_cast<std::size_t>(chainNumber - 1)];
+    return (u && u->present()) ? u : nullptr;
 }
 
 void SmartPortBusDevice::reset()

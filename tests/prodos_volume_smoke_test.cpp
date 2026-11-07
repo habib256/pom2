@@ -1845,6 +1845,110 @@ static void testLockFollowsTheHostReadOnlyBit()
     std::printf("prodos_volume_smoke: LOCK follows the host read-only bit OK\n");
 }
 
+// Bug hunt 2026-11-07. Three ways the write-back overruled a host it should
+// have left alone, each needing the mount's name map to be seen.
+static std::uint8_t* findRootEntry(std::vector<std::uint8_t>& img, const char* name)
+{
+    for (int blk = 2; blk <= 5; ++blk)
+        for (int e = 0; e < 13; ++e) {
+            std::uint8_t* ent = img.data() + blk * kBlockBytes + 4 + e * 39;
+            const int nl = ent[0] & 0x0F;
+            if ((ent[0] >> 4) != 0 && (ent[0] >> 4) < 4 &&
+                nl == static_cast<int>(std::strlen(name)) && std::memcmp(ent + 1, name, nl) == 0)
+                return ent;
+        }
+    return nullptr;
+}
+
+static void testUntouchedFilesKeepTheHostCopy()
+{
+    // 1. A host file replaced with an OLDER mtime (`cp -p`, a restore) and
+    //    never touched by the guest: the stale mount-time copy overwrote it.
+    const fs::path dir = makeTempDir("untouched");
+    writeFile(dir / "NOTES.txt", {'o', 'l', 'd'});
+    writeFile(dir / "OTHER.txt", {'a', 'b', 'c'});
+    writeFile(dir / "DOC.txt",   {'d', 'o', 'c'});
+    std::vector<std::uint8_t> img;
+    assert(pom2::buildVolumeFromFolder(dir.string(), "HOST", img).ok);
+    const auto names = pom2::takeFolderNameMap(dir.string());
+    assert(names);
+    std::uint8_t* other = findRootEntry(img, "OTHER");
+    assert(other);
+    img[rd16(other + 0x11) * kBlockBytes] = 'X';        // the guest writes OTHER
+    std::uint8_t* doc = findRootEntry(img, "DOC");
+    assert(doc && doc[0x10] == 0x04);
+    doc[0x10] = 0x06;                                    // ... and retypes DOC, bytes unchanged
+    writeFile(dir / "NOTES.txt", {'n', 'e', 'w'});
+    writeFile(dir / "DOC.txt",   {'D', 'O', 'C'});
+    const auto stamp = fs::last_write_time(dir / "NOTES.txt") + std::chrono::hours(24);
+    std::set<std::string> sticky;
+    auto r = pom2::decodeVolumeToFolder(img, dir.string(), &stamp, &sticky, false, names.get());
+    assert(r.ok);
+    assert(slurp(dir / "NOTES.txt") == "new" && "a host copy older than the stamp was reverted");
+    assert(slurp(dir / "OTHER.txt") == "Xbc" && "the guest's own write still lands");
+    assert(!fs::exists(dir / "DOC.txt") && "the retype renames the host file");
+    int docs = 0;
+    for (const auto& f : fs::directory_iterator(dir))
+        if (f.path().filename().string().rfind("DOC", 0) == 0) {
+            ++docs;
+            assert(slurp(f.path()) == "DOC" && "the rename keeps the host's bytes");
+        }
+    assert(docs == 1);
+    // A guest that puts the mount-time bytes BACK still lands: unchanged
+    // means unchanged since the last sync, not since the mount.
+    img[rd16(other + 0x11) * kBlockBytes] = 'a';
+    assert(pom2::decodeVolumeToFolder(img, dir.string(), &stamp, &sticky, false, names.get()).ok);
+    assert(slurp(dir / "OTHER.txt") == "abc" && "a revert to the mount bytes was dropped");
+
+    // 2. A host `chmod -w` after the mount, the guest never touching the
+    //    lock: every flush gave the write bits back.
+    constexpr fs::perms kW = fs::perms::owner_write | fs::perms::group_write |
+                             fs::perms::others_write;
+    fs::permissions(dir / "NOTES.txt", kW, fs::perm_options::remove);
+    r = pom2::decodeVolumeToFolder(img, dir.string(), &stamp, &sticky, false, names.get());
+    assert(r.ok && (fs::status(dir / "NOTES.txt").permissions() & kW) == fs::perms::none &&
+           "a host read-only bit set after the mount was undone");
+    // The guest's own LOCK then UNLOCK still both land.
+    fs::permissions(dir / "NOTES.txt", fs::perms::owner_write, fs::perm_options::add);
+    std::uint8_t* notes = findRootEntry(img, "NOTES");
+    assert(notes);
+    notes[0x1E] = 0x01;
+    assert(pom2::decodeVolumeToFolder(img, dir.string(), &stamp, &sticky, false, names.get()).ok);
+    assert((fs::status(dir / "NOTES.txt").permissions() & kW) == fs::perms::none);
+    notes[0x1E] = 0xE3;
+    assert(pom2::decodeVolumeToFolder(img, dir.string(), &stamp, &sticky, false, names.get()).ok);
+    assert((fs::status(dir / "NOTES.txt").permissions() & fs::perms::owner_write) != fs::perms::none &&
+           "an UNLOCK after the mount's own LOCK must land");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+
+    // 3. An unreadable root file the build skipped still counted as served
+    //    in the map, so with 52 files the 52nd went to a new `.1` sibling.
+    const fs::path many = makeTempDir("unreadable52");
+    char nm[16];
+    for (int i = 0; i < 52; ++i) {
+        std::snprintf(nm, sizeof nm, "F%02d.txt", i);
+        writeFile(many / nm, {'0', '0'});
+    }
+    fs::permissions(many / "F00.txt", fs::perms::none);
+    if (std::ifstream(many / "F00.txt")) {               // root, or Windows
+        std::printf("prodos_volume_smoke: unreadable-file case skipped (file still readable)\n");
+    } else {
+        std::vector<std::uint8_t> v;
+        assert(pom2::buildVolumeFromFolder(many.string(), "HOST", v).ok);
+        const auto map = pom2::takeFolderNameMap(many.string());
+        std::uint8_t* last = findRootEntry(v, "F51");
+        assert(map && last && "F00 skipped, so F51 is served");
+        v[rd16(last + 0x11) * kBlockBytes] = '5';
+        assert(pom2::decodeVolumeToFolder(v, many.string(), nullptr, nullptr, false, map.get()).ok);
+        assert(slurp(many / "F51.txt") == "50" && "the guest's edit lands in place");
+        assert(!fs::exists(many / "F51.txt.1") && !fs::exists(many / "F51.1.txt"));
+    }
+    fs::permissions(many / "F00.txt", fs::perms::owner_all, fs::perm_options::add);
+    fs::remove_all(many, ec);
+    std::printf("prodos_volume_smoke: untouched files keep the host copy OK\n");
+}
+
 int main()
 {
     testFolderTextModeAndMetadata();
@@ -1876,6 +1980,7 @@ int main()
     testLossyHostNamesRoundTripInPlace();
     testMountNamesSurviveHostDeletes();
     testLockFollowsTheHostReadOnlyBit();
+    testUntouchedFilesKeepTheHostCopy();
     std::printf("prodos_volume_smoke: PASS\n");
     return 0;
 }

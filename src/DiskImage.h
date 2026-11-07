@@ -253,6 +253,15 @@ public:
         static_cast<std::size_t>(kTracks) * kNibblesPerTrack + kTracks;
     void appendMediaSnapshot(std::vector<uint8_t>& out) const;
     void loadMediaSnapshot(const uint8_t* data, std::size_t len);
+    /// The nibble-write framing per track (where a write burst stands in
+    /// its cell grid), 32 bytes a track — the session encoding, shared by
+    /// the rewind's D2S1 v6 tail. Without it a rewind into a burst resumed
+    /// mid-nibble and corrupted the sector (bug hunt 2026-11-07).
+    static constexpr std::size_t kWriteFramingBytes = static_cast<std::size_t>(kTracks) * 32;
+    void appendWriteFraming(std::vector<uint8_t>& out) const;
+    /// Validates every field first; false leaves the framing untouched.
+    bool loadWriteFraming(const uint8_t* data, std::size_t len);
+    void resetWriteFraming() { writeFraming.fill(WriteFraming{}); }
     /// Self-contained, physically protected media (DRO1 or DWO1).
     /// RAM-only; loading creates a detached medium with no writable host path.
     bool appendReadOnlySession(std::vector<uint8_t>& out, std::string& error) const;

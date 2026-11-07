@@ -140,9 +140,15 @@ bool SpOverSlipLink::start(std::string& errOut)
         std::lock_guard<std::mutex> lk(stateMtx_);
         lastError_.clear();
     }
+#ifdef __EMSCRIPTEN__
+    // No pthreads in the browser: the spawn would abort() the module.
+    errOut = "FujiNet needs a worker thread, which the browser build has not";
+    return false;
+#else
     running_.store(true);
     worker_ = pom2::guardedThread("FujiNet", [this] { workerLoop(); });
     return true;
+#endif
 }
 
 void SpOverSlipLink::stop()

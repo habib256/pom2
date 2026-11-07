@@ -57,6 +57,20 @@ run(0 o "${DISK}" new d.dsk --dos33 --volume 123 --force)
 run(0 o "${DOS}" d.dsk ls)
 expect("${o}" "DISK VOLUME 123" "--force replaces it, --volume is honoured")
 
+# A DOS 3.3 disk named .po: the catalog chain decides the order, not the
+# extension, which used to lose catalog entries and write sectors to the
+# wrong place (bug hunt 2026-11-07).
+run(0 o "${DISK}" new m.dsk --dos33)
+run(0 o "${DOS}" m.dsk put notes.txt)
+configure_file("${WORK}/m.dsk" "${WORK}/m.po" COPYONLY)
+run(0 o "${DOS}" m.po put hello.bas)
+expect("${o}" "catalog is in DOS order" "a DOS-order disk under .po is read in DOS order")
+configure_file("${WORK}/m.po" "${WORK}/m2.dsk" COPYONLY)
+run(0 o "${DOS}" m2.dsk ls)
+expect("${o}" " T 002 NOTES" "the file already there survives")
+run(0 o "${DOS}" m2.dsk list HELLO)
+expect("${o}" "20 FOR I=1 TO 3: PRINT I: NEXT" "the new file is where DOS will look for it")
+
 # ── A formatted ProDOS volume, filled by pom2_prodos ─────────────────────────
 run(0 o "${DISK}" new p.po --prodos --name WORK)
 run(0 o "${PRODOS}" p.po ls)
@@ -70,6 +84,8 @@ run(0 o "${PRODOS}" p.po ls)
 expect("${o}" "GAMES +DIR" "the directory")
 expect("${o}" "NOTES +TXT" "the text file")
 expect("${o}" "PROG +BIN.*A=\\$0300" "-t and -a are honoured")
+expect("${o}" "NOTES +TXT +[0-9]+ +[ 0-9][0-9]-[A-Z][A-Z][A-Z]-[0-9][0-9]"
+       "a file put is dated (it read as no date)")
 run(0 o "${PRODOS}" p.po ls GAMES)
 expect("${o}" "HELLO +BAS.*A=\\$0801" "the program, at Applesoft's address")
 run(0 o "${PRODOS}" p.po list GAMES/HELLO)
@@ -124,6 +140,8 @@ run(0 o "${DISK}" info w.woz)
 expect("${o}" "35 track\\(s\\) verify in full, 0 do not, 0 unmapped" "a sound WOZ")
 run(1 o "${DISK}" recover w.woz w.woz)
 expect("${o}" "COPY" "recover never writes over the damaged file")
+run(1 o "${DISK}" recover w.woz ./w.woz --force)
+expect("${o}" "COPY" "the same file under another spelling is still the evidence")
 run(0 o "${DISK}" recover w.woz copy.woz)
 run(1 o "${DISK}" info notes.txt)
 expect("${o}" "not a WOZ" "info on something else")

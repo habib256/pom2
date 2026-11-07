@@ -418,4 +418,35 @@ void Settings::setFloat (const std::string& key, float v)
 
 std::string Settings::getStorePath() const { return resolveStorePath().string(); }
 
+std::filesystem::path settingsSidePath(const std::string& storePath,
+                                       const std::string& name)
+{
+    const fs::path store(storePath);
+    const fs::path dir = store.has_parent_path() ? store.parent_path() : fs::path(".");
+    const std::string base = store.filename().string();
+    if (!base.empty() && base[0] == '.') return dir / (".pom2_" + name);
+    return dir / name;
+}
+
+std::vector<std::string> readPathListFile(const fs::path& file)
+{
+    std::vector<std::string> out;
+    std::ifstream f(file);
+    std::string line;
+    while (f && std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (!line.empty()) out.push_back(line);
+    }
+    return out;
+}
+
+bool writePathListFile(const fs::path& file, const std::vector<std::string>& paths,
+                       std::error_code& ec)
+{
+    std::string text;
+    for (const auto& p : paths)
+        if (!p.empty() && p.find('\n') == std::string::npos) text += p + '\n';
+    return writeFileAtomic(file, text.data(), text.size(), ec);
+}
+
 } // namespace pom2

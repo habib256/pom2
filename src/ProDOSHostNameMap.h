@@ -18,7 +18,8 @@
 
 // What a build of a ProDOS host folder hands the mount it was built for
 // (ProDOSVolume.h): when its scan started, and which host file each ProDOS
-// name came from, with a hash of the bytes the guest was served. Both are
+// name came from, with a hash of the bytes the guest was served and the
+// access byte it was served under. Both are
 // recorded per folder by `buildVolumeFromFolder` and taken once by
 // `Block512Backing::loadFromBytes`. The write-back compares against them
 // rather than against the folder as it stands at eject (STORAGE-014 #1, #3).
@@ -40,6 +41,7 @@ struct HostNameMap {
         std::uint8_t  fileType = 0;
         std::uint16_t auxType  = 0;
         std::uint64_t hash     = 0;   // the bytes the guest was served
+        std::uint8_t  access   = 0xE3; // the access byte it was served under
     };
     std::map<std::string, std::vector<Entry>> dirs;   // key: hostNameMapKey(host dir)
 };

@@ -165,26 +165,44 @@ bool CpmDisk::open(std::vector<uint8_t> image, SectorOrder order, std::string& e
         return false;
     }
     image_ = std::move(image);
-    order_ = order;
-    loadDirectory();
+    orderOverridden_ = false;
     // An entry is either free ($E5) or a user number 0-31 followed by eleven
     // printable name bytes (attribute bits masked) and block numbers inside
     // the disk. A DOS 3.3 or ProDOS disk fails this on its first entry.
-    for (const auto& e : dir_) {
-        if (unused(e) || cpm3Meta(e)) continue;
-        bool ok = e[0] <= 31 && e[15] <= 0x80;
-        for (int i = 1; ok && i <= 11; ++i) {
-            const uint8_t c = e[i] & 0x7F;
-            ok = c >= 0x20 && c < 0x7F;
+    // Returns the number of files, or -1 when the directory is not CP/M's.
+    auto directoryIn = [&](SectorOrder o) {
+        order_ = o;
+        loadDirectory();
+        int files = 0;
+        for (const auto& e : dir_) {
+            if (unused(e) || cpm3Meta(e)) continue;
+            bool ok = e[0] <= 31 && e[15] <= 0x80;
+            for (int i = 1; ok && i <= 11; ++i) {
+                const uint8_t c = e[i] & 0x7F;
+                ok = c >= 0x20 && c < 0x7F;
+            }
+            for (int i = 16; ok && i < 32; ++i) ok = e[i] <= kMaxReadBlock;
+            if (!ok) return -1;
+            ++files;
         }
-        for (int i = 16; ok && i < 32; ++i) ok = e[i] <= kMaxReadBlock;
-        if (!ok) {
-            error = "no CP/M directory on track 3 (wrong sector order, or not a CP/M disk)";
-            image_.clear();
-            return false;
-        }
+        return files;
+    };
+    // The extension names an order; the directory proves one. A CP/M disk
+    // saved as `.po` (or `.dsk` in CP/M order) used to be refused outright:
+    // when the named order shows no directory, try the other two and take
+    // the one whose directory holds files — an all-free directory reads as
+    // valid in any order, so it proves nothing (bug hunt 2026-11-07).
+    const int named = directoryIn(order);
+    if (named > 0) return true;
+    for (const SectorOrder o : { SectorOrder::Dos, SectorOrder::Prodos, SectorOrder::Cpm }) {
+        if (o == order) continue;
+        if (directoryIn(o) > 0) { orderOverridden_ = true; return true; }
     }
-    return true;
+    if (named == 0) { directoryIn(order); return true; }   // empty: the extension's
+    error = "no CP/M directory on track 3 (wrong sector order, or not a CP/M disk)";
+    image_.clear();
+    order_ = order;
+    return false;
 }
 
 std::vector<bool> CpmDisk::usedBlocks() const

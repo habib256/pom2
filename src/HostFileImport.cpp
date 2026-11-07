@@ -34,7 +34,8 @@ bool looksLikeBasicListing(const std::vector<std::uint8_t>& data)
 }
 
 bool importHostFile(const std::string& hostPath, const std::vector<std::uint8_t>& bytes,
-                    ImportedFile& out, std::string& error, bool tokenizeListings)
+                    ImportedFile& out, std::string& error, bool tokenizeListings,
+                    bool dropResourceFork)
 {
     ImportedFile file;
     const std::filesystem::path host(hostPath);
@@ -46,6 +47,10 @@ bool importHostFile(const std::string& hostPath, const std::vector<std::uint8_t>
     std::uint8_t  namedType = 0;
     std::uint16_t namedAux  = 0;
     const bool tagged = stripHostFileTag(base, namedType, namedAux);
+    // `%2ePROFILE#040000` is the guest's `.PROFILE`: the leading-dot escape
+    // counts on a TAGGED name only, as in the host folder (HostFileTag.h).
+    // (The strip takes the whole `%2e` off; the period goes back here.)
+    if (tagged && stripHostLeadingDotEscape(base)) base.insert(0, 1, '.');
     if (!tagged) {
         namedType = prodosTypeFromExtension(host.extension().string());
         base.resize(base.size() - strippedExtensionLength(base));
@@ -62,8 +67,22 @@ bool importHostFile(const std::string& hostPath, const std::vector<std::uint8_t>
             error = "AppleSingle: " + error;
             return false;
         }
+        // A resource fork (entry 2) is half of a GS/OS extended file
+        // ([B] ProDOS 8 TN #25, storage type $5) — an S16 application's
+        // code lives there. Neither tool writes an extended file, and the
+        // data fork alone under the original type is a broken program, so
+        // dropping it is the user's call, never a silent one.
+        if (!wrapped.resource.empty() && !dropResourceFork) {
+            error = "AppleSingle: it carries a " + std::to_string(wrapped.resource.size()) +
+                    "-byte resource fork, which this volume cannot hold "
+                    "(--data-fork-only stores the data fork alone)";
+            return false;
+        }
         file.data = std::move(wrapped.data);
         file.note = "AppleSingle unwrapped";
+        if (!wrapped.resource.empty())
+            file.note += ", its " + std::to_string(wrapped.resource.size()) +
+                         "-byte resource fork DROPPED";
         if (wrapped.hasProdosInfo) {
             file.type      = static_cast<std::uint8_t>(wrapped.fileType);
             file.aux       = static_cast<std::uint16_t>(wrapped.auxType);

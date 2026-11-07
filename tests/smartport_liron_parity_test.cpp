@@ -314,6 +314,15 @@ int main()
             std::printf("FAIL: CONTROL on a mounted unit stopped succeeding\n");
             ++g_failures;
         }
+        // …and the controller does not count it: STATUS unit 0 said 2
+        // devices, then unit 2 answered "no device" (bug hunt 2026-11-07).
+        const Call status0{ "STATUS unit 0 (one drive)", 0x00, {3, 0, lo, hi, 0x00}, 8 };
+        const Result r0 = spCall(bare, status0);
+        if (!(r0.returned && !r0.carry && !r0.bytes.empty() && r0.bytes[0] == 1)) {
+            std::printf("FAIL: STATUS unit 0 counts a bay with no drive (%s)\n",
+                        hex(r0).c_str());
+            ++g_failures;
+        }
     }
 
     std::printf("%d failure(s)\n", g_failures);

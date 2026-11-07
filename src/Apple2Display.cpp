@@ -115,6 +115,7 @@ void Apple2Display::applyVideoEvent(Memory::DisplayState& state,
         case Memory::VideoEventKind::An3:       state.an3       = value; break;
         case Memory::VideoEventKind::EightyStore: state.eightyStore = value; break;
         case Memory::VideoEventKind::AltChar:   state.altChar   = value; break;
+        case Memory::VideoEventKind::An2:       state.an2       = value; break;
         case Memory::VideoEventKind::Cut:       break;   // a band edge only
     }
 }
@@ -154,7 +155,7 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     // The ACTIVE 4 KB set (an 8 KB dual-bank ROM's live half, chosen by AN2 —
     // charRomActiveData). The pointer differs between banks, so keying on it
     // makes an AN2 font switch invalidate the cached text frame.
-    const uint8_t* cromData = mem.charRomActiveData();
+    const uint8_t* cromData = mem.charRomBankData(state.an2);
     const std::size_t cromSize = mem.charRomActiveSize();
     k.charRom     = cromData;
     k.charRomSize = cromSize;
@@ -483,6 +484,7 @@ void Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
     if (live.dhgr        != was.dhgr)        s.dhgr        = live.dhgr;
     if (live.eightyStore != was.eightyStore) s.eightyStore = live.eightyStore;
     if (live.an0         != was.an0)         s.an0         = live.an0;
+    if (live.an2         != was.an2)         s.an2         = live.an2;
 }
 
 void Apple2Display::render(Memory& mem)
@@ -1301,7 +1303,7 @@ void Apple2Display::renderText(Memory& mem, const Memory::DisplayState& state,
             const int cellX = col * 7;
             const int cellY = row * 8;
 
-            const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
+            const auto rows = glyphRows7(src, mem.charRomBankData(state.an2), mem.charRomActiveSize(),
                                          useCharRom, altCharSet, flashPhase);
             for (int gy = 0; gy < 8; ++gy) {
                 const int y = cellY + gy;
@@ -1353,7 +1355,7 @@ void Apple2Display::renderTextChatMauveFgBg(Memory& mem,
             // Resolve the glyph into a uniform 7-bit row (bit i = pixel i,
             // bit 0 = leftmost, 1 = lit) with invert/flash already applied,
             // so the 14-dot widening below is shared by both font paths.
-            const auto glyphRows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
+            const auto glyphRows = glyphRows7(src, mem.charRomBankData(state.an2), mem.charRomActiveSize(),
                                               useCharRom, altCharSet, flashPhase);
 
             for (int gy = 0; gy < 8; ++gy) {
@@ -1876,7 +1878,7 @@ void Apple2Display::renderText80(Memory& mem, const Memory::DisplayState& state,
                 const int     cellX = col * 14 + half * 7;
                 const int     cellY = row * 8;
 
-                const auto rows = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
+                const auto rows = glyphRows7(src, mem.charRomBankData(state.an2), mem.charRomActiveSize(),
                                              useCharRom, altCharSet, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = cellY + gy;
@@ -2250,7 +2252,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
             const uint16_t rowAddr = textRowAddress(row, videoTextPage2(state));
             for (int col = col0; col < col1; ++col) {
                 const uint8_t src = ram[rowAddr + col];
-                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
+                const auto bytes = glyphRows7(src, mem.charRomBankData(state.an2), mem.charRomActiveSize(),
                                               useCharRom, state.altChar, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = row * 8 + gy;
@@ -2279,7 +2281,7 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                 // (AppleWin scanner convention).
                 const uint8_t src = (col & 1) ? ram[rowAddr + (col >> 1)]
                                               : aux[rowAddr + (col >> 1)];
-                const auto bytes = glyphRows7(src, mem.charRomActiveData(), mem.charRomActiveSize(),
+                const auto bytes = glyphRows7(src, mem.charRomBankData(state.an2), mem.charRomActiveSize(),
                                               useCharRom, state.altChar, flashPhase);
                 for (int gy = 0; gy < 8; ++gy) {
                     const int y = row * 8 + gy;

@@ -237,6 +237,43 @@ void testWavVariants()
            " transitions (expected 40) " + err);
 }
 
+// ── 6: tape hiss is not a signal (bug hunt 2026-11-07) ──────────────────
+// A bare sign comparator made every wobble of a real rip's hiss a transition
+// (~17 k/s), so a minute of quiet spent the 1 M-transition budget and the
+// tape was refused. The Schmitt band ignores noise that never leaves it.
+void testHissIsNotTransitions()
+{
+    std::vector<float> v;
+    uint32_t seed = 0x2545F491u;
+    auto hiss = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            seed = seed * 1664525u + 1013904223u;
+            v.push_back((float(seed >> 8) / float(1u << 24) * 2.0f - 1.0f) * 0.015f);
+        }
+    };
+    hiss(22050);                                        // 0.5 s of pre-roll hiss
+    bool lvl = true;
+    for (int h = 0; h < kHalves; ++h, lvl = !lvl)
+        for (int i = 0; i < kSamplesPerHalf; ++i) v.push_back(lvl ? 0.45f : -0.45f);
+    hiss(22050);                                        // and 0.5 s after it
+    std::vector<uint8_t> data;
+    for (float x : v) u16v(data, uint16_t(int16_t(x * 32000.0f)));
+    std::vector<uint8_t> body;
+    tagv(body, "fmt "); u32v(body, 16);
+    u16v(body, 1); u16v(body, 1); u32v(body, 44100); u32v(body, 44100 * 2);
+    u16v(body, 2); u16v(body, 16);
+    tagv(body, "data"); u32v(body, uint32_t(data.size()));
+    body.insert(body.end(), data.begin(), data.end());
+    std::vector<uint8_t> w;
+    tagv(w, "RIFF"); u32v(w, uint32_t(4 + body.size())); tagv(w, "WAVE");
+    w.insert(w.end(), body.begin(), body.end());
+    std::string err;
+    const size_t n = loadCount(writeBlob("pom2_ch_hiss.wav", w), err);
+    expect(n == kExpectedTransitions,
+           "hiss around a clean signal decoded as " + std::to_string(n) +
+           " transitions (expected 40) " + err);
+}
+
 // ── 4: recording polarity ────────────────────────────────────────────────
 struct Aci { bool initialLevel = false; std::vector<uint32_t> durations; };
 
@@ -456,6 +493,7 @@ void testWritesDoNotReachTheComparator()
 int main()
 {
     testWavVariants();
+    testHissIsNotTransitions();
     testRecordingPolarity();
     testIicC060IsNotTheDeck();
     testWritesDoNotReachTheComparator();

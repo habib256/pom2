@@ -52,7 +52,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -116,10 +115,7 @@ constexpr int kKioskKeyRowN = int(sizeof(kKioskKeyRows) / sizeof(kKioskKeyRows[0
 // read-only), in a sibling "kiosk_romdirs.txt" — one absolute path per line.
 static std::filesystem::path kioskRomDirsFile(const pom2::Settings& s)
 {
-    namespace fs = std::filesystem;
-    fs::path store = s.getStorePath();
-    fs::path dir = store.has_parent_path() ? store.parent_path() : fs::path(".");
-    return dir / "kiosk_romdirs.txt";
+    return pom2::settingsSidePath(s.getStorePath(), "kiosk_romdirs.txt");
 }
 
 void MainWindow::renderKiosk()
@@ -351,7 +347,8 @@ void MainWindow::kioskActivateFocused()
             kioskSetPaused(false);          // game keeps running under the band
             break;
         case 2:     // ROM folders manager
-            if (kioskPruneRomDirs()) kioskSaveRomDirs();
+            // No prune here: a folder on a stick or share not mounted right
+            // now stays listed (the scan skips it) until the user removes it.
             kioskRomDirSel_ = 0;
             kioskPage_      = KioskPage::RomDirs;
             break;
@@ -912,36 +909,22 @@ void MainWindow::kioskLoadRomDirs()
     namespace fs = std::filesystem;
     kioskRomDirs_.clear();
     if (!settings) return;
-    std::ifstream f(kioskRomDirsFile(*settings));
-    if (!f) return;
-    std::string line;
-    while (std::getline(f, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        std::error_code ec;
-        if (!line.empty() && fs::is_directory(line, ec)) kioskRomDirs_.push_back(line);
-    }
+    // Every listed folder, mounted or not: dropping the missing ones here and
+    // saving was how a cabinet started once without its USB stick forgot the
+    // stick's folder for good. The scan (addDir) skips what is not there.
+    std::error_code ec;
+    fs::path file = kioskRomDirsFile(*settings);
+    const fs::path legacy = fs::path(settings->getStorePath()).parent_path() / "kiosk_romdirs.txt";
+    if (!fs::exists(file, ec) && legacy != file) file = legacy;   // pre-dotfile name
+    kioskRomDirs_ = pom2::readPathListFile(file);
 }
 
 void MainWindow::kioskSaveRomDirs()
 {
     if (!settings) return;
-    std::ofstream f(kioskRomDirsFile(*settings), std::ios::trunc);
-    if (!f) return;
-    for (const auto& d : kioskRomDirs_) f << d << '\n';
-}
-
-bool MainWindow::kioskPruneRomDirs()
-{
-    namespace fs = std::filesystem;
-    bool changed = false;
-    for (size_t i = 0; i < kioskRomDirs_.size(); ) {
-        std::error_code ec;
-        if (!fs::is_directory(kioskRomDirs_[i], ec)) {
-            kioskRomDirs_.erase(kioskRomDirs_.begin() + long(i));
-            changed = true;
-        } else ++i;
-    }
-    return changed;
+    std::error_code ec;
+    if (!pom2::writePathListFile(kioskRomDirsFile(*settings), kioskRomDirs_, ec))
+        pom2::log().warn("Kiosk", "ROM folders not saved: " + ec.message());
 }
 
 void MainWindow::setKioskMode(bool k)

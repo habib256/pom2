@@ -38,6 +38,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -314,6 +317,42 @@ int main()
         assert(mem.videoAuxData()[0x2000] == 0x00 && "line 50 fetched the old byte");
         mem.videoRewindEnd();
         assert(mem.videoAuxData()[0x2000] == 0x55 && "bank 0 back to live");
+    }
+
+    // AN2 picks the font of a dual-bank 8 KB character generator. It is a
+    // display switch like ALTCHAR: painted per beam segment from the frame's
+    // own events, not read live at paint time (bug hunt 2026-11-07). A font
+    // switched on at line 48 and off at line 144 shows bank 1 between them.
+    {
+        const std::string romPath = (std::filesystem::temp_directory_path() /
+                                     "pom2_an2_dual_bank.rom").string();
+        {
+            std::ofstream out(romPath, std::ios::binary);
+            for (int i = 0; i < 8192; ++i)
+                out.put(static_cast<char>(i < 4096 ? (i * 7) & 0x7F : (i * 13 + 5) & 0x7F));
+        }
+        auto textMachine = [&](Memory& mem) {
+            mem.setIIEMode(true);
+            assert(mem.loadCharRom(romPath.c_str(), -1) && mem.charRomIsDualBank());
+            for (uint16_t a = 0x0400; a < 0x0800; ++a)
+                mem.memWrite(a, static_cast<uint8_t>(0xC1 + (a & 0x0F)));
+        };
+        Memory b0; textMachine(b0); b0.memRead(0xC05C);
+        Memory b1; textMachine(b1); b1.memRead(0xC05D);
+        const auto f0 = frameOf(b0);
+        const auto f1 = frameOf(b1);
+        assert(f0 != f1 && "the two banks draw different glyphs");
+
+        Memory mem; textMachine(mem); mem.memRead(0xC05C);
+        mem.setCycleCounter(0);
+        mem.beginVideoEventFrame();
+        mem.setCycleCounter(48 * 65 + 5);   mem.memRead(0xC05D);
+        mem.setCycleCounter(144 * 65 + 5);  mem.memRead(0xC05C);
+        const auto f = frameOf(mem);
+        assert(row(f, f0, 20)  && "above the switch: bank 0");
+        assert(row(f, f1, 100) && "between the switches: bank 1");
+        assert(row(f, f0, 170) && "below: bank 0 again");
+        std::filesystem::remove(romPath);
     }
 
     std::printf("drol_pageflip_render OK\n");

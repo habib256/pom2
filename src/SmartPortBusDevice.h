@@ -98,6 +98,12 @@ public:
     /// may do file I/O (`MountableMediaCard::requestGuestEject`); the bus
     /// only acknowledges. A fixed disk never gets the call.
     virtual void     requestEject() {}
+    /// False once the drive behind this unit has left the cable (its bay
+    /// was emptied after the INIT that numbered it). [B] SmartPort: a
+    /// number nobody holds gets no answer and the host times out; this
+    /// responder answers BADUNIT instead ([F] the exact host error after
+    /// the timeout, settled by a //c with a chain unplugged mid-session).
+    virtual bool     present() const { return true; }
 };
 
 class SmartPortBusDevice {

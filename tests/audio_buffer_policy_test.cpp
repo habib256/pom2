@@ -27,6 +27,8 @@
 
 #include "AudioBufferPolicy.h"
 #include "AudioDevice.h"
+#include "AudioMix.h"
+#include "EventRing.h"
 
 #include <atomic>
 #include <cassert>
@@ -187,10 +189,28 @@ void testReopenKeepsSources()
 
 int main()
 {
+    // The audio thread never allocates (bug hunt 2026-11-07): the mixer's
+    // scratch covers the largest rung, and an EventRing hands back a popped
+    // tail with push_front whatever the producer added in between.
+    {
+        pom2::MixBusState mix;
+        assert(mix.tmpL.size() >= pom2::AudioBufferPolicy::kMaxBrowserPeriodFrames);
+        pom2::EventRing<int> ring(4);
+        for (int i = 0; i < 100; ++i) ring.push_back(i);          // grows: producer side
+        std::vector<int> window;
+        while (!ring.empty() && ring.front() < 60) { window.push_back(ring.front()); ring.pop_front(); }
+        for (int i = 100; i < 140; ++i) ring.push_back(i);         // the producer runs on
+        for (size_t k = window.size(); k-- > 10; )                 // consumer reached 10
+            assert(ring.push_front(window[k]) && "a popped tail always fits back");
+        for (int expect = 10; expect < 140; ++expect) {
+            assert(!ring.empty() && ring.front() == expect);
+            ring.pop_front();
+        }
+        assert(ring.empty());
+    }
     // WASM-5 (bug hunt 2026-11-01 round 3): a PINNED rung below the browser
     // default is kept at the next load; a LEARNED one below it is stale.
     {
-        using P = pom2::AudioBufferPolicy;
         const auto B = P::Platform::Browser;
         assert(P::startRung(B, 512, true) == 512);
         assert(P::startRung(B, 512, false) == P::defaultPeriodFrames(B));

@@ -247,6 +247,8 @@ public:
     /// Where the card's own CPU is.
     uint16_t cardPc() const { return cardCpu_ ? cardCpu_->getProgramCounter() : 0; }
     bool cardHalted() const { return cardCpu_ && cardCpu_->isHalted(); }
+    /// The card 65C02's asserted IRQ sources (bit 1 timer, bit 2 SCC).
+    uint32_t cardIrqSources() const { return cardCpu_ ? cardCpu_->getIrqSourceMask() : 0; }
     /// The firmware's POST error accumulator at $0100; 0 means every test
     /// passed. It halts at $C174 when a bit survives its `AND #$EF` mask.
     uint8_t postErrors() const { return ram_[0x0100]; }

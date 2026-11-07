@@ -164,6 +164,7 @@ public:
     void setDebugBrkTrace(bool enabled) { debugBrkTrace = enabled; }
     bool getDebugBrkTrace() const { return debugBrkTrace; }
     uint16_t memReadAbsolute(uint16_t adr);
+    uint16_t vectorRead(uint16_t adr);   // two bytes, one bus cycle each
     
     // Nouvelles méthodes pour l'exécution et l'affichage
     /// Attach (or detach, with nullptr) the per-instruction debug hook. The

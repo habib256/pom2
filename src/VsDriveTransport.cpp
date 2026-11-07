@@ -27,6 +27,13 @@ public:
 
     bool start(uint16_t) override
     {
+#ifdef __EMSCRIPTEN__
+        // No pthreads in the browser: std::thread throws into a build with
+        // no landing pads and abort()s the module. The panel hides VSDrive
+        // there, and this keeps any other caller (DevicePanelCoordinator's
+        // start command) from reaching the spawn (key_chord_policy scan).
+        return false;
+#else
         if (running_) return true;
         protocol_.resetPacket();
         stopRequested_ = false;
@@ -34,6 +41,7 @@ public:
         card_.onTransportConnected();
         worker_ = guardedThread("VSDrive", [this] { run(); });
         return true;
+#endif
     }
 
     void stop() override

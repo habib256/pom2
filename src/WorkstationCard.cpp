@@ -116,8 +116,13 @@ void WorkstationCard::onReset()
     sccAcc_     = 0;
     postFailed_ = false;
     entropy_    = 0;
+    cardAcc_    = 0;
     strobes_.clear();
     scc_.reset();
+    // The SCC's callback fires only on a CHANGE of its own output, and
+    // hardReset keeps the CPU's source mask (devices release their own
+    // line): a timer flag up at reset would leave /IRQ held with no source.
+    updateIrqLine();
 
     cardCpu_->hardReset();
     // hardReset takes the vector through the bus, which is already live, so

@@ -102,7 +102,12 @@ namespace {
 using Blob = std::vector<uint8_t>;
 using Maker = std::function<std::unique_ptr<SlotPeripheral>()>;
 
-struct Entry { const char* name; Maker make; };
+// `legacyLens`: the lengths of the card's older, complete formats (a blob
+// written before an optional tail was appended). Loading one applies the
+// captured head and DEFAULTS for the tail — legal, and not a hybrid as long
+// as nothing of the live state leaks into it, which P3 checks by loading
+// the same prefix into a card with another history.
+struct Entry { const char* name; Maker make; std::vector<size_t> legacyLens = {}; };
 
 uint32_t rnd(uint32_t& s) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return s; }
 
@@ -269,10 +274,19 @@ void check(const Entry& e)
             d->loadSnapshotState(ba.data(), n);      // truncated
             Blob after = cap(*d);
             if (after != before && after != ba && after != fresh) {
-                std::printf("  %-22s P3 FAIL: truncation to %zu/%zu is a hybrid state\n",
-                            e.name, n, ba.size());
-                ++failures;
-                break;
+                bool legacyParse = false;
+                if (std::find(e.legacyLens.begin(), e.legacyLens.end(), n) != e.legacyLens.end()) {
+                    auto other = e.make();
+                    drive(*other, 0x1234u);
+                    other->loadSnapshotState(ba.data(), n);
+                    legacyParse = cap(*other) == after;   // the prefix alone decided it
+                }
+                if (!legacyParse) {
+                    std::printf("  %-22s P3 FAIL: truncation to %zu/%zu is a hybrid state\n",
+                                e.name, n, ba.size());
+                    ++failures;
+                    break;
+                }
             }
         }
         // Oversized: valid blob with junk appended.
@@ -394,7 +408,10 @@ int main()
         { "EchoPlusCard",      [] { return std::unique_ptr<SlotPeripheral>(new EchoPlusCard(3)); } },
         { "EchoPlusTMS",       [] { return std::unique_ptr<SlotPeripheral>(new EchoPlusTMS5220Card(3)); } },
         { "SuperSerialCard",   [] { return std::unique_ptr<SlotPeripheral>(new SuperSerialCard(2)); } },
-        { "ClockCard",         [] { return std::unique_ptr<SlotPeripheral>(new ClockCard(4)); } },
+        // 36 = the original blob, 45 = with the hold tail (2026-11-01); 54
+        // adds the DATA_OUT phase (2026-11-07).
+        { "ClockCard",         [] { return std::unique_ptr<SlotPeripheral>(new ClockCard(4)); },
+                               { 36, 45 } },
         { "MouseCardAppleWin", [] { return std::unique_ptr<SlotPeripheral>(new MouseCardAppleWin(4)); } },
         { "MouseCard",         [] { return std::unique_ptr<SlotPeripheral>(new MouseCard(4)); } },
         { "FourPlayCard",      [] { return std::unique_ptr<SlotPeripheral>(new FourPlayCard(4)); } },

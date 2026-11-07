@@ -257,8 +257,15 @@ bool scanFile(const std::string& path)
                                  s.find("! defined(__EMSCRIPTEN__)") != std::string::npos ||
                                  s.find("!__EMSCRIPTEN__") != std::string::npos;
             const bool orCond = s.find("||") != std::string::npos;
+            // POM2_HAS_SOCKETS is 0 exactly under Emscripten (Pom2Build.h):
+            // `#if POM2_HAS_SOCKETS` excludes the browser, `#if
+            // !POM2_HAS_SOCKETS` is its branch, and #else flips either.
+            const bool hasSockets = s.find("POM2_HAS_SOCKETS") != std::string::npos;
+            const bool socketsNeg = s.find("!POM2_HAS_SOCKETS") != std::string::npos;
             if (s.rfind("#ifndef", 0) == 0)
                 stack.push_back({hasEms, hasEms});
+            else if ((s.rfind("#if ", 0) == 0) && hasSockets && !hasEms && !orCond)
+                stack.push_back({!socketsNeg, true});
             else if (s.rfind("#ifdef", 0) == 0 || s.rfind("#if", 0) == 0)
                 stack.push_back({negated && !orCond, hasEms && !orCond});
             else if (s.rfind("#elif", 0) == 0) {
@@ -454,7 +461,9 @@ void testNoEmscriptenAbortStubs()
         allOk &= scanFile(e.path().string());
         ++files;
     }
-    check(files > 300, "the Emscripten scan walked the whole of src/");
+    // 290 translation units on 2026-11-07: a floor well under it, so a
+    // broken directory walk (scanning a handful) cannot pass.
+    check(files > 250, "the Emscripten scan walked the whole of src/");
     check(allOk,
           "no Emscripten abort()-stub GLFW call or thread spawn is reachable "
           "in the browser build");

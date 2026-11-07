@@ -69,7 +69,7 @@ constexpr std::size_t kMaxEntries = 64;
 
 struct File {
     std::vector<uint8_t> data;        // entry 1
-    std::vector<uint8_t> resource;    // entry 2 (kept, POM2 does not use it)
+    std::vector<uint8_t> resource;    // entry 2 (no volume POM2 writes holds it: HostFileImport refuses it)
     std::string          realName;    // entry 3, may be empty
     bool     hasProdosInfo = false;   // entry 11 present (or a v1 ProDOS entry 7)
     uint16_t access   = 0xC3;

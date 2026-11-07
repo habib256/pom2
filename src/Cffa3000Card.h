@@ -21,6 +21,12 @@ public:
     { setUnitCount(8); }
 
     std::string_view name() const override { return "CFFA3000 (SmartPort)"; }
+
+protected:
+    // Not a cable chain: the board's eight SmartPort devices are fixed slots
+    // in its own firmware, numbered whether a medium is in them or not, so
+    // device n is bay n and nothing is compacted.
+    bool compactsChain() const override { return false; }
 };
 
 } // namespace pom2

@@ -2,6 +2,9 @@
 #include "EmulationController.h"
 #include "PremiumSoftCard.h"
 #include "SessionMachine.h"
+#include "SessionSettings.h"
+#include "Settings.h"
+#include "SuperSerialCard.h"
 #include "SessionSnapshot.h"
 #include "SessionLoadQueue.h"
 #include "SessionFiles.h"
@@ -335,8 +338,39 @@ void premiumSoftCardSurvivesARefusedLoad()
     std::printf("  ok: a session load refuses a Premium SoftCard and keeps it\n");
 }
 
+// Quitting with a loaded session's machine must not write its serial ports
+// and No-Slot Clock over the user's own settings: the session's //c ports
+// have no listener and the default port, its clock may be off, and the next
+// normal launch came back with the user's telnet listener and clock gone.
+void sessionMachineKeepsUserSerialAndClockSettings()
+{
+    auto c = std::make_unique<EmulationController>(AudioDevice::OutputMode::Offline);
+    c->memory().slotBus().plug(2, std::make_unique<SuperSerialCard>(2));
+    c->noSlotClock().setEnabled(false);
+    c->noSlotClock().setSlot(-1);
+    Settings settings;
+    settings.setBool("ssc_listening_slot2", true);
+    settings.setInt ("ssc_port_slot2", 6800);
+    settings.setBool("ssc_listening", true);
+    settings.setInt ("ssc_port", 6800);
+    settings.setBool("nsclock_enable", true);
+    settings.setInt ("nsclock_slot", 3);
+    persistSerialAndClockSettings(settings, c->memory().slotBus(), c->noSlotClock(), true);
+    assert(settings.getBool("ssc_listening_slot2") && settings.getInt("ssc_port_slot2") == 6800);
+    assert(settings.getBool("ssc_listening") && settings.getInt("ssc_port") == 6800);
+    assert(settings.getBool("nsclock_enable") && settings.getInt("nsclock_slot") == 3);
+    assert(!settings.has("ssc_cable_slot2") && !settings.has("ssc_raw_mode_slot2"));
+    // The user's own machine still persists them.
+    persistSerialAndClockSettings(settings, c->memory().slotBus(), c->noSlotClock(), false);
+    assert(!settings.getBool("ssc_listening_slot2", true));
+    assert(settings.getInt("ssc_port_slot2") != 6800 && settings.has("ssc_cable_slot2"));
+    assert(!settings.getBool("nsclock_enable", true) && settings.getInt("nsclock_slot") == -1);
+    std::printf("  ok: a session's machine leaves the serial and clock settings alone\n");
+}
+
 int main()
 {
+    sessionMachineKeepsUserSerialAndClockSettings();
     profiles(); legacyBundles(); zipAndExpansions(); transwarp(); cffaAndFolder(); outgoingDurability(); tapes();
     tapeRewindSession();
     premiumSoftCardSurvivesARefusedLoad();

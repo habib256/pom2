@@ -173,6 +173,67 @@ int main()
         CHECK(drops(modes[3], 7) == 0 && drops(modes[2], 3) == 0);
     }
 
+    // 5b. Bug hunt 2026-11-07, three VDP fixes, on fresh cards.
+    auto vAddr = [](TMS9918& v, uint16_t a, bool write) {
+        v.writeControl(uint8_t(a)); v.writeControl(uint8_t((write ? 0x40 : 0x00) | (a >> 8)));
+    };
+    auto vReg = [](TMS9918& v, int r, uint8_t x) { v.writeControl(x); v.writeControl(uint8_t(0x80 | r)); };
+    {   // R1 bit 7 clear (4K DRAM mapping) still reaches all 16 KB — it used
+        // to wrap at $0FFF, so $1234 landed on $0234 (the name table's page).
+        EzColorCard c;
+        TMS9918& v = c.vdp();
+        CHECK(v.isSiliconStrictMode() && v.regsData()[1] == 0);
+        const uint8_t below = v.vramData()[0x0234];
+        vAddr(v, 0x1234, true);  v.writeData(0xAA); c.advanceCycles(40);
+        CHECK(v.vramData()[0x1234] == 0xAA && v.vramData()[0x0234] == below && "4K mode: no 4 KB wrap");
+        vAddr(v, 0x1234, false); c.advanceCycles(40);
+        CHECK(v.readData() == 0xAA && "…and it reads back");
+        // Flip to the 16K mapping: the byte is now at the address the DRAM
+        // cell has there ([D] openMSX change4k8kMapping: VA6 <-> VA12).
+        vReg(v, 1, 0x80); c.advanceCycles(40);
+        CHECK(v.vramData()[0x0934] == 0xAA && "16K mapping: the same cell, rearranged");
+        vReg(v, 1, 0x00); c.advanceCycles(40);
+        CHECK(v.vramData()[0x1234] == 0xAA && "back to 4K: back where it was");
+    }
+    {   // A snapshot taken while a data-port write waits for its VRAM slot
+        // keeps it: the restored VDP lands the byte (it used to be dropped).
+        EzColorCard c;
+        TMS9918& v = c.vdp();
+        vReg(v, 1, 0xC0); c.advanceCycles(64);         // Graphics I, display on
+        vAddr(v, 0x0400, true); c.advanceCycles(40);
+        v.writeData(0x5A);                              // pending: >= 1 cycle away
+        CHECK(v.vramData()[0x0400] != 0x5A);
+        std::vector<uint8_t> b;
+        c.appendSnapshotState(b);
+        EzColorCard r;
+        r.loadSnapshotState(b.data(), b.size());
+        r.advanceCycles(40);
+        CHECK(r.vdp().vramData()[0x0400] == 0x5A && "restored pending write lands");
+        // A blob from before the fix (bits 1-2 of the strict byte clear)
+        // still loads, with no access pending.
+        b[4 + TMS9918::kStateBytes - 3] &= 0x01;
+        EzColorCard o;
+        o.loadSnapshotState(b.data(), b.size());
+        o.advanceCycles(40);
+        CHECK(o.vdp().isSiliconStrictMode() && o.vdp().vramData()[0x0400] != 0x5A);
+    }
+    {   // Text mode has no sprite engine: a "SAT" over text bytes raises no
+        // 5S / collision. Graphics I with the same VRAM does (the control).
+        EzColorCard c;
+        TMS9918& v = c.vdp();
+        v.setSiliconStrictMode(false);
+        vReg(v, 5, 0x00); vReg(v, 6, 0x00);             // SAT and sprite patterns at $0000
+        vAddr(v, 0x0000, true);
+        for (int i = 0; i < 0x100; ++i) v.writeData(0x20);   // 32 sprites at Y=$20, pattern $20
+        vReg(v, 1, 0xD0);                               // Text, display on
+        (void)v.readControl();
+        for (int i = 0; i < 2 * TMS9918::kCyclesPerFrame / 64 + 1; ++i) c.advanceCycles(64);
+        CHECK((v.readControl() & 0x60) == 0 && "Text: no 5S, no collision");
+        vReg(v, 1, 0xC0);                               // Graphics I, same VRAM
+        for (int i = 0; i < 2 * TMS9918::kCyclesPerFrame / 64 + 1; ++i) c.advanceCycles(64);
+        CHECK((v.readControl() & 0x40) && "Graphics I: the 5th sprite is flagged");
+    }
+
     // 6. The VDP keeps its own crystal's time (bug hunt 2026-10-31). The card
     // is told the CPU clock (setCpuClock: an accelerator, a PAL machine); the
     // VDP's tables are in 1.022727 MHz cycles, so the card converts. Before,

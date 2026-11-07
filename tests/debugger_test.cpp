@@ -53,8 +53,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace {
@@ -1681,6 +1683,212 @@ static void testBreakpointAfterDmaRelease()
     assert(!ctrl.cpu().getDebugHook());
 }
 
+// A watch hit the DMA card's processor makes (the SoftCard Z80 reads and
+// writes through Memory::memRead/memWrite) stops the machine. It stayed
+// latched while the card held the bus, and on the hand-back the stale-hit
+// reconcile ate it as one from an earlier stop (bug hunt 2026-11-07). The
+// hit names the bus master: the parked 6502's PC did not write.
+static void testWatchHitByTheBusMaster()
+{
+    struct WritingCard final : SlotPeripheral {
+        Memory* mem = nullptr;
+        bool active = true, release = false;
+        int runs = 0;
+        std::string_view name() const override { return "DMA watch test"; }
+        bool dmaActive() const override { return active; }
+        int dmaRun(int cycles) override
+        { ++runs; mem->memWrite(0x0040, 0x5A); active = !release; return release ? 1 : cycles; }
+    };
+    for (const bool release : { false, true }) {
+        EmulationController ctrl(AudioDevice::OutputMode::Offline);
+        auto card = std::make_unique<WritingCard>();
+        auto* dma = card.get();
+        {
+            auto state = ctrl.lockState();
+            dma->mem = &state.memory();
+            dma->release = release;
+            state.memory().writeRamUnchecked(0x0800, 0x4C);   // JMP *
+            state.memory().writeRamUnchecked(0x0801, 0x00);
+            state.memory().writeRamUnchecked(0x0802, 0x08);
+            state.cpu().setProgramCounter(0x0800);
+            state.memory().slotBus().plug(4, std::move(card));
+            ctrl.debugger().setWatchpoint(0x0040, pom2::Debugger::Write);
+            ctrl.syncDebugHook();
+        }
+        ctrl.setCyclesPerFrame(4 * 4096);
+        ctrl.setMode(EmulationController::Mode::Running);
+        ctrl.tickFrame();
+        assert(ctrl.getMode() == EmulationController::Mode::Stopped &&
+               "a watch hit by the bus master did not stop the machine");
+        const auto hit = ctrl.debugger().lastHit();
+        assert(hit.reason == pom2::Debugger::Reason::WatchWrite);
+        assert(hit.addr == 0x0040 && hit.value == 0x5A && hit.busMaster);
+        assert(dma->runs == 1 && "the card ran on past its stop");
+    }
+}
+
+// Step Out from inside an interrupt handler (bug hunt 2026-11-07): only RTS
+// was a return, so the handler's RTI was not, and over a top-level JMP loop
+// Step Out became an unbounded Run.
+static void testStepOutOfAnInterruptHandler()
+{
+    EmulationController ctrl;
+    {
+        auto st = ctrl.lockState();
+        const uint8_t loop[] = {0x4C, 0x00, 0x08}, handler[] = {0xEA, 0xEA, 0x40};  // JMP * / NOP NOP RTI
+        for (size_t i = 0; i < 3; ++i) { st.memory().memWrite(0x0800 + i, loop[i]); st.memory().memWrite(0x0A00 + i, handler[i]); }
+        st.memory().memWrite(0x01FF, 0x08); st.memory().memWrite(0x01FE, 0x00);  // return $0800
+        st.memory().memWrite(0x01FD, 0x24);                                     // P, I set
+        st.cpu().setProgramCounter(0x0A01);                                     // stopped inside
+        st.cpu().setStackPointer(0xFC);
+    }
+    ctrl.debugStepOut();
+    ctrl.tickFrame();
+    auto st = ctrl.lockState();
+    assert(ctrl.getMode() == EmulationController::Mode::Stopped && "step out of a handler ran on");
+    assert(st.cpu().getProgramCounter() == 0x0800 && st.cpu().getStackPointer() == 0xFF);
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::StepOut);
+}
+
+// The other side of that rule: an IRQ taken INSIDE the routine being stepped
+// out of is a nested frame, and its RTI is not the return — here the routine
+// has pulled above where the step began, so the RTI "returned above" it.
+static void testStepOutIgnoresANestedHandlersRti()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0800, 0x20); mem.memWrite(0x0801, 0x00); mem.memWrite(0x0802, 0x09);
+    mem.memWrite(0x0803, 0x4C); mem.memWrite(0x0804, 0x03); mem.memWrite(0x0805, 0x08);
+    const uint8_t routine[] = {0x48, 0xEA, 0x68, 0xEA, 0x60};   // PHA NOP PLA NOP RTS
+    for (size_t i = 0; i < sizeof routine; ++i) mem.memWrite(0x0900 + i, routine[i]);
+    mem.memWrite(0x0A00, 0x40);                                  // handler: RTI
+    const uint8_t vectors[] = {0x00, 0x0A};
+    mem.loadRomBytes(vectors, 2, 0xFFFE);
+    mem.memWrite(0x01FF, 0x08); mem.memWrite(0x01FE, 0x02);      // return $0803
+    mem.memWrite(0x01FD, 0x55);                                  // the saved A
+    cpu.setProgramCounter(0x0901);                               // after the PHA
+    cpu.setStackPointer(0xFC);
+    cpu.setStatusRegister(0x20);                                 // I clear
+    dbg.setStepOut(cpu, mem);
+    cpu.setDebugHook(&dbg);
+    cpu.run(2);                                                  // NOP
+    cpu.run(4);                                                  // PLA: SP above the start
+    assert(cpu.getProgramCounter() == 0x0903 && cpu.getStackPointer() == 0xFD);
+    cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+    cpu.run(7);                                                  // the entry
+    cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, false);
+    assert(cpu.getProgramCounter() == 0x0A00);
+    cpu.run(1000);
+    assert(dbg.stopRequested() && dbg.lastHit().reason == pom2::Debugger::Reason::StepOut);
+    assert(cpu.getProgramCounter() == 0x0803 && "the handler's RTI ended the step");
+    assert(cpu.getStackPointer() == 0xFF);
+}
+
+// A ProDOS-shaped MLI at $BF00 (os_call_trace_test's stub): OPEN succeeds
+// with ref 1, everything else fails with $46.
+static void installMliStub(Memory& m)
+{
+    const uint8_t stub[] = {
+        0x68, 0x85, 0xFA, 0x68, 0x85, 0xFB, 0xA0, 0x02, 0xB1, 0xFA, 0x85, 0xFC,
+        0xC8, 0xB1, 0xFA, 0x85, 0xFD, 0x18, 0xA5, 0xFA, 0x69, 0x03, 0xAA,
+        0xA5, 0xFB, 0x69, 0x00, 0x48, 0x8A, 0x48, 0xA0, 0x01, 0xB1, 0xFA, 0xC9, 0xC8,
+        0xD0, 0x0A, 0xA0, 0x05, 0xA9, 0x01, 0x91, 0xFC, 0xA9, 0x00, 0x18, 0x60, 0xA9, 0x46, 0x38, 0x60,
+    };
+    for (size_t i = 0; i < sizeof stub; ++i) m.memWrite(uint16_t(0xBF00 + i), stub[i]);
+}
+
+// F7 / Step goes through stepBusMaster, which never offered the OS-call
+// trace (bug hunt 2026-11-07): an MLI return stepped over left its call open,
+// and the next call closed it "-> (no return)"; a stepped $BF00 was never
+// decoded at all.
+static void testExplicitStepsFeedTheOsCallTrace()
+{
+    for (const bool stopAtEntry : { true, false }) {
+        EmulationController ctrl;
+        {
+            auto st = ctrl.lockState();
+            pom2::OsTraceKinds k; k.mli = true;
+            ctrl.setOsCallTrace(k);
+            installMliStub(st.memory());
+            auto put = [&](uint16_t at, std::initializer_list<int> bytes) {
+                for (int b : bytes) st.memory().memWrite(at++, uint8_t(b));
+            };
+            put(0x0800, {0x20, 0x00, 0xBF, 0xC8, 0x00, 0x09,       // JSR MLI / OPEN / $0900
+                         0x20, 0x00, 0xBF, 0xC4, 0x20, 0x09,       // JSR MLI / GET_FILE_INFO / $0920
+                         0x4C, 0x0C, 0x08});                       // JMP *
+            put(0x0900, {0x03, 0x10, 0x09, 0x00, 0x1C, 0x00});
+            put(0x0910, {13, '/', 'P', 'R', 'O', 'D', 'O', 'S', '/', 'H', 'E', 'L', 'L', 'O'});
+            put(0x0920, {0x0A, 0x10, 0x09});
+            st.cpu().setStackPointer(0xFF);
+            st.cpu().setProgramCounter(0x0800);
+            // Stopped AT the entry (its offer and the first step's are one), or not.
+            if (stopAtEntry) { ctrl.debugger().addBreakpoint(0xBF00); ctrl.syncDebugHook(); }
+        }
+        if (stopAtEntry) {
+            ctrl.setMode(EmulationController::Mode::Running);
+            ctrl.tickFrame();
+            assert(ctrl.cpu().getProgramCounter() == 0xBF00 && ctrl.debugger().stopRequested());
+        }
+        // Step through the return AND the next JSR: the return is seen only
+        // if the step at $0806 offers it.
+        for (int i = 0; i < 100 && ctrl.cpu().getProgramCounter() != 0x0806; ++i) {
+            ctrl.debugStepInstruction();
+            ctrl.tickFrame();
+        }
+        ctrl.debugStepInstruction();
+        ctrl.tickFrame();
+        assert(ctrl.cpu().getProgramCounter() == 0xBF00);
+        {
+            auto st = ctrl.lockState();
+            ctrl.debugger().clearBreakpoints();
+            ctrl.syncDebugHook();
+            ctrl.debugResume();
+        }
+        ctrl.setMode(EmulationController::Mode::Running);
+        ctrl.tickFrame();
+        const auto& t = ctrl.debugger().osCalls().lines();
+        const std::vector<std::string> l(t.begin(), t.end());
+        assert(l.size() == 2);
+        assert(l[0] == "MLI  $0800 OPEN \"/PRODOS/HELLO\" buf=$1C00 -> ref=1");
+        assert(l[1] == "MLI  $0806 GET_FILE_INFO \"/PRODOS/HELLO\" -> ERR $46 file not found");
+    }
+}
+
+// The assembler patched through noteTimeJump(), which wiped the stop: the next
+// Run had no amnesty and re-stopped on the same breakpoint having executed
+// nothing (bug hunt 2026-11-07). Debugger::patchMemory keeps the stop.
+static void testAssemblerPatchKeepsTheStop()
+{
+    EmulationController ctrl;
+    {
+        auto st = ctrl.lockState();
+        const uint8_t prog[] = {0xE8, 0xEA, 0x4C, 0x02, 0x08};   // INX NOP(patched) JMP *
+        for (size_t i = 0; i < sizeof prog; ++i) st.memory().memWrite(uint16_t(0x0800 + i), prog[i]);
+        st.cpu().setProgramCounter(0x0800);
+        st.cpu().setXRegister(0); st.cpu().setYRegister(0);
+        ctrl.debugger().addBreakpoint(0x0800);
+        ctrl.debugger().setWatchpoint(0x0801, pom2::Debugger::Write);
+        ctrl.syncDebugHook();
+    }
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.debugger().lastHit().reason == pom2::Debugger::Reason::Breakpoint);
+    {
+        auto st = ctrl.lockState();
+        const uint8_t iny = 0xC8; ctrl.debugger().patchMemory(st.memory(), 0x0801, &iny, 1);
+        assert(st.memory().peekCpuView(0x0801) == 0xC8);
+        const auto hit = ctrl.debugger().lastHit();
+        assert(hit.reason == pom2::Debugger::Reason::Breakpoint && hit.pc == 0x0800 &&
+               "the patch wiped the stop, or latched its own watch hit");
+        ctrl.debugResume();
+    }
+    ctrl.setMode(EmulationController::Mode::Running);
+    ctrl.tickFrame();
+    assert(ctrl.cpu().getXRegister() == 1 && "Run re-stopped on the breakpoint it resumed from");
+    assert(ctrl.cpu().getYRegister() == 1);
+}
+
 // The debugger's listing decodes the instruction set the CORE dispatches,
 // not one it assumes (audit parite-ow65c02-2026-11-01, MINEUR). The Apple's
 // own CPU is an NCR65C02 — [B] Apple IIc Technical Reference Manual (1984),
@@ -1740,6 +1948,11 @@ void testDisassemblerFollowsTheCoreInstructionSet()
 int main()
 {
     testBreakpointAfterDmaRelease();
+    testWatchHitByTheBusMaster();
+    testStepOutOfAnInterruptHandler();
+    testStepOutIgnoresANestedHandlersRti();
+    testExplicitStepsFeedTheOsCallTrace();
+    testAssemblerPatchKeepsTheStop();
     testPhysicalBankRouting();
     testBankBreakpointsAndWatches();
     testBankProfileAcrossSwitchingInstruction();

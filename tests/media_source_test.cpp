@@ -241,6 +241,33 @@ int main()
         CHECK(pom2::mediaArchiveExtension(disk) == nullptr);
     }
 
+    // 4c. The cache key (bug hunt 2026-11-07). Two URLs with one last
+    //     segment and one 32-bit FNV-1a: the old key gave them one cache
+    //     copy, and a hit opens no socket, so whichever came first was
+    //     served as the other for good.
+    {
+        auto fnv32 = [](const std::string& s) {
+            uint32_t h = 2166136261u;
+            for (unsigned char c : s) h = (h ^ c) * 16777619u;
+            return h;
+        };
+        const std::string a = "http://example.test/disk.dsk?m4urx81r9b";
+        const std::string b = "http://example.test/disk.dsk?lgll5sars5";
+        CHECK(fnv32(a) == fnv32(b));                       // the pair does collide
+        CHECK(pom2::mediaUrlCachePath(a, cache) != pom2::mediaUrlCachePath(b, cache));
+        // A copy cached under the old key moves to the new one, with the
+        // guest's writes in it, and no download is tried.
+        const std::string url = "http://127.0.0.1:9/legacy.dsk";
+        char old[9];
+        std::snprintf(old, sizeof old, "%08x", fnv32(url));
+        fs::create_directories(cache, ec);
+        put(cache / (std::string(old) + "-legacy.dsk"), disk);
+        r = pom2::resolveMediaSource(url, cache);
+        CHECK(r.ok && r.fromCache && fs::path(r.localPath) == pom2::mediaUrlCachePath(url, cache));
+        CHECK(r.ok && get(r.localPath) == disk);
+        CHECK(!fs::exists(cache / (std::string(old) + "-legacy.dsk")));
+    }
+
     // 5. Predicates.
     CHECK(pom2::isHttpUrl("HTTPS://example.org/a.dsk") && !pom2::isHttpUrl("tnfs://h/a.po"));
     CHECK(pom2::isCompressedImage("a.ZIP") && pom2::isCompressedImage("b.dsk.gz"));

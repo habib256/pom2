@@ -36,16 +36,7 @@ bool DiskImage::appendSessionMedia(std::vector<uint8_t>& out, std::string& error
     image->fileWriteProtected = true;
     std::vector<uint8_t> media, framing;
     if (!image->appendReadOnlySession(media, error)) return false;
-    for (const auto& frame : writeFraming) {
-        pom2::byteio::putU64(framing, uint64_t(frame.nextCycle));
-        pom2::byteio::putU32(framing, uint32_t(frame.nibbleIdx));
-        framing.push_back(frame.acc);
-        framing.push_back(uint8_t(frame.accBits));
-        pom2::byteio::putU64(framing, uint64_t(frame.origin));
-        pom2::byteio::putU32(framing, uint32_t(frame.nextCell));
-        framing.push_back(uint8_t(frame.heldValid)); framing.push_back(uint8_t(frame.heldBit));
-        pom2::byteio::putU32(framing, uint32_t(frame.heldCell));
-    }
+    appendWriteFraming(framing);
     out.insert(out.end(), {'D','M','S',1, uint8_t(uint8_t(fileWriteProtected) |
         (uint8_t(hostReadOnly_) << 1) | (uint8_t(writeBackEnabled) << 2))});
     pom2::sessionio::blob(out, media); pom2::sessionio::blob(out, framing);
@@ -81,21 +72,8 @@ bool DiskImage::loadSessionMedia(const uint8_t* data, size_t len, std::string& e
             pos += 8 + count;
         }
     }
-    pom2::sessionio::Reader f(framing.data(), framing.size());
-    auto u64 = [&] { const auto lo = f.u32(); return uint64_t(lo) | (uint64_t(f.u32()) << 32); };
-    auto i32 = [&] { const uint32_t v = f.u32(); return v <= INT32_MAX ? int(v) : int(int64_t(v) - (int64_t(1) << 32)); };
-    constexpr int64_t maxClock = INT64_MAX / 4;
-    for (auto& frame : image->writeFraming) {
-        frame.nextCycle = int64_t(u64()); frame.nibbleIdx = i32(); frame.acc = f.u8();
-        frame.accBits = f.u8(); frame.origin = int64_t(u64()); frame.nextCell = i32();
-        const uint8_t valid = f.u8(), bit = f.u8(); frame.heldValid = valid; frame.heldBit = bit;
-        frame.heldCell = i32();
-        if ((frame.nextCycle != INT64_MIN && (frame.nextCycle < 0 || frame.nextCycle > maxClock)) ||
-            frame.origin < 0 || frame.origin > maxClock || frame.nibbleIdx < -1 || frame.nibbleIdx >= kNibblesPerTrack ||
-            frame.accBits > 7 || frame.nextCell < -1 || frame.nextCell > (1 << 24) ||
-            frame.heldCell < -1 || frame.heldCell > (1 << 24) || valid > 1 || bit > 1) {
-            error = "invalid session nibble write framing"; return false;
-        }
+    if (!image->loadWriteFraming(framing.data(), framing.size())) {
+        error = "invalid session nibble write framing"; return false;
     }
     image->fileWriteProtected = flags & 1; image->hostReadOnly_ = flags & 2;
     image->writeBackEnabled = flags & 4; image->detachedSession_ = true;

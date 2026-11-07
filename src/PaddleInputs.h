@@ -96,15 +96,23 @@ public:
     // `iiPlus` = a ][ / ][+ (its own wirings); `iieMod` = a //e whose PB2
     // may carry the //e mod (not a //c). MAME `apple2.cpp` c060_r, cases
     // 1-3 and 6-7.
+    //
+    // The Apple keys reach PB0/PB1 on a //e or //c only: a ][ / ][+ has no
+    // Open- or Solid-Apple key ([B] Apple II Reference Manual 1979, the
+    // keyboard; [D] MAME `apple2.cpp` c060_r @ b2a182f0b7 reads sw0/sw1 or
+    // the Shift/Ctrl mods, never an Apple key). Host Alt (Alt-Tab, a macOS
+    // Option chord) pressed a ][+ game's fire buttons (bug hunt 2026-11-07).
     bool button0(bool iiPlus = false) const {
         if (iiPlus && iiShiftWiring() == IiShiftWiring::Sw01) return !shift_.load(std::memory_order_relaxed);
-        if (!connected()) return iiPlus || openApple_.load(std::memory_order_relaxed);
-        return button_[0] || openApple_.load(std::memory_order_relaxed);
+        const bool apple = !iiPlus && openApple_.load(std::memory_order_relaxed);
+        if (!connected()) return iiPlus || apple;
+        return button_[0] || apple;
     }
     bool button1(bool iiPlus = false) const {
         if (iiPlus && iiShiftWiring() == IiShiftWiring::Sw01) return !ctrl_.load(std::memory_order_relaxed);
-        if (!connected()) return iiPlus || solidApple_.load(std::memory_order_relaxed);
-        return button_[1] || solidApple_.load(std::memory_order_relaxed);
+        const bool apple = !iiPlus && solidApple_.load(std::memory_order_relaxed);
+        if (!connected()) return iiPlus || apple;
+        return button_[1] || apple;
     }
     bool button2(bool iieMod, bool iiPlus = false) const {
         if ((iieMod && shiftMod_.load(std::memory_order_relaxed))

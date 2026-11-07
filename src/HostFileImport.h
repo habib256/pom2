@@ -10,7 +10,8 @@
 // them the same way — the hazard HostFileTag.h records, one level up:
 //
 //   1. an AppleSingle wrapper says the type and aux itself (cc65's linker,
-//      CiderPress and Cadius write one), and its data fork is the file. It
+//      CiderPress and Cadius write one), and its data fork is the file (one
+//      with a resource fork is refused unless the caller drops it). It
 //      wins over the host name: the wrapper travels WITH the bytes, a name
 //      is whatever the file was last saved as.
 //   2. otherwise the host name says it, by the convention HostFileTag.h owns
@@ -53,10 +54,12 @@ bool looksLikeBasicListing(const std::vector<std::uint8_t>& data);
 
 /// `hostPath`: only its file name is used. `tokenizeListings` false keeps an
 /// Applesoft text listing as the bytes it is. False (with `error`) when an
-/// AppleSingle wrapper is malformed or a listing does not tokenize — the
-/// message names the line.
+/// AppleSingle wrapper is malformed, carries a resource fork and
+/// `dropResourceFork` is false, or a listing does not tokenize — the message
+/// names the line.
 bool importHostFile(const std::string& hostPath, const std::vector<std::uint8_t>& bytes,
-                    ImportedFile& out, std::string& error, bool tokenizeListings = true);
+                    ImportedFile& out, std::string& error, bool tokenizeListings = true,
+                    bool dropResourceFork = false);
 
 }  // namespace pom2
 

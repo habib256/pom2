@@ -217,3 +217,48 @@ void DiskIICard::carryAngleAcrossStep(int drive, int fromQt, int toQt)
     // early (the boot's recalibration pushes it against the stop).
     if (now >= pos) anchor = now - pos;
 }
+
+// D2S1 v6: the write framing of each captured drive. A rewind restores the
+// nibbles and the controller's burst (v4) but left `writeFraming` holding
+// the abandoned future: the next flush took the window for a new burst,
+// threw the half-framed nibble away and re-framed mid-nibble, so the rest
+// of the data field was garbage (bug hunt 2026-11-07).
+void DiskIICard::appendFramingTail(std::vector<uint8_t>& out) const
+{
+    for (int d = 0; d < kDriveCount; ++d) {
+        // The media capture's predicate (appendSnapshotState).
+        const bool cap = images[d].isLoaded() &&
+                         !images[d].isFileWriteProtected() && !images[d].isWoz();
+        out.push_back(cap ? 1 : 0);
+        if (cap) images[d].appendWriteFraming(out);
+    }
+}
+
+bool DiskIICard::framingTailFits(const uint8_t* data, std::size_t len)
+{
+    std::size_t q = 0;
+    for (int d = 0; d < kDriveCount; ++d) {
+        if (q >= len || data[q] > 1) return false;
+        if (data[q++]) {
+            if (DiskImage::kWriteFramingBytes > len - q) return false;
+            q += DiskImage::kWriteFramingBytes;
+        }
+    }
+    return true;
+}
+
+void DiskIICard::loadFramingTail(const uint8_t* data, std::size_t len,
+                                 const bool mediaApplied[])
+{
+    std::size_t q = 0;
+    for (int d = 0; d < kDriveCount; ++d) {
+        const bool has = data && q < len && data[q++] != 0;
+        if (has && mediaApplied[d] &&
+            images[d].loadWriteFraming(data + q, DiskImage::kWriteFramingBytes)) {
+            q += DiskImage::kWriteFramingBytes;
+            continue;
+        }
+        if (has) q += DiskImage::kWriteFramingBytes;
+        if (mediaApplied[d]) images[d].resetWriteFraming();
+    }
+}

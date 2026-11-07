@@ -724,19 +724,27 @@ public:
     // A localized //e (French, Japanese katakana, …) fits a 2364-class 8 KB
     // character generator holding TWO 4 KB sets and wires the char ROM's A12
     // to annunciator 2 ($C05C = AN2 off, $C05D = AN2 on) — so software flips
-    // the whole font by poking AN2 (apple2history.org ch.12; the Japanese
-    // j-Plus katakana toggle is the canonical example). POM2 loads such a ROM
+    // the whole font by poking AN2 ([E] apple2history.org ch.12, no
+    // schematic; [D] MAME wires AN2 to the font only on the j-Plus, the
+    // canonical katakana toggle, @ b2a182f0b7). POM2 loads such a ROM
     // dual-bank (`loadCharRom` with bank < 0) and selects the live 4 KB set
     // here; a plain 4 KB ROM leaves AN2 a no-op, exactly as on a US machine.
     // French Touch "Block ASCII Anthology" uses this to switch between its
     // normal-text set (the intro screen) and its block-glyph set (the art).
     bool charRomIsDualBank() const { return charRomDualBank_; }
     std::size_t charRomBankOffset() const {
-        return (charRomDualBank_ && an2) ? 4096u : 0u;
+        return (charRomDualBank_ && display.an2) ? 4096u : 0u;
     }
+    /// The live set (`display.an2` now). The display paints with
+    /// `charRomBankData(state.an2)` instead: the PUBLISHED frame's AN2, per
+    /// beam segment, as every other switch.
     const uint8_t* charRomActiveData() const {
         return characterRom.empty() ? nullptr
                                      : characterRom.data() + charRomBankOffset();
+    }
+    const uint8_t* charRomBankData(bool an2Set) const {
+        return characterRom.empty() ? nullptr
+             : characterRom.data() + ((charRomDualBank_ && an2Set) ? 4096u : 0u);
     }
     std::size_t charRomActiveSize() const {
         return charRomDualBank_ ? 4096u : characterRom.size();
@@ -777,6 +785,13 @@ public:
         // as every other switch — and so the static-text skip key, which
         // compares this struct wholesale, sees an AN0 flip.
         bool an0 = false;
+        // Annunciator 2 ($C05C off / $C05D on): A12 of a dual-bank 8 KB
+        // character generator (`charRomBankData`). Here, with a video event,
+        // so a font switch reaches the screen at its beam position and a
+        // flip after a frame closed does not repaint that frame ([D] MAME
+        // apple2video.cpp an2_w → delayed_update @ b2a182f0b7; bug hunt
+        // 2026-11-07).
+        bool an2 = false;
     };
     DisplayState getDisplayState() const {
         std::lock_guard<std::mutex> lk(stateMutex);
@@ -796,6 +811,7 @@ public:
         An3,
         EightyStore,
         AltChar,
+        An2,
         /// Display-side only, never recorded by Memory: a band boundary the
         /// renderer inserts where a logged video-RAM write changes what the
         /// beam fetches (see videoRewindBegin). Changes no state.
@@ -1533,9 +1549,9 @@ private:
     // DisplayState::an0); AN0/AN1 also select the Sirius Joyport jack/axis.
     // All three are cleared by `resetSoftSwitches` (the 74LS259's /CLR
     // rides the reset line) and carried in the snapshot trailer. AN0 is
-    // `display.an0` since 2026-09-29 (a Videx Videoterm watches it).
+    // `display.an0` since 2026-09-29 (a Videx Videoterm watches it), AN2
+    // `display.an2` since 2026-11-07 (painted per beam segment).
     bool an1 = false;
-    bool an2 = false;
 
     void markRomRegion(uint16_t lo, uint16_t hi);
     uint8_t softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal);

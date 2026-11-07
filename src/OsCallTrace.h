@@ -139,6 +139,19 @@ public:
         if (acorn_) acornStep(pc);
         if (cpm65_) cpm65Step(pc);
     }
+    /// The Debugger's entry: on6502Instruction once per instruction RUN. An
+    /// instruction is offered again when a debugger stop parks the CPU on it
+    /// (Run offers it once more) or an IRQ/NMI is taken at its boundary (again
+    /// after the RTI). The MLI/SmartPort/CP/M-65 BDOS halves guard against it
+    /// (`reoffered`), but COUT appended its byte twice ("OOKK") and the Pascal
+    /// BIOS, CP/M-65 BIOS and Applecorn entries logged twice (bug hunt
+    /// 2026-11-07). So an offer at the (pc, SP) of one not yet retired — or of
+    /// one an interrupt deferred — is dropped, once for every decoder.
+    void offer6502(uint16_t pc);
+    /// The offered instruction executed (Debugger::onStepCompleted).
+    void retire6502() { offered_ = false; }
+    /// An IRQ/NMI entry ran instead of the offered instruction.
+    void interrupted6502();
     void onZ80Instruction(const Z80& z80) override;
     void onCardLine(const char* line) override { emit(line); }
 
@@ -158,6 +171,7 @@ public:
     {
         mliPending_.clear(); bdosPending_.clear(); spPending_.clear();
         monPending_.clear(); cpmPending_.clear(); acornInKernel_ = false;
+        offered_ = false; interrupted_.clear();
     }
 
     static const char* mliName(uint8_t cmd);
@@ -223,6 +237,10 @@ private:
     AcornCall acornCall_;
     uint32_t cpmSector_ = 0;               // the last BIOS SETSEC / SETDMA
     uint16_t cpmDma_ = 0;
+    struct Offer { uint16_t pc = 0; uint8_t sp = 0; };
+    bool offered_ = false;                 // see offer6502
+    Offer offer_;
+    std::vector<Offer> interrupted_;       // offers an IRQ/NMI deferred, innermost last
     std::deque<std::string> lines_;
     uint64_t emitted_ = 0;
     Sink sink_;

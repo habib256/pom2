@@ -1045,7 +1045,7 @@ void testCpuRegisterSet(EmulationController& /*ctrl*/, pom2::AiControlServer& /*
 
 // Pins the POST /mouse endpoint: card lookup via the SlotBus, the 8-bit
 // running counter (mirrors MainWindow::onMouseMove), ±127 per-call clamp,
-// absolute set, reset, and the 503/405 error shapes. This is the headless
+// absolute set, reset, the GUI's shared counter, and the 503/405 shapes. This is the headless
 // driver used to verify mouse apps end-to-end (it closed the "X stuck" item).
 void testMouseEndpoint(EmulationController& ctrl, pom2::AiControlServer& /*srv*/)
 {
@@ -1091,9 +1091,21 @@ void testMouseEndpoint(EmulationController& ctrl, pom2::AiControlServer& /*srv*/
     assert(contains(r.body, "\"x\":12") && contains(r.body, "\"y\":34"));
     assert(contains(r.body, "\"btn\":1"));
 
-    // reset zeroes the running counter.
+    // reset pushes nothing: it used to zero a private counter and push it,
+    // moving the cursor by -counter (bug hunt 2026-11-07).
     r = postMouse("{\"reset\":1}");
-    assert(contains(r.body, "\"x\":0") && contains(r.body, "\"y\":0"));
+    assert(contains(r.body, "\"x\":12") && contains(r.body, "\"y\":34"));
+
+    // The GUI feeds the same card. A delta starts from ITS counter, not a
+    // private one: a GUI move to 100 then dx=+1 is 101, not 13 (a jump of
+    // 88 back), and the card banks exactly +1.
+    {
+        std::lock_guard<std::mutex> lk(ctrl.stateMutex());
+        auto* card = static_cast<MouseCard*>(ctrl.memory().slotBus().peripheral(4));
+        card->setHostMouse(100, 34, true);
+    }
+    r = postMouse("{\"dx\":1}");
+    assert(contains(r.body, "\"x\":101") && contains(r.body, "\"y\":34"));
 
     std::puts("  mouse: OK");
 }

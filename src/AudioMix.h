@@ -53,6 +53,13 @@ inline constexpr int kMixChannels = 2;
 /// The three meters are atomics because a UI thread reads them while the
 /// audio thread writes them; everything else is audio-thread-only.
 struct MixBusState {
+    /// The largest device buffer the ladder can climb to
+    /// (AudioBufferPolicy::kMaxBrowserPeriodFrames): sized here, on the
+    /// thread that builds the bus, so a rung change never allocates in the
+    /// realtime callback (bug hunt 2026-11-07). The resize below stays as a
+    /// guard for a larger buffer than the ladder knows.
+    static constexpr std::size_t kPreallocFrames = 8192;
+    MixBusState() : tmpL(kPreallocFrames), tmpR(kPreallocFrames) {}
     std::vector<float> tmpL, tmpR;      ///< per-source scratch, grown once
     float    masterGainRamp   = 0.0f;
     bool     masterGainPrimed = false;

@@ -100,6 +100,9 @@ RomStatus_ImGui::~RomStatus_ImGui()
 
 void RomStatus_ImGui::startRetroBiosFetch()
 {
+#if defined(__EMSCRIPTEN__)
+    return;   // curl and a worker thread: native only (startDownload, the button)
+#else
     if (fetchRunning_.load()) return;
     if (fetchThread_.joinable()) {
         fetchThread_.join();
@@ -152,6 +155,7 @@ void RomStatus_ImGui::startRetroBiosFetch()
             fetchLine_.clear();
         }
     });
+#endif
 }
 
 void RomStatus_ImGui::pollFetchJoin()

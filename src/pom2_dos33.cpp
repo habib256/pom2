@@ -49,6 +49,7 @@
 #include "HostFileTag.h"
 #include "MediaNotch.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -66,9 +67,10 @@ using namespace pom2::dos33fs;
 void usage()
 {
     std::fprintf(stderr,
-        "Usage: pom2_dos33 [-t T|A|B|I] [-a ADDR] [--raw] IMAGE COMMAND [ARGS]\n"
+        "Usage: pom2_dos33 [-t T|A|B|I] [-a ADDR] [--raw] [--data-fork-only] IMAGE COMMAND [ARGS]\n"
         "\n"
-        "IMAGE is a 140 KB DOS 3.3 disk (.dsk/.do DOS order, .po ProDOS order).\n"
+        "IMAGE is a 140 KB DOS 3.3 disk (.dsk/.do DOS order, .po ProDOS order;\n"
+        "the catalog chain overrules the extension when it disagrees).\n"
         "\n"
         "  ls                         catalog\n"
         "  get NAME [HOSTFILE]        extract (text converted; A/B/I without header)\n"
@@ -80,6 +82,8 @@ void usage()
         "  -a ADDR                    B file load address, hex, overriding it too\n"
         "  --raw                      get: the file's own bytes, header included\n"
         "  --no-tokenize              put: keep an Applesoft TEXT listing as text\n"
+        "  --data-fork-only           put: store an AppleSingle's data fork and drop\n"
+        "                             its resource fork (refused otherwise)\n"
         "\n"
         "put understands three things about the host file: an AppleSingle wrapper\n"
         "(cc65, CiderPress, Cadius) carries the type and load address itself; a\n"
@@ -134,12 +138,14 @@ int main(int argc, char** argv)
     bool addrGiven = false;
     bool raw = false;
     bool tokenize = true;
+    bool dataForkOnly = false;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-h" || a == "--help") { usage(); return 0; }
         if (a == "--raw") { raw = true; continue; }
         if (a == "--no-tokenize") { tokenize = false; continue; }
+        if (a == "--data-fork-only") { dataForkOnly = true; continue; }
         if (a == "-t" || a == "-a") {
             if (i + 1 >= argc) { usage(); return 1; }
             const std::string v = argv[++i];
@@ -177,6 +183,9 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "%s: %s\n", imagePath.c_str(), error.c_str());
         return 1;
     }
+    if (disk.orderOverridden())
+        std::fprintf(stderr, "%s: the catalog is in %s order, whatever the extension says\n",
+                     imagePath.c_str(), disk.order() == SectorOrder::Dos ? "DOS" : "ProDOS");
 
     // Say the destination cannot take a write BEFORE doing the work, not
     // after. The idea is `CHECK_WRITABLE` from the Host File Transfer Card
@@ -262,6 +271,9 @@ int main(int argc, char** argv)
             out = file;
         } else {
             out = Dos33Disk::payload(type, file, &loadAddress);
+            if (type == 0x00 && std::find(out.begin(), out.end(), uint8_t(0)) != out.end())
+                std::fprintf(stderr, "%s: random-access text: its records are kept, "
+                             "with the $00 bytes between them\n", args[2].c_str());
             if (type == 0x00) out = Dos33Disk::textFromDos(out);
         }
         if (args.size() == 3 && cmd == "list") {
@@ -296,7 +308,7 @@ int main(int argc, char** argv)
         // is the DOS file `HELLO.BAS`), and an Applesoft file that is a typed
         // LISTING is tokenized instead of being stored as ASCII under type A.
         pom2::ImportedFile imported;
-        if (!pom2::importHostFile(args[2], data, imported, error, tokenize)) {
+        if (!pom2::importHostFile(args[2], data, imported, error, tokenize, dataForkOnly)) {
             std::fprintf(stderr, "%s: %s\n", args[2].c_str(), error.c_str());
             return 1;
         }

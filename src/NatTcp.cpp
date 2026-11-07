@@ -252,8 +252,15 @@ void TcpRelay::onGuestSegment(const TcpSegment& segment, uint64_t nowMs)
 {
     const TcpConnection::Key key{ segment.sourcePort, segment.destinationIp,
                                   segment.destinationPort };
-    const auto found = connections_.find(key);
+    auto found = connections_.find(key);
     const bool isSyn = (segment.flags & (kTcpSyn | kTcpAck)) == kTcpSyn;
+    // A connection the guest has just reset is gone, not waiting for the
+    // next pump(): the SYN that follows a challenge-ACK'd RST opens a new one
+    // instead of landing on the closed entry and being dropped.
+    if (found != connections_.end() && found->second->closed()) {
+        connections_.erase(found);
+        found = connections_.end();
+    }
 
     if (found != connections_.end())  found->second->onGuestSegment(segment);
     else if (isSyn)                   startOutbound(segment, nowMs);

@@ -34,6 +34,7 @@
 #include "Memory.h"
 #include "SnapshotIO.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -156,23 +157,42 @@ int main()
         // A quiescent controller's v4 tail is 13 bytes: count(4) = 0,
         // lineActive(1), startTime(8). v5 follows it with POM2's own
         // sequencer state (2 bytes), so the burst is not the last thing.
+        // v6 then appends the write framing: drive 0 (captured) flag +
+        // 35 x 32 bytes, drive 1 (empty) flag.
         constexpr size_t kTail = 4 + 1 + 8;
         constexpr size_t kSeq  = 2;
-        assert(blob.size() > kTail + kSeq);
-        for (int i = 0; i < 4; ++i) assert(blob[blob.size() - kSeq - kTail + i] == 0);
-        const std::vector<uint8_t> seqTail(blob.end() - kSeq, blob.end());
+        constexpr size_t kFraming = 1 + DiskImage::kWriteFramingBytes + 1;
+        assert(blob.size() > kTail + kSeq + kFraming);
+        assert(blob[blob.size() - kFraming] == 1 && blob.back() == 0);
+        for (int i = 0; i < 4; ++i)
+            assert(blob[blob.size() - kFraming - kSeq - kTail + i] == 0);
+        const std::vector<uint8_t> seqTail(blob.end() - kFraming - kSeq, blob.end() - kFraming);
+        const std::vector<uint8_t> idleFraming(blob.end() - kFraming, blob.end());
+        // A burst stands mid-nibble on track 0: three bits framed, cell 12
+        // next. Encoded as DiskImage::appendWriteFraming writes it.
+        std::vector<uint8_t> midFraming = idleFraming;
+        {
+            uint8_t* f = midFraming.data() + 1;            // track 0's 32 bytes
+            const uint64_t next = 1000, origin = 900;
+            for (int i = 0; i < 8; ++i) f[i] = static_cast<uint8_t>(next >> (8 * i));
+            f[8] = 5; f[9] = f[10] = f[11] = 0;            // nibbleIdx
+            f[12] = 0x05; f[13] = 3;                       // acc, accBits
+            for (int i = 0; i < 8; ++i) f[14 + i] = static_cast<uint8_t>(origin >> (8 * i));
+            f[22] = 12; f[23] = f[24] = f[25] = 0;         // nextCell
+        }
 
         // Rewrite it as a burst of three flux stamps with the write line high.
         auto put64 = [](std::vector<uint8_t>& v, uint64_t x) {
             for (int i = 0; i < 8; ++i)
                 v.push_back(static_cast<uint8_t>(x >> (8 * i)));
         };
-        std::vector<uint8_t> burst(blob.begin(), blob.end() - kSeq - kTail);
+        std::vector<uint8_t> burst(blob.begin(), blob.end() - kFraming - kSeq - kTail);
         burst.push_back(3); burst.push_back(0); burst.push_back(0); burst.push_back(0);
         burst.push_back(1);                       // writeLineActive
         put64(burst, 0x0011223344556677ULL);      // writeStartTime
         put64(burst, 111); put64(burst, 222); put64(burst, 333);
         burst.insert(burst.end(), seqTail.begin(), seqTail.end());
+        burst.insert(burst.end(), midFraming.begin(), midFraming.end());
 
         Memory mem2;
         M6502  cpu2(&mem2);
@@ -184,11 +204,13 @@ int main()
         std::vector<uint8_t> back;
         card2->appendSnapshotState(back);
         assert(back == burst && "the in-flight write burst did not round-trip");
+        assert(std::equal(back.end() - kFraming, back.end(), midFraming.begin()) &&
+               "the burst's mid-nibble framing travels with it (D2S1 v6)");
 
         // A count past the 32-entry buffer is refused WHOLE (framing check),
         // leaving the card as it was rather than half-restored.
         std::vector<uint8_t> huge = burst;
-        huge[burst.size() - kSeq - 3 * 8 - 8 - 1 - 4] = 99;   // count = 99
+        huge[burst.size() - kFraming - kSeq - 3 * 8 - 8 - 1 - 4] = 99;   // count = 99
         Memory mem3;
         M6502  cpu3(&mem3);
         (void)cpu3;
@@ -204,7 +226,7 @@ int main()
 
         // A pre-v4 blob (no burst tail at all) must still load, and leave the
         // restored controller on a CLEAN splice.
-        std::vector<uint8_t> v3(blob.begin(), blob.end() - kSeq - kTail);
+        std::vector<uint8_t> v3(blob.begin(), blob.end() - kFraming - kSeq - kTail);
         v3[4] = 3;                                   // version 4 → 3
         Memory mem4;
         M6502  cpu4(&mem4);
@@ -216,7 +238,9 @@ int main()
         card4->loadSnapshotState(v3.data(), v3.size());         // then a v3 blob
         std::vector<uint8_t> back4;
         card4->appendSnapshotState(back4);
-        assert(back4.size() == v3.size() + kTail + kSeq);
+        assert(back4.size() == v3.size() + kTail + kSeq + kFraming);
+        assert(std::equal(back4.end() - kFraming, back4.end(), idleFraming.begin()) &&
+               "an older blob resets the restored drive's framing");
         for (int i = 0; i < 4; ++i) assert(back4[v3.size() + i] == 0);
         assert(back4[v3.size() + 4] == 0);           // writeLineActive cleared
     }

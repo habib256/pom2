@@ -661,7 +661,7 @@ bool EmulationController::eject35(int idx)
     // UI thread together. Phase 1 lifts the payload out (a memcpy), phase 2
     // writes it with the lock released, phase 3 drops the medium.
     pom2::Disk35Image::PendingWriteBack pending;
-    std::string pendingPath;
+    uint64_t pendingMount = 0;   // the mount, not the path (a same-file remount)
     for (;;) {
         {
             std::lock_guard<std::mutex> lk(stateMtx);
@@ -676,11 +676,11 @@ bool EmulationController::eject35(int idx)
             // its completion takes `stateMtx`.
             if (!drive || !drive->isEjectPending()) {
                 pending     = image->takeWriteBack();
-                // The image's path, not the capture's: a clean medium
-                // yields an invalid capture with an empty path, and phase
-                // 3 still has to recognise it as the disk it was asked to
-                // eject.
-                pendingPath = image->path();
+                // The image's mount, not the capture's: a clean medium
+                // yields an invalid capture, and phase 3 still has to
+                // recognise it as the disk it was asked to eject — by
+                // mount, as StorageCoordinator does (bug hunt 2026-11-07).
+                pendingMount = image->mountId();
                 break;
             }
         }
@@ -702,7 +702,7 @@ bool EmulationController::eject35(int idx)
         // is still in the bay: a mount that landed while phase 2 ran unlocked
         // owns the drive now, and re-dirtying it would write this disk's
         // blocks into that one's file.
-        if (image->isLoaded() && image->path() == pendingPath)
+        if (image->isLoaded() && image->mountId() == pendingMount)
             image->restoreDirty();
         pom2::log().warn("Sony35", "3.5\" eject refused: " + error);
         return false;
@@ -710,7 +710,7 @@ bool EmulationController::eject35(int idx)
     if (!image->isLoaded()) return true;          // ejected under us — done
     // A mount that landed while phase 2 ran unlocked owns the bay now; the
     // disk this call was asked to eject is already gone. Leave the new one.
-    if (image->path() != pendingPath) return true;
+    if (image->mountId() != pendingMount) return true;
     // The guest may have written AND strobed its own eject during phase 2:
     // the firmware capture then holds those writes in the queue and left the
     // medium clean, so the late capture below finds nothing and `eject()`
@@ -1467,19 +1467,22 @@ int64_t EmulationController::scaledFrameBudget() const
 
 int EmulationController::runCpuSlice(int chunk)
 {
+    // The LATCHED HIT is reconciled first (why: further down), so that a
+    // hit the DMA card's processor makes below is a stop, never "stale".
+    if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
+        debugResume();
     int dmaSpent = 0;
     // DMA daisy chain (SoftCard Z80): while a card claims the bus the
     // 6502 stays parked and the card's processor burns the budget. The
     // claimant scan is 8 virtual calls per 4096-cycle chunk — noise.
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
-        dmaSpent = dma->dmaRun(chunk);
+        dmaSpent = debugger_->runAsBusMaster([&] { return dma->dmaRun(chunk); });
+        // Its accesses go through Memory: a watch it hit stops here.
+        if (debugger_->stopRequested()) { noteDebuggerStop(); return dmaSpent; }
         // A card that flips off mid-slice returns what it consumed; the
-        // remainder of the chunk goes back to the 6502 so the hand-back
-        // doesn't cost a whole chunk of dead time.
+        // remainder of the chunk goes back to the 6502.
         if (dmaSpent >= chunk || dma->dmaActive()) return dmaSpent;
         chunk -= dmaSpent;
-        // Hand-back uses the common 6502 path below: it must reconcile
-        // debugger state and publish a stop just like an ordinary slice.
     }
     // The hook must not outlive what armed it. `M6502::step` gates its
     // interrupt-entry split on `debugHook_ != nullptr` and NOT on "is
@@ -1501,7 +1504,7 @@ int EmulationController::runCpuSlice(int chunk)
     // The caller holds `stateMutex`, which is what syncDebugHook needs.
     if (debugger_ && processor.getDebugHook() != nullptr && !debugger_->armed())
         syncDebugHook();
-    // …and the same reconciliation for the LATCHED HIT. `Debugger::onInstruction`
+    // …and the LATCHED HIT, consumed at the top. `Debugger::onInstruction`
     // returns true on its first call while `hit_` is still valid, so a machine
     // resumed with a stale hit executes ZERO cycles and re-parks for ever.
     // Only `debugResume()` (the Debugger panel's Run) and `clearForTimeJump()`
@@ -1509,16 +1512,10 @@ int EmulationController::runCpuSlice(int chunk)
     // the toolbar Play button, Machine ▸ Run, the command palette, the kiosk
     // toggle, the Rewind panel's Play/"resume here", `bootFromSlot`, and the
     // CLI runner. No reset cleared it either, so the machine was wedged until
-    // the user found the Debugger panel. Consuming it HERE — the one funnel
-    // both CPU drivers go through — covers every one of them, present and
-    // future, at the cost of one predictable branch per 4096-cycle chunk.
-    //
-    // Gated on Running on purpose: `noteDebuggerStop()` below parks by storing
-    // Stopped, and `tickFrame`'s chunk loop (unlike workerLoop's) does not
-    // re-check the mode, so without the gate the very next chunk of the same
-    // tick would eat the stop it just produced.
-    if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
-        debugResume();
+    // the user found the Debugger panel. Consuming it in this funnel both CPU
+    // drivers go through covers every one of them, present and future.
+    // Gated on Running: `noteDebuggerStop()` parks by storing Stopped, and a
+    // later chunk of the same tick must not eat the stop it just produced.
     const int spent = processor.run(chunk);
     // A debugger stop ends the slice early. Handled HERE, in the one funnel
     // both drivers (worker thread and the WASM RAF tick) go through, rather
@@ -1532,8 +1529,11 @@ int EmulationController::runCpuSlice(int chunk)
     // write grants the bus (the card calls M6502::stop()); give the
     // remainder to the new claimant instead of burning a dead chunk.
     if (spent < chunk) {
-        if (SlotPeripheral* dma = mem.slotBus().dmaClaimant())
-            return dmaSpent + spent + dma->dmaRun(chunk - spent);
+        if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
+            const int z = debugger_->runAsBusMaster([&] { return dma->dmaRun(chunk - spent); });
+            if (debugger_->stopRequested()) noteDebuggerStop();
+            return dmaSpent + spent + z;
+        }
     }
     return dmaSpent + spent;
 }
@@ -1662,7 +1662,7 @@ void EmulationController::debugRunToCursor(uint16_t addr, pom2::DebugBank bank)
 void EmulationController::stepBusMaster()
 {
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
-        dma->dmaRun(1);
+        debugger_->runAsBusMaster([&] { return dma->dmaRun(1); });
     } else {
         // Keep step()'s cycle/IRQ timing; only instrument its boundaries.
         const uint16_t pc = processor.getProgramCounter();

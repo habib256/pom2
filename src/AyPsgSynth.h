@@ -32,7 +32,8 @@
 // ─── Rate model ──────────────────────────────────────────────────────
 //
 // The AY's pin-22 CLOCK is wired to the slot's phase-0 line, so the chip
-// runs at the CPU clock — 1 022 727 Hz on NTSC, 1 015 625 Hz on PAL.
+// runs at the BUS clock — 1 022 727 Hz on NTSC, 1 015 625 Hz on PAL — and
+// not at an accelerated CPU clock (the card's `busHz()`, SlotBusClock.h).
 // Tone, noise and envelope all derive from ONE base tick at clock/8
 // (~127.8 kHz); MAME allocates a single stream at exactly that rate
 // (`ay8910.cpp:1298`, `stream_alloc(0, m_streams, master_clock / 8)`)

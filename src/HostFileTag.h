@@ -91,6 +91,12 @@ bool stripHostFileTag(std::string& name, std::uint8_t& type, std::uint16_t& aux)
 /// `.NAME` → `%2eNAME`. `name` must start with a period.
 std::string hostEscapeLeadingDot(const std::string& name);
 
+/// The host file name for a guest file, the escape included: a name that
+/// starts with a period leaves as `%2eNAME#TTAAAA` (always tagged, so the
+/// escape counts on the way back in), any other as `hostNameForType`.
+std::string hostNameForGuestFile(const std::string& name, std::uint8_t type,
+                                 std::uint16_t aux);
+
 /// Takes a leading `%2e` / `%2E` off `hostName`. False, and the name left
 /// alone, when it has none or when nothing would remain.
 bool stripHostLeadingDotEscape(std::string& hostName);

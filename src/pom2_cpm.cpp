@@ -123,6 +123,11 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "%s: %s\n", imagePath.c_str(), error.c_str());
         return 1;
     }
+    if (disk.orderOverridden())
+        std::fprintf(stderr, "%s: the CP/M directory is in %s order, whatever the extension says\n",
+                     imagePath.c_str(),
+                     disk.order() == pom2::cpmfs::SectorOrder::Prodos ? "ProDOS"
+                     : disk.order() == pom2::cpmfs::SectorOrder::Cpm ? "CP/M" : "DOS");
 
     // Checked BEFORE the work, not after — `CHECK_WRITABLE` from the Host
     // File Transfer Card (sbabcoc/ReplicApple2Plus, § 4.1), without its

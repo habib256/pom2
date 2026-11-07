@@ -108,6 +108,34 @@ int main()
     CHECK(importHostFile("HELLO.as", applesingle::encode(wrappedListing), f, error));
     CHECK(f.type == 0xFC && f.data == program);
 
+    // A resource fork is half of a GS/OS extended file: dropping it is the
+    // user's call, never a silent one (bug hunt 2026-11-07).
+    applesingle::File forked;
+    forked.data = { 1, 2, 3 };
+    forked.resource = { 9, 9, 9, 9 };
+    forked.hasProdosInfo = true;
+    forked.fileType = 0xB3;
+    forked.auxType  = 0xDB07;
+    {
+        ImportedFile keep;
+        keep.name = "KEEP";
+        CHECK(!importHostFile("APP.as", applesingle::encode(forked), keep, error));
+        CHECK(error.find("resource fork") != std::string::npos && keep.name == "KEEP");
+    }
+    CHECK(importHostFile("APP.as", applesingle::encode(forked), f, error, true,
+                         /*dropResourceFork=*/true));
+    CHECK(f.data == forked.data && f.type == 0xB3 && f.note.find("DROPPED") != std::string::npos);
+
+    // The leading-dot escape, as the ProDOS host folder and `pom2_prodos get`
+    // write it, comes back as the guest's `.PROFILE` — on a TAGGED name only
+    // (HostFileTag.h); an untagged `%2e` name keeps the name it always had.
+    CHECK(importHostFile("%2ePROFILE#040000", bytesOf("X\n"), f, error));
+    CHECK(f.name == ".PROFILE" && f.type == 0x04);
+    CHECK(importHostFile("%2EPROFILE#040000", bytesOf("X\n"), f, error));
+    CHECK(f.name == ".PROFILE");
+    CHECK(importHostFile("%2eNOTES.txt", bytesOf("X\n"), f, error));
+    CHECK(f.name == "%2eNOTES" && f.type == 0x04);
+
     // Refusals name the cause, and leave the output alone.
     ImportedFile untouched;
     untouched.name = "KEEP";

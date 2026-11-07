@@ -249,6 +249,10 @@ public:
     // correction went out. Until they move, that correction is not published.
     bool               mousePushOut = false;
     int                mousePushHoleX = 0, mousePushHoleY = 0;
+    // Calls spent waiting on a push the holes never showed: one that could
+    // not move the cursor (target past the clamp, mouse off, a guest that
+    // stopped reading) latched setMouse false for the whole session.
+    int                mousePushWaits = 0;
     ::VideoStandard    videoStandard = ::VideoStandard::NTSC;
     double cpuClockHz = static_cast<double>(POM2_CPU_CLOCK_HZ);
     std::uint32_t audioSampleRate = 44100;
@@ -1160,6 +1164,7 @@ bool Core::attachMouse(int slot, MouseModel model, std::string_view romDirectory
     }
     impl_->mouseSlot = slot;
     impl_->mouseRawX = impl_->mouseRawY = 0;
+    impl_->mousePushOut = false;
     impl_->error.clear();
     return true;
 }
@@ -1218,9 +1223,14 @@ bool Core::setMouse(int x, int y, bool button)
                (m.peekCpuView(static_cast<std::uint16_t>(0x05F8 + n)) << 8);
         curX = static_cast<std::int16_t>(curX);
         curY = static_cast<std::int16_t>(curY);
+        // Replayed, not yet read back — for a while. Past kMaxPushWaits
+        // calls the push moved nothing (an edge, the mouse off): drop it and
+        // aim again, so a reachable target still converges (bug hunt
+        // 2026-11-07).
+        constexpr int kMaxPushWaits = 30;   // [F] ~0.5 s of 60 Hz calls
         if (impl_->mousePushOut && curX == impl_->mousePushHoleX &&
-            curY == impl_->mousePushHoleY) {
-            moveMouse(0, 0, button);            // replayed, not yet read back
+            curY == impl_->mousePushHoleY && ++impl_->mousePushWaits < kMaxPushWaits) {
+            moveMouse(0, 0, button);
             return false;
         }
     }
@@ -1228,6 +1238,7 @@ bool Core::setMouse(int x, int y, bool button)
     const int dy = std::clamp(y - curY, -127, 127);
     moveMouse(dx, dy, button);
     impl_->mousePushOut = dx != 0 || dy != 0;
+    impl_->mousePushWaits = 0;
     impl_->mousePushHoleX = curX;
     impl_->mousePushHoleY = curY;
     return dx == 0 && dy == 0;
@@ -1239,6 +1250,7 @@ void Core::softReset()
     impl_->memory.resetSoftSwitchesWarm();
     impl_->memory.slotBus().reset();
     if (impl_->plus) impl_->plus->hub.warmReset();
+    impl_->mousePushOut = false;          // the guest re-inits its holes
     impl_->cpu.softReset();
 }
 
@@ -1253,6 +1265,7 @@ void Core::hardReset()
     }
     impl_->speaker.reset();
     impl_->cassette.resetCpuSide();
+    impl_->mousePushOut = false;
     impl_->cpu.hardReset();
 }
 
@@ -1273,6 +1286,7 @@ void Core::coldBoot()
     }
     impl_->speaker.reset();
     impl_->cassette.resetCpuSide();
+    impl_->mousePushOut = false;
     impl_->cpu.hardReset();
 }
 

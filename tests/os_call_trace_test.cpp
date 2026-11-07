@@ -405,6 +405,65 @@ void testMonitor()
     if (l.size() != 2) dump(dbg.osCalls());
 }
 
+// COUT offered twice (bug hunt 2026-11-07): a breakpoint on $FDED parks the
+// CPU on it and Run offers it again; an IRQ taken at its boundary offers it
+// again after the RTI. COUT appends A to the line on every offer, so "OK"
+// came out "OOKK". The Debugger drops a re-offer of the same (pc, SP) once
+// for every decoder; the handler's own COUT, deeper in the stack, is new.
+void testCoutOfferedTwice()
+{
+    for (const bool irq : { false, true }) {
+        Memory mem;
+        M6502 cpu(&mem);
+        mem.setCpu(&cpu);
+        std::vector<uint8_t> rom(0x0800, 0xEA);  // $F800-$FFFF
+        auto at = [&](uint16_t a, std::initializer_list<int> b) { for (int v : b) rom[size_t(a++ - 0xF800)] = uint8_t(v); };
+        at(0xFDED, { 0x6C, 0x36, 0x00 });        // COUT: JMP (CSW)
+        at(0xFFFE, { 0x00, 0x0A });              // IRQ -> $0A00
+        mem.loadRomBytes(rom.data(), rom.size(), 0xF800);
+        poke(mem, 0x0036, { 0x00, 0x03 });       // CSW = $0300: RTS
+        mem.memWrite(0x0300, 0x60);
+        poke(mem, 0x0A00, { 0x40 });             // the handler: RTI
+        pom2::Debugger dbg;
+        dbg.setMemory(&mem);
+        dbg.osCalls().bind(&cpu, &mem);
+        dbg.osCalls().setMonitor(true);
+        if (!irq) dbg.addBreakpoint(0xFDED);
+        cpu.setDebugHook(&dbg);
+        poke(mem, 0x0800, {
+            0xA9, 0xCF, 0x20, 0xED, 0xFD,        // 'O'
+            0xA9, 0xCB, 0x20, 0xED, 0xFD,        // 'K'
+            0xA9, 0x8D, 0x20, 0xED, 0xFD,        // CR
+            0x4C, 0x0F, 0x08,                    // JMP *
+        });
+        cpu.setStackPointer(0xFF);
+        cpu.setStatusRegister(0x20);             // I clear
+        cpu.setProgramCounter(0x0800);
+        int stops = 0, entries = 0;
+        uint16_t prev = 0;
+        for (int i = 0; i < 80; ++i) {
+            // Once per COUT: not again on the way back from the handler.
+            const bool raise = irq && cpu.getProgramCounter() == 0xFDED && prev != 0x0A00;
+            prev = cpu.getProgramCounter();
+            if (raise) cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, true);
+            cpu.run(1);
+            if (raise) {
+                cpu.setIrqLine(M6502::IRQ_SRC_SLOT1, false);
+                entries += cpu.getProgramCounter() == 0x0A00;
+            }
+            if (dbg.stopRequested()) {           // the panel's Run
+                ++stops;
+                dbg.armResumeFrom(cpu.getProgramCounter());
+                dbg.clearHit();
+            }
+        }
+        CHECK(irq ? entries == 3 : stops == 3);
+        const auto l = lines(dbg.osCalls());
+        CHECK(l.size() == 1 && l[0] == "MON  \"OK\"");
+        if (l.size() != 1) dump(dbg.osCalls());
+    }
+}
+
 // The key loop, NXTCHAR at $FD75: entered directly, as Integer BASIC does after
 // printing its own prompt, it is a call whose echo stays out of the output.
 // Reached from inside GETLN, as every key reaches it, it opens nothing.
@@ -652,6 +711,7 @@ int main()
     testDiskHead();
     testMonitor();
     testMonitorNxtchar();
+    testCoutOfferedTwice();
     testApplecorn();
     testCpm65();
     testSlotBusObserver();

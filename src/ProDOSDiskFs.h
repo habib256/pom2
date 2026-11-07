@@ -154,7 +154,7 @@ public:
 
     /// A file, or an EMPTY directory. Frees its blocks in the bit map and
     /// clears its entry (storage type 0), updating file_count. A file whose
-    /// access byte disables destroy is refused.
+    /// access byte disables destroy is refused, and so is a Pascal area.
     bool removeFile(const std::string& path, std::string& error);
 
     bool makeDirectory(const std::string& path, std::string& error);
@@ -162,7 +162,9 @@ public:
     /// Walk the whole volume and check what every mutator relies on: each
     /// directory / index / data block in range, claimed once, and marked
     /// used in the bit map; every entry's storage type one this code can
-    /// follow. False with the first problem found.
+    /// follow (standard files, directories, and TN #25's $5 extended file
+    /// and $4 Pascal area, whose blocks are claimed but never rewritten).
+    /// False with the first problem found.
     bool verify(std::string& error) const;
 
 private:

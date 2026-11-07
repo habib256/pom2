@@ -17,6 +17,7 @@
 #include "AudioDevice.h"
 
 #include "AudioMix.h"
+#include "AudioBufferPolicy.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -70,6 +71,12 @@
 #endif
 #define MINIAUDIO_IMPLEMENTATION
 #include "third_party/miniaudio.h"
+
+// The mix scratch is sized for the largest rung, so no rung allocates in
+// the callback (AudioMix.h, MixBusState).
+static_assert(pom2::MixBusState::kPreallocFrames >=
+                  pom2::AudioBufferPolicy::kMaxBrowserPeriodFrames,
+              "the mix scratch must cover the largest buffer rung");
 #if defined(__clang__) && defined(__EMSCRIPTEN__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__) && !defined(__clang__)

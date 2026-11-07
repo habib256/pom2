@@ -828,6 +828,12 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (data == nullptr || len < kClkSnapBytes ||
         std::memcmp(data, kClkSnapMagic, 4) != 0)
         return;   // foreign blob — a different card sat in this slot
+    // Three formats, by exact length: 36, 45 (+hold tail), 54 (+DATA_OUT
+    // phase); longer is a 54 with junk behind. A length between two of them
+    // is a torn blob, refused whole — read as the shorter format it mixed
+    // its head with the live tail (card_snapshot_contract P3).
+    if (len != kClkSnapBytes && len != kClkSnapBytes + 9 && len < kClkSnapBytes + 18)
+        return;
     size_t p = 4;
     auto get32 = [&]() -> int32_t {
         uint32_t v = 0;

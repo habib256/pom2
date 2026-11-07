@@ -428,7 +428,10 @@ bool testShrinkHidesSelectedUnit()
     pom2::SmartPortCard card(5);
     card.setUnitCount(4);
     card.setUnit(3, std::move(unit));
-    writeReg(card, 0x0, 3);
+    // Bays 0-2 hold no drive: on the cable this one is the first (chain
+    // position 0, SmartPortCard::chainLength).
+    writeReg(card, 0x0, 0);
+    if (card.activeUnit() != 3) { std::puts("FAIL: chain position 0 is not bay 3"); return false; }
     writeReg(card, 0x1, 0);
     writeReg(card, 0x2, 0);
     if (readReg(card, 0x3) != 0x73) return false;

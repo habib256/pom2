@@ -33,6 +33,11 @@ constexpr unsigned    kEntriesPerBlock = 0x0D;
 constexpr uint8_t kSeedling     = 0x1;
 constexpr uint8_t kSapling      = 0x2;
 constexpr uint8_t kTree         = 0x3;
+// [B] ProDOS 8 Technical Note #25 "Non-Standard Storage Types" (rev. Dec.
+// 1991, prodos8.com/docs/technote/25): $4 Pascal area, $5 GS/OS extended
+// file (two forks).
+constexpr uint8_t kPascalArea   = 0x4;
+constexpr uint8_t kExtended     = 0x5;
 constexpr uint8_t kSubdirEntry  = 0xD;
 constexpr uint8_t kSubdirHeader = 0xE;
 constexpr uint8_t kVolumeHeader = 0xF;
@@ -581,8 +586,6 @@ bool ProDOSDisk::fileBlocks(const uint8_t* e, std::vector<uint32_t>& blocks,
         return true;
     };
     if (!inRange(key, "key block")) return false;
-    blocks.push_back(key);
-    if (storage == kSeedling) return true;
     // An index block's 256 pointers ([B] TRM § B.3.3 / B.3.7). A tree's
     // master index uses at most 128 of them (§ B.3.4), but every non-zero
     // one is a block the file holds as far as the bit map is concerned.
@@ -596,16 +599,57 @@ bool ProDOSDisk::fileBlocks(const uint8_t* e, std::vector<uint32_t>& blocks,
         }
         return true;
     };
-    if (storage == kSapling) return walkIndex(key, false);
-    if (storage == kTree) {
-        const uint8_t* master = blockPtr(key);
-        for (unsigned g = 0; g < 256; ++g) {
-            const uint32_t sub = indexEntry(master, g);
-            if (sub == 0) continue;
-            if (!inRange(sub, "index block")) return false;
-            blocks.push_back(sub);
-            if (!walkIndex(sub, false)) return false;
+    // One fork: a seedling, sapling or tree rooted at `root`.
+    auto fork = [&](uint8_t type, uint32_t root) {
+        if (!inRange(root, "key block")) return false;
+        blocks.push_back(root);
+        if (type == kSeedling) return true;
+        if (type == kSapling) return walkIndex(root, false);
+        if (type == kTree) {
+            const uint8_t* master = blockPtr(root);
+            for (unsigned g = 0; g < 256; ++g) {
+                const uint32_t sub = indexEntry(master, g);
+                if (sub == 0) continue;
+                if (!inRange(sub, "index block")) return false;
+                blocks.push_back(sub);
+                if (!walkIndex(sub, false)) return false;
+            }
+            return true;
         }
+        error = name + ": storage type " + hex(type) + " is not a standard file";
+        return false;
+    };
+    if (storage == kSeedling || storage == kSapling || storage == kTree)
+        return fork(storage, key);
+    if (storage == kExtended) {
+        // [B] TN #25: the extended key block holds two mini-entries, the
+        // data fork's at +$000 and the resource fork's at +$100, each
+        // storage_type (byte), key_block (word), blocks_used (word), EOF
+        // (3 bytes) — every fork a standard seedling / sapling / tree.
+        blocks.push_back(key);
+        const uint8_t* xk = blockPtr(key);
+        for (const unsigned off : {0x000u, 0x100u})
+            if (!fork(xk[off], rd16(xk + off + 1))) {
+                error += off ? " (resource fork)" : " (data fork)";
+                return false;
+            }
+        return true;
+    }
+    if (storage == kPascalArea) {
+        // [B] TN #25: key_pointer is the first block of the area (TOTAL_BLOCKS
+        // - 2 as created), blocks_used is 2, and "when PPM expands or
+        // contracts the Pascal area, blocks_used and key_pointer are updated
+        // accordingly". [F] That the area is the CONTIGUOUS run key ..
+        // key + blocks_used - 1 is read off that sentence, not stated; a
+        // volume where it is not would fail `verify` (a block marked free or
+        // used twice) and be refused, never written over.
+        const uint32_t used = rd16(e + eBlocks);
+        if (used == 0 || key + used > totalBlocks_) {
+            error = name + ": Pascal area of " + std::to_string(used) + " blocks from " +
+                    std::to_string(key) + " is outside the volume";
+            return false;
+        }
+        for (uint32_t b = key; b < key + used; ++b) blocks.push_back(b);
         return true;
     }
     error = name + ": storage type " + hex(storage) + " is not a standard file";
@@ -664,14 +708,17 @@ bool ProDOSDisk::verify(std::string& error) const
                 const std::string path = dir.path + "/" + entryName(e);
                 if (storage == kSubdirEntry) {
                     stack.push_back({rd16(e + eKey), false, path});
-                } else if (storage == kSeedling || storage == kSapling || storage == kTree) {
+                } else if (storage == kSeedling || storage == kSapling || storage == kTree ||
+                           storage == kExtended || storage == kPascalArea) {
+                    // $5 and $4 are TN #25's (fileBlocks): an IIgs System
+                    // disk holds extended files, and refusing them blocked
+                    // every write to it (bug hunt 2026-11-07).
                     if (!fileBlocks(e, blocks, error)) return false;
                     for (uint32_t fb : blocks)
                         if (!claim(fb, path)) return false;
                 } else {
-                    // [F] $4 (Pascal area) and anything else: which blocks it
-                    // owns is not in the TRM, so nothing may be allocated
-                    // while it is there.
+                    // Any other storage type: which blocks it owns is in no
+                    // document, so nothing may be allocated while it is there.
                     error = path + " has storage type " + hex(storage) +
                             ", which this tool does not follow";
                     return false;
@@ -1034,6 +1081,12 @@ bool ProDOSDisk::removeFileImpl(const std::string& path, std::string& error)
     }
     const uint8_t storage = static_cast<uint8_t>(e[eStorage] >> 4);
     std::vector<uint32_t> blocks;
+    if (storage == kPascalArea) {
+        // Its blocks are a whole Pascal volume set PPM manages; freeing them
+        // from here would leave PPM's header describing space ProDOS reuses.
+        error = leaf + " is a Pascal area: remove it with the Pascal ProFile Manager";
+        return false;
+    }
     if (storage == kSubdirEntry) {
         // [B] TRM § B.2.4: "You cannot delete a subdirectory that contains
         // any files."

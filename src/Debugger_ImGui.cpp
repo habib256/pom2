@@ -312,12 +312,21 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
             // Two addresses, and both matter: WHAT was written, and WHO wrote
             // it. The machine's PC is neither — it is the instruction after
             // the store, because the access cannot be un-done.
-            std::snprintf(msg, sizeof(msg),
-                          "Stopped: $%04X was %s ($%02X) by the instruction at $%04X.",
-                          snap.hit.addr,
-                          snap.hit.reason == Debugger::Reason::WatchWrite
-                              ? "written" : "read",
-                          snap.hit.value, snap.hit.pc);
+            // A DMA card's processor (SoftCard Z80) held the bus: the parked
+            // 6502's PC is not the one that made the access.
+            if (snap.hit.busMaster)
+                std::snprintf(msg, sizeof(msg),
+                              "Stopped: $%04X was %s ($%02X) by the card processor holding the bus (DMA).",
+                              snap.hit.addr,
+                              snap.hit.reason == Debugger::Reason::WatchWrite ? "written" : "read",
+                              snap.hit.value);
+            else
+                std::snprintf(msg, sizeof(msg),
+                              "Stopped: $%04X was %s ($%02X) by the instruction at $%04X.",
+                              snap.hit.addr,
+                              snap.hit.reason == Debugger::Reason::WatchWrite
+                                  ? "written" : "read",
+                              snap.hit.value, snap.hit.pc);
             break;
         default:
             std::snprintf(msg, sizeof(msg), "Stopped.");

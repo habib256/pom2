@@ -82,6 +82,9 @@ public:
         uint16_t addr   = 0;      ///< watched address (watchpoints only)
         uint8_t  value  = 0;      ///< byte read or written (watchpoints only)
         DebugBank pcBank{}, bank{};
+        /// A watch hit made by a DMA card's processor (the SoftCard Z80)
+        /// while it held the bus: `pc` is the parked 6502's, not the writer.
+        bool     busMaster = false;
         bool     valid() const { return reason != Reason::None; }
     };
 
@@ -196,6 +199,22 @@ public:
     void noteAccess(uint16_t addr, uint8_t value, bool write) override;
     void noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBank bank) override;
 
+    /// Run `slice` (a DMA card's `dmaRun`) with its bus accesses credited to
+    /// the card's processor: a watch hit it makes is `Hit::busMaster`.
+    template <class F> int runAsBusMaster(F&& slice)
+    {
+        busMaster_ = true;
+        const int spent = slice();
+        busMaster_ = false;
+        return spent;
+    }
+
+    /// The debugger's OWN write into guest memory (the assembler's patch),
+    /// through the CPU's write mapping. Neither a watch hit nor a time jump:
+    /// the stop it is made from, its resume amnesty and the open OS-call
+    /// trace all stay as they are. Caller holds `stateMutex`.
+    void patchMemory(Memory& memory, uint16_t addr, const uint8_t* bytes, std::size_t count);
+
     /// True once something has asked the machine to stop and the stop has not
     /// been consumed yet. `EmulationController` drains this at its chunk
     /// boundary and parks the worker.
@@ -301,6 +320,7 @@ private:
     /// `noteAccess` fires from inside that instruction, where the CPU's own
     /// programCounter has already walked past the opcode and operands.
     uint16_t curPc_ = 0;
+    bool busMaster_ = false;              // see runAsBusMaster
 
     Hit hit_{};
     OsCallTrace osCalls_;

@@ -1251,7 +1251,9 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
     const bool haveAx  = jsonGetInt(req.body, "x",     ax);
     const bool haveAy  = jsonGetInt(req.body, "y",     ay);
     const bool haveBtn = jsonGetInt(req.body, "btn",   btn);
+    // `reset` is still accepted; there is no private counter left to clear.
     (void)jsonOptionalIntOk(req.body, "reset", rst);
+    (void)rst;
 
     // Clamp per-call delta to ±127 — the MCU's 8-bit signed wrap window,
     // matching MainWindow::onMouseMove. Larger deltas must be split across
@@ -1291,18 +1293,26 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
         if (!noCard) {
             slot = mouseIic ? mouseIic->getSlot() : mouseLle ? mouseLle->getSlot() : mouseHle->getSlot();
 
-            if (rst) { mouseAccumX_ = 0; mouseAccumY_ = 0; }
-
-            if (haveAx)      mouseAccumX_ = static_cast<uint8_t>(ax & 0xFF);
-            else if (haveDx) mouseAccumX_ = static_cast<uint8_t>(mouseAccumX_ + clamp127(dx));
-            if (haveAy)      mouseAccumY_ = static_cast<uint8_t>(ay & 0xFF);
-            else if (haveDy) mouseAccumY_ = static_cast<uint8_t>(mouseAccumY_ + clamp127(dy));
+            // Start from the CARD's counter, not one of our own: the GUI
+            // feeds the same card, and a private counter made the first
+            // dx=+1 after any pointer motion a jump of up to 128 (bug hunt
+            // 2026-11-07). `reset` re-reads it and pushes nothing.
+            uint8_t x = mouseIic ? mouseIic->hostCounterX()
+                      : mouseLle ? mouseLle->hostCounterX() : mouseHle->hostCounterX();
+            uint8_t y = mouseIic ? mouseIic->hostCounterY()
+                      : mouseLle ? mouseLle->hostCounterY() : mouseHle->hostCounterY();
+            if (haveAx)      x = static_cast<uint8_t>(ax & 0xFF);
+            else if (haveDx) x = static_cast<uint8_t>(x + clamp127(dx));
+            if (haveAy)      y = static_cast<uint8_t>(ay & 0xFF);
+            else if (haveDy) y = static_cast<uint8_t>(y + clamp127(dy));
             if (haveBtn)     mouseBtn_ = (btn != 0);
 
-            if (mouseIic) mouseIic->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
-            else if (mouseLle) mouseLle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
-            else          mouseHle->setHostMouse(mouseAccumX_, mouseAccumY_, mouseBtn_);
-            outX = mouseAccumX_; outY = mouseAccumY_; outBtn = mouseBtn_;
+            if (haveAx || haveDx || haveAy || haveDy || haveBtn) {
+                if (mouseIic) mouseIic->setHostMouse(x, y, mouseBtn_);
+                else if (mouseLle) mouseLle->setHostMouse(x, y, mouseBtn_);
+                else          mouseHle->setHostMouse(x, y, mouseBtn_);
+            }
+            outX = x; outY = y; outBtn = mouseBtn_;
         }
     }
 

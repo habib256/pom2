@@ -71,12 +71,17 @@ void MainWindow::renderOpenUrlPopup()
         urlFetch_ = std::make_unique<UrlFetch>();
         urlFetch_->url = url;
         UrlFetch* f = urlFetch_.get();
+#ifndef __EMSCRIPTEN__   // the menu item is native-only; no pthreads in the browser
         f->t = pom2::guardedThread("MediaURL", [f] {
             const auto got = pom2::resolveMediaSource(f->url, pom2::mediaCacheDir(), &f->abort);
             if (got.ok) f->localPath = got.localPath;
             else        f->error = got.error;
             f->done = true;
         });
+#else
+        f->error = "opening a disk from a URL needs curl, which the browser has not";
+        f->done = true;
+#endif
     }
     ImGui::SameLine();
     if (busy) {

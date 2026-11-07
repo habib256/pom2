@@ -54,22 +54,14 @@ constexpr std::size_t kStructuralBeforeBitmap = kBootBlocks + kVolDirBlocks; // 
 constexpr std::size_t kMinFirstDataBlock = kStructuralBeforeBitmap + 1;      // = 7
 constexpr std::size_t kBlocksPerBitmap   = kBlockBytes * 8;                  // 4096
 constexpr std::size_t kMaxVolumeBlocks   = 65535; // ProDOS total_blocks is 16-bit
-// Logical bytes one build stages in memory, and one decode may write to the
-// host. NOT the volume capacity: a sparse file costs a few blocks on the
-// volume and its full EOF on the host (TN ProDOS #30), so two guest
-// `BSAVE A,A$2000,L1,B$FFFFFE` files are 32 MB here and ~10 blocks there.
-// Gating the build on logical size made such a folder unmountable after its
-// first write-back; the real capacity test counts allocated blocks (Phase 2).
-// The decode side bounds what a crafted volume — many 16 MB seedlings on one
-// block — can make the host write (bug hunt 2026-10-23).
+// Logical bytes one build stages and one decode may write to the host. NOT
+// the volume capacity: a sparse file costs a few blocks there and its full
+// EOF here (TN ProDOS #30); the capacity test counts allocated blocks. The
+// decode bound stops a crafted volume of many 16 MB seedlings (2026-10-23).
 constexpr std::size_t kMaxLogicalBytes   = std::size_t{512} << 20;
-// What one decode may READ OUT of the volume (materialise, sparse holes
-// zero-filled) — a separate bound from what it may WRITE (kMaxLogicalBytes,
-// charged only when a file is really written). Charging the write budget for
-// every file read made a folder of large unchanged files exhaust it and fail
-// the whole write-back for good, naming a file that was fine (MED-4, bug
-// hunt 2026-11-01 round 2). Twice the write budget: a build stages at most
-// kMaxLogicalBytes unchanged, and the guest may add as much again.
+// What one decode may READ OUT of the volume — apart from what it may WRITE,
+// or a folder of large unchanged files exhausted the write budget (MED-4,
+// 2026-11-01). Twice it: the build staged at most that, the guest adds more.
 constexpr std::size_t kMaxDecodeReadBytes = 2 * kMaxLogicalBytes;
 
 constexpr std::uint8_t kStorageSeedling     = 0x1;
@@ -83,17 +75,11 @@ constexpr std::uint8_t kFileTypeDir         = 0x0F;
 
 constexpr std::size_t  kMaxRecursionDepth   = 16;
 
-// Bounds for the write-back walk (`decodeOneDir`). The volume image is
-// guest-writable RAM, so the directory graph it describes is untrusted
-// input: a subdir entry's key_pointer is only range-checked, nothing stops
-// it pointing back at an ancestor — or at the very block that holds the
-// entry. A depth cap alone bounds NOTHING there, because it does not bound
-// the fan-out: 12 self-referential entries in one block explored to depth 16
-// is 12^17 visits, each performing a real `fs::create_directories` under a
-// fresh path. So the walk also carries a per-call set of already-expanded
-// directory blocks (making the graph a forest — every block is walked at
-// most once, which caps the visit count at the number of blocks in the
-// image) and a hard budget on directories created.
+// Bounds for the write-back walk (`decodeOneDir`). The image is guest RAM, so
+// a subdir key_pointer may point back at an ancestor or its own block, and a
+// depth cap does not bound the fan-out (12 self-referential entries to depth
+// 16 is 12^17 visits, each a real `create_directories`). The walk keeps a set
+// of expanded directory blocks (each walked once) and a budget on dirs made.
 // Blocks per directory chain. ProDOS bounds a directory only by its 16-bit
 // entry count and the volume, so neither may the decode: at 256 blocks
 // (~3300 entries) the rest of a large subfolder was silently not written
@@ -267,14 +253,9 @@ std::string sanitiseProDOSName(const std::string& hostName,
 }
 
 // `alt` (optional) is tried BEFORE the numeric suffixes when `base` is taken:
-// the same host name with its known extension kept. A numeric suffix is not
-// a name the write-back can undo — `HELLO.1` reads as "a file called HELLO.1
-// with no extension", so the type-derived `.txt` is never appended, a NEW
-// host file `HELLO.1` appears beside `hello.txt`, and the next mount finds
-// three files where there were two. One more per flush, for ever (the probe
-// that found it counted `HELLO.1`, `HELLO.2`, `HELLO.3` after three cycles).
-// `HELLO.TXT` instead: the dotted ProDOS name keeps its own suffix on the
-// way out, and the decode's case-folded lookup lands it back on `hello.txt`.
+// the same host name with its known extension kept. `HELLO.1` is not a name
+// the write-back can undo (it came back as a new host file, one per flush);
+// `HELLO.TXT` keeps its suffix and lands back on `hello.txt`.
 std::string uniqueName(const std::string& base,
                        std::unordered_map<std::string, int>& used,
                        const std::string& alt = std::string())
@@ -461,20 +442,16 @@ struct HostEntry {
     const char*     skipReason = nullptr;   // non-null → never enters the volume
     bool            mountHashed = false;    // from a HostNameMap: the bytes served
     std::uint64_t   mountHash   = 0;
+    std::uint8_t    mountAccess = 0xE3;     // ... and the access byte they had
 };
 
 
 // The naming pass, shared by the build and the decode: list `hostPath`
 // (dotfiles hidden, symlinks out of `root` refused), sort, and give every
-// entry the ProDOS name, type and aux type the volume will carry. It is a
-// function of the directory listing alone, and that is the point — the
-// decode REPLAYS it over the folder as it stands and so knows, for any
-// entry, which host file it came from, however lossy the sanitisation was:
-// `README!` → `README.`, `Hello World.txt` → `HELLOWORLD`, and whatever the
-// collision rules minted. Before the replay the decode composed a host name
-// from the ProDOS name and, finding no such file, wrote a NEW one beside the
-// source — `HELLOWORLD.txt` next to `Hello World.txt`, `README.1` next to
-// `README!` — and the next mount served both. One more per flush.
+// entry the ProDOS name, type and aux type the volume will carry. A function
+// of the listing alone, so the decode can REPLAY it and know which host file
+// an entry came from however lossy the name (`README!` → `README.`); a host
+// name composed from the ProDOS name wrote a new file beside the source.
 std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& root,
                                    std::size_t& symlinksSkipped)
 {
@@ -570,14 +547,9 @@ std::vector<HostEntry> nameHostDir(const fs::path& hostPath, const fs::path& roo
 // from `nameHostDir` (per directory: subdir name collisions don't conflict
 // with parent dir names). `result` accumulates filesIncluded / filesSkipped.
 //
-// `root` + `visited` bound the walk. `directory_iterator` and `is_directory`
-// both DEREFERENCE symlinks, so the previous version followed any link it
-// met: `ln -s . loop` inside the folder recursed to the depth cap, and a link
-// to `/` served the user's whole filesystem to the guest as a ProDOS volume
-// (capped only by the 51 root slots and the 128 KB per-file limit). A link is
-// followed only when its target is still inside the served folder, and the
-// canonical path of every directory entered is remembered so an aliased or
-// cyclic tree is walked once instead of exponentially.
+// `root` + `visited` bound the walk: `directory_iterator` follows symlinks,
+// and `ln -s / x` served the whole filesystem. A link is followed only into
+// the served folder, and each directory's canonical path is walked once.
 void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
                     std::size_t depth, ProDOSBuildResult& result,
                     const fs::path& root,
@@ -615,7 +587,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
         rec->clear();
         for (const HostEntry& he : entries)
             rec->push_back({he.path.filename().string(), he.prodosName, he.isDir,
-                            he.skipReason != nullptr, false, he.fileType, he.auxType, 0});
+                            he.skipReason != nullptr, false, he.fileType, he.auxType, 0, 0xE3});
     }
 
     for (std::size_t ei = 0; ei < entries.size(); ++ei) {
@@ -647,10 +619,14 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             continue;
         }
 
+        // A read failure is a skip the map must record too: the decode
+        // replays the root's 51-slot budget over it, and counting a slot the
+        // build never filled hid the next file (bug hunt 2026-11-07).
         std::ifstream f(he.path, std::ios::binary);
         if (!f) {
             pom2::log().warn("ProDOSVol", "skipping unreadable file: " + leaf);
             ++result.filesSkipped;
+            if (rec) (*rec)[ei].skipped = true;
             continue;
         }
         const std::size_t fsize = static_cast<std::size_t>(he.size);
@@ -668,6 +644,7 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             if (!f) {
                 pom2::log().warn("ProDOSVol", "short read, skipping: " + leaf);
                 ++result.filesSkipped;
+                if (rec) (*rec)[ei].skipped = true;
                 continue;
             }
         }
@@ -683,7 +660,10 @@ void scanHostFolder(const fs::path& hostPath, PreparedDir& dir,
             pf.access = 0x01;
         if (convertText && pf.fileType == 0x04)
             convertTextNewlines(pf.data, true);
-        if (rec) { (*rec)[ei].hashed = true; (*rec)[ei].hash = hostNameMapHash(pf.data); }
+        if (rec) {
+            (*rec)[ei].hashed = true; (*rec)[ei].hash = hostNameMapHash(pf.data);
+            (*rec)[ei].access = pf.access;
+        }
         const std::size_t payloadSize = pf.data.size();
         if (payloadSize <= kBlockBytes) {
             pf.storageType = kStorageSeedling;
@@ -1133,33 +1113,17 @@ FileWriteResult writeFileAtomic(const fs::path& dest,
 }
 
 // The guest's ProDOS access byte, carried onto the host file as its
-// read-only bit.
+// read-only bit — the inverse of the build's `pf.access` ($01 when the host
+// file is read-only). Until 2026-11-01 the write-back dropped +$1E, so a
+// guest LOCK never reached the host and an UNLOCK could not take effect
+// (`writeFileAtomic` keeps the original's mode). Write-protection is the host
+// read-only bit, the `MediaNotch.h` rule one level down: no `,attr` in the
+// host name, the state lives where every other tool sees it.
 //
-// The build already reads the host bit INBOUND — a read-only host file is
-// served with access $01 (`pf.access`) — and until 2026-11-01 nothing read
-// it back out: the write-back took the entry's file_type (+$10) and aux
-// (+$1F) and never its access (+$1E). So a guest `LOCK HELLO` was dropped
-// at every flush and the next mount served the file unlocked; and because
-// `writeFileAtomic` carries the original's mode onto the replacement, a
-// guest `UNLOCK` of a read-only host file could not take effect either.
-// Both directions, silently.
-//
-// Write-protection is the host read-only bit. That is the rule
-// `MediaNotch.h` sets for a whole medium ("the write-protect is the notch
-// ON THE DISK", 2026-09-08), and a file inside a served folder is the same
-// question one level down — which is why this does NOT invent a `,attr`
-// field in the host name: the state lives where the host already keeps it,
-// so it follows the file out of POM2 and into any other tool.
-//
-// ProDOS access bits (ProDOS 8 Technical Reference, directory entry +$1E):
-// bit 7 D(estroy), bit 6 R(e)N(ame), bit 5 B(ackup needed), bit 1 W(rite),
-// bit 0 R(ead). W clear is what LOCK leaves and what CATALOG shows as `*`.
-// $E3 and $C3 are unlocked, $01 is read-only. Only W is modelled: the host
-// has no separate rename or destroy bit, and ProDOS's own LOCK/UNLOCK move
-// D, RN and W together.
-//
-// Nothing is changed when the bits already agree — the common case, since
-// the build derives the entry from these very permissions.
+// [B] ProDOS 8 Technical Reference, directory entry +$1E: bit 7 D(estroy),
+// 6 R(e)N(ame), 5 B(ackup), 1 W(rite), 0 R(ead); LOCK clears D, RN and W
+// together ($E3/$C3 unlocked, $01 locked). Only W is modelled: the host has
+// no rename or destroy bit. Nothing changes when the bits already agree.
 void applyAccessByteToHost(const fs::path& dest, std::uint8_t access)
 {
     constexpr fs::perms kWriteBits = fs::perms::owner_write |
@@ -1194,27 +1158,14 @@ void applyAccessByteToHost(const fs::path& dest, std::uint8_t access)
     }
 }
 
-// Mark `p` as "written by this decode, at `stamp`".
-//
-// WHY it SETS the mtime instead of reading it. The next decode decides whether
-// a host file is the user's edit or POM2's own last output by comparing its
-// mtime against the volume's mount stamp — and the old shape (take `now()`
-// after the walk, widened to the newest mtime observed) is a comparison
-// between two clocks that are only related by assumption. On Linux CI a file
-// POM2 had just written read back NEWER than that stamp, so the next flush
-// preserved POM2's own output away and every later guest save was discarded.
-// Bug hunt #4 first tried to make the arithmetic tighter; the arithmetic was
-// not the problem.
-//
-// Giving every file the decode writes the SAME stamp removes the comparison
-// entirely: "ours" is `mtime == stamp`, exact, on any filesystem and whatever
-// the clock granularity. A user editing the file afterwards moves it strictly
-// past the stamp and is preserved, which is the rule this exists to enforce.
-//
-// If the timestamp cannot be set — a filesystem that refuses `utimensat`, a
-// medium mounted noatime-and-more — fall back to widening `newest` the way it
-// used to, so the behaviour degrades to the old approximation rather than to
-// no protection at all.
+// Mark `p` as "written by this decode, at `stamp`". It SETS the mtime: the
+// next decode tells the user's edit from POM2's own output by comparing it
+// with the mount stamp, and `now()` read after the walk is another clock —
+// on Linux CI POM2's own file read back NEWER than the stamp and every later
+// guest save was preserved away (bug hunt #4). With one stamp, "ours" is
+// `mtime == stamp`, exact on any filesystem; a user edit moves it past.
+// A filesystem that refuses the set falls back to widening `newest`, the old
+// approximation, rather than to no protection.
 void noteWriteTime(const fs::path& p, fs::file_time_type stamp,
                    fs::file_time_type& newest)
 {
@@ -1224,6 +1175,34 @@ void noteWriteTime(const fs::path& p, fs::file_time_type stamp,
     std::error_code rec;
     const auto t = fs::last_write_time(p, rec);
     if (!rec && t > newest) newest = t;
+}
+
+// What this mount last synced for one served entry (`id`): the guest bytes'
+// hash and its lock. Kept in the caller's sticky set, which lives as long as
+// the mount, under keys that start with NUL — no path spells one. Unknown =
+// nothing synced yet, so the mount's own map is the reference.
+struct SyncedState { bool known = false; std::uint64_t hash = 0; bool locked = false; };
+SyncedState readSynced(const std::set<std::string>* sticky, const std::string& id)
+{
+    const std::string prefix = std::string(1, '\0') + id + '\0';
+    if (!sticky) return {};
+    const auto it = sticky->lower_bound(prefix);
+    if (it == sticky->end() || it->compare(0, prefix.size(), prefix) != 0 ||
+        it->size() != prefix.size() + 17) return {};
+    return {true, std::stoull(it->substr(prefix.size(), 16), nullptr, 16), it->back() == 'L'};
+}
+void writeSynced(std::set<std::string>* sticky, const std::string& id,
+                 std::uint64_t hash, bool locked)
+{
+    const std::string prefix = std::string(1, '\0') + id + '\0';
+    if (!sticky) return;
+    for (auto it = sticky->lower_bound(prefix);
+         it != sticky->end() && it->compare(0, prefix.size(), prefix) == 0;)
+        it = sticky->erase(it);
+    char state[20];
+    std::snprintf(state, sizeof state, "%016llx%c",
+                  static_cast<unsigned long long>(hash), locked ? 'L' : 'U');
+    sticky->insert(prefix + state);
 }
 
 }  // namespace
@@ -1276,23 +1255,13 @@ void noteUnsaved(ProDOSDecodeResult& r, const std::string& name)
 /// Is `dest` — a path the decode is about to create or write — still inside
 /// the served root once every symlink on the way has been followed?
 ///
-/// The name check (`isHostSafeProDOSName`) proves the last COMPONENT carries
-/// no separator and is not "..". It says nothing about what the components
-/// ahead of it resolve to, and the guest can arrange those: it creates the
-/// directory `LINK` in the volume, the decode calls `create_directories` on
-/// `root/LINK` — which SUCCEEDS silently when `root/LINK` is already a
-/// symlink to somewhere else on the host, because create_directories is
-/// happy with an existing directory and follows the link to find it. Every
-/// file the walk then writes under that name lands outside the jail. The
-/// scan side deliberately hides symlinks, so the volume never even shows the
-/// user the thing their guest is writing through.
-///
-/// `weakly_canonical` resolves the components that exist (the link included)
-/// and leaves the rest lexical, which is exactly the question being asked.
-/// The `dest` itself must additionally not BE a symlink: a link inside the
-/// root pointing out of it is the file-level version of the same escape, and
-/// `writeFileAtomic`'s temp+rename would replace the link rather than follow
-/// it — but only after `prepareTempPath` had already opened the sibling.
+/// `isHostSafeProDOSName` vets the last component only. The guest can name a
+/// directory `LINK` where the host has a symlink `root/LINK` pointing out:
+/// `create_directories` follows it silently and every file under it lands
+/// outside the jail (the scan hides symlinks, so the user never sees it).
+/// `weakly_canonical` resolves the components that exist and leaves the rest
+/// lexical — exactly the question. `dest` itself must not BE a symlink
+/// either: that is the same escape at file level.
 bool destStaysInsideRoot(const DecodeWalk& w, const fs::path& dest)
 {
     std::error_code ec;
@@ -1323,22 +1292,13 @@ bool escapeLeadingDot(const std::string& name, std::string& host)
 // Reserve `name` as a host filename inside one decoded directory, returning
 // the name actually to use.
 //
-// TWO ProDOS entries can want ONE host name. The decode strips trailing dots
-// before composing the host path (a name ending in '.' is legal in ProDOS and
-// awkward-to-illegal on the host), so `README` and `README.` both come out as
-// `README` — and the second write silently REPLACED the first, reporting both
-// as written. The build path manufactures exactly that pair without trying:
-// `sanitiseProDOSName` maps every character outside A-Z 0-9 '.' to '.', so a
-// host folder holding `README` and `README!` becomes `README` and `README.`
-// in the volume, `uniqueName` sees two distinct ProDOS names, and the
-// write-back merges them back into one file. The guest can do it directly too
-// — nothing stops it creating both names inside the volume.
-//
-// So: names are unique per decoded directory, and a clash gets a numeric
-// suffix rather than overwriting. `used` covers THIS decode pass only, never
-// what is already on disk, so re-decoding an unchanged volume still lands on
-// the same names (writeFileAtomic's Unchanged path) instead of growing a new
-// `.1` every time.
+// TWO ProDOS entries can want ONE host name: the decode strips trailing dots,
+// so `README` and `README.` (which the build itself mints from `README` +
+// `README!`, and the guest can create) both come out as `README`, and the
+// second write silently replaced the first. Names are therefore unique per
+// decoded directory and a clash gets a numeric suffix. `used` covers THIS
+// pass only, never what is on disk, so re-decoding an unchanged volume lands
+// on the same names instead of growing a new `.1` every time.
 std::string foldHostCase(std::string s)
 {
     for (char& c : s)
@@ -1465,7 +1425,7 @@ void decodeOneDir(DecodeWalk& w,
             he.isDir = e.isDir; he.prodosName = e.prodosName;
             he.fileType = e.fileType; he.auxType = e.auxType;
             he.skipReason = e.skipped ? "skipped at mount" : nullptr;
-            he.mountHashed = e.hashed; he.mountHash = e.hash;
+            he.mountHashed = e.hashed; he.mountHash = e.hash; he.mountAccess = e.access;
             named.push_back(std::move(he));
         }
     } else {
@@ -1804,15 +1764,34 @@ void decodeOneDir(DecodeWalk& w,
             // already exists on disk (then that file is the destination).
             fs::path renameFrom;
             bool ownSource = false;
-            // Deleted on the host since the mount, and the guest never changed
-            // it: the deletion stands. Rewriting it brought every deleted file
-            // back on every eject. A copy the guest DID change is written back.
-            if (const auto src = sources.find(rawName); src != sources.end() &&
-                src->second->mountHashed && src->second->mountHash == guestHash) {
+            const auto src = sources.find(rawName);
+            // What the mount served under this name, when its map says so, and
+            // what it last synced since (bug hunt 2026-11-07). The guest is
+            // the authority only over what it CHANGED: bytes it never touched
+            // must not overwrite a host replacement whose mtime predates the
+            // stamp (`cp -p`, `rsync -a`, a restore — the preserve rule below
+            // cannot see it), and a lock it never touched must not undo a host
+            // `chmod`. Only the metadata it changed lands on such a file.
+            const HostEntry* const source =
+                (src != sources.end() && src->second->mountHashed) ? src->second : nullptr;
+            const std::string syncId = hostNameMapKey(hostFolder) + "/" + rawName;
+            const SyncedState synced = source ? readSynced(w.sticky, syncId) : SyncedState{};
+            const bool guestUnchanged =
+                source && (synced.known ? synced.hash : source->mountHash) == guestHash;
+            const bool guestLocked = (e[0x1E] & 0x02) == 0;
+            const bool driveLock = !source || guestLocked !=
+                (synced.known ? synced.locked : (source->mountAccess & 0x02) == 0);
+            auto applyLock = [&](const fs::path& p) {
+                if (driveLock) applyAccessByteToHost(p, e[0x1E]);
+                if (source) writeSynced(w.sticky, syncId, guestHash, guestLocked);
+            };
+            // Deleted on the host and unchanged by the guest: the deletion
+            // stands (rewriting it brought every deleted file back).
+            if (guestUnchanged) {
                 std::error_code xec;
-                if (!fs::exists(src->second->path, xec) && !xec) continue;
+                if (!fs::exists(source->path, xec) && !xec) continue;
             }
-            if (const auto src = sources.find(rawName); src != sources.end()) {
+            if (src != sources.end()) {
                 const std::string srcName = src->second->path.filename().string();
                 if (usedHostNames.count(srcName) == 0) {
                     if (src->second->fileType == fileType &&
@@ -1835,6 +1814,24 @@ void decodeOneDir(DecodeWalk& w,
                 reserveHostName(usedHostNames, spelled, &usedFolded, ownSource);
             if (hostName != spelled) renameFrom.clear();  // suffixed: a fresh file
             const fs::path dest = fs::path(hostFolder) / hostName;
+            // Unchanged bytes, and the entry is still that host file: keep it.
+            if (guestUnchanged && ((ownSource && hostName == spelled) || !renameFrom.empty())) {
+                if (renameFrom.empty()) {
+                    if (destStaysInsideRoot(w, dest)) applyLock(dest);
+                    continue;
+                }
+                std::error_code rec;
+                if (destStaysInsideRoot(w, dest) && destStaysInsideRoot(w, renameFrom)) {
+                    fs::rename(renameFrom, dest, rec);
+                    if (!rec) {
+                        ++r.filesWritten;
+                        existingHostNames.erase(foldCase(renameFrom.filename().string()));
+                        existingHostNames[foldCase(hostName)] = hostName;
+                        applyLock(dest);
+                        continue;
+                    }
+                }
+            }
             // Text exchange: the volume holds CR, the decode composes LF —
             // so a host file kept in CRLF (or old-Mac CR) was rewritten on
             // the first flush although the guest never touched it (bug hunt
@@ -2029,7 +2026,7 @@ void decodeOneDir(DecodeWalk& w,
             // Whatever the bytes did, the entry's access byte is metadata the
             // guest may have changed on its own: a LOCK writes no data at all,
             // so this has to run on the Unchanged path too.
-            applyAccessByteToHost(dest, e[0x1E]);
+            applyLock(dest);
         }
         // Next directory block pointer is at offset 2 of every dir block.
         curBlock = rd16(blk + 2);

@@ -196,8 +196,9 @@ int main()
     assert(r.status == 200);
     assert(contains(r.body, "\"x\":12") && contains(r.body, "\"y\":34"));
     assert(contains(r.body, "\"btn\":1"));
+    // `reset` pushes nothing since 2026-11-07: the counter is the card's.
     r = postMouse("{\"reset\":1}");
-    assert(contains(r.body, "\"x\":0") && contains(r.body, "\"y\":0"));
+    assert(contains(r.body, "\"x\":12") && contains(r.body, "\"y\":34"));
 
     // The actual //c default is now the IOU, with no EPROM/PIA card.
     {

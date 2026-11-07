@@ -284,6 +284,20 @@ int main()
                    std::string("an unread dump is Unused: ") + e.name);
     }
 
+    // The ROM Status label may not say "archive only" for a dump the fetch
+    // catalogue serves from a second source: three entries kept that label
+    // after RetroBIOS PR #86 gave them one (2026-11-06).
+    for (const auto& e : pom2::romCatalog()) {
+        const std::string label = e.knownCrcLabel ? e.knownCrcLabel : "";
+        if (label.find("archive only") == std::string::npos) continue;
+        bool archiveOnly = false;
+        for (const auto& f : pom2::romFetchCatalog())
+            for (const char* c : e.candidates)
+                if (f.destRel && c && std::string(f.destRel) == c && pom2::romArchiveOnly(f))
+                    archiveOnly = true;
+        expect(archiveOnly, std::string("\"archive only\" label matches the fetch source: ") + e.name);
+    }
+
     const auto known = knownDests();
     const auto& cat  = pom2::romFetchCatalog();
 

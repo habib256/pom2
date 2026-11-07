@@ -177,7 +177,10 @@ bool LironCard::busLive() const
 uint8_t LironCard::deviceSelectRead(uint8_t low4)
 {
     if (!romLoaded_) return 0xFF;
-    iwm_.tick(cycles_);
+    // At the access's bus cycle, not the instruction start (bug hunt
+    // 2026-11-07, as Memory's //c+ IWM path): `cycles_` advances per
+    // instruction, after it.
+    iwm_.tick(cycles_ + busAccessOffset());
     // SEL is sampled on every access rather than only on a devsel edge: the
     // firmware flips it ($C0nA / $C0nB) to pick the head *without* changing
     // the selected drive, and on a Sony that same line is bit 3 of the
@@ -231,7 +234,7 @@ uint8_t LironCard::deviceSelectRead(uint8_t low4)
 void LironCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
     if (!romLoaded_) return;
-    iwm_.tick(cycles_);
+    iwm_.tick(cycles_ + busAccessOffset());
     if (active_ >= 0) {
         drives_[active_].setSel(iwm_.sel());
         drives_[active_].ssW(iwm_.sel());

@@ -30,7 +30,9 @@
 namespace {
 
 // AY-3-8910 input clock on the Mockingboard — pin 22 (CLOCK) is wired to
-// the slot's phase 0 clock, i.e. the Apple II 1.0227 MHz CPU clock.
+// the slot's phase 0 clock: the video standard's nominal bus clock (1.0227
+// MHz NTSC, 1.0156 MHz PAL), which equals the CPU clock only while no
+// accelerator runs (`busHz()`, SlotBusClock.h; SND-1, 2026-09-29).
 //
 // MAME `ay8910.cpp:1077` runs its synthesis stream at `clock/8` and
 // increments tone/noise counters by 1 per sample. Datasheet output

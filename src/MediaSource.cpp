@@ -21,6 +21,7 @@
 #include "AtomicFileReplace.h"
 #include "ChildProcess.h"
 #include "ResourcePaths.h"
+#include "Sha256.h"
 #include "ZipMember.h"
 
 #include <algorithm>
@@ -54,14 +55,32 @@ bool endsWith(const std::string& s, const char* suffix)
     return s.size() >= x.size() && s.compare(s.size() - x.size(), x.size(), x) == 0;
 }
 
-// FNV-1a, 32 bits, as eight hex digits: the cache key of a source.
+// The cache key of a source: SHA-256 of its exact spelling, 128 bits of it
+// in hex. It was a 32-bit FNV-1a, and a hit opens no socket: a URL padded
+// until its hash matched a genuine one's, fetched first, was served in its
+// place for good (bug hunt 2026-11-07; TnfsMedia.cpp closed the same hole).
 std::string key(const std::string& s)
+{
+    return sha256Hex(reinterpret_cast<const std::uint8_t*>(s.data()), s.size()).substr(0, 32);
+}
+
+// The key before 2026-11-07. Read only to carry an existing cache copy — and
+// the guest's writes in it — over to its new name; nothing is created under it.
+std::string legacyKey(const std::string& s)
 {
     uint32_t h = 2166136261u;
     for (unsigned char c : s) h = (h ^ c) * 16777619u;
     char b[9];
     std::snprintf(b, sizeof b, "%08x", h);
     return b;
+}
+
+// `dest` absent and the copy an older POM2 made under `legacy` present: move it.
+void adoptLegacyCopy(const fs::path& legacy, const fs::path& dest)
+{
+    std::error_code ec;
+    if (!fs::exists(dest, ec) && !ec && fs::is_regular_file(legacy, ec))
+        fs::rename(legacy, dest, ec);
 }
 
 // A file name safe on every host, from the last segment of a URL, a path or
@@ -133,6 +152,15 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
     const fs::path tmp = tempSiblingPath(dest);
+    // Our own cap as well as curl's: before curl 8.4 `--max-filesize` does
+    // nothing when the size is not announced (chunked, no Content-Length), and
+    // Ubuntu 22.04 / Debian 12 ship 7.81 / 7.88 — two minutes of a full link
+    // went to disk and was then cached as a disk (bug hunt 2026-11-07).
+    auto oversized = [&] {
+        std::error_code sec;
+        const auto n = fs::file_size(tmp, sec);
+        return !sec && n > kMaxImageBytes;
+    };
     ChildProcess p;
     if (!p.start(curl, { "-fsL", "--proto", "=http,https", "--proto-redir", "=http,https",
                          "--max-filesize", std::to_string(kMaxImageBytes),
@@ -141,7 +169,14 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
         return false;
     while (p.isRunning()) {
         if (abort && abort->load()) { p.stop(500); fs::remove(tmp, ec); err = "download cancelled"; return false; }
+        if (oversized()) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+    if (oversized()) {
+        if (p.isRunning()) p.stop(500);
+        fs::remove(tmp, ec);
+        err = "the download is larger than any Apple II disk: " + url;
+        return false;
     }
     if (p.lastExitCode() != 0) {
         fs::remove(tmp, ec);
@@ -257,9 +292,12 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
         fs::path got;
         std::error_code ec;
         // The copy keeps the archive extension the download sniffed.
+        const fs::path legacy = cacheDir / (legacyKey(source) + "-" + safeName(source, true));
         for (const char* ext : { "", ".zip", ".gz" }) {
-            fs::path c = dest;
+            fs::path c = dest, old = legacy;
             c += ext;
+            old += ext;
+            adoptLegacyCopy(old, c);
             if (!fs::is_regular_file(c, ec) || fs::file_size(c, ec) == 0) continue;
             // A page an older POM2 cached as a disk: drop it, fetch afresh.
             if (mediaBodyIsWebPage(head(c))) { fs::remove(c, ec); continue; }
@@ -287,14 +325,16 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
         // cache copy and the guest's writes seemed gone.
         fs::path canon = fs::weakly_canonical(path, ec);
         if (ec || canon.empty()) { ec.clear(); canon = fs::absolute(path, ec).lexically_normal(); }
-        const std::string k = key(canon.string() + "|" + std::to_string(size)
-                                  + "|" + std::to_string(when));
+        const std::string id = canon.string() + "|" + std::to_string(size)
+                               + "|" + std::to_string(when);
+        const std::string k = key(id);
         std::vector<uint8_t> packed, image;
         if (!readFile(path, packed, r.error)) return r;
         std::string member;
         if (endsWith(lower(path), ".zip")) {
             if (!pickZipImage(packed, member, r.error)) return r;
             const fs::path dest = cacheDir / (k + "-" + safeName(member));
+            adoptLegacyCopy(cacheDir / (legacyKey(id) + "-" + safeName(member)), dest);
             if (fs::is_regular_file(dest, ec)) {
                 r.ok = true; r.fromCache = true; r.localPath = dest.string();
                 r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + " from the zip (cached copy)";
@@ -314,6 +354,7 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
                     name.erase(name.size() - 3);              // drop ".gz"
             }
             const fs::path dest = cacheDir / (k + "-" + name);
+            adoptLegacyCopy(cacheDir / (legacyKey(id) + "-" + name), dest);
             if (fs::is_regular_file(dest, ec)) {
                 r.ok = true; r.fromCache = true; r.localPath = dest.string();
                 r.note += std::string(r.note.empty() ? "" : ", ") + "ungzipped (cached copy)";

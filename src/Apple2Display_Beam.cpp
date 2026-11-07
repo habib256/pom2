@@ -319,7 +319,8 @@ void Apple2Display::forEachBeamSegment(
         return x.textMode == z.textMode && x.mixedMode == z.mixedMode &&
                x.page2 == z.page2 && x.hiRes == z.hiRes &&
                x.eightyCol == z.eightyCol && x.altChar == z.altChar &&
-               x.dhgr == z.dhgr && x.eightyStore == z.eightyStore;
+               x.dhgr == z.dhgr && x.eightyStore == z.eightyStore &&
+               x.an2 == z.an2;
     };
     auto sameSegs = [&](const std::vector<Seg>& a, const std::vector<Seg>& b) {
         if (a.size() != b.size()) return false;

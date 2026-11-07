@@ -351,6 +351,25 @@ void testMouse(const std::string& sourceDir)
         }
         assert(holeX() == 300 && holeY() == 120 && "absolute position converges");
 
+        // A push that cannot move the cursor must not latch setMouse false
+        // for the session (bug hunt 2026-11-07): aim past INITMOUSE's
+        // 0..1023 window, so the cursor stops at the edge, then at a
+        // reachable point — it must still converge.
+        for (int frame = 0; frame < 30; ++frame) {
+            c.setMouse(1500, 120, false);
+            c.run(17030);
+            callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        }
+        assert(holeX() == 1023 && "the window holds the cursor at its edge");
+        there = false;
+        for (int frame = 0; frame < 80 && !there; ++frame) {
+            there = c.setMouse(50, 50, false);
+            c.run(17030);
+            callRoutine(c, readMouse, 0, 0xC4, 0x40);
+        }
+        assert(holeX() == 50 && holeY() == 50 && "a reachable target converges after an edge");
+
+
         // The card's VBL interrupt reaches the 6502 as in the application.
         // SETMOUSE $09 = on + VBL interrupt. The //e ROM's IRQ handler ends in
         // JMP ($03FE): ours services the card, counts, and returns.
@@ -603,6 +622,38 @@ void testBusWatch(const std::string& sourceDir)
     core.setBusWatch({});
     runProgram(core, { 0xAD, 0x30, 0xC0 });
     assert(seen.size() == 3);
+
+    // Every access on its own bus cycle, opcode fetch = 0 (bug hunt
+    // 2026-11-07: the fetch was stamped +1, both operand bytes on one cycle,
+    // both pushes on one cycle). JSR $0310: fetch 0, lo 1, (internal 2),
+    // PCH 3, PCL 4, hi 5. RTS at +6: pulls at +9 and +10.
+    seen.clear();
+    core.write(0x0310, 0x60);                                    // RTS
+    core.setBusWatch([&seen](std::uint16_t a, std::uint8_t v, bool w,
+                             std::uint64_t cycle) { seen.push_back({a, v, w, cycle}); });
+    assert(core.watchAddresses(0x0300, 0x0302, true, false));
+    assert(core.watchAddresses(0x01F0, 0x01FF, true, true));
+    core.write(0x0300, 0x20); core.write(0x0301, 0x10); core.write(0x0302, 0x03);
+    {
+        pom2::CpuState s0 = core.cpuState();
+        s0.programCounter = 0x0300; s0.stackPointer = 0xFF; s0.status = 0x24;
+        core.setCpuState(s0);
+    }
+    const std::uint64_t t0 = core.cpuState().cycles;
+    core.step();                                                 // JSR $0310
+    core.step();                                                 // RTS
+    assert(core.cpuState().programCounter == 0x0303);
+    auto at = [&](std::uint16_t a, bool w) -> std::int64_t {
+        for (const Access& x : seen)
+            if (x.address == a && x.write == w) return static_cast<std::int64_t>(x.cycle - t0);
+        return -1;
+    };
+    assert(at(0x0300, false) == 0 && "the opcode fetch is cycle 0");
+    assert(at(0x0301, false) == 1 && at(0x0302, false) == 5 && "JSR operand bytes at 1 and 5");
+    assert(at(0x01FF, true) == 3 && at(0x01FE, true) == 4 && "JSR pushes at 3 and 4");
+    assert(at(0x01FE, false) == 9 && at(0x01FF, false) == 10 && "RTS pulls at 9 and 10");
+    core.clearWatchedAddresses();
+    core.setBusWatch({});
 }
 
 // displayState (request 2): the switches on a ][+, which has no $C01x

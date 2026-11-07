@@ -276,6 +276,12 @@ int main()
         auto third = std::make_unique<pom2::SmartPort35Unit>();
         expect(third->loadImage(po), tag + "load bay 2");
         craw->setUnit(2, std::move(third));
+        // A drive plugged after the INIT is not on the chain until the next
+        // bus reset numbers it, as on the cable (SmartPortCard::chainLength).
+        r = call(0x00, kMirror1, 0);
+        expect(r.carry == 1 && r.a == 0x28,
+               tag + "a drive plugged after INIT stays unnumbered until a reset");
+        craw->onReset();
         r = call(0x00, kMirror1, 0);
         expect(r.carry == 0 && r.a == 0x00,
                tag + "S2,D1 must answer for a loaded bay 2");

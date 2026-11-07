@@ -253,6 +253,7 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     if (stepSkipFirst_ && pc == stepJsrPc_) stepSkipFirst_ = false;
     // The resumed instruction has executed: its amnesty is spent (DBG-1).
     if (resumeSkipArmed_ && pc == resumeSkip_) resumeSkipArmed_ = false;
+    osCalls_.retire6502();                 // ...and so is its trace offer
     if (cycles <= 0) return;
     if (profiling_) {
         auto& entry = profile_[{pc, curBank_}];
@@ -272,6 +273,12 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
 
 void Debugger::onInterruptEntered(const M6502& cpu, uint16_t, int cycles)
 {
+    // The interrupted instruction is offered again after the RTI.
+    osCalls_.interrupted6502();
+    // A step follows the handler as a nested frame, closed when SP climbs
+    // back to the interrupted level: its RTI is not the call's return.
+    if (stepCpu_ && transientArmed_.load(std::memory_order_relaxed) && stepFrames_.size() < 256)
+        stepFrames_.push_back(static_cast<uint8_t>(cpu.getStackPointer() + 3));
     // The entry's cycles belong to the handler it enters; it is not a visit
     // (the handler's first instruction counts its own when it runs), and
     // nothing executed, so history records nothing.
@@ -336,7 +343,13 @@ void Debugger::clearForTimeJump()
 
 void Debugger::beginStep(uint16_t pc, bool explicitStep)
 {
-    if (explicitStep) resumeSkipArmed_ = false;
+    if (explicitStep) {
+        resumeSkipArmed_ = false;
+        // F7 / Step goes through here, not onInstruction: without the offer a
+        // stepped $BF00 was never decoded and a stepped-over return left its
+        // call open, later closed as "(no return)" (bug hunt 2026-11-07).
+        if (osCalls_.any6502()) osCalls_.offer6502(pc);
+    }
     curPc_ = pc;
     curBank_ = resolveBank(pc);
 }
@@ -350,7 +363,7 @@ bool Debugger::onInstruction(uint16_t pc)
     // ever clear when the controller has consumed it (debugResume), so this
     // cannot swallow a resume.
     if (hit_.valid()) return true;
-    if (osCalls_.any6502()) osCalls_.on6502Instruction(pc);
+    if (osCalls_.any6502()) osCalls_.offer6502(pc);
     // Latched for noteAccess(), which fires mid-instruction and would
     // otherwise have no way to name the instruction responsible.
     beginStep(pc);
@@ -382,10 +395,12 @@ bool Debugger::onInstruction(uint16_t pc)
                 // sit below `stepStack_` and cannot match.
                 if (stepSkipFirst_ && pc == stepJsrPc_ && sp == stepStack_) {
                     // the stepped JSR — nothing to track yet
-                } else if (op == 0x20) {                 // JSR: a nested call
+                } else if (op == 0x20 || op == 0x00) {   // JSR, BRK: a nested call
                     if (stepFrames_.size() < 256) stepFrames_.push_back(sp);
-                } else if (op == 0x60 && stepFrames_.empty()) {
-                    const int after = static_cast<int>(sp) + 2;
+                } else if ((op == 0x60 || (op == 0x40 && stepOutMode_)) && stepFrames_.empty()) {
+                    // RTI pops P as well: Step Out of an IRQ/NMI/BRK handler
+                    // returns to the interrupted pc (bug hunt 2026-11-07).
+                    const int after = static_cast<int>(sp) + (op == 0x40 ? 3 : 2);
                     // An RTS used as a jump (push target-1, RTS) pops back to
                     // where the callee was, not to the caller: not a return.
                     if (stepOutMode_ ? after > static_cast<int>(stepStartSp_)
@@ -450,13 +465,13 @@ void Debugger::noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBan
         // read-modify-write writes the original value back first (the dummy
         // cycle, rmwSecondBusCycle), so `INC $10` reported "$0010 was written
         // ($05)" while memory held $06. The last write is the one that stays.
-        if (write && hit_.reason == Reason::WatchWrite && hit_.addr == addr &&
+        if (write && !busMaster_ && hit_.reason == Reason::WatchWrite && hit_.addr == addr &&
             hit_.bank == bank && hit_.pc == curPc_)
             hit_.value = value;
         return;
     }
     hit_ = { write ? Reason::WatchWrite : Reason::WatchRead,
-             curPc_, addr, value, curBank_, bank };
+             curPc_, addr, value, curBank_, bank, busMaster_ };
     // curPc_, not the CPU's programCounter: the access is mid-instruction and
     // that register has already advanced past the opcode and its operands, so
     // it names neither the writing instruction nor anything stable. curPc_ is
@@ -507,6 +522,19 @@ void Debugger::setWatchpoint(uint16_t addr, Access access, DebugBank bank)
 void Debugger::clearHit()
 {
     hit_ = {};
+}
+
+void Debugger::patchMemory(Memory& memory, uint16_t addr, const uint8_t* bytes, std::size_t count)
+{
+    // noteTimeJump() was the assembler's old call: it wiped the stop, so the
+    // next Run had no amnesty and re-stopped on the same breakpoint having
+    // executed nothing (bug hunt 2026-11-07). A watch on a patched byte must
+    // not latch either; a pending hit is kept exactly (the RMW rule in
+    // noteBankAccess would otherwise rewrite its value).
+    const Hit kept = hit_;
+    for (std::size_t i = 0; i < count; ++i)
+        memory.memWrite(static_cast<uint16_t>(addr + i), bytes[i]);
+    hit_ = kept;
 }
 
 }  // namespace pom2

@@ -430,6 +430,23 @@ int main()
                     "through Memory\n");
     }
 
+    // ─── Ctrl-Reset releases the card's /IRQ (bug hunt 2026-11-07) ───────
+    // onReset cleared the timer flag but never re-published the line, and
+    // hardReset keeps the source mask: a flag up at reset held /IRQ with no
+    // source, and every CLI then counted spurious interrupts. Raise the flag
+    // through a restored blob, then reset.
+    {
+        std::vector<uint8_t> b;
+        card.appendSnapshotState(b);
+        const std::size_t kTimerFlag = 4 + 1 + pom2::WorkstationCard::kRamBytes + 8 + 16 + 4 + 4;
+        b[kTimerFlag] = 1;
+        card.loadSnapshotState(b.data(), b.size());
+        assert((card.cardIrqSources() & (1u << 1)) && "restored timer flag drives /IRQ");
+        card.onReset();
+        assert(card.cardIrqSources() == 0 && "reset leaves /IRQ held with no source");
+        std::printf("  ok: Ctrl-Reset releases the card's /IRQ\n");
+    }
+
     // ─── A host accelerator does not speed up the card ───────────────────
     // The card's 65C02 and timer run off its own crystal. Paced one card
     // cycle per HOST cycle, a 4 MHz Zip ran it ~4x fast against its SCC and

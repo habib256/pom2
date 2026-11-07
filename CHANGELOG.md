@@ -10,6 +10,136 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — Bug hunt, wave 3: five data losses, the debugger, the tools, and the deferred items
+
+Six more read-only reviewers (configuration and user files, cards with their
+own processor, host disk tools, tape and FujiNet, outside bytes becoming
+volumes, the debugger), then the fixes, each pinned by a test that fails
+without it unless noted. Account and what is still open:
+`docs/audits/bug-hunt-2026-11-07.md` § Wave 3.
+
+**Data losses**
+
+- **ProDOS host folder**: a file the guest never changed is no longer written
+  back. A host replacement with an older mtime (`cp -p`, `rsync -a`, a
+  restore) was silently reverted to the mount-time copy at the next flush.
+  "Unchanged" means unchanged since the last sync, so a guest that puts the
+  original bytes back still lands, and a retype still renames.
+- **`pom2_dos33`** reads the sector order from the catalog chain, not the
+  extension: a DOS-order disk named `.po` lost catalog entries and a `put`
+  wrote to the wrong sectors.
+- **FujiNet**: the ProDOS entry decodes the slot bits of `$43`, as
+  SmartPortCard and the Liron do ([C] Liron `$CC1E`); a mirrored S2/S3 drive
+  read, wrote and formatted unit 1/2.
+- **Sessions**: quitting with a loaded `.pom2session` no longer writes that
+  session's serial ports and No-Slot Clock over the user's own `state.cfg`.
+- **Kiosk** keeps a ROM folder that is not mounted right now instead of
+  erasing it from the list; the list is written atomically.
+- **Disk II rewind inside a write burst**: the write framing travels in the
+  snapshot (D2S1 v6, a tail after everything else, so sessions keep their
+  offsets; older blobs reset it). A rewind into a SAVE re-framed mid-nibble
+  and corrupted the rest of the data field.
+
+**Debugger**
+
+- A watch hit made by a DMA card's processor (SoftCard Z80) stops the
+  machine, and the banner names the card processor; the hit was thrown away
+  when the card handed the bus back.
+- The OS-call trace takes an instruction offered twice (a breakpoint then
+  Run, an IRQ at its boundary) once, for every decoder: COUT printed "OOKK"
+  for "OK", and the Pascal BIOS, CP/M-65 BIOS and Applecorn lines doubled.
+- Step Out inside an IRQ/NMI/BRK handler stops after its RTI (it ran on,
+  without end over a `JMP` main loop); an interrupt inside the stepped
+  routine no longer ends the step early.
+- Explicit single steps feed the OS-call trace: a stepped MLI call was not
+  decoded, and its return later read "(no return)".
+- Assembling an instruction while stopped keeps the stop: the next Run
+  re-stopped on the same breakpoint having executed nothing.
+- The 3.5" eject's phase 3 recognises the medium by mount, not by path (a
+  same-file remount during the unlocked commit).
+
+**Guest-visible**
+
+- **E-Z Color / TMS9918**: with R1 bit 7 clear VRAM no longer wraps at 4 KB;
+  a bit-7 toggle rearranges it in 64-byte blocks ([B] TI data manual R1,
+  [D] openMSX `change4k8kMapping` @ a0a4f24199, [F] on a real card). A
+  pending CPU VRAM access survives a snapshot (spare bits of an existing
+  byte, old blobs load). Text mode no longer runs the sprite status scan.
+- **Workstation Card**: Ctrl-Reset releases the card 65C02's /IRQ.
+- **Cassette**: audio tapes go through a Schmitt comparator ([F]-tuned band),
+  so a real line-in rip's hiss no longer spends the transition budget and
+  gets the tape refused; mp3/ogg/flac loads get the DC threshold too.
+- **AN2** (the dual-bank character generator's font) is a published,
+  beam-timed display switch like ALTCHAR: a font flip after a frame closed no
+  longer repaints that frame, and a mid-screen split holds ([D] MAME `an2_w`
+  @ b2a182f0b7). The wiring claim itself is graded [E].
+- **Disk II head** reaches quarter-tracks 157-159, which a WOZ TMAP can fill
+  ([D] MAME stops at 164; [F] the real stop).
+- **IWM** (//c+, //c rear port) accesses are stamped at their bus cycle, not
+  the instruction start (3-6 cycles, 1.5-3 Sony cells, early). No dedicated
+  pin; the 3.5" boot tests guard it.
+- **AI `/mouse`** starts from the card's own counter (the one the GUI feeds),
+  so the first delta after a pointer move no longer jumps up to 128; `reset`
+  no longer moves the cursor. **`Core::setMouse`** no longer latches false
+  for the session after a push that could not move the cursor (an edge, the
+  mouse off).
+
+**Tools and files**
+
+- `pom2_dos33 get` keeps every record of a random-access text file, and
+  `put` keeps the `$00` padding; a name with trailing blanks finds the
+  existing file instead of adding a second entry.
+- `pom2_prodos get` writes a guest `.NAME` as `%2eNAME#TTAAAA` (never a host
+  dotfile), and both tools read that spelling back.
+- An AppleSingle `put` with a resource fork is refused unless
+  `--data-fork-only` says to drop it.
+- `pom2_prodos` accepts volumes with GS/OS extended files ($5) and a Pascal
+  area ($4) ([B] ProDOS 8 TN #25): their blocks are claimed, `rm` of an
+  extended file frees both forks, a Pascal area cannot be removed.
+- `pom2_disk recover` refuses to write over the damaged file through another
+  name for it, even with `--force`.
+- **ProDOS host folder**: a host read-only change made after the mount is no
+  longer undone at every flush; an unreadable root file no longer shifts the
+  52nd file.
+- **Media cache** keys are 128 bits of SHA-256, not a 32-bit FNV-1a (cache
+  poisoning by a colliding URL); old copies are carried over. URL downloads
+  are capped by POM2 itself (curl < 8.4 ignores `--max-filesize` when the
+  server announces no size).
+- ROM Status no longer labels the CCS 7710 and DAN ][ dumps "archive only";
+  turning browser automatic resume off deletes both saved machines.
+- Comments: the Mockingboard / AY clock is the bus clock, not the CPU clock;
+  the SmartPort empty-bay comment no longer claims the bus answers `$28`.
+- **6502 bus stamps**: every access is issued on its own bus cycle, opcode
+  fetch = 0 — the fetch was stamped +1, both operand bytes of an absolute
+  address on one cycle, both pushes of a JSR/IRQ/BRK on one cycle, the pulls
+  of PLA/PLP/RTS/RTI a cycle early, the vector fetches past the end. The
+  totals were right; the SDK bus watch and every `accessCycle()` reader now
+  see the cycle each access lands on.
+- **Liron** IWM accesses are stamped at their bus cycle too
+  (`SlotPeripheral::busAccessOffset`).
+- **`pom2_cpm`** finds the CP/M directory in the order it is in (a CP/M disk
+  saved as `.dsk` in ProDOS order was refused); an empty directory proves
+  nothing, so the extension's order stands for it.
+- **`pom2_prodos`** dates what `put` and `mkdir` create (they read as no
+  date).
+- **ROM downloads** are capped by POM2 itself, as URL disks are.
+- **Audio**: the mixer's scratch is sized for the largest buffer rung, and
+  the speaker and DAC queues are an `EventRing` only the producer grows, so
+  the realtime callback no longer allocates.
+- **][ / ][+**: host Alt no longer presses PB0/PB1 — those machines have no
+  Apple keys ([B]; [D] MAME `c060_r` @ b2a182f0b7), and Alt-Tab or a macOS
+  Option chord fired the game's buttons.
+- **SmartPort, as the silicon numbers it**: only the drives on the cable
+  are numbered, 1, 2, 3… in cable order, at the INIT that follows a reset
+  ([B] IIc Technical Reference, SmartPort; [C] Liron INIT `$CE00`). A bay set
+  to "(empty)" is no drive: the drives behind it take the next numbers (it
+  used to answer `$28` in the middle of the count on a //e and pose as a
+  doorless UniDisk on a //c), and STATUS unit 0 counts the drives, not the
+  bays. A drive plugged mid-session waits for the next reset; one unplugged
+  answers "no device" at its old number — no number moves under a
+  transaction. The CFFA3000 keeps its eight fixed device slots. Pinned by
+  `smartport_unit_visibility`; four tests re-pinned to the cable's numbers.
+
 ## 2026-11-07 — Bug hunt, two waves: NAT reconnects, a //c+ → //e beam, a stray $DB, and more
 
 Twelve read-only reviewers in two waves; the full account, fixes and
