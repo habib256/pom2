@@ -11734,3 +11734,13 @@ foreach(_pom2_t IN LISTS _pom2_all_tests)
     math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
     set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
 endforeach()
+
+# An IWM access is stamped at its own bus cycle, not the instruction start:
+# the //c+ on-board IWM and the Liron card's (bug hunt 2026-11-07). One
+# instruction per probe, then IWMDevice::emuCycles against start + offset.
+pom2_add_headless_test(test_iwm_access_stamp
+    NAME iwm_access_stamp TIMEOUT 30
+    SOURCES iwm_access_stamp_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(iwm_access_stamp PROPERTIES SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

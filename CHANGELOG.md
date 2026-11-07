@@ -76,8 +76,9 @@ without it unless noted. Account and what is still open:
 - **Disk II head** reaches quarter-tracks 157-159, which a WOZ TMAP can fill
   ([D] MAME stops at 164; [F] the real stop).
 - **IWM** (//c+, //c rear port) accesses are stamped at their bus cycle, not
-  the instruction start (3-6 cycles, 1.5-3 Sony cells, early). No dedicated
-  pin; the 3.5" boot tests guard it.
+  the instruction start (3-6 cycles, 1.5-3 Sony cells, early). Pinned by
+  `iwm_access_stamp` (one instruction per probe, the IWM's stamp read at
+  the access; fails at start+0 without the fix).
 - **AI `/mouse`** starts from the card's own counter (the one the GUI feeds),
   so the first delta after a pointer move no longer jumps up to 128; `reset`
   no longer moves the cursor. **`Core::setMouse`** no longer latches false
@@ -116,7 +117,7 @@ without it unless noted. Account and what is still open:
   totals were right; the SDK bus watch and every `accessCycle()` reader now
   see the cycle each access lands on.
 - **Liron** IWM accesses are stamped at their bus cycle too
-  (`SlotPeripheral::busAccessOffset`).
+  (`SlotPeripheral::busAccessOffset`); `iwm_access_stamp` pins the reads.
 - **`pom2_cpm`** finds the CP/M directory in the order it is in (a CP/M disk
   saved as `.dsk` in ProDOS order was refused); an empty directory proves
   nothing, so the extension's order stands for it.
