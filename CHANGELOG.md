@@ -10,6 +10,38 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — DIGIDREAM SID Voice Edition froze on the //c (the browser's machine)
+
+- **Report:** "digidream SID plante en wasm". It is not the WASM build: the
+  browser opens a PAL //c with a Mockingboard 4c, and on a //c French
+  Touch's DD2 (DIX) takes its //c-specific path — arm the IOU's VBL
+  interrupt (`STA $C079 / $C05B / $C078`) with the handler installed and I
+  clear, then `LDA $C019 / BPL -` ("wait for start of VBL (IIc specific)
+  and INT occurs"), the handler acknowledging with `BIT $C070`. Headless on
+  a //c the loop ran for ever: over 100 frames the handler entered 100
+  times and read VBLINT set 100 times, the main loop read `$C019`
+  289 256 times and never once saw bit 7. On a //e the demo takes its
+  other path and plays, which is why the desktop and the corpus never saw
+  it.
+- **Why:** POM2 latches VBLINT in `advanceCyclesVideo()`, which runs after
+  the instruction, and raises the IRQ line with it — so the interrupt was
+  taken before the next read and the handler had already cleared the flag.
+  On the silicon the LDA whose cycle 4 lands on or after the edge reads the
+  flag set (the 6502 sampled /IRQ on cycle 3 and still completes the read),
+  N survives the interrupt and the BPL falls through; the loop's phase walks
+  across the edge a cycle a frame, so it exits within a few frames. MAME's
+  cycle-stepped core gets it for free (`apple2e.cpp` @ 5346a8ce :1397-1400).
+  The //c `$C019` read now reports the latch **as of the access cycle**: an
+  edge inside the current instruction counts (`Memory.cpp`, the
+  `iicProfile_` branch). Nothing else moves — the IRQ line still rises at
+  the instruction's end, as POM2's instruction-granular core samples it.
+- **Pinned by** `vbl_ioudis_annunciator` §5 (the loop with an acknowledging
+  handler on the three //c ROMs; fails in 12 frames with the tick-time
+  latch, exits in 4.7 with the fix) and the corpus title
+  `dix-digidream-sid-iic` (//c PAL + 4c + DIX-fix, blessed with the demo's
+  DGR window on screen). The browser itself was not exercised (the Chrome
+  extension was offline); the Pages deploy follows `main`.
+
 ## 2026-11-07 — Ediciel Porte Parole (MEA8000 French speech card)
 
 - **New card `porteparole`** (`PorteParoleCard`, `Mea8000`): Ediciel's text-

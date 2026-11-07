@@ -217,6 +217,62 @@ int main()
         expect(!vblPending(mem), "//c: DisVBL with IOUDIS clear left the latch set");
         expect(!irqAsserted(cpu), "//c: DisVBL with IOUDIS clear left IRQ_SRC_VBL up");
     }
+
+    // 5. The latch is visible to the instruction that straddles the edge.
+    //    French Touch's DIGIDREAM SID Voice Edition (DIX, DD2/main.a) arms
+    //    the //c VBL interrupt with its handler INSTALLED and I CLEAR, then
+    //    polls `LDA $C019 / BPL -` ("wait for start of VBL (IIc specific)
+    //    and INT occurs"); the handler acknowledges with `BIT $C070`. On the
+    //    silicon the LDA whose read cycle lands on or after the edge sees
+    //    VBLINT set — the 6502 sampled /IRQ one cycle earlier and still
+    //    completes the read — so N survives the interrupt and the BPL falls
+    //    through. POM2 set the latch (and the IRQ line) only at the end of
+    //    the instruction, so the handler always cleared it before the next
+    //    read and the loop never ended: the demo froze on the //c, which is
+    //    the browser's default machine (2026-11-07). The loop's phase walks
+    //    across the edge one cycle a frame (17030 mod 7 = 6, 20280 mod 7 = 1),
+    //    so it must exit within a handful of frames, never more.
+    for (const auto& candidate : iicRoms) {
+        const std::string rom = firstExisting({candidate});
+        if (rom.empty()) continue;
+        Memory mem;
+        M6502  cpu(&mem);
+        mem.setCpu(&cpu);
+        mem.clearRam();
+        mem.setIIEMode(true);
+        if (!mem.loadAppleIIRom(rom.c_str(), true)) { ++failures; continue; }
+        mem.resetSoftSwitches();
+        cpu.setCpuMode(M6502::CpuMode::CMOS);
+        cpu.hardReset();
+        // Language card bank 1, read AND write ($C08B twice), so the IRQ
+        // vector and the handler are ours and not the firmware's.
+        (void)mem.memRead(0xC08B); (void)mem.memRead(0xC08B);
+        const uint8_t handler[] = { 0x2C, 0x19, 0xC0,   // BIT $C019  (VERTBLANK)
+                                    0x2C, 0x70, 0xC0,   // BIT $C070  (VBLCLR)
+                                    0xE6, 0x06,         // INC $06    (count)
+                                    0x40 };             // RTI
+        for (size_t i = 0; i < sizeof handler; ++i) mem.memWrite(uint16_t(0xFF00 + i), handler[i]);
+        mem.memWrite(0xFFFE, 0x00); mem.memWrite(0xFFFF, 0xFF);
+        const uint8_t loop[] = { 0x58,                   // CLI
+                                 0xAD, 0x19, 0xC0,       // - LDA $C019
+                                 0x10, 0xFB,             //   BPL -
+                                 0x4C, 0x06, 0x03 };     // JMP *   ($0306)
+        for (size_t i = 0; i < sizeof loop; ++i) mem.memWrite(uint16_t(0x0300 + i), loop[i]);
+        mem.memWrite(0x06, 0);
+        cpu.setProgramCounter(0x0300);
+        // DD2's exact arming order: IOUDIS clear, EnVBL, IOUDIS set again.
+        mem.memWrite(0xC079, 0); mem.memWrite(0xC05B, 0); mem.memWrite(0xC078, 0);
+        uint64_t ran = 0;
+        const uint64_t limit = 12 * kFrameCyclesNtsc;
+        while (ran < limit && cpu.getProgramCounter() != 0x0306) ran += uint64_t(cpu.run(64));
+        const int handled = mem.peekMainRam(0x06);
+        std::printf("  %s: polled loop ended after %.1f frames, handler ran %d time(s)\n",
+                    candidate.c_str(), double(ran) / kFrameCyclesNtsc, handled);
+        expect(cpu.getProgramCounter() == 0x0306,
+               "//c: LDA $C019 / BPL with the VBL handler acknowledging never saw VBLINT set");
+        expect(handled >= 1, "//c: the VBL handler never ran");
+        expect(ran < 9 * kFrameCyclesNtsc, "//c: the polled loop took more than 8 frames to see VBLINT");
+    }
     if (tested == 0) {
         std::printf("SKIP vbl_ioudis_annunciator: no //c-class ROM in roms/\n");
         return failures ? 1 : 0;

@@ -962,6 +962,28 @@ write side (even = RDIOUDIS; odd = RDDHIRES, bit 7 = !DHGR, also //c-only). Pinn
 own `$C068` mirror kept them (`Memory::softSwitchAccess`, MAME
 `apple2e.cpp:2177-2185`).
 
+**VBLINT is read as of the access cycle** *(2026-11-07)*. On a //c `$C019`
+is the latched VBL interrupt flag. POM2 sets that latch in
+`advanceCyclesVideo()`, after the instruction, together with the IRQ line —
+so a `LDA $C019` whose read cycle fell on or after the edge returned 0, the
+interrupt was taken right after it, and a handler that acknowledges
+(`BIT $C070`) cleared the flag before the next read. A poller with the
+interrupt enabled therefore never saw bit 7: French Touch's DIGIDREAM SID
+Voice Edition (DIX `DD2/main.a`, "wait for start of VBL (IIc specific) and
+INT occurs", `LDA VERTBLANK / BPL`) froze on the //c, which is the browser's
+default machine. On the silicon the LDA that straddles the edge reads the
+flag set (the 6502 samples /IRQ on its penultimate cycle and still completes
+the read), N survives the interrupt and the BPL falls through; the loop's
+phase walks across the edge a cycle a frame (20280 mod 7 = 1). The //c
+`$C019` read now counts an edge that falls inside the current instruction
+(`videoAccessCycle()` against `vblFrameBase_ + 192·65` while `vblWasActive`
+and the mask is armed); the IRQ line itself still rises at the instruction's
+end, which is where POM2's instruction-granular core samples it (M6502.cpp,
+"interrupt sampling is instruction-granular"). MAME's cycle-stepped m65c02
+has the same observable order for free (`apple2e.cpp` @ 5346a8ce
+:1397-1400). Pinned by `vbl_ioudis_annunciator` §5 and the corpus title
+`dix-digidream-sid-iic`.
+
 **The //c's ACIAs never read as the floating bus** *(2026-10-06)*. Its two
 6551s (`$C098-$C09F` printer port, `$C0A8-$C0AF` modem port) are soldered
 to the board, so when no slot-1/2 SSC models one (a hand-built bench, a card
