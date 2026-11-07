@@ -32,6 +32,7 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -837,8 +838,33 @@ void testC800ClaimFollowsTheEprom()
     std::printf("  ok: the $C800 claim follows the EPROM\n");
 }
 
+// DATA_OUT's free-running pulse travels with a snapshot (bug hunt
+// 2026-11-01 round 4). It used to restart at the restore: the 1 Hz square
+// wave of REGISTER_HOLD came back half a period out, so a guest polling it
+// across a rewind saw another timeline than the one recorded.
+void testDataOutPhaseSurvivesSnapshot()
+{
+    ClockCard a(4);
+    a.deviceSelectWrite(0, 0x00);          // REGISTER_HOLD (mode 0), STB low
+    a.deviceSelectWrite(0, kBitStb);       // STB rising: the pulse starts
+    const int cyclesPerSecond = 1022727;
+    a.advanceCycles(cyclesPerSecond * 6 / 10);
+    std::vector<uint8_t> blob;
+    a.appendSnapshotState(blob);
+    ClockCard b(4);
+    b.loadSnapshotState(blob.data(), blob.size());
+    for (int step = 0; step < 6; ++step) {
+        a.advanceCycles(cyclesPerSecond / 5);
+        b.advanceCycles(cyclesPerSecond / 5);
+        assert((a.deviceSelectRead(0) & 0x80) == (b.deviceSelectRead(0) & 0x80) &&
+               "DATA_OUT's phase did not survive the snapshot");
+    }
+}
+
 int main()
 {
+    testDataOutPhaseSurvivesSnapshot();
+    std::printf("DATA_OUT pulse phase survives a snapshot: OK\n");
     testC800ClaimFollowsTheEprom();
     testSignature();
     std::printf("ProDOS detection signature: OK\n");

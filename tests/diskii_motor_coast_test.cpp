@@ -310,6 +310,30 @@ int main()
         assert(resumed > 1000 && "and certainly not back at index");
     }
 
+    // 7c. A drive swap with the motor on stops the old drive's platter where
+    //     it is, and selecting it again resumes there ([D] MAME floppy.cpp:
+    //     871-876 @ b2a182f0b7 — mon_w(true) saves the angle on every on→off,
+    //     and wozfdc.cpp:269-290 calls it on the old drive of a $C0nA/$C0nB
+    //     swap). selectDrive skipped the save: drive 1 came back at index
+    //     (bug hunt 2026-11-07).
+    {
+        auto c = std::make_unique<DiskIICard>();
+        assert(c->loadBootRom(pom2test::diskIIRomPath("disk2.rom")));
+        assert(c->loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"), /*selectBitLss=*/true));
+        c->setIwmHost(false);
+        c->setWriteBackEnabled(false);
+        assert(c->insertDisk(0, dsk.string()) && c->insertDisk(1, dsk.string()));
+        assert(c->usingBitLss());
+        c->deviceSelectRead(0x9); c->advanceCycles(300'000);   // drive 1 spinning
+        const int before = c->getFluxPosition(0);
+        assert(before > 1000);
+        c->deviceSelectRead(0xB); c->advanceCycles(1'000);     // drive 2 selected
+        c->deviceSelectRead(0xA);                               // back to drive 1
+        const int after = c->getFluxPosition(0);
+        assert(std::abs(after - before) <= 4 &&
+               "a swapped-out drive resumes at its angle, not at index");
+    }
+
     // 8. A CPU SLOWER than the bus (a FASTChip at 0.2 MHz: ratio 5 bus ticks
     //    per CPU cycle). The motor stop splits a batch at the deadline, so
     //    one 300 k-cycle batch and 300 k one-cycle steps across the stop

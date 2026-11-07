@@ -736,8 +736,8 @@ void Memory::resetSoftSwitches(bool warm)
     // The comment here used to claim upstream did the same —
     // caught by `docs/audits/parite-apple2e-2026-11-01.md`.
     // It gates the IOU/mouse softswitches off until the firmware clears
-    // it via $C07F. Shared by IIe, IIc, IIc+ even though IIe ignores
-    // SET/CLR — the read at $C07E still returns the bit.
+    // it via $C07F. Shared by IIe, IIc, IIc+; a plain //e ignores SET/CLR
+    // and its $C07E read is the floating bus (RDIOUDIS is //c-class only).
     ioudis = true;
     // RamWorks III — MAME `a2eramworks3.cpp:65-68 device_reset` snaps
     // `m_bank = 0`, but that is a MACHINE reset: the reset key
@@ -1811,9 +1811,12 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
         // II/II+ have no internal slot-3/8 ROM, so the chip sits under
         // the Monitor ROM at $F800 instead. //e / //c-class hook the
         // NSC inside the INTCXROM/SLOTC3ROM branches at $C300 + $C800
-        // (where ProDOS 2.4 + GS-OS actually scan). Gate on
-        // !iieMode + LC-ROM-mapped so this exactly matches AppleWin's
-        // `!SW_HIGHRAM && !SW_WRITERAM` check.
+        // (where ProDOS 2.4 + GS-OS actually scan). Gate on !iieMode +
+        // ROM-mapped + INH released. NOT AppleWin's `!SW_HIGHRAM &&
+        // !SW_WRITERAM`: MF_WRITERAM is the LC's write-enable, set at
+        // reset, so AppleWin's clock is off after every reset until an even
+        // $C08x access; the ROM socket's chip-select does not depend on the
+        // LC's write-enable, and POM2 deliberately does not follow it.
         if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam && !inhRead_) {
             v = noSlotClock_->interceptRead(addr, v);
         }
@@ -2142,7 +2145,11 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         // key with STA and never unlocked the clock with only the read
         // hook wired. Same gating as the read site (II+ Monitor-ROM
         // window, LC ROM mapped).
-        if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam) {
+        // INH removes the ROM socket's chip-select for writes too ([B] on a
+        // ][+ R/W does not reach the socket, INH does): a Saturn reading RAM
+        // fed every store to the clock's key matcher (bug hunt 2026-11-07).
+        if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam &&
+            !(lcInhibitor_ && (inhRead_ || lcInhibitor_->inhibitsWrite()))) {
             noSlotClock_->interceptWrite(addr);
         }
         languageCardWrite(addr, value);

@@ -252,6 +252,16 @@ public:
         bool  textSharp = true;   // true = crisp framebuffer TEXT (no demod)
     };
     void setOeDemodParams(const OeDemodParams& p) { oeDemod_ = p; }
+    /// The controller's run state, told by the host each render. A RUNNING
+    /// machine is never "idle", even when the worker sits between two bursts
+    /// and the counter has not moved since the last render — it runs a
+    /// frame's budget in a few ms and sleeps to the next tick, so on a 60 Hz
+    /// (and more so a 120/144 Hz) monitor many renders land inside a sleep.
+    /// Inferring "stopped" from an unchanged counter painted those renders
+    /// from live RAM instead of beam-time RAM: a flicker the video write log
+    /// exists to remove (bug hunt 2026-11-07). Default false: a host that
+    /// never says keeps the inference (tests, the SDK).
+    void setMachineRunning(bool running) { machineRunning_ = running; }
     const OeDemodParams& getOeDemodParams() const { return oeDemod_; }
 
     /// Display state consumed by the most recent render() — the *published*
@@ -486,6 +496,7 @@ private:
     uint32_t lastRenderFrame_ = 0;
     bool     renderedOnce_    = false;
     bool     cpuIdle_         = false;
+    bool     machineRunning_  = false;   // setMachineRunning
     Memory::DisplayState liveStateAtRun_{};
     // Fold the switches moved while the CPU was idle onto `s`. No-op when the
     // CPU is running.

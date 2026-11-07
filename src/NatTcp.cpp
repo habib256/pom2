@@ -37,6 +37,14 @@ void TcpConnection::onGuestSegment(const TcpSegment& segment)
         sendToGuest(kTcpSyn | kTcpAck, ourIsn_, nullptr, 0, kMaxMss);
         return;
     }
+    // Any OTHER SYN on an established connection: the guest rebooted or was
+    // rewound (the NIC comes back from a snapshot, this table does not) and
+    // reuses the 4-tuple — uIP restarts its ports at 1024. [B] RFC 5961
+    // § 4.2: answer with a challenge ACK; the guest, in SYN-SENT, resets it
+    // ([B] RFC 793 § 3.9) and the RST arm above closes the stale entry.
+    // Swallowed, every retry was lost until the server timed out
+    // (bug hunt 2026-11-07).
+    if (segment.flags & kTcpSyn) { sendAck(); return; }
     if (segment.flags & kTcpAck) onAck(segment);
     onData(segment);
     onFin(segment);
@@ -174,11 +182,17 @@ void TcpConnection::pumpGuestSend(uint64_t nowMs)
     }
 }
 
-/// The oldest unacknowledged segment — data, or the FIN — once per
-/// kRetransmitMs without progress, up to kMaxRetransmits times.
+/// The oldest unacknowledged segment — data, or the FIN — with a timeout that
+/// doubles on each resend from kRetransmitMs up to kMaxRtoMs ([B] RFC 6298
+/// § 5.5), up to kMaxRetransmits times: about three minutes without progress,
+/// above RFC 1122 § 4.2.3.5's R2 floor of 100 s. A fixed 1 s timer reset
+/// the connection after ~9 s — a guest busy on a 5.25" overlay for that
+/// long lost its transfer (bug hunt 2026-11-07).
 void TcpConnection::pumpRetransmit(uint64_t nowMs)
 {
-    if (inFlight() == 0 || nowMs - lastSendMs_ < kRetransmitMs) return;
+    const uint64_t rto = std::min<uint64_t>(
+        kRetransmitMs << std::min(retransmits_, 6), kMaxRtoMs);
+    if (inFlight() == 0 || nowMs - lastSendMs_ < rto) return;
     if (++retransmits_ > kMaxRetransmits) { resetAndClose(); return; }
     lastSendMs_ = nowMs;
 

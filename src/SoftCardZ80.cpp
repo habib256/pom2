@@ -200,6 +200,7 @@ void SoftCardZ80::loadSnapshotState(const uint8_t* data, std::size_t len)
     constexpr std::size_t kLen = 4 + 1 + 22 + 10;
     if (len < kLen || std::memcmp(data, kMagic, 4) != 0)
         return;   // foreign or older blob — keep current state
+    busCarry_ = 0.0;   // accelerated-cycle carry: not in the blob (ApplicardCard's note)
     const uint8_t* p = data + 4;
     const uint8_t flags = *p++;
     enabled_      = (flags & 1) != 0;

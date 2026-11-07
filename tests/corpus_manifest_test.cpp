@@ -133,6 +133,20 @@ int main()
     refuses("title a iie\n  diskii 1 a.dsk\n  diskii 1 b.dsk\n  check x\n", 3,
             "one drive given twice");
     refuses("title a\n  check x\n", 1, "a title without a profile");
+    // Ids and check names become path components and the scratch is
+    // remove_all'd per title: `..` removed $TMPDIR (bug hunt 2026-11-07).
+    refuses("title .. iie\n  check x\n", 1, "a title id of '..'");
+    refuses("title /abs iie\n  check x\n", 1, "an absolute title id");
+    refuses("title a/b iie\n  check x\n", 1, "a title id with a separator");
+    refuses("title .hidden iie\n  check x\n", 1, "a title id starting with '.'");
+    refuses("title a iie\n  check ../x\n", 2, "a check name with a separator");
+    refuses("title a iie\n  check ..\n", 2, "a check name of '..'");
+    {
+        Manifest ok;
+        std::string err;
+        expect(parses("title v1.2_x-y iie\n  check a.b_c-1\n", ok, err),
+               "a plain id with '.', '_' and '-' is still accepted");
+    }
 
     // ── Expectations: round trip, sorted, refusals.
     Expectations e;

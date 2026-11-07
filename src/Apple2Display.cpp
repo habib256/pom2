@@ -558,7 +558,7 @@ void Apple2Display::render(Memory& mem)
         // backwards jump (rewind) wraps the unsigned subtraction huge, which
         // also drops the override — the right answer there too.
         const bool wasIdle = cpuIdle_;
-        cpuIdle_ = renderedOnce_ &&
+        cpuIdle_ = renderedOnce_ && !machineRunning_ &&
                    (cyc == lastRenderCycle_ ||
                     (wasIdle && frameCounter == lastRenderFrame_ &&
                      cyc - lastRenderCycle_ <= 8));

@@ -76,6 +76,19 @@ bool tokenize(const std::string& line, std::vector<std::string>& words,
     return true;
 }
 
+// A title id and a check name become path components (the scratch copy,
+// `--frames DIR/<id>__<check>.png`) and the scratch is remove_all'd per title:
+// `title .. ii` removed $TMPDIR, and an absolute id replaced the scratch root
+// outright (std::filesystem's `/`). Plain names only (bug hunt 2026-11-07).
+bool plainName(const std::string& s)
+{
+    if (s.empty() || s[0] == '.' || s.size() > 64) return false;
+    return std::all_of(s.begin(), s.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-' ||
+               c == '_' || c == '.';
+    });
+}
+
 bool parseInt(const std::string& s, int lo, int hi, int& out)
 {
     if (s.empty()) return false;
@@ -153,6 +166,9 @@ bool parseManifest(std::istream& in, Manifest& out, std::string& error)
         if (kw == "title") {
             if (!finishTitle()) return false;
             if (w.size() < 3) return fail("title needs an id and a profile");
+            if (!plainName(w[1]))
+                return fail("title id '" + w[1] + "' must be letters, digits, '-', '_', '.'"
+                            " and not start with '.'");
             if (!ids.insert(w[1]).second) return fail("duplicate title '" + w[1] + "'");
             Title t;
             t.id = w[1];
@@ -228,6 +244,9 @@ bool parseManifest(std::istream& in, Manifest& out, std::string& error)
             s.text = w[1];
         } else if (kw == "check") {
             if (w.size() != 2) return fail("check takes a name");
+            if (!plainName(w[1]))
+                return fail("check name '" + w[1] + "' must be letters, digits, '-', '_', '.'"
+                            " and not start with '.'");
             if (!checks.insert(w[1]).second) return fail("duplicate check '" + w[1] + "'");
             s.kind = Step::Kind::Check;
             s.text = w[1];

@@ -133,6 +133,11 @@ void IIcMouse::appendSnapshotState(std::vector<uint8_t>& out) const
     for (int v : {countX_, countY_}) {
         out.push_back(uint8_t(v)); out.push_back(uint8_t(uint16_t(v) >> 8));
     }
+    // Optional 20th byte (2026-11-07): the stale-latch counter. Without it a
+    // restore reset it to 0, so a latch already given up on was held again
+    // for kStaleLatchLines more scanlines (bug hunt 2026-11-01 round 4). Only
+    // its saturation matters, hence the clamp.
+    out.push_back(uint8_t(std::min(releasedFor_, kStaleLatchLines)));
 }
 
 void IIcMouse::loadSnapshotState(const uint8_t* p, size_t n)
@@ -142,9 +147,9 @@ void IIcMouse::loadSnapshotState(const uint8_t* p, size_t n)
 
 bool IIcMouse::validateIicMouseState(const uint8_t* p, size_t n) const
 {
-    if (!p || n != 19 || std::memcmp(p, "IOU1", 4) || p[14] >= 65) return false;
+    if (!p || (n != 19 && n != 20) || std::memcmp(p, "IOU1", 4) || p[14] >= 65) return false;
     for (int i=4; i<14; ++i) if (p[i] > 1) return false;
-    return true;
+    return n == 19 || p[19] <= kStaleLatchLines;
 }
 
 bool IIcMouse::loadIicMouseState(const uint8_t* p, size_t n)
@@ -154,6 +159,7 @@ bool IIcMouse::loadIicMouseState(const uint8_t* p, size_t n)
     x1_=p[9]; y1_=p[10]; xIrq_=p[11]; yIrq_=p[12]; phase_=p[14];
     auto signed16 = [](int v) { return v >= 32768 ? v-65536 : v; };
     countX_=signed16(p[15] | (p[16]<<8)); countY_=signed16(p[17] | (p[18]<<8));
+    releasedFor_ = n == 20 ? p[19] : 0;
     assertIrq(p[13]);
     // Current host position/button stay live across rewind. Only queued
     // emulated edges and chip state travel back in time.

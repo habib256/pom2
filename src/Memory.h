@@ -1057,6 +1057,7 @@ public:
     uint64_t videoNow() const { return videoCycleAt(cycleCounter); }
     uint64_t videoAccessCycle() const { return videoCycleAt(accessCycle()); }
     uint64_t nextVblCpuCycle(uint64_t cpuNow) const;   // SlotBus::nextVblCpuCycle
+    double videoClockRatio() const { return vRatio_; }
     /// Video cycles per CPU cycle from now on (1 / the accelerator's speed).
     void setVideoClockRatio(double r)
     {
@@ -1333,8 +1334,9 @@ private:
     // current frame, then its end). 0 = run it on the next call.
     uint64_t vblNextEventCycle_ = 0;
     uint64_t cycleCounter     = 0;       // hand-rolled, see advanceCycles()
-    // videoCycleAt's anchor and slope. Not snapshotted: a restore re-anchors
-    // to the identity (setCycleCounter), as the clock did before it existed.
+    // videoCycleAt's anchor and slope. In the snapshot (the beam's-clock
+    // section, MemorySnapshot.cpp); an empty section leaves the identity
+    // anchor setCycleCounter set, and the controller re-asserts the ratio.
     uint64_t vAnchorCpu_   = 0;
     uint64_t vAnchorVideo_ = 0;
     double   vRatio_       = 1.0;

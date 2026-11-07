@@ -179,7 +179,7 @@ AudioDevice::AudioDevice() : AudioDevice(OutputMode::Host)
 // constructor, before the settings are restored (and before IDBFS has
 // necessarily synced), and the whole point is to open it right the first
 // time. Guarded: a private window or a blocked origin throws on access.
-uint32_t AudioDevice::rememberedPeriodFrames()
+uint32_t AudioDevice::rememberedPeriodFrames(bool* pinned)
 {
 #if defined(__EMSCRIPTEN__)
     const int frames = EM_ASM_INT({
@@ -189,21 +189,28 @@ uint32_t AudioDevice::rememberedPeriodFrames()
             return (n > 0 && n < 65536) ? n : 0;
         } catch (e) { return 0; }
     });
+    if (pinned) *pinned = EM_ASM_INT({
+        try { return window.localStorage.getItem('pom2.audio_buffer_pinned') === '1' ? 1 : 0; }
+        catch (e) { return 0; }
+    }) != 0;
     return static_cast<uint32_t>(frames);
 #else
+    if (pinned) *pinned = false;
     return 0;
 #endif
 }
 
-void AudioDevice::rememberPeriodFrames(uint32_t frames)
+void AudioDevice::rememberPeriodFrames(uint32_t frames, bool pinned)
 {
 #if defined(__EMSCRIPTEN__)
     EM_ASM({
-        try { window.localStorage.setItem('pom2.audio_buffer_frames', String($0)); }
-        catch (e) {}
-    }, static_cast<int>(frames));
+        try {
+            window.localStorage.setItem('pom2.audio_buffer_frames', String($0));
+            window.localStorage.setItem('pom2.audio_buffer_pinned', $1 ? '1' : '0');
+        } catch (e) {}
+    }, static_cast<int>(frames), pinned ? 1 : 0);
 #else
-    (void)frames;
+    (void)frames; (void)pinned;
 #endif
 }
 
@@ -211,11 +218,11 @@ AudioDevice::AudioDevice(OutputMode mode)
     : platform_(detectPlatform())
 {
     uint32_t start = pom2::AudioBufferPolicy::defaultPeriodFrames(platform_);
-    // The browser's remembered rung, when it is one and above the default
-    // (a default that moved up makes an older memory stale).
-    const uint32_t remembered = rememberedPeriodFrames();
-    if (pom2::AudioBufferPolicy::isRung(remembered, platform_) && remembered > start)
-        start = remembered;
+    // The browser's remembered rung (AudioBufferPolicy::startRung): a learned
+    // one only when above the default, a pinned one as the user set it.
+    bool pinned = false;
+    const uint32_t remembered = rememberedPeriodFrames(&pinned);
+    start = pom2::AudioBufferPolicy::startRung(platform_, remembered, pinned);
     periodFrames_.store(start, std::memory_order_relaxed);
     nextLoadPeriodFrames_ = start;
     hostMode_ = (mode == OutputMode::Host);
@@ -256,13 +263,13 @@ void AudioDevice::notificationCallback(const void* opaque)
         self->stopped_.store(true, std::memory_order_relaxed);
 }
 
-bool AudioDevice::reconfigurePeriod(uint32_t periodFrames)
+bool AudioDevice::reconfigurePeriod(uint32_t periodFrames, bool pinned)
 {
     if (!pom2::AudioBufferPolicy::isRung(periodFrames, platform_)) return false;
     if (appliesAtNextLoad()) {
         // Browser: remember, never re-open (see the header).
         nextLoadPeriodFrames_ = periodFrames;
-        rememberPeriodFrames(periodFrames);
+        rememberPeriodFrames(periodFrames, pinned);
         return true;
     }
     nextLoadPeriodFrames_ = periodFrames;

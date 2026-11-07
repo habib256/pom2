@@ -813,6 +813,14 @@ void ClockCard::appendSnapshotState(std::vector<uint8_t>& out) const
     const uint64_t held = static_cast<uint64_t>(heldTime_);
     for (int i = 0; i < 8; ++i)
         out.push_back(static_cast<uint8_t>(held >> (8 * i)));
+    // Second optional tail (2026-11-07): DATA_OUT's free-running pulse — its
+    // level at mode entry and the cycles since. Without it a rewind or a
+    // session restarted the 1 Hz / 0.5 Hz square wave at the restore, and a
+    // guest polling DATA_OUT in REGISTER_HOLD saw another timeline than the
+    // one recorded (bug hunt 2026-11-01 round 4).
+    out.push_back(dataOutStart_ ? 1 : 0);
+    for (int i = 0; i < 8; ++i)
+        out.push_back(static_cast<uint8_t>(dataOutCycles_ >> (8 * i)));
 }
 
 void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -874,6 +882,14 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         uint64_t held = 0;
         for (int i = 0; i < 8; ++i) held |= static_cast<uint64_t>(data[p++]) << (8 * i);
         heldTime_ = static_cast<std::time_t>(held);
+    }
+    dataOutStart_  = false;
+    dataOutCycles_ = 0;
+    if (len >= kClkSnapBytes + 18) {          // optional DATA_OUT phase tail
+        dataOutStart_ = data[p++] != 0;
+        uint64_t cyc = 0;
+        for (int i = 0; i < 8; ++i) cyc |= static_cast<uint64_t>(data[p++]) << (8 * i);
+        dataOutCycles_ = cyc;
     }
     // Re-drive the slot IRQ line from the restored request flip-flop:
     // assertIrq() owns the wire-OR bookkeeping in SlotPeripheral.

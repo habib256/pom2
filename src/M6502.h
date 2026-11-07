@@ -460,9 +460,15 @@ private :
     CpuMode     ownCpuMode = CpuMode::CMOS;   // the machine's own chip
     bool        cmosSubstitute_ = false;
     bool        ncr_ = false;   // see setNcr65C02
-    /// A CMOS dispatch drops the Rockwell/WDC opcodes: the machine's own NCR
-    /// part, not while a TransWarp's 65C02 runs the program.
-    bool        ncrDispatch() const { return ncr_ && !cmosSubstitute_; }
+    /// A CMOS dispatch drops the Rockwell/WDC opcodes (RMB/SMB/BBR/BBS,
+    /// WAI/STP → 1-byte NOPs): the machine's own NCR part, and a TransWarp's
+    /// 65C02 too. [D] MAME a2bus/transwarp.cpp:172 @ b2a182f0b7 seats a
+    /// W65C02, whose dw65c02.lst has no bit ops and no WAI/STP. POM2 gave the
+    /// substitute the superset with no source: a stray $DB halted an
+    /// accelerated machine — the bug setNcr65C02 exists to prevent (bug hunt
+    /// 2026-11-07). [F] The card's chip vendor is unknown; settled by a board
+    /// photo, or a $DB run on a real TransWarp.
+    bool        ncrDispatch() const { return ncr_ || cmosSubstitute_; }
     void        applyDispatch(CpuMode mode);
 
     /// Set by `STP` ($DB on 65C02 / W65C02). When true, `step()` skips

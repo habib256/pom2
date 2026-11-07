@@ -1272,9 +1272,14 @@ double ImageWriter::byteCost(uint8_t ch) const
     // parameters) never move the mechanism — they land in a register. The
     // Epson / Diablo binary parameters too: a parameter of 12 used to be
     // charged a form-feed slew, so every `ESC A 12` held the drain (and a
-    // Grappler+'s BUSY) for ~2.2 s.
+    // Grappler+'s BUSY) for ~2.2 s. So are DATA streams the parser swallows
+    // whole — a custom-font download, an ESC/P `ESC ^` / `ESC &` body, an
+    // `ESC D`/`B`/`b` list: their $0C/$0A/$0D bytes were charged a slew, a
+    // line feed or a return each (bug hunt 2026-11-07; [B] ImageWriter II
+    // Technical Reference ch. 7: download data are dot columns).
     if (escSeen_ || fsSeen_ || numParam_ < neededParam_ ||
-        epsonNeed_ > 0 || diabloNeed_ > 0)
+        epsonNeed_ > 0 || diabloNeed_ > 0 || customLoad_ != CustomLoad::Off ||
+        epsonSkip_ > 0 || epsonListCmd_ != 0)
         return 0.0;
 
     switch (ch & 0x7F) {

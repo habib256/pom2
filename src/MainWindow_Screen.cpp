@@ -27,6 +27,7 @@
 #include "MainWindow.h"
 
 #include "Apple2Display.h"
+#include "BrowserFiles.h"
 #include "ScreenshotExport.h"
 #include "CrtPresets.h"
 #include "SystemProfile.h"
@@ -98,6 +99,17 @@ void MainWindow::saveScreenshot()
     pom2::log().info("Screenshot", "wrote " + out.string() +
                      " (" + std::to_string(w) + "x" + std::to_string(h) + ")");
     tapeStatusMessage = "Screenshot: " + out.string();
+#ifdef __EMSCRIPTEN__
+    // userDataDir() is MEMFS in the browser: the file vanishes on reload and
+    // its path means nothing to the visitor, who was told it was written
+    // (WASM-4, bug hunt 2026-11-01 round 3). Hand it over as a download.
+    {
+        std::string derr;
+        tapeStatusMessage = pom2::downloadBrowserFile(out.string(), out.filename().string(), derr)
+            ? "Screenshot downloaded: " + out.filename().string()
+            : "Screenshot: " + derr;
+    }
+#endif
     tapeStatusUntil   = lastFrameTime + 3.0;
 }
 
@@ -154,6 +166,7 @@ void MainWindow::uploadScreenTexture()
         // captured frame. Still ahead of render(), which is what the
         // ordering above is about.
         display->setOeDemodParams(dp);
+        display->setMachineRunning(controller->getMode() == EmulationController::Mode::Running);
         display->render(st.memory());
     }
     display->finishPendingCpuDemod();

@@ -246,6 +246,28 @@ int main()
         assert(!row(after, before, 0) && "a poke while stopped shows at once");
     }
 
+    // A RUNNING machine between two worker bursts: the counter has not moved
+    // since the last render, but the machine is not stopped. The repaint must
+    // stay on beam-time RAM, not show RAM the worker wrote past the published
+    // frame (bug hunt 2026-11-07: the idle inference flickered at 60 Hz).
+    {
+        Memory mem; populate(mem); hgrMode(mem); mem.memRead(SET_PAGE1);
+        mem.setCycleCounter(0);
+        advanceTo(mem, 50 * 65);
+        mem.memRead(SET_PAGE2); mem.memRead(SET_PAGE1);
+        advanceTo(mem, 3 * kFrame + 100);
+        assert(mem.videoWriteLogArmed());
+        Apple2Display d;
+        d.setAuxMemory(mem.auxData());
+        d.setMachineRunning(true);
+        d.render(mem);
+        const std::vector<uint32_t> before(d.pixels(), d.pixels() + W * H);
+        for (uint16_t a = 0x2000; a < 0x2028; ++a) mem.memWrite(a, 0x7F);   // next frame's work
+        d.render(mem);                                     // no cycles, still running
+        const std::vector<uint32_t> after(d.pixels(), d.pixels() + W * H);
+        assert(after == before && "a running machine's repaint left beam-time RAM");
+    }
+
     // A clock jump (rewind, snapshot load) under an armed log. The old
     // timeline's entries carry future cycles; left in the log they blocked
     // its trim, an entry from the frame BEFORE the published one survived,

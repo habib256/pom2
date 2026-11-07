@@ -238,7 +238,7 @@ private:
     /// Browser: one climb per session — it is remembered for the next load,
     /// so the late callbacks that follow are still the OLD buffer's.
     bool          climbDeferred_     = false;
-    void applyLadderRung(std::uint32_t frames, const std::string& why);
+    void applyLadderRung(std::uint32_t frames, const std::string& why, bool pinned = false);
 };
 
 } // namespace pom2

@@ -281,15 +281,27 @@ bool Ssi263::advance(int cycles)
 // the contribution. Otherwise we sum (not overwrite) into `output`
 // so the host's AudioSrc can mix multiple sources.
 
+// ONE prime for the audio-side register bank, used by both primers. Two
+// copies drifted: the pitch registers (aInflect_ / aRateInf_, 2026-11-06)
+// reached fillAudioTimed's and not this one, which both cards call before
+// every SSI write — so after a session load, a rewind or a reset the
+// formant voice spoke at a stale or zero inflection (~31 Hz from a fresh
+// chip) until the driver wrote INFLECT again (bug hunt 2026-11-07).
+void Ssi263::primeShadow()
+{
+    if (aPrimed_) return;
+    aDurPhon_ = durPhon_;
+    aCttrAmp_ = cttrAmp_;
+    aFilFreq_ = filFreq_;
+    aInflect_ = inflect_;
+    aRateInf_ = rateInf_;
+    aMode_    = mode_;
+    aPrimed_  = true;
+}
+
 void Ssi263::prepareTimedPlayback()
 {
-    if (!aPrimed_) {
-        aDurPhon_ = durPhon_;
-        aCttrAmp_ = cttrAmp_;
-        aFilFreq_ = filFreq_;
-        aMode_ = mode_;
-        aPrimed_ = true;
-    }
+    primeShadow();
     timedPlayback_ = true;
 }
 
@@ -352,15 +364,7 @@ void Ssi263::fillAudioTimed(float* output, int frameCount, uint32_t sampleRate,
         fillAudio(output, frameCount, sampleRate);
         return;
     }
-    if (!aPrimed_) {                          // first buffer, or after a drop
-        aDurPhon_ = durPhon_;
-        aCttrAmp_ = cttrAmp_;
-        aFilFreq_ = filFreq_;
-        aInflect_ = inflect_;
-        aRateInf_ = rateInf_;
-        aMode_    = mode_;
-        aPrimed_  = true;
-    }
+    primeShadow();                            // first buffer, or after a drop
 
     int    i     = 0;
     double cycle = startCycle;

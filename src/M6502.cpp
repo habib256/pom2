@@ -1406,8 +1406,8 @@ void M6502::applyDispatch(CpuMode mode)
     cpuMode = mode;
     std::memcpy(opcodeTable, kCmosTable, sizeof(opcodeTable));
     if (mode == CpuMode::CMOS) {
-        // NCR65C02 (setNcr65C02): no Rockwell bit ops, no WAI/STP — 1-byte,
-        // 1-cycle NOPs. Not while a TransWarp's own 65C02 runs the program.
+        // NCR65C02 (setNcr65C02) or a TransWarp's 65C02 (ncrDispatch): no
+        // Rockwell bit ops, no WAI/STP — 1-byte, 1-cycle NOPs.
         if (ncrDispatch()) {   // also what instructionSet() reports
             const auto nop = OpcodeEntry{&M6502::Unoff, nullptr};
             for (int hi = 0; hi < 16; ++hi) {

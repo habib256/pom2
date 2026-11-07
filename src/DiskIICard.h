@@ -549,6 +549,7 @@ private:
     /// The spindle stops now: the end of the 556 / IWM countdown, or an
     /// immediate stop (DiskIICard_Cycles.cpp).
     void stopSpindle();
+    void rememberStoppedPosition(int drive);   // mon_w(true)'s angle (Cycles.cpp)
     pom2::SlotBusClock motorClock_;   // CPU cycles -> stock: LSS, delay, stepper
     bool writeMode = false;     // Q7 latch: false=read, true=write
     bool loadMode  = false;     // Q6 latch: false=shift, true=load

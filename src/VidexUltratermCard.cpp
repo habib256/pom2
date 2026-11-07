@@ -52,7 +52,7 @@ bool VidexUltratermCard::loadRoms(const std::vector<uint8_t>& firmware,
 uint8_t VidexUltratermCard::deviceSelectRead(uint8_t low4)
 {
     selectBlock(low4);
-    switch (low4 & 3) {
+    switch (low4) {                // exact, as writes (header: [D] MAME)
     case 1: return crtc_.registerRead();
     case 2: return ctrl1_;
     case 3: return ctrl2_;
@@ -62,9 +62,8 @@ uint8_t VidexUltratermCard::deviceSelectRead(uint8_t low4)
 
 void VidexUltratermCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
-    // Writes decode $C0n0-$C0n3 EXACTLY; only reads mirror on A0-A1 (above).
-    // [D] MAME a2ultraterm.cpp:287-315 @ b2a182f0b7, `switch (offset)` with
-    // cases 0-3, as POM2's own VidexVideotermCard does. `low4 & 3` let
+    // $C0n0-$C0n3 EXACTLY, as reads (header). [D] MAME a2ultraterm.cpp:
+    // 287-315 @ b2a182f0b7, as POM2's own VidexVideotermCard. `low4 & 3` let
     // $C0n4-$C0nF reach the 6845 and both control registers, and in
     // Videoterm-emulation mode (the reset state) $C0n4/8/C are the bank
     // selects: `STA $C0n6` rewrote ctrl1 and could take the monitor away

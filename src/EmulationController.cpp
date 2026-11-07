@@ -128,7 +128,10 @@ void EmulationController::applyAcceleratorClock(double mul)
     const double stockHz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     const double hz = stockHz * mul;
-    if (hz == cpuClockHz_.load()) return;   // the no-accelerator fast path
+    // Fast path only when the BEAM agrees too: setVideoStandard and a stock
+    // snapshot restore the clock, not the ratio (a //c+ → //e switch kept the
+    // beam at ~1/4 speed; bug hunt 2026-11-07).
+    if (hz == cpuClockHz_.load() && mem.videoClockRatio() == 1.0 / mul) return;
     cpuClockHz_.store(hz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
     // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
     // its backlog then plays at the speed it was made at. The cards' AY
@@ -619,12 +622,24 @@ void EmulationController::WriteBackQueue::run()
         busy_ = true;
         lk.unlock();                       // ← the file I/O happens here
         std::string error;
-        const bool ok =
-            pom2::Disk35Image::commitWriteBack(std::move(item.pending), error);
+        bool ok = false;
+        // Caught here, as runMediaCommit does: escaping to the thread guard it
+        // left busy_ set, so drain() and quit waited for ever (2026-11-07).
+        try {
+            ok = pom2::Disk35Image::commitWriteBack(std::move(item.pending), error);
+        } catch (const std::exception& e) {
+            ok = false; error = std::string("deferred write-back threw: ") + e.what();
+        } catch (...) {
+            ok = false; error = "deferred write-back threw";
+        }
         if (!ok)
             pom2::log().warn("Sony35", "Deferred write-back failed: " + error);
         // Outside `mtx_`, inside `stateMtx` — see report().
-        report(item, ok, error);
+        try {
+            report(item, ok, error);
+        } catch (...) {
+            pom2::log().warn("Sony35", "Deferred write-back: the completion threw");
+        }
         lk.lock();
         busy_ = false;
         idleCv_.notify_all();

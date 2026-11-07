@@ -98,6 +98,7 @@ void PremiumSoftCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (len < 4 + 2 + pom2::kZ80StateBlobBytes + dram0400_.size()
         || std::memcmp(data, kMagic, 4) != 0)
         return;
+    tOwed_ = 0.0;   // the Z80's debt: not in the blob (ApplicardCard's note)
     reg_ = data[4];
     callPending_ = (data[5] & 1) != 0;
     iHigh_       = (data[5] & 2) != 0;

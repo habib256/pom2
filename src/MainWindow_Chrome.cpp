@@ -824,11 +824,12 @@ void MainWindow::renderMenuBar()
                 auto st = controller->lockState();
                 psc = st.memory().slotBus().peripheral(0) != nullptr;   // only it uses slot 0
             }
-            if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc)) {
-                settings->setBool("premium_softcard", psc);
-                settings->save();
-                restartEmulationFromSettings();
-            }
+            // Through SettingRebuild.h, as the Abstraction Levels row for the
+            // same key: saving first and ignoring a refused rebuild left the
+            // next launch plugging a card the user was told could not be
+            // applied (bug hunt 2026-11-07).
+            if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc))
+                applyFirmwareToggle("premium_softcard", psc ? "true" : "false");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
                     "Microsoft's Premium SoftCard //e in the auxiliary slot: the\n"

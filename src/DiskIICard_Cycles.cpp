@@ -19,6 +19,24 @@
 #include <cmath>
 #include "FloppySoundSink.h"
 
+// Where the platter of `drive` stands, kept for when its spindle turns again
+// — a spindle resumes where it stopped, it does not snap back to index.
+// [D] MAME floppy.cpp:871-876 @ b2a182f0b7: mon_w(true) saves
+// m_stopped_position on EVERY on→off, and wozfdc.cpp:269-290 calls it on the
+// old drive of a $C0nA/$C0nB swap. The swap used to skip it, so a two-drive
+// copy re-entered each drive at a stale angle (index, if it had never
+// coasted to a stop) — bug hunt 2026-11-07. A drive whose anchor is already
+// cleared keeps what it had.
+void DiskIICard::rememberStoppedPosition(int drive)
+{
+    if (revolutionStartLssCycle[drive] == kNeverRev) return;
+    const int period = images[drive].trackPeriod(headQuarterTrack[drive]);
+    stoppedPosition[drive] = period > 0
+        ? static_cast<int64_t>((lssCycle - static_cast<uint64_t>(
+              revolutionStartLssCycle[drive])) % static_cast<uint64_t>(period))
+        : 0;
+}
+
 void DiskIICard::advanceCycles(int cycles)
 {
     // A caller's batch can straddle the spindle-stop deadline. Catch up
@@ -126,14 +144,7 @@ void DiskIICard::stopSpindle()
         // WHERE the platter stopped ([D] MAME `bc9aec5a`, 2026-10-03):
         // a spindle resumes where it stopped, it does not snap back
         // to index. `docs/audits/parite-floppy-2026-11-01.md`.
-        if (revolutionStartLssCycle[activeDrive] != kNeverRev) {
-            const int period =
-                images[activeDrive].trackPeriod(headQuarterTrack[activeDrive]);
-            stoppedPosition[activeDrive] = period > 0
-                ? static_cast<int64_t>((lssCycle - static_cast<uint64_t>(
-                      revolutionStartLssCycle[activeDrive])) % static_cast<uint64_t>(period))
-                : 0;
-        }
+        rememberStoppedPosition(activeDrive);
         revolutionStartLssCycle[activeDrive] = kNeverRev;
     }
     if (sound_) sound_->motor(false, images[activeDrive].isLoaded());

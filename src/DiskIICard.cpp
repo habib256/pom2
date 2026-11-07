@@ -1585,9 +1585,9 @@ void DiskIICard::selectDrive(int newDrive)
         // continues on the new drive into a transition that never happened
         // — the same one-bit inversion commitInFlightWrite had.
 
-        // OLD drive: mon_w(true). Disk angular position is now undefined
-        // — flux reads against it would return nothing. MAME uses
-        // `attotime::never` for the same effect.
+        // OLD drive: mon_w(true) — angle remembered, anchor cleared (see
+        // rememberStoppedPosition; the swap used to skip the remembering).
+        rememberStoppedPosition(oldDrive);
         revolutionStartLssCycle[oldDrive] = kNeverRev;
 
         // Switch drives. Do NOT reset `lssCycle` — MAME's `cycles` keeps

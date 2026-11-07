@@ -127,8 +127,25 @@ bool rowEqual(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b, in
 
 } // namespace
 
+// A clock jump the card's loader never sees (a .pom2snap load by the CLI or
+// the AI server restores CPU and memory only): the ring's edges are then in
+// the future and used to win every latchBefore() scan. onTimeJump clears it
+// (bug hunt 2026-11-07).
+void testTimeJumpClearsRing()
+{
+    Rig rig;                                     // latch reset = COL140
+    rig.clockLatchAt(150, false);                // 00 → BW560
+    const auto live = rig.card->currentMode();
+    assert(live == LeChatMauveCard::RenderMode::BW560);
+    rig.mem.setCycleCounter(10);                 // the clock went back…
+    rig.card->onTimeJump();                      // …as noteTimeJump tells every card
+    assert(rig.card->latchBefore(500) == live && "a future-stamped edge won the scan");
+    std::printf("  ok: a clock jump clears the latch ring\n");
+}
+
 int main()
 {
+    testTimeJumpClearsRing();
     // References: uniform COL140 and uniform BW560 frames of the same RAM.
     std::vector<uint32_t> col140, bw560;
     {

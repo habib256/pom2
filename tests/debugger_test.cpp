@@ -1687,8 +1687,8 @@ static void testBreakpointAfterDmaRelease()
 // Appendix A, NCR65C02 data sheet: invalid op codes "are NOPs ... X3, X7,
 // XB, XF 1 [byte] 1 [cycle]" — so for every one of the 34 Rockwell/WDC
 // slots the listing's length must be the PC advance of a real step. A
-// TransWarp's own 65C02 (setCmosSubstitute) runs the superset, and the
-// listing must follow that too.
+// TransWarp's own 65C02 (setCmosSubstitute) runs the same subset ([D] MAME
+// seats a W65C02; bug hunt 2026-11-07), and the listing follows it.
 void testDisassemblerFollowsTheCoreInstructionSet()
 {
     EmulationController ctrl;
@@ -1719,9 +1719,19 @@ void testDisassemblerFollowsTheCoreInstructionSet()
             assert(false);
         }
     }
+    // A TransWarp's 65C02 runs the same subset ([D] MAME seats a W65C02;
+    // bug hunt 2026-11-07): a stray $DB is a NOP, not a halt — even on a
+    // machine whose own CPU would have the superset.
+    cpu.setNcr65C02(false);
     cpu.setCmosSubstitute(true);
-    assert(cpu.instructionSet() == pom2::Cpu6502Set::Superset65C02);
+    assert(cpu.instructionSet() == pom2::Cpu6502Set::Ncr65C02);
+    mem.memWrite(0x0300, 0xDB);
+    cpu.setProgramCounter(0x0300);
+    cpu.step();
+    assert(cpu.getProgramCounter() == 0x0301 && !cpu.isHalted() &&
+           "a stray $DB under a TransWarp halted the machine");
     cpu.setCmosSubstitute(false);
+    cpu.setNcr65C02(true);
     cpu.setCpuMode(M6502::CpuMode::NMOS);
     assert(cpu.instructionSet() == pom2::Cpu6502Set::Nmos6502);
     cpu.setCpuMode(M6502::CpuMode::CMOS);

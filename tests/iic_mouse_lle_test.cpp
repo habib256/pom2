@@ -100,6 +100,14 @@ static void exercise(pom2::SystemProfile profile, const std::string& rom)
     assert(mouse->slotIrqAsserted());
     auto bad = pending; bad[14] = 65;
     assert(!mouse->loadIicMouseState(bad.data(), bad.size()));
+    // The stale-latch counter travels too (byte 19, bug hunt 2026-11-01
+    // round 4); a 19-byte blob from before it still loads, a counter past
+    // the saturation point does not.
+    assert(pending.size() == 20);
+    assert(mouse->loadIicMouseState(pending.data(), 19));
+    auto badCount = pending; badCount[19] = 200;
+    assert(!mouse->loadIicMouseState(badCount.data(), badCount.size()));
+    assert(mouse->loadIicMouseState(pending.data(), pending.size()));
     assert(mouse->slotIrqAsserted()); // invalid restore is inert
 
     auto call = [&](uint8_t index, uint8_t a) {

@@ -187,6 +187,19 @@ void testReopenKeepsSources()
 
 int main()
 {
+    // WASM-5 (bug hunt 2026-11-01 round 3): a PINNED rung below the browser
+    // default is kept at the next load; a LEARNED one below it is stale.
+    {
+        using P = pom2::AudioBufferPolicy;
+        const auto B = P::Platform::Browser;
+        assert(P::startRung(B, 512, true) == 512);
+        assert(P::startRung(B, 512, false) == P::defaultPeriodFrames(B));
+        assert(P::startRung(B, 4096, false) == 4096);
+        assert(P::startRung(B, 4096, true) == 4096);
+        assert(P::startRung(B, 300, true) == P::defaultPeriodFrames(B));   // not a rung
+        assert(P::startRung(B, 0, false) == P::defaultPeriodFrames(B));
+    }
+
     testRungs();
     testLateCallback();
     testClimb();

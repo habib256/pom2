@@ -304,8 +304,8 @@ private:
     bool testMode_           = false;
 
     // DATA_OUT's pulse in REGISTER_HOLD (1 Hz) and TIME_READ (0.5 Hz): the
-    // level at mode entry and the CPU cycles since. Not in the snapshot —
-    // a phase the guest cannot sample to better than a second.
+    // level at mode entry and the CPU cycles since. In the snapshot since
+    // 2026-11-07 (second optional tail): a restore used to restart the wave.
     bool     dataOutStart_  = false;
     uint64_t dataOutCycles_ = 0;
     bool dataOut() const;

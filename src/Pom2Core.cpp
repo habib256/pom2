@@ -103,7 +103,11 @@ public:
             auto mouse = std::make_unique<IIcMouse>(
                 machine == Machine::AppleIIcPlus ? 7 : 4);
             mouseIic = mouse.get();
-            mouseSlot = 4;
+            // The firmware's screen holes follow its page: port 7 on the
+            // //c+ ([C] apple2cp.rom bank 1 reads $047F/$04FF), port 4 on the
+            // //c. setMouse read port 4's on a //c+ and never saw the cursor
+            // move (bug hunt 2026-11-07).
+            mouseSlot = machine == Machine::AppleIIcPlus ? 7 : 4;
             memory.slotBus().plug(4, std::move(mouse));
         }
     }

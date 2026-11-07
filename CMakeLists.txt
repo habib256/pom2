@@ -914,6 +914,7 @@ set(POM2_MEDIA_HEADERS
     src/AtomicFileReplace.h
     src/MediaAutosave.h
     src/TwoImg.h
+    src/MacBinary.h
 )
 
 set(POM2_MEDIA_SOURCES
@@ -1224,6 +1225,7 @@ set(HEADERS
     src/StatusLed.h
     src/SuperSerialCard.h
     src/ThreadGuard.h
+    src/MacBinary.h
 )
 
 # Strict warnings on POM2 first-party sources only. Vendored Dear ImGui
@@ -1492,6 +1494,12 @@ if(EMSCRIPTEN)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}")
             list(APPEND POM2_WASM_LINK
                 "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}@/${_pom2_dst}")
+        else()
+            # Dropped from the bundle — say so (PKG-3, bug hunt 2026-11-01
+            # round 3: the //c + //e ROMs could ship silently absent). The
+            # release job fails earlier on it: stage_data.sh --verify-wasm-sources.
+            message(WARNING "WASM preload: ${_pom2_src} is missing and will not "
+                            "be in the browser bundle (run tools/fetch_test_media.py)")
         endif()
     endforeach()
     # emcc's --exclude-file applies to every --preload-file above. Same reason

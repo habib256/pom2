@@ -931,6 +931,9 @@ jobs:
           version: 6.0.9
           actions-cache-folder: emsdk-cache
 
+      - name: Every wasm payload entry is present
+        run: packaging/stage_data.sh --verify-wasm-sources
+
       - name: Build the WASM bundle
         run: ./build_wasm.sh
 

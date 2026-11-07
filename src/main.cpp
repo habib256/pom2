@@ -918,6 +918,18 @@ int main(int argc, char* argv[])
     glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
     glfwSetWindowFocusCallback(window, glfw_window_focus_callback);
     glfwSetDropCallback       (window, glfw_drop_callback);
+#ifdef __EMSCRIPTEN__
+    // emscripten's libglfw.js stores the focus callback and never calls it,
+    // so onWindowFocus — held keys AND a held mouse button released — never
+    // ran in the browser (bug hunt 2026-11-07). The page's blur does it.
+    emscripten_set_blur_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, window, false,
+        [](int, const EmscriptenFocusEvent*, void* user) -> EM_BOOL {
+            auto* w = static_cast<GLFWwindow*>(user);
+            if (auto* mw = static_cast<MainWindow*>(glfwGetWindowUserPointer(w)))
+                mw->onWindowFocus(false);
+            return EM_FALSE;
+        });
+#endif
 
     // ─── Phase B: apply boot-time overrides on the live emulator ─────────
     // `--speed` and `--cpu-max` set the same knob. Applied in THIS order

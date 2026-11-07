@@ -565,17 +565,14 @@ void hgrpaint::HgrPaintEditor::floodFill(int x, int y, HgrColor c)
     if (grMode)  { grFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
     if (dhgrMode){ dhgrFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
     if (dlgrMode){ dlgrFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
-    // Flood by *perceived* artifact colour (a raw-bit flood leaks through the
-    // off sub-pixels of every chromatic dither), perceived through the
-    // module's ColorNTSC decode, not the host's selected pipeline: a composite
-    // demod varies a field's colour dot by dot (PAINT-2, bug hunt 2026-11-01).
+    // Flood by *perceived* colour (raw bits leak through the dither), through
+    // the module's ColorNTSC decode, not the host pipeline (PAINT-2).
     // fillRegion mutates a page buffer directly, so snapshot the shadow, run it,
     // then diff back into per-byte edits to keep undo + the live RAM writes working.
     std::vector<uint8_t> before = shadow;
     hgrpaint::fillRegion(shadow.data(), x, y, c,
                          hgrpaint::hgrRenderPageRgb,
-                         // The MacPaint pattern the tool panel offers for Fill,
-                         // sampled in page coordinates like applyPlotPat.
+                         // The panel's MacPaint pattern, in page coordinates.
                          [this](int px, int py) { return patternOn(px, py); });
     for (int off = 0; off < static_cast<int>(shadow.size()); ++off) {
         if (shadow[off] == before[off]) continue;
@@ -2356,6 +2353,7 @@ void hgrpaint::HgrPaintEditor::renderFileBrowser()
             ? isImg
             : (!ec && (dhgrMode ? (sz >= 16000 && sz <= 16384)
                      : dlgrMode ? (sz >= 2000 && sz <= 2048)
+                     : grMode   ? (sz >= 1000 && sz <= 1024)   // PAINT-4
                                 : (sz >= 8000 && sz <= 8192)));
         char label[320];
         std::snprintf(label, sizeof(label), "%-28s %8llu B", name.c_str(),
@@ -2493,6 +2491,9 @@ void hgrpaint::HgrPaintEditor::renderStatusBar(int lx, int ly, bool hovered)
         ImGui::Text("x=%3d y=%3d  byte=$%04X  colour %d", lx, ly,
                     baseAddr() + mainOff,
                     hgrpaint::dhgrColorAt(shadow.data(), lx, ly));
+    } else if (hovered && lx >= 0 && ly >= 0 && grMode) {   // GR: text-page byte (PAINT-3)
+        ImGui::Text("x=%3d y=%3d  byte=$%04X  colour %d", lx, ly, baseAddr() + hgrpaint::grBlockOffset(lx / 7, ly / 4),
+                    hgrpaint::grBlockColorAt(shadow.data(), lx / 7, ly / 4));
     } else if (hovered && lx >= 0 && ly >= 0) {
         const int snapped = hgrpaint::snapColumn(lx, activeColor);
         ImGui::Text("x=%3d y=%3d  byte=$%04X  col->%d", lx, ly,

@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskImage.h"
+#include "MacBinary.h"
 #include "MediaNotch.h"
 #include "TwoImgHeader.h"
 
@@ -192,23 +193,9 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
     bool macBinaryStripped = false;
 
     // ── MacBinary wrapper — 128-byte prefix from legacy Mac downloads ──
-    // Predicate per AppleWin's DiskImageHelper.cpp:
-    //   byte[0]    == 0     (always-zero "old version" marker)
-    //   byte[1]    in [1..63] (Pascal-string filename length)
-    //   byte[1+1+len] == 0  (terminator after the filename)
-    //   byte[122,123] == 0  (reserved field — zeroes in real MacBinary)
-    // All four fit inside the image's own first sector, and ordinary disk
-    // images DO hit them by chance — the claim that this is "safe to apply
-    // unconditionally" was wrong. See the guard below the lambda.
-    auto looksLikeMacBinary = [](const uint8_t* p, std::size_t n) -> bool {
-        if (n < 128)             return false;
-        if (p[0] != 0x00)        return false;
-        const uint8_t nameLen = p[1];
-        if (nameLen == 0 || nameLen >= 64) return false;
-        if (p[1 + nameLen + 1] != 0x00) return false;
-        if (p[122] != 0x00 || p[123] != 0x00) return false;
-        return true;
-    };
+    // The predicate (MacBinary.h, shared with Disk35Image) is only four bytes
+    // wide, inside the image's own first sector: see the guard below.
+    const auto& looksLikeMacBinary = pom2::macbinary::looksLike;
     // The sniff above is only FOUR bytes wide and every one of them lives
     // inside the image's own first sector, so ordinary disk images hit it by
     // chance — and stripping 128 bytes off one leaves a length that matches
@@ -232,18 +219,9 @@ DiskImage::DetectResult DiskImage::detectFormat(const std::string& path,
                std::memcmp(q, "WOZ1", 4) == 0 ||
                std::memcmp(q, "WOZ2", 4) == 0;
     };
-    // The header's data-fork length (big-endian u32 at bytes 83-86). The
-    // spec pads the fork to a multiple of 128 and a resource fork may follow,
-    // so "everything after the header" is not the image: a padded CNib2
-    // (223440 is no multiple of 128) or a fork with resources was refused
-    // (bug hunt 2026-10-16). 0 = absent or implausible.
-    const std::size_t dataForkLen = [&]() -> std::size_t {
-        if (totalLen < 128) return 0;
-        const uint8_t* p = bytes.data();
-        const std::size_t len = (std::size_t(p[83]) << 24) | (std::size_t(p[84]) << 16) |
-                                (std::size_t(p[85]) << 8)  |  std::size_t(p[86]);
-        return len > 0 && len <= totalLen - 128 ? len : 0;
-    }();
+    // The data-fork length, not "everything after the header": a padded
+    // CNib2 or a fork with resources was refused (bug hunt 2026-10-16).
+    const std::size_t dataForkLen = pom2::macbinary::dataForkLength(bytes.data(), totalLen);
     if (looksLikeMacBinary(bytes.data(), totalLen) &&
         !knownPayloadLength(totalLen) &&
         (knownPayloadLength(totalLen - 128) || knownPayloadLength(dataForkLen) ||
@@ -1032,7 +1010,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // Captain Goodnight, Ankh, Sundog: Frozen Legacy.
     uint16_t fluxBlock        = 0;   // INFO+46 (u16 LE, file-block units)
     uint16_t fluxLargestTrack = 0;   // INFO+48 (u16 LE, in blocks)
-    bool     boot13           = false;   // INFO+38 boot_sector_format == 2
+    uint8_t  bootFormat       = 0;       // INFO+38 boot_sector_format (below)
 
     auto readU16LE = [&](size_t o) -> uint32_t {
         return static_cast<uint32_t>(buf[o])
@@ -1081,13 +1059,12 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
                 wozRequiredRamK_ = static_cast<uint16_t>(
                     buf[dataOff + 42] | (buf[dataOff + 43] << 8));
             }
-            // INFO+38 (v2) boot_sector_format: 2 = 13-sector only. This
-            // is what routes a DOS 3.2 .woz to the 13-sector boot PROM —
-            // loadWoz never set sectorsPerTrack_, so every 13-sector WOZ
-            // was served the 16-sector P5 PROM and could not boot.
-            if (infoVersion >= 2 && len >= 39 && buf[dataOff + 38] == 2) {
-                boot13 = true;
-            }
+            // INFO+38 (v2) boot_sector_format. [B] WOZ 2 reference: 0 =
+            // unknown, 1 = 16-sector boot sector, 2 = 13-sector, 3 = both.
+            // 2 routes a DOS 3.2 .woz to the 13-sector boot PROM; 1 and 3
+            // are as authoritative and keep the 16-sector one (they used to
+            // be sniffed like 0, which a 5-and-3 prologue could override).
+            if (infoVersion >= 2 && len >= 39) bootFormat = buf[dataOff + 38];
             // INFO version 3 (WOZ2 v2.1+) adds flux_block / largest_flux_track
             // at offsets +46 / +48. Older versions report 0. MAME
             // `as_dsk.cpp:287-290`.
@@ -1407,11 +1384,12 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // nibble boundary. DiskIICard keys serving13_/boot-PROM choice on
     // is13Sector(), which loadWoz previously never set.
     // A FLUX track 0 has its cells projected on first use; this is it.
-    if (!boot13 && wozQtFluxPeriodTicks[0] != 0 && !bitStreamValid[0])
+    const bool sniff = bootFormat == 0 || bootFormat > 3;   // unknown only
+    if (sniff && wozQtFluxPeriodTicks[0] != 0 && !bitStreamValid[0])
         projectFluxTrack(0);
-    if (boot13) {
+    if (bootFormat == 2) {
         sectorsPerTrack_ = kSectorsPerTrack13;
-    } else if (bitStreamValid[0]) {
+    } else if (sniff && bitStreamValid[0]) {
         static const uint8_t kPro13[24] = {1,1,0,1,0,1,0,1,   // D5
                                            1,0,1,0,1,0,1,0,   // AA
                                            1,0,1,1,0,1,0,1};  // B5

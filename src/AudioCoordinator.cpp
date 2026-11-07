@@ -427,7 +427,7 @@ void AudioCoordinator::restore(Settings& settings,
         if (!P::isRung(pinnedFrames_, platform)) pinnedFrames_ = 0;
         if (!P::isRung(learnedFrames_, platform)) learnedFrames_ = 0;
         if (pinnedFrames_)
-            applyLadderRung(pinnedFrames_, "pinned in the settings");
+            applyLadderRung(pinnedFrames_, "pinned in the settings", true);
         else if (learnedFrames_ > device_.periodFrames())
             applyLadderRung(learnedFrames_, "learned on an earlier run");
     }
@@ -556,11 +556,12 @@ AudioCoordinator::BufferSnapshot AudioCoordinator::captureBuffer() const
     return s;
 }
 
-void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& why)
+void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& why,
+                                       bool pinned)
 {
     const std::uint32_t before = device_.periodFrames();
     const double beforeMs = device_.bufferSeconds() * 1000.0;
-    if (!device_.reconfigurePeriod(frames)) {
+    if (!device_.reconfigurePeriod(frames, pinned)) {
         log().warn("Audio", "device buffer: could not re-open at " +
                             std::to_string(frames) + " frames (" + why + ")");
         return;
@@ -589,9 +590,11 @@ void AudioCoordinator::pinBuffer(std::uint32_t frames)
     if (frames != 0 && !P::isRung(frames, device_.platform())) return;
     pinnedFrames_ = frames;
     if (frames != 0) {
-        applyLadderRung(frames, "pinned in the Audio panel");
+        applyLadderRung(frames, "pinned in the Audio panel", true);
     } else {
-        // Back to automatic: keep the current rung as the ladder's start.
+        // Back to automatic: keep the current rung as the ladder's start, and
+        // tell the browser's memory it is no longer a pin (WASM-5).
+        device_.reconfigurePeriod(device_.periodFrames(), false);
         learnedFrames_     = std::max(learnedFrames_, device_.periodFrames());
         lateAtWindowStart_ = device_.lateCallbacks();
         windowStartSec_    = -1.0;

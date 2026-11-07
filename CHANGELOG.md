@@ -10,6 +10,78 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — Bug hunt, two waves: NAT reconnects, a //c+ → //e beam, a stray $DB, and more
+
+Twelve read-only reviewers in two waves; the full account, fixes and
+deferrals is `docs/audits/bug-hunt-2026-11-07.md`. What changed:
+
+- **Built-in NAT**: a SYN on an established 4-tuple (the guest rebooted or
+  was rewound) gets a challenge ACK, so the guest's RST clears the stale entry
+  and it reconnects ([B] RFC 5961 § 4.2); it was swallowed until the server
+  timed out. Retransmits double from 1 s to 60 s and give up after ≥ 100 s
+  ([B] RFC 6298, RFC 1122), not ~9 s.
+- **A switch away from an accelerated machine** (//c+ to //e) no longer leaves
+  the beam at ~1/4 speed: the accelerator fast path compared the clock, not
+  the beam's ratio.
+- **A TransWarp's 65C02** runs the NCR/W65C02 subset, so a stray `$DB` is a
+  NOP and not a halt ([D] MAME seats a W65C02; [F] the real chip).
+- **A running machine's repaint** stays on beam-time RAM between two worker
+  bursts; the display used to read an unchanged counter as "stopped" and
+  flicker on 60 Hz and faster monitors.
+- **Disk II**: a drive swap with the motor on remembers the old drive's angle
+  ([D] MAME `floppy.cpp` / `wozfdc.cpp`).
+- **SSI263** formant voice after a load or rewind; **Le Chat Mauve** after a
+  snapshot load; **Z80 cards** replay deterministically; the **3.5"
+  deferred write-back** survives an exception instead of hanging quit; the
+  **Premium SoftCard** menu toggle no longer saves a refused change.
+- **Printer**: print screen refuses the Diablo and PostScript heads instead of
+  misconfiguring them; swallowed data streams cost no paper motion. **No-Slot
+  Clock** writes honour INH. **UltraTerm** decodes exactly both ways.
+- **`pom2_corpus`** refuses ids and check names that are not plain names (one
+  reached `remove_all`), and `--bless` keeps a setup-failed title's lines.
+- **SDK** `setMouse` on a //c+ reads the port-7 holes; the **browser** releases
+  held input on blur.
+
+## 2026-11-07 — The rest of the 2026-11-01 hunt's small items
+
+- **`--fujinet-slot N` alone is refused** (CLI-5): it was validated, recorded
+  and ignored by every consumer.
+- **WOZ `boot_sector_format` 1 and 3 are authoritative** ([B] WOZ 2 reference,
+  INFO +38: 1 = 16-sector, 3 = both). Only 0 is sniffed now; a 5-and-3
+  prologue on track 0 used to send a disk that says "16-sector" to the
+  13-sector PROM. Pinned `woz_load_smoke`.
+- **ClockCard's DATA_OUT pulse and IIcMouse's stale-latch counter travel with
+  a snapshot**, as optional tails: a restore restarted the 1 Hz / 0.5 Hz wave,
+  and held an already-abandoned latch again. Older blobs still load; the
+  session format accepts the longer ClockCard blob. Pinned
+  `clock_card_smoke`, `iic_mouse_lle`.
+- **A MacBinary-wrapped 3.5" image mounts read-only** instead of being
+  refused on its size. The predicate is one header, `MacBinary.h`, shared
+  with the 5.25" loader; the protection is its own flag, so lifting the
+  notch cannot let a save write the bare payload over the wrapped file.
+  Pinned `disk35_remount`.
+- **The browser**: F9 screenshots and BASIC listings are downloaded instead
+  of written to a MEMFS path that vanishes on reload, and the listing no
+  longer claims a clipboard copy emscripten does not make (WASM-4). A device
+  buffer pinned below the browser default is kept at the next load instead
+  of being dropped by the clamp meant for learned values
+  (`AudioBufferPolicy::startRung`, WASM-5). A missing `wasm` payload entry is
+  a CMake warning and fails the release WASM job before the build
+  (`stage_data.sh --verify-wasm-sources`, PKG-3).
+- **key_chord_policy's browser scan** lists every GLFW abort stub of the
+  toolchain (31, from libglfw.js; three earlier names were silent no-ops),
+  walks every TU of `src/` the browser build compiles instead of nine, and
+  reads `#if !defined(__EMSCRIPTEN__)` the right way round. The CI WASM job
+  re-derives the list from the pinned emsdk (`tools/check_glfw_abort_stubs.sh`)
+  (WASM-6).
+- **The paint editor's GR mode**: the status bar shows the text-page address
+  of a block, not an HGR one, and the file browser highlights 1 KB GR pages
+  (PAINT-3 / PAINT-4).
+- **Probes write under `probeOutDir()`**, now enforced:
+  `tools/check_probe_outputs.sh` (ctest `probe_output_paths`) fails on a
+  literal output path; it found a third probe, `cffa_boot_dump`, writing to
+  `/tmp`.
+
 ## 2026-11-07 — Round-4 leftovers: a mouse button on focus loss, a self-healing media cache, honest tools and docs
 
 - **A held mouse button is released when the window loses focus**, as the

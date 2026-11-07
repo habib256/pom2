@@ -18,6 +18,7 @@
 // Native GCR flux splicing/serialization lives in Disk35Image_Bitstream.cpp.
 
 #include "Disk35Image.h"
+#include "MacBinary.h"
 #include "Disk35Bitstream.h"
 #include "TwoImgHeader.h"
 #include "Disk35Mfm.h"
@@ -167,15 +168,42 @@ bool Disk35Image::parseImageBytes(std::vector<uint8_t>& buf, const std::string& 
                                   bool hostReadOnly)
 {
     hostReadOnly_ = hostReadOnly;
-    const std::size_t n = buf.size();
     // The mount's reference for the external-change check. Contents only:
     // these bytes may have been read by phase 1 of a two-phase mount, and
     // this function runs under the machine lock, where no stat belongs. A
     // zero time never matches, so the first commit compares the file's hash.
+    // Taken on the FILE's bytes, before any MacBinary unwrap below.
     fileStamp_ = MediaFileStamp{};
     fileStamp_.known = true;
-    fileStamp_.size  = n;
-    fileStamp_.hash  = hashMediaBytes(buf.data(), n);
+    fileStamp_.size  = buf.size();
+    fileStamp_.hash  = hashMediaBytes(buf.data(), buf.size());
+
+    // A MacBinary envelope (legacy Mac downloads; MacBinary.h). Stripped only
+    // when that turns an unrecognised file into a recognised 3.5" image, as
+    // DiskImage does for 5.25". It used to be refused on its size. The mount
+    // is read-only: a save would write the bare payload over the wrapped
+    // file, and re-wrapping is not done here (bug hunt 2026-11-01 round 4).
+    macBinaryWrapped_ = false;
+    {
+        auto known35 = [&](const uint8_t* q, std::size_t len) {
+            return len == kBytesPerImage || len == kBytesPerImage400 ||
+                   len == kBytesPerImage1440 ||
+                   (len >= 4 && (std::memcmp(q, "2IMG", 4) == 0 ||
+                                 std::memcmp(q, "WOZ", 3) == 0 ||
+                                 std::memcmp(q, "MOOF", 4) == 0));
+        };
+        const std::size_t total = buf.size();
+        if (pom2::macbinary::looksLike(buf.data(), total) && !known35(buf.data(), total)) {
+            const std::size_t fork = pom2::macbinary::dataForkLength(buf.data(), total);
+            const std::size_t len = fork ? fork : total - pom2::macbinary::kHeaderBytes;
+            if (known35(buf.data() + pom2::macbinary::kHeaderBytes, len)) {
+                buf = std::vector<uint8_t>(buf.begin() + pom2::macbinary::kHeaderBytes,
+                                           buf.begin() + pom2::macbinary::kHeaderBytes + len);
+                macBinaryWrapped_ = true;
+            }
+        }
+    }
+    const std::size_t n = buf.size();
 
     // Detect 2IMG-wrapped 400K, 800K or SuperDrive 1.44M payloads.
     if (n >= 64 &&
@@ -308,6 +336,7 @@ void Disk35Image::eject()
     detachedSession_     = false;
     fileWriteProtected_  = false;
     hostReadOnly_        = false;
+    macBinaryWrapped_    = false;
     kind_                = ImageKind::Unknown;
     blocks_.clear();
     moofCells_.reset();

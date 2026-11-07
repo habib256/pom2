@@ -179,6 +179,9 @@ public:
     // first render can hear the producer's future CTL/amplitude immediately.
     // Holds no lock; caller uses the card mutex as for the write/event pair.
     void prepareTimedPlayback();
+    /// Seed the audio-side register bank from the CPU side, once (both
+    /// primers go through it, so a new register cannot reach only one).
+    void primeShadow();
     void queuePlaybackEvent(uint8_t reg, uint8_t val, uint64_t cycle);
 
     /// Render `frameCount` samples, applying the queued playback events at
