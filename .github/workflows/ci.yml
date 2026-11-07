@@ -178,6 +178,12 @@ jobs:
           tools/check_version_strings.sh --self-test
           tools/check_version_strings.sh
 
+      # Resolve explicit backlog links and task IDs before the expensive build.
+      - name: Documentation references
+        run: |
+          tools/check_doc_refs.sh --self-test
+          tools/check_doc_refs.sh
+
       # Every settings key read is written by something and vice versa, or
       # sits on the script's allowlist with its reason (TODO G5-7).
       - name: Settings keys

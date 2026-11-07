@@ -24,7 +24,8 @@
 // during Phases 1-2, a decoder was altered, not just moved.
 //
 // What it covers: the cross product of
-//   scenes  = {text40, text80, lores, lores+mixed, hgr, hgr+mixed,
+//   scenes  = {real-ROM text40/text80 with ALTCHAR off/on,
+//              fallback text40, text80, lores, lores+mixed, hgr, hgr+mixed,
 //              dhgr, dhgr+mixed, dlgr, dlgr+mixed, text40 flash-phase,
 //              text40 page2, hgr page2, hgr 80STORE+page2 (must equal the
 //              page-1 hash — Sather 5.10), hgr+AN3 (rev-0 bit-7 mask),
@@ -68,6 +69,7 @@
 #include "Apple2Display.h"
 #include "LeChatMauveCard.h"
 #include "Memory.h"
+#include "Sha256.h"
 
 #include <cassert>
 #include <cstdint>
@@ -75,6 +77,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -142,6 +146,109 @@ void baseline(Memory& mem)
     mem.memRead(CLR_HIRES);
     mem.memWrite(IIE_80COL_OFF, 0);
     mem.memRead(DHIRES_OFF);
+}
+
+// CI fetches this exact dump through tools/test_media.sha256. An override
+// permits checking missing/corrupt-media failures without touching the fixture.
+std::string characterRomPath()
+{
+    if (const char* p = std::getenv("POM2_GOLDEN_CHAR_ROM")) return p;
+    return std::string(POM2_TEST_SOURCE_DIR) + "/roms/apple2e_char.rom";
+}
+
+std::vector<uint8_t> checkedCharacterRom()
+{
+    std::ifstream in(characterRomPath(), std::ios::binary);
+    const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)), {});
+    if (raw.size() != 4096 || pom2::sha256Hex(raw.data(), raw.size()) !=
+            "52c3b87900ac939f6525402cab1ccfd8f8259290fc6df54da48fb4c98ae3ed0f") {
+        std::fprintf(stderr, "display golden: missing/corrupt Enhanced character ROM: %s\n"
+                     "Fetch the pinned fixture with python3 tools/fetch_test_media.py\n",
+                     characterRomPath().c_str());
+        return {};
+    }
+    return raw;
+}
+
+// Each bank contains every screen code, in different cells. Derive expected
+// codes from row/column rather than reading the renderer's memory addresses.
+uint8_t romScreenCode(int row, int col, bool aux)
+{
+    return static_cast<uint8_t>(row * 40 + col + (aux ? 73 : 0));
+}
+
+void realRomText(Memory& mem, bool eighty, bool alternate)
+{
+    baseline(mem);
+    mem.memRead(SET_TEXT);
+    mem.memWrite(eighty ? IIE_80COL_ON : IIE_80COL_OFF, 0);
+    mem.memWrite(alternate ? 0xC00F : 0xC00E, 0);
+    if (!mem.loadCharRom(characterRomPath().c_str())) std::abort();
+    for (int row = 0; row < 24; ++row) {
+        const uint16_t base = 0x400 + (row % 8) * 128 + (row / 8) * 40;
+        for (int col = 0; col < 40; ++col) {
+            mem.memWrite(base + col, romScreenCode(row, col, false));
+            mem.auxDataMutable()[base + col] = romScreenCode(row, col, true);
+        }
+    }
+}
+
+void sRom40(Memory& m) { realRomText(m, false, false); }
+void sRom40Alt(Memory& m) { realRomText(m, false, true); }
+void sRom80(Memory& m) { realRomText(m, true, false); }
+void sRom80Alt(Memory& m) { realRomText(m, true, true); }
+
+// [C] Enhanced 342-0265-A dump, pinned above: raw rows are active-low,
+// bit 0 at the left. This oracle indexes RAW file bytes, independently of
+// Memory's normalisation and the renderer's shared glyphRows7 helper.
+// $40-$7F: FLASH aliases inverse uppercase with ALTCHAR off; with ALTCHAR
+// on, $40-$5F address MouseText and $60-$7F inverse lowercase ($E0-$FF).
+int checkRomPixels(const std::vector<uint8_t>& raw)
+{
+    for (bool eighty : {false, true}) for (bool alternate : {false, true})
+        for (int phase = 0; phase != 2; ++phase) {
+            Memory mem;
+            mem.setIIEMode(true);
+            realRomText(mem, eighty, alternate);
+            mem.setCycleCounter(phase * 16ull * 65 * 262);
+            // Synchronous test bracket describes the configured frame after
+            // moving the clock, rather than the unpublished power-on state.
+            mem.beginVideoEventFrame();
+            Apple2Display disp;
+            disp.setAuxMemory(mem.auxData());
+            disp.setHiResMode(Apple2Display::HiResMode::MonoWhite);
+            disp.render(mem);
+            const int width = eighty ? 560 : 280;
+            if (disp.width() != width || disp.height() != 192) return 1;
+            const auto* pixels = disp.pixels();
+            for (int row = 0; row < 24; ++row)
+                for (int cell = 0; cell < (eighty ? 80 : 40); ++cell) {
+                    const uint8_t code = romScreenCode(row, eighty ? cell / 2 : cell,
+                                                       eighty && cell % 2 == 0);
+                    unsigned glyph = code;
+                    unsigned xorMask = 0x7F; // active-low dump to lit dots
+                    if (code >= 0x40 && code < 0x80) {
+                        if (!alternate) {
+                            glyph = code % 64;
+                            if (phase) xorMask = 0;
+                        } else if (code >= 0x60) {
+                            glyph = code + 128;
+                            xorMask = 0; // inverse lowercase
+                        }
+                    }
+                    for (int y = 0; y < 8; ++y) for (int x = 0; x < 7; ++x) {
+                        const bool lit = ((raw[glyph * 8 + y] ^ xorMask) >> x) & 1;
+                        const uint32_t expected = lit ? 0xFFFFFFFFu : 0xFF000000u;
+                        if (pixels[(row * 8 + y) * width + cell * 7 + x] != expected) {
+                            std::fprintf(stderr, "ROM pixel mismatch: %dcol ALTCHAR=%d phase=%d "
+                                         "code=$%02X cell=%d,%d dot=%d,%d\n",
+                                         eighty ? 80 : 40, alternate, phase, code, cell, row, x, y);
+                            return 1;
+                        }
+                    }
+                }
+        }
+    return 0;
 }
 
 struct Scene {
@@ -285,6 +392,10 @@ void sHgr80ColMixed(Memory& m) {
 }
 
 const Scene kScenes[] = {
+    { "iie/rom40", true, sRom40 },
+    { "iie/rom40alt", true, sRom40Alt },
+    { "iie/rom80", true, sRom80 },
+    { "iie/rom80alt", true, sRom80Alt },
     { "iie/text40",     true,  sText40    },
     { "iie/text80",     true,  sText80    },
     { "iie/textcolorcm",true,  sTextColorCM},
@@ -324,6 +435,38 @@ const ModeEntry kModes[] = {
 // ── Golden table (host-independent integer paths) ─────────────────────────
 // Populated by POM2_GOLDEN_RECORD=1 — see file header.
 const std::map<std::string, uint64_t> kGolden = {
+    { "iie/rom40/ntsc", 0xe53026703ecd0b5cULL },
+    { "iie/rom40/medium", 0xe53026703ecd0b5cULL },
+    { "iie/rom40/4bit", 0xe53026703ecd0b5cULL },
+    { "iie/rom40/chatmauve", 0xe53026703ecd0b5cULL },
+    { "iie/rom40/monowhite", 0xe53026703ecd0b5cULL },
+    { "iie/rom40/monogreen", 0xf3b27a73420b2f5cULL },
+    { "iie/rom40/monoamber", 0x3422e259c9988e4cULL },
+    { "iie/rom40/signal", 0x08bb456e619321e3ULL },
+    { "iie/rom40alt/ntsc", 0xd13c8d0dabb9475cULL },
+    { "iie/rom40alt/medium", 0xd13c8d0dabb9475cULL },
+    { "iie/rom40alt/4bit", 0xd13c8d0dabb9475cULL },
+    { "iie/rom40alt/chatmauve", 0xd13c8d0dabb9475cULL },
+    { "iie/rom40alt/monowhite", 0xd13c8d0dabb9475cULL },
+    { "iie/rom40alt/monogreen", 0x073919875d2fb75cULL },
+    { "iie/rom40alt/monoamber", 0x3791a008ed90b84cULL },
+    { "iie/rom40alt/signal", 0xb6b0411652daf1e3ULL },
+    { "iie/rom80/ntsc", 0xaac194c92bda895cULL },
+    { "iie/rom80/medium", 0xaac194c92bda895cULL },
+    { "iie/rom80/4bit", 0xaac194c92bda895cULL },
+    { "iie/rom80/chatmauve", 0xaac194c92bda895cULL },
+    { "iie/rom80/monowhite", 0xaac194c92bda895cULL },
+    { "iie/rom80/monogreen", 0x7ab0b70979e6445cULL },
+    { "iie/rom80/monoamber", 0x4d4fed1bd24085ccULL },
+    { "iie/rom80/signal", 0x035f63a1bb971e9cULL },
+    { "iie/rom80alt/ntsc", 0x65e7cc3615a91d83ULL },
+    { "iie/rom80alt/medium", 0x65e7cc3615a91d83ULL },
+    { "iie/rom80alt/4bit", 0x65e7cc3615a91d83ULL },
+    { "iie/rom80alt/chatmauve", 0x65e7cc3615a91d83ULL },
+    { "iie/rom80alt/monowhite", 0x65e7cc3615a91d83ULL },
+    { "iie/rom80alt/monogreen", 0x7f60e937eed4f483ULL },
+    { "iie/rom80alt/monoamber", 0xe78e151c0a4e5e03ULL },
+    { "iie/rom80alt/signal", 0x74892bb0c1271d63ULL },
     { "iie/text40/ntsc", 0xe52e00a110661d5cULL },
     { "iie/text40/medium", 0xe52e00a110661d5cULL },
     { "iie/text40/4bit", 0xe52e00a110661d5cULL },
@@ -514,6 +657,8 @@ const std::map<std::string, uint64_t> kGolden = {
 
 int main()
 {
+    const auto rawRom = checkedCharacterRom();
+    if (rawRom.empty() || checkRomPixels(rawRom)) return 1;
     const bool record = std::getenv("POM2_GOLDEN_RECORD") != nullptr;
     std::string dumpName;
     int dumpLine = 0;

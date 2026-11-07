@@ -49,8 +49,8 @@ criterion. Move an item when its next action or dependency changes.
 | Task | Next action |
 |---|---|
 | [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | **The cycle exact, not the instruction exact** — a cycle-stepped core issuing one bus access per cycle in silicon order, so a write's placement *within* an instruction exists. This is what lets the beam-raced PAL French Touch / DIX demos be calibrated against the hardware instead of tuned through three independent per-device offsets (Disk II `getCurrentInstructionCycles`, Mockingboard `syncToCpuCycle()+1`, the 6522 T1 −1 bias). Design the microsequences from MAME's `.lst` tables as a **separate** core (a branch on the bus path costs 13-16 %); Harte per-cycle bus ordering is the gate. The recorded DIX expectation now exists (VALIDATION-006, done 2026-11-06): `pom2_corpus --tag dix` checks one frame per part, and a one-cycle Mockingboard regression fails 15 of its 16 checks — so a change can be told apart, but whether a changed frame is *better* still needs eyes or a capture. Not yet known: which DIX effects, if any, are currently mis-timed. |
-| [DISPLAY-002](docs/backlog/display.md#display-002) | Add ALTCHAR / MouseText hash pins from the tracked `apple2e_char*.rom`. |
-| [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Re-profile a ][+ banner, then prototype the page-dispatch table against `bus_fastpath`. |
+| [DISPLAY-002](docs/backlog/display.md#display-002) | ALTCHAR / MouseText ROM goldens added; remaining: PAL split coverage and a separate measurement of the fallback-framebuffer upload. |
+| [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Re-profiled; two guard reorderings rejected because they slow the //e. Isolate the ROM-condition cost before considering a page table (PERFORMANCE.md); no core change retained. |
 | [STORAGE-014](docs/backlog/storage.md#storage-014) | Test a host-folder bay dirtied during each phase-2 commit, or record the residue as an accepted limit. |
 
 ### Core — ready
@@ -59,7 +59,6 @@ criterion. Move an item when its next action or dependency changes.
 |---|---|
 | [STORAGE-003](docs/backlog/storage.md#storage-003) | Best-of-9 `pom2_bench` with `DiskImage::tracks` on the heap. |
 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
-| [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Write the doc-reference checker with negative controls; wire it into the CI Linux job. |
 | [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`ImageWriter.cpp`, `Apple2Display.cpp`); split the DiskImage WOZ save half. |
 | [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only pass on `M6502`, verified by unchanged Harte/Klaus. |
 
@@ -81,6 +80,7 @@ romsets, where noted).
 
 | Task | Question |
 |---|---|
+| [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Links and task IDs are checked in CI; define explicit ctest/card reference syntax before extending the guard. |
 | [UI-009](docs/backlog/ui-debugger.md#ui-009) | Miniatures from cover art or a captured screen? (Requested order: this, then [UI-010](docs/backlog/ui-debugger.md#ui-010).) |
 | [ARCH-011](docs/backlog/architecture-tooling.md#arch-011) | Close as "worker stopped during Apply, by design", or wait for ARCH-003? |
 | [STORAGE-002](docs/backlog/storage.md#storage-002) | Add a slot+bay `/media` mount/boot endpoint, or narrow the entry to the API gap? |

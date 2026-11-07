@@ -757,3 +757,110 @@ byte-identical** — the same contract §§ 1-9 are held to.
   the bus path at 13-16 % and a flag *test* there at 7.2 %; the same order of
   magnitude applies inside the interpreter loop. Run the bench on any diff
   that touches those four.
+
+<a id="memread-2026-11-07"></a>
+
+## 11. memRead revalidation, 2026-11-07
+
+**Result: two smaller alternatives to a page table were measured and rejected;
+the bus code stays unchanged.** MEMORY-002 remains open. The August ~15 %
+figure in § 7.4 is historical, not a current measurement of the ROM guards.
+
+A five-second macOS `sample <pid> 5 1 -mayDie` of the existing release
+`pom2_bench --frames 300000 --quiet` found 972 / 4226 main-thread samples
+(23.0 %) with **the whole `Memory::memRead` at the top of the stack**;
+`memReadSlow` had 276 (6.5 %) self samples. This establishes a current hotspot,
+not the fraction attributable to the ROM condition chain. The ARM64 LTO build
+retains a named `memRead`; instruction offsets identify both its entry and ROM
+guards, without source-line attribution. Sampling required permission outside
+the sandbox. No percentage of removable work is inferred from this profile.
+
+The subsequent A/B builds were fresh, isolated copies of source at `826bbba0`,
+using Apple Clang 17.0.0, macOS 15.8.1, ARM64, Release `-O3 -DNDEBUG` and thin
+LTO, without PGO. No shared build was changed. First build the unchanged
+baseline, save its executable, then apply **one** variant and rebuild in the
+same tree. These are the exact functional changes (comments move with the
+corresponding block):
+
+**Variant 1: put the existing ROM shortcut first**, before the RAM branch:
+
+```diff
+@@ Memory::memRead(uint16_t addr)
++        if (addr >= 0xD000 && !lcReadRam && romFastRead_
++            && !(noSlotClock_ && !iieMode && addr >= 0xF800))
++            return mem[addr];
+         if (addr < 0xC000) {
+@@ after the RAM branch and the flat-test shortcut
+-        if (addr >= 0xD000 && !lcReadRam && romFastRead_
+-            && !(noSlotClock_ && !iieMode && addr >= 0xF800))
+-            return mem[addr];
+```
+
+**Variant 2: retain RAM first, move only the flat-test shortcut after ROM:**
+
+```diff
+@@ after the RAM branch
+-        if (testMode && plainRead_) return mem[addr];
+@@ immediately after the ROM shortcut's return mem[addr]
++        if (testMode && plainRead_) return mem[addr];
+```
+
+Both keep every guard, add no state and avoid the page-table invalidation
+problem. `otool -tvV` confirmed the changed instruction order. Neither was
+promoted into the working tree. Reproduction, starting in the original repo
+(the worktree needs the existing, untracked ImGui dependency):
+
+```sh
+git worktree add --detach /tmp/pom2-memread-roi 826bbba0
+ln -s "$PWD/imgui" /tmp/pom2-memread-roi/imgui
+cmake -S /tmp/pom2-memread-roi -B /tmp/pom2-memread-roi/build \
+    -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=OFF
+cmake --build /tmp/pom2-memread-roi/build --target pom2_bench --parallel 2
+cp /tmp/pom2-memread-roi/build/pom2_bench /tmp/pom2-memread-baseline
+# Apply one functional change above to the worktree's src/Memory.h.
+cmake --build /tmp/pom2-memread-roi/build --target pom2_bench --parallel 2
+```
+
+Run from the **original repository root**, so firmware and media resolve to
+the same files. Every invocation sets `POM2_MEDIA_WRITE_DEFAULT=protected`.
+For each variant independently, run five pairs per row, alternating A/B then
+B/A order; A is `/tmp/pom2-memread-baseline`, B is the worktree's rebuilt
+`build/pom2_bench`. Append `--frames 30000 --quiet` to each row's arguments.
+No builds or other test workloads ran during either timing series. Both
+banners use the bench's simple NTSC reset configuration, not a saved user
+profile. The default ROM is `roms/apple2p.rom`, with rendering enabled.
+
+| Arguments | Variant 1 paired median Δ | Variant 2 paired median Δ |
+|---|---:|---:|
+| none (][+ banner) | −6.11 % | −4.50 % |
+| `--rom roms/apple2e.rom --iie` | **+1.35 %** | **+1.64 %** |
+| `--disk packaging/disks/MICRO-SOKOBAN.dsk` | **+1.95 %** | +0.30 % |
+| `--no-render` (][+ CPU/bus) | −6.40 % | −4.56 % |
+
+Δ is `median(100 × (B_i / A_i − 1))` over the five adjacent pairs, not a
+ratio of independent best runs. Negative means faster. Variant 2's //e pairs
+all regressed 1.46–1.72 %: A took 2.738–2.742 s, B 2.782–2.785 s. Its disk
+pairs ranged −0.47 to +0.85 %, which is treated as noise. Variant 1 also
+regressed //e and disk in all five pairs. The first series' baseline drifted
+(][+ 2.512 down to 2.391 s), so its exact gain is less portable than its
+cross-workload rejection. There is no claim about other hosts or compilers.
+
+All 80 measured invocations matched their paired cycle totals and main-RAM
+hashes, and framebuffer hashes when rendered. Variant 2 additionally passed
+all four `tools/check_bench_identity.sh` workloads. These checks do not cover
+aux/LC RAM or every side effect (§ 1); no full correctness qualification of a
+rejected prototype is claimed. No runtime optimization shipped, so no new
+goldens or bus-test expectations were needed.
+
+The preselected retention threshold was at least a repeatable 3 % gain on a
+target workload with no repeatable regression above 1 % on the other shapes,
+followed by `bus_fastpath`, `bench_identity` and relevant device gates. Both
+prototypes fail the regression condition. A page table is still only a
+hypothesis: it must preserve read-watch diversion, bank tracing, foreign bus,
+INH, aux-card and NoSlotClock hooks, plus invalidate on paging writes,
+PAGE2/HIRES reads, LC switches, INTC8ROM latch edges and snapshot restore.
+The next experiment should isolate the guard share with a symbol-rich
+optimized profile (§ 1) before paying that implementation cost; the ≥10 %
+guard-share floor from § 7.4 still applies. This revalidation supports keeping
+the task open, not scheduling a broad table implementation from the 23 %
+whole-function sample alone.

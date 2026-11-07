@@ -4926,6 +4926,8 @@ add_executable(test_display_golden
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_display_golden PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(test_display_golden PRIVATE
+    POM2_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_display_golden PRIVATE
         ${CMAKE_DL_LIBS} Threads::Threads m)

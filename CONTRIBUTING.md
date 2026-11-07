@@ -35,9 +35,9 @@ results. Packaging checks belong to the separate release workflow.
   keeps finding in its own guards.
 - **The text guards pass** — CI runs them, and so can you:
   `tools/check_file_sizes.sh`, `tools/check_version_strings.sh`,
-  `tools/check_settings_keys.sh`, `tools/check_workflow_pins.sh`,
-  `tools/check_coordinator_locks.sh`, `tools/check_includes.sh` (none needs a
-  build tree).
+  `tools/check_settings_keys.sh`, `tools/check_doc_refs.sh`,
+  `tools/check_workflow_pins.sh`, `tools/check_coordinator_locks.sh`,
+  `tools/check_includes.sh` (none needs a build tree).
 - **The emulation did not move by accident.** `ctest -R bench_identity`
   compares `pom2_bench`'s cycle counts and RAM hashes with
   `tests/bench_golden.txt`. A change *meant* to alter emulation regenerates
