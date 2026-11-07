@@ -408,6 +408,35 @@ bool DiskImage::applyWozFluxWriteBack()
     return true;
 }
 
+// ─── WOZ2 record bounds (bug hunt 2026-11-01 round 4) ────────────────────
+// [B] WOZ 2.1 reference, TRKS: the chunk opens with exactly 160 TRK records
+//     (kWoz2TrkRecords), then the bit and flux data. A TMAP or FLUX entry
+//     past them (200, say) used to land in the DATA and read 8 bytes of a
+//     track as a TRK header; the loader now calls it damage.
+// [B] Same reference: "all track data is stored in 512-byte blocks". A
+//     record whose `block_count` runs past its region — the end of TRKS when
+//     its data starts inside it, else the end of the file — is a
+//     non-conforming file, and the spec says nothing on reading one.
+// [D] MAME as_dsk.cpp @ b2a182f0b7 pads every track to whole blocks when it
+//     writes (count_blocks / save_tracks, :201-262) and checks no bound when
+//     it reads.
+// POM2 reads such a record when its stream (FLUX) or its bits (bit-cell) are
+// all inside the region, and caps the write capacity at the region. Before,
+// a FLUX record mounted with the whole count and every save of the track was
+// refused (capacity > file - offset), and a bit-cell one was damage —
+// unreadable, the image refused when it was the only track. A cap at the
+// file's end alone would let a save run over the FLUX chunk after TRKS.
+std::size_t DiskImage::woz2Capacity(std::size_t trksOff, std::size_t trksLen,
+                                    std::size_t fileSize, std::size_t dataOff,
+                                    std::size_t allocBytes, std::size_t used)
+{
+    const std::size_t trksEnd = trksOff + trksLen;
+    const std::size_t regionEnd =
+        (dataOff >= trksOff && dataOff < trksEnd) ? trksEnd : fileSize;
+    if (dataOff > regionEnd || used > regionEnd - dataOff) return 0;
+    return std::min(allocBytes, regionEnd - dataOff);
+}
+
 // MacBinary header CRC (MacBinary II: CRC-16/XMODEM over bytes 0-123).
 static uint16_t macBinaryCrc(const uint8_t* p)
 {

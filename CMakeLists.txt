@@ -869,6 +869,7 @@ set(POM2_MACHINE_HEADERS
     src/MemoryProfile.h
     src/MemoryWatchSink.h
     src/PaddleInputs.h
+    src/RomErrata.h
     src/SiriusJoyport.h
     src/SlotPeripheral.h
     src/CardTraceSink.h
@@ -1189,6 +1190,7 @@ set(HEADERS
     src/SettingsList.h
     src/PersistentFs.h
     src/CpuClock.h
+    src/RomErrata.h
     src/ResourcePaths.h
     src/FloppyEmuDevice.h
     src/FloppyEmu_ImGui.h

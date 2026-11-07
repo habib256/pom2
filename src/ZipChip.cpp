@@ -81,7 +81,20 @@ ZipChip::ioRead(uint8_t low, uint64_t now, uint8_t stateByte, uint64_t stockNow)
         tempDelay(kShortDelayMs, (slotSpk_ & 1) != 0, now);
         return r;
     }
-    if (low == 0x70) {                                // PTRIG, :2043-2044
+    // PTRIG. $C070 ONLY, not the $C071-$C07F mirrors Memory honours for
+    // the paddle timers (bug hunt 2026-11-01 round 2, CPU-4):
+    // [A] Measured on a Zip Chip-8 and a //c+ (T. Greene, D. Schmidt;
+    //     ZIPTEST / ZIPSCAN), reported in MAME PR #15387 (arekkusu42,
+    //     merged 2026-05-27): "ZipGS optional paddle delay on C020/70, Zip
+    //     only on C070".
+    // [B] Zip Technology, ZIP CHIP instruction manual, PDF pp. 14-15
+    //     ($C05B bit 5, $C05F bit 6): "accesses to $C070 cause a 5
+    //     millisecond synchronous sequence" — $C070 is the only address named.
+    // [D] MAME master b2a182f0b7 apple2e.cpp:2042-2046: accel_temp_delay on
+    //     `case 0x70`, then a fall-through to 0x71-0x7f WITHOUT it. Tag
+    //     mame0287 :2012-2025 still took it on all sixteen; #15387 is the
+    //     change.
+    if (low == 0x70) {
         tempDelay(kShortDelayMs, (gameIo_ & 0x40) != 0, now);
         return r;
     }
@@ -139,6 +152,7 @@ void ZipChip::ioWrite(uint8_t low, uint8_t value, uint64_t now)
     // a STA / STZ $C070 opens the paddle delay too. The note here used to
     // say the write side had none (bug hunt 2026-10-23).
     if ((low & 0xF0) == 0x30) { tempDelay(kShortDelayMs, (slotSpk_ & 1) != 0, now); return; }
+    // $C070 only, as on the read side (CPU-4, see ioRead).
     if (low == 0x70) { tempDelay(kShortDelayMs, (gameIo_ & 0x40) != 0, now); return; }
     if (low >= 0x90) {                                // c080_w, :2934
         tempDelay(kSlotDelayMs, ((slotSpk_ >> (low >> 4 & 7)) & 1) != 0, now);

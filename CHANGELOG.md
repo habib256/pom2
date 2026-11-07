@@ -10,6 +10,168 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — Round-4 leftovers: a mouse button on focus loss, a self-healing media cache, honest tools and docs
+
+- **A held mouse button is released when the window loses focus**, as the
+  keys already were. `setMouseGrab(false)` released it only when the pointer
+  had been captured, and a press over the Apple II Screen widget is routed
+  uncaptured. GLFW synthesises a release after the focus callback on desktop
+  builds; not every port promises that.
+- **A poisoned test-media cache heals itself** (PKG-4). A cached zip that
+  fails the manifest — a truncated-but-valid zip, a member that will not
+  inflate — was restored by every later CI job, all failing alike, while the
+  log said "using the cached archive". It is now downloaded once more and
+  replaced. `fetch_test_media.py --self-test` pins both directions offline
+  (ctest `fetch_test_media`).
+- **`pom2_bench` checks its numbers and documents `--dump-text`** (CLI-1,
+  CLI-2): `--cycles-per-frame abc` ran the default budget and `--read-watch
+  zzz` armed a watchpoint at `$0000`. The usage/parser symmetry check now
+  covers `pom2_bench.cpp`. Two probes wrote outside `probeOutDir()` — one into
+  the cwd, one to a fixed `/tmp` path — and swallowed a failed open (CLI-3,
+  CLI-4); fixed.
+- **The HGR Fill floods against the ColorNTSC picture, not the canvas's
+  pipeline** (PAINT-2). On a composite demod a solid field's colour varies
+  dot by dot with its NTSC phase, so the flood stopped where it pleased.
+  `hgrRenderPageRgb` (the module's own decode) is pinned equal to the
+  display's ColorNTSC render, page for page.
+- **Docs and citations**: `lle_vs_hle.md` no longer calls four dumps
+  "in-repo" (they are fetched from `pom2_firm`) and gains CCS 7710, DAN ][ and
+  E-Z Color in the master table; the ProDOS block-device signature is cited to
+  ProDOS 8 Technical Note #20 (checked), not the 1979 Apple II Reference
+  Manual that predates ProDOS.
+- **A write to a blank 3.5" MOOF or WOZ track creates it.** A track the
+  capture does not have (TMAP `$FF`) gave `Sony35Drive` an empty cache, and
+  `writeFlux` returned without a word: formatting a blank track of a MOOF
+  never took. `ensureCacheFor` now caches a zone-sized blank for it, as
+  `cellsPerRev()` already assumed, and `Woz35` takes the same branch as its
+  two siblings — which, without the blank, had spread the hole to WOZ (caught
+  by the 2026-11-07 bug hunt before it shipped). Pinned `disk35_flux_write`.
+- **Checked and left as they are, with the reason written down**:
+  `~SlotBus` skipping `onUnplug()` is deliberate — the CPU is destroyed first,
+  so an `onUnplug()` there would reach a freed M6502 (now said in
+  `SlotBus.h`). A MacBinary-wrapped 3.5" image is
+  still refused on its size, never mis-read; stripping it needs the envelope
+  written back on save, as the 5.25" path does.
+
+## 2026-11-07 — Every ROM dump against MAME; tabs, page floor, UltraTerm decode
+
+- **`tools/audit_rom_dumps.py`** compares every file in `roms/` with the CRC
+  of every `ROM_LOAD` in MAME's Apple drivers and `a2bus` cards at the pinned
+  revision, whole and slice by slice. On a full `roms/`: 41 MATCH, 3 TILED,
+  4 PARTIAL, 15 NONE, each explained in
+  `docs/audits/rom-dumps-vs-mame-2026-11-07.md`. One defect in code POM2
+  runs (the ][+ F8 page, entry below); `grappler_plus.bin` is a third
+  revision MAME does not have — it says "Grappler+ Version 3.1" in the
+  clear — and `RomFetch.cpp` called it "EPROM 3.2": corrected.
+- **ESC/P `ESC D NUL` cancels the horizontal tab stops** (PRN-3). An empty
+  list was the encoding for "power-on stops", so HT still jumped 8 columns;
+  ESC/P C-43 says HT is then ignored. A flag now tells the two apart, as the
+  vertical side already did; a margin command restores the defaults
+  (FX-80 p. 121).
+- **A Diablo 630 page must hold one line** (PRN-4). `ESC L` sent at home or
+  `ESC FF 1` left no room, so every LF ejected a blank sheet into the durable
+  print history; `ESC T` could do the same from the other side. Refused now,
+  as `ESC H` and `ESC N` already refused theirs. Not the 630's own rule —
+  its manual gives none.
+- **The UltraTerm decodes device-select writes exactly** (VID-2): `$C0n0-$C0n3`,
+  as MAME and POM2's own Videoterm do. `low4 & 3` sent `STA $C0n6` — a
+  bank select in Videoterm mode — into control register 1.
+- The audit's "SlotBus's cache guard never runs" was wrong: the test
+  binaries compile `SlotBus.cpp` with `-UNDEBUG`; corrected in the audit.
+
+## 2026-11-07 — The ][+ dump's IRQ/BRK vector put back to $FA40
+
+`roms/apple2p.rom` (the pinned ][+ dump) is Apple's set page for page except
+`$FFFE/$FFFF`: `$FF59` (OLDRST, the Monitor's reset entry) where the
+Autostart Monitor 341-0020-00 has `$FA40` (its IRQ entry). On POM2's ][+
+every IRQ and every BRK therefore fell into the Monitor's `*` prompt: an
+interrupt-driven program hooking `$03FE` (a Mockingboard player) died on its
+first interrupt, and BRK printed no registers. Evidence: Apple's own copy of
+the ROM on the Service Disk (ASF8.DATA, entry above) ends `$40 $FA`; MAME's
+`341-0020-00.f8` (CRC `079589c4`) and AppleWin's current
+`resource/Apple2_Plus.rom` have the same page. The `$FF59` image is the one
+comp.sys.apple2 found in AppleWin's old ][+ ROM and MESS's a2p in December
+2005 (patching it back fixed Ultima III's Mockingboard music there); where it
+came from was never traced.
+
+The dump is SHA-256-pinned (RetroBIOS, `pom2_firm`, `tools/test_media.sha256`),
+so it is corrected in memory, not on disk: `RomErrata.h` rewrites the two
+bytes after the ROM is mapped, only when the F8 page is exactly that dump's
+(CRC `ecffd453`) and only if the result is exactly 341-0020-00's. Any other
+ROM is left alone. Snapshots and sessions record the ROM in their ENV
+section, so both sides are normalised too: a ][+ `.pom2snap` or session saved
+before the fix still matches the live firmware (it was refused as "firmware
+differs"), and a session reconstructed from its own ENV installs the
+corrected page (it brought `$FF59` back) — caught by the 2026-11-07 bug hunt
+before it shipped. Pinned `rom_errata` (fails without the fix).
+
+## 2026-11-07 — Apple's Service Disk No.1 in the corpus, repaired
+
+A forum post reported the F0 ROM test of "Apple Computer Co. - Confidential
+Service Disk No.1.do" (asimov mirror, `images/disk_utils/diagnostics/`,
+sha256 `9f98b1e4…`) failing on an emulated Integer-BASIC ][. The fault is the
+image's: F0.DATA's second data sector (T10 S2) is a copy of E8.DATA's, so
+the reference holds ROM `$E8FC-$E9FB` where `$F0FC-$F1FB` belongs, and the
+test prints "UNABLE TO MATCH CODE ... REPLACE F0 ROM" on any faithful
+machine. Reproduced on POM2's `ii` profile. Putting that one sector back
+from `341-0003-00.f0` (MAME CRC `62230d38`) — 255 bytes, nothing else —
+makes E0, E8, F0 and F8 all report "NO ERRORS ENCOUNTERED". The post's
+second suspicion does not hold: E8.DATA's 2 KB are exactly
+`341-0002-00.e8` (CRC `a99c2cf6`); the file is one byte long (`$801`, a
+trailing `$20`), which is not a ROM byte.
+
+New corpus title `service-disk-1` (`ii`, tag `diagnostics`): the menu and the
+four ROM results, on the repaired copy (sha256 `b8dd1898…`). The copy is not
+in the test-media archive yet, so the title skips until it is.
+
+## 2026-11-07 — Five round-4 leftovers: sprite undo, SuperDrive, WOZ2 record bounds, live demod controls
+
+From the 2026-11-01 bug hunt's deferred list (`docs/audits/bug-hunt-2026-11-01-round2.md`).
+
+- **The sprite editor's Ctrl+Z during a pencil drag** undid the *previous*
+  stroke and left the open one recording old values that were already
+  stale, so undoing it later put back pixels the first undo had removed
+  (PAINT-1). `HgrSpriteEditor::flushOpenStroke` closes the drag before undo,
+  redo or a bulk transform, as the paint editor's own guard does; a transform
+  mid-drag keeps the drag's pixels as their own undo group instead of dropping
+  them from the history. Pinned `hgr_sprite_undo` (fails on the old code).
+- **"Apple IIe SuperDrive" on a machine the factory refused.** The picker
+  offered it, `resolve()` kept it, and the factory refused it in silence: the
+  Slot Config badge said "1 staged change" for ever and every Apply cold-booted.
+  One predicate, `superDriveFitsProfile` (`SystemProfile.h`), now drives all
+  three: the picker greys it with a reason, and `resolve()` drops it and
+  remembers it like the Videoterm and the VidHD. The rule also changed, now
+  that it is sourced: **every //e takes the card, the unenhanced one too**.
+  [B] Apple's owner's guide and Tech Info Library article 9292 say "an Apple
+  IIGS or Apple IIe", not an enhanced one; [C] in the card's ROM 341-0438-A
+  the code the host runs splits on `BIT $CC09`, 65816 on the IIGS branch and
+  NMOS-only on the //e branch. The ][ / ][+ stay out ([F]: Apple does not list
+  them). Pinned `slot_configuration_coordinator`.
+- **WOZ2 record bounds.** [B] WOZ 2.1 reference: TRKS opens with exactly 160
+  TRK records. A TMAP or FLUX entry past them (200, say) pointed into the
+  track data and read 8 bytes of it as a TRK header; it is now a damaged
+  quarter-track (the image mounts write-protected and says so). A record whose
+  `block_count` runs past its region (the end of TRKS when its data starts
+  there, else the end of the file) is a non-conforming file ([B] "all track
+  data is stored in 512-byte blocks"; MAME's writer pads, its reader checks
+  nothing). One rule now reads it on both paths when its stream or bits are
+  all present, and caps its write capacity at the region. Before, a FLUX one
+  mounted with the whole count and refused every save of the track, and a
+  bit-cell one was damage — unreadable, the image refused when it was the
+  only track. Pinned `woz_load_smoke` and `woz_writeback_smoke`, each failing
+  on the old code.
+- **Hue, Sharpness, PAL composite and Sharp text stay live with "CRT effects"
+  off.** They are demodulation knobs, handed to the OpenEmulator demod
+  whether or not the glass pass runs, so greying them hid controls that still
+  changed the picture. PAL composite describes the machine and has no other UI.
+- **CPU-4 settled, not changed.** The socket accelerators open their paddle
+  delay on `$C070` only, and for the Zip Chip that is now sourced: [A]
+  hardware tests on a Zip Chip-8 and a //c+, reported in MAME PR #15387
+  ("Zip only on C070"), and [B] the Zip Chip instruction manual, which names
+  `$C070` alone. MAME master `b2a182f0b7` follows the measurement; tag
+  mame0287 took the delay on all of `$C070-$C07F`. The FASTChip's own decode
+  stays [F].
+
 ## 2026-11-06 — RESET leaves the IRQ line to its drivers; quiet skips speak; in-test time bounds scale
 
 **CPU-2: RESET no longer wipes the wire-OR IRQ mask.** The mask is POM2's

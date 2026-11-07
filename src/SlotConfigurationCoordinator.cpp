@@ -278,6 +278,23 @@ SlotConfigurationCoordinator::resolve(const Settings& settings,
             continue;
         }
 
+        // The SuperDrive card: the factory builds it on a //e only
+        // (superDriveFitsProfile, SystemProfile.h). A saved key on any other slotted machine used to reach the
+        // factory, be refused there in silence, and leave Slot Config with a
+        // staged change that never cleared and an Apply that cold-booted
+        // every time (bug hunt 2026-11-01 round 4). Dropped and remembered.
+        if (effectivePlan_[slot] == "superdrive" && !cfg.noPhysicalSlots &&
+            !superDriveFitsProfile(profile)) {
+            log().info("Slots",
+                "Slot " + std::to_string(slot) + " left empty on " +
+                std::string(cfg.displayName) +
+                " (the Apple IIe SuperDrive card needs a //e); "
+                "user setting kept");
+            dedupCleared_[slot] = effectivePlan_[slot];
+            effectivePlan_[slot].clear();
+            continue;
+        }
+
         if (!cfg.noPhysicalSlots || effectivePlan_[slot].empty()) continue;
         if (effectivePlan_[slot] == "chatmauve" && !builtinRgb) {
             log().info("Slots",

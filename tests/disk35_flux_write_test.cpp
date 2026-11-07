@@ -160,4 +160,33 @@ void test(bool moof) {
     }
 }
 }
-int main() { test(false); test(true); }
+// A write to a track the capture does not have (TMAP $FF) must create it,
+// through the drive as the firmware writes (bug hunt 2026-11-07): the cache
+// for an absent MOOF / WOZ track was empty and Sony35Drive::writeFlux
+// returned without a word.
+void testWriteCreatesAbsentTrack(bool moof) {
+    std::vector<std::vector<uint8_t>> tracks(160);
+    std::vector<uint8_t> payload(12 * 512);
+    for (int s = 0; s < 12; ++s) fillBlock(payload.data() + s * 512, s);
+    tracks[2] = encodeTrack(1, 0, payload.data());     // track 0 head 0 absent
+    auto bytes = buildWoz(tracks);
+    if (moof) {
+        std::memcpy(bytes.data(), "MOOF\xFF\x0A\x0D\x0A", 8);
+        bytes[20] = 1; bytes[24] = 16;
+    }
+    const auto path = writeTemp(moof ? "pom2-absent35.moof" : "pom2-absent35.woz", bytes);
+    pom2::Disk35Image image;
+    assert(image.loadFile(path.string())); image.setWriteBackEnabled(true);
+    assert(!image.isWriteProtected());
+    assert(image.trackPeriod125ns(0, 0) == 0);          // absent before
+    pom2::Sony35Drive drive; drive.setImage(&image); drive.notifyMediaChange();
+    const int64_t period = drive.ticksPerRev();
+    const int64_t fluxes[] = { period / 8, period / 4, period / 2 };
+    drive.writeFlux(0, period, fluxes, 3, 0, 0);
+    assert(image.trackPeriod125ns(0, 0) != 0 && "the write created no track");
+    assert(image.originalFluxTicks(0, 0) && !image.originalFluxTicks(0, 0)->empty());
+    assert(image.saveDirty());
+    pom2::Disk35Image again; assert(again.loadFile(path.string()));
+    assert(again.trackPeriod125ns(0, 0) != 0 && "the new track did not reach the file");
+}
+int main() { test(false); test(true); testWriteCreatesAbsentTrack(false); testWriteCreatesAbsentTrack(true); }

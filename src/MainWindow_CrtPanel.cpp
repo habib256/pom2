@@ -328,6 +328,21 @@ void MainWindow::renderNtscSettingsWindow()
             }
         };
 
+        // Hue, Sharpness, PAL composite and Sharp text are DEMODULATION
+        // knobs: renderScreenTexture hands them to the OE demod whether or
+        // not the glass pass runs (MainWindow_Screen.cpp, setOeDemodParams).
+        // They stay live when "CRT effects" is off — greyed, they read as
+        // dead while they still changed the picture, and PAL composite, which
+        // describes the machine and has no other UI, could not be ticked by a
+        // PAL user who wanted clean pixels (bug hunt 2026-11-01 round 4).
+        // ImGui's disabled state is cumulative, so the outer block is closed
+        // around them; none sits inside a nested BeginDisabled.
+        auto demodLive = [&](auto&& draw) {
+            ImGui::EndDisabled();
+            draw();
+            ImGui::BeginDisabled(!crtEffectsEnabled);
+        };
+
         ImGui::SeparatorText("Picture");
         slider("Brightness", "##bright", &p.brightness, -0.5f, 0.5f,
                "Added to luma.");
@@ -335,12 +350,16 @@ void MainWindow::renderNtscSettingsWindow()
                "Scaling around mid-grey.");
         slider("Saturation", "##sat", &p.saturation, 0.0f, 2.0f,
                "Chroma multiplier. 0 = monochrome.");
-        slider("Hue",        "##hue", &p.hue, -0.5f, 0.5f,
-               "I/Q rotation. Full turn at +/-0.5.");
+        demodLive([&] {
+            slider("Hue",        "##hue", &p.hue, -0.5f, 0.5f,
+                   "I/Q rotation. Full turn at +/-0.5.");
+        });
 
         ImGui::SeparatorText("Phosphor");
-        slider("Sharpness",   "##sharp", &p.sharpness, 0.0f, 1.0f,
-               "Chroma bandwidth. Lower = more composite bleed.");
+        demodLive([&] {
+            slider("Sharpness",   "##sharp", &p.sharpness, 0.0f, 1.0f,
+                   "Chroma bandwidth. Lower = more composite bleed.");
+        });
         slider("Persistence", "##persist", &p.persistence, 0.0f, 0.95f,
                "Temporal decay — the phosphor's afterglow.");
         slider("Phosphor gamma", "##gamma", &p.phosphorGamma, 0.6f, 2.6f,
@@ -419,13 +438,15 @@ void MainWindow::renderNtscSettingsWindow()
         // with the NTSC look most users associate with the Apple II). It
         // describes the machine being emulated, not a look — so it is one
         // setting for every monitor, like Sharp text below.
-        changed |= ImGui::Checkbox("PAL composite (line-phase alternation)",
-                                   &p.palMode);
         // Sharp-text bypass: keep glyphs crisp in TEXT mode by skipping the
         // shader for the whole text screen. HGR/DHGR/lo-res still run through
-        // the demodulator.
-        changed |= ImGui::Checkbox("Sharp text (bypass shader in TEXT mode)",
-                                   &p.textSharp);
+        // the demodulator. Both stay live with the glass off (demodLive).
+        demodLive([&] {
+            changed |= ImGui::Checkbox("PAL composite (line-phase alternation)",
+                                       &p.palMode);
+            changed |= ImGui::Checkbox("Sharp text (bypass shader in TEXT mode)",
+                                       &p.textSharp);
+        });
 
         ImGui::Spacing();
         const int mine = ov.count(mon);

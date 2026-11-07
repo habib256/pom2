@@ -645,6 +645,15 @@ void MainWindow::onWindowFocus(bool focused)
         keyboardJoystick_.setActive(false);
         setMouseGrab(false);
         controller->memory().releaseHeldKeys();
+        // The button too, as setMouseGrab(false) does — which returns early
+        // when the pointer was not captured, the case where a press over the
+        // Apple II Screen widget is routed (bug hunt 2026-11-01 round 4).
+        // GLFW synthesises a release after this callback on desktop builds;
+        // that is not a guarantee every port makes, and this is idempotent.
+        if (mouseButtonHeld) {
+            mouseButtonHeld = false;
+            (void)mouseCoordinator_->routeHost(mouseAppleX, mouseAppleY, false);
+        }
     }
 }
 

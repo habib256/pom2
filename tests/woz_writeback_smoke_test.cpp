@@ -586,6 +586,59 @@ bool testFluxWriteBackRoundTrip()
     return true;
 }
 
+// Bug hunt 2026-11-01 round 4. (a) A FLUX record whose `block_count` runs
+// past the TRKS chunk (here into the FLUX chunk) mounted with the whole count
+// as its write capacity, and the save refused every write of the track. Its
+// capacity is now what TRKS gives it, and a save neither fails nor touches
+// the FLUX chunk. (b) [B] WOZ 2.1 reference, TRKS: 160 TRK records; a FLUX
+// entry past them is damage, not a record.
+bool testFluxRecordBounds()
+{
+    auto woz = buildFluxWoz();
+    woz[258] = 2;            // block_count 2: blocks 3-4, but block 4 is FLUX
+    const auto path = writeTempFile(woz, "flux_overrun");
+    DiskImage img;
+    img.setFluxClockHz(kTickAlignedHz);
+    if (!img.loadFile(path) || img.trackPeriod(0) != 400) {
+        std::printf("FAIL: overrunning FLUX record did not mount: %s\n",
+                    img.getLastError().c_str());
+        return false;
+    }
+    img.setWriteBackEnabled(true);
+    int64_t pulse = 109;
+    img.writeFlux(0, 100, 120, 1, &pulse);
+    if (!img.saveDirty()) {
+        std::printf("FAIL: save of an overrunning FLUX record: %s\n",
+                    img.getLastError().c_str());
+        return false;
+    }
+    const auto saved = readWholeFile(path);
+    if (saved.size() < 2056 || saved[2048] != 'F' || saved[2049] != 'L' ||
+        saved[2056] != 0 || saved[2057] != 0) {
+        std::printf("FAIL: the FLUX save ran over the FLUX chunk\n"); return false;
+    }
+
+    auto bad = buildFluxWoz();
+    const size_t fluxMap = bad.size() - 160;
+    bad[fluxMap + 8] = 200;  // qt 8 → TRK record 200: in the data
+    // ...where a plausible header sits (TRKS payload 256 + 200 × 8 = 1856,
+    // inside the data block): block 3, one block, 9 bytes.
+    const uint8_t fakeHdr[8] = {3, 0, 1, 0, 9, 0, 0, 0};
+    std::copy(std::begin(fakeHdr), std::end(fakeHdr), bad.begin() + 1856);
+    const auto badPath = writeTempFile(bad, "flux_idx200");
+    DiskImage img2;
+    if (!img2.loadFile(badPath) || img2.trackPeriod(8) != 0 ||
+        img2.integrityWarning().empty()) {
+        std::printf("FAIL: FLUX index 200 was not reported as damage\n");
+        return false;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    fs::remove(badPath, ec);
+    std::printf("  ok: FLUX capacity stays in TRKS; a FLUX index >= 160 is damage\n");
+    return true;
+}
+
 // [B] WOZ 2.1 reference, TRKS: every non-255 byte of a flux stream is a
 // transition, the LAST one included — it closes the loop at position 0
 // (audit parite-flopimg-as_dsk-wozfdc-2026-11-01, constat 1). So (a) an
@@ -891,6 +944,7 @@ int main()
     if (!testFluxStreamEndsOnTransition()) return 1;
     if (!testFluxSlotGrowth()) return 1;
     if (!testFluxSlotGrowthInMacBinary()) return 1;
+    if (!testFluxRecordBounds()) return 1;
     if (!testSharedTrkQuarterTracksAlias()) return 1;
     if (!testWoz1WriteBackRoundTrip())  return 1;
     if (!testWoz2WriteBackRoundTrip())  return 1;

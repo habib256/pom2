@@ -565,16 +565,15 @@ void hgrpaint::HgrPaintEditor::floodFill(int x, int y, HgrColor c)
     if (grMode)  { grFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
     if (dhgrMode){ dhgrFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
     if (dlgrMode){ dlgrFloodFill(x, y, (c == HgrColor::Black) ? 0 : grColor); return; }
-    // Flood by *perceived* artifact colour (hgrpaint::fillRegion renders the page
-    // through the host NTSC pipeline), which is what the eye sees — a raw-bit
-    // flood leaks through the off sub-pixels that dither every chromatic region.
+    // Flood by *perceived* artifact colour (a raw-bit flood leaks through the
+    // off sub-pixels of every chromatic dither), perceived through the
+    // module's ColorNTSC decode, not the host's selected pipeline: a composite
+    // demod varies a field's colour dot by dot (PAINT-2, bug hunt 2026-11-01).
     // fillRegion mutates a page buffer directly, so snapshot the shadow, run it,
     // then diff back into per-byte edits to keep undo + the live RAM writes working.
     std::vector<uint8_t> before = shadow;
     hgrpaint::fillRegion(shadow.data(), x, y, c,
-                         [this](const uint8_t* page8k, uint32_t* out) {
-                             if (host) host->renderHgrPage(page8k, out, /*mono=*/false);
-                         },
+                         hgrpaint::hgrRenderPageRgb,
                          // The MacPaint pattern the tool panel offers for Fill,
                          // sampled in page coordinates like applyPlotPat.
                          [this](int px, int py) { return patternOn(px, py); });

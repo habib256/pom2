@@ -216,6 +216,33 @@ inline std::uint16_t wozHardwareBit(SystemProfile p)
     return 0;
 }
 
+/// The Apple II 3.5 Disk Controller card (catalog `superdrive`) is offered
+/// on every //e with slots, enhanced or not, NTSC or PAL, and nowhere else.
+/// One predicate for the factory, the Slot Config picker and `resolve()`,
+/// which used to disagree: the picker offered it on profiles where the
+/// factory then refused it in silence, and the staged change never cleared
+/// (bug hunt 2026-11-01 round 4).
+/// [B] Apple, "Apple II 3.5 Disk Controller Card Owner's Guide" (1991) and
+///     Tech Info Library article 9292 (2/97): the card is for "an Apple IIGS
+///     or Apple IIe computer". Neither says ENHANCED //e, and neither lists
+///     a ][ or ][+.
+/// [C] The card's ROM 341-0438-A: the code the HOST runs (the $Cn page from
+///     $8100, $CA00-$CBFF from $8200, $CC00-$CFFF from $8400, copied at
+///     $D319) splits on `BIT $CC09 / BVS`. The IIGS branch uses 65816 code
+///     (XCE, LDA [dp],Y, the $C036 speed register); the //e branch, followed
+///     from the boot, ProDOS and SmartPort entries, is NMOS-only. So an
+///     unenhanced //e's 6502 runs it, and POM2 used to refuse that machine
+///     on a rule nobody had sourced.
+/// [F] The ][ / ][+: Apple does not list them. The //e branch calls only
+///     monitor entries a ][+ also has ($FABA, $FB39, $FC58, $FE89, $FE93),
+///     so it may run there; kept out until a real card is tried in one.
+inline bool superDriveFitsProfile(SystemProfile p)
+{
+    return p == SystemProfile::AppleIIe || p == SystemProfile::AppleIIePAL ||
+           p == SystemProfile::AppleIIeUnenhanced ||
+           p == SystemProfile::AppleIIeUnenhancedPAL;
+}
+
 }  // namespace pom2
 
 #endif // POM2_SYSTEM_PROFILE_H

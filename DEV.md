@@ -4805,7 +4805,7 @@ POM2's is generated for its slot. Soft
 switches `$C0E0-$C0EF`: phases, motor, drive_select, Q6L/Q6H,
 Q7L/Q7H.
 
-**Boot signature** (Apple II Ref Manual Appx C): `$Cn00` starts with
+**Boot signature** ([B] ProDOS 8 Technical Note #20, "Mirrored Devices and SmartPort": the block-device signature ProDOS checks at boot — not the 1979 Apple II Reference Manual, which predates ProDOS): `$Cn00` starts with
 `$20 ?? $00 $03` at offsets 1/3/5 (JSR dispatch trio). `$Cn07`
 identifies Disk II (`$3C`), SmartPort (`$00`), or a plain ProDOS block
 interface (anything else — the synthetic SmartPort stub reads `$01`, the

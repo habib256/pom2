@@ -366,6 +366,72 @@ bool testWozLssEndToEnd() {
     return false;
 }
 
+// [B] WOZ 2.1 reference, TRKS: the chunk opens with exactly 160 TRK records.
+// A TMAP entry of 200 points 1600 bytes in, i.e. into the bit DATA; the
+// loader used to read those 8 bytes as a TRK header (bug hunt 2026-11-01
+// round 4). Here the data at that spot is a plausible header, so the old
+// loader mounted a track that does not exist; it must be damage instead.
+bool testWoz2TmapIndexOutOfRange() {
+    std::vector<uint8_t> bitData(512, 0xFF);
+    // Chunk offset 1600 = the block's byte 320: a header naming block 3,
+    // one block, 32 bits — i.e. this very block.
+    const uint8_t fakeHdr[8] = {3, 0, 1, 0, 32, 0, 0, 0};
+    std::memcpy(bitData.data() + 320, fakeHdr, sizeof fakeHdr);
+    auto woz = buildMinimalWoz2(bitData, 32);
+    // TMAP payload starts at 12 + 8 + 60 + 8 = 88.
+    woz[88 + 4] = 200;                       // qt 4 → TRK record 200
+    const std::string path = writeTempFile(woz, "tmap200");
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: TMAP 200 image refused outright: %s\n",
+                    img.getLastError().c_str());
+        return false;
+    }
+    if (img.trackBitLength(4) != 0) {
+        std::printf("FAIL: TMAP index 200 read track data as a TRK header "
+                    "(qt 4 has %d bits)\n", img.trackBitLength(4));
+        return false;
+    }
+    if (img.integrityWarning().empty()) {
+        std::printf("FAIL: an out-of-range TMAP index is not reported as damage\n");
+        return false;
+    }
+    if (img.trackBitLength(0) != 32) {
+        std::printf("FAIL: the valid track 0 was lost\n"); return false;
+    }
+    std::printf("[ OK ] WOZ2 TMAP index >= 160 is damage, not a record\n");
+    return true;
+}
+
+// The same image with `block_count` 2: its one data block is the last 512
+// bytes of the file, so the record's second block lies past the end. [B] WOZ
+// 2.1 reference: track data is stored in whole 512-byte blocks, so the file
+// does not conform, but every bit of the track is there. The bit-cell path
+// used to call it damage — the only track unreadable, the image refused —
+// where a FLUX record in the same shape was read (bug hunt 2026-11-01
+// round 4). Both now read it and cap the write capacity at the file's end.
+bool testWoz2BlockCountPastEof() {
+    std::vector<uint8_t> bitData(512, 0xFF);
+    bitData[0] = 0xD5;
+    auto woz = buildMinimalWoz2(bitData, 32);
+    woz[258] = 2;                            // TRK 0 block_count = 2
+    const std::string path = writeTempFile(woz, "blocks_past_eof");
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: a bit-cell record running past EOF refused the "
+                    "image: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    if (img.trackBitLength(0) != 32 || img.bitAt(0, 0) != 1 ||
+        !img.integrityWarning().empty()) {
+        std::printf("FAIL: the track whose bits are all present was not read "
+                    "cleanly\n");
+        return false;
+    }
+    std::printf("[ OK ] WOZ2 bit-cell record past EOF: read, capacity capped\n");
+    return true;
+}
+
 bool testWozRejectsNonWoz() {
     // Build a buffer that has the magic prefix but garbage in the
     // sentinel bytes. Should fail cleanly.
@@ -392,6 +458,8 @@ int main() {
     ok &= testWoz2Parse();
     ok &= testWozLssEndToEnd();
     ok &= testWozRejectsNonWoz();
+    ok &= testWoz2TmapIndexOutOfRange();
+    ok &= testWoz2BlockCountPastEof();
     if (ok) {
         std::printf("woz_load_smoke OK\n");
         return 0;

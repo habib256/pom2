@@ -439,7 +439,8 @@ void ImageWriter::resetPrinter()
     // Practically every Apple II printer driver (including GS/OS) assumes
     // the ImageWriter's 1/4 inch left margin (imagewriter.cpp:281).
     leftMargin_   = kHomeX;
-    epsonHTabs_.clear(); epsonVTabs_.clear(); epsonVTabsSet_ = false;
+    epsonHTabs_.clear(); epsonHTabsSet_ = false;
+    epsonVTabs_.clear(); epsonVTabsSet_ = false;
     pageWidthIn_  = defaultPageWidth_;
     // The ImageWriter and the FX-80 strike an 8-inch line (80 Pica columns)
     // from column one, whatever the paper; the Diablo 630 is a wide carriage.
@@ -2220,7 +2221,8 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
         // ── Margins and tabs, all set at the CURRENT position ───────────
         case '9': leftMargin_   = curX_;                     return true;
         case '0': rightMargin_  = curX_;                     return true;
-        case 'T': topMargin_    = curY_;                     return true;
+        case 'T': if (pageHoldsALine(curY_, bottomMargin_)) topMargin_ = curY_;   // PRN-4
+                  return true;
         case 'C': topMargin_    = 0.0;                                  // clear
                   bottomMargin_ = pageHeightIn_;             return true;
         case '1': // Set a tab here. Kept sorted so the HT scan is a
@@ -2262,7 +2264,11 @@ bool ImageWriter::processDiabloChar(uint8_t ch)
                           curY_);
                   }
                   return true;
-        case 'L': bottomMargin_ = curY_ + lineSpacing_;      return true;   // bottom margin here
+        case 'L': // Bottom margin here; the same floor as ESC FF n (PRN-4):
+                  // sent at home, it left no line and every LF ejected.
+                  if (pageHoldsALine(topMargin_, curY_ + lineSpacing_))
+                      bottomMargin_ = curY_ + lineSpacing_;
+                  return true;
 
         // ── Styles ─────────────────────────────────────────────────────
         case 'E': style_ |=  kStyleUnderline;                return true;
@@ -2440,9 +2446,15 @@ void ImageWriter::execDiabloEscape()
         curY_ = std::min(y, bottomMargin_);
         break;
     }
-    case 0x0C:                                     // ESC FF n: n lines per page (66 at reset)
-        if (p0 > 0) bottomMargin_ = std::min(pageHeightIn_, p0 * lineSpacing_);
+    case 0x0C: {                                   // ESC FF n: n lines per page (66 at reset)
+        // A page with no room for one line is refused, as ESC H and ESC N
+        // refuse theirs (PRN-4): every LF would eject, and each blank sheet
+        // lands in the durable print history. [E] Not the 630's own rule —
+        // the SPI manual gives none; a real one would end the page.
+        const double bottom = std::min(pageHeightIn_, p0 * lineSpacing_);
+        if (p0 > 0 && pageHoldsALine(topMargin_, bottom)) bottomMargin_ = bottom;
         break;
+    }
     case 0x0D:                                     // ESC CR P — Remote RESET
     case 0x1A:                                     // ESC SUB I — Initialize
         // § 3.23.1: ESC SUB I "will cause the Model 630 to unconditionally

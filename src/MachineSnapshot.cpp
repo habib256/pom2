@@ -19,6 +19,7 @@
 // and the HTTP API serialize the exact same bytes.
 
 #include "MachineSnapshot.h"
+#include "RomErrata.h"
 
 #include "Logger.h"
 
@@ -378,7 +379,11 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         if (banks != mem.ramWorksBanks())
             return { false, "snapshot RamWorks geometry differs; set ramworks_banks=" +
                             std::to_string(banks) + " and restart before loading it" };
-        if (environment != live)
+        // Known dump errata normalised first (RomErrata.h): an ENV saved
+        // before one was applied still names this machine's firmware.
+        std::vector<uint8_t> normalised = environment;
+        pom2::applyRomErrataToEnvironment(normalised);
+        if (normalised != live)
             return { false, "snapshot firmware differs from this machine (system, internal I/O, character ROM or alternate bank); load the matching ROMs first" };
     } else {
         pom2::log().warn("Snapshot",

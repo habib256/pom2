@@ -173,7 +173,9 @@ bool ImageWriter::processEpsonChar(uint8_t ch)
             epsonListCmd_     = ch;
             epsonListChannel_ = (ch == 0x62);
             epsonListPrev_    = -1;
-            if (ch == 0x44) epsonHTabs_.assign(1, -1.0);     // marker: list started
+            // ESC D NUL cancels every stop (ESC/P C-43) — an empty list is
+            // NOT the power-on stops, hence the flag (PRN-3).
+            if (ch == 0x44) { epsonHTabs_.clear(); epsonHTabsSet_ = true; }
             if (ch == 0x42) { epsonVTabs_.clear(); epsonVTabsSet_ = true; }
             return true;
         // Fixed-length commands with no effect here, CONSUMED so their bytes
@@ -273,7 +275,7 @@ void ImageWriter::epsonTab()
 {
     const double rel = curX_ - leftMargin_ + 1e-9;
     double next = -1.0;
-    if (epsonHTabs_.empty()) {
+    if (!epsonHTabsSet_) {
         next = (std::floor(rel / 0.8) + 1.0) * 0.8;
     } else {
         for (double t : epsonHTabs_) if (t > rel) { next = t; break; }
@@ -313,14 +315,11 @@ void ImageWriter::epsonListByte(uint8_t ch)
     if (epsonListChannel_) { epsonListChannel_ = false; return; }   // ESC b channel
     const int v = ch;
     if (v == 0 || v <= epsonListPrev_) {
-        if (epsonListCmd_ == 0x44 && !epsonHTabs_.empty() && epsonHTabs_[0] < 0.0)
-            epsonHTabs_.erase(epsonHTabs_.begin());
         epsonListCmd_ = 0;
         return;
     }
     epsonListPrev_ = v;
     if (epsonListCmd_ == 0x44) {
-        if (!epsonHTabs_.empty() && epsonHTabs_[0] < 0.0) epsonHTabs_.clear();
         if (epsonHTabs_.size() < 32) epsonHTabs_.push_back(v / actcpi_);
     } else if (epsonListCmd_ == 0x42) {
         if (epsonVTabs_.size() < 16) epsonVTabs_.push_back(v * lineSpacing_);
@@ -518,12 +517,12 @@ void ImageWriter::execEpsonEscape()
     case 0x6C:                                     // ESC l n  left margin
         leftMargin_ = std::min(kHomeX + p0 / actcpi_, rightMargin_ - 1.0 / actcpi_);
         if (curX_ < leftMargin_) curX_ = leftMargin_;
-        epsonHTabs_.clear();
+        epsonHTabs_.clear(); epsonHTabsSet_ = false;
         break;
     case 0x51:                                     // ESC Q n  right margin
         if (p0 > 0) rightMargin_ = std::max(leftMargin_ + 1.0 / actcpi_,
                                             std::min(pageWidthIn_, kHomeX + p0 / actcpi_));
-        epsonHTabs_.clear();
+        epsonHTabs_.clear(); epsonHTabsSet_ = false;
         break;
     case 0x66:                                     // ESC f m n  skip (RX-80)
         if (p0 == 0) {
@@ -535,7 +534,7 @@ void ImageWriter::execEpsonEscape()
         break;
     case 0x65:                                     // ESC e m n  tab increment (RX-80)
         if (p0 == 0 && epsonParams_[1] > 0) {
-            epsonHTabs_.clear();
+            epsonHTabs_.clear(); epsonHTabsSet_ = true;
             for (int c = epsonParams_[1]; epsonHTabs_.size() < 32; c += epsonParams_[1])
                 epsonHTabs_.push_back(c / 10.0);            // Pica columns
         } else if (p0 == 1 && epsonParams_[1] > 0) {

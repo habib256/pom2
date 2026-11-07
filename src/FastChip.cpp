@@ -86,6 +86,9 @@ CpuSocketAccelerator::ReadResult FastChip::ioRead(uint8_t low, uint64_t now, uin
                                                    uint64_t /*stockNow*/)
 {
     ReadResult r;
+    // The paddle delay on $C070 only, like the Zip Chip's, which is measured
+    // (CPU-4, ZipChip.cpp ioRead). [F] For the FASTChip itself: the User's
+    // Guide names the joystick delay but not the addresses that open it.
     if ((low & 0xF0) == 0x30) { if (config_[2]) slowFor(kShortDelayMs, now); return r; }
     if (low == 0x70)           { if (config_[3]) slowFor(kShortDelayMs, now); return r; }
     if (low >= 0x90) {

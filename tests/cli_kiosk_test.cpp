@@ -667,6 +667,9 @@ int main()
     std::printf("parseCli: every remaining flag lands in the plan: OK\n");
     checkUsageParserSymmetry("src/CliDispatcher.cpp", "void printUsage()");
     checkUsageParserSymmetry("src/pom2_headless.cpp", "void usage(");
+    // pom2_bench too (CLI-2): --dump-text parsed, used by PERFORMANCE.md,
+    // absent from its usage text.
+    checkUsageParserSymmetry("src/pom2_bench.cpp", "void usage(");
     std::printf("usage text and parser agree (POM2 and pom2_headless): OK\n");
     testPositionalDisk();
     std::printf("parseCli positional disk: OK\n");

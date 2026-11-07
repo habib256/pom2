@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "Memory.h"
+#include "RomErrata.h"
 
 #include "CharRomDump.h"
 #include "MemoryProfile_IIcClass.h"
@@ -334,6 +335,9 @@ int Memory::loadAppleIIRomImpl(const AppleIIRomImage& image, bool pickLower16KFo
             mem[addr] = payload[i];
         }
     }
+    // Known defects of a pinned dump, put right in memory (RomErrata.h).
+    if (const std::string fix = pom2::applyRomErrata(mem.data()); !fix.empty())
+        pom2::log().info("ROM", std::string(filename) + ": " + fix);
     pom2::log().info("ROM", std::string("Loaded ") + filename + " at $" +
                      [&]{ char b[8]; std::snprintf(b, 8, "%04X", loadAddr); return std::string(b); }() +
                      (iieMode ? " (IIe)" : ""));

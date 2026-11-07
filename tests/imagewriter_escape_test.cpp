@@ -309,8 +309,47 @@ void testImageWriterManualDefaults()
     std::printf("  ok: ImageWriter power-on defaults follow the TR, not the reference\n");
 }
 
+// Bug hunt 2026-11-01 round 3. PRN-3: ESC D NUL cancels every horizontal
+// stop (ESC/P C-43: HT is then ignored); an empty list used to mean "the
+// power-on stops", so HT still jumped 8 columns. A margin command restores
+// the defaults (FX-80 p. 121). PRN-4: a Diablo page with no room for one line
+// (ESC L at home, ESC FF 1) ejected a blank sheet on every LF, into the
+// durable print history; refused now, as ESC H and ESC N refuse theirs.
+void testTabCancelAndPageFloor()
+{
+    auto run = [](pom2::IwModel model, const std::vector<uint8_t>& job) {
+        auto iw = std::make_unique<ImageWriter>(144, ImageWriter::PaperSize::Letter);
+        iw->setModel(model);
+        iw->queueBytes(job.data(), job.size());
+        for (int i = 0; i < 8000 && iw->pendingBytes(); ++i) iw->tick(0.05);
+        return iw;
+    };
+    auto near = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
+    const double home = ImageWriter::kHomeX;
+    const auto fx = pom2::IwModel::EpsonFX80;
+    assert(near(run(fx, { 0x1B, 'D', 0, 'A', 0x09 })->status().headX, home + 0.1) &&
+           "ESC D NUL: no stop is set, HT is ignored");
+    assert(near(run(fx, { 0x1B, 'D', 0, 0x1B, 'l', 0, 'A', 0x09 })->status().headX,
+                home + 0.8) && "a margin command restores the power-on stops");
+
+    const auto diablo = pom2::IwModel::LaserWriterDiablo;
+    assert(run(diablo, { 0x1B, 'L', 0x0A, 0x0A, 0x0A })->completedPageCount() == 0 &&
+           "ESC L at home left no line: every LF ejected a sheet");
+    assert(run(diablo, { 0x1B, 0x0C, 1, 0x0A, 0x0A, 0x0A })->completedPageCount() == 0 &&
+           "ESC FF 1 left no line: every LF ejected a sheet");
+    // Control: a bottom margin that holds lines still ends the page there.
+    {
+        std::vector<uint8_t> job(10, 0x0A);
+        job.insert(job.end(), { 0x1B, 'L', 0x0A, 0x0A });
+        assert(run(diablo, job)->completedPageCount() == 1 &&
+               "ESC L below the top still ends the page at that line");
+    }
+    std::printf("  ok: ESC D NUL cancels tabs; a page must hold one line\n");
+}
+
 int main()
 {
+    testTabCancelAndPageFloor();
     // ── The Diablo 630 tab racks are BOUNDED ─────────────────────────────
     // `ESC 1` (horizontal) and `ESC -` (vertical) cost no mechanism time, so
     // the paced drain's only brake is kCatchUpBytes — ~8192 pushes per UI

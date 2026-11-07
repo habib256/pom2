@@ -76,6 +76,11 @@ void testBus()
     CHECK(c.expansionRomRead(0x600) == 0xAB);       // $CE00 mirrors $CC00
     c.deviceSelectWrite(0xC, 0);                     // a write moves it too: block 3
     CHECK(c.windowBase() == 1536);
+    // VID-2: a WRITE decodes $C0n0-$C0n3 exactly. `STA $C0n6` (a block
+    // select in Videoterm mode) used to land in ctrl1 through `low4 & 3`.
+    c.deviceSelectWrite(0x6, 0xFF);
+    CHECK(c.control1() == 0 && c.control2() == 0);  // no register touched
+    CHECK(c.windowBase() == 512);                    // the block select still is
 
     // MCP bit 7: firmware over $CC00 for reads; writes still go to VRAM.
     c.deviceSelectWrite(2, VidexUltratermCard::kMemSel);

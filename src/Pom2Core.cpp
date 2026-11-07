@@ -295,8 +295,12 @@ std::string Core::lastError() const
 
 namespace {
 
-// The JSR-dispatch trio of Apple II Reference Manual Appx C, the check the
-// emulator's own bootFromSlot makes. $Cn07 is not checked: a SmartPort reads
+// The ProDOS block-device signature, the check the emulator's own
+// bootFromSlot makes. [B] ProDOS 8 Technical Note #20, "Mirrored Devices and
+// SmartPort": ProDOS "checks each interface card ... for the ProDOS
+// block-device signature bytes ($Cn01 = $20, $Cn03 = $00, and $Cn05 = $03)".
+// (Cited to the 1979 Apple II Reference Manual before 2026-11-07, which
+// predates ProDOS by four years.) $Cn07 is not checked: a SmartPort reads
 // $00 there and the //c-class block stub $01.
 template <typename Read>
 bool hasBootSignature(Read read)
