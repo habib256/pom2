@@ -10,6 +10,37 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — Character-ROM goldens, documentation references and memory profiling
+
+- **DISPLAY-002, the glyph gap:** `display_golden_hash` now loads the pinned
+  Enhanced //e character ROM for four 40/80-column, ALTCHAR off/on scenes.
+  Their 32 new integer-render/signal hashes preserve the 184 existing pins.
+  An independent raw-ROM pixel oracle checks every code in both FLASH
+  phases, including MouseText, inverse lowercase and main/aux order. Five
+  temporary renderer mutations fail even in golden-record mode. A missing
+  or corrupt ROM fails with the fixture-fetch command; CI already fetches
+  this dump. The eight focused display/ROM tests pass. PAL split goldens
+  and the separate fallback-upload measurement remain open.
+- **ARCH-016, explicit references:** `tools/check_doc_refs.sh` and its
+  negative controls run before the Linux CI build. It checks backlog links
+  and anchors, links to historical closure anchors, unknown task IDs and
+  duplicate canonical backlog definitions. Closed tasks remain valid via
+  CHANGELOG; free prose about test names and card keys is not treated as a
+  typed reference. Two retired-card links now point to their closure here,
+  the ImageWriter's reused CARDS-011 label is removed, and the Step Over
+  closure names UI-001. The guard does not infer semantic agreement between
+  historical descriptions.
+- **MEMORY-002, measured before changing the bus:** the current ][+ banner
+  profile still spends 23% of its samples in `memRead`, but that is the
+  whole function, not a measurement of its ROM condition chain. Two isolated
+  Release/LTO prototypes reordered existing guards without introducing a
+  cache. Five alternating A/B pairs per workload kept cycles and hashes
+  identical: ROM-first reduced ][+ time by a paired median 6.11% but increased
+  //e and disk time by 1.35% and 1.95%; moving only the flat-test shortcut
+  after the ROM guard reduced ][+ time by 4.50% but increased //e time by a median 1.64%,
+  with every pair slower. Both were rejected, and the core is unchanged.
+  Reproduction and the remaining profiling question are in `docs/PERFORMANCE.md`.
+
 ## 2026-11-07 — Bug hunt, wave 3: five data losses, the debugger, the tools, and the deferred items
 
 Six more read-only reviewers (configuration and user files, cards with their
@@ -4756,7 +4787,7 @@ ignores both. A snapshot (and the Workstation Card's) stores the state as
 0/1/2 in the byte that was a bool, so an older reader sees a waiting CPU
 as halted. Pinned in `cpu_cycle_count`, which fails on the old WAI.
 
-## 2026-10-24 — The ImageWriter residue (CARDS-011, closed)
+## 2026-10-24 — The ImageWriter residue (closed)
 
 What bug hunt #15 left on the printer, all within `ImageWriter.cpp`'s size
 ceiling and pinned in `imagewriter_residue` (its own file: the smoke test
@@ -4891,7 +4922,7 @@ keys drive the wire, and Shift still shifts. A //c never reads it. Pinned
 in `input_io_smoke` (no mod: Shift absent; mod: Shift up = `$80`, down =
 `$00`, button 2 cut off; ][+ untouched).
 
-## 2026-10-24 — Ghostscript found on a stock Apple Silicon Homebrew (CARDS-011)
+## 2026-10-24 — Ghostscript found on a stock Apple Silicon Homebrew
 
 `ChildProcess::findOnPath` refuses any directory the group or the world can
 write to, so nobody else can plant the `gs` POM2 runs with `-dSAFER`.
@@ -4905,7 +4936,8 @@ renders a real page through `/opt/homebrew/bin/gs`. Pinned in
 `child_process` (an ordinary group refused; `admin` accepted when the
 account can chgrp to it — the test fails with the exception removed). The
 "Reset printer" tooltip now says the sheet is ejected, which is what it
-does. The ImageWriter's smaller residue stays in CARDS-011.
+does. The ImageWriter's smaller residue is recorded in the ImageWriter
+residue entry above.
 
 ## 2026-10-24 — SSC RDR no longer releases the IRQ; Mockingboard slot hint
 
@@ -4986,7 +5018,7 @@ test fails with its fix reverted.
   the window and returns that card's `read_c800(0x7ff)`; `c800_w` writes it
   through before releasing — even with INTCXROM on. POM2 released first and
   read the floating bus. Pinned in `slot_bus_smoke`.
-- **CARDS-012: the SSC page under DOS 3.3 was fine.** The 2026-10-06 hunt
+- <a id="cards-012-closed"></a>**CARDS-012: the SSC page under DOS 3.3 was fine.** The 2026-10-06 hunt
   feared `PR#2` under DOS would reach `$C200` with CSW still naming DOS and
   take the input path; DOS puts the true hook back around the call, and
   the new `ssc_fallback_dos` (DOS 3.3 master, `PR#2`, `CATALOG`, `PR#0`)
@@ -5033,7 +5065,7 @@ test fails with its fix reverted.
   `hdv_boot_scan`). CONTROL serves reset (0) and EJECT (4); codes 1-3
   answer BADCTL `$21`, the IIgs Firmware Reference's error for a control
   code the device does not take, now pinned in `liron_smartport_dispatch`.
-- **Closed with no change, matching MAME:** CARDS-013 (the `$C800` owner
+- <a id="cards-013-closed"></a>**Closed with no change, matching MAME:** CARDS-013 (the `$C800` owner
   survives Ctrl-Reset: `apple2e.cpp` clears `m_cnxx_slot` only in
   `machine_start`, `apple2.cpp`'s keyboard reset only pulls the CPU line;
   already pinned in `slot_bus_smoke`), AUDIO-010 (R14/R15 read back the
@@ -7059,7 +7091,7 @@ Regression: `phasor_card_smoke` / `phasor_speech_cases.cpp`; oracle AppleWin
 
 ## 2026-10-17 — Non-IIgs parity: debugger, SNES MAX, local TCP and host files
 
-- Step Over follows the outer RTS and stack frame, including inline
+- **UI-001:** Step Over follows the outer RTS and stack frame, including inline
   ProDOS/SmartPort arguments, recursion, stack wrap and interrupt entry.
   Added Step Out. The single-threaded frame loop now honors a one-shot
   debugger stop; watchpoint resume no longer skips the next PC breakpoint.
@@ -7732,8 +7764,8 @@ removed).
   machine lock, like every other handler. `rom_path_taken` now covers the
   SSC, the Grappler 1981, the PIC and the Videoterm.
 - Leads left open, not traced to a defect, now backlog items:
-  [CARDS-012](docs/backlog/cards.md#cards-012) (the SSC fallback page under
-  DOS 3.3 `PR#n`) and [CARDS-013](docs/backlog/cards.md#cards-013) (the
+  [CARDS-012](#cards-012-closed) (the SSC fallback page under
+  DOS 3.3 `PR#n`) and [CARDS-013](#cards-013-closed) (the
   `$C800` owner across Ctrl-Reset).
 - Backlog: STORAGE-001/-009/-012 removed (shipped, recorded above in their
   own entries); seven items the 2026-10-05 migration had dropped re-homed

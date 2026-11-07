@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [CPU-001](#cpu-001) | 🟡 | To design | Optional cycle-stepped 6502 core |
-| [MEMORY-002](#memory-002) | 🟡 | Confirmed open | `Memory::memRead` hot path |
+| [MEMORY-002](#memory-002) | 🟡 | Confirmed open; revalidated 2026-11-07 | `Memory::memRead` hot path |
 | [MEMORY-003](#memory-003) | 🟢 | Needs hardware oracle (bank) | Language Card power-on bank; the Apple card's own F8 ROM |
 | [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
@@ -93,9 +93,19 @@ Mockingboard T1 IRQ phase, the 6522 T1 read-back bias tuned on TRIBU.
 
 ## MEMORY-002 — `Memory::memRead` hot path
 
-**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); re-measure the share before prototyping.
+**Priority:** 🟡 · **State:** Confirmed open; revalidated 2026-11-07 ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md), [measured revalidation](../PERFORMANCE.md#memread-2026-11-07)).
 
 **Acceptance criterion (after revalidation):** Show a measured memRead improvement with bus_fastpath differential checks and bench_identity unchanged.
+
+**2026-11-07 outcome:** Current banner sampling puts the whole `memRead` at
+23.0 % of main-thread samples, without isolating the ROM-guard share. Two
+isolated reorder prototypes improved ][+ but each slowed //e in all five
+alternating-order A/B pairs (paired medians +1.35 % and +1.64 %); both were
+rejected and the bus code remains unchanged. All measured cycle/RAM/framebuffer
+identities held; the second prototype also passed `bench_identity`. The ~15 %
+below remains historical. Next: isolate the current guard share before a page
+table; require ≥10 % attributable share, then a repeatable ≥3 % workload gain
+without >1 % repeatable cross-workload regressions, plus the correctness gates.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1056). Original dates and estimates are retained below.
 

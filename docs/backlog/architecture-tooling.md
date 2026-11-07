@@ -15,7 +15,7 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [ARCH-016](#arch-016) | 🟡 | Ready | Documentation drift checker |
+| [ARCH-016](#arch-016) | 🟡 | Partial: links and task identities | Documentation drift checker |
 | [ARCH-004](#arch-004) | 🟠 | Partial | Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed |
 | [ARCH-009](#arch-009) | 🟠 | Partial: Uthernet panel only | Remaining ImGui panel concurrency coverage |
 | [ARCH-003](#arch-003) | 🟡 | Confirmed open | ThreadSanitizer: the GUI half is still open. |
@@ -30,22 +30,38 @@ an explicit request before scheduling.
 
 ## ARCH-016 — Documentation drift checker
 
-**Priority:** 🟡 · **State:** Ready ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+**Priority:** 🟡 · **State:** Partial — explicit links and task identities checked in CI.
 
-**Acceptance criterion:** A `tools/check_doc_refs.sh` (shape of
-`check_version_strings.sh`, run in the CI Linux job, with a `--self-test`
-holding negative controls) fails when a Markdown file under the repo root,
-`docs/backlog/`, `docs/decisions/` or `docs/audits/` (not `docs/archive/`)
-cites a backlog ID with no entry, a `docs/backlog/*.md#anchor` that does not
-exist, a ctest name that is not registered, or a catalog key absent from
-`SlotCardCatalog`; and when one backlog ID is defined twice across
-`docs/backlog/` and `CHANGELOG.md`.
+**Implemented 2026-11-07:** `tools/check_doc_refs.sh` uses a Python standard-library
+scanner and runs with its negative-control `--self-test` in the Linux CI job,
+before build dependencies. It scans root Markdown plus `docs/backlog/`,
+`docs/decisions/` and `docs/audits/` recursively, excluding fenced examples.
+It checks links to backlog Markdown files and fragments (explicit HTML IDs
+and generated heading anchors), links to historical CHANGELOG fragments,
+unknown task IDs, and duplicate canonical definitions in backlog headings.
+A leading task ID in a backlog heading defines that task; index rows and
+mentions do not. Closed IDs remain valid when cited in CHANGELOG. Consequently,
+removing an active entry requires retaining its ID in the historical record.
+`--root` permits isolated fixtures without modifying the working tree.
 
-**Evidence:** the 2026-10-28 triage found `CARDS-011` used for two items
-(`cards.md` and `CHANGELOG.md:945`), the RVB Graph described three ways in
-three documents, and two index/body state disagreements (UI-003,
-STORAGE-014). About 30 000 lines of prose (DEV, CHANGELOG, docs/) drift
-faster than review can catch.
+**Remaining scope, deferred:** Typed references to registered ctest names and
+`SlotCardCatalog` keys need an explicit document convention before enforcement.
+Backticks in prose also name executables, source symbols and abstraction-catalog
+keys, and audits intentionally record historical names. Inferring their types
+would introduce false positives. A future ctest check should consume configured
+CTest JSON and account for platform-conditional tests, rather than parse CMake.
+
+**Limits:** This is a reference guard, not a semantic prose audit. It does not
+infer whether the same ID was historically used for two different subjects,
+whether index/body status agrees, or whether hardware descriptions agree.
+CHANGELOG citations preserve closed IDs; they are not canonical definitions.
+
+**Revalidation 2026-11-07:** A focused scan found two stale CARDS-012/-013
+backlog links in CHANGELOG; they now point to explicit historical closure
+anchors. CARDS-011 also named both ALS CP/M in the active backlog and an old
+ImageWriter changelog topic; the obsolete ImageWriter labels were removed.
+Those examples justify link validation and deliberate identity review, without
+claiming every historical heading is a second task definition.
 
 <a id="arch-004"></a>
 

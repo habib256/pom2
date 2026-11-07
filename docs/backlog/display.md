@@ -18,7 +18,7 @@ an explicit request before scheduling.
 | [DISPLAY-001](#display-001) | 🟡 | Partial; needs hardware oracle | VidHD on Apple IIe — SHR display support. |
 | [DISPLAY-011](#display-011) | 🟡 | Partial: Eve Leonard golden; rest needs oracle | Le Chat Mauve — what is left after P0-P2 |
 | [DISPLAY-012](#display-012) | 🧊 | Frozen: needs a colour oracle | 80-column text colour phase under the CPU demodulators |
-| [DISPLAY-002](#display-002) | 🟢 | Confirmed open | Golden coverage gaps |
+| [DISPLAY-002](#display-002) | 🟢 | Partial: ALTCHAR/ROM goldens closed | PAL splits and fallback upload measurement |
 | [DISPLAY-008](#display-008) | 🧊 | Frozen — triage 2026-10-28 | "Smooth" interpolated sub-pixel mode |
 | [DISPLAY-010](#display-010) | 🟢 | Partial: F6 only | CRT parity refinements vs OpenEmulator |
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
@@ -126,20 +126,32 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 ## DISPLAY-002 — Golden coverage gaps
 
-**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); the user-ROM blocker is gone (`roms/apple2e_char*.rom` are tracked).
+**Priority:** 🟢 · **State:** Partial. ALTCHAR/character-ROM golden gaps closed
+2026-11-07; PAL split goldens and fallback-upload measurement remain separate.
 
-**Acceptance criterion (after revalidation):** Add the missing glyph and PAL split coverage; separately measure whether the fallback-framebuffer upload remains unnecessary.
+**Acceptance criterion for the remainder:** Add PAL beam-raced split goldens
+beyond the existing behavioural tests; separately measure whether the
+fallback-framebuffer upload remains unnecessary.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1079). Original dates and estimates are retained below.
+**Closed 2026-11-07:** `display_golden_hash` adds four real Enhanced-ROM
+scenes (40/80 columns × ALTCHAR off/on), freezing all seven deterministic
+CPU pipelines and the composite signal: 32 additional pins, with the original
+fallback pins unchanged. An independent pixel oracle reads the raw active-low
+ROM bytes and checks every screen code, both FLASH phases, MouseText,
+inverse lowercase and main/aux cell order. The ROM is **not tracked**:
+`tools/test_media.sha256` pins `roms/apple2e_char.rom`, fetched by CI's
+`fetch-test-media` action. Missing or corrupt ROMs fail explicitly with the
+fixture-fetch command, including in record mode.
 
-- 🟢 **Golden coverage gaps** (from the 2026-07-12 audit; mostly closed
-  2026-07-12 wave 4, table 112 → 164 pins — flash-on phase, PAGE2/80STORE,
-  rev-0 HGR+AN3, IIe 80COL+HIRES+MIXED without DHGR, Chat Mauve sub-modes
-  all hash-frozen: `iie/text40flash`, `text40page2`, `hgrpage2`,
-  `hgr80store2`, `hgran3`, `hgr80colmix`, `textcolorcm`). Remaining:
-  ALTCHAR/mousetext + char-ROM glyphs (need a user ROM), PAL beam-raced
-  splits (stay behavioural). Also: OE-GPU uploads the unused ~430 KB
-  fallback framebuffer every frame (minor perf).
+**Remaining:** PAL beam-raced splits currently have behavioural coverage
+(`display_dirty_skip`), rather than frozen split hashes. OE-GPU's purported
+unused ~430 KB fallback upload is still a measurement question, not a
+confirmed performance defect.
+
+**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1079);
+[triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Earlier waves
+already pinned FLASH, PAGE2/80STORE, rev-0 HGR+AN3,
+IIe 80COL+HIRES+MIXED and Chat Mauve sub-modes.
 
 <a id="display-008"></a>
 
