@@ -43,45 +43,16 @@
 #ifndef POM2_ABSTRACTION_LEVELS_IMGUI_H
 #define POM2_ABSTRACTION_LEVELS_IMGUI_H
 
+#include "AbstractionCatalog.h"
+
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace pom2 {
 
-/// POM2's five-level scale, from silicon to pure host function.
-/// Definitions (and the reasoning behind the cut points) in
-/// `docs/lle_vs_hle.md` § The POM2 scale. `Host` is the sixth,
-/// off-axis bucket: machinery with no hardware referent at all.
-enum class AbsLevel {
-    L0,    ///< Silicon: internal state machine + timing; a real ROM runs on top
-    L1,    ///< Chip-faithful: full register/protocol model at bus timing
-    L2,    ///< Real firmware executing, host device underneath
-    H1,    ///< Synthetic firmware: invented register protocol, host does the work
-    H2,    ///< Host function: nothing guest-visible at all
-    Host   ///< Off-axis: host-side machinery with no hardware referent
-};
-
-/// Short badge text ("L0") and the long name ("Silicon").
-const char* levelBadge(AbsLevel l);
-const char* levelName (AbsLevel l);
-/// True for L0-L2 — the LLE half of the scale. `Host` is neither.
-bool        levelIsLle(AbsLevel l);
-
-/// One catalogued subsystem. Static data, mirroring the master table of
-/// `docs/lle_vs_hle.md` — keep the two in step when either moves.
-struct AbsEntry {
-    const char* id;        ///< Stable key the caller's live rows are matched on.
-    const char* group;     ///< Section heading.
-    const char* subsystem; ///< Human name.
-    AbsLevel    level;     ///< Level as classified in the doc.
-    const char* modelled;  ///< What is actually modelled, one line.
-    const char* whyNot;    ///< Why not lower (or why this is the floor).
-    const char* files;     ///< Implementation files, for the reader who wants the code.
-};
-
-/// The catalog itself.
-const std::vector<AbsEntry>& abstractionCatalog();
+// The scale, the catalog entry and the catalog itself live in
+// AbstractionCatalog.h (no ImGui) so a test can link them.
 
 /// The switchable boundaries. One enumerator per subsystem that genuinely
 /// ships both levels — not per level, since each is a two-way choice.

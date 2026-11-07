@@ -30,6 +30,7 @@
 #include "MouseCoordinator.h"
 #include "PrinterCoordinator.h"
 #include "SmartPortCard.h"
+#include "SlotBus.h"
 #include "SuperSerialCard.h"
 #include "StorageCoordinator.h"
 
@@ -77,6 +78,8 @@
 #include "Settings.h"
 
 #include "imgui.h"
+#include <array>
+#include <cstddef>
 #include <fstream>
 
 void MainWindow::applyFirmwareToggle(const char* key, const char* value)
@@ -227,13 +230,20 @@ void MainWindow::renderAbstractionPanel()
     using Live  = Panel::Live;
     Panel::Snapshot snap;
 
-    // Plug state comes from the live slot map rather than from the dozen
-    // `*Card` pointers: one uniform test that covers every catalogued card,
-    // including the ones MainWindow keeps no pointer to.
+    // Plug state comes from the slot plan rather than from the dozen
+    // `*Card` pointers (one uniform test that covers every catalogued card,
+    // including the ones MainWindow keeps no pointer to) AND from the live
+    // bus — the plan alone showed a refused ROM-gated card as Active
+    // (`pom2::slotPlanKeyLive`, pinned by abstraction_catalog).
+    static_assert(SlotBus::kSlotCount == 8, "slotPlanKeyLive takes 8 slots");
+    std::array<bool, SlotBus::kSlotCount> occupied{};
+    {
+        auto st = controller->lockState();
+        for (int s = 1; s < SlotBus::kSlotCount; ++s)
+            occupied[static_cast<std::size_t>(s)] = st.memory().slotBus().isPlugged(s);
+    }
     auto plugged = [&](const char* key) {
-        for (int s = 1; s <= 7; ++s)
-            if (slotCards[s] == key) return true;
-        return false;
+        return pom2::slotPlanKeyLive(slotCards, occupied, key);
     };
     auto row = [&](const char* id, Live live, const char* detail = "") {
         Panel::Row r;
@@ -375,6 +385,16 @@ void MainWindow::renderAbstractionPanel()
     row("softcard2", plugged("softcard2") ? Live::Active : Live::NotPlugged);
     row("applicard", plugged("applicard") ? Live::Active : Live::NotPlugged);
     row("saturn",    plugged("saturn")    ? Live::Active : Live::NotPlugged);
+    // Plugged or not, nothing else: the ROM-gated ones among these
+    // (slinky, videoterm, grappler1, pic, workstation) refuse the slot when
+    // their dump is missing — `plugged` sees the empty slot — so a plugged
+    // one is always at its level.
+    for (const char* id : {"slinky", "transwarp", "videoterm", "vidhd", "sam", "porteparole",
+                           "workstation", "grappler1", "pic", "4play", "snesmax"})
+        row(id, plugged(id) ? Live::Active : Live::NotPlugged);
+    // The socket accelerators sit under the CPU, not in a slot.
+    row("zipchip",  controller->zipChipInstalled()  ? Live::Active : Live::NotPlugged);
+    row("fastchip", controller->fastChipInstalled() ? Live::Active : Live::NotPlugged);
     {
         // Which firmware the plugged 7710 runs, read off the card itself.
         int ccsSlot = 0;

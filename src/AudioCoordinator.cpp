@@ -21,6 +21,7 @@
 #include "EchoPlusCard.h"
 #include "EchoPlusTMS5220Card.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "EmulationController.h"
 #include "FloppySoundDevice.h"
 #include "Mockingboard.h"
@@ -68,6 +69,7 @@ const char* settingsStem(AudioCoordinator::CardKind kind)
         case AudioCoordinator::CardKind::EchoPlus: return "echoplus";
         case AudioCoordinator::CardKind::EchoPlusTms5220: return "echoplus_tms";
         case AudioCoordinator::CardKind::Sam: return "sam";
+        case AudioCoordinator::CardKind::PorteParole: return "porteparole";
     }
     return "audio_card";
 }
@@ -198,6 +200,11 @@ AudioCoordinator::captureMixerCards() const
             snapshot.volume = sam->getVolume();
             snapshot.muted = sam->isMuted();
             source = sam->audioSource();
+        } else if (auto* pp = cardAt<PorteParoleCard>(bus, slot)) {
+            snapshot.kind = CardKind::PorteParole;
+            snapshot.volume = pp->getVolume();
+            snapshot.muted = pp->isMuted();
+            source = pp->audioSource();
         } else {
             continue;
         }
@@ -248,6 +255,13 @@ bool AudioCoordinator::applyMixerCard(const MixerCardCommand& command)
             break;
         case CardKind::Sam:
             if (auto* card = cardAt<SamCard>(bus, command.slot)) {
+                card->setVolume(command.volume);
+                card->setMuted(command.muted);
+                return true;
+            }
+            break;
+        case CardKind::PorteParole:
+            if (auto* card = cardAt<PorteParoleCard>(bus, command.slot)) {
                 card->setVolume(command.volume);
                 card->setMuted(command.muted);
                 return true;

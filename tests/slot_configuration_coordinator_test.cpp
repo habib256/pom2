@@ -61,6 +61,7 @@
 #include "TranswarpCard.h"
 #include "SlinkyCard.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
 #include "WorkstationCard.h"
@@ -247,6 +248,7 @@ int main()
     expectLiveKey(std::make_unique<pom2::TranswarpCard>(3), "transwarp");
     expectLiveKey(std::make_unique<pom2::SlinkyCard>(3), "slinky");
     expectLiveKey(std::make_unique<pom2::SamCard>(3), "sam");
+    expectLiveKey(std::make_unique<pom2::PorteParoleCard>(4), "porteparole");
     expectLiveKey(std::make_unique<pom2::LironCard>(3), "liron");
 
     // Every catalog key a live card can carry must round-trip. Keys with no

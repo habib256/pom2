@@ -134,7 +134,7 @@ ROMs that run the disks POM2 ships.
 | **Machines** | Nine profiles: ][, ][+, unenhanced and enhanced //e, //c, //c Plus, and PAL versions of the unenhanced //e, the enhanced //e and the //c |
 | **Memory and speed** | Language Card, //e auxiliary memory, RamWorks III, Saturn 128K, Slinky; TransWarp, Zip Chip, FASTChip and the //c Plus's 4 MHz |
 | **Video** | Text 40/80, lo-res, hi-res and their double-resolution modes; composite NTSC, AppleWin, monochrome and CRT rendering ([compared](docs/graphics_modes_comparison.md)); Le Chat Mauve/Video-7 RGB, Videx Videoterm and UltraTerm, VidHD Super Hi-Res, E-Z Color; a 3D voxel view |
-| **Sound** | Speaker, cassette, drive and printer sounds; stereo Mockingboard A/C, Sound II and //c Mockingboard 4c, Phasor; SSI263 and Echo+ TMS5220C speech, S.A.M. DAC |
+| **Sound** | Speaker, cassette, drive and printer sounds; stereo Mockingboard A/C, Sound II and //c Mockingboard 4c, Phasor; SSI263 and Echo+ TMS5220C speech, S.A.M. DAC, Ediciel Porte Parole (MEA8000 French speech) |
 | **Storage** | Disk II, Sony 3½-inch, SmartPort, Liron, HDV, CFFA 2.0, CFFA3000, SuperDrive, DAN ][, Floppy Emu; writable WOZ and MOOF captures; a host folder served as a ProDOS volume |
 | **CP/M** | Five Z80 cards: Microsoft SoftCard, SoftCard II and Premium SoftCard //e, PCPI Applicard, ALS CP/M Card (CP/M Plus) |
 | **Input and printing** | Mouse, paddles, gamepads, 4play, SNES MAX; serial and parallel cards feeding an ImageWriter II with PNG/PDF export |

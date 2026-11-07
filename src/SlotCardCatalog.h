@@ -217,6 +217,10 @@ inline constexpr CardType kCardTypes[] = {
     // the S.A.M. software synthesises speech on the 6502 and streams the
     // samples. No ROM. MAME `bus/a2bus/a2sam.cpp` port.
     { "sam",          "SAM (8-bit DAC speech)" },
+    // Ediciel "Porte Parole" (Matra & Hachette, 1983) — French text-to-speech
+    // on an MEA8000: data / status at $C0n0, command at $C0n1, no ROM (the
+    // driver is on its disks), slot 4 by default. PorteParoleCard.h.
+    { "porteparole",  "Porte Parole (MEA8000 French speech, Ediciel)" },
 };
 
 /// Human-readable label for a card key (falls back to the key itself).

@@ -490,7 +490,7 @@ these machines so versatile.
 |---|---|
 | **Video** | Text, lo-res, hi-res, double hi-res and 80 columns; composite NTSC, AppleWin NTSC, monochrome, Video-7, Le Chat Mauve RGB, Videx Videoterm on a ][ or ][+, Videx UltraTerm, E-Z Color (TMS9918A) and VidHD Super Hi-Res on a //e |
 | **Memory** | Language Card, IIe auxiliary memory, RamWorks III up to 8 MB, Saturn 128K and Slinky 1 MB expansion |
-| **Sound** | Speaker, cassette, Mockingboard A/C, //c Mockingboard 4c, Sound II with SSI263 speech, Phasor with dual SSI263AP, Cricket / Echo, Echo+ TMS5220C and S.A.M. DAC; stereo mixing and mono output |
+| **Sound** | Speaker, cassette, Mockingboard A/C, //c Mockingboard 4c, Sound II with SSI263 speech, Phasor with dual SSI263AP, Cricket / Echo, Echo+ TMS5220C, S.A.M. DAC and Ediciel Porte Parole (MEA8000, French speech, slot 4); stereo mixing and mono output |
 | **Storage** | Disk II, Sony 3½-inch mechanisms, SmartPort, Liron, ProDOS HDV, CFFA 2.0, CFFA3000 SmartPort HLE, SuperDrive, DAN ][ and Floppy Emu |
 | **Input and printing** | Mouse Card, joysticks/paddles, 4play, SNES MAX, Super Serial, CCS 7710 serial, parallel interfaces and ImageWriter II |
 | **Expansion** | Z80 cards for CP/M (Microsoft SoftCard, SoftCard II and Premium SoftCard //e, PCPI Applicard, ALS CP/M Card), TransWarp, Zip Chip and FASTChip socket accelerators, clocks and Apple II Workstation Card |

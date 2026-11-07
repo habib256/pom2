@@ -3379,6 +3379,57 @@ Pinned by `sam_card` (levels; writes at cycles 1000/1015/1030 landing in
 samples 100/101/103 at 10 cycles per sample, the mid-sample average; the bus
 path through a real 6502; DC decay; reset).
 
+### Porte Parole (`PorteParoleCard`, `Mea8000`)
+
+*(2026-11-07.)* Ediciel's French text-to-speech card (Matra & Hachette, 1983,
+board CE 638009 L01; catalog `porteparole`, slot 4 by default). The card is
+an RTC / Philips **MEA8000** on the bus and nothing else that software uses:
+`$C0n0` = data write / status read, `$C0n1` = command, A0 the only address
+line decoded, a 4.000 MHz crystal, no slot ROM (the driver is on the disk),
+no IRQ. Its manual's Annexe 5 is the card's whole contract; the chip has a
+data sheet (Signetics, 1985) and a Philips application note (Technical
+Publication 101, 1983), both grade B. Sources and every departure are in
+the headers; the short version:
+
+| | MAME `mea8000.cpp` @ 5346a8ce | POM2 | Evidence |
+|---|---|---|---|
+| Frequencies on a 4 MHz crystal | Hz kept, frames shorter | everything x 4/3.84, frames x 0.96 | [B] TP101 Table 2 "when using a clock frequency of 3,84 MHz" |
+| Pitch | table value | table x 1.024 | [B] TP101 Table 2 note |
+| First frame | amplitude ramps DOWN to 0 | ramps UP from 0 | [B] TP101 p. 10 |
+| Status D0-D6 | 0 | floating bus | [B] data sheet Fig. 5 |
+| REQ after a frame byte | never drops | 0 for 2 µs | [B] TP101 p. 10, Fig. 20 |
+| REQ after the starting pitch | at once | at the next 8 ms grid point | [B] TP101 p. 10 |
+| Output | 16 bits interpolated | 11 bits into the x8 interpolator, 8-bit DAC | [B] TP101 pp. 5, 12 |
+| Noise table | `machine().rand()` | fixed xorshift seed | [F] the chip's noise source is undocumented |
+
+The MAME first-frame fade was the visible one: a one-frame CONT loop was
+silent, and every utterance's first frame decayed instead of rising.
+
+**Timing.** The card counts the chip's output ticks (clock / 60 = 66 667 Hz)
+from CPU cycles alone, then derives the host samples from those ticks (box
+average of the ~1.5 ticks per 44.1 kHz sample). An earlier shape split each
+advance at host-sample boundaries too, and the floating-point tick phase —
+so the cycle a frame ended on — depended on the host's sample phase:
+`porte_parole_card` §7 caught two cards in the same state drifting apart.
+**Reset:** the MEA8000 has no reset pin, so Ctrl-Reset leaves it talking;
+power-up is STOP. **Snapshot** (`PPA` v1, session kind 20): the whole chip,
+its tick phase and the REQ window; not the host-rate queue.
+
+**Not modelled:** the optional 2 KB memory socket Z7 (`$C800-$CEFF`, a 2716
+or 6116, "normally delivered without"), the J2 speaker pass-through (the card
+is mixed as its own source), the 74LS74 write synchroniser.
+
+**Validated** by `porte_parole_card` (bus contract, REQ pacing, the 7.68 ms
+frame, pitch 106.7 Hz for code 50, the first-frame rise, fade/STOP, snapshot,
+and the manual's Annexe 2 polling loop on a 6502; the MAME first-frame and
+pitch behaviours fail it) and by `porte_parole_probe` (manual, needs the
+disk): Ediciel's v1.1 side 1 boots on a 64 KB ][+ to the menu in ~75 s,
+`F` + "IL FAIT BEAU" gives the manual's own transcription `- I L- FAI- BAU.`,
+and `E` speaks 0.75 s: three voiced syllables at 130, 128→120 and 104→100 Hz
+with the unvoiced F between — a falling declarative contour. [F] Nobody has
+compared it with a real card's recording yet; the mirror's `Porte Parole -
+Sample.mp3` is the obvious reference.
+
 ## TransWarp (Applied Engineering)
 
 **Sampled per chunk** *(2026-09-09)*. Both frame loops
@@ -11468,12 +11519,23 @@ both cleared in kiosk). Command palette: `panel.slotconfig`,
 follows is only the split.
 
 **Static catalog vs live state.** The subsystem table (id, group, level, what
-is modelled, why not lower, files) is static data next to the window, mirroring
-the doc's master table. Everything machine-dependent comes in as a `Snapshot`
-the caller fills, so the panel needs no emulator headers and takes no lock.
-Plug state is read from `slotCards[]` rather than from the dozen `*Card`
-pointers: one uniform test that also covers the cards MainWindow keeps no
-pointer to.
+is modelled, why not lower, files) is static data in its own ImGui-free file,
+`AbstractionCatalog.{h,cpp}`, mirroring the doc's master table; the Slot
+Configuration picker tags every card from it through
+`abstractionEntryForCardKey` (which owns the key → row aliases: the SmartPort
+variants, the Mockingboard family, the Echo cards). Two invariants are pinned
+by `abstraction_catalog`: every key the picker offers resolves to a row (ten
+did not until 2026-11-07, CARDS-001), and each group is one contiguous run —
+the window prints a heading whenever the group changes, and four headings used
+to print twice. Everything machine-dependent comes in as a `Snapshot` the
+caller fills, so the panel needs no emulator headers and takes no lock. Plug
+state is read from `slotCards[]` rather than from the dozen `*Card` pointers —
+one uniform test that also covers the cards MainWindow keeps no pointer to —
+**and** from the live SlotBus: `slotCards[]` is the plan, what the user asked
+for, and a ROM-gated card refused for a missing dump (CFFA, Slinky, Videoterm,
+Workstation, Grappler 1981, PIC) leaves its slot empty while the plan still
+names it. Read from the plan alone it showed Active; the rule is
+`pom2::slotPlanKeyLive`, pinned by `abstraction_catalog`.
 
 **The "Now" column is the reason it exists.** Every ROM-driven low level in
 POM2 degrades *silently* to a working higher one when its dump is absent, and

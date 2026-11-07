@@ -52,12 +52,13 @@ public:
         EchoPlus,
         EchoPlusTms5220,
         Sam,            ///< S.A.M. 8-bit DAC (SamCard)
+        PorteParole,    ///< Ediciel Porte Parole, MEA8000 (PorteParoleCard)
     };
     /// Number of `CardKind` values. Anything that indexes an array by kind
     /// sizes it from here: the legacy type-wide key table in `persist()` was
     /// hard-coded to 3 while the enum had 4, so the last kind fell off the
     /// end of an `index < legacy.size()` guard instead of failing to build.
-    static constexpr std::size_t kCardKindCount = 5;
+    static constexpr std::size_t kCardKindCount = 6;
 
     struct CardMixSettings {
         float volume = 1.0f;

@@ -75,6 +75,7 @@
 #include "TranswarpCard.h"
 #include "SlinkyCard.h"
 #include "SamCard.h"
+#include "PorteParoleCard.h"
 #include "UthernetCard.h"
 #include "UthernetIICard.h"
 #include "VidexVideotermCard.h"
@@ -419,6 +420,7 @@ int main()
         { "TranswarpCard",     [] { return std::unique_ptr<SlotPeripheral>(new TranswarpCard(3)); } },
         { "SlinkyCard",        [] { return std::unique_ptr<SlotPeripheral>(new SlinkyCard(4)); } },
         { "SamCard",           [] { return std::unique_ptr<SlotPeripheral>(new SamCard(4)); } },
+        { "PorteParole",       [] { return std::unique_ptr<SlotPeripheral>(new PorteParoleCard(4)); } },
         { "GrapplerCard",      [] { return std::unique_ptr<SlotPeripheral>(new GrapplerCard(1)); } },
         { "GrapplerClassic",   [] { return std::unique_ptr<SlotPeripheral>(new GrapplerClassicCard(1)); } },
         { "AppleParallel",     [] { return std::unique_ptr<SlotPeripheral>(new AppleParallelCard(1)); } },
@@ -495,6 +497,7 @@ int main()
         {"snesmax", "SnesMaxCard"},
         {"transwarp", "TranswarpCard"},
         {"slinky", "SlinkyCard"}, {"sam", "SamCard"},
+        {"porteparole", "PorteParole"},
         {"grappler1", "GrapplerClassic"}, {"pic", "AppleParallel"},
         {"videoterm", "VidexVideoterm"}, {"vidhd", "VidHD"},
     };

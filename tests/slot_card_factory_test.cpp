@@ -72,6 +72,20 @@ int main()
     assert(noPromCard && noPromCard->hasBootRom() && noPromCard->usingPom2BootRom());
     assert(noPromDisk.status.find("POM2 boot PROM") != std::string::npos);
 
+    // The ROM-gated cards REFUSE the slot without their dump: no card, a
+    // warning. The Abstraction Levels panel relies on it — it reads a card
+    // as plugged only when the live bus holds one (pom2::slotPlanKeyLive),
+    // because the slot plan keeps naming a refused card.
+    for (const char* key : {"cffa", "slinky", "videoterm", "workstation",
+                            "grappler1", "pic"}) {
+        const auto refused = missing.create(request(key, 3));
+        if (refused.card || refused.warning.empty()) {
+            std::cerr << "FAIL: '" << key << "' without its ROM should leave "
+                         "the slot empty with a warning\n";
+            return 1;
+        }
+    }
+
     const auto missingCffa = missing.create(request("cffa"));
     // The CFFA ships two firmware builds and the factory picks by the CPU it
     // is told about. applyProfile used to ask AFTER re-plugging, i.e. the

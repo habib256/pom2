@@ -10,6 +10,71 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-07 — Ediciel Porte Parole (MEA8000 French speech card)
+
+- **New card `porteparole`** (`PorteParoleCard`, `Mea8000`): Ediciel's text-
+  to-speech card (Matra & Hachette, 1983), requested by the user, who had
+  emulated it under AppleWin. It passes the admission rule on named software:
+  Ediciel's own Porte Parole disks and Edi-Logo's `LOGO.PARLE`. Everything
+  came from public scans (apple2.org.za: the manual, both disk sides, board
+  photos; CPCWiki: the Signetics and Mullard data sheets; Philips Technical
+  Publication 101). The card's contract is its manual's Annexe 5: an
+  MEA8000 at `$C0n0` data/status and `$C0n1` command, A0 only, 4 MHz, no ROM.
+- **Why not MAME's chip as is:** MAME `mea8000.cpp` is the only emulation of
+  the chip, and the two primary documents contradict it in seven places
+  (DEV § Porte Parole has the table). The one you hear: its "fade-in" of an
+  utterance's first frame interpolates the amplitude DOWN to zero — the
+  Philips note says it "starts from zero and reaches its correct value" — so
+  every word started decaying and a one-frame CONT loop was silent. The
+  others: every frequency scales with the crystal (Table 2 is "when using a
+  clock frequency of 3,84 MHz"; the card runs 4.00), pitch is the table
+  value x 1.024, status drives D7 only, REQ drops 2 µs after each byte and
+  waits for an 8 ms grid after the starting pitch, the output is 11 bits
+  into an 8-bit DAC.
+- **A determinism bug caught before it shipped:** the first version split
+  each advance at host-sample boundaries as the Echo+ does, and the
+  floating-point phase made the cycle a frame ended on depend on the host's
+  sample phase. Chip ticks now come from CPU cycles alone and host samples
+  from chip ticks (`porte_parole_card` §7).
+- **Pinned by** `porte_parole_card` (the MAME first-frame and pitch
+  behaviours each fail it). `porte_parole_probe` (manual; the disk is not
+  tracked) boots Ediciel's v1.1 to its menu, and "IL FAIT BEAU" comes out as
+  the manual's own `- I L- FAI- BAU.` and 0.75 s of speech with a falling
+  contour. Not yet compared with a real card's recording. Sessions: kind 20
+  (a build from before today refuses such a session rather than misreading
+  it). The two disk sides belong in the test-media archive before a corpus
+  entry can use them.
+
+## 2026-11-07 — Every pickable card has a level (CARDS-001)
+
+- <a id="cards-001"></a>**CARDS-001, closed:** twelve rows added to the
+  LLE/HLE catalog — `workstation` (L0), `slinky`, `videoterm`, `grappler1`,
+  `pic` (L2), `4play`, `snesmax`, `sam` (L1), `transwarp`, `vidhd`, and the
+  two socket accelerators `zipchip` / `fastchip` (H1). Ten slot cards had
+  shown in the Slot Configuration picker with no [LLE]/[HLE] tag and were
+  absent from the Abstraction Levels panel. `docs/lle_vs_hle.md` gained the
+  five rows it lacked (SNES MAX, Zip Chip, FASTChip, Slinky, S.A.M.), cited
+  to POM2's own headers rather than unpinned upstream lines.
+- **Why a new file:** the catalog is pure data and lived inside the ImGui
+  window, so nothing could test it. It moved to `AbstractionCatalog.{h,cpp}`
+  with the picker's key → row aliases (`abstractionEntryForCardKey`, until
+  now a lambda in `MainWindow_Slots.cpp`). `abstraction_catalog` fails when a
+  `kCardTypes` key has no row; mutation-checked (a renamed id and a misfiled
+  group both fail it).
+- **Two defects found on the way.** The panel prints a group heading
+  whenever the group changes, and the catalog had filed the CCS 7710, the
+  DAN ][, the E-Z Color and the UltraTerm amid other groups' rows: "CPU &
+  memory", "Network & serial", "Storage" and "Video" each printed twice. The
+  rows are now regrouped and the test pins contiguity. And the panel's
+  "Now" column read plug state from `slotCards[]`, which is the slot *plan*:
+  a ROM-gated card refused for a missing dump (CFFA, Slinky, Videoterm,
+  Workstation, Grappler 1981, PIC) leaves its slot empty while the plan
+  still names it, and was shown Active. The rule is now
+  `pom2::slotPlanKeyLive` (plan AND live SlotBus, read once per frame under
+  one lock): `abstraction_catalog` pins it (the plan-only rule fails it), and
+  `slot_card_factory` pins its premise — each of the six cards, built with no
+  ROM, returns no card and a warning.
+
 ## 2026-11-07 — Character-ROM goldens, documentation references and memory profiling
 
 - **DISPLAY-002, the glyph gap:** `display_golden_hash` now loads the pinned

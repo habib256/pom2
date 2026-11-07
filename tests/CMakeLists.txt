@@ -7806,6 +7806,16 @@ target_include_directories(test_host_file_tag PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME host_file_tag COMMAND test_host_file_tag)
 set_tests_properties(host_file_tag PROPERTIES TIMEOUT 15)
 
+# ─── LLE/HLE catalog vs the slot-card picker (CARDS-001) ──────────────────
+# Every card the picker offers has a level; each group is one contiguous run.
+add_executable(test_abstraction_catalog
+    abstraction_catalog_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AbstractionCatalog.cpp
+)
+target_include_directories(test_abstraction_catalog PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME abstraction_catalog COMMAND test_abstraction_catalog)
+set_tests_properties(abstraction_catalog PROPERTIES TIMEOUT 15)
+
 # ─── DOS 3.3 file system + Applesoft listing (pom2_dos33's library) ────────
 # A blank volume built in memory; the System Master too when present.
 add_executable(test_dos33_disk_fs
@@ -9805,6 +9815,20 @@ pom2_add_headless_test(test_sam_card
     SOURCES sam_card_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# Ediciel Porte Parole + MEA8000: the bus contract from the card's manual and
+# the chip's data sheet, REQ pacing, the 4 MHz crystal's frame length and
+# pitch, fade/STOP, snapshot, and the manual's own polling loop on a 6502.
+pom2_add_headless_test(test_porte_parole_card
+    NAME porte_parole_card TIMEOUT 30
+    SOURCES porte_parole_card_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+# Manual check: boot Ediciel's own Porte Parole disk (not in the repository)
+# with the card in slot 4, type, and write the card's audio to a WAV.
+add_executable(porte_parole_probe EXCLUDE_FROM_ALL porte_parole_probe.cpp)
+target_include_directories(porte_parole_probe PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(porte_parole_probe PRIVATE pom2_core_test)
+
 # Undocumented NMOS opcodes touch the bus at the documented opcode's cycle
 # (bug hunt 2026-10-27).
 pom2_add_headless_test(test_m6502_undoc_access_timing
@@ -11352,6 +11376,10 @@ if(TARGET pom2_core_test)
     # DIX's automatic mode on the fresh-install //e PAL (VALIDATION-002).
     add_executable(dix_auto_tour_probe EXCLUDE_FROM_ALL dix_auto_tour_probe.cpp)
     target_link_libraries(dix_auto_tour_probe PRIVATE pom2_core_test)
+    # grouik_sync_probe — manual: replays French Touch's own "IRL" sync
+    # annotations (DIX loader.a, CCII part1.a) against POM2's beam.
+    add_executable(grouik_sync_probe EXCLUDE_FROM_ALL grouik_sync_probe.cpp)
+    target_link_libraries(grouik_sync_probe PRIVATE pom2_core_test)
 endif()
 
 # lss_window_probe — manual: how long each nibble keeps bit 7 set in the read
@@ -11424,6 +11452,7 @@ set(POM2_PROBE_TARGETS
     dd2_ay_trace
     disasm_smoke
     dix_auto_tour_probe
+    grouik_sync_probe
     dix_menu_raster_probe
     dix_return_crash_probe
     iic_a2fc_printer_port_probe
@@ -11449,6 +11478,7 @@ set(POM2_PROBE_TARGETS
     u5_woz_save_probe
     lss_window_probe
     lss_write_probe
+    porte_parole_probe
 )
 set(_pom2_probe_present)
 foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)
@@ -11671,6 +11701,16 @@ pom2_add_headless_test(test_screenshot_export
     NAME screenshot_export TIMEOUT 10
     SOURCES screenshot_export_test.cpp ${CMAKE_SOURCE_DIR}/src/ScreenshotExport.cpp)
 
+# An IWM access is stamped at its own bus cycle, not the instruction start:
+# the //c+ on-board IWM and the Liron card's (bug hunt 2026-11-07). One
+# instruction per probe, then IWMDevice::emuCycles against start + offset.
+pom2_add_headless_test(test_iwm_access_stamp
+    NAME iwm_access_stamp TIMEOUT 30
+    SOURCES iwm_access_stamp_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(iwm_access_stamp PROPERTIES SKIP_RETURN_CODE 77
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries
@@ -11736,13 +11776,3 @@ foreach(_pom2_t IN LISTS _pom2_all_tests)
     math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
     set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
 endforeach()
-
-# An IWM access is stamped at its own bus cycle, not the instruction start:
-# the //c+ on-board IWM and the Liron card's (bug hunt 2026-11-07). One
-# instruction per probe, then IWMDevice::emuCycles against start + offset.
-pom2_add_headless_test(test_iwm_access_stamp
-    NAME iwm_access_stamp TIMEOUT 30
-    SOURCES iwm_access_stamp_test.cpp
-    LINK_LIBRARIES pom2_core_test)
-set_tests_properties(iwm_access_stamp PROPERTIES SKIP_RETURN_CODE 77
-                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
