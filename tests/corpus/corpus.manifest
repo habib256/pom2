@@ -96,3 +96,32 @@ title digidream iie-pal demos
   diskii 1 disks_5.4/demo/digidream/DD.dsk sha256=d7b5fbb9ffc1fa35709c560ddcc2238861726a194381294b3dab0339e96bedd5
   run 30
   check running
+
+# ── Apple's "Confidential Service Disk No.1" — a dealer ROM/RAM test that
+# runs on the Integer-BASIC ][ (its menu is Integer BASIC). The image on the
+# asimov mirror (images/disk_utils/diagnostics/, sha256 9f98b1e4…) is BROKEN:
+# F0.DATA's second data sector (T10 S2) holds a copy of E8.DATA's, i.e. ROM
+# $E8FC-$E9FB where $F0FC-$F1FB belongs, so the F0 test says "REPLACE F0 ROM"
+# on any faithful machine. This is the repaired copy: that one sector put
+# back from 341-0003-00.f0 (MAME CRC 62230d38), 255 bytes changed, nothing
+# else. Its four ROM tests then pass on POM2's apple2o.rom, which is MAME's
+# 341-0001..0004 page for page. Not in the test-media archive yet: absent,
+# the title is skipped. Timeline after RETURN: E8 ~30 s, F0 ~40 s, F8 ~54 s,
+# back to the menu ~60 s.
+
+title service-disk-1 ii diagnostics
+  diskii 1 disks_5.4/diagnostics/apple-service-disk-1-fixed.do sha256=b8dd1898a444943c29c7f75ce9f1ddd5794660c8bc9b81f14d412bad10ff44aa
+  boot 6
+  run 15
+  check menu
+  key ESC
+  run 0.5
+  key RETURN
+  run 30
+  check rom-e8
+  run 10
+  check rom-f0
+  run 14
+  check rom-f8
+  run 6
+  check back-to-menu

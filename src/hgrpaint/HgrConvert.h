@@ -89,6 +89,14 @@ struct ImportStats {
 // NTSC pipeline. Exposed mainly so the test can pin it equal to GraphicsCard.
 void hgrDecodeScanlineRgb(const uint8_t bytes[40], uint32_t out[280]);
 
+// A whole 8 KB HGR page (page-relative bytes) through the same decode, into
+// kHiresWidth × kHiresHeight RGBA. The paint editor's Fill floods against
+// THIS, not the host's selected pipeline (bug hunt 2026-11-01 round 3,
+// PAINT-2): fillRegion's premise — a periodic field renders as one colour —
+// and its measured edge constants hold for the ColorNTSC artifact model, and
+// the composite demods vary a field's colour with each dot's NTSC phase.
+void hgrRenderPageRgb(const uint8_t* page8k, uint32_t* out);
+
 // Convert a decoded RGBA image (srcW×srcH, 4 bytes/pixel, top-down) into an 8 KB
 // HGR page (page-relative, $2000 layout). `outPage` must hold kHiresSize bytes.
 // `stats` (optional) receives refinement/diffusion telemetry.

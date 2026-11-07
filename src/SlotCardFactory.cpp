@@ -458,11 +458,9 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
     }
 
     if (request.key == "smartport35" || request.key == "superdrive") {
-        if (request.key == "superdrive" &&
-            request.profile != SystemProfile::AppleIIe &&
-            request.profile != SystemProfile::AppleIIePAL) {
+        if (request.key == "superdrive" && !superDriveFitsProfile(request.profile)) {
             result.warningCategory = "SuperDrive";
-            result.warning = "Apple IIe SuperDrive requires an enhanced Apple IIe profile";
+            result.warning = "Apple IIe SuperDrive requires an Apple IIe profile";
             return result;
         }
         auto card = std::make_unique<SmartPortCard>(request.slot);

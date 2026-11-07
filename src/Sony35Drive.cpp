@@ -609,10 +609,19 @@ void Sony35Drive::ensureCacheFor(int track, int head) const
         image_->kind() == Disk35Image::ImageKind::Raw1440k ||
         image_->kind() == Disk35Image::ImageKind::TwoImg1440k) return;
 
+    // The same three kinds as cellsPerRev() / cyclesPerRevFor(): a Woz35
+    // track has its captured cells too. A track the capture does NOT have
+    // (TMAP $FF: a blank or partial image) gets a zone-sized blank, as those
+    // two fall back to the zone: an empty cache made writeFlux() return
+    // without a word, so formatting a blank track of a MOOF never took, and
+    // neither did a WOZ's once it joined this branch (bug hunt 2026-11-07).
     if (image_->kind() == Disk35Image::ImageKind::Moof35 ||
-        image_->kind() == Disk35Image::ImageKind::Moof400k) {
+        image_->kind() == Disk35Image::ImageKind::Moof400k ||
+        image_->kind() == Disk35Image::ImageKind::Woz35) {
         if (const auto* original = image_->originalBitCells(track, head))
             cells_ = *original;
+        else if (head < image_->headCount())  // a single-sided 400K has no head 1
+            cells_.assign(size_t(kCellsPerRev[zoneForTrack(track)]), 0);
     } else if (image_->isBitstream()) {
         cells_.assign(size_t(kCellsPerRev[zoneForTrack(track)]), 0);
     } else {

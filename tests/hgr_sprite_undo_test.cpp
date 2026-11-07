@@ -35,9 +35,49 @@ struct HgrSpriteEditorTestAccess {
         assert(editor.scratch == grabbed); // Output selection leaves the source intact.
     }
 
+    // PAINT-1 (bug hunt 2026-11-01 round 3): Ctrl+Z while the pencil is still
+    // down. The undo used to reverse the PREVIOUS stroke and leave this one
+    // open; its recorded old values were then stale, and undoing it later
+    // put back the pixels the first undo had removed.
+    static void testUndoMidDrag()
+    {
+        using hgrpaint::HgrColor;
+        HgrSpriteEditor editor(nullptr);
+        const auto blank = editor.scratch;
+        editor.beginStroke();
+        assert(editor.recordPlot(0, 0, HgrColor::White));
+        editor.commitStroke();
+        const auto first = editor.scratch;
+        // Second stroke, button still held, over the SAME byte.
+        editor.beginStroke();
+        editor.dragging = true;
+        assert(editor.recordPlot(1, 0, HgrColor::White));
+        const auto second = editor.scratch;
+        editor.doUndo();   // Ctrl+Z mid-drag
+        assert(!editor.dragging && "the open drag was not closed");
+        assert(editor.scratch == first && "Ctrl+Z mid-drag did not undo the open stroke");
+        editor.doUndo();
+        assert(editor.scratch == blank && "the earlier stroke came back wrong");
+        editor.doRedo();
+        editor.doRedo();
+        assert(editor.scratch == second);
+
+        // A bulk op during a drag keeps the drag's pixels as their own group.
+        editor.beginStroke();
+        editor.dragging = true;
+        assert(editor.recordPlot(3, 0, HgrColor::White));
+        const auto beforeClear = editor.scratch;
+        editor.transformClear();
+        editor.doUndo();
+        assert(editor.scratch == beforeClear);
+        editor.doUndo();
+        assert(editor.scratch == second && "the drag's pixels left the history");
+    }
+
     static void run()
     {
         testGrabbedPalette();
+        testUndoMidDrag();
         HgrSpriteEditor editor(nullptr);
         using hgrpaint::HgrColor;
         // Preserve an existing pixel alongside the new stroke in the same byte.

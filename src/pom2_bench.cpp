@@ -145,6 +145,10 @@ void usage(const char* prog)
         "  --read-watch HEX    Arm a read watchpoint on that address — no\n"
         "                      sink, so nothing stops; measures the cost of\n"
         "                      the armed read diversion (PERFORMANCE 8.5).\n"
+        "  -h, --help          This text.\n"
+        "  --dump-text         Print the PC and the text page at the end — the\n"
+        "                      check that a workload booted instead of looping\n"
+        "                      on a BRK (PERFORMANCE.md).\n"
         "\n"
         "The main-RAM hash ($0000-$BFFF) is always printed and integer-exact;\n"
         "the framebuffer hash is printed for integer pipelines only, because\n"
@@ -169,23 +173,49 @@ int main(int argc, char** argv)
     bool dumpText       = false;
     int  readWatch      = -1;        // --read-watch, or none
 
+    // Numbers are checked, as pom2_headless checks them (bug hunt 2026-11-01
+    // round 3, CLI-1): atoi turned `--cycles-per-frame abc` into the default
+    // budget and strtol turned `--read-watch zzz` / `10000` into a watchpoint
+    // at $0000 — in the binary whose contract is reproducibility.
+    auto parseNum = [](const char* flag, const char* text, int base, long lo,
+                       long hi, int& out) -> bool {
+        char* end = nullptr;
+        const long v = std::strtol(text, &end, base);
+        if (end == text || *end != '\0' || v < lo || v > hi) {
+            std::fprintf(stderr, "%s expects %s in %ld..%ld, got: %s\n", flag,
+                         base == 16 ? "a hex address" : "an integer", lo, hi, text);
+            return false;
+        }
+        out = static_cast<int>(v);
+        return true;
+    };
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
-        if      (a == "--rom"    && i + 1 < argc) romArg  = argv[++i];
-        else if (a == "--prom"   && i + 1 < argc) promArg = argv[++i];
-        else if (a == "--disk"   && i + 1 < argc) diskArg = argv[++i];
-        else if (a == "--mode"   && i + 1 < argc) modeArg = argv[++i];
-        else if (a == "--frames" && i + 1 < argc) frames  = std::atoi(argv[++i]);
-        else if (a == "--cycles-per-frame" && i + 1 < argc)
-                                                  cyclesPerFrame = std::atoi(argv[++i]);
+        if ((a == "--rom" || a == "--prom" || a == "--disk" || a == "--mode" ||
+             a == "--frames" || a == "--cycles-per-frame" || a == "--read-watch") &&
+            i + 1 >= argc) {
+            std::fprintf(stderr, "%s needs a value\n", a.c_str());
+            usage(argv[0]); return 1;
+        }
+        if      (a == "--rom")    romArg  = argv[++i];
+        else if (a == "--prom")   promArg = argv[++i];
+        else if (a == "--disk")   diskArg = argv[++i];
+        else if (a == "--mode")   modeArg = argv[++i];
+        else if (a == "--frames") {
+            if (!parseNum("--frames", argv[++i], 10, 1, 100000000, frames)) return 1;
+        } else if (a == "--cycles-per-frame") {
+            if (!parseNum("--cycles-per-frame", argv[++i], 10, 0, 10000000,
+                          cyclesPerFrame)) return 1;
+        }
         else if (a == "--iie")        iie   = true;
         else if (a == "--pal")        pal   = true;
         else if (a == "--no-render")  render = false;
         else if (a == "--hash-frame") hashFrameForce = true;
         else if (a == "--hash-all")   hashAll = true;
         else if (a == "--quiet")      quiet = true;
-        else if (a == "--read-watch" && i + 1 < argc)
-                                      readWatch = static_cast<int>(std::strtol(argv[++i], nullptr, 16));
+        else if (a == "--read-watch") {
+            if (!parseNum("--read-watch", argv[++i], 16, 0, 0xFFFF, readWatch)) return 1;
+        }
         else if (a == "--dump-text")  dumpText = true;
         else if (a == "-h" || a == "--help") { usage(argv[0]); return 0; }
         else { std::fprintf(stderr, "unknown arg: %s\n", a.c_str());

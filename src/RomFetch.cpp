@@ -251,7 +251,7 @@ const std::vector<RomFetchEntry>& catalogStorage()
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/ae_transwarp_1.4.bin",
           nullptr, nullptr, 0xAFE37F55u, "MAME warprom",
           "bcbb1a3bab083b0c2988b502f5e024ff4346fab5dbf09276b32724693bcbd0e9", 0u },
-        { "roms/grappler_plus.bin", "Grappler+ EPROM 3.2", 4096,
+        { "roms/grappler_plus.bin", "Grappler+ EPROM 3.1", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/grappler_plus.bin",
           nullptr, nullptr, 0u, nullptr,
           "9be4dea7722ad8928aee64c2ae708f365a6d66c50a63bff8a3c1a4e7596d44c6", 0u },

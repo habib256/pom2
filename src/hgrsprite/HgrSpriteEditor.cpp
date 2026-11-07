@@ -101,6 +101,14 @@ void HgrSpriteEditor::commitStroke()
     stroke.clear();
 }
 
+void HgrSpriteEditor::flushOpenStroke()
+{
+    if (!dragging) return;
+    commitStroke();
+    dragging = false;
+    lastPx = lastPy = -1;
+}
+
 bool HgrSpriteEditor::recordPlot(int x, int y, HgrColor c)
 {
     const int off = hgrpaint::targetOffset(x, y, c);
@@ -122,6 +130,7 @@ void HgrSpriteEditor::applyOps(const std::vector<ByteEdit>& ops, bool forward)
 
 void HgrSpriteEditor::doUndo()
 {
+    flushOpenStroke();
     if (undo.empty()) return;
     auto ops = undo.back(); undo.pop_back();
     applyOps(ops, false);
@@ -131,6 +140,7 @@ void HgrSpriteEditor::doUndo()
 
 void HgrSpriteEditor::doRedo()
 {
+    flushOpenStroke();
     if (redo.empty()) return;
     auto ops = redo.back(); redo.pop_back();
     applyOps(ops, true);
@@ -160,6 +170,9 @@ std::vector<std::pair<uint16_t, uint8_t>> HgrSpriteEditor::snapshotRegion(int wB
 
 void HgrSpriteEditor::commitRegionDiff(const std::vector<std::pair<uint16_t, uint8_t>>& before)
 {
+    // An open drag's edits precede the bulk op: keep them as their own group
+    // instead of dropping them from the history.
+    flushOpenStroke();
     stroke.clear();
     for (const auto& p : before)
         if (scratch[p.first] != p.second)

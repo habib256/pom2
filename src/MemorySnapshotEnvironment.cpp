@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "Memory.h"
+#include "Logger.h"
+#include "RomErrata.h"
 
 #include "ByteIO.h"
 #include "MemoryProfile.h"
@@ -89,6 +91,10 @@ bool Memory::installSessionEnvironment(const std::vector<uint8_t>& bytes, std::s
         writable[a] = bytes[i] != 0;
         mem[a] = bytes[i + 1];
     }
+    // A session saved before a known dump erratum was corrected carries the
+    // faulty bytes; install the corrected page (RomErrata.h).
+    if (const std::string fix = pom2::applyRomErrata(mem.data()); !fix.empty())
+        pom2::log().info("ROM", "session environment: " + fix);
     std::copy_n(bytes.data() + 8 + 0x6000, 0x1000, internalIORom.begin());
     characterRom = std::move(chars); charRomDualBank_ = flags & 8; charRomLowercase_ = flags & 16;
     setVideoStandard(pal ? VideoStandard::PAL : VideoStandard::NTSC);

@@ -887,7 +887,12 @@ private:
     bool     epsonListChannel_ = false;   // ESC b: the channel byte comes first
     int      epsonListPrev_    = -1;
     uint32_t epsonSkip_        = 0;       // body bytes left to swallow
-    std::vector<double> epsonHTabs_;      // inches from the left margin; empty = every 8 Pica
+    std::vector<double> epsonHTabs_;      // inches from the left margin
+    bool     epsonHTabsSet_    = false;   // false = power-on stops, every 8 Pica
+    /// Room for one line feed between `top` and `bottom` without an eject
+    /// (lineFeed ejects when curY_ > bottomMargin_ - lineSpacing_).
+    bool pageHoldsALine(double top, double bottom) const
+    { return bottom - top >= 2.0 * lineSpacing_ - 1e-9; }
     std::vector<double> epsonVTabs_;      // inches from top of form
     bool     epsonVTabsSet_    = false;   // false = power-on stops, every 2 lines at 1/6"
     void     epsonListByte(uint8_t ch);

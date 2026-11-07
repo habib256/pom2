@@ -172,7 +172,13 @@ wrong behaviour a user sees > wrong behaviour software can see > hygiene.
   bypassing the `hostNameMapKey()` normaliser that exists for it. All four
   producers pass the same string today, so no live failure could be built;
   latent trap plus a small unbounded leak when a build's mount then fails.
-- **CPU-4 — both socket accelerators decode only `$C070`**, not the
+- **CPU-4 — both socket accelerators decode only `$C070`**, *settled
+  2026-11-07: POM2 is right, not changed. [A] Zip Chip-8 and //c+ hardware
+  tests reported in MAME PR #15387 (merged 2026-05-27): "Zip only on C070".
+  [B] The Zip Chip instruction manual (PDF pp. 14-15) names `$C070` alone.
+  [D] MAME master `b2a182f0b7` (`apple2e.cpp:2042-2046`) follows the
+  measurement; tag mame0287 (`:2012-2025`) took the delay on all sixteen.
+  The FASTChip's decode stays [F].* The finding: not the
   `$C071-$C07F` PTRIG mirrors POM2's own `Memory` honours (citing MAME
   `apple2.cpp:555 .mirror(0xf)`). Unverified against MAME's accelerator hooks —
   no MAME source tree on the machine — so possibly MAME-faithful and only an
@@ -384,7 +390,9 @@ If someone builds a reproduction it belongs there.
   browser bundle can ship with its //c + //e ROMs silently absent and the
   Chrome smoke, which waits for the splash to hide and checks settings
   persistence, would not notice. All four are present today.
-- **PKG-4 — a poisoned test-media cache is permanent.** `fetch_test_media.py`
+- **PKG-4 — a poisoned test-media cache is permanent.** *Fixed 2026-11-07: a cached
+  zip that fails the manifest is downloaded once more and replaced (pinned
+  `fetch_test_media`, offline).* `fetch_test_media.py`
   replaces a cached file that is not a zip, but never a cached zip whose
   members fail the manifest; the Actions cache is keyed on the manifest hash
   alone. One truncated-but-valid download to the first job that misses would
@@ -393,7 +401,8 @@ If someone builds a reproduction it belongs there.
   while the log says "using the cached archive". The action's own stated
   invariant is "a cache is never trusted further than a download".
 - **CLI-1 — `pom2_bench` takes two numbers straight off argv with no error
-  channel.** Measured on the built binary: `--cycles-per-frame abc` silently
+  channel.** *Fixed 2026-11-07 (checked like `pom2_headless`; a value flag with
+  no value says so).* Measured on the built binary: `--cycles-per-frame abc` silently
   runs the 17045 default, and `--read-watch zzz` or `--read-watch 10000` both
   arm a read watchpoint at `$0000` the user never asked for, dropping the
   measured speed from ~134 to ~91 MHz — in the binary whose whole contract is
@@ -402,11 +411,14 @@ If someone builds a reproduction it belongs there.
   unknown flag. `pom2_headless.cpp` carries both fixes, and the rationale, one
   file away.
 - **CLI-2 — `pom2_bench --dump-text` is parsed and is what `docs/PERFORMANCE.md`
-  tells the reader to use, but `usage()` never mentions it** (confirmed:
+  tells the reader to use, but `usage()` never mentions it** *Fixed 2026-11-07;
+  `checkUsageParserSymmetry` now covers `pom2_bench.cpp` too* (confirmed:
   `--help | grep -c dump-text` is 0). CLAUDE.md calls the usage text the source
   of truth, and `checkUsageParserSymmetry` is only pointed at `CliDispatcher.cpp`
   and `pom2_headless.cpp`.
-- **CLI-3 / CLI-4 — two probes write outside `probeOutDir()`.**
+- **CLI-3 / CLI-4 — two probes write outside `probeOutDir()`.** *Fixed
+  2026-11-07: both write under `probeOutDir()` and fail on a failed open; the
+  source-scan guard is not added.*
   `u5_woz_save_probe` writes `<base>.hgr1/2` into the **current directory** —
   which that probe requires to be the repo root — and `artifact_phase_probe`
   hard-codes `/tmp/test4_signal.bin`, ignoring `$TMPDIR` and
@@ -419,7 +431,7 @@ If someone builds a reproduction it belongs there.
   near-miss loudly, and it is exactly the flag someone reaches for when they
   already believe a card is being plugged.
 - **VID-2 — the UltraTerm's device-select *write* decode is three addresses too
-  wide.** It dispatches on `low4 & 3`, so `$C0n4-$C0nF` writes reach the 6845
+  wide.** *Fixed 2026-11-07 (`switch (low4)`, pinned `videx_ultraterm`).* It dispatches on `low4 & 3`, so `$C0n4-$C0nF` writes reach the 6845
   and both control registers — and in Videoterm-emulation mode (the reset
   state) `$C0n4/8/C` are precisely the bank-select addresses, so `STA $C0n6`
   rewrites control 1 and can take the monitor away mid-draw. MAME decodes
@@ -428,10 +440,14 @@ If someone builds a reproduction it belongs there.
   The agent disassembled the tracked firmware and found it only ever uses
   offsets 0-3, so the card's own driver cannot trigger it.
 - **PAINT-1 — Ctrl+Z during an open pencil drag corrupts the sprite editor's
-  undo stack** and resurrects an already-undone stroke, because
+  undo stack** *Fixed 2026-11-07 (`HgrSpriteEditor::flushOpenStroke`, pinned
+  `hgr_sprite_undo`).* and resurrects an already-undone stroke, because
   `HgrSpriteEditor` has no `flushOpenStroke`. The paint editor has exactly that
   guard, for exactly this reason, and states the invariant in its header.
 - **PAINT-2 — the HGR Fill tool floods against the user's canvas *pipeline*.**
+  *Fixed 2026-11-07: the editor floods against `hgrRenderPageRgb` (the
+  module's decode, pinned equal to ColorNTSC page for page in
+  `hgr_paint_fill_edge`), whatever pipeline the canvas shows.*
   Connectivity is exact-RGB equality of a page rendered through the host, and
   the host renders through the selected pipeline — including two CPU composite
   demods, whose output for a periodic field varies with each dot's NTSC phase.
@@ -447,12 +463,14 @@ If someone builds a reproduction it belongs there.
   Both pure-ImGui, both one arm short of a `switch` that already covers DHGR
   and DLGR.
 - **PRN-3 — ESC/P `ESC D NUL` restores the power-on tab stops instead of
-  cancelling them**, because "empty `epsonHTabs_`" is the encoding for
+  cancelling them** *Fixed 2026-11-07 (`epsonHTabsSet_`, pinned
+  `imagewriter_escape`)*, because "empty `epsonHTabs_`" is the encoding for
   *defaults*. The vertical side has the `epsonVTabsSet_` flag that distinguishes
   them; the horizontal side has no counterpart. ESC/P says HT is ignored when no
   tab is set after the current position.
 - **PRN-4 — the Diablo 630's `ESC L` and `ESC FF n` have none of the "one line
-  must fit" floor** that `ESC H` and ESC/P's `ESC N` carry (and whose comments
+  must fit" floor** *Fixed 2026-11-07 (`pageHoldsALine`, on `ESC T` too;
+  pinned `imagewriter_escape`)* that `ESC H` and ESC/P's `ESC N` carry (and whose comments
   record the incident: "`ESC H 0000` set a zero-length page, so every single
   line feed ejected"). A driver emitting its page setup at home turns every
   subsequent LF into a blank sheet — and `archiveNewPrinterPages` writes those
@@ -600,7 +618,11 @@ Highest first. Full detail in the agents' reports; the short form:
   stale, the //c absolute cursor sync projects onto garbage. **The single
   highest-value hardware capture in that domain** — see the unknowns below.
 - **"Apple IIe SuperDrive" is offered on four profiles where the factory
-  refuses it**, and the refusal is silent: `unavailableReason` has no case for
+  refuses it** *Fixed 2026-11-07 (`superDriveFitsProfile`, shared by the
+  factory, the picker and `resolve()`; pinned `slot_configuration_coordinator`).
+  The "enhanced //e only" rule had no source and was wrong: Apple's guide says
+  "Apple IIe", and the card's host code is NMOS-only on the //e branch, so
+  the unenhanced //e now takes it; the ][ / ][+ do not.*, and the refusal is silent: `unavailableReason` has no case for
   it, `resolve()` does not drop it, `plugSmartPort35` discards the factory's
   warning, so the badge shows "1 staged change" for ever and every Apply
   re-arms a cold boot. Same shape as hunt #21.
@@ -612,10 +634,16 @@ Highest first. Full detail in the agents' reports; the short form:
   `M6502.cpp`'s own comment asserts. MAME's `reset_w`, read in full, never
   touches its IRQ mask. (Same root cause as round 2's CPU-2.)
 - **The ESC/P `ESC D NUL`, Diablo bottom-margin, WOZ `boot_sector_format`,
-  FLUX `block_count` bound and TMAP 0..159 range** findings — four more
+  FLUX `block_count` bound and TMAP 0..159 range** findings *(the last two
+  fixed 2026-11-07: an index past the 160 TRK records is damage, and a
+  record whose blocks run past TRKS or the file is read when its data is all
+  there, with its write capacity capped — FLUX and bit-cell alike; pinned `woz_load_smoke`,
+  `woz_writeback_smoke`)* — four more
   format-layer items, each with a fetched spec line, including one where a
   crafted TMAP entry of 200 reads 8 bytes of *bit data* as a TRK header.
 - **Four live demodulation controls are greyed out when "CRT effects" is off**
+  *Fixed 2026-11-07 (Hue, Sharpness, PAL composite and Sharp text stay
+  enabled; no test reaches an ImGui panel)*
   — including **PAL composite**, which has no other UI anywhere, so a PAL user
   who wants clean pixels cannot tick the one control that describes their
   machine rather than a look.
@@ -627,17 +655,36 @@ Highest first. Full detail in the agents' reports; the short form:
   checked only by a hand transcription in a test; a typo inside the shader
   string ships with all 425 cases green.
 - **`SlotBus`'s active-card-cache staleness guard never executes in any
-  configured build** (`#ifndef NDEBUG`, and every documented build is Release
+  configured build** *Not so, checked 2026-11-07: the test twin
+  `pom2_core_test` and the test binaries that compile `src/SlotBus.cpp`
+  themselves add `-UNDEBUG` after the Release `-DNDEBUG` (since 2026-08-26,
+  `70cc8e9a`), so the guard runs in ~200 test binaries, `slot_bus` and the
+  Mockingboard suites among them (`build/compile_commands.json`). What is
+  true: it does not run in the shipped binaries, which is its design.* (`#ifndef NDEBUG`, and every documented build is Release
   or RelWithDebInfo), so the regression it exists to make loud would ship.
 - `ClockCard`'s free-running DATA_OUT pulse phase is not in the snapshot;
   `IIcMouse`'s `releasedFor_` is not either; `~SlotBus` is `= default`, the one
-  teardown path that skips `onUnplug()`; window focus loss releases held keys
-  but never a held mouse button; `Sony35Drive::ensureCacheFor` omits
-  `Woz35` from a three-kind list two siblings include; the MacBinary envelope
-  is stripped only by the 5.25" loader; `lle_vs_hle.md` calls four firmware
+  teardown path that skips `onUnplug()` *(deliberate, 2026-11-07: the CPU is
+  destroyed first, so an `onUnplug()` there would reach a freed M6502; now
+  said in `SlotBus.h`)*; window focus loss releases held keys
+  but never a held mouse button *(fixed 2026-11-07, `onWindowFocus`)*; `Sony35Drive::ensureCacheFor` omits
+  `Woz35` from a three-kind list two siblings include *(aligned 2026-11-07,
+  with a zone-sized blank for a track the capture lacks: an empty cache made
+  `writeFlux` return silently, so a blank MOOF track could never be written —
+  and aligning WOZ without the blank spread that to WOZ, caught by the
+  2026-11-07 hunt; pinned `disk35_flux_write`)*; the MacBinary envelope
+  is stripped only by the 5.25" loader *(still open 2026-11-07: a wrapped
+  3.5" image is refused on its size, never mis-read; stripping it needs the
+  envelope written back on save, as `DiskImage` does for 5.25")*; `lle_vs_hle.md` calls four firmware
   dumps "in-repo" when the repo tracks none; the LLE/HLE panel has six rows the
   Markdown master table does not; the ProDOS block-device signature is cited to
   a manual that predates ProDOS by four years (it is **ProDOS 8 TN #20**).
+  *All three fixed 2026-11-07: "in-repo" now says fetched from `pom2_firm`;
+  CCS 7710, DAN ][ and E-Z Color joined the master table (the panel's
+  Rewind, AI server, CRT and `bootFromSlot` rows were already in other
+  sections); TN #20 — checked on prodos8.com, "Mirrored Devices and
+  SmartPort" — replaces the 1979 manual in CLAUDE.md, DEV.md and
+  `Pom2Core.cpp`.*
 
 ## What we do not know — the round's real deliverable
 

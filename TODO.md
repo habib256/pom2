@@ -119,6 +119,7 @@ Remaining 1.0 release gates and the candidate checklist:
 |---|---|
 | [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
 | [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
+| [RELEASE-012](docs/backlog/release-1.0.md#release-012) | Fix the ][+ dump's IRQ vector at the source: corrected `apple2p.rom` in `pom2_firm.zip`, report to RetroBIOS, then move the digests together (in-memory errata until then); upload the repaired Service Disk copy. |
 
 For the Disk Library follow-up, the requested order is
 [miniatures](docs/backlog/ui-debugger.md#ui-009), then

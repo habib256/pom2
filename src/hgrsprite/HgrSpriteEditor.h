@@ -151,6 +151,13 @@ private:
     // Editing (operate on `scratch` + accumulate undo; NO live poke).
     void beginStroke();
     void commitStroke();
+    // Close a pencil/eraser drag before anything else edits the history
+    // (bug hunt 2026-11-01 round 3, PAINT-1). Ctrl+Z mid-drag used to undo
+    // the PREVIOUS group while this one stayed open: its recorded old values
+    // were then stale, and undoing it later wrote back pixels the first undo
+    // had removed. The paint editor's flushOpenStroke() is the model. The
+    // drag restarts on the next frame if the button is still held.
+    void flushOpenStroke();
     bool recordPlot(int x, int y, hgrpaint::HgrColor c);   // one pixel
     void floodFill(int x, int y, hgrpaint::HgrColor c);
     void applyOps(const std::vector<ByteEdit>& ops, bool forward);

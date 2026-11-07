@@ -39,6 +39,7 @@
 
 #include "Apple2Display.h"
 #include "Memory.h"
+#include "hgrpaint/HgrConvert.h"
 #include "hgrpaint/HgrPaintModel.h"
 
 #include <cassert>
@@ -180,6 +181,31 @@ int main()
                 if (changed)
                     assert(x > 40 && x < 240 && y > 40 && y < 150);
             }
+    }
+
+    // ── 4. The editor's Fill renderer (PAINT-2, bug hunt 2026-11-01 round 3)
+    //      The editor floods against hgrRenderPageRgb, not the host's selected
+    //      pipeline. It must be the ColorNTSC picture, page for page, so every
+    //      result above — the edge constants were measured on ColorNTSC —
+    //      holds for it, headless. On random pages and through a full fill.
+    {
+        uint32_t seed = 12345;
+        auto rnd = [&]() { seed = seed * 1103515245u + 12345u; return uint8_t(seed >> 16); };
+        std::vector<uint32_t> viaDisplay(280 * 192), viaModule(280 * 192);
+        for (int trial = 0; trial < 8; ++trial) {
+            std::vector<uint8_t> page(kHiresSize);
+            for (auto& b : page) b = rnd();
+            renderPage(page.data(), viaDisplay.data());
+            hgrRenderPageRgb(page.data(), viaModule.data());
+            for (size_t i = 0; i < viaDisplay.size(); ++i)
+                assert((viaDisplay[i] & 0xFFFFFFu) == (viaModule[i] & 0xFFFFFFu));
+        }
+        std::vector<uint8_t> a(kHiresSize, 0), b(kHiresSize, 0);
+        for (int x = 40; x <= 240; ++x) { plotPage(a.data(), x, 40, HgrColor::White); }
+        b = a;
+        fillRegion(a.data(), 140, 96, HgrColor::Orange, renderPage);
+        fillRegion(b.data(), 140, 96, HgrColor::Orange, hgrRenderPageRgb);
+        assert(a == b && "the editor's fill renderer floods like ColorNTSC");
     }
 
     std::printf("hgr_paint_fill_edge: OK\n");

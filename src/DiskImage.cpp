@@ -1213,6 +1213,7 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     // trackBitLength / trackPeriod / bitAt keep returning sensible
     // values. The projection is made on first use, not here.
     auto loadFluxTrack = [&](int qt, uint8_t fidx) -> bool {
+        if (fidx >= kWoz2TrkRecords) return false;   // see woz2Capacity
         const size_t hdrOff = trksOff + static_cast<size_t>(fidx) * 8;
         const size_t trksEnd = trksOff + trksLen;
         if (hdrOff > trksEnd || trksEnd - hdrOff < 8) return false;
@@ -1223,8 +1224,9 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             trackSize > static_cast<size_t>(blockCount) * 512 ||
             trackSize > kMaxFluxTrackBytes) return false;
         const size_t dataOff = static_cast<size_t>(startBlock) * 512;
-        if (dataOff > wozSize ||
-            static_cast<size_t>(trackSize) > wozSize - dataOff) return false;
+        const size_t capacity = woz2Capacity(trksOff, trksLen, wozSize, dataOff,
+                                             size_t{blockCount} * 512, trackSize);
+        if (capacity == 0) return false;   // past its region, or damage
 
         // First pass: sum total ticks to size the synthetic bitStream.
         uint64_t totalTicks = 0;
@@ -1284,17 +1286,13 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         wozQtFluxPeriodTicks[qt] = static_cast<int>(totalTicks);
         wozQtFluxHeaderOff[qt] = hdrOff;
         wozQtByteOff[qt] = dataOff;
-        wozQtByteLen[qt] = static_cast<size_t>(blockCount) * 512;
+        wozQtByteLen[qt] = capacity;      // not block_count × 512: woz2Capacity
         return true;
     };
 
-    // Walk all 160 TMAP entries (= every quarter-track). For each
-    // non-FF slot, unpack the matching TRK chunk into bitStream[qt].
-    // FLUX takes precedence over TMAP when both are present (matches
-    // MAME `as_dsk.cpp:316-326`). This is the change from the
-    // original "whole-tracks-only" port that walked `tmap[t*4]` for
-    // t in 0..34 and lost the inter-track protection data carried
-    // at qt%4 != 0 by copy-protected disks.
+    // Walk all 160 TMAP entries, every quarter-track — not tmap[t*4], which
+    // lost the data copy-protected disks keep at qt%4 != 0. FLUX takes
+    // precedence over TMAP when both are present (MAME `as_dsk.cpp:316-326`).
     int populatedSlots = 0;
     int populatedWholeTracks = 0;
     int populatedFluxSlots = 0;
@@ -1333,7 +1331,8 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             bitCount     = readU16LE(slotOff + 6648);
         } else {
             // WOZ2: 8-byte TRK headers at the start of TRKS, data at
-            // file-absolute block offsets.
+            // file-absolute block offsets. Only 160 of them (woz2Capacity).
+            if (trkIdx >= kWoz2TrkRecords) { damagedQts.push_back(qt); continue; }
             const size_t hdrOff = trksOff + static_cast<size_t>(trkIdx) * 8;
             const size_t trksEnd = trksOff + trksLen;
             if (hdrOff > trksEnd || trksEnd - hdrOff < 8) {
@@ -1354,13 +1353,14 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
             bitDataBytes = static_cast<size_t>(blockCount) * 512;
             bitCount     = bc;
         }
-        // kMaxTrackBits: real 5.25" tracks hold ~50k bits (WOZ1 slots cap
-        // at 53,168); 1 Mi-bit is far above any legitimate mastering while
-        // stopping a hostile TRKS header from driving a huge expansion
-        // (bitStream stores one BYTE per bit). expandedBytes caps the
-        // aggregate across bit-cell and FLUX slots — duplicate map entries
-        // could otherwise multiply even a legal track.
+        // kMaxTrackBits: real 5.25" tracks hold ~50k bits (WOZ1 slots cap at
+        // 53,168); 1 Mi-bit stops a hostile TRKS header driving a huge
+        // expansion (bitStream is one BYTE per bit). expandedBytes caps the
+        // aggregate over bit-cell and FLUX slots (duplicate map entries).
         if (bitCount == 0) continue;      // WOZ1 slot never written: absent
+        if (!isWoz1 && bitCount <= bitDataBytes * 8)   // as FLUX; 0 = damage below
+            bitDataBytes = woz2Capacity(trksOff, trksLen, wozSize, bitDataOff,
+                                        bitDataBytes, (bitCount + 7) / 8);
         if (bitCount > kMaxTrackBits
             || bitCount > bitDataBytes * 8
             || bitDataOff > wozSize || bitDataBytes > wozSize - bitDataOff) {

@@ -22,8 +22,10 @@
 #                 in an Actions cache keyed on the manifest's hash, so
 #                 archive.org — which answers 500/502 for a minute now and
 #                 then — is asked once per manifest, not once per job). A
-#                 cached file that is not a zip is replaced. Every file is
-#                 SHA-256-checked whatever the zip's origin.
+#                 cached file that is not a zip is replaced, and so is a
+#                 cached zip that fails the manifest (downloaded once more).
+#                 Every file is SHA-256-checked whatever the zip's origin.
+#   --self-test   offline check of the cache logic (ctest fetch_test_media)
 #   $POM2_TEST_MEDIA_URL overrides the default URL, as --url does.
 
 import argparse
@@ -34,6 +36,7 @@ import sys
 import time
 import urllib.request
 import zipfile
+import zlib
 
 # Item pom2_media_202611 since 2026-11-01: pom2_testmedia_20261029 went dark.
 DEFAULT_URL = ("https://archive.org/download/pom2_media_202611/"
@@ -74,51 +77,19 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default=os.environ.get("POM2_TEST_MEDIA_URL",
-                                                    DEFAULT_URL))
-    ap.add_argument("--zip")
-    ap.add_argument("--cache")
-    ap.add_argument("--manifest", default=os.path.join(here, "test_media.sha256"))
-    ap.add_argument("--root", default=os.path.dirname(here))
-    ap.add_argument("--strict", action="store_true")
-    args = ap.parse_args()
-
-    want = read_manifest(args.manifest)
-    blob = None
-    if args.zip:
-        with open(args.zip, "rb") as f:
-            blob = f.read()
-    elif args.cache and os.path.exists(args.cache):
-        with open(args.cache, "rb") as f:
-            blob = f.read()
-        if zipfile.is_zipfile(io.BytesIO(blob)):
-            print(f"fetch_test_media: using the cached archive {args.cache}")
-        else:
-            print(f"fetch_test_media: {args.cache} is not a zip — "
-                  "downloading again", file=sys.stderr)
-            blob = None
-    if blob is None:
-        print(f"fetch_test_media: downloading {args.url}")
-        blob = download(args.url)
-        if args.cache:
-            # Kept for the next run; atomic, so a killed job never leaves a
-            # half-written file under the cache's name.
-            os.makedirs(os.path.dirname(os.path.abspath(args.cache)),
-                        exist_ok=True)
-            tmp = args.cache + ".fetchtmp"
-            with open(tmp, "wb") as f:
-                f.write(blob)
-            os.replace(tmp, args.cache)
-
+def extract(blob, want, root):
+    """Write every listed file the tree lacks. Returns (written, kept,
+    problems); a problem that does not end in "(kept)" is the archive's."""
     written = kept = 0
     problems = []
-    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+    try:
+        z = zipfile.ZipFile(io.BytesIO(blob))
+    except zipfile.BadZipFile as e:
+        return 0, 0, [f"the archive is not a readable zip ({e})"]
+    with z:
         members = {i.filename: i for i in z.infolist() if not i.is_dir()}
         for rel, digest in sorted(want.items()):
-            dst = os.path.join(args.root, *rel.split("/"))
+            dst = os.path.join(root, *rel.split("/"))
             if os.path.exists(dst):
                 with open(dst, "rb") as f:
                     if sha256(f.read()) != digest:
@@ -129,7 +100,11 @@ def main():
             if rel not in members:
                 problems.append(f"{rel}: missing from the archive")
                 continue
-            data = z.read(members[rel])
+            try:
+                data = z.read(members[rel])
+            except (zipfile.BadZipFile, zlib.error, EOFError) as e:
+                problems.append(f"{rel}: unreadable in the archive ({e})")
+                continue
             if sha256(data) != digest:
                 problems.append(f"{rel}: SHA-256 mismatch in the archive "
                                 "(not written)")
@@ -140,12 +115,120 @@ def main():
                 f.write(data)
             os.replace(tmp, dst)
             written += 1
+    return written, kept, problems
+
+
+def archive_problems(problems):
+    return [p for p in problems if not p.endswith("(kept)")]
+
+
+def store_cache(path, blob):
+    # Kept for the next run; atomic, so a killed job never leaves a
+    # half-written file under the cache's name.
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".fetchtmp"
+    with open(tmp, "wb") as f:
+        f.write(blob)
+    os.replace(tmp, path)
+
+
+def fetch(args, want, fetcher=download):
+    blob = None
+    from_cache = False
+    if args.zip:
+        with open(args.zip, "rb") as f:
+            blob = f.read()
+    elif args.cache and os.path.exists(args.cache):
+        with open(args.cache, "rb") as f:
+            blob = f.read()
+        if zipfile.is_zipfile(io.BytesIO(blob)):
+            print(f"fetch_test_media: using the cached archive {args.cache}")
+            from_cache = True
+        else:
+            print(f"fetch_test_media: {args.cache} is not a zip — "
+                  "downloading again", file=sys.stderr)
+            blob = None
+    if blob is None:
+        print(f"fetch_test_media: downloading {args.url}")
+        blob = fetcher(args.url)
+        if args.cache:
+            store_cache(args.cache, blob)
+
+    written, kept, problems = extract(blob, want, args.root)
+    # A cached zip is trusted no further than a download (PKG-4, bug hunt
+    # 2026-11-01): one that fails the manifest — a truncated-but-valid zip,
+    # a member that will not inflate — used to be restored by every later
+    # job, all failing alike, while the log said "using the cached archive".
+    # Download once more and replace it. A file the archive really lacks
+    # fails again after the download, as it should.
+    if from_cache and archive_problems(problems):
+        print(f"fetch_test_media: the cached archive fails the manifest "
+              f"({archive_problems(problems)[0]}) — downloading again",
+              file=sys.stderr)
+        blob = fetcher(args.url)
+        store_cache(args.cache, blob)
+        more, kept, problems = extract(blob, want, args.root)
+        written += more
+    return written, kept, problems
+
+
+def self_test():
+    """Offline: a poisoned cache is replaced, a good one is not re-fetched."""
+    import tempfile
+    import types
+    good = io.BytesIO()
+    with zipfile.ZipFile(good, "w") as z:
+        z.writestr("a/x.bin", b"payload")
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("a/y.bin", b"other")          # x.bin missing
+    want = {"a/x.bin": sha256(b"payload")}
+    calls = []
+
+    def fetcher(url):
+        calls.append(url)
+        return good.getvalue()
+
+    for cached, expect_calls in ((bad.getvalue(), 1), (good.getvalue(), 0)):
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache.zip")
+            with open(cache, "wb") as f:
+                f.write(cached)
+            calls.clear()
+            args = types.SimpleNamespace(zip=None, cache=cache, url="u",
+                                         root=os.path.join(d, "tree"))
+            written, _, problems = fetch(args, want, fetcher)
+            assert len(calls) == expect_calls, calls
+            assert written == 1 and not problems, problems
+            with open(cache, "rb") as f:
+                assert f.read() == good.getvalue(), "cache not replaced"
+    print("fetch_test_media: self-test OK")
+    return 0
+
+
+def main():
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", default=os.environ.get("POM2_TEST_MEDIA_URL",
+                                                    DEFAULT_URL))
+    ap.add_argument("--zip")
+    ap.add_argument("--cache")
+    ap.add_argument("--manifest", default=os.path.join(here, "test_media.sha256"))
+    ap.add_argument("--root", default=os.path.dirname(here))
+    ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+    if args.self_test:
+        return self_test()
+
+    want = read_manifest(args.manifest)
+    written, kept, problems = fetch(args, want)
 
     print(f"fetch_test_media: {written} written, {kept} already present, "
           f"{len(problems)} problem(s), {len(want)} listed")
     for p in problems:
         print(f"  {p}", file=sys.stderr)
-    if problems and (args.strict or any("kept" not in p for p in problems)):
+    if problems and (args.strict or archive_problems(problems)):
         return 1
     return 0
 

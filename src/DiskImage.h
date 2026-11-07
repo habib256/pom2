@@ -85,6 +85,8 @@ public:
     /// this). Non-WOZ formats only carry whole-track data; quarter-track
     /// accesses on those alias down to the containing whole track.
     static constexpr int kQuarterTracks     = 160;
+    /// [B] WOZ 2.1 reference, TRKS: the chunk opens with 160 TRK records.
+    static constexpr int kWoz2TrkRecords    = 160;
 
     /// File-format sector ordering. Both produce the same on-disk physical
     /// sector layout — only the skew between file offset and physical
@@ -465,6 +467,10 @@ public:
         const std::vector<TrackBuffer>& surface, bool thirteenSector);
     /// IEEE CRC-32 as the WOZ header carries it (over bytes 12..EOF).
     static uint32_t wozCrc32(const uint8_t* data, std::size_t n);
+    /// A WOZ2 TRK record's write capacity, 0 = damage (DiskImageWozFlux.cpp).
+    static std::size_t woz2Capacity(std::size_t trksOff, std::size_t trksLen,
+                                    std::size_t fileSize, std::size_t dataOff,
+                                    std::size_t allocBytes, std::size_t used);
 
     /// Background autosave (MediaAutosave.h), `stateMutex` held.
     std::shared_ptr<pom2::MediaCommitOperation>

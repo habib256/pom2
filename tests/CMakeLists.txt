@@ -9397,6 +9397,17 @@ set_tests_properties(debugger PROPERTIES TIMEOUT 30)
 
 
 # ─── Package payload manifest ───────────────────────────────────────────
+# tools/fetch_test_media.py's cache logic, offline (PKG-4, bug hunt
+# 2026-11-01): a cached zip that fails the manifest is downloaded once more
+# and replaced, and a good one is not re-fetched. Every CI job runs that
+# script first; a poisoned Actions cache used to fail every later run alike.
+find_program(POM2_PYTHON3 NAMES python3 python)
+if(POM2_PYTHON3)
+    add_test(NAME fetch_test_media
+             COMMAND ${POM2_PYTHON3} -I ${CMAKE_SOURCE_DIR}/tools/fetch_test_media.py --self-test)
+    set_tests_properties(fetch_test_media PROPERTIES TIMEOUT 30)
+endif()
+
 # Not a C++ test: what needs pinning here is packaging/bundle.manifest and its
 # reader, packaging/stage_data.sh. Both failure modes it guards are SILENT —
 # a package that lost fonts/ drops the UI to ImGui's bitmap face with blank
@@ -9939,6 +9950,16 @@ pom2_add_headless_test(test_drive_rack_media
     NAME drive_rack_media TIMEOUT 20
     SOURCES drive_rack_media_test.cpp
     LINK_LIBRARIES pom2_core_test)
+
+# Known defects of a pinned ROM dump are put right in memory, on that exact
+# dump only (RomErrata.h): the ][+ dump's $FF59 IRQ/BRK vector.
+pom2_add_headless_test(test_rom_errata
+    NAME rom_errata TIMEOUT 10
+    SOURCES rom_errata_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+set_tests_properties(rom_errata PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                     LABELS rom)
 
 # Every ROM-driven card takes its real ROM path when the dumps are present
 # (TODO G5-15). `ctest -L rom` runs the ROM-level checks on their own.
@@ -11221,6 +11242,9 @@ add_executable(test_hgr_paint_fill_edge
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/Cam16.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/DhgrNtsc8Palette.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrConvert.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_hgr_paint_fill_edge PRIVATE ${CMAKE_SOURCE_DIR}/src)

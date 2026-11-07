@@ -91,6 +91,15 @@ public:
     void setCardTrace(pom2::CardTraceSink* sink);
 
     SlotBus() = default;
+    /// Deliberately does NOT call onUnplug(), unlike unplug() and clear().
+    /// The bus is a member of Memory, and its owners (EmulationController,
+    /// Pom2Core) declare Memory BEFORE the M6502, so the CPU is already gone
+    /// when this runs: TranswarpCard::onUnplug would call
+    /// setCmosSubstitute() on it, Saturn / Premium SoftCard would write into
+    /// a Memory being destroyed. Nothing an onUnplug() does outlives the
+    /// machine; a card's media commit lives in its destructor (CLAUDE.md).
+    /// Checked 2026-11-07 against the bug hunt's "the one teardown path that
+    /// skips onUnplug()".
     ~SlotBus() = default;
 
     SlotBus(const SlotBus&) = delete;

@@ -31,6 +31,7 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "Mockingboard.h"
+#include "ProbeOutDir.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -128,11 +129,17 @@ int main(int argc, char** argv)
             // Dump both HGR pages raw (8 KB each) + which one is displayed;
             // a host-side script renders them. Lets the key script be
             // steered by what the game actually shows.
-            const std::string base = k.substr(4);
+            // Under pom2test::probeOutDir(), not the cwd — which this probe
+            // requires to be the repo root (CLI-3, bug hunt 2026-11-01 round
+            // 3); a failed open is said, not swallowed.
+            const std::string base = pom2test::probeOutDir() + "/" + k.substr(4);
             const uint8_t* ram = mem.data();
             for (int pg = 1; pg <= 2; ++pg) {
-                FILE* f = std::fopen((base + ".hgr" + std::to_string(pg)).c_str(), "wb");
-                if (f) { std::fwrite(ram + (pg == 1 ? 0x2000 : 0x4000), 1, 0x2000, f); std::fclose(f); }
+                const std::string path = base + ".hgr" + std::to_string(pg);
+                FILE* f = std::fopen(path.c_str(), "wb");
+                if (!f) { std::fprintf(stderr, "cannot write %s\n", path.c_str()); return 1; }
+                std::fwrite(ram + (pg == 1 ? 0x2000 : 0x4000), 1, 0x2000, f);
+                std::fclose(f);
             }
             std::printf("    shot %s: page2=%d hires=%d text=%d\n", base.c_str(),
                         mem.getDisplayState().page2 ? 1 : 0,

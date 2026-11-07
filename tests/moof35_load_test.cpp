@@ -577,7 +577,13 @@ void testWrongHeadIsIgnored()
     drive.notifyMediaChange();
     assert(drive.debugCellStream() == tracks[0]);
     drive.ssW(true);
-    assert(drive.debugCellStream().empty());
+    // Head 1 has no track: nothing to read. Since 2026-11-07 the drive caches
+    // a blank (no transition) surface there rather than nothing, so a write
+    // can format it (Sony35Drive::ensureCacheFor).
+    {
+        const auto cells = drive.debugCellStream();
+        assert(std::all_of(cells.begin(), cells.end(), [](uint8_t c) { return c == 0; }));
+    }
     uint8_t block[512];
     assert(image.readBlock(uint32_t(blockIndex(0, 1, 0)), block));
     for (uint8_t byte : block) assert(byte == 0);

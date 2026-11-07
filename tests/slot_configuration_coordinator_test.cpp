@@ -337,6 +337,32 @@ int main()
         assert(slots.dedupCleared(3) == "vidhd");
     }
 
+    // The SuperDrive card: the factory builds it on a //e only, enhanced or
+    // not ([B] Apple's owner's guide says "Apple IIe"; [C] the card's host
+    // code is NMOS-only on the //e branch — SystemProfile.h). On a ][ / ][+
+    // the saved key used to reach the factory, be refused in silence, and
+    // leave a staged change that never cleared (bug hunt 2026-11-01 round
+    // 4). Dropped and remembered instead.
+    settings.setString("slot_3_card", "");
+    settings.setString("slot_5_card", "superdrive");
+    for (auto profile : { pom2::SystemProfile::AppleIIe,
+                          pom2::SystemProfile::AppleIIePAL,
+                          pom2::SystemProfile::AppleIIeUnenhanced,
+                          pom2::SystemProfile::AppleIIeUnenhancedPAL }) {
+        assert(pom2::superDriveFitsProfile(profile));
+        const auto& plan = slots.resolve(settings, profile);
+        assert(plan[5] == "superdrive");
+        assert(slots.dedupCleared(5).empty());
+    }
+    for (auto profile : { pom2::SystemProfile::AppleII,
+                          pom2::SystemProfile::AppleIIPlus }) {
+        assert(!pom2::superDriveFitsProfile(profile));
+        const auto& plan = slots.resolve(settings, profile);
+        assert(plan[5].empty() && "a SuperDrive the factory refuses stayed in the plan");
+        assert(slots.dedupCleared(5) == "superdrive");
+    }
+    settings.setString("slot_5_card", "");
+
     // A live failure/absence must never erase the effective request. This is
     // the contract that preserves a CFFA assignment while its ROM is missing.
     settings.setString("slot_1_card", "cffa");

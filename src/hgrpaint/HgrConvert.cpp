@@ -265,6 +265,13 @@ private:
 
 } // namespace
 
+void hgrRenderPageRgb(const uint8_t* page8k, uint32_t* out)
+{
+    for (int y = 0; y < kHiresHeight; ++y)
+        hgrDecodeScanlineRgb(page8k + hgrByteOffset(0, y),
+                             out + static_cast<size_t>(y) * kHiresWidth);
+}
+
 void hgrDecodeScanlineRgb(const uint8_t bytes[40], uint32_t out[280])
 {
     uint16_t words[40];

@@ -387,6 +387,46 @@ notes open with the first-launch warning. v1.1.2 gets the "Apple could not verif
   1.0 where two of three desktop platforms show a security warning reads as
   unfinished. *~1 d + $99/yr Apple, $200-400/yr Windows EV.*
 
+<a id="release-012"></a>
+
+### RELEASE-012 — Fix the ][+ dump's IRQ vector at the source
+
+**Priority:** 🟡 · **State:** worked around in memory (2026-11-07); the source fix needs an upload.
+
+`roms/apple2p.rom` (sha256 `92c4bef6…`, from RetroBIOS and `pom2_firm.zip`)
+carries `$FF59` at `$FFFE/$FFFF` where Apple's Autostart Monitor
+341-0020-00 has `$FA40`: every IRQ and BRK on a ][+ fell into the Monitor's
+reset entry. POM2 now puts the two bytes back as the ROM is mapped
+(`src/RomErrata.h`, pinned `rom_errata`), only on that exact dump. The
+evidence (Apple's Service Disk copy, MAME's `341-0020-00.f8`, AppleWin's
+current `Apple2_Plus.rom`, the 2005 comp.sys.apple2 thread) is in
+`RomErrata.h` and the 2026-11-07 CHANGELOG entry.
+
+The file itself is still wrong, for every user and in every other emulator
+that takes it from the same places. To fix it at the source:
+
+- [ ] Rebuild `pom2_firm.zip` with a corrected `apple2p.rom`: the same 20 KB
+      layout, `$FFFE/$FFFF` = `$40 $FA`, its F8 page then CRC `079589c4`.
+- [ ] Report it upstream to RetroBIOS (`bios/Apple/Apple II/apple2p.rom`),
+      with the evidence above. No Claude attribution on that PR or issue.
+- [ ] Move the digests together, in ONE commit, once both sources serve the
+      new bytes: `src/RomFetch.cpp` (the `apple2p.rom` entry, and the
+      RetroBIOS pin if it moved) and `tools/test_media.sha256`. Moving them
+      while RetroBIOS still serves the old file breaks that fallback, because
+      every source is SHA-256-gated.
+- [ ] Keep `RomErrata.h`: users who already hold the old file keep it. The
+      errata is a no-op on the corrected dump, and `rom_errata` passes on
+      either.
+
+Related upload, same item: the repaired copy of Apple's Service Disk No.1
+(`disks_5.4/diagnostics/apple-service-disk-1-fixed.do`, sha256 `b8dd1898…`)
+belongs in `pom2_media.zip` and `tools/test_media.sha256`, or the corpus title
+`service-disk-1` keeps skipping.
+
+**Acceptance criterion:** a fresh clone fetches an `apple2p.rom` whose
+`$FFFE` is `$FA40` with no errata applied (the `ROM:` log line about the
+vector no longer appears), and CI is green.
+
 ## Candidate release checklist
 
 Checks previously completed on a September build are not current candidate

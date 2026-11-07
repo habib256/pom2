@@ -27,6 +27,7 @@
 #include "Apple2Display.h"
 #include "AppleWinNtsc.h"
 #include "Memory.h"
+#include "ProbeOutDir.h"
 
 #include <cmath>
 #include <vector>
@@ -114,8 +115,12 @@ int main(){
         std::printf("  phi=%4.2f*pi  %s  %d/4%s\n", k/8.0, d.c_str(), ok, ok==4?"  <== MATCH":""); }
 
     // Dump the 4-band composite signal for the real-GLSL viewer (oe_signal_view).
-    { std::FILE* fp=std::fopen("/tmp/test4_signal.bin","wb");
-      if(fp){ std::fwrite(sig,1,(size_t)sw*sh,fp); std::fclose(fp);
-              std::printf("\nwrote /tmp/test4_signal.bin (%dx%d) — bands violet/green/blue/orange\n",sw,sh); } }
+    // Under pom2test::probeOutDir(), never a fixed /tmp path (CLI-4, bug hunt
+    // 2026-11-01 round 3); a failed open is a failure, not a success line.
+    { const std::string path = pom2test::probeOutDir() + "/test4_signal.bin";
+      std::FILE* fp=std::fopen(path.c_str(),"wb");
+      if(!fp){ std::fprintf(stderr,"cannot write %s\n",path.c_str()); return 1; }
+      std::fwrite(sig,1,(size_t)sw*sh,fp); std::fclose(fp);
+      std::printf("\nwrote %s (%dx%d) — bands violet/green/blue/orange\n",path.c_str(),sw,sh); }
     return 0;
 }
