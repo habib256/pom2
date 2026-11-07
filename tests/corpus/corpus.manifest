@@ -21,6 +21,29 @@ title dix-menu iie-pal ci dix
   run 30
   check unlimited-bobs
 
+# The browser's machine: //c PAL, Mockingboard 4c on the internal connector,
+# the Chat Mauve adapter. DIGIDREAM SID Voice Edition takes its //c path
+# there (IOU VBL interrupt, `LDA $C019 / BPL` with the handler armed) and
+# froze on it until 2026-11-07 (CHANGELOG; pinned at unit level by
+# vbl_ioudis_annunciator §5). `boot 5` is the //c's explicit SmartPort boot
+# (the GUI's Boot button / bootFromSlot(5)): the facade's slot-5 card on a
+# //c is the armed $C500 stub, which the ROM's cold-boot scan does not find.
+# LEFT twice: 0 -> 16 (automatic) -> 15 = DD2.
+title dix-digidream-sid-iic iic-pal ci dix
+  boot 5
+  mockingboard 4
+  smartport 1 disks_3.5/DIX-fix.po sha256=e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df
+  rgb 7 iic
+  run 25
+  check menu
+  key LEFT
+  run 1
+  key LEFT
+  run 1
+  key RETURN
+  run 40
+  check digidream-sid-iic
+
 title dix-auto iie-pal dix
   mockingboard 2
   smartport 1 disks_3.5/DIX-fix.po sha256=e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df

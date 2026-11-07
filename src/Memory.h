@@ -1529,6 +1529,10 @@ private:
     bool vblIrqMask    = false;
     bool vblIrqPending = false;
     bool vblWasActive  = true;       // tracks transition into VBL window
+    /// //c VBLINT as the in-flight instruction sees it: true when the VBL
+    /// edge falls between the last video tick and the current access cycle
+    /// with the interrupt armed (MemoryVideoLog.cpp; DEV § IOUDIS / VBLINT).
+    bool vblintEdgeInFlight() const;
 
     // IOUDIS — MAME `apple2e.cpp:1224` initialises to `true`. Only IIc
     // and IIc+ honour SET/CLR writes ($C07E/$C07F per MAME `:2569-2587`,

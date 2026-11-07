@@ -252,3 +252,33 @@ void Memory::videoRewindEnd()
     videoRewindTo(INT_MAX);
     vrActive_ = false;
 }
+
+// ─── //c VBLINT, read inside the instruction ────────────────────────────
+//
+// `vblIrqPending` is set by advanceCyclesVideo(), which runs AFTER the
+// instruction, together with the IRQ line. So a `LDA $C019` whose read
+// cycle landed on or after the VBL edge returned 0, the interrupt was taken
+// right after it, and a handler that acknowledges (`BIT $C070`) cleared the
+// flag before the next read: a poller with the interrupt enabled never saw
+// bit 7. French Touch's DIGIDREAM SID Voice Edition (DIX `DD2/main.a`,
+// "wait for start of VBL (IIc specific) and INT occurs", `LDA VERTBLANK /
+// BPL`) froze on every //c — the browser's default machine (2026-11-07).
+//
+// On the silicon the LDA that straddles the edge reads the flag SET: the
+// edge latches VBLINT at once, the 6502 sampled /IRQ on the instruction's
+// penultimate cycle and still completes the read, N survives the interrupt
+// and the BPL falls through. The loop's phase walks across the edge a cycle
+// a frame (20280 mod 7 = 1), so it exits within a few frames. [D] MAME's
+// cycle-stepped m65c02 has the same order for free (apple2e.cpp @ 5346a8ce
+// :1397-1400 raises VBLINT inside the instruction). POM2's core samples IRQ
+// at the instruction's end (M6502.cpp, "interrupt sampling is
+// instruction-granular"), which is unchanged: only the READ looks ahead to
+// the access cycle. Pinned by `vbl_ioudis_annunciator` §5 and the corpus
+// title `dix-digidream-sid-iic`.
+bool Memory::vblintEdgeInFlight() const
+{
+    if (!vblIrqMask || !vblWasActive || vblFrameCycles_ == 0) return false;
+    const uint64_t edge = vblFrameBase_ + 192 * 65;   // first VBL line, video cycles
+    const uint64_t va   = videoAccessCycle();
+    return va >= edge && va - vblFrameBase_ < vblFrameCycles_;
+}

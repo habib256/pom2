@@ -1032,7 +1032,9 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // iieMode machine, so //c software polling for its VBL interrupt
         // saw a free-running beam signal instead.
         if (iicProfile_) {
-            return static_cast<uint8_t>((vblIrqPending ? 0x80 : 0x00) | low7);
+            // The latch as of the ACCESS cycle (vblintEdgeInFlight, MemoryVideoLog.cpp).
+            const bool latched = vblIrqPending || vblintEdgeInFlight();
+            return static_cast<uint8_t>((latched ? 0x80 : 0x00) | low7);
         }
         // IIe: live VBLBAR beam state (MAME apple2e.cpp:2092-2093),
         // OR m_transchar into the low 7 bits.
