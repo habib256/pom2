@@ -48,7 +48,7 @@
 
 #include <atomic>
 #include <cstdint>
-#include <deque>
+#include "EventRing.h"
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -92,7 +92,7 @@ private:
     using Event = std::pair<uint64_t, uint8_t>;
 
     mutable std::mutex mutex_;
-    std::deque<Event>  events_;
+    EventRing<Event>   events_;   // EventRing.h: no allocation on the audio thread
     uint32_t           gen_ = 0;
     std::atomic<uint64_t> latest_{0};
     std::atomic<bool>     resetPending_{false};

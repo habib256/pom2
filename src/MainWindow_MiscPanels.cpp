@@ -87,8 +87,8 @@ void MainWindow::applyFirmwareToggle(const char* key, const char* value)
         if (!settingsReadOnly()) (void)settings->save();
         return;
     }
-    tapeStatusMessage = std::string("Could not rebuild the machine with the ") +
-                        value + " firmware — kept the previous one.";
+    tapeStatusMessage = std::string("Could not rebuild the machine with ") + key +
+                        " = " + value + " — kept the previous configuration.";
     tapeStatusUntil = lastFrameTime + 6.0;
     pom2::log().warn("Abstraction", tapeStatusMessage);
 }

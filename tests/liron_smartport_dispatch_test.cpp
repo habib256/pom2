@@ -140,7 +140,9 @@ int main()
 
         auto card = std::make_unique<pom2::SmartPortCard>(kSlot);
         // Eight by default since 2026-09-11; this test's geometry is the
-        // two-unit card (unit 2 empty → $28, STATUS unit 0 counts 2).
+        // two-unit card with one drive: bay 1 holds none, so it is not on the
+        // cable — unit 2 is $28 and STATUS unit 0 counts ONE device, as the
+        // Liron's INIT scan would find (SmartPortCard::chainLength).
         assert(card->unitCount() == pom2::SmartPortCard::kDefaultUnits);
         card->setUnitCount(2);
         if (useLiron) assert(card->loadLironRom(lironRom));
@@ -166,7 +168,7 @@ int main()
         auto r = spCall(cpu, mem, 0x00);
         assert(r.sentinel == 0x77 && "RA must advance past the 3 inline bytes");
         assert(!r.carry && r.a == 0x00);
-        assert(mem.memRead(kBuf) == 2 && "device count");
+        assert(mem.memRead(kBuf) == 1 && "device count: the drives on the cable");
         assert((mem.memRead(kBuf + 1) & 0x40) &&
                "interrupt status bit 6 = no interrupt (TN SmartPort #2)");
 

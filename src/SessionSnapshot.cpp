@@ -51,13 +51,16 @@ bool safeClockState(const Blob& bytes)
 {
     // CLK1: six shift bytes, edge/mode latches, offset, three timer words,
     // and three boolean lines — plus, since 2026-11-01, an optional 9-byte
-    // tail: a Time Set's counter hold (flag + held instant, ClockCard.cpp).
+    // tail: a Time Set's counter hold (flag + held instant, ClockCard.cpp),
+    // and since 2026-11-07 a second one: DATA_OUT's pulse (level + cycles).
     // The card's rewind loader accepts larger blobs and clamps invalid
     // timers; a session requires exact state.
-    if ((bytes.size() != 36 && bytes.size() != 45) || bytes[0] != 'C' ||
+    if ((bytes.size() != 36 && bytes.size() != 45 && bytes.size() != 54) ||
+        bytes[0] != 'C' ||
         bytes[1] != 'L' || bytes[2] != 'K' || bytes[3] != '1' ||
         bytes[11] > 7 || bytes[12] > 1 || bytes[33] > 1 || bytes[34] > 1 ||
-        bytes[35] > 1 || (bytes.size() == 45 && bytes[36] > 1))
+        bytes[35] > 1 || (bytes.size() >= 45 && bytes[36] > 1) ||
+        (bytes.size() == 54 && bytes[45] > 1))
         return false;
     uint64_t offset = 0;
     for (int i = 0; i < 8; ++i) offset |= uint64_t(bytes[13 + i]) << (8 * i);

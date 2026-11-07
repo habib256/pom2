@@ -230,16 +230,19 @@ public:
     bool exportRawTo(const std::string& outPath, std::string& errOut) const;
 
     bool isWriteProtected() const {
-        return fileWriteProtected_ || hostReadOnly_ || !writeBackEnabled_;
+        return fileWriteProtected_ || hostReadOnly_ || macBinaryWrapped_ || !writeBackEnabled_;
     }
+    /// Mounted from inside a MacBinary envelope (MacBinary.h): read-only,
+    /// whatever the notch says, since a save would drop the envelope.
+    bool isMacBinaryWrapped() const { return macBinaryWrapped_; }
     /// The medium's OWN lock: the container header bit.
     /// Distinct from `isWriteProtected()`, which also carries the notch
     /// and the write-back opt-out. `takeWriteBack` gates on this plus
     /// `writeBackEnabled_`, not the notch — see Block512Backing::isMediumLocked.
-    bool isMediumLocked() const { return fileWriteProtected_; }
+    bool isMediumLocked() const { return fileWriteProtected_ || macBinaryWrapped_; }
     /// The medium's own protection: the container lock flag or
     /// the notch — the host file's read-only bit (MediaNotch.h).
-    bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_; }
+    bool isFileWriteProtected() const { return fileWriteProtected_ || hostReadOnly_ || macBinaryWrapped_; }
     void setWriteBackEnabled(bool on) { writeBackEnabled_ = on; }
     bool isWriteBackEnabled() const   { return writeBackEnabled_; }
     /// Re-apply the notch on a mounted image (the user flipped it in the
@@ -272,6 +275,7 @@ private:
     uint64_t      lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
     bool         writeBackEnabled_    = pom2::mediaWritableByDefault();   // MediaWritePolicy.h
     bool         fileWriteProtected_  = false;   // header / format says so
+    bool         macBinaryWrapped_    = false;   // unwrapped at load: read-only
     bool         hostReadOnly_        = false;   // the notch (MediaNotch.h)
     ImageKind    kind_                = ImageKind::Unknown;
     bool         mfmCapable_          = false;

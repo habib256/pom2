@@ -28,6 +28,7 @@
 #include "ApplesoftListing.h"
 #include "Dos33DiskFs.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -145,6 +146,87 @@ void testProdosOrder()
     std::vector<uint8_t> raw;
     CHECK(b.readFile("F", raw, err) && Dos33Disk::payload(0x04, raw) == std::vector<uint8_t>({ 9, 8, 7 }));
     CHECK(orderForPath("x.po") == SectorOrder::Prodos && orderForPath("x.DSK") == SectorOrder::Dos);
+}
+
+// A DOS-order disk named `.po` (and a ProDOS-order one named `.dsk`): the
+// VTOC passes in both orders, so only the catalog chain can tell, and the
+// extension's order used to lose every entry past catalog sector 17/14 and
+// WRITE each sector to the wrong place (bug hunt 2026-11-07).
+void testWrongExtension()
+{
+    Dos33Disk a;
+    std::string err;
+    CHECK(a.open(blankVolume(), SectorOrder::Dos, err));
+    CHECK(!a.orderOverridden());
+    for (int i = 0; i < 9; ++i)   // 7 entries a catalog sector: two sectors used
+        CHECK(a.writeFile(std::string("F") + char('A' + i), FileType::Binary,
+                          { uint8_t(i), 1, 2 }, uint16_t(0x2000 + i), err));
+    const std::vector<uint8_t> dosImage = a.image();
+
+    Dos33Disk b;   // the same bytes, opened as if named GAME.po
+    CHECK(b.open(dosImage, SectorOrder::Prodos, err));
+    CHECK(b.orderOverridden() && b.order() == SectorOrder::Dos);
+    CHECK(b.list().size() == 9);
+    CHECK(b.writeFile("NEW", FileType::Binary, { 7, 7, 7 }, 0x4000, err));
+    Dos33Disk c;   // read back in the order the disk really has
+    CHECK(c.open(b.image(), SectorOrder::Dos, err));
+    std::vector<uint8_t> raw;
+    for (int i = 0; i < 9; ++i) {
+        CHECK(c.readFile(std::string("F") + char('A' + i), raw, err));
+        CHECK(Dos33Disk::payload(0x04, raw) == std::vector<uint8_t>({ uint8_t(i), 1, 2 }));
+    }
+    uint16_t addr = 0;
+    CHECK(c.readFile("NEW", raw, err) && Dos33Disk::payload(0x04, raw, &addr) == std::vector<uint8_t>({ 7, 7, 7 }));
+    CHECK(addr == 0x4000);
+
+    Dos33Disk p;   // ProDOS-order bytes named `.dsk`
+    CHECK(p.open(toProdos(dosImage), SectorOrder::Dos, err));
+    CHECK(p.orderOverridden() && p.order() == SectorOrder::Prodos && p.list().size() == 9);
+}
+
+// A random-access text file: fixed-length records, $00 between them and
+// 0/0 holes for sectors never written. `payload` used to stop at the first
+// $00 and keep record 0 alone (bug hunt 2026-11-07).
+void testRandomAccessText()
+{
+    Dos33Disk d;
+    std::string err;
+    CHECK(d.open(blankVolume(), SectorOrder::Dos, err));
+    const char* r0 = "ALPHA\n"; const char* r3 = "OMEGA\n";
+    const auto t0 = Dos33Disk::textToDos({ r0, r0 + 6 });
+    const auto t3 = Dos33Disk::textToDos({ r3, r3 + 6 });
+    std::vector<uint8_t> recs(768 + t3.size(), 0);  // record length 256
+    std::copy(t0.begin(), t0.end(), recs.begin());
+    std::copy(t3.begin(), t3.end(), recs.begin() + 768);
+    CHECK(d.writeFile("RAND", FileType::Text, recs, 0, err));
+    std::vector<uint8_t> img = d.image();
+    // Records 1 and 2 were never written: make their sectors holes.
+    uint8_t* list = sec(img, 18, 15);
+    CHECK(list[0x0C + 2] != 0);
+    list[0x0C + 2] = 0; list[0x0D + 2] = 0;
+    list[0x0C + 4] = 0; list[0x0D + 4] = 0;
+    CHECK(d.open(img, SectorOrder::Dos, err));
+    std::vector<uint8_t> raw;
+    CHECK(d.readFile("RAND", raw, err));
+    CHECK(Dos33Disk::payload(0x00, raw) == recs);
+    // $00 survives the host trip both ways.
+    CHECK(Dos33Disk::textToDos({ 'A', 0, 'B' }) == std::vector<uint8_t>({ 0xC1, 0x00, 0xC2 }));
+    // A sequential file still ends at its $00.
+    CHECK(Dos33Disk::payload(0x00, { 0xC1, 0xC2, 0x00, 0x00 }) == std::vector<uint8_t>({ 0xC1, 0xC2 }));
+}
+
+// "FOO " is FOO: the catalog's names are right-trimmed, so the asked-for
+// one must be too, or `put` added a second FOO that DOS never sees.
+void testTrailingBlank()
+{
+    Dos33Disk d;
+    std::string err;
+    CHECK(d.open(blankVolume(), SectorOrder::Dos, err));
+    CHECK(d.writeFile("FOO", FileType::Binary, { 1 }, 0x2000, err));
+    CHECK(d.writeFile("FOO  ", FileType::Binary, { 2 }, 0x2000, err));
+    CHECK(d.list().size() == 1);
+    std::vector<uint8_t> raw;
+    CHECK(d.readFile("FOO ", raw, err) && Dos33Disk::payload(0x04, raw) == std::vector<uint8_t>({ 2 }));
 }
 
 void testListing()
@@ -293,6 +375,9 @@ int main()
     testEmptyPayload();
     testVolume();
     testProdosOrder();
+    testWrongExtension();
+    testRandomAccessText();
+    testTrailingBlank();
     testListing();
     const int master = testMaster();
     if (g_fail) {

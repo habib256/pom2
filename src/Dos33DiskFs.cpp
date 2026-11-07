@@ -44,6 +44,12 @@ std::string upper(std::string s)
     return s;
 }
 
+std::string rtrim(std::string s)
+{
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
 std::string entryName(const uint8_t* e)
 {
     std::string n;
@@ -95,11 +101,42 @@ bool Dos33Disk::open(std::vector<uint8_t> image, SectorOrder order, std::string&
     }
     image_ = std::move(image);
     order_ = order;
+    orderOverridden_ = false;
     const uint8_t* v = sector(kVtocTrack, 0);
     if (v[0x34] != kTracks || v[0x35] != kSectors || v[0x36] != 0x00 || v[0x37] != 0x01
         || v[0x01] >= kTracks || v[0x02] >= kSectors || v[0x27] != kPairsPerList) {
         error = "no DOS 3.3 VTOC on track 17";
         return false;
+    }
+    // The extension is only a hint: DOS 3.3 masters named `.po` exist, and
+    // the VTOC cannot tell the orders apart (track 17 sector 0; sectors 0
+    // and 15 are fixed points of the skew), so it passes either way and the
+    // wrong order then WRITES to the wrong sectors. The catalog chain can
+    // tell: INIT links each catalog sector to the one below it on the same
+    // track ([B] Beneath Apple DOS ch. 4), so the second link of the chain
+    // read in the right order steps down by one, and in the wrong order
+    // lands on another sector (for INIT's 17/15 → 17/14 → 17/13, the wrong
+    // order reads DOS sector 1, which ends the chain). The same rule as
+    // DiskImage's sniff (DiskImage.cpp, "a DOS 3.3 disk under the wrong
+    // extension"). A chain that says nothing (one sector, or not
+    // descending in either order) keeps the extension's order.
+    const auto descends = [&](SectorOrder o) {
+        const SectorOrder saved = order_;
+        order_ = o;
+        const uint8_t* c0 = sector(v[0x01], v[0x02]);
+        const int t1 = c0[0x01], s1 = c0[0x02];
+        bool ok = false;
+        if (t1 > 0 && t1 < kTracks && s1 > 0 && s1 < kSectors) {
+            const uint8_t* c1 = sector(t1, s1);
+            ok = c1[0x01] == t1 && c1[0x02] + 1 == s1;
+        }
+        order_ = saved;
+        return ok;
+    };
+    const SectorOrder other = order == SectorOrder::Dos ? SectorOrder::Prodos : SectorOrder::Dos;
+    if (!descends(order) && descends(other)) {
+        order_ = other;
+        orderOverridden_ = true;
     }
     return true;
 }
@@ -153,7 +190,10 @@ std::vector<FileInfo> Dos33Disk::list() const
 
 bool Dos33Disk::findEntry(const std::string& name, Entry& at) const
 {
-    const std::string want = upper(name);
+    // The catalog's names are compared right-trimmed (entryName), so the
+    // asked-for one is too: "FOO " must find FOO, not miss it and let
+    // writeFile create a second FOO that DOS never sees.
+    const std::string want = rtrim(upper(name));
     const uint8_t* v = sector(kVtocTrack, 0);
     int t = v[0x01], s = v[0x02];
     std::set<int> seen;
@@ -217,8 +257,16 @@ std::vector<uint8_t> Dos33Disk::payload(uint8_t type, const std::vector<uint8_t>
     };
     switch (type & 0x7F) {
         case 0x00: {
+            // A sequential file ends at its first $00. A RANDOM-ACCESS one
+            // is fixed-length records whose unused bytes are $00 (and whose
+            // never-written sectors are 0/0 holes), so text follows that
+            // first $00 ([B] Beneath Apple DOS ch. 4/6). Cutting there kept
+            // record 0 only; keep up to the last non-zero byte instead —
+            // DOS stores no record length, so the zeros are the layout.
             const auto z = std::find(raw.begin(), raw.end(), uint8_t(0));
-            return { raw.begin(), z };
+            const auto last = std::find_if(raw.rbegin(), raw.rend(),
+                                           [](uint8_t b) { return b != 0; }).base();
+            return { raw.begin(), last > z ? last : z };
         }
         case 0x01: case 0x02: {
             // `begin() + 2` is only defined for 2 <= size(): a T/S list whose
@@ -250,7 +298,9 @@ std::vector<uint8_t> Dos33Disk::textToDos(const std::vector<uint8_t>& host)
             if (i + 1 < host.size() && host[i + 1] == '\n') continue;
             c = '\n';
         }
-        out.push_back(c == '\n' ? 0x8D : uint8_t(c | 0x80));
+        // $00 stays $00: it is no character DOS can print, and it is the
+        // padding between a random-access file's records (`payload`).
+        out.push_back(c == '\n' ? 0x8D : c == 0 ? uint8_t(0) : uint8_t(c | 0x80));
     }
     return out;
 }
@@ -285,7 +335,8 @@ bool Dos33Disk::writeFile(const std::string& name, FileType type,
                           const std::vector<uint8_t>& data, uint16_t loadAddress,
                           std::string& error)
 {
-    const std::string up = upper(name);
+    // Space-padded on disk: a trailing blank is padding, not the name.
+    const std::string up = rtrim(upper(name));
     if (up.empty() || up.size() > 30 || !std::isalpha(static_cast<unsigned char>(up[0]))
         || up.find(',') != std::string::npos) {
         error = name + ": a DOS 3.3 name is 1-30 characters, starting with a letter, no comma";

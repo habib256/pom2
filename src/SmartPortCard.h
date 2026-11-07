@@ -144,6 +144,23 @@ public:
     /// beyond it keep their media but are invisible to the guest.
     void setUnitCount(int n);
     int  unitCount() const { return unitCount_; }
+    /// The chain, as the silicon has it. [B] Apple IIc Technical Reference,
+    /// SmartPort; [C] Liron INIT scan $CE00: the host numbers the drives on
+    /// the cable 1, 2, 3… in cable order at INIT, and the numbers hold until
+    /// the next bus reset. A bay with no drive ("(empty)") is not on the
+    /// cable, so the drives behind it take the next numbers — no hole. A
+    /// drive with no disk is on it and answers offline. Taken at the first
+    /// guest access after a reset (the firmware's INIT follows the reset),
+    /// so a drive plugged later waits for the next reset, and a drive
+    /// removed since answers "no device" ($28) at its old number — the
+    /// numbers never move under a transaction (bug hunt 2026-11-07).
+    int  chainLength() const { ensureChain(); return chainLen_; }
+    /// The bay behind chain number `n` (1-based), or -1.
+    int  bayForChainNumber(int n) const
+    {
+        ensureChain();
+        return (n >= 1 && n <= chainLen_) ? chain_[static_cast<size_t>(n - 1)] : -1;
+    }
 
     int                    smartPortBusUnitCount() const override;
     pom2::SmartPortBusUnit* smartPortBusUnit(int index) override;
@@ -288,6 +305,7 @@ private:
         bool     isUnidisk35()    const override;
         uint64_t mediaIdentity()  const override;
         void     requestEject()         override;
+        bool     present()        const override { return target() != nullptr; }
     private:
         SmartPortUnit* target() const
         { return card_ ? card_->units_[bay_].get() : nullptr; }
@@ -306,7 +324,21 @@ private:
     // ($C0n0) latches `activeUnit_` for $C0n3 (data) / $C0n4 (status)
     // — block setup ($C0n1/2) writes to the active unit's register pair.
     size_t   activeUnit_                 = 0;
+    /// $C0n0 selected a chain position with no drive behind it: the
+    /// register path answers "no device" until the next select.
+    bool     activeAbsent_               = false;
+    bool     absentError_                = false;   // its error latch
     int      unitCount_                  = kDefaultUnits;   // see setUnitCount
+    // The chain latched at INIT (chainLength): bays in cable order.
+    void ensureChain() const;
+protected:
+    /// A daisy chain of drives (true): bays with no drive are not on it. A
+    /// card whose devices are fixed slots (the CFFA3000) numbers every bay.
+    virtual bool compactsChain() const { return true; }
+private:
+    mutable std::array<int, kMaxUnits> chain_{};
+    mutable int  chainLen_   = 0;
+    mutable bool chainStale_ = true;
     bool     superDriveMode_             = false;
     std::array<uint16_t, kMaxUnits> selectedBlock_{};
     std::array<size_t,   kMaxUnits> streamOffset_{};

@@ -96,7 +96,10 @@ void testBus()
     CHECK(c.vram()[9 * 256 + 0xFF] == 0x77);
     CHECK(c.displayMask() == 0x0FFF);
     CHECK(c.deviceSelectRead(2) == (VidexUltratermCard::kPages256 | 9));
-    CHECK(c.deviceSelectRead(6) == (VidexUltratermCard::kPages256 | 9));   // A0-A1 decode
+    // Exact decode, reads as writes ([D] MAME; the real card is [F]):
+    // $C0n6 is not control 1.
+    CHECK(c.deviceSelectRead(6) != (VidexUltratermCard::kPages256 | 9) ||
+          (VidexUltratermCard::kPages256 | 9) == 0xFF);
 
     c.deviceSelectWrite(3, 0x21);
     CHECK(c.ownsScreen(true, false) == false);

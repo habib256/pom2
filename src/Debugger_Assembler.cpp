@@ -38,8 +38,9 @@ void Debugger_ImGui::drawAssembler(EmulationController& ctrl, const Snapshot& sn
         auto state = ctrl.lockState();
         if (ctrl.getMode() == EmulationController::Mode::Stopped &&
             state.cpu().instructionSet() == snap.isa) {
-            for (size_t i = 0; i < bytes.size(); ++i) state.memory().memWrite(uint16_t(address + i), bytes[i]);
-            ctrl.noteTimeJump();
+            // Not noteTimeJump(): a patch is no time jump, and that wiped the
+            // stop, so the next Run re-stopped at once (bug hunt 2026-11-07).
+            ctrl.debugger().patchMemory(state.memory(), uint16_t(address), bytes.data(), bytes.size());
             ctrl.rewind().clear();
             followPc_ = false; viewAddr_ = uint16_t(address);
             assemblyStatus_ = "Instruction written.";

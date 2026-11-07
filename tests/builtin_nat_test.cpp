@@ -842,18 +842,26 @@ void testTcp()
         CHECK(seg.size() == 2 && seg[0].sequence == ours + 150 &&
               seg[0].payload.size() == 100 && seg[0].payload[0] == static_cast<uint8_t>(150));
 
-        // Never acknowledged again: eight resends a second apart, then a
-        // reset and the host socket closed.
+        // Never acknowledged again: eight resends with a timeout that
+        // doubles (RFC 6298 § 5.5) up to 60 s, then a reset and the host
+        // socket closed — never before RFC 1122's 100 s (it used to be ~9 s).
         int resends = 0;
         bool reset = false;
-        for (int i = 0; i < 12 && !reset; ++i) {
-            rig.pump(1001);
+        uint64_t elapsed = 0, resetAt = 0;
+        std::vector<uint64_t> at;
+        for (int i = 0; i < 400 && !reset; ++i) {
+            rig.pump(1000);
+            elapsed += 1000;
             for (const TcpSegment& t : rig.segments()) {
-                if (t.flags & kTcpRst) reset = true;
-                else if (t.sequence == ours + 150) ++resends;
+                if (t.flags & kTcpRst) { reset = true; resetAt = elapsed; }
+                else if (t.sequence == ours + 150) { ++resends; at.push_back(elapsed); }
             }
         }
         CHECK(resends == 8 && reset && rig.world.closed == 1);
+        CHECK(resetAt >= 100000);
+        for (std::size_t k = 2; k < at.size(); ++k)
+            CHECK(at[k] - at[k - 1] >= at[k - 1] - at[k - 2]);   // never shorter
+        CHECK(at.size() >= 3 && at[2] - at[1] > at[1] - at[0]);   // and growing
     }
     {
         // A lost SYN-ACK: the guest's repeated SYN gets it again.
@@ -871,6 +879,31 @@ void testTcp()
         CHECK(first.size() == 1 && again.size() == 1 &&
               again[0].flags == (kTcpSyn | kTcpAck) && again[0].sequence == first[0].sequence);
         CHECK(rig.world.opened == 1);
+    }
+    {
+        // A guest that rebooted reuses the 4-tuple with a NEW ISN (uIP
+        // restarts its ports at 1024): a challenge ACK (RFC 5961 § 4.2), the
+        // guest's RST closes the stale entry, and its next SYN opens a fresh
+        // host connect. The SYN used to be swallowed (bug hunt 2026-11-07).
+        Rig rig;
+        rig.sendTcp(kPublicIp, 4006, 80, kTcpSyn, kGuestIsn, 0, {}, 2048, 536);
+        FakeSocket* s = rig.world.last();
+        if (!s) { CHECK(false); return; }
+        s->connectState = ConnectState::Connected;
+        rig.pump(1);
+        const auto synAck = rig.segments();
+        CHECK(synAck.size() == 1);
+        if (synAck.size() != 1) return;
+        rig.sendTcp(kPublicIp, 4006, 80, kTcpAck, kGuestIsn + 1, synAck[0].sequence + 1);
+        rig.segments();
+        rig.sendTcp(kPublicIp, 4006, 80, kTcpSyn, kGuestIsn + 50000, 0, {}, 2048, 536);
+        const auto challenge = rig.segments();
+        CHECK(challenge.size() == 1 && challenge[0].flags == kTcpAck &&
+              challenge[0].acknowledgment == kGuestIsn + 1);
+        rig.sendTcp(kPublicIp, 4006, 80, kTcpRst, kGuestIsn + 1, 0);
+        CHECK(rig.world.closed == 1);
+        rig.sendTcp(kPublicIp, 4006, 80, kTcpSyn, kGuestIsn + 50000, 0, {}, 2048, 536);
+        CHECK(rig.world.opened == 2);
     }
     {
         // Nobody listening: the guest learns it as a reset of its SYN.

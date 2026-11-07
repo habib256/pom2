@@ -175,7 +175,9 @@ public:
     /// smoke went red on its pause click, 2026-11-01). `periodFrames()`
     /// keeps reporting the device as opened; `nextLoadPeriodFrames()` is
     /// the remembered rung.
-    bool reconfigurePeriod(uint32_t periodFrames);
+    /// `pinned`: the user chose it (Audio panel / settings), so the browser
+    /// keeps it at the next load even below its default (WASM-5).
+    bool reconfigurePeriod(uint32_t periodFrames, bool pinned = false);
     /// Close and open the device again at the current period, keeping every
     /// source — for a device that went away or changed under the session
     /// (`AudioDeviceWatch.h` decides when). UI thread, like the call above.
@@ -229,8 +231,8 @@ private:
     std::atomic<uint32_t> periodFrames_{pom2::AudioBufferPolicy::kMinPeriodFrames};
     uint32_t nextLoadPeriodFrames_ = pom2::AudioBufferPolicy::kMinPeriodFrames;
     // Browser only: the rung remembered across loads (localStorage).
-    static uint32_t rememberedPeriodFrames();
-    static void     rememberPeriodFrames(uint32_t frames);
+    static uint32_t rememberedPeriodFrames(bool* pinned = nullptr);
+    static void     rememberPeriodFrames(uint32_t frames, bool pinned);
     std::atomic<uint64_t> lateCallbacks_{0};
     std::atomic<uint64_t> callbacks_{0};
     // Audio thread only. Reset by the UI thread in `reconfigurePeriod`,

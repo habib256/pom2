@@ -213,6 +213,12 @@ public:
     /// sixteen switches unless LOCKRES is on. CPREG is not a switch and
     /// keeps its value.
     void onReset() override;
+    /// The machine's clock jumped (a .pom2snap load by the CLI or the AI
+    /// server restores CPU and memory only, never this card): every latch
+    /// edge in the ring is then stamped in the FUTURE and would win each
+    /// latchBefore() scan, painting beam-raced frames in a stale mode. The
+    /// same clear onReset and loadSnapshotState make (bug hunt 2026-11-07).
+    void onTimeJump() override { latchRingHead_ = latchRingSize_ = 0; }
     /// Leaving the bus disarms the aux shadow it may have programmed into
     /// Memory (a slot rebuild must not leave two RAM pages diverted).
     void onUnplug() override;

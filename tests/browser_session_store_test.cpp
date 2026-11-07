@@ -88,6 +88,8 @@ int main()
     assert(read(path) == "broken");
     assert(broken.setEnabled(*ctrl, false));
     assert(!std::filesystem::exists(root + "/browser-resume.enabled"));
+    // Turning resume off drops both saved machines, not just the marker.
+    assert(!std::filesystem::exists(path) && !std::filesystem::exists(inactive));
     pom2::BrowserSessionStore disabled(root);
     disabled.initialize(*ctrl);
     assert(!disabled.enabled());

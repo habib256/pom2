@@ -124,6 +124,12 @@ void testFujiNetSlotExplicitness()
     assert(chosen->fujiNetSlotExplicit);     // an occupied 3 must stay an error
     assert(chosen->fujiNetPort == 1990);
 
+    // CLI-5 (bug hunt 2026-11-01 round 3): alone it was validated, recorded
+    // and ignored — the one accepted-but-inert input. It is refused now.
+    assert(!parse({"POM2", "--fujinet-slot", "3"}, help).has_value());
+    assert(parse({"POM2", "--fujinet-serial=/dev/ttyACM0", "--fujinet-slot", "4"},
+                 help).has_value());
+
     auto serial = parse({"POM2", "--fujinet-serial=/dev/ttyACM0"}, help);
     assert(serial.has_value());
     assert(serial->fujiNet == pom2::CliPlan::FujiNetTransport::Serial);

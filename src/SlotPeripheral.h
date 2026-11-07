@@ -387,6 +387,10 @@ protected:
     /// it (standalone test harnesses). Read the pointer once at plug/reset;
     /// dereferencing it per instruction is one load, no call.
     const uint64_t* busCycleCounter() const;
+    /// How far into the in-flight instruction the current bus access is
+    /// (SlotBus::accessCycle - the machine's counter); 0 when unplugged or
+    /// standalone. Add it to a card clock that only advances per instruction.
+    uint64_t busAccessOffset() const;
     /// SlotBus::nextVblCpuCycle for this card's bus; 0 when unplugged.
     uint64_t busNextVblCycle(uint64_t cpuNow) const;
 

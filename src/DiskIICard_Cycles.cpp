@@ -19,6 +19,24 @@
 #include <cmath>
 #include "FloppySoundSink.h"
 
+// Where the platter of `drive` stands, kept for when its spindle turns again
+// — a spindle resumes where it stopped, it does not snap back to index.
+// [D] MAME floppy.cpp:871-876 @ b2a182f0b7: mon_w(true) saves
+// m_stopped_position on EVERY on→off, and wozfdc.cpp:269-290 calls it on the
+// old drive of a $C0nA/$C0nB swap. The swap used to skip it, so a two-drive
+// copy re-entered each drive at a stale angle (index, if it had never
+// coasted to a stop) — bug hunt 2026-11-07. A drive whose anchor is already
+// cleared keeps what it had.
+void DiskIICard::rememberStoppedPosition(int drive)
+{
+    if (revolutionStartLssCycle[drive] == kNeverRev) return;
+    const int period = images[drive].trackPeriod(headQuarterTrack[drive]);
+    stoppedPosition[drive] = period > 0
+        ? static_cast<int64_t>((lssCycle - static_cast<uint64_t>(
+              revolutionStartLssCycle[drive])) % static_cast<uint64_t>(period))
+        : 0;
+}
+
 void DiskIICard::advanceCycles(int cycles)
 {
     // A caller's batch can straddle the spindle-stop deadline. Catch up
@@ -126,14 +144,7 @@ void DiskIICard::stopSpindle()
         // WHERE the platter stopped ([D] MAME `bc9aec5a`, 2026-10-03):
         // a spindle resumes where it stopped, it does not snap back
         // to index. `docs/audits/parite-floppy-2026-11-01.md`.
-        if (revolutionStartLssCycle[activeDrive] != kNeverRev) {
-            const int period =
-                images[activeDrive].trackPeriod(headQuarterTrack[activeDrive]);
-            stoppedPosition[activeDrive] = period > 0
-                ? static_cast<int64_t>((lssCycle - static_cast<uint64_t>(
-                      revolutionStartLssCycle[activeDrive])) % static_cast<uint64_t>(period))
-                : 0;
-        }
+        rememberStoppedPosition(activeDrive);
         revolutionStartLssCycle[activeDrive] = kNeverRev;
     }
     if (sound_) sound_->motor(false, images[activeDrive].isLoaded());
@@ -205,4 +216,49 @@ void DiskIICard::carryAngleAcrossStep(int drive, int fromQt, int toQt)
     // as it was for that one step; nothing moves the head off track 0 that
     // early (the boot's recalibration pushes it against the stop).
     if (now >= pos) anchor = now - pos;
+}
+
+// D2S1 v6: the write framing of each captured drive. A rewind restores the
+// nibbles and the controller's burst (v4) but left `writeFraming` holding
+// the abandoned future: the next flush took the window for a new burst,
+// threw the half-framed nibble away and re-framed mid-nibble, so the rest
+// of the data field was garbage (bug hunt 2026-11-07).
+void DiskIICard::appendFramingTail(std::vector<uint8_t>& out) const
+{
+    for (int d = 0; d < kDriveCount; ++d) {
+        // The media capture's predicate (appendSnapshotState).
+        const bool cap = images[d].isLoaded() &&
+                         !images[d].isFileWriteProtected() && !images[d].isWoz();
+        out.push_back(cap ? 1 : 0);
+        if (cap) images[d].appendWriteFraming(out);
+    }
+}
+
+bool DiskIICard::framingTailFits(const uint8_t* data, std::size_t len)
+{
+    std::size_t q = 0;
+    for (int d = 0; d < kDriveCount; ++d) {
+        if (q >= len || data[q] > 1) return false;
+        if (data[q++]) {
+            if (DiskImage::kWriteFramingBytes > len - q) return false;
+            q += DiskImage::kWriteFramingBytes;
+        }
+    }
+    return true;
+}
+
+void DiskIICard::loadFramingTail(const uint8_t* data, std::size_t len,
+                                 const bool mediaApplied[])
+{
+    std::size_t q = 0;
+    for (int d = 0; d < kDriveCount; ++d) {
+        const bool has = data && q < len && data[q++] != 0;
+        if (has && mediaApplied[d] &&
+            images[d].loadWriteFraming(data + q, DiskImage::kWriteFramingBytes)) {
+            q += DiskImage::kWriteFramingBytes;
+            continue;
+        }
+        if (has) q += DiskImage::kWriteFramingBytes;
+        if (mediaApplied[d]) images[d].resetWriteFraming();
+    }
 }

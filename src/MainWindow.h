@@ -1186,7 +1186,6 @@ private:
     void kioskComputeShortcuts();                      // /, Home, mounts
     void kioskLoadRomDirs();                            // read persisted list
     void kioskSaveRomDirs();                            // write persisted list
-    bool kioskPruneRomDirs();                          // drop vanished folders
 
     // Slot of the HDV card auto-plugged by ensureHdvCardForBoot for a CLI
     // `POM2 <image.hdv>` boot (-1 = none). Session-local: NOT persisted, so

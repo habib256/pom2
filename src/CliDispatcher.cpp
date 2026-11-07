@@ -662,6 +662,15 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         }
     }
 
+    // `--fujinet-slot N` picks the slot of a card `--fujinet` or
+    // `--fujinet-serial` plugs; alone it was validated, recorded and then
+    // ignored by every consumer (bug hunt 2026-11-01 round 3, CLI-5) — the one
+    // accepted-but-inert input in a parser that refuses every near-miss.
+    if (plan.fujiNetSlotExplicit && plan.fujiNet == CliPlan::FujiNetTransport::None) {
+        pom2::log().error("CLI", "--fujinet-slot needs --fujinet or --fujinet-serial "
+                                 "(it chooses the slot of the card they plug)");
+        return std::nullopt;
+    }
     return plan;
 }
 

@@ -61,6 +61,14 @@ const uint64_t* SlotPeripheral::busCycleCounter() const
     return bus_ ? bus_->cycleCounterRef() : nullptr;
 }
 
+uint64_t SlotPeripheral::busAccessOffset() const
+{
+    const uint64_t* now = bus_ ? bus_->cycleCounterRef() : nullptr;
+    if (!now) return 0;
+    const uint64_t at = bus_->accessCycle();
+    return at > *now ? at - *now : 0;
+}
+
 uint64_t SlotPeripheral::busNextVblCycle(uint64_t cpuNow) const
 {
     return bus_ ? bus_->nextVblCpuCycle(cpuNow) : 0;

@@ -766,6 +766,9 @@ jobs:
           version: 6.0.9
           actions-cache-folder: emsdk-cache
 
+      - name: GLFW abort stubs match key_chord_policy's list
+        run: tools/check_glfw_abort_stubs.sh
+
       - name: Build WASM target
         run: ./build_wasm.sh
 

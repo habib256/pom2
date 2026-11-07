@@ -185,8 +185,32 @@ void checkAuxSlotGetsTheClock()
 
 }  // namespace
 
+// An accelerator that goes away (a profile switch, a replug) must take the
+// beam's ratio with it. The clock-only fast path kept the accelerated ratio:
+// the beam ran ~1/3.5 speed on the stock machine (bug hunt 2026-11-07).
+void testRatioFollowsTheAcceleratorAway()
+{
+    auto c = makeWithTranswarp();
+    loadNops(*c);
+    for (int i = 0; i < 3; ++i) c->tickFrame();
+    {
+        auto st = c->lockState();
+        assert(st.memory().videoClockRatio() < 0.5 && "the TransWarp runs fast");
+        st.memory().slotBus().plug(4, nullptr);
+    }
+    c->setVideoStandard(VideoStandard::NTSC);
+    c->tickFrame();
+    uint64_t v0, c0, v1, c1;
+    { auto st = c->lockState(); v0 = st.memory().videoNow(); c0 = st.memory().getCycleCounter(); }
+    c->tickFrame();
+    { auto st = c->lockState(); v1 = st.memory().videoNow(); c1 = st.memory().getCycleCounter(); }
+    assert(v1 - v0 == c1 - c0 && "the beam kept the accelerator's rate");
+    std::printf("  ok: the beam's ratio follows the accelerator away\n");
+}
+
 int main()
 {
+    testRatioFollowsTheAcceleratorAway();
     // 1. Steady 3.5x: nothing to get wrong, and it must stay right.
     {
         auto c = makeWithTranswarp();

@@ -101,13 +101,26 @@ uint16_t M6502::memReadAbsolute(uint16_t adr)
   return (memory->memRead(adr) | memory->memRead((unsigned short)(adr + 1)) << 8);
 }
 
+// Two bus cycles, one per byte: an operand or a vector.
+uint16_t M6502::vectorRead(uint16_t adr)
+{
+    const uint8_t lo = memory->memRead(adr);
+    cycles++;
+    const uint8_t hi = memory->memRead(static_cast<uint16_t>(adr + 1));
+    cycles++;
+    return static_cast<uint16_t>(lo | (hi << 8));
+}
+
+// One bus cycle per push and per pull, so accessCycle() readers (the bus
+// watch) see each land on its own cycle (bug hunt 2026-11-07).
 void M6502::pushProgramCounter(void)
 {
     memory->memWrite((unsigned short)(stackPointer + 0x100), (unsigned char)(programCounter >> 8));
     stackPointer--;
-   memory->memWrite((unsigned short)(stackPointer + 0x100), (unsigned char)programCounter);
-   stackPointer--;
-    cycles += 2;
+    cycles++;
+    memory->memWrite((unsigned short)(stackPointer + 0x100), (unsigned char)programCounter);
+    stackPointer--;
+    cycles++;
 }
 
 void M6502::popProgramCounter(void)
@@ -116,37 +129,40 @@ void M6502::popProgramCounter(void)
     // Donc on pop d'abord le low byte, puis le high byte
     stackPointer++;
     uint8_t lowByte = memory->memRead((unsigned short)(stackPointer + 0x100));
+    cycles++;
     stackPointer++;
     uint8_t highByte = memory->memRead((unsigned short)(stackPointer + 0x100));
+    cycles++;
     programCounter = lowByte | (highByte << 8);
-    cycles += 2;
 }
 
 void M6502::handleIRQ(void)
 {
+    cycles += 2;                    // internal; pushes at 2-3, P 4, vector 5-6
     pushProgramCounter();
     memory->memWrite((unsigned short)(0x100 + stackPointer), (unsigned char)((statusRegister & ~0x10) | 0x20));
     stackPointer--;
+    cycles++;
     statusRegister |= M6502::Status::I;
     // 65C02 clears D on interrupt entry (MAME ow65c02.lst:259 brk_c_imp:
     // `m_P = (m_P | F_I) & ~F_D;`). NMOS leaves D untouched.
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
     memory->noteInterruptEntry();
-    programCounter = memReadAbsolute(0xFFFE);
-    cycles += 5;
+    programCounter = vectorRead(0xFFFE);
 }
 
 void M6502::handleNMI(void)
 {
+    cycles += 2;
     pushProgramCounter();
     memory->memWrite((unsigned short)(0x100 + stackPointer), (unsigned char)((statusRegister & ~0x10) | 0x20));
     stackPointer--;
+    cycles++;
     statusRegister |= M6502::Status::I;
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
     NMI = 0;
     memory->noteInterruptEntry();
-    programCounter = memReadAbsolute(0xFFFA);
-    cycles += 5;
+    programCounter = vectorRead(0xFFFA);
 }
 
 void M6502::Imp(void)
@@ -186,9 +202,8 @@ void M6502::ZeroY(void)
 
 void M6502::Abs(void)
 {
-    op = memReadAbsolute(programCounter);
+    op = vectorRead(programCounter);        // operand bytes at cycles 1-2
     programCounter += 2;
-    cycles += 2;
 }
 
 // NMOS indexed-access dummy READ. A 6502 adds the index to the LOW byte
@@ -245,10 +260,9 @@ void M6502::cmosIndexedWriteDummyRead(uint16_t base, uint16_t indexed)
 
 void M6502::AbsX(void)
 {
-    uint16_t base = memory->memRead(programCounter++);
-    base |= (uint16_t)memory->memRead(programCounter++) << 8;
+    const uint16_t base = vectorRead(programCounter);
+    programCounter += 2;
     op = base + xRegister;
-    cycles += 2;
     if ((base & 0xFF00) != (op & 0xFF00))
         cycles++;
     nmosIndexDummyRead(base, op, /*always=*/false);
@@ -256,10 +270,9 @@ void M6502::AbsX(void)
 
 void M6502::AbsY(void)
 {
-    uint16_t base = memory->memRead(programCounter++);
-    base |= (uint16_t)memory->memRead(programCounter++) << 8;
+    const uint16_t base = vectorRead(programCounter);
+    programCounter += 2;
     op = base + yRegister;
-    cycles += 2;
     if ((base & 0xFF00) != (op & 0xFF00))
         cycles++;
     nmosIndexDummyRead(base, op, /*always=*/false);
@@ -273,21 +286,24 @@ void M6502::Ind(void)
     // the cost of one extra cycle (5 → 6). MAME `om6502.lst:649-656`
     // (jmp_ind, NMOS, buggy) vs `ow65c02.lst:387-395` (jmp_c_ind, CMOS,
     // fixed + extra cycle).
-    uint8_t  lo = memory->memRead(programCounter++);
-    uint16_t hi = (uint16_t)memory->memRead(programCounter++) << 8;
+    const uint16_t ptr = vectorRead(programCounter);   // cycles 1-2
+    programCounter += 2;
+    const uint8_t lo = static_cast<uint8_t>(ptr);
+    const uint16_t hi = ptr & 0xFF00;
     uint16_t ptrLo;
     uint16_t ptrHi;
     if (cpuMode == CpuMode::CMOS) {
         ptrLo = (uint16_t)(hi | lo);
         ptrHi = (uint16_t)(ptrLo + 1);  // linear, carries into hi byte
-        cycles += 5;                    // CMOS: 6 total with fetch
+        cycles++;                       // CMOS: one more internal cycle, 6 total
     } else {
         ptrLo = (uint16_t)(hi | lo);
         ptrHi = (uint16_t)(hi | ((lo + 1) & 0xFF));  // NMOS page-wrap bug
-        cycles += 4;                    // NMOS: 5 total with fetch
     }
     op  = memory->memRead(ptrLo);
+    cycles++;
     op |= (uint16_t)memory->memRead(ptrHi) << 8;
+    cycles++;                           // NMOS 5 / CMOS 6 with the fetch
 }
 
 void M6502::IndZeroX(void)
@@ -913,24 +929,21 @@ void M6502::PHP(void)
 void M6502::PLA(void)
 {
     stackPointer++;
-accumulator = memory->memRead((uint16_t)(stackPointer + 0x100));
+    cycles++;                       // the pull is cycle 3 (a stack dummy at 2)
+    accumulator = memory->memRead((uint16_t)(stackPointer + 0x100));
     setStatusRegisterNZ(accumulator);
-    cycles += 2;
+    cycles++;
 }
 
 void M6502::PLP(void)
 {
     stackPointer++;
-    // [D] MAME om6502.lst `plp_imp` (0287:1068) and `rti_imp` (0287:1174),
-    // `read(m_SP) | (F_B|F_E)`, force U=1 AND B=1 on every P pop (PLP/RTI).
-    // (This used to cite `m6502.cpp:408`; that file's only `F_B|F_E` is the
-    // debugger's `state_import` — parite-ow65c02-2026-11-01.md.) The "B" and "U" bits aren't physical flags; the
-    // pushed byte carries them as 1 from PHP/BRK and as B=0/U=1 from
-    // IRQ/NMI. Without the OR with 0x30, an RTI from IRQ leaves B=0 in
-    // the popped status, which a subsequent PHP would then push back —
-    // visible to any handler that inspects pushed P.
+    // [D] MAME om6502.lst `plp_imp` (0287:1068), `rti_imp` (0287:1174):
+    // `read(m_SP) | (F_B|F_E)` — U=1 AND B=1 on every P pop (PLP/RTI), else
+    // an RTI from IRQ left B=0 for a later PHP to push.
+    cycles++;                       // the pull is cycle 3, as PLA's
     statusRegister = memory->memRead((uint16_t)(stackPointer + 0x100)) | 0x30;
-    cycles += 2;
+    cycles++;
 }
 
 void M6502::BRK(void)
@@ -969,13 +982,13 @@ void M6502::BRK(void)
     pushProgramCounter();
     memory->memWrite((uint16_t)(0x100 + stackPointer), statusRegister | M6502::Status::B | 0x20);
     stackPointer--;
+    cycles++;                       // P at 4, the vector at 5-6
     statusRegister |= M6502::Status::I;
     if (cpuMode == CpuMode::CMOS) statusRegister &= ~M6502::Status::D;
     memory->noteInterruptEntry();
-    programCounter = memReadAbsolute(0xFFFE);
     // BRK = 7 cycles on both NMOS and CMOS (MAME `om6502.lst` /
-    // `ow65c02.lst:234-261`). fetch(1)+Imp(1)+pushPC(2)+body(3) = 7.
-    cycles += 3;
+    // `ow65c02.lst:234-261`). fetch(1)+Imp(1)+pushPC(2)+P(1)+vector(2) = 7.
+    programCounter = vectorRead(0xFFFE);
 }
 
 void M6502::RTI(void)
@@ -995,17 +1008,20 @@ void M6502::JMP(void)
 
 void M6502::RTS(void)
 {
+    cycles++;                       // stack dummy at 2, pulls at 3-4
     popProgramCounter();
     programCounter++;
-    cycles += 2;
+    cycles++;                       // PC increment at 5: 6 total
 }
 
 void M6502::JSR(void)
 {
+    // lo at 1, internal at 2, pushes at 3-4, hi at 5: 6 total.
     uint8_t lo = memory->memRead(programCounter++);
+    cycles += 2;
     pushProgramCounter();
     programCounter = lo + (memory->memRead(programCounter) << 8);
-    cycles += 3;
+    cycles++;
 }
 
 void M6502::branch(void)
@@ -1406,8 +1422,8 @@ void M6502::applyDispatch(CpuMode mode)
     cpuMode = mode;
     std::memcpy(opcodeTable, kCmosTable, sizeof(opcodeTable));
     if (mode == CpuMode::CMOS) {
-        // NCR65C02 (setNcr65C02): no Rockwell bit ops, no WAI/STP — 1-byte,
-        // 1-cycle NOPs. Not while a TransWarp's own 65C02 runs the program.
+        // NCR65C02 (setNcr65C02) or a TransWarp's 65C02 (ncrDispatch): no
+        // Rockwell bit ops, no WAI/STP — 1-byte, 1-cycle NOPs.
         if (ncrDispatch()) {   // also what instructionSet() reports
             const auto nop = OpcodeEntry{&M6502::Unoff, nullptr};
             for (int hi = 0; hi < 16; ++hi) {
@@ -1916,8 +1932,7 @@ long        g_pcTraceN = 0;
 }
 void M6502::executeOpcode(void)
 {
-    // Count the opcode fetch itself so per-instruction timing matches 6502 totals.
-    cycles = 1;
+    cycles = 0;   // the opcode fetch is bus cycle 0; counted right after it
     // Detect non-sequential PC transitions. "Sequential" = new PC is within a
     // few bytes of the previous instruction's start (covers 1..3 byte opcodes
     // plus taken short branches within the same page). Anything else is a
@@ -1961,6 +1976,7 @@ void M6502::executeOpcode(void)
     }
 
     unsigned char opcode = memory->memRead(programCounter++);
+    cycles = 1;
 
     // DIAGNOSTIC (POM2_TRACE_PC=path): log every instruction (PC, opcode,
     // A/X/Y) to a file for trace-diffing against a MAME reference. Capped.
@@ -2205,13 +2221,9 @@ void M6502::step(void)
     //
     // The interrupt-entry sequence costs 7 bus cycles on both NMOS and
     // CMOS (MAME om6502.lst irq/nmi sequences; pushPC + flags + vector
-    // fetch). handleNMI/handleIRQ accumulate those into `cycles`, but
-    // executeOpcode() reseeds `cycles = 1` for the opcode fetch and would
-    // wipe them. Capture the entry cost here, publish it to the bus in the
-    // epilogue BEFORE the handler's first instruction, and fold it back into
-    // `cycles` afterwards for run()'s budget. Previously every IRQ/NMI was charged 0
-    // cycles, silently desyncing every cycleCounter-derived clock (VBL,
-    // slot-peripheral timers, cassette) on interrupt-driven software.
+    // fetch). executeOpcode() reseeds `cycles`, so the entry cost is captured
+    // here, published BEFORE the handler's first instruction and folded back
+    // for run()'s budget (it used to be charged 0, desyncing every clock).
     // ── Owned deviation: interrupt sampling is instruction-granular ──────
     // Real silicon samples IRQ/NMI during phi2 of an instruction's
     // penultimate cycle, and CLI / SEI / PLP land their new I flag *after*

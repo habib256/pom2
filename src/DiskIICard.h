@@ -455,6 +455,15 @@ public:
     // mounted media and the boot/P6 PROMs are NOT captured — they're
     // reconstructed identically on the restored machine. See DiskIICard.cpp.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
+    /// D2S1 v6 tail, after everything else: per drive a flag and, for a
+    /// drive whose nibbles are captured, its write framing
+    /// (DiskImage::appendWriteFraming). Fits = the sizes add up.
+    void appendFramingTail(std::vector<uint8_t>& out) const;
+    static bool framingTailFits(const uint8_t* data, std::size_t len);
+    /// `data` null (an older blob): drives whose media was restored start a
+    /// fresh burst rather than keep the abandoned future's framing.
+    void loadFramingTail(const uint8_t* data, std::size_t len,
+                         const bool mediaApplied[]);
     /// Size of the D2S1 FIXED header (magic + version + the scalar body),
     /// before the optional per-drive nibble captures. `appendSessionState`
     /// used to carry it as a literal `83`, which silently pointed into the
@@ -549,6 +558,7 @@ private:
     /// The spindle stops now: the end of the 556 / IWM countdown, or an
     /// immediate stop (DiskIICard_Cycles.cpp).
     void stopSpindle();
+    void rememberStoppedPosition(int drive);   // mon_w(true)'s angle (Cycles.cpp)
     pom2::SlotBusClock motorClock_;   // CPU cycles -> stock: LSS, delay, stepper
     bool writeMode = false;     // Q7 latch: false=read, true=write
     bool loadMode  = false;     // Q6 latch: false=shift, true=load

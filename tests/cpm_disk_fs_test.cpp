@@ -234,9 +234,19 @@ void testProdosOrder()
     std::vector<uint8_t> back;
     CHECK(p.readFile(0, "PO.TXT", back, err));
     CHECK(roundTrips(data, back));
-    // Read in the wrong order, the directory is not there.
+    // Named in the wrong order (a `.dsk` holding a ProDOS-order CP/M disk),
+    // the directory is found in the right one (bug hunt 2026-11-07); it was
+    // refused, or read as empty.
     CpmDisk wrong;
-    CHECK(!wrong.open(po, SectorOrder::Dos, err) || wrong.list().empty());
+    CHECK(wrong.open(po, SectorOrder::Dos, err));
+    CHECK(wrong.orderOverridden() && wrong.order() == SectorOrder::Prodos);
+    back.clear();
+    CHECK(wrong.readFile(0, "PO.TXT", back, err));
+    CHECK(roundTrips(data, back));
+    // An empty directory proves nothing: the extension's order stands.
+    CpmDisk empty;
+    CHECK(empty.open(blankImage(), SectorOrder::Prodos, err));
+    CHECK(!empty.orderOverridden() && empty.order() == SectorOrder::Prodos);
     for (int n = 0; n < 16; ++n) CHECK(kDosToCpm[kSkew[n]] == n);
     // CP/M order (.cpm): the de-skewed layout, convertible to DOS order.
     std::vector<uint8_t> cpm(kImageBytes);

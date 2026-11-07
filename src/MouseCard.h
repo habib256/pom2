@@ -116,6 +116,10 @@ public:
     /// with wrap). `button` is true while the mouse button is held.
     /// Called from the UI thread once per frame.
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button);
+    /// The running counters the last setHostMouse set (any feeder's): a
+    /// second feeder adds its delta to these, or it jumps the cursor.
+    uint8_t hostCounterX() const { return hostSetX_; }
+    uint8_t hostCounterY() const { return hostSetY_; }
     /// Motion the host has pushed that the MCU has not yet turned into
     /// quadrature edges — the "previous push not consumed" test of a
     /// closed-loop absolute drive (MouseSync.h's rule; pom2::Core::setMouse).

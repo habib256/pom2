@@ -244,6 +244,28 @@ void testFatTrackContinuity(int obt) {
     }
 }
 
+// The head reaches every quarter-track a WOZ TMAP can fill: the clamp at 156
+// left 157-159 loaded and unreachable (bug hunt 2026-11-07). A walk past the
+// end leaves it against the stop, at 159.
+void testHeadReachesTheLastTrack() {
+    DiskIICard card;
+    pom2test::loadDiskIIDefaults(card);
+    card.setIwmHost(false);
+    card.deviceSelectRead(9);                       // motor on
+    int ph = 0;
+    card.deviceSelectRead(1);                       // phase 0 on
+    for (int i = 0; i < 200; ++i) {
+        const int nx = (ph + 1) & 3;
+        card.deviceSelectRead(static_cast<uint8_t>(nx * 2 + 1));
+        card.deviceSelectRead(static_cast<uint8_t>(ph * 2));
+        ph = nx;
+        advance(card, 2000, 7);
+    }
+    require(card.getQuarterTrack() == 159,
+            "head stopped at quarter-track " + std::to_string(card.getQuarterTrack()) +
+            ", not at the stop (159)");
+}
+
 void testControllerCadence() {
     size_t samples = 0;
     for (int obt : {28, 32, 36}) {
@@ -325,7 +347,7 @@ int main(int argc, char** argv) {
         require(argc == 2, "usage: test_disk_protection_signals flux|cadence");
         const std::string mode = argv[1];
         if (mode == "flux") testFluxOracle();
-        else if (mode == "cadence") testControllerCadence();
+        else if (mode == "cadence") { testHeadReachesTheLastTrack(); testControllerCadence(); }
         else throw std::runtime_error("unknown mode: " + mode);
         return 0;
     } catch (const std::exception& e) {

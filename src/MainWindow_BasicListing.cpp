@@ -39,6 +39,7 @@
 
 #include "MainWindow.h"
 #include "ApplesoftListing.h"
+#include "BrowserFiles.h"
 #include "IntegerBasicListing.h"
 #include "EmulationController.h"
 #include "Logger.h"
@@ -100,9 +101,21 @@ void MainWindow::saveBasicListing()
         basicListingStatus_ = "Could not write " + file.string();
         return;
     }
+#ifdef __EMSCRIPTEN__
+    // The browser: MEMFS loses the file on reload and emscripten's GLFW
+    // clipboard is a no-op, so "saved to <path> (and copied)" claimed two
+    // things that did not happen (WASM-4). Download it instead.
+    {
+        std::string derr;
+        basicListingStatus_ = pom2::downloadBrowserFile(file.string(), file.filename().string(), derr)
+            ? std::string("Downloaded ") + which + " listing as " + file.filename().string()
+            : std::string("Could not download the listing: ") + derr;
+    }
+#else
     ImGui::SetClipboardText(text.c_str());
     basicListingStatus_ = std::string("Saved ") + which + " listing to " +
                           file.string() + " (and copied)";
+#endif
     // Bytes text cannot hold (ApplesoftListing.h): say so, or the file
     // passes for a copy of the program.
     if (report.untypable > 0)

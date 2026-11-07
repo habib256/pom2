@@ -151,16 +151,45 @@ void testAltAppleKeys()
 
 // ── 2. The Emscripten abort()-stub scan ─────────────────────────────────
 
-// GLFW entry points Emscripten's port implements as abort(). Adding one here
-// is cheap; the cost of a missing one is a browser session that dies on a
-// keystroke.
+// GLFW entry points Emscripten's port implements as abort(): every
+// `name: (...) => abort(` line of src/lib/libglfw.js, derived from
+// emscripten 6.0.8 (2026-11-07, WASM-6). The hand list it replaces had
+// drifted both ways: it missed most of these, and three of its six
+// (glfwSetWindowIcon / SizeLimits / AspectRatio) are silent no-ops there.
+// The CI WASM job re-derives the list from the toolchain it pins (6.0.9)
+// and fails on a name missing here: tools/check_glfw_abort_stubs.sh.
 const char* const kAbortStubs[] = {
+    "glfwBroadcastCond",
+    "glfwCreateCond",
+    "glfwCreateMutex",
+    "glfwDestroyCond",
+    "glfwDestroyMutex",
+    "glfwFreeImage",
+    "glfwGetDesktopMode",
+    "glfwGetGammaRamp",
+    "glfwGetJoystickGUID",
+    "glfwGetJoystickHats",
+    "glfwGetJoystickUserPointer",
     "glfwGetKeyName",
-    "glfwSetWindowMonitor",
-    "glfwSetWindowIcon",
-    "glfwSetWindowSizeLimits",
-    "glfwSetWindowAspectRatio",
+    "glfwGetKeyScancode",
+    "glfwGetRequiredInstanceExtensions",
+    "glfwGetTimerFrequency",
+    "glfwGetTimerValue",
     "glfwGetWindowFrameSize",
+    "glfwJoystickIsGamepad",
+    "glfwLoadMemoryTexture2D",
+    "glfwLoadTexture2D",
+    "glfwLoadTextureImage2D",
+    "glfwLockMutex",
+    "glfwReadImage",
+    "glfwReadMemoryImage",
+    "glfwSetCharModsCallback",
+    "glfwSetGammaRamp",
+    "glfwSetJoystickUserPointer",
+    "glfwSetWindowMonitor",
+    "glfwSignalCond",
+    "glfwUnlockMutex",
+    "glfwWaitCond",
 };
 
 // Thread spawns. `pom2::guardedThread` is POM2's own wrapper (ThreadGuard.h)
@@ -170,20 +199,16 @@ const char* const kThreadSpawns[] = {
     "guardedThread",
 };
 
-const char* const kScannedFiles[] = {
-    "src/main.cpp",
-    "src/MainWindow.cpp",
-    "src/MainWindow_Input.cpp",
-    "src/MainWindow_Kiosk.cpp",
-    "src/MainWindow_Slots.cpp",
-    "src/MainWindow_Chrome.cpp",
-    "src/JoystickInput.cpp",
-    // Added for the thread-spawn scan: every TU that hands work to a worker
-    // and is reachable from a browser frame. PrinterHistory and
-    // PostScriptRender are the two that were not guarded (2026-11-01).
-    "src/PrinterHistory.cpp",
-    "src/PostScriptRender.cpp",
-};
+// Every TU of src/ the browser build compiles (2026-11-07, WASM-6: the hand
+// list covered 9 of ~540 files). The POM2 target compiles the whole SOURCES
+// list for WASM; what it does not compile are the host tools' mains.
+bool scannedForBrowser(const std::filesystem::path& p)
+{
+    const std::string name = p.filename().string();
+    if (p.extension() != ".cpp") return false;
+    if (name.rfind("pom2_", 0) == 0) return false;            // host tools' mains
+    return true;
+}
 
 /// Would a line at this preprocessor nesting be COMPILED with __EMSCRIPTEN__
 /// defined? The stack holds one entry per open conditional:
@@ -223,10 +248,26 @@ bool scanFile(const std::string& path)
 
         if (!s.empty() && s[0] == '#') {
             const bool hasEms = s.find("__EMSCRIPTEN__") != std::string::npos;
+            // `#if !defined(__EMSCRIPTEN__)` (or `!__EMSCRIPTEN__`) excludes
+            // the browser exactly like #ifndef; it was read as an Emscripten
+            // branch — a false alarm inside, blind to the real one after
+            // #else (WASM-6). An `||` makes the branch reachable from either
+            // side, so it is scanned both ways (conservative).
+            const bool negated = s.find("!defined(__EMSCRIPTEN__)") != std::string::npos ||
+                                 s.find("! defined(__EMSCRIPTEN__)") != std::string::npos ||
+                                 s.find("!__EMSCRIPTEN__") != std::string::npos;
+            const bool orCond = s.find("||") != std::string::npos;
+            // POM2_HAS_SOCKETS is 0 exactly under Emscripten (Pom2Build.h):
+            // `#if POM2_HAS_SOCKETS` excludes the browser, `#if
+            // !POM2_HAS_SOCKETS` is its branch, and #else flips either.
+            const bool hasSockets = s.find("POM2_HAS_SOCKETS") != std::string::npos;
+            const bool socketsNeg = s.find("!POM2_HAS_SOCKETS") != std::string::npos;
             if (s.rfind("#ifndef", 0) == 0)
                 stack.push_back({hasEms, hasEms});
+            else if ((s.rfind("#if ", 0) == 0) && hasSockets && !hasEms && !orCond)
+                stack.push_back({!socketsNeg, true});
             else if (s.rfind("#ifdef", 0) == 0 || s.rfind("#if", 0) == 0)
-                stack.push_back({false, hasEms});
+                stack.push_back({negated && !orCond, hasEms && !orCond});
             else if (s.rfind("#elif", 0) == 0) {
                 if (!stack.empty()) stack.back().excludesEmscripten = false;
             } else if (s.rfind("#else", 0) == 0) {
@@ -414,14 +455,21 @@ void testNoEmscriptenAbortStubs()
     const std::string root = POM2_STR(POM2_SOURCE_DIR);
     bool allOk = true;
     g_linesInspected = 0;
-    for (const char* rel : kScannedFiles)
-        allOk &= scanFile(root + "/" + rel);
+    int files = 0;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(root + "/src")) {
+        if (!e.is_regular_file() || !scannedForBrowser(e.path())) continue;
+        allOk &= scanFile(e.path().string());
+        ++files;
+    }
+    // 290 translation units on 2026-11-07: a floor well under it, so a
+    // broken directory walk (scanning a handful) cannot pass.
+    check(files > 250, "the Emscripten scan walked the whole of src/");
     check(allOk,
           "no Emscripten abort()-stub GLFW call or thread spawn is reachable "
           "in the browser build");
     // The scan must have LOOKED. A PpFrame model that excluded everything
     // would otherwise pass by inspecting nothing.
-    check(g_linesInspected > 2000,
+    check(g_linesInspected > 50000,
           "the Emscripten scan inspected a plausible number of lines");
     std::printf("  (the Emscripten scan inspected %d browser-reachable lines)\n",
                 g_linesInspected);

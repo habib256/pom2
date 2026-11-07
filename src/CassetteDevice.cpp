@@ -132,20 +132,51 @@ std::string lowerExtension(const std::string& path)
 
 struct PcmDurationDecoder {
     uint32_t sampleRate = 0;
-    // Comparator threshold. Zero is the ideal-signal answer and stays the
-    // default for the streamed (mp3/ogg/flac) path, which cannot pre-measure
-    // the file. loadWavTape has the whole waveform in hand and sets the DC
-    // average here: a line-in capture of a real
+    // Comparator threshold. Zero is the ideal-signal answer; both loaders
+    // pre-measure the file and set the DC average here: a line-in capture of a real
     // tape rides on the sound card's DC bias, and when that bias exceeds the
     // signal amplitude a sign-only detector sees zero zero-crossings — the
     // tape "loads" with one transition and plays silence, with loadTape
     // returning true and no error to show for it.
     float threshold = 0.0f;
+    // Schmitt band, half-width around `threshold`: the level flips only once
+    // the sample leaves the band on the other side. A bare sign comparator
+    // turned every wobble of tape hiss into a transition — ~17 k/s ([F] a
+    // simulation, not a capture), so a minute of a real rip's quiet filled the 1 M-transition cap and the
+    // whole tape was refused. 0 = the old comparator. Set by PcmLevelStats.
+    float hysteresis = 0.0f;
     bool foundSignal = false;
     bool initialLevel = false;
     bool currentLevel = false;
     uint64_t heldSamples = 0;
     std::vector<uint32_t> durations;
+};
+
+// One linear pass over the waveform, before decoding it.
+struct PcmLevelStats {
+    long double sum = 0.0L, sumSq = 0.0L;
+    float peak = 0.0f;
+    size_t n = 0;
+    void add(float v) { sum += v; sumSq += static_cast<long double>(v) * v; peak = std::max(peak, std::fabs(v)); ++n; }
+    // Threshold: the DC mean, clamped inside the signal's own band — a
+    // line-in rip rides on the sound card's bias, and past |bias| > amplitude
+    // a sign-only comparator finds no crossings at all; a clean file keeps
+    // threshold ~ 0. Band: [F] tuned, not measured — min(10 % of the peak
+    // swing, 25 % of the RMS about the mean). The RMS term keeps a loud click
+    // from widening the band past the signal, the peak term keeps a file that
+    // is all signal from a band a quarter of its swing. Settled by: real rips
+    // of several decks, and the Apple's own input comparator's hysteresis.
+    void calibrate(PcmDurationDecoder& d) const
+    {
+        if (n == 0) return;
+        const long double meanL = sum / static_cast<long double>(n);
+        const float mean = static_cast<float>(meanL);
+        const float limit = peak * 0.9f;
+        d.threshold = std::max(-limit, std::min(limit, mean));
+        const long double var = sumSq / static_cast<long double>(n) - meanL * meanL;
+        const float rms = var > 0.0L ? static_cast<float>(std::sqrt(var)) : 0.0f;
+        d.hysteresis = std::min(0.10f * std::max(0.0f, peak - std::fabs(mean)), 0.25f * rms);
+    }
 };
 
 bool emitPcmDuration(PcmDurationDecoder& d, std::string& error,
@@ -169,14 +200,15 @@ bool consumePcm(PcmDurationDecoder& d, const float* samples, size_t count,
 {
     for (size_t i = 0; i < count; ++i) {
         const float sample = samples[i] - d.threshold;
+        const bool above = sample > d.hysteresis, below = sample < -d.hysteresis;
         if (!d.foundSignal) {
-            if (sample == 0.0f) continue;
+            if (!above && !below) continue;
             d.foundSignal = true;
-            d.initialLevel = d.currentLevel = sample > 0.0f;
+            d.initialLevel = d.currentLevel = above;
             d.heldSamples = 1;
             continue;
         }
-        const bool newLevel = sample == 0.0f ? d.currentLevel : sample > 0.0f;
+        const bool newLevel = above ? true : below ? false : d.currentLevel;
         if (newLevel == d.currentLevel) {
             ++d.heldSamples;
             continue;
@@ -1087,25 +1119,10 @@ bool CassetteDevice::loadWavTape(const std::string& path)
 
     PcmDurationDecoder decoded;
     decoded.sampleRate = sampleRate;
-    // DC pass. Cheap (one linear scan, no allocation) and it is what lets a
-    // real line-in rip decode: the sound card's bias moves the whole
-    // waveform off zero, and past |bias| > amplitude a sign-only comparator
-    // finds no crossings at all. The threshold is clamped
-    // inside the signal's own band, so a clean file keeps threshold ≈ 0 and
-    // decodes exactly as before.
-    {
-        long double sum = 0.0L;
-        float peak = 0.0f;
-        for (size_t f = 0; f < frames; ++f) {
-            const float v = frameSample(f);
-            sum += v;
-            peak = std::max(peak, std::fabs(v));
-        }
-        if (frames > 0) {
-            const float mean = static_cast<float>(sum / static_cast<long double>(frames));
-            const float limit = peak * 0.9f;
-            decoded.threshold = std::max(-limit, std::min(limit, mean));
-        }
+    {   // Level pass: DC threshold + Schmitt band (PcmLevelStats).
+        PcmLevelStats stats;
+        for (size_t f = 0; f < frames; ++f) stats.add(frameSample(f));
+        stats.calibrate(decoded);
     }
     decoded.durations.reserve(std::min<size_t>(frames / 16,
                                                kMaxRecordedTransitions));
@@ -1227,6 +1244,25 @@ bool CassetteDevice::loadMiniaudioTape(const std::string& path)
     uint64_t totalFrames = 0;
     PcmDurationDecoder decoded;
     decoded.sampleRate = sampleRate;
+    // Level pass, as loadWavTape's, then back to the start (re-opened when
+    // the decoder cannot seek).
+    {
+        PcmLevelStats stats;
+        while (stats.n < kMaxFrames) {
+            ma_uint64 got = 0;
+            const ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, kChunkFrames, &got);
+            for (ma_uint64 i = 0; i < got; ++i) stats.add(std::isfinite(chunk[i]) ? chunk[i] : 0.0f);
+            if (got == 0 || r != MA_SUCCESS) break;
+        }
+        if (ma_decoder_seek_to_pcm_frame(&decoder, 0) != MA_SUCCESS) {
+            ma_decoder_uninit(&decoder);
+            if (ma_decoder_init_file(path.c_str(), &cfg, &decoder) != MA_SUCCESS) {
+                lastError = "Cannot decode audio file: " + path;
+                return false;
+            }
+        }
+        stats.calibrate(decoded);
+    }
     while (totalFrames < kMaxFrames) {
         ma_uint64 framesRead = 0;
         const ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, kChunkFrames, &framesRead);

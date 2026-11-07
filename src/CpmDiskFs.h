@@ -119,6 +119,10 @@ public:
     /// Takes an image already in memory. False (with `error`) unless it is
     /// exactly 143 360 bytes and its directory looks like CP/M's.
     bool open(std::vector<uint8_t> image, SectorOrder order, std::string& error);
+    /// The order the directory was found in, and whether it is not the one
+    /// `open` was given (the extension's).
+    SectorOrder order() const { return order_; }
+    bool orderOverridden() const { return orderOverridden_; }
 
     const std::vector<uint8_t>& image() const { return image_; }
     /// The same 140 KB laid out in another order — `.cpm` → `.dsk` for a
@@ -167,6 +171,7 @@ private:
 
     std::vector<uint8_t> image_;
     SectorOrder order_ = SectorOrder::Dos;
+    bool orderOverridden_ = false;
     uint8_t dir_[kDirEntries][32] = {};
 };
 

@@ -149,6 +149,8 @@ SmartPortCard::setUnit(size_t idx, std::unique_ptr<SmartPortUnit> u)
 void SmartPortCard::onReset()
 {
     activeUnit_ = 0;
+    activeAbsent_ = false;
+    chainStale_ = true;          // the bus reset; INIT numbers the chain again
     selectedBlock_.fill(0);
     streamOffset_.fill(0);
     readCacheValid_.fill(false);
@@ -245,6 +247,8 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         }
     }
     activeUnit_ = std::min<size_t>(data[3], kMaxUnits - 1);
+    activeAbsent_ = absentError_ = false;
+    chainStale_ = true;      // the restored machine's next access numbers it
     for (size_t u = nUnits; u < kMaxUnits; ++u) {
         selectedBlock_[u] = 0; streamOffset_[u] = 0;
         writeBufPrimed_[u] = false; ioError_[u] = false;
@@ -321,7 +325,7 @@ void SmartPortCard::noteAccess(SmartPortUnit* unit)
     // Access light BEFORE the sound early-out: `sound_` is optional (no
     // FloppySoundDevice on a headless run, and the user can disable the
     // samples), but the LED is not.
-    if (!unit) unit = units_[activeUnit_].get();
+    if (!unit && !activeAbsent_) unit = units_[activeUnit_].get();
     if (unit) unit->bumpActivity();
 
     if (!sound_) return;
@@ -338,7 +342,7 @@ void SmartPortCard::noteAccess(SmartPortUnit* unit)
     // (~tens of ms apart at native speed) land in the seek-rate band
     // and the user hears a continuous seek; isolated accesses sound
     // like a single click.
-    sound_->step(static_cast<int>(selectedBlock_[activeUnit_]),
+    sound_->step(activeAbsent_ ? 0 : static_cast<int>(selectedBlock_[activeUnit_]),
                  cpuCycleTotal_);
     lastAccessCycle_ = cpuCycleTotal_;
 }
@@ -352,7 +356,18 @@ uint8_t SmartPortCard::slotRomRead(uint8_t low8)
 
 int SmartPortCard::smartPortBusUnitCount() const
 {
-    return unitCount_;
+    return chainLength();
+}
+
+void SmartPortCard::ensureChain() const
+{
+    if (!chainStale_) return;
+    chainLen_ = 0;
+    const bool compact = compactsChain();
+    for (int b = 0; b < unitCount_ && static_cast<size_t>(b) < kMaxUnits; ++b)
+        if (!compact || units_[static_cast<size_t>(b)])
+            chain_[static_cast<size_t>(chainLen_++)] = b;
+    chainStale_ = false;
 }
 
 void SmartPortCard::setUnitCount(int n)
@@ -373,13 +388,16 @@ void SmartPortCard::setUnitCount(int n)
         if (activeUnit_ >= static_cast<size_t>(n)) spPushPages_ = 0;
     }
     unitCount_ = n;
+    chainStale_ = true;          // a rebuilt card: the next INIT sees it
 }
 
 pom2::SmartPortBusUnit* SmartPortCard::smartPortBusUnit(int index)
 {
-    if (index < 0 || static_cast<size_t>(index) >= kMaxUnits) return nullptr;
-    BusUnit& u = busUnits_[static_cast<size_t>(index)];
-    u.bind(this, static_cast<size_t>(index));
+    // `index` is the position on the cable; the bay behind it is the chain's.
+    const int bay = bayForChainNumber(index + 1);
+    if (bay < 0) return nullptr;
+    BusUnit& u = busUnits_[static_cast<size_t>(bay)];
+    u.bind(this, static_cast<size_t>(bay));
     return &u;
 }
 
@@ -419,8 +437,8 @@ bool SmartPortCard::BusUnit::writeBlock(uint32_t block, const uint8_t in[512])
 bool SmartPortCard::BusUnit::isUnidisk35() const
 {
     const SmartPortUnit* u = target();
-    // The unit object is the kind, media or not. A cleared bay (no object)
-    // is the card's default drive on this bus: a UniDisk with the door open.
+    // The unit object is the kind, media or not. A bay with none is not on
+    // the chain at all (chainLength; present() false), so it never asks.
     return !u || u->kindKey() == SmartPort35Unit::kKindKey;
 }
 
@@ -533,8 +551,13 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             // (8 since 2026-09-08, 2 before) let `LDA #3 / STA $C0n0` read and
             // COMMIT 512-byte blocks on a bay outside the count — outside
             // `bayCount()` too, so the Slot Manager could not even show it.
-            const size_t live = static_cast<size_t>(unitCount_ > 0 ? unitCount_ : 1);
-            const size_t u = static_cast<size_t>(v) % live;
+            // `v` is the chain position the ProDOS decode ($CD80) computed;
+            // the bay is the chain's (see chainLength). A position past the
+            // chain is no drive: the register path answers "no device".
+            const int bay = bayForChainNumber(static_cast<int>(v) + 1);
+            activeAbsent_ = bay < 0;
+            absentError_  = false;
+            const size_t u = activeAbsent_ ? 0 : static_cast<size_t>(bay);
             activeUnit_ = u;
             // A unit-select starts a fresh transfer: drop any half-streamed
             // write buffer / stale read cache / error so the next op is clean.
@@ -545,6 +568,7 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             break;
         }
         case 0x1: {                             // block LO of active unit
+            if (activeAbsent_) break;
             const size_t u = activeUnit_;
             selectedBlock_[u] = static_cast<uint16_t>(
                 (selectedBlock_[u] & 0xFF00u) | v);
@@ -555,6 +579,7 @@ void SmartPortCard::deviceSelectWrite(uint8_t low4, uint8_t v)
             break;
         }
         case 0x2: {                             // block HI of active unit
+            if (activeAbsent_) break;
             const size_t u = activeUnit_;
             selectedBlock_[u] = static_cast<uint16_t>(
                 (selectedBlock_[u] & 0x00FFu) |
@@ -595,6 +620,7 @@ void SmartPortCard::noteIoError(size_t u)
 
 uint8_t SmartPortCard::statusByte() const
 {
+    if (activeAbsent_) return static_cast<uint8_t>(0xC0 | (absentError_ ? 0x01 : 0x00));
     const SmartPortUnit* u = (activeUnit_ < static_cast<size_t>(unitCount_))
         ? units_[activeUnit_].get() : nullptr;
     uint8_t s = (u && guestLoaded(activeUnit_)) ? 0x00 : 0x80;
@@ -605,6 +631,7 @@ uint8_t SmartPortCard::statusByte() const
 
 uint8_t SmartPortCard::readDataByte()
 {
+    if (activeAbsent_) { absentError_ = true; return 0xFF; }   // no drive there
     const size_t u = activeUnit_;
     if (u >= static_cast<size_t>(unitCount_)) {
         noteIoError(u);
@@ -650,6 +677,7 @@ uint8_t SmartPortCard::readDataByte()
 
 void SmartPortCard::writeDataByte(uint8_t v)
 {
+    if (activeAbsent_) { absentError_ = true; return; }
     const size_t u = activeUnit_;
     if (u >= static_cast<size_t>(unitCount_)) {
         noteIoError(u);
@@ -1234,9 +1262,12 @@ uint8_t SmartPortCard::spExecute()
                      unsigned(spCollectN_), spCollect_[3], spCollect_[4],
                      spCollect_[5], spCollect_[6]);
 
+    // Chain number → bay (chainLength): a number past the chain, or a drive
+    // removed since the INIT that numbered it, is no device ($28).
+    auto bayOf = [&](uint8_t n) { return bayForChainNumber(n); };
     auto unitFor = [&](uint8_t n) -> SmartPortUnit* {
-        if (n == 0 || n > static_cast<uint8_t>(unitCount_)) return nullptr;
-        return units_[n - 1].get();
+        const int b = bayOf(n);
+        return b < 0 ? nullptr : units_[static_cast<size_t>(b)].get();
     };
 
     // What the host firmware decides before a packet reaches a drive, as the
@@ -1261,13 +1292,13 @@ uint8_t SmartPortCard::spExecute()
                 // a zero told an interrupt handler polling the chain that
                 // this card wanted service — then vendor $0000
                 // ("undetermined"), interface version, two reserved.
-                spResult_ = { static_cast<uint8_t>(unitCount_),
+                spResult_ = { static_cast<uint8_t>(chainLength()),
                               0x40, 0, 0, 0, 0, 0, 0 };
                 return ok();
             }
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);                 // no device connected
-            const bool     loaded = guestLoaded(unitNo - 1u);
+            const bool     loaded = guestLoaded(static_cast<size_t>(bayOf(unitNo)));
             const uint32_t blocks = loaded ? u->blockCount() : 0;
             const bool     is35   = u->kindKey() == SmartPort35Unit::kKindKey;
             // General status byte: bit7 block dev, bit6 write allowed,
@@ -1325,7 +1356,8 @@ uint8_t SmartPortCard::spExecute()
         case 0x02: {                                   // WRITE BLOCK
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
-            if (!guestLoaded(unitNo - 1u)) return fail(0x2F);   // device offline
+            const size_t idx = static_cast<size_t>(bayOf(unitNo));
+            if (!guestLoaded(idx)) return fail(0x2F);   // device offline
             const uint32_t block = static_cast<uint32_t>(spCollect_[5])
                                  | static_cast<uint32_t>(spCollect_[6]) << 8
                                  | static_cast<uint32_t>(spCollect_[7]) << 16;
@@ -1342,8 +1374,8 @@ uint8_t SmartPortCard::spExecute()
             if (u->isWriteProtected()) return fail(0x2B);
             // Arm the legacy reg-0x3 streaming machinery: the 6502 pushes
             // 512 bytes, writeDataByte commits at wrap + latches ioError_.
-            const size_t idx = unitNo - 1;
             activeUnit_          = idx;
+            activeAbsent_        = false;
             selectedBlock_[idx]  = static_cast<uint16_t>(block);
             streamOffset_[idx]   = 0;
             writeBufPrimed_[idx] = false;
@@ -1356,7 +1388,7 @@ uint8_t SmartPortCard::spExecute()
             // (pp. 7-14, 7-17): one parameter, the unit number.
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
-            if (!guestLoaded(unitNo - 1u)) return fail(0x2F);
+            if (!guestLoaded(static_cast<size_t>(bayOf(unitNo)))) return fail(0x2F);
             if (u->isWriteProtected()) return fail(0x2B);
             return ok();  // block devices "need only lay down marks" — no-op
         }
@@ -1377,20 +1409,17 @@ uint8_t SmartPortCard::spExecute()
             // download/EXECUTE is not modelled (SmartPortBusDevice agrees).
             const uint8_t code = spCollect_[5];
             if (unitNo == 0) return fail(code <= 0x01 ? 0x1F : 0x21);
-            if (unitNo > static_cast<uint8_t>(unitCount_)) return fail(0x28);
-            // A unit number in range whose BAY holds no unit object is still
-            // no device: STATUS, READ, WRITE and FORMAT all answer $28 for it
-            // (and so does SmartPortBusDevice::serveWriteData over the wire),
-            // while CONTROL used to answer $00 — so a chain enumerator that
-            // probes with CONTROL code $00, the cheapest presence probe there
-            // is, was told units 2..8 of a default 8-bay card exist and then
-            // got $28 the moment it asked them anything.
+            // A number with no drive behind it is no device, for CONTROL as
+            // for STATUS, READ, WRITE and FORMAT: a chain enumerator probing
+            // with CONTROL code $00 (the cheapest presence probe) must not be
+            // told a drive exists that then answers $28 to anything else.
             SmartPortUnit* u = unitFor(unitNo);
             if (!u) return fail(0x28);
             if (code != 0x00 && code != 0x04) return fail(0x21);
-            if (code == 0x04 && guestLoaded(unitNo - 1u) &&
+            const int bay = bayOf(unitNo);
+            if (code == 0x04 && guestLoaded(static_cast<size_t>(bay)) &&
                 u->kindKey() == SmartPort35Unit::kKindKey)
-                requestGuestEject(unitNo - 1, unitMediaId(u));
+                requestGuestEject(bay, unitMediaId(u));
             return ok();
         }
         case 0x05:                                     // INIT

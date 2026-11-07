@@ -203,6 +203,7 @@ void AlsCpmCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     constexpr std::size_t kLen = 4 + 1 + 22 + 10 + 8 + 0x10000;
     if (len < kLen || std::memcmp(data, kMagic, 4) != 0)
         return;
+    busPos_ = busCarry_ = 0.0;   // the Z80's bus phase: not in the blob (ApplicardCard's note)
     const uint8_t* p = data + 4;
     const uint8_t flags = *p++;
     enabled_      = (flags & 1) != 0;

@@ -181,6 +181,7 @@ void SoftCardIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
     const std::size_t n = p[3 + pom2::kZ80StateBlobBytes];
     if (n > kMaxReplay || len < kFixed + n + 0x10000)
         return;
+    tOwed_ = 0.0;   // the Z80's debt: not in the blob (ApplicardCard's note)
     const uint8_t flags = *p++;
     booting_     = (flags & 1) != 0;
     toZ80Full_   = (flags & 2) != 0;

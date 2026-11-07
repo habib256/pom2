@@ -14,6 +14,12 @@
 #   stage_data.sh --verify <dest>   assert the payload is there and nothing
 #                                   from the deny list leaked in
 #   stage_data.sh --self-test       stage into a temp dir, verify, clean up
+#   stage_data.sh --verify-wasm-sources
+#                                   every `wasm` entry exists, non-empty, in
+#                                   the source tree (the release WASM job,
+#                                   before the build: CMake drops a missing
+#                                   --preload-file, so the browser bundle
+#                                   could ship without its //c + //e ROMs)
 #   stage_data.sh --list [kind]     print manifest entries (dir|file|wasm|deny|
 #                                   all|parsed — `parsed` is CMake's dump format)
 #
@@ -48,6 +54,24 @@ while read -r kind src dst _rest; do
         *)    die "manifest: unknown entry kind '$kind' (dir|file|wasm|deny|denyglob)" ;;
     esac
 done < <(sed 's/#.*//' "$MANIFEST")
+
+# ─── --verify-wasm-sources ──────────────────────────────────────────────────
+# The one payload kind no parser validated (PKG-3, bug hunt 2026-11-01).
+if [ "${1:-}" = "--verify-wasm-sources" ]; then
+    bad=0
+    for x in "${WASM[@]:-}"; do
+        [ -n "$x" ] || continue
+        p="$REPO_ROOT/$x"
+        if [ -d "$p" ]; then
+            [ -n "$(ls -A "$p" 2>/dev/null)" ] || { printf 'EMPTY   %s\n' "$x" >&2; bad=1; }
+        elif [ ! -s "$p" ]; then
+            printf 'MISSING %s\n' "$x" >&2; bad=1
+        fi
+    done
+    [ "$bad" -eq 0 ] || die "a wasm payload entry is absent: the browser bundle would ship without it"
+    printf 'stage_data: every wasm entry is present\n'
+    exit 0
+fi
 
 # ─── --list ─────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "--list" ]; then

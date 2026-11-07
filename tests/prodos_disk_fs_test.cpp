@@ -549,6 +549,98 @@ void testRefusals()
     }
 }
 
+// TN #25's storage types: a $5 extended file (an IIgs System disk is full
+// of them) and a $4 Pascal area. `verify` refused both, so one such entry
+// blocked every put / rm / mkdir on the volume (bug hunt 2026-11-07). Their
+// blocks are now claimed: writes go round them, never over them.
+void setBit(std::vector<uint8_t>& img, uint32_t b, bool free)
+{
+    uint8_t& byte = img[6 * 512u + (b >> 3)];
+    const uint8_t bit = static_cast<uint8_t>(0x80u >> (b & 7));
+    byte = free ? static_cast<uint8_t>(byte | bit) : static_cast<uint8_t>(byte & ~bit);
+}
+
+void testNonStandardStorage()
+{
+    std::string err;
+    {   // $5: the key block's two mini-entries, data fork at +$000 and
+        // resource fork at +$100, each a standard fork.
+        ProDOSDisk d;
+        if (!openOk(d, fresh(280))) return;
+        CHECK(d.writeFile("XFILE", 0x06, 0, pattern(512, 1), err));   // its key becomes the extended key
+        CHECK(d.writeFile("DFORK", 0x06, 0, pattern(600, 2), err));   // sapling: index + 2
+        CHECK(d.writeFile("RFORK", 0x06, 0, pattern(100, 3), err));   // seedling
+        auto img = d.image();
+        const long x = rawEntry(img, 2, "XFILE"), df = rawEntry(img, 2, "DFORK"),
+                   rf = rawEntry(img, 2, "RFORK");
+        CHECK(x > 0 && df > 0 && rf > 0);
+        if (x <= 0 || df <= 0 || rf <= 0) return;
+        const uint32_t xkey = rd16(img, std::size_t(x) + 0x11);
+        uint8_t* xk = &img[xkey * 512u];
+        std::fill(xk, xk + 512, uint8_t(0));
+        xk[0x000] = 0x2; wr16(img, xkey * 512u + 0x001, rd16(img, std::size_t(df) + 0x11));
+        wr16(img, xkey * 512u + 0x003, 3); wr16(img, xkey * 512u + 0x005, 600);
+        xk[0x100] = 0x1; wr16(img, xkey * 512u + 0x101, rd16(img, std::size_t(rf) + 0x11));
+        wr16(img, xkey * 512u + 0x103, 1); wr16(img, xkey * 512u + 0x105, 100);
+        img[std::size_t(x)] = static_cast<uint8_t>(0x50 | (img[std::size_t(x)] & 0x0F));
+        wr16(img, std::size_t(x) + 0x13, 5);
+        img[std::size_t(df)] = 0;                         // the forks are no files of their own
+        img[std::size_t(rf)] = 0;
+        wr16(img, 2 * 512 + 0x25, 1);                     // file_count
+        ProDOSDisk g;
+        if (!openOk(g, img)) return;
+        CHECK_MSG(g.verify(err), err);
+        const uint32_t free0 = g.freeBlocks();
+        CHECK_MSG(g.writeFile("NEW", 0x06, 0, pattern(3000, 4), err), err);
+        CHECK_MSG(g.verify(err), err);                    // NEW took none of the forks' blocks
+        CHECK(g.makeDirectory("SUB", err));
+        std::vector<uint8_t> v;
+        CHECK(!g.readFile("XFILE", v, nullptr, err));     // two forks: not one file's bytes
+        const auto before = g.image();
+        CHECK(!g.writeFile("XFILE", 0x06, 0, pattern(5, 5), err));   // replacing would drop a fork
+        CHECK(g.image() == before);
+        const uint32_t free1 = g.freeBlocks();
+        CHECK_MSG(g.removeFile("XFILE", err), err);       // key + index + 2 data + resource
+        CHECK(g.freeBlocks() == free1 + 5);
+        CHECK_MSG(g.verify(err), err);
+        CHECK(free1 < free0);
+        // A mini-entry that is no standard fork is still refused.
+        img[xkey * 512u + 0x100] = 0x7;
+        ProDOSDisk h;
+        if (openOk(h, img)) {
+            CHECK(!h.verify(err) && err.find("resource fork") != std::string::npos);
+            CHECK(!h.writeFile("NEW", 0x06, 0, pattern(5, 5), err));
+        }
+    }
+    {   // $4: key_pointer = TOTAL_BLOCKS - 2, blocks_used = 2.
+        ProDOSDisk d;
+        if (!openOk(d, fresh(280))) return;
+        CHECK(d.writeFile("PASCAL.AREA", 0xEF, 0, pattern(10, 1), err));
+        auto img = d.image();
+        const long a = rawEntry(img, 2, "PASCAL.AREA");
+        CHECK(a > 0);
+        if (a <= 0) return;
+        setBit(img, rd16(img, std::size_t(a) + 0x11), true);   // the seedling's block back
+        img[std::size_t(a)] = static_cast<uint8_t>(0x40 | (img[std::size_t(a)] & 0x0F));
+        wr16(img, std::size_t(a) + 0x11, 278);
+        wr16(img, std::size_t(a) + 0x13, 2);
+        setBit(img, 278, false);
+        setBit(img, 279, false);
+        ProDOSDisk g;
+        if (!openOk(g, img)) return;
+        CHECK_MSG(g.verify(err), err);
+        CHECK_MSG(g.writeFile("NEW", 0x06, 0, pattern(1000, 2), err), err);
+        CHECK_MSG(g.verify(err), err);
+        const auto before = g.image();
+        CHECK(!g.removeFile("PASCAL.AREA", err));         // PPM's, not ours
+        CHECK(g.image() == before);
+        // An area the bit map does not hold is inconsistent: refused.
+        setBit(img, 279, true);
+        ProDOSDisk h;
+        if (openOk(h, img)) CHECK(!h.verify(err));
+    }
+}
+
 // --------------------------------------------------- 5. ProDOSVolume volumes
 
 void testBuiltVolume()
@@ -970,6 +1062,7 @@ int main()
     testWriteRead();
     testDirectories();
     testRefusals();
+    testNonStandardStorage();
     testBuiltVolume();
     testHostile();
     testSectorOrder();

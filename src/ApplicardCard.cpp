@@ -138,6 +138,11 @@ void ApplicardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (len < 4 + 3 + pom2::kZ80StateBlobBytes + ram_.size()
         || std::memcmp(data, kMagic, 4) != 0)
         return;
+    // Not in the blob: the Z80's sub-instruction debt to the 6502. Restarting
+    // it at zero is exact to within one instruction, and the SAME for every
+    // restore of one frame, so a replay is repeatable (as WorkstationCard
+    // does; bug hunt 2026-11-07 — the live debt survived the restore).
+    tOwed_ = 0.0;
     const uint8_t* p = data + 4;
     const uint8_t flags = *p++;
     romOn_       = (flags & 1) != 0;

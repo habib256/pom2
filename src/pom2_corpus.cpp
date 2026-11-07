@@ -550,9 +550,14 @@ int main(int argc, char** argv)
 
     if (opt.bless) {
         pom2::corpus::Expectations next = expected;
-        int recorded = 0;
+        int recorded = 0, setupFailed = 0;
         for (const TitleResult& r : results) {
             if (r.outcome == Outcome::Skip) continue;
+            // A title whose SETUP failed (copy, ROM, mount, boot) ran no
+            // check: keep what it had recorded instead of erasing it, and do
+            // not exit 0 (bug hunt 2026-11-07 — it used to erase the lines,
+            // print "Blessed" and succeed).
+            if (r.outcome == Outcome::Fail && r.checks.empty()) { ++setupFailed; continue; }
             for (auto it = next.begin(); it != next.end();)
                 it = it->first.first == r.title->id ? next.erase(it) : std::next(it);
             for (const CheckResult& c : r.checks) {
@@ -564,6 +569,11 @@ int main(int argc, char** argv)
         out << pom2::corpus::formatExpectations(next);
         if (!out) { std::fprintf(stderr, "cannot write %s\n", opt.expected.string().c_str()); return 2; }
         std::printf("Blessed: %d check(s) recorded into %s\n", recorded, opt.expected.string().c_str());
+        if (setupFailed) {
+            std::fprintf(stderr, "%d title(s) failed their setup and kept their old lines\n",
+                         setupFailed);
+            return 1;
+        }
     } else {
         std::printf("%s\n", rate);
     }

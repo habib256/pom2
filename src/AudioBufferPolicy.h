@@ -93,6 +93,21 @@ struct AudioBufferPolicy
                    : kMaxDesktopPeriodFrames;
     }
 
+    /// The rung a device opens on, from what an earlier load remembered.
+    /// A LEARNED rung below the default is stale (the default moved up) and
+    /// is dropped; a PINNED one is the user's choice and is kept, even below
+    /// the default — the clamp used to drop it too, so a pin below the
+    /// browser's 2048 was accepted, shown, persisted and never applied
+    /// ("(512 frames at the next load)" on every load; WASM-5).
+    static constexpr std::uint32_t startRung(Platform p, std::uint32_t remembered,
+                                             bool pinned)
+    {
+        const std::uint32_t def = defaultPeriodFrames(p);
+        if (!isRung(remembered, p)) return def;
+        if (pinned) return remembered;
+        return remembered > def ? remembered : def;
+    }
+
     /// A rung of the ladder: a power of two within the platform's range.
     static constexpr bool isRung(std::uint32_t frames, Platform p)
     {

@@ -148,7 +148,7 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         // the live values for anything the section does not carry).
         sect.push_back(display.an0 ? 1 : 0);
         sect.push_back(an1 ? 1 : 0);
-        sect.push_back(an2 ? 1 : 0);
+        sect.push_back(display.an2 ? 1 : 0);
         // Appended 2026-09-06, same grow-at-the-end rule:
         //  * `vblWasActive` is the EDGE detector behind the //c VBL IRQ.
         //    It defaults to true, so a restore taken while the beam was
@@ -315,6 +315,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
     paddles_.setLatchCycle(getU64());
     {
         std::lock_guard<std::mutex> lk(stateMutex);
+        // AN0 and AN2 are not in these nine bytes: the annunciator trailer
+        // below restores them, and a blob older than it keeps the live ones.
+        ds.an0 = display.an0;
+        ds.an2 = display.an2;
         display = ds;
         // The restored clock invalidates the beam-racing event log:
         // events stamped with pre-restore (possibly FUTURE, on rewind)
@@ -438,7 +442,7 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
                 std::lock_guard<std::mutex> lk(stateMutex);   // AN0 is in DisplayState:
                 display.an0 = displayAtFrameStart_.an0 = publishedFrameStart_.an0 = p[4] != 0;
                 an1 = p[5] != 0;
-                an2 = p[6] != 0;
+                display.an2 = displayAtFrameStart_.an2 = publishedFrameStart_.an2 = p[6] != 0;
             }
             // VBL edge detector + the //c $C800 window latch (see
             // appendSnapshotState). Older blobs stop before these.

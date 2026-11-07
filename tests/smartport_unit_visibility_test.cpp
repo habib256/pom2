@@ -109,9 +109,13 @@ int main()
               "SmartPort STATUS unit 3 is $28 no device connected");
 
         // 5. Raise the count and the same bay becomes reachable — the gate
-        //    is the count, not the bay index.
+        //    is the count, not the bay index. Bays 0-2 hold no drive, so on
+        //    the cable the drive in bay 3 is the FIRST one: chain position 0
+        //    (SmartPortCard::chainLength, 2026-11-07).
         card.setUnitCount(4);
-        card.deviceSelectWrite(0x0, 3);
+        check(card.chainLength() == 1 && card.bayForChainNumber(1) == 3,
+              "one drive on the chain, the one in bay 3");
+        card.deviceSelectWrite(0x0, 0);
         check(card.activeUnit() == 3, "with unitCount() = 4, bay 3 selects");
         card.deviceSelectWrite(0x1, 0x00);
         card.deviceSelectWrite(0x2, 0x00);
@@ -123,8 +127,47 @@ int main()
 
         // Do not write the scratch image back on teardown.
         card.setBayWriteBack(3, false);
-        rc = g_failures ? 1 : 0;
     }
+
+    // ── The chain, as the silicon has it (2026-11-07) ────────────────────
+    // [B] Apple IIc Technical Reference, SmartPort; [C] the Liron INIT scan
+    // ($CE00): only the drives on the cable are numbered, 1, 2, 3… in cable
+    // order, and the numbers hold until the next bus reset. A bay with no
+    // drive is not on the cable: the drive behind it takes the next number.
+    {
+        const std::string a = makeImage(dir, "DRIVE-A0");
+        const std::string c = makeImage(dir, "DRIVE-C0");
+        pom2::SmartPortCard card(5);
+        card.setUnitCount(4);
+        const std::string k35(pom2::SmartPort35Unit::kKindKey);
+        std::string err;
+        card.setBayType(0, k35); check(card.mountBay(0, a, err), "mount bay 0");
+        card.setBayType(2, k35); check(card.mountBay(2, c, err), "mount bay 2");
+        card.setBayWriteBack(0, false); card.setBayWriteBack(2, false);
+        auto status = [&](uint8_t unit) {
+            card.deviceSelectWrite(0xE, 0);                 // BEGIN
+            const uint8_t call[] = { 0x00, 0x03, unit, 0x00, 0x00, 0x00 };
+            for (uint8_t b : call) card.deviceSelectWrite(0x7, b);
+            return card.deviceSelectRead(0xE);
+        };
+        // Bay 1 is a hole: two drives, numbered 1 and 2, no $28 in between.
+        check(card.chainLength() == 2, "two drives on the cable, not three");
+        check(card.bayForChainNumber(1) == 0 && card.bayForChainNumber(2) == 2,
+              "the drive in bay 2 is unit 2 — the hole takes no number");
+        check(status(2) == 0x00, "STATUS unit 2 answers for the drive in bay 2");
+        check(status(3) == 0x28, "there is no unit 3");
+        // Unplug the first drive mid-session: nothing renumbers before the
+        // next bus reset — its number goes quiet ($28), the others stay.
+        card.setBayType(0, std::string());
+        check(status(1) == 0x28, "an unplugged drive no longer answers");
+        check(card.bayForChainNumber(2) == 2, "unit 2 is still bay 2 until the reset");
+        // The reset's INIT numbers the cable again.
+        card.onReset();
+        check(card.chainLength() == 1 && card.bayForChainNumber(1) == 2,
+              "after a reset the remaining drive is unit 1");
+        check(status(1) == 0x00, "…and answers as unit 1");
+    }
+    rc = g_failures ? 1 : 0;
     fs::remove_all(dir, ec);
     std::printf(g_failures ? "\nFAILED (%d)\n" : "\nPASS\n", g_failures);
     return rc;

@@ -1233,6 +1233,15 @@ void MainWindow::dumpScreenToPrinter()
                              : pom2::EpsonDumpCmd::K60;
         pom2::buildScreenDumpEpson(px.data(), w, h, w,
                                    printerDumpOptions_, stream, cmd);
+    } else if (head.lineage != pom2::IwLineage::CItoh) {
+        // The Diablo 630 and PostScript heads have no bit-image grammar to
+        // build a dump in. An ImageWriter stream fed to them printed its
+        // digits and column bytes as text, ejected a sheet per $0C byte into
+        // the history, and left a top margin ~4" down for the next job
+        // (Diablo `ESC T` per band; bug hunt 2026-11-07).
+        tapeStatusMessage = "Print screen: this printer head has no graphics mode";
+        tapeStatusUntil = lastFrameTime + 4.0;
+        return;
     } else {
         // Put the pitch back once the picture is out: the dump selects its
         // own for the graphics density, and pitch persists into the next job.

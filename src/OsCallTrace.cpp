@@ -417,6 +417,33 @@ void OsCallTrace::spStep(uint16_t pc)
     spPending_.pop_back();
 }
 
+// ── Re-offers ────────────────────────────────────────────────────────────
+
+void OsCallTrace::offer6502(uint16_t pc)
+{
+    const Offer o{pc, cpu_ ? cpu_->getStackPointer() : uint8_t(0)};
+    if (offered_ && offer_.pc == o.pc && offer_.sp == o.sp) return;   // a stop, then Run
+    offered_ = true;
+    offer_ = o;
+    // Back from the handler at the same pc AND stack level. The SP is what
+    // tells it from the handler calling the same routine (COUT) itself.
+    if (!interrupted_.empty() && interrupted_.back().pc == o.pc && interrupted_.back().sp == o.sp) {
+        interrupted_.pop_back();
+        return;
+    }
+    on6502Instruction(pc);
+}
+
+void OsCallTrace::interrupted6502()
+{
+    if (!offered_) return;
+    // Bounded: a handler that never returns (a reset, an error unwind)
+    // leaves its entry behind.
+    if (interrupted_.size() >= 16) interrupted_.erase(interrupted_.begin());
+    interrupted_.push_back(offer_);
+    offered_ = false;
+}
+
 // ── Apple Pascal BIOS ────────────────────────────────────────────────────
 
 const char* OsCallTrace::pascalName(uint8_t offset)

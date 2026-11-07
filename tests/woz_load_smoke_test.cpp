@@ -432,6 +432,35 @@ bool testWoz2BlockCountPastEof() {
     return true;
 }
 
+// [B] WOZ 2 reference, INFO +38 boot_sector_format: 0 = unknown, 1 = 16-sector,
+// 2 = 13-sector, 3 = both. Only 0 is sniffed now; 1 and 3 used to be sniffed
+// like 0, so a 5-and-3 prologue on track 0 sent a disk that says "16-sector"
+// to the 13-sector PROM (bug hunt 2026-11-01 round 4).
+bool testWoz2BootSectorFormat() {
+    std::vector<uint8_t> bitData(512, 0xFF);
+    bitData[0] = 0xD5; bitData[1] = 0xAA; bitData[2] = 0xB5;   // 5-and-3 prologue
+    const struct { uint8_t fmt; bool want13; } cases[] = {
+        {0, true}, {1, false}, {2, true}, {3, false}, {9, true}};
+    for (const auto& c : cases) {
+        auto woz = buildMinimalWoz2(bitData, 32);
+        woz[20 + 38] = c.fmt;                     // INFO payload at 20
+        const std::string path = writeTempFile(woz, "bootfmt");
+        DiskImage img;
+        if (!img.loadFile(path)) {
+            std::printf("FAIL: boot_sector_format %u: %s\n", c.fmt,
+                        img.getLastError().c_str());
+            return false;
+        }
+        if (img.is13Sector() != c.want13) {
+            std::printf("FAIL: boot_sector_format %u routed to %d sectors\n",
+                        c.fmt, img.sectorsPerTrack());
+            return false;
+        }
+    }
+    std::printf("[ OK ] WOZ2 boot_sector_format 1/3 are authoritative, 0 is sniffed\n");
+    return true;
+}
+
 bool testWozRejectsNonWoz() {
     // Build a buffer that has the magic prefix but garbage in the
     // sentinel bytes. Should fail cleanly.
@@ -460,6 +489,7 @@ int main() {
     ok &= testWozRejectsNonWoz();
     ok &= testWoz2TmapIndexOutOfRange();
     ok &= testWoz2BlockCountPastEof();
+    ok &= testWoz2BootSectorFormat();
     if (ok) {
         std::printf("woz_load_smoke OK\n");
         return 0;

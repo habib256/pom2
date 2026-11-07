@@ -126,6 +126,20 @@ void testSnapshot()
     b.loadSnapshotState(blob.data(), blob.size());
     CHECK(b.z80().getState().pc == a.z80().getState().pc);
     CHECK(b.deviceSelectRead(0) == 0x5A);
+
+    // One blob restored into two cards with different pasts runs the same
+    // from there: the Z80's sub-instruction debt (tOwed_) is not in the blob
+    // and used to survive the restore, so a replay was not repeatable
+    // (bug hunt 2026-11-07).
+    ApplicardCard c, d;
+    c.loadRom(testRom()); d.loadRom(testRom());
+    c.advanceCycles(7); d.advanceCycles(13);     // different histories
+    c.loadSnapshotState(blob.data(), blob.size());
+    d.loadSnapshotState(blob.data(), blob.size());
+    for (int i = 0; i < 50; ++i) { c.advanceCycles(3); d.advanceCycles(3); }
+    std::vector<uint8_t> bc, bd;
+    c.appendSnapshotState(bc); d.appendSnapshotState(bd);
+    CHECK(bc == bd);
 }
 
 uint16_t textRowBase(int row) { return uint16_t(0x0400 + (row % 8) * 0x80 + (row / 8) * 0x28); }

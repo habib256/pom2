@@ -944,6 +944,49 @@ void testWriteBlockBumpsMediaEpoch()
     std::puts("  WRITE BLOCK bumps the media-write epoch: OK");
 }
 
+// ProDOS mirrors SmartPort units 3 and 4 into another slot and calls this
+// card's driver with that slot in $43. The decode took bit 7 only, so a
+// mirrored S3,D1 READ / FORMAT went to unit 1 (bug hunt 2026-11-07; the same
+// fix SmartPortCard took on 2026-10-25, after the Liron's $CC1E).
+void testProDosUnitByteKeepsTheSlotBits()
+{
+    Machine m;
+    m.startLink();
+    std::atomic<int> lastUnit{-1};
+    FakePeer peer(m.port, [&](const std::vector<uint8_t>& req, std::vector<uint8_t>& wire) {
+        if (req.size() >= 4 && (req[1] == kSpReadBlock || req[1] == kSpFormat))
+            lastUnit.store(req[3]);
+        standardHandler(req, wire);
+    });
+    assert(waitFor([&] { return m.card->link().deviceCount() == 2; }));
+    const uint16_t prodosEntry = kSlotRom + m.mem.memRead(kSlotRom + 0xFF);
+    auto call = [&](uint8_t cmd, uint8_t unitByte) {
+        lastUnit.store(-1);
+        m.mem.memWrite(0x42, cmd);
+        m.mem.memWrite(0x43, unitByte);
+        m.mem.memWrite(0x44, 0x00); m.mem.memWrite(0x45, 0x40);   // buffer $4000
+        m.mem.memWrite(0x46, 0x02); m.mem.memWrite(0x47, 0x00);   // block 2
+        m.mem.memWrite(0x0300, 0x20);                              // JSR entry
+        m.mem.memWrite(0x0301, static_cast<uint8_t>(prodosEntry & 0xFF));
+        m.mem.memWrite(0x0302, static_cast<uint8_t>(prodosEntry >> 8));
+        m.mem.memWrite(0x0303, 0x4C);                              // JMP $0303
+        m.mem.memWrite(0x0304, 0x03); m.mem.memWrite(0x0305, 0x03);
+        m.cpu->setProgramCounter(0x0300);
+        m.run(20000);
+        assert(m.cpu->getProgramCounter() == 0x0303);
+        return lastUnit.load();
+    };
+    constexpr uint8_t own = kSlot << 4;                 // $70: S7
+    assert(call(0x01, own) == 1);
+    assert(call(0x01, own | 0x80) == 2);
+    assert(call(0x01, 0x30) == 3 && "S3,D1: the slot-7 card's unit 3");
+    assert(call(0x01, 0xB0) == 4 && "S3,D2: unit 4");
+    assert(call(0x03, 0x30) == 3 && "a mirrored FORMAT must not reach unit 1");
+    peer.stop();
+    m.card->transportLink().stop();
+    std::puts("  ProDOS $43 slot bits pick units 3/4: OK");
+}
+
 } // namespace
 
 int main()
@@ -966,6 +1009,7 @@ int main()
     testSnapshotBlob();
     testPrinterTap();
     testWriteBlockBumpsMediaEpoch();
+    testProDosUnitByteKeepsTheSlotBits();
 
     std::puts("fujinet_card: OK");
     return 0;

@@ -343,7 +343,11 @@ int commandInfo(const std::vector<std::string>& args)
 int commandRecover(const std::vector<std::string>& args, bool force)
 {
     if (args.size() != 2) { usage(); return 1; }
-    if (fs::path(args[0]) == fs::path(args[1])) {
+    // By FILE, not by spelling: `a.woz` and `./a.woz` (or a hard link, or a
+    // symlink) are the same file, and --force would have overwritten it.
+    std::error_code sameEc;
+    if (fs::path(args[0]) == fs::path(args[1]) ||
+        (fs::exists(args[1], sameEc) && fs::equivalent(args[0], args[1], sameEc))) {
         // The damaged file is the evidence; it is never the output.
         std::fprintf(stderr, "recover writes a COPY: give another name for the healthy file\n");
         return 1;

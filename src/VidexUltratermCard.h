@@ -27,10 +27,17 @@
 // Bus map (a2ultraterm.cpp:250-375):
 //   $C0n0 W   6845 address latch           $C0n1 R/W  the selected register
 //   $C0n2 R/W control 1 (MCP)              $C0n3 R/W  control 2 (attributes)
-//             A0-A1 decode the register; while MCP bit 4 is 0 (Videoterm
-//             mode) EVERY access also selects the 512-byte VRAM block from
-//             A2-A3, as on the Videoterm. (MAME reads only $C0n1-3 exactly;
-//             izapple2 decodes A0-A1 — modelled: the four repeat.)
+//             $C0n0-$C0n3 decode EXACTLY, reads and writes alike; while MCP
+//             bit 4 is 0 (Videoterm mode) EVERY access also selects the
+//             512-byte VRAM block from A2-A3, as on the Videoterm.
+//             [D] MAME a2ultraterm.cpp:258-315 @ b2a182f0b7: `switch (offset)`
+//             cases 1-3 / 0-3, other reads $FF. [D] izapple2
+//             cardVidexUltraterm.go mirrors A0-A1 in both directions.
+//             [F] The real card's decode is unknown; settled by a schematic
+//             (DEVSEL / RS wiring) or a card. POM2 had read-mirror +
+//             exact-write after VID-2, a hybrid neither emulator has; it
+//             follows MAME on both sides since 2026-11-07, which keeps
+//             `STA $C0n6` (a Videoterm-mode block select) off control 1.
 //   $CnXX  R  firmware[slot × $100 + low byte]: the low 2 KB holds one copy
 //             per slot. Writes ignored (they claim $C800).
 //   $C800-$CBFF R  firmware[$800 + offset]

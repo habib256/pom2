@@ -963,9 +963,13 @@ void FujiNetCard::handleProDosCall()
     const uint16_t buffer   = readGuest16(kZpBufLo);
     const uint16_t block    = readGuest16(kZpBlkLo);
 
-    // ProDOS addresses two drives per slot; map them onto the first two
-    // SmartPort units, which is what every FujiNet configuration expects.
-    const uint8_t unit = (unitByte & 0x80) ? 2 : 1;
+    // $43 is DSSS0000 and its slot bits matter: ProDOS mirrors SmartPort
+    // units 3 and 4 into another slot and calls THIS driver for them. [C] The
+    // Liron's decode ($CC1E, roms/liron.rom), as SmartPortCard's ($CD80):
+    // unit = 1 + D + 2 x (S2 of $43 differs from this slot's). Bit 7 alone
+    // sent a mirrored S2,D1 READ/WRITE/FORMAT to unit 1.
+    const uint8_t unit = static_cast<uint8_t>(1 + ((unitByte & 0x80) ? 1 : 0)
+                       + (((unitByte ^ (slot_ << 4)) & 0x40) ? 2 : 0));
 
     const bool connected = link().isConnected();
     if (!connected) { finish(kSpNoDevice); return; }

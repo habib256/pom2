@@ -31,8 +31,10 @@
 //                 a 0/0 pair is a hole (random-access text files).
 //
 // File payloads, as `readFile`/`writeFile` see them: T = text up to the
-// first $00 (bytes with the high bit set, $8D for a return); I and A = a
-// two-byte length, then the program; B = address and length, then the data.
+// first $00 (bytes with the high bit set, $8D for a return) — or, for a
+// random-access file whose records follow that $00, up to the last non-zero
+// byte; I and A = a two-byte length, then the program; B = address and
+// length, then the data.
 
 #ifndef POM2_DOS33_DISK_FS_H
 #define POM2_DOS33_DISK_FS_H
@@ -69,8 +71,12 @@ class Dos33Disk
 {
 public:
     /// False (with `error`) unless the image is 143 360 bytes and its VTOC
-    /// reads as a 35-track, 16-sector DOS 3.3 volume.
+    /// reads as a 35-track, 16-sector DOS 3.3 volume. `order` is the
+    /// extension's guess: the catalog chain overrules it when it reads as
+    /// INIT laid it out in the other order only (`orderOverridden`).
     bool open(std::vector<uint8_t> image, SectorOrder order, std::string& error);
+    SectorOrder order() const { return order_; }
+    bool orderOverridden() const { return orderOverridden_; }
     const std::vector<uint8_t>& image() const { return image_; }
     int volume() const;
     int freeSectors() const;
@@ -93,7 +99,8 @@ public:
                    std::string& error);
     bool removeFile(const std::string& name, std::string& error);
 
-    /// Host text → DOS text: '\n' (and "\r\n") → $8D, every byte | $80.
+    /// Host text → DOS text: '\n' (and "\r\n") → $8D, every byte | $80
+    /// but $00, which stays the records' padding.
     static std::vector<uint8_t> textToDos(const std::vector<uint8_t>& host);
     /// DOS text → host text: high bit off, $0D → '\n'.
     static std::vector<uint8_t> textFromDos(const std::vector<uint8_t>& dos);
@@ -112,6 +119,7 @@ private:
 
     std::vector<uint8_t> image_;
     SectorOrder order_ = SectorOrder::Dos;
+    bool orderOverridden_ = false;
 };
 
 } // namespace pom2::dos33fs

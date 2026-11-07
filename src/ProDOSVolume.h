@@ -150,7 +150,10 @@ struct ProDOSDecodeResult {
 /// same mount. They stay preserved whatever their mtime, and every file this
 /// pass preserves is added. Without it the caller's restamp (see
 /// `completedAt`) moved past the user's edit, and the NEXT flush reverted it
-/// to the mount-time copy (bug hunt 2026-09-17).
+/// to the mount-time copy (bug hunt 2026-09-17). With `mountNames` it also
+/// carries, under NUL-led keys, what each served entry last synced (bytes
+/// hash, lock): bytes or a lock the guest has not changed since never
+/// overrule the host file (bug hunt 2026-11-07).
 ProDOSDecodeResult decodeVolumeToFolder(
     const std::vector<std::uint8_t>& image,
     const std::string& hostFolder,

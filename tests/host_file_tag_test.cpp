@@ -198,10 +198,26 @@ void testDos33LoadAddressSurvives()
     CHECK(dos33TypeFromProdos(ptype, dosType) && dosType == 0x02);
 }
 
+// A guest file whose name starts with a period leaves escaped AND tagged —
+// `pom2_prodos get ROOT/.PROFILE` wrote the host dotfile `.PROFILE#040000`
+// (bug hunt 2026-11-07); a TXT would otherwise take `.txt`, and an untagged
+// escape does not count on the way back.
+void testGuestDotName()
+{
+    CHECK(hostNameForGuestFile(".PROFILE", 0x04, 0x0000) == "%2ePROFILE#040000");
+    CHECK(hostNameForGuestFile(".X", 0x06, 0x2000) == "%2eX#062000");
+    CHECK(hostNameForGuestFile("NOTES", 0x04, 0x0000) == hostNameForType("NOTES", 0x04, 0x0000));
+    std::string back = hostNameForGuestFile(".PROFILE", 0x04, 0);
+    uint8_t t = 0; uint16_t a = 0xFFFF;
+    CHECK(stripHostFileTag(back, t, a) && t == 0x04 && a == 0);
+    CHECK(stripHostLeadingDotEscape(back) && back == "PROFILE");
+}
+
 } // namespace
 
 int main()
 {
+    testGuestDotName();
     testTagRoundTrip();
     testComposeParses();
     testPrefersExtensions();

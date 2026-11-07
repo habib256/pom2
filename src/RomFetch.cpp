@@ -443,9 +443,24 @@ bool downloadUrl(const std::string& url, const fs::path& dest, std::string& err,
     fs::create_directories(dest.parent_path(), ec);
     const fs::path tmp = dest.string() + ".part";
     fs::remove(tmp, ec);
-    if (!runHostTool(curl, curlDownloadArgs(url, tmp.string()),
-                     {}, 120000, err, cancelled)) {
+    // Our own cap as well as curl's: before curl 8.4 `--max-filesize` does
+    // nothing when the server announces no size, and the 30 ms poll is where
+    // it can be enforced (bug hunt 2026-11-07, as MediaSource's download).
+    bool tooBig = false;
+    auto oversized = [&] {
+        std::error_code sec;
+        const auto n = fs::file_size(tmp, sec);
+        return !sec && n > kMaxUnpackedZipBytes;
+    };
+    const RomFetchCancel stop = [&] {
+        if (oversized()) { tooBig = true; return true; }
+        return cancelled && cancelled();
+    };
+    const bool ran = runHostTool(curl, curlDownloadArgs(url, tmp.string()), {}, 120000, err, stop);
+    const bool big = tooBig || oversized();
+    if (!ran || big) {
         fs::remove(tmp, ec);
+        if (big) { err = "the file is larger than any ROM: " + url; return false; }
         // "/usr/bin/curl exited 56" told the user nothing. With `-f` an HTTP
         // status >= 400 is exit 22 — or 56 over HTTP/2: archive.org's dark
         // item answers 403, which curl 8 reports as "(56) … returned error".

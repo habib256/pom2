@@ -27,6 +27,7 @@
 #include "CffaCard.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "ProbeOutDir.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -135,7 +136,9 @@ int main(int argc, char** argv) {
     disp.render(mem);
     if (const uint32_t* px = disp.pixels()) {
         const int w = disp.width(), h = disp.height();
-        if (FILE* f = std::fopen("/tmp/cffa_boot.ppm", "wb")) {
+        // Under pom2test::probeOutDir(), not a fixed /tmp (tools/check_probe_outputs.sh).
+        const std::string ppm = pom2test::probeOutDir() + "/cffa_boot.ppm";
+        if (FILE* f = std::fopen(ppm.c_str(), "wb")) {
             std::fprintf(f, "P6\n%d %d\n255\n", w, h);
             for (int i = 0; i < w * h; ++i) {
                 const uint32_t p = px[i];
@@ -146,7 +149,7 @@ int main(int argc, char** argv) {
                 std::fwrite(rgb, 1, 3, f);
             }
             std::fclose(f);
-            std::printf("wrote /tmp/cffa_boot.ppm\n");
+            std::printf("wrote %s\n", ppm.c_str());
         }
     }
     return 0;

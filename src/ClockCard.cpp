@@ -813,6 +813,14 @@ void ClockCard::appendSnapshotState(std::vector<uint8_t>& out) const
     const uint64_t held = static_cast<uint64_t>(heldTime_);
     for (int i = 0; i < 8; ++i)
         out.push_back(static_cast<uint8_t>(held >> (8 * i)));
+    // Second optional tail (2026-11-07): DATA_OUT's free-running pulse — its
+    // level at mode entry and the cycles since. Without it a rewind or a
+    // session restarted the 1 Hz / 0.5 Hz square wave at the restore, and a
+    // guest polling DATA_OUT in REGISTER_HOLD saw another timeline than the
+    // one recorded (bug hunt 2026-11-01 round 4).
+    out.push_back(dataOutStart_ ? 1 : 0);
+    for (int i = 0; i < 8; ++i)
+        out.push_back(static_cast<uint8_t>(dataOutCycles_ >> (8 * i)));
 }
 
 void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
@@ -820,6 +828,12 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     if (data == nullptr || len < kClkSnapBytes ||
         std::memcmp(data, kClkSnapMagic, 4) != 0)
         return;   // foreign blob — a different card sat in this slot
+    // Three formats, by exact length: 36, 45 (+hold tail), 54 (+DATA_OUT
+    // phase); longer is a 54 with junk behind. A length between two of them
+    // is a torn blob, refused whole — read as the shorter format it mixed
+    // its head with the live tail (card_snapshot_contract P3).
+    if (len != kClkSnapBytes && len != kClkSnapBytes + 9 && len < kClkSnapBytes + 18)
+        return;
     size_t p = 4;
     auto get32 = [&]() -> int32_t {
         uint32_t v = 0;
@@ -874,6 +888,14 @@ void ClockCard::loadSnapshotState(const uint8_t* data, std::size_t len)
         uint64_t held = 0;
         for (int i = 0; i < 8; ++i) held |= static_cast<uint64_t>(data[p++]) << (8 * i);
         heldTime_ = static_cast<std::time_t>(held);
+    }
+    dataOutStart_  = false;
+    dataOutCycles_ = 0;
+    if (len >= kClkSnapBytes + 18) {          // optional DATA_OUT phase tail
+        dataOutStart_ = data[p++] != 0;
+        uint64_t cyc = 0;
+        for (int i = 0; i < 8; ++i) cyc |= static_cast<uint64_t>(data[p++]) << (8 * i);
+        dataOutCycles_ = cyc;
     }
     // Re-drive the slot IRQ line from the restored request flip-flop:
     // assertIrq() owns the wire-OR bookkeeping in SlotPeripheral.

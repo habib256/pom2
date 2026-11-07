@@ -70,7 +70,9 @@ its outer RTS returns; other opcodes take a plain step. It decodes the current
 CPU mapping without reading soft switches. Inline ProDOS/SmartPort arguments,
 recursion and stack wrap are handled by following the return frame rather
 than assuming the next instruction is at PC+3. **Step Out** follows the current
-subroutine's return. These shortcuts are handled while the debugger panel is
+subroutine's return — or, inside an IRQ/NMI/BRK handler, its RTI; an
+interrupt taken during the step opens a nested frame, so its RTI does not end
+the step. These shortcuts are handled while the debugger panel is
 open. **Run To Cursor** uses the selected disassembly instruction and bank.
 
 A breakpoint stops before its instruction executes. Resuming with **Run**, the

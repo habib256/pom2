@@ -192,6 +192,14 @@ std::string hostEscapeLeadingDot(const std::string& name)
     return "%2e" + name.substr(name.empty() ? 0 : 1);
 }
 
+std::string hostNameForGuestFile(const std::string& name, std::uint8_t type,
+                                 std::uint16_t aux)
+{
+    if (name.size() > 1 && name.front() == '.')
+        return hostEscapeLeadingDot(name) + hostFileTag(type, aux);
+    return hostNameForType(name, type, aux);
+}
+
 bool stripHostLeadingDotEscape(std::string& hostName)
 {
     if (hostName.size() < 4 || hostName[0] != '%' || hostName[1] != '2' ||

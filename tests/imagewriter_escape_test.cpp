@@ -347,9 +347,32 @@ void testTabCancelAndPageFloor()
     std::printf("  ok: ESC D NUL cancels tabs; a page must hold one line\n");
 }
 
+// Data streams the parser swallows whole cost no mechanism time: a custom
+// font download's $0C columns, an ESC/P tab list (bug hunt 2026-11-07). Each
+// $0C used to be charged a form-feed slew, holding a Grappler+'s BUSY.
+void testSwallowedDataCostsNothing()
+{
+    auto drain = [](pom2::IwModel m, std::vector<uint8_t> b) {
+        ImageWriter iw(72);
+        iw.setModel(m);
+        iw.setSpeed(ImageWriter::Speed::Draft);
+        iw.queueBytes(b.data(), b.size());
+        double t = 0.0;
+        while (iw.busy() && t < 20.0) { iw.tick(0.001); t += 0.001; }
+        return t;
+    };
+    assert(drain(pom2::IwModel::ImageWriterII,
+                 { 0x1B, '-', 0x1B, 'I', 'A', 'E', 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x04, 'X' }) < 0.5 &&
+           "custom-font columns were charged form feeds");
+    assert(drain(pom2::IwModel::EpsonFX80, { 0x1B, 'B', 12, 0, 'X' }) < 0.5 &&
+           "an ESC B list byte was charged a form feed");
+    std::printf("  ok: swallowed data streams cost no mechanism time\n");
+}
+
 int main()
 {
     testTabCancelAndPageFloor();
+    testSwallowedDataCostsNothing();
     // ── The Diablo 630 tab racks are BOUNDED ─────────────────────────────
     // `ESC 1` (horizontal) and `ESC -` (vertical) cost no mechanism time, so
     // the paced drain's only brake is kCatchUpBytes — ~8192 pushes per UI

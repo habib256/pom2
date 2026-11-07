@@ -361,7 +361,11 @@ If someone builds a reproduction it belongs there.
   the maintainer**, not a drive-by fix; WASM-1 and WASM-2 remove the two live
   aborts regardless. The cheap CI guard is a `grep -q "invoke_" wasm/POM2.js`
   in the wasm job.
-- **WASM-4 — `userDataDir()` has no Emscripten branch**, so F9 screenshots,
+- **WASM-4 — `userDataDir()` has no Emscripten branch** *(fixed 2026-11-07 for the
+  two outputs a visitor asks for: F9 screenshots and BASIC listings are
+  downloaded, and the listing no longer claims a copy; printouts history and
+  the media cache stay MEMFS — a cache, and a history the browser build
+  does not record)*, so F9 screenshots,
   saved BASIC listings, printouts and the media cache land on a MEMFS path
   outside the one IDBFS mount and vanish on reload, while the status bar
   reports a host path as though it had been written. Its sibling
@@ -369,13 +373,18 @@ If someone builds a reproduction it belongs there.
   claims "(and copied)" while emscripten's `glfwSetClipboardString` is a
   no-op — the visitor is told twice that something happened.
   `downloadBrowserFile()` already exists and none of these paths uses it.
-- **WASM-5 — pinning a device-buffer rung *below* the browser default is
+- **WASM-5** *(fixed 2026-11-07: a pin is remembered as a pin,
+  `AudioBufferPolicy::startRung`, pinned `audio_buffer_policy`)* **— pinning a device-buffer rung *below* the browser default is
   accepted, shown, persisted and ignored for ever.** The constructor discards
   a remembered rung that is not strictly larger than the platform default, a
   clamp written for a stale *learned* value and applied to an explicit *pin*;
   the panel then promises "(512 frames at the next load)" on every load,
   permanently.
-- **WASM-6 — `key_chord_policy`'s abort-stub scan has drifted from the pinned
+- **WASM-6** *(fixed 2026-11-07: the list is derived from libglfw.js and
+  re-checked against the pinned toolchain in the CI WASM job
+  (`tools/check_glfw_abort_stubs.sh`); the scan walks every TU of `src/` the
+  browser build compiles; `#if !defined(__EMSCRIPTEN__)` is read the right
+  way round)* **— `key_chord_policy`'s abort-stub scan has drifted from the pinned
   toolchain in both directions**: ~13 aborting GLFW entry points are missing
   from its list, three of the six it names are silent no-ops in emsdk 6.0.8,
   it covers 7 of ~540 files, it mishandles `#if !defined(__EMSCRIPTEN__)`
@@ -384,7 +393,8 @@ If someone builds a reproduction it belongs there.
   Deriving the list from `$EMSDK`'s `libglfw.js` at test time and scanning all
   of `src/` would make it catch that whole class.
 - **PKG-3 — a `wasm` manifest entry is the one payload kind no parser
-  validates.** `stage_data.sh` collects them without an existence check, CMake
+  validates.** *Fixed 2026-11-07: CMake warns on a missing preload, and the
+  release WASM job runs `stage_data.sh --verify-wasm-sources` before the build.* `stage_data.sh` collects them without an existence check, CMake
   drops a missing `--preload-file` with no diagnostic, and the release job's
   only WASM gate is `test -s` on four files plus a 100 MB ceiling — so the
   browser bundle can ship with its //c + //e ROMs silently absent and the
@@ -425,7 +435,8 @@ If someone builds a reproduction it belongs there.
   `$POM2_PROBE_OUT`. Both swallow a failed `fopen` and still print their
   success line. `ProbeOutDir.h` states the policy and the incident that
   produced it. One source-scan guard over `POM2_PROBE_TARGETS` covers both.
-- **CLI-5 — `--fujinet-slot N` alone is validated, recorded and silently
+- **CLI-5** *(fixed 2026-11-07: refused without `--fujinet` / `--fujinet-serial`)*
+  **— `--fujinet-slot N` alone is validated, recorded and silently
   ignored**: every consumer is gated on a transport that flag never sets. It is
   the one accepted-but-inert input in a parser that otherwise refuses every
   near-miss loudly, and it is exactly the flag someone reaches for when they
@@ -456,7 +467,7 @@ If someone builds a reproduction it belongs there.
   already carries a pipeline-independent decode (`hgrDecodeScanlineRgb`, pinned
   byte-identical to the display's) that the flood should use instead — which
   would also make `fillRegion` headless-testable. Failure *shape* unverified.
-- **PAINT-3 / PAINT-4** — the status bar prints an HGR-interleave address while
+- **PAINT-3 / PAINT-4** *(fixed 2026-11-07: the GR arm of both)* — the status bar prints an HGR-interleave address while
   editing a lo-res GR page (`$23D0` for a block that lives at `$07D0`), and the
   file browser highlights 8 KB files when loading a 1 KB GR page, so selecting
   the highlighted one loads the top-left of an HGR picture as lo-res nibbles.
@@ -634,7 +645,9 @@ Highest first. Full detail in the agents' reports; the short form:
   `M6502.cpp`'s own comment asserts. MAME's `reset_w`, read in full, never
   touches its IRQ mask. (Same root cause as round 2's CPU-2.)
 - **The ESC/P `ESC D NUL`, Diablo bottom-margin, WOZ `boot_sector_format`,
-  FLUX `block_count` bound and TMAP 0..159 range** findings *(the last two
+  FLUX `block_count` bound and TMAP 0..159 range** findings *(all five fixed
+  2026-11-07; `boot_sector_format` 1 and 3 are now authoritative, only 0 is
+  sniffed; of the last two
   fixed 2026-11-07: an index past the 160 TRK records is damage, and a
   record whose blocks run past TRKS or the file is read when its data is all
   there, with its write capacity capped — FLUX and bit-cell alike; pinned `woz_load_smoke`,
@@ -663,7 +676,8 @@ Highest first. Full detail in the agents' reports; the short form:
   true: it does not run in the shipped binaries, which is its design.* (`#ifndef NDEBUG`, and every documented build is Release
   or RelWithDebInfo), so the regression it exists to make loud would ship.
 - `ClockCard`'s free-running DATA_OUT pulse phase is not in the snapshot;
-  `IIcMouse`'s `releasedFor_` is not either; `~SlotBus` is `= default`, the one
+  `IIcMouse`'s `releasedFor_` is not either *(both added as optional tails
+  2026-11-07; old blobs still load)*; `~SlotBus` is `= default`, the one
   teardown path that skips `onUnplug()` *(deliberate, 2026-11-07: the CPU is
   destroyed first, so an `onUnplug()` there would reach a freed M6502; now
   said in `SlotBus.h`)*; window focus loss releases held keys
@@ -673,9 +687,9 @@ Highest first. Full detail in the agents' reports; the short form:
   `writeFlux` return silently, so a blank MOOF track could never be written —
   and aligning WOZ without the blank spread that to WOZ, caught by the
   2026-11-07 hunt; pinned `disk35_flux_write`)*; the MacBinary envelope
-  is stripped only by the 5.25" loader *(still open 2026-11-07: a wrapped
-  3.5" image is refused on its size, never mis-read; stripping it needs the
-  envelope written back on save, as `DiskImage` does for 5.25")*; `lle_vs_hle.md` calls four firmware
+  is stripped only by the 5.25" loader *(fixed 2026-11-07: `MacBinary.h` is
+  shared, and a wrapped 3.5" image mounts read-only — re-wrapping on save is
+  not done)*; `lle_vs_hle.md` calls four firmware
   dumps "in-repo" when the repo tracks none; the LLE/HLE panel has six rows the
   Markdown master table does not; the ProDOS block-device signature is cited to
   a manual that predates ProDOS by four years (it is **ProDOS 8 TN #20**).

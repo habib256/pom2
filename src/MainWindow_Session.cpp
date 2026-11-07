@@ -55,11 +55,12 @@
 #include "PrinterSoundDevice.h"
 #include "Pom2Theme.h"
 #include "ProDOSHardDiskCard.h"
+#include "SessionMachine.h"
+#include "SessionSettings.h"
 #include "Settings.h"
 #include "SettingsList.h"
 #include "SlotConfigurationCoordinator.h"
 #include "StorageCoordinator.h"
-#include "SuperSerialCard.h"
 #include "SystemProfile.h"
 #include "Voxel3DRenderer.h"
 
@@ -206,45 +207,17 @@ void MainWindow::persistSession(bool flushMedia)
         settings->setBool(key + "_writeback", pom2::persistedWriteBack(cffa->isWriteBackEnabled()));
     }
 
-    // Per-slot persistence so the //c's two SSC ports (printer sl1 +
-    // modem sl2) each keep their own port / listener / raw-mode state.
-    // Legacy global keys (`ssc_listening`, `ssc_port`, `ssc_raw_mode`)
-    // are mirrored to the primary SSC for backwards-compat with older
-    // settings files and the AI control path.
-    for (auto* ssc : serialCards()) {
-        if (!ssc) continue;
-        const std::string sk = "_slot" + std::to_string(ssc->getSlot());
-        settings->setBool("ssc_listening" + sk, ssc->isListening());
-        settings->setInt ("ssc_port"      + sk, ssc->getPort());
-        settings->setBool("ssc_raw_mode"  + sk, ssc->rawMode());
-        settings->setBool("vsdrive_enabled" + sk, ssc->vsDriveActive());
-        if (ssc->vsDriveActive()) {
-            for (int drive = 0; drive < 2; ++drive) {
-                settings->setString("vsdrive_path" + std::to_string(drive + 1) + sk,
-                                    ssc->vsDrivePath(drive));
-                settings->setBool("vsdrive_read_only" + std::to_string(drive + 1) + sk,
-                                  ssc->vsDriveReadOnly(drive));
-            }
-        }
-        settings->setBool("ssc_printer_tap" + sk, ssc->printerTap());
-        settings->setString("ssc_cable" + sk,
-                            SuperSerialCard::cableKey(ssc->cable()));
-        if (!ssc->builtInPort()) {
-            settings->setInt("ssc_dsw1" + sk, ssc->dipSwitch1());
-            settings->setInt("ssc_dsw2" + sk, ssc->dipSwitch2());
-        }
-    }
-    if (primarySerialCard()) {
-        settings->setBool("ssc_listening", primarySerialCard()->isListening());
-        settings->setInt ("ssc_port",      primarySerialCard()->getPort());
-        settings->setBool("ssc_raw_mode",  primarySerialCard()->rawMode());
-    }
+    // Serial ports + No-Slot Clock: skipped on a loaded session's machine,
+    // whose values came from the session file, not from the user.
+    pom2::persistSerialAndClockSettings(*settings, controller->memory().slotBus(),
+                                        controller->noSlotClock(), sessionMachineActive_);
 
     // FujiNet relay — transport choice and its parameters, per slot.
     // Resolved from the live bus rather than an alias: the destructor runs
     // after controller->stop(), so this is a UI-thread topology read.
     pom2::FujiNetCard* fujiNet = nullptr;
-    for (int s = 1; s < SlotBus::kSlotCount && !fujiNet; ++s)
+    // Not on a session's machine: its relay is the session's, not the user's.
+    for (int s = 1; !sessionMachineActive_ && s < SlotBus::kSlotCount && !fujiNet; ++s)
         fujiNet = dynamic_cast<pom2::FujiNetCard*>(
             controller->memory().slotBus().peripheral(s));
     if (fujiNet) {
@@ -358,8 +331,6 @@ void MainWindow::persistSession(bool flushMedia)
     // No-ops when no Grappler+ is plugged, so the keys keep their previous
     // values rather than being overwritten with a default.
     printerCoordinator_->persistGrappler(*settings, *controller);
-    settings->setBool  ("nsclock_enable",  controller->noSlotClock().isEnabled());
-    settings->setInt   ("nsclock_slot",    controller->noSlotClock().slot());
     saveCrtSettings();
     settings->setBool  ("crt_effects_enabled", crtEffectsEnabled);
     settings->setBool  ("monitor_artwork", monitorArtworkEnabled);

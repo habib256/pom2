@@ -528,11 +528,42 @@ int main()
         assert(s.getString("dan2_firmware", "") == "eprom");
     }
 
+    // ── A path-list side file keeps folders that are not mounted right now ──
+    // The kiosk's ROM-folder list dropped every line that was not a directory
+    // on load and saved the result, so a cabinet started once without its USB
+    // stick forgot the stick's folder for good.
+    {
+        const fs::path list = home / "kiosk_romdirs.txt";
+        const fs::path stick = home / "stick_games";
+        fs::create_directories(stick);
+        const std::vector<std::string> dirs = { stick.string(), (home / "share").string() };
+        std::error_code ec;
+        assert(pom2::writePathListFile(list, dirs, ec));
+        fs::remove_all(stick);                         // the stick is unplugged
+        auto back = pom2::readPathListFile(list);
+        assert(back == dirs);                          // nothing pruned on read
+        back.push_back((home / "more").string());      // an Add saves the lot
+        assert(pom2::writePathListFile(list, back, ec));
+        assert(pom2::readPathListFile(list).size() == 3);
+        assert(pom2::readPathListFile(list)[0] == stick.string());
+        // CRLF from a hand edit is tolerated, blank lines are not entries.
+        { std::ofstream f(list, std::ios::trunc); f << "/a\r\n\n/b\n"; }
+        assert((pom2::readPathListFile(list) == std::vector<std::string>{"/a", "/b"}));
+        // Beside state.cfg; a dotfile when state.cfg is the bare $HOME fallback.
+        assert(pom2::settingsSidePath("/cfg/pom2/state.cfg", "kiosk_romdirs.txt")
+               == fs::path("/cfg/pom2/kiosk_romdirs.txt"));
+        assert(pom2::settingsSidePath("/home/u/.pom2_state", "kiosk_romdirs.txt")
+               == fs::path("/home/u/.pom2_kiosk_romdirs.txt"));
+        // Nothing left behind but the list itself (atomic write, no temp).
+        for (const auto& e : fs::directory_iterator(home))
+            assert(e.path().extension() != ".pom2tmp");
+    }
+
     fs::remove_all(home);
     std::printf("OK settings_roundtrip (#-in-value, newline, backslash, "
                 "boundary whitespace, int/float/bool round-trip, partial "
                 "parses rejected, joystick binding keys, config dir, "
                 "unchanged-save skip, list encoding, absent-vs-empty undo, "
-                "setting+rebuild revert)\n");
+                "setting+rebuild revert, path-list side file)\n");
     return 0;
 }

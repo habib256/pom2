@@ -9401,6 +9401,13 @@ set_tests_properties(debugger PROPERTIES TIMEOUT 30)
 # 2026-11-01): a cached zip that fails the manifest is downloaded once more
 # and replaced, and a good one is not re-fetched. Every CI job runs that
 # script first; a poisoned Actions cache used to fail every later run alike.
+# Probes write under pom2test::probeOutDir(), never a literal path (CLI-3/4).
+if(UNIX)
+    add_test(NAME probe_output_paths
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tools/check_probe_outputs.sh)
+    set_tests_properties(probe_output_paths PROPERTIES TIMEOUT 30)
+endif()
+
 find_program(POM2_PYTHON3 NAMES python3 python)
 if(POM2_PYTHON3)
     add_test(NAME fetch_test_media

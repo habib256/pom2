@@ -475,6 +475,7 @@ set(SOURCES
     src/FloppyEmuDevice.cpp
     src/FloppyEmu_ImGui.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/Pom2HgrPaintHost.cpp
     src/hgrpaint/Cam16.cpp
     src/hgrpaint/DhgrNtsc8Palette.cpp
@@ -698,6 +699,7 @@ set(POM2_FOUNDATION_HEADERS
     src/WozCompat.h
     src/AudioSource.h
     src/ByteIO.h
+    src/EventRing.h
     src/CharRomDump.h
     src/ChildProcess.h
     src/FloppySoundSink.h
@@ -832,6 +834,7 @@ set(POM2_FRONTEND_SOURCES
     src/Rewind_ImGui.cpp
     src/FloppyEmu_ImGui.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/Pom2HgrPaintHost.cpp
     src/hgrpaint/Cam16.cpp
     src/hgrpaint/DhgrNtsc8Palette.cpp
@@ -914,6 +917,7 @@ set(POM2_MEDIA_HEADERS
     src/AtomicFileReplace.h
     src/MediaAutosave.h
     src/TwoImg.h
+    src/MacBinary.h
 )
 
 set(POM2_MEDIA_SOURCES
@@ -1090,6 +1094,7 @@ set(HEADERS
     src/Z80StateBlob.h
     src/SoftCardZ80.h
     src/ByteIO.h
+    src/EventRing.h
     src/Memory.h
     src/Debugger.h
     src/Debugger_ImGui.h
@@ -1186,6 +1191,7 @@ set(HEADERS
     src/ProDOSVolume.h
     src/Logger.h
     src/Settings.h
+    src/SessionSettings.h
     src/SettingRebuild.h
     src/SettingsList.h
     src/PersistentFs.h
@@ -1224,6 +1230,7 @@ set(HEADERS
     src/StatusLed.h
     src/SuperSerialCard.h
     src/ThreadGuard.h
+    src/MacBinary.h
 )
 
 # Strict warnings on POM2 first-party sources only. Vendored Dear ImGui
@@ -1492,6 +1499,12 @@ if(EMSCRIPTEN)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}")
             list(APPEND POM2_WASM_LINK
                 "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}@/${_pom2_dst}")
+        else()
+            # Dropped from the bundle — say so (PKG-3, bug hunt 2026-11-01
+            # round 3: the //c + //e ROMs could ship silently absent). The
+            # release job fails earlier on it: stage_data.sh --verify-wasm-sources.
+            message(WARNING "WASM preload: ${_pom2_src} is missing and will not "
+                            "be in the browser bundle (run tools/fetch_test_media.py)")
         endif()
     endforeach()
     # emcc's --exclude-file applies to every --preload-file above. Same reason
@@ -1780,6 +1793,7 @@ set(POM2_CORE_SOURCES
     src/ResourcePaths.cpp
     src/FloppyEmuDevice.cpp
     src/Settings.cpp
+    src/SessionSettings.cpp
     src/SlotBus.cpp
     src/FourPlayCard.cpp
     src/SnesMaxCard.cpp

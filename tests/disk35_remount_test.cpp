@@ -36,6 +36,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -65,8 +66,54 @@ void writeBlankImage(const fs::path& po, char fill)
 
 }  // namespace
 
+// A MacBinary-wrapped 800K image (bug hunt 2026-11-01 round 4): only the
+// 5.25" loader unwrapped the envelope, and a 3.5" one was refused on its
+// size. It mounts now, read-only whatever the notch says — a save would write
+// the bare payload over the wrapped file — and an ordinary image whose first
+// bytes happen to look like a header is not stripped.
+void testMacBinaryWrapped35()
+{
+    const fs::path dir = fs::temp_directory_path() / "pom2_macbinary35";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::vector<uint8_t> payload(pom2::Disk35Image::kBytesPerImage);
+    for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = uint8_t(i * 7 + 3);
+    std::vector<uint8_t> wrapped(128, 0);
+    wrapped[1] = 5;                                     // name length
+    std::memcpy(wrapped.data() + 2, "DISK8", 5);        // [7] = 0 terminator
+    const uint32_t fork = static_cast<uint32_t>(payload.size());
+    wrapped[83] = uint8_t(fork >> 24); wrapped[84] = uint8_t(fork >> 16);
+    wrapped[85] = uint8_t(fork >> 8);  wrapped[86] = uint8_t(fork);
+    wrapped.insert(wrapped.end(), payload.begin(), payload.end());
+    const fs::path path = dir / "wrapped.po";
+    { std::ofstream f(path, std::ios::binary);
+      f.write(reinterpret_cast<const char*>(wrapped.data()), std::streamsize(wrapped.size())); }
+
+    pom2::Disk35Image img;
+    img.setWriteBackEnabled(true);
+    assert(img.loadFile(path.string()) && "a MacBinary-wrapped 800K image mounts");
+    assert(img.isMacBinaryWrapped() && img.isWriteProtected());
+    uint8_t block[512];
+    assert(img.readBlock(1, block));
+    assert(std::memcmp(block, payload.data() + 512, 512) == 0 && "the payload, not the header");
+    img.setHostWriteProtected(false);                   // the notch cannot lift it
+    assert(img.isWriteProtected());
+
+    // An ordinary 800K image is never stripped, whatever its first bytes.
+    std::vector<uint8_t> plain = payload;
+    plain[0] = 0; plain[1] = 5; plain[7] = 0; plain[122] = 0; plain[123] = 0;
+    const fs::path plainPath = dir / "plain.po";
+    { std::ofstream f(plainPath, std::ios::binary);
+      f.write(reinterpret_cast<const char*>(plain.data()), std::streamsize(plain.size())); }
+    pom2::Disk35Image img2;
+    assert(img2.loadFile(plainPath.string()) && !img2.isMacBinaryWrapped());
+    fs::remove_all(dir, ec);
+    std::printf("disk35: a MacBinary-wrapped image mounts read-only: OK\n");
+}
+
 int main()
 {
+    testMacBinaryWrapped35();
     const fs::path dir = fs::temp_directory_path() / "pom2_disk35_remount";
     std::error_code ec;
     fs::remove_all(dir, ec);

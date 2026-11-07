@@ -67,7 +67,11 @@ bool BrowserSessionStore::setEnabled(EmulationController& ctrl, bool enabled)
         std::error_code ec;
         std::filesystem::remove(markerPath_, ec);
         if (ec) { error_ = "Cannot disable browser resume: " + ec.message(); return false; }
-        enabled_ = false; suspended_ = false; error_.clear();
+        // Both generations go too: without the marker nothing reads them
+        // again, and each is up to 32 MiB of IndexedDB quota holding the
+        // user's disk images. Best effort — the marker is what disables.
+        for (const auto& path : sessionPaths_) std::filesystem::remove(path, ec);
+        enabled_ = false; suspended_ = false; error_.clear(); active_ = -1;
         markPersistentStateDirty();
         return true;
     }

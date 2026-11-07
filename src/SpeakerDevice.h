@@ -46,7 +46,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <deque>
+#include "EventRing.h"
 #include <mutex>
 #include <vector>
 
@@ -133,7 +133,7 @@ private:
     static constexpr int    kFilterLength   = 64;      // [D] MAME spkrdev.h:39 @ a2b6ba2d
 
     mutable std::mutex   eventMutex;
-    std::deque<uint64_t> events;
+    pom2::EventRing<uint64_t> events;   // EventRing.h: none allocates on the audio thread
     /// Guarded by `eventMutex`. `reset()` bumps it; `fillAudioBuffer`
     /// snapshots it under the lock it takes to drain the queue and compares
     /// under the lock it takes to push the leftovers back. Mirrors

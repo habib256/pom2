@@ -144,6 +144,14 @@ public:
     /// `cpuNow` — on the crystal's clock, so an accelerator stretches it
     /// (Memory::videoCycleAt). 0 when no Memory is behind the bus. Once a
     /// frame, not per instruction.
+    /// The CPU cycle of the bus access being made now (Memory::accessCycle,
+    /// the instruction's start plus its in-flight cycles); falls back to the
+    /// cycle source. For a card whose own clock must sample at the access.
+    void setAccessCycleSource(CycleSourceFn fn) { accessCycle_ = std::move(fn); }
+    uint64_t accessCycle() const
+    {
+        return accessCycle_ ? accessCycle_() : cycleSource_ ? cycleSource_() : 0;
+    }
     using VblEdgeFn = std::function<uint64_t(uint64_t cpuNow)>;
     void setVblEdgeSource(VblEdgeFn fn) { vblEdge_ = std::move(fn); }
     uint64_t nextVblCpuCycle(uint64_t cpuNow) const { return vblEdge_ ? vblEdge_(cpuNow) : 0; }
@@ -372,6 +380,7 @@ private:
     std::array<AccessLog, kSlotCount> accessLogs_{};
     CycleSourceFn cycleSource_;
     VblEdgeFn vblEdge_;
+    CycleSourceFn   accessCycle_;
     const uint64_t* cycleCounterRef_ = nullptr;
     const uint8_t*  auxRamRef_ = nullptr;
     void logAccess(int slot, uint16_t addr, uint8_t value, bool write)

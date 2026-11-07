@@ -71,7 +71,8 @@ public:
     static constexpr std::size_t kQueueLimit       = 4096;
     static constexpr uint16_t    kMaxMss           = 1460;
     static constexpr uint16_t    kDefaultMss       = 536;
-    static constexpr uint64_t    kRetransmitMs     = 1000;
+    static constexpr uint64_t    kRetransmitMs     = 1000;    // the first RTO; doubles
+    static constexpr uint64_t    kMaxRtoMs         = 60000;
     static constexpr int         kMaxRetransmits   = 8;
     static constexpr uint64_t    kConnectTimeoutMs = 30000;
 

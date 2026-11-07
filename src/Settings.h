@@ -44,6 +44,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace pom2 {
 
@@ -144,6 +145,26 @@ private:
     mutable bool unreadableOnDisk_ = false;
     bool setAsideUnreadable(const std::filesystem::path& path) const;
 };
+
+// ─── Side files: a list of paths beside state.cfg, one per line ──────────
+// (the kiosk's extra ROM folders live in one, since kiosk keeps state.cfg
+// read-only).
+
+/// `name` in the directory that holds `storePath`. When the store is the
+/// bare `$HOME/.pom2_state` fallback, the side file is a dotfile too
+/// (`.pom2_<name>`) rather than a stray file in the home folder.
+std::filesystem::path settingsSidePath(const std::string& storePath,
+                                       const std::string& name);
+
+/// Every non-empty line, whether or not the path exists NOW: a folder on a
+/// USB stick or a share that is not mounted yet is still the user's choice.
+/// A reader skips missing entries; only an explicit removal drops one.
+std::vector<std::string> readPathListFile(const std::filesystem::path& file);
+
+/// Atomic replace (temp + rename): a crash or a full disk leaves the old list.
+bool writePathListFile(const std::filesystem::path& file,
+                       const std::vector<std::string>& paths,
+                       std::error_code& ec);
 
 } // namespace pom2
 

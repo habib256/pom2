@@ -119,8 +119,18 @@ void testButtons()
     mem.setPaddleButton(0, false);
     assert((mem.memRead(kBtn0) & 0x80) == 0);
 
-    // Open-Apple is wired to PB0 ($C061), Solid-Apple to PB1 ($C062) — the
-    // two sources are OR'd with the paddle buttons on the same wire.
+    // A ][ / ][+ (this Memory's default) has no Apple keys: host Alt must not
+    // press its fire buttons (bug hunt 2026-11-07).
+    mem.setOpenAppleKey(true);
+    mem.setSolidAppleKey(true);
+    assert((mem.memRead(kBtn0) & 0x80) == 0 && "no Open-Apple on a ][+");
+    assert((mem.memRead(kBtn1) & 0x80) == 0 && "no Solid-Apple on a ][+");
+    mem.setOpenAppleKey(false);
+    mem.setSolidAppleKey(false);
+
+    // On a //e, Open-Apple is wired to PB0 ($C061), Solid-Apple to PB1
+    // ($C062) — OR'd with the paddle buttons on the same wire.
+    mem.setIIEMode(true);
     mem.setOpenAppleKey(true);
     assert((mem.memRead(kBtn0) & 0x80) != 0);
     assert((mem.memRead(kBtn1) & 0x80) == 0);

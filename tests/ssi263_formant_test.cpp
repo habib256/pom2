@@ -137,6 +137,27 @@ int main()
 
     // ── The formant voice is made of it ────────────────────────────────
     Ssi263::setVoice(Ssi263::Voice::Formant);
+    // A chip restored from a snapshot and primed through
+    // prepareTimedPlayback() — what both cards do before every SSI write —
+    // speaks at the snapshot's pitch, not the fresh object's (bug hunt
+    // 2026-11-07: that prime skipped the inflection registers, ~31 Hz).
+    {
+        Ssi263 a;
+        program(a, kAH, 120.0);
+        std::vector<uint8_t> blob;
+        a.appendSnapshot(blob);
+        Ssi263 b;
+        b.loadSnapshot(blob.data(), blob.size());
+        b.prepareTimedPlayback();
+        std::vector<float> v(22050, 0.0f);
+        const double cps = 1022727.0 / 44100.0;
+        for (int i = 0; i < 22050; i += 256)
+            b.fillAudioTimed(v.data() + i, std::min(256, 22050 - i), 44100, i * cps, cps);
+        const double got = pitchOf(v, 44100);
+        if (std::fabs(got - 120.0) > 120.0 * 0.03)
+            std::printf("  restored + primed: heard %.1f Hz, want 120\n", got);
+        CHECK(std::fabs(got - 120.0) <= 120.0 * 0.03);
+    }
     for (double want : { 90.0, 120.0, 180.0, 240.0 }) {
         Ssi263 chip;
         program(chip, kAH, want);

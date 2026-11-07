@@ -70,6 +70,7 @@ Memory::Memory()
     // `memReadSlow`'s $Cxxx dispatch, never the fast bus (PERFORMANCE §§ 8.2/8.5).
     slots.setFloatingBusSource([this]() { return floatingBus(); });
     slots.setCycleSource([this]() { return getCycleCounter(); });
+    slots.setAccessCycleSource([this]() { return accessCycle(); });
     slots.setVblEdgeSource([this](uint64_t now) { return nextVblCpuCycle(now); });
     slots.setCycleCounterRef(&cycleCounter);
     slots.setAuxRamRef(aux.data());   // VidHD's SHR source; stable (RamWorks memcpys INTO aux)
@@ -687,6 +688,11 @@ void Memory::resetSoftSwitches(bool warm)
     display = DisplayState{};
     // Ctrl-Reset clears 80STORE/80COL/ALTCHR/PAGE2/HIRES/AN0-3: TEXT and
     // MIXED survive, DHGR/AN3 does NOT (Sather IIe p. 7-3; DEV § Soft switches).
+    // AN3 low with DHGR off is a pair no switch makes, but it lives a few
+    // instructions only: [C] every //e and //c RESET handler throws $C05F
+    // (AN3 high, DHIRES off) — enhanced //e $C2B0 via $FA62's GOTOCX,
+    // unenhanced $C234, //c and //c+ $FA75 — so a ROM reset always ends
+    // where Le Chat Mauve's `an3Prev = true` assumes (bug hunt 2026-11-07).
     if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; }
     // A reset wipes the beam-racing timeline: drop the logged events (stale
     // ones would paint ghost segments) and resync the frame-start snapshots.
@@ -736,8 +742,8 @@ void Memory::resetSoftSwitches(bool warm)
     // The comment here used to claim upstream did the same —
     // caught by `docs/audits/parite-apple2e-2026-11-01.md`.
     // It gates the IOU/mouse softswitches off until the firmware clears
-    // it via $C07F. Shared by IIe, IIc, IIc+ even though IIe ignores
-    // SET/CLR — the read at $C07E still returns the bit.
+    // it via $C07F. Shared by IIe, IIc, IIc+; a plain //e ignores SET/CLR
+    // and its $C07E read is the floating bus (RDIOUDIS is //c-class only).
     ioudis = true;
     // RamWorks III — MAME `a2eramworks3.cpp:65-68 device_reset` snaps
     // `m_bank = 0`, but that is a MACHINE reset: the reset key
@@ -760,8 +766,7 @@ void Memory::resetSoftSwitches(bool warm)
     // generator it is wired to the ROM's A12, so a stale AN2 left a
     // freshly-reset machine rendering the second 4 KB font
     // (`charRomBankOffset`). Same reason they are in the snapshot trailer.
-    an1 = false;   // (AN0 is display.an0, cleared with `display` above)
-    an2 = false;
+    an1 = false;   // (AN0 and AN2 are in `display`, cleared above)
     // reset_w keeps the latch, so the //c Plus ROM sees Esc held through
     // Ctrl-Reset ($FD82); power-on re-strobes a key held (Keyboard::powerOn).
     if (warm) keyboard_.cancelPaste(); else keyboard_.powerOn();
@@ -1110,7 +1115,12 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         switch ((low - 0x58) >> 1) {
             case 0: { std::lock_guard<std::mutex> lk(stateMutex); display.an0 = on; break; }
             case 1: an1 = on; break;
-            case 2: an2 = on; break;
+            case 2: {
+                std::lock_guard<std::mutex> lk(stateMutex);
+                display.an2 = on;
+                pushVideoEventLocked(VideoEventKind::An2, on);
+                break;
+            }
         }
         if (iieMode && !iicProfile_ && (low == 0x5A || low == 0x5B)) {
             // POM2 overlay: $C05A/B doubles as VBL IRQ mask in IIe.
@@ -1811,9 +1821,12 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
         // II/II+ have no internal slot-3/8 ROM, so the chip sits under
         // the Monitor ROM at $F800 instead. //e / //c-class hook the
         // NSC inside the INTCXROM/SLOTC3ROM branches at $C300 + $C800
-        // (where ProDOS 2.4 + GS-OS actually scan). Gate on
-        // !iieMode + LC-ROM-mapped so this exactly matches AppleWin's
-        // `!SW_HIGHRAM && !SW_WRITERAM` check.
+        // (where ProDOS 2.4 + GS-OS actually scan). Gate on !iieMode +
+        // ROM-mapped + INH released. NOT AppleWin's `!SW_HIGHRAM &&
+        // !SW_WRITERAM`: MF_WRITERAM is the LC's write-enable, set at
+        // reset, so AppleWin's clock is off after every reset until an even
+        // $C08x access; the ROM socket's chip-select does not depend on the
+        // LC's write-enable, and POM2 deliberately does not follow it.
         if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam && !inhRead_) {
             v = noSlotClock_->interceptRead(addr, v);
         }
@@ -1863,7 +1876,9 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
     // `apple2e.cpp:6281-6302`.
     if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
         uint8_t v;
-        if (iicProfile_->ioReadIWM(addr, cycleCounter, v)) {
+        // At the access's own bus cycle, as the Disk II takes it: the
+        // instruction start sampled 3-6 cycles (1.5-3 Sony cells) early.
+        if (iicProfile_->ioReadIWM(addr, accessCycle(), v)) {
             // Not the Disk II's while the hub routes to a 3.5" (= ioWriteIWM).
             if (!iicProfile_->servesExternalSmartPort() && !iicProfile_->iwmRoutedTo35())
                 (void)slots.deviceSelectRead(addr);
@@ -2142,7 +2157,11 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         // key with STA and never unlocked the clock with only the read
         // hook wired. Same gating as the read site (II+ Monitor-ROM
         // window, LC ROM mapped).
-        if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam) {
+        // INH removes the ROM socket's chip-select for writes too ([B] on a
+        // ][+ R/W does not reach the socket, INH does): a Saturn reading RAM
+        // fed every store to the clock's key matcher (bug hunt 2026-11-07).
+        if (noSlotClock_ && !iieMode && addr >= 0xF800 && !lcReadRam &&
+            !(lcInhibitor_ && (inhRead_ || lcInhibitor_->inhibitsWrite()))) {
             noSlotClock_->interceptWrite(addr);
         }
         languageCardWrite(addr, value);
@@ -2179,7 +2198,7 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         // sound + writeback gating).
         if (addr >= 0xC0E0 && addr <= 0xC0EF && iicProfile_) {
             // A write the external port claimed is not the Disk II's (flux!).
-            if (iicProfile_->ioWriteIWM(addr, value, cycleCounter)) return;
+            if (iicProfile_->ioWriteIWM(addr, value, accessCycle())) return;
         }
         // Le Chat Mauve Eve registers — mirror of the memRead path so the
         // toggle reacts to STA $C0B9 and friends, not just LDA. Same

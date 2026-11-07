@@ -269,8 +269,6 @@ private:
     // the card sees a continuous 8-bit counter (the MCU firmware computes
     // motion via wrap-corrected subtraction — see MouseCard::updateAxis).
     // Guarded by ctrl_->stateMutex() when written (same as the card read).
-    uint8_t mouseAccumX_ = 0;
-    uint8_t mouseAccumY_ = 0;
     bool    mouseBtn_    = false;
 
     void runWorker();

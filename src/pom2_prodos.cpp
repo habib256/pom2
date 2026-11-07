@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -59,7 +60,7 @@ constexpr uint8_t kTypeText = 0x04, kTypeInteger = 0xFA, kTypeApplesoft = 0xFC;
 void usage()
 {
     std::fprintf(stderr,
-        "Usage: pom2_prodos [-t TYPE] [-a AUX] [--raw] [--no-tokenize] IMAGE COMMAND [ARGS]\n"
+        "Usage: pom2_prodos [-t TYPE] [-a AUX] [--raw] [--no-tokenize] [--data-fork-only] IMAGE COMMAND [ARGS]\n"
         "\n"
         "IMAGE is a ProDOS volume: .po / .hdv (block order, any size) or a 140 KB\n"
         ".dsk / .do (DOS sector order).\n"
@@ -75,6 +76,8 @@ void usage()
         "  -a AUX                     put: aux type (a BIN's load address), hex\n"
         "  --raw                      get/put: no text conversion\n"
         "  --no-tokenize              put: keep an Applesoft TEXT listing as text\n"
+        "  --data-fork-only           put: store an AppleSingle's data fork and drop\n"
+        "                             its resource fork (refused otherwise)\n"
         "\n"
         "PATH is DIR/NAME from the volume directory. Without HOSTFILE, get names\n"
         "the file after its type — HELLO.bas, NOTES.txt, or GAME#062000 when no\n"
@@ -175,6 +178,7 @@ std::string dateText(uint16_t date)
 int main(int argc, char** argv)
 {
     bool raw = false, tokenize = true, typeGiven = false, auxGiven = false;
+    bool dataForkOnly = false;
     uint8_t typeArg = 0;
     long    auxArg  = 0;
     std::vector<std::string> args;
@@ -183,6 +187,7 @@ int main(int argc, char** argv)
         if (a == "-h" || a == "--help") { usage(); return 0; }
         if (a == "--raw") { raw = true; continue; }
         if (a == "--no-tokenize") { tokenize = false; continue; }
+        if (a == "--data-fork-only") { dataForkOnly = true; continue; }
         if (a == "-t" || a == "-a") {
             if (i + 1 >= argc) { usage(); return 1; }
             const std::string v = argv[++i];
@@ -226,6 +231,22 @@ int main(int argc, char** argv)
     if (!disk.open(std::move(bytes), error)) {
         std::fprintf(stderr, "%s: %s\n", imagePath.c_str(), error.c_str());
         return 1;
+    }
+    // What `put` and `mkdir` create is dated now, as ProDOS dates a file it
+    // creates; the library takes no clock of its own (ProDOSDiskFs.h). Left
+    // at 0 every file read "<NO DATE>" in a CATALOG (bug hunt 2026-11-07).
+    {
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        const bool ok = localtime_s(&local, &now) == 0;
+#else
+        const bool ok = localtime_r(&now, &local) != nullptr;
+#endif
+        if (ok)
+            disk.setTimestamp(pom2::prodosfs::packDate(local.tm_year + 1900, local.tm_mon + 1,
+                                                       local.tm_mday),
+                              pom2::prodosfs::packTime(local.tm_hour, local.tm_min));
     }
 
     // Say the destination cannot take a write BEFORE doing the work
@@ -318,10 +339,17 @@ int main(int argc, char** argv)
         // The host name carries the type and the aux, so a `put` of what
         // `get` wrote restores both (HostFileTag.h). A listing is text: it
         // is named for what it is, not for the program it came from.
+        // A guest name that starts with a period (A2osX's .PROFILE) never
+        // becomes a host dotfile: it leaves as `%2ePROFILE#040000`, the
+        // spelling the ProDOS host folder writes and `put` reads back
+        // (HostFileTag.h, the leading-dot escape).
+        const bool dotted = info.name.size() > 1 && info.name.front() == '.';
         std::string dst;
         if (args.size() == 4)   dst = args[3];
-        else if (cmd == "list") dst = info.name + ".txt";
-        else                    dst = pom2::hostNameForType(info.name, info.fileType, info.auxType);
+        else if (cmd == "list") dst = (dotted ? pom2::hostEscapeLeadingDot(info.name)
+                                              : info.name) + ".txt";
+        else                    dst = pom2::hostNameForGuestFile(info.name, info.fileType,
+                                                                 info.auxType);
         if (!writeHostFile(dst, out)) {
             std::fprintf(stderr, "%s: write failed\n", dst.c_str());
             return 1;
@@ -338,7 +366,8 @@ int main(int argc, char** argv)
             return 1;
         }
         pom2::ImportedFile imported;
-        if (!pom2::importHostFile(args[2], data, imported, error, tokenize && !typeGiven)) {
+        if (!pom2::importHostFile(args[2], data, imported, error, tokenize && !typeGiven,
+                                   dataForkOnly)) {
             std::fprintf(stderr, "%s: %s\n", args[2].c_str(), error.c_str());
             return 1;
         }

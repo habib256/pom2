@@ -30,7 +30,9 @@
 // The slots come from openMSX's TMS9918 tables, so the gap needed depends on
 // the mode and the beam (~2 cycles in VBlank or with the display off, more
 // during the active lines) rather than a fixed figure. Strict mode also
-// makes R1 bit 7 select 4 KB / 16 KB addressing: the card's 16 KB need it. Writes catch the raster up to the beam first and a
+// makes R1 bit 7 select the 4K / 16K DRAM mapping: all 16 KB stay reachable in
+// both, only rearranged ([B] TMS9918A Data Manual, R1; [D] openMSX
+// change4k8kMapping, TMS9918.cpp). Writes catch the raster up to the beam first and a
 // status read syncs the sprite scan to it (POM1's Étapes 0/1), with the
 // in-flight cycles of the CPU's current instruction.
 //

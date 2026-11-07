@@ -3783,7 +3783,7 @@ then drives three of them — `pom2_disk`, `pom2_dos33`, `pom2_prodos` (not `pom
 | `DiskBuilder.*` | a formatted empty DOS 3.3 disk; the "not a startup disk" boot sector; the direct-boot disk; DOS ↔ ProDOS sector order | `disk_builder`, `disk_builder_boot` |
 | `ProDOSDiskFs.*` | a ProDOS volume edited in place: format, list, read, write, remove, mkdir | `prodos_disk_fs` |
 | `ApplesoftTokenizer.*` | a text listing → the program as Applesoft stores it | `applesoft_tokenizer` |
-| `AppleSingle.*` | the wrapper cc65, CiderPress and Cadius use to carry a type | `apple_single` |
+| `AppleSingle.*` | the wrapper cc65, CiderPress and Cadius use to carry a type; a wrapper with a resource fork is refused on `put` unless `--data-fork-only` says to drop it | `apple_single`, `host_file_import` |
 | `HostFileImport.*` | what a host file becomes on an Apple volume (one decision for every `put`) | `host_file_import` |
 | `WozRecover.*` | a damaged WOZ made healthy, and the report of what it lost | `woz_recover` |
 | `WozCompat.h` | what a WOZ says of the machine it is for | `woz_compat` |
@@ -5388,6 +5388,23 @@ Pinned: `cffa_card_smoke` (ROM-gated). MAME cross-check ([D]): `mame
 apple2ee -sl7 cffa2 -hard1 <img>` (romset `~/mame_roms/cffa2/`).
 
 ### SmartPortCard (//e Liron-class)
+
+**The chain is the cable's** *(2026-11-07)*. [B] Apple IIc Technical
+Reference, SmartPort; [C] the Liron's INIT scan at `$CE00`: the host numbers
+the drives ON THE CABLE 1, 2, 3… in cable order, and the numbers hold until
+the next bus reset. A bay set to "(empty)" is no drive, so it is not on the
+cable and the drives behind it take the next numbers — there is no hole.
+`chainLength()` / `bayForChainNumber()` latch that numbering at the first
+guest access after a reset (the firmware's INIT follows the reset). A drive
+plugged later stays unnumbered until the next reset; one unplugged since
+answers `$28` at its old number (on the //c bus, `SmartPortBusUnit::present`
+false: BADUNIT, where the silicon's host would time out — [F] the exact
+error). The numbers never move under a transaction. STATUS unit 0, the
+ProDOS decode (`$43` → chain position), the `$C0n0` select, the SmartPort
+dispatch and the //c bus binding all go through it. A drive with no disk is
+on the cable and answers offline. The CFFA3000 is not a chain: its eight
+devices are fixed slots (`compactsChain()` false). Pinned by
+`smartport_unit_visibility`.
 
 **Eight bays, a configurable unit count** *(2026-09-08, after A2retroNET —
 the A2Pico firmware that presents up to eight 32 MB volumes as one
@@ -7736,7 +7753,7 @@ while this table and the handler implementations give the detailed contract):
 | `/speed` | POST | `{"cycles_per_frame":N}` (1–2000000) or `{"preset":"1x\|2x\|max"}`; 1x/2x follow active PAL/NTSC timing, max selects 1000000 cycles/frame |
 | `/screen.ppm` | GET | binary PPM of the live framebuffer |
 | `/screen/text` | GET | JSON of motherboard text RAM (`text`, `columns`, `rows`, `first_row`, `page`, `source`) |
-| `/mouse` | POST | `dx`/`dy` clamp to ±127/call; `x`/`y` override the corresponding delta as 8-bit counters, `btn` sets the button, `reset` clears accumulated counters; supports both Mouse Cards and the //c IOU mouse |
+| `/mouse` | POST | `dx`/`dy` clamp to ±127/call; `x`/`y` override the corresponding delta as 8-bit counters, `btn` sets the button; deltas start from the card's own counter (the one the GUI also feeds), so the two never fight; `reset` is accepted and does nothing; supports both Mouse Cards and the //c IOU mouse |
 | `/printer-port[?slot=N]` | GET / POST | the printer side of one slot, or of every `ssc`/`grappler`/`grappler1`/`pic` slot / `{"slot":N,"set":"k=v,…"}`, the `--printer-port` option language |
 | `/slot-log?slot=N` | GET / POST | drain slot N's bus-access log / `{"slot":N,"enable":1[,"capacity":C]}` (capacity 1-4194304) or `{"slot":N,"enable":0}` |
 | `/printer/spool?slot=N[&from=K]` | GET | bytes the card in slot N sent its printer since byte K (hex), plus the next cursor — see [printer-detection § 12](docs/printer-detection.md#12-pom2s-controls-cli-http-library) |
@@ -12388,6 +12405,13 @@ BDOS $94C3 F_SFIRST ????????.??? -> A=$00
   got the CPU there.
 - **MLI half** rides the Debugger hook: `Debugger::armed()` includes it, so
   it puts the CPU on the debugged loop only while it is on.
+- **One offer per instruction, for every 6502 decoder** *(2026-11-07)*.
+  `OsCallTrace::offer6502` drops an offer at the same (pc, SP) as one not yet
+  retired (`retire6502`, from `onStepCompleted`) — a stop then Run, or an
+  explicit step after a breakpoint — and an interrupt entry stacks the
+  pending offer so the same (pc, SP) after the RTI is dropped once
+  (`interrupted6502`). Before it, COUT printed `OOKK` for `OK` under a
+  breakpoint at `$FDED`. Explicit steps offer too (`beginStep`).
 - **BDOS half** is a `pom2::Z80Observer`. The Z80 core calls it before each
   instruction (not for an interrupt entry, a HALT cycle or the opcode behind
   a DD/FD prefix) — one pointer test per `step()` when unset.
