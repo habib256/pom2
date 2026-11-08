@@ -57,6 +57,7 @@ criterion. Move an item when its next action or dependency changes.
 
 | Task | Next action |
 |---|---|
+| [STORAGE-015](docs/backlog/storage.md#storage-015) | **After 1.2:** fix Disk II / DOS 3.3 RWTS at accelerated ×4; Dirtbike does not load its title screen (user report, 2026-11-08). |
 | [STORAGE-003](docs/backlog/storage.md#storage-003) | Best-of-9 `pom2_bench` with `DiskImage::tracks` on the heap. |
 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
 | [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`ImageWriter.cpp`, `Apple2Display.cpp`); split the DiskImage WOZ save half. |
