@@ -40,7 +40,7 @@
 
 namespace {
 
-constexpr int    kBase   = 17045;        // NTSC frame, base cycles
+constexpr int    kBase   = POM2_TIMING_NTSC.cyclesPerFrame;   // one NTSC video frame, base cycles
 constexpr double kNominal = 1022727.0;
 
 // $0800: `nops` NOPs, then a loop reading slot 6's device select ($C0E0 —

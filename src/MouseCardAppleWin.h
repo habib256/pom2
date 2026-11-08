@@ -150,10 +150,11 @@ public:
     ///
     /// `SlotCardFactory.cpp` passes the BEAM geometry —
     /// `scanlinesPerFrame * cyclesPerScanline` (`CpuClock.h`), i.e.
-    /// **17030 NTSC (262×65)** and **20280 PAL (312×65)**. Those are not the
-    /// profile's CPU budget `defaultCyclesPerFrame` (17045 / 20313), which is
-    /// the worker's pacing quantum; VBL is a video event, so it follows the
-    /// raster. The 17030 default below is what a hand-built card in a test
+    /// **17030 NTSC (262×65)** and **20280 PAL (312×65)**. Since 2026-11-07
+    /// the profile's CPU budget `defaultCyclesPerFrame` (the worker's pacing
+    /// quantum) has the same value, but it is a different quantity — a
+    /// --speed changes it, never the raster — and VBL is a video event, so
+    /// it follows the raster. The 17030 default below is what a hand-built card in a test
     /// sees before anything calls this.
     void setVblCycles(int cycles)
     {

@@ -44,9 +44,9 @@ class Toolbar_ImGui
 public:
     struct Snapshot {
         bool          isRunning          = false;
-        int           cyclesPerFrame     = 17045;
+        int           cyclesPerFrame     = POM2_TIMING_NTSC.cyclesPerFrame;
         // Active video standard: the 1×/2×/4× buckets derive from its
-        // cyclesPerFrame (17045 NTSC / 20313 PAL) — a hardcoded 17045 made
+        // cyclesPerFrame (17030 NTSC / 20280 PAL) — a hardcoded NTSC 1x made
         // "1×" run a PAL machine at 852 kHz (−16 %).
         VideoStandard videoStandard      = VideoStandard::NTSC;
         SystemProfile activeProfile      = SystemProfile::AppleIIPlus;

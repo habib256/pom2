@@ -71,7 +71,7 @@ struct FastSlotStub : SlotPeripheral {
 int main()
 {
     EmulationController c;
-    c.setCyclesPerFrame(17045);
+    c.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
     c.setVideoStandard(VideoStandard::NTSC);
     const double fastMul = pom2::ZipChip::kFastHz / 1022727.0;
     {
@@ -141,8 +141,8 @@ int main()
     std::printf("frame: %ld cycles stopped, %ld cycles fast (x%.3f), clock %.0f Hz\n",
                 slowCycles, fastCycles, double(fastCycles) / double(slowCycles),
                 c.emulatedCpuClockHz());
-    expect(std::abs(slowCycles - 17045) < 64, "stopped: a stock frame");
-    expect(std::fabs(double(fastCycles) / 17045.0 - fastMul) < 0.02, "fast: a 4 MHz frame");
+    expect(std::abs(slowCycles - POM2_TIMING_NTSC.cyclesPerFrame) < 64, "stopped: a stock frame");
+    expect(std::fabs(double(fastCycles) / double(POM2_TIMING_NTSC.cyclesPerFrame) - fastMul) < 0.02, "fast: a 4 MHz frame");
     expect(std::fabs(c.emulatedCpuClockHz() - 4000000.0) < 2.0, "devices told 4 MHz");
 
     {

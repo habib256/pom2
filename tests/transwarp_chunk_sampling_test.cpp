@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr int kBase = 17045;   // NTSC frame, base cycles
+constexpr int kBase = POM2_TIMING_NTSC.cyclesPerFrame;   // one NTSC video frame, base cycles
 
 // $0800: a NOP run of `nops` bytes (2 cycles each), then a loop that reads
 // slot 6's device select ($C0E0 — stock speed on the shipped DIP block) and

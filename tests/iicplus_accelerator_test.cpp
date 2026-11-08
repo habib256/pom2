@@ -68,7 +68,7 @@ int main()
     }
 
     EmulationController c;
-    c.setCyclesPerFrame(17045);
+    c.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
     c.setVideoStandard(VideoStandard::NTSC);
     {
         auto st = c.lockState();
@@ -113,7 +113,7 @@ int main()
                std::fabs(m - pom2::ZipChip::kFastHz / 1022727.0) < 0.01,
                "the frame loop runs it at 4 MHz");
     }
-    expect(c.getCyclesPerFrame() == 17045, "the budget is 1x — the 4x is the chip's");
+    expect(c.getCyclesPerFrame() == POM2_TIMING_NTSC.cyclesPerFrame, "the budget is 1x — the 4x is the chip's");
 
     // Code that touches no slot or speaker runs at the full 4 MHz once the
     // ROM's own disk polling has stopped opening 52 ms slow windows.

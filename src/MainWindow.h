@@ -862,8 +862,8 @@ private:
     bool        diskTurboWhileMotor = false;
     // Speed to restore when turbo disengages. NTSC 1× at construction;
     // applyProfile re-seeds it with the profile's defaultCyclesPerFrame
-    // (20313 PAL) so the restore never underclocks.
-    int         diskSavedCyclesPerFrame = 17045;
+    // (20280 PAL) so the restore never underclocks.
+    int         diskSavedCyclesPerFrame = POM2_TIMING_NTSC.cyclesPerFrame;
     bool        diskTurboActive = false;
 
     // ProDOS hard disk / HDV state. The default mounted image is whatever

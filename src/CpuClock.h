@@ -23,8 +23,9 @@
 #ifndef POM2_CPU_CLOCK_H
 #define POM2_CPU_CLOCK_H
 
+#include <cstdint>
+
 inline constexpr int POM2_CPU_CLOCK_HZ = 1022727;
-inline constexpr int POM2_CPU_CYCLES_PER_FRAME_60HZ = (POM2_CPU_CLOCK_HZ + 30) / 60;
 
 // Hard ceiling for the per-frame worker cycle budget (turbo). ONE constant
 // shared by the CLI `--speed` clamp and the AI server's POST /speed so the
@@ -172,10 +173,22 @@ inline constexpr int POM2_IWM_TICKS_PER_CPU_CYCLE = 7;
 // better-founded one. Left as-is because every NTSC-era timing constant, test
 // and golden capture in the tree is calibrated against 1 022 727.
 //
-// `cyclesPerFrame` mirrors the NTSC convention (round(clock / refresh)); it is
-// the CPU budget the worker runs per UI tick and is intentionally decoupled
-// from `scanlinesPerFrame` (the video geometry used by the beam-racing /
-// floating-bus scanner), exactly as the NTSC 17045-vs-262×65 split already is.
+// `cyclesPerFrame` is the CPU budget the worker runs per tick, and it is ONE
+// VIDEO FRAME — 65 × 262 = 17030 NTSC, 65 × 312 = 20280 PAL — paced at
+// `frameIntervalNs()` = frame / clock (16 651 560 ns, 19 968 000 ns), so a
+// guest sees exactly `cpuClockHz` and the machine refreshes at 60.054 Hz /
+// 50.080 Hz, as the real ones do on these clocks. Until 2026-11-07 it was
+// round(clock / nominal refresh) — 17045 / 20313 cycles every 16 667 / 20 000
+// µs — "intentionally decoupled" from the geometry. The decoupling had a
+// cost: each tick ended 15 (NTSC) / 33 (PAL) cycles further into the beam
+// than the last, so the phase went round every 19 s / 12.3 s, and once per
+// round a tick held TWO frame boundaries and the first of the two frames
+// was published and replaced before any vsync could show it — one dropped
+// frame per lap, and the live-RAM paint fallback (MemoryVideoLog) read RAM
+// at a rolling phase. The worker now also ends each tick ON a frame boundary
+// (EmulationController::workerLoop), carrying the last instruction's
+// overshoot, so a 1× tick holds exactly one frame. `refreshHz` stays the
+// nominal 60 / 50 for what it labels (rewind seconds, CRT decay, the UI).
 enum class VideoStandard { NTSC, PAL };
 
 struct VideoTiming {
@@ -184,14 +197,47 @@ struct VideoTiming {
     int  scanlinesPerFrame;   // 262 NTSC / 312 PAL — video geometry
     int  cyclesPerScanline;   // 65 both
     int  visibleScanlines;    // 192 both
-    int  cyclesPerFrame;      // CPU budget per UI frame (round(clock/refresh))
-    int  refreshHz;           // 60 NTSC / 50 PAL
+    int  cyclesPerFrame;      // CPU budget per worker tick = one video frame
+    int  refreshHz;           // nominal 60 NTSC / 50 PAL (labels; see frameIntervalNs)
 };
 
 inline constexpr VideoTiming POM2_TIMING_NTSC{
-    VideoStandard::NTSC, 1022727, 262, 65, 192, 17045, 60 };
+    VideoStandard::NTSC, 1022727, 262, 65, 192, 262 * 65, 60 };
 inline constexpr VideoTiming POM2_TIMING_PAL{
-    VideoStandard::PAL,  1015625, 312, 65, 192, 20313, 50 };
+    VideoStandard::PAL,  1015625, 312, 65, 192, 312 * 65, 50 };
+
+/// Wall-clock length of one `cyclesPerFrame` budget at the standard's clock,
+/// rounded to the nanosecond: 16 651 560 ns NTSC, 19 968 000 ns PAL (exact).
+/// The worker paces each tick on it, so the CPU runs at `cpuClockHz`.
+inline constexpr int64_t pom2FrameIntervalNs(const VideoTiming& t)
+{
+    return (static_cast<int64_t>(t.cyclesPerFrame) * 1'000'000'000 + t.cpuClockHz / 2)
+           / t.cpuClockHz;
+}
+static_assert(pom2FrameIntervalNs(POM2_TIMING_PAL) == 19'968'000, "PAL tick = 19.968 ms");
+static_assert(pom2FrameIntervalNs(POM2_TIMING_NTSC) == 16'651'560, "NTSC tick = 16.65156 ms");
+
+/// The worker's budget for the tick that starts at video cycle `videoNow`:
+/// a budget that is a whole number of frames is cut to end ON the frame
+/// boundary at or past `budget / 2` from now — absorbing the first tick's
+/// arbitrary phase and each tick's 0-6-cycle overshoot, which the tick loop
+/// used to throw away. Any other budget (a custom --speed) is returned as is.
+/// Pinned by `pal_timing`.
+inline constexpr int64_t pom2AlignedTickBudget(int64_t budget, int64_t frameCycles,
+                                               uint64_t videoNow)
+{
+    if (frameCycles <= 0 || budget < frameCycles || budget % frameCycles != 0)
+        return budget;
+    int64_t toBoundary = budget - static_cast<int64_t>(videoNow % static_cast<uint64_t>(frameCycles));
+    if (toBoundary < budget / 2) toBoundary += frameCycles;
+    return toBoundary;
+}
+static_assert(POM2_TIMING_NTSC.cyclesPerFrame ==
+              POM2_TIMING_NTSC.scanlinesPerFrame * POM2_TIMING_NTSC.cyclesPerScanline,
+              "a 1x tick is one NTSC video frame");
+static_assert(POM2_TIMING_PAL.cyclesPerFrame ==
+              POM2_TIMING_PAL.scanlinesPerFrame * POM2_TIMING_PAL.cyclesPerScanline,
+              "a 1x tick is one PAL video frame");
 
 // ── The shape of the lit rectangle ───────────────────────────────────────
 //

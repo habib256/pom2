@@ -361,6 +361,7 @@ set(SOURCES
     src/ZipChip.cpp
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
+    src/EmulationController_Clock.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -1028,6 +1029,7 @@ set(POM2_RUNTIME_SOURCES
     src/EmulationController.cpp
     src/EmulationController_Socket.cpp
     src/EmulationController_Storage.cpp
+    src/EmulationController_Clock.cpp
     src/BlockWriteBackExecutor.cpp
     src/FloppySoundDevice.cpp
     src/FujiNetCardFactory.cpp
@@ -1737,6 +1739,7 @@ set(POM2_CORE_SOURCES
     src/ZipChip.cpp
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
+    src/EmulationController_Clock.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -2104,6 +2107,7 @@ add_executable(pom2_headless
     src/ZipChip.cpp
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
+    src/EmulationController_Clock.cpp
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp

@@ -761,7 +761,7 @@ are checked by reading back each byte. They are not transactional: a later
 failure can leave earlier bytes changed.
 
 `--speed` sets a cycles-per-frame budget: normal
-speed is 17045 for NTSC or 20313 for PAL. `--cpu-max` runs without normal pacing;
+speed is one video frame: 17030 for NTSC or 20280 for PAL. `--cpu-max` runs without normal pacing;
 the achievable emulation speed depends on the host.
 CLI speed values above 2000000 are clamped with a warning; the HTTP `/speed`
 endpoint rejects out-of-range values instead.

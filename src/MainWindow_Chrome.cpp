@@ -156,7 +156,8 @@ void MainWindow::renderCommandPalette()
     {
         const VideoTiming& vt = pom2VideoTiming(controller->getVideoStandard());
         const int cur = controller->getCyclesPerFrame();
-        const double mhz = static_cast<double>(vt.cyclesPerFrame) * vt.refreshHz / 1e6;
+        // 1x is one video frame per tick at the standard's clock (CpuClock.h).
+        const double mhz = static_cast<double>(vt.cpuClockHz) / 1e6;
         char buf[64];
         std::snprintf(buf, sizeof buf, "Speed 1x (%.2f MHz)", mhz);
         add("speed.1x", "Machine", buf, "", true, cur == vt.cyclesPerFrame);

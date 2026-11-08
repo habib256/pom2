@@ -65,15 +65,15 @@ void testAllProfilesEnumerated()
     assert(all[7] == pom2::SystemProfile::AppleIIePAL);
     assert(all[8] == pom2::SystemProfile::AppleIIcPAL);
 
-    // NTSC profiles are 262-line/60 Hz (17045 cyc/frame); the three PAL
-    // profiles are 312-line/50 Hz (20313). PAL profiles otherwise inherit
+    // NTSC profiles are 262-line/60 Hz (17030 cyc/frame = one video frame);
+    // the three PAL profiles are 312-line/50 Hz (20280, ditto — CpuClock.h). PAL profiles otherwise inherit
     // their NTSC sibling's CPU/iieMode/slots.
     for (auto p : { pom2::SystemProfile::AppleIIeUnenhancedPAL,
                     pom2::SystemProfile::AppleIIePAL,
                     pom2::SystemProfile::AppleIIcPAL }) {
         const auto& c = pom2::profileConfig(p);
         assert(c.videoStandard == VideoStandard::PAL);
-        assert(c.defaultCyclesPerFrame == 20313);
+        assert(c.defaultCyclesPerFrame == 20280);
         assert(c.iieMode);                              // all are IIe-class
     }
     // CPU follows the NTSC sibling: Enhanced PAL //e and //c PAL are 65C02;

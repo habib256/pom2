@@ -813,7 +813,7 @@ void testSpeed(EmulationController& ctrl, pom2::AiControlServer& /*srv*/)
         "Content-Length: %zu\r\n\r\n%s", body.size(), body.c_str());
     const HttpResponse r = oneShot(kTestPort, req);
     assert(r.status == 200);
-    assert(ctrl.getCyclesPerFrame() == 34090);
+    assert(ctrl.getCyclesPerFrame() == 2 * POM2_TIMING_NTSC.cyclesPerFrame);
 
     // `payload`, not `body`: the enclosing scope already has a `body` and
     // shadowing it here made the lambda read as if it reused that one.
@@ -830,7 +830,7 @@ void testSpeed(EmulationController& ctrl, pom2::AiControlServer& /*srv*/)
     // garbage int that freezes/pauses the emulator. State stays unchanged.
     HttpResponse rr = postSpeed("{\"cycles_per_frame\":9999999999}");
     assert(rr.status == 400);
-    assert(ctrl.getCyclesPerFrame() == 34090);
+    assert(ctrl.getCyclesPerFrame() == 2 * POM2_TIMING_NTSC.cyclesPerFrame);
     rr = postSpeed("{\"cycles_per_frame\":0}");
     assert(rr.status == 400);
     // A valid in-range value is accepted.

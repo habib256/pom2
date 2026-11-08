@@ -10,6 +10,41 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-08 — One worker tick is one video frame, ending on its boundary
+
+- **What was wrong:** the worker ran `cyclesPerFrame` = round(clock / 60 or
+  50) = 17045 / 20313 cycles every 16 667 / 20 000 µs, while a video frame
+  is 17030 / 20280 cycles. Each tick therefore ended 15 / 33 cycles further
+  into the beam than the last, and the last instruction's 0-6-cycle
+  overshoot was thrown away on top. Once per lap (19 s NTSC, 12.3 s PAL) a
+  tick held TWO frame boundaries: the first frame was published and
+  replaced inside one worker burst, before any vsync could paint it — one
+  dropped frame per lap — and the live-RAM paint fallback
+  (`MemoryVideoLog`, used while the write log is off) read RAM at a phase
+  that rolled through the picture. Found by an audit of the beam / ImGui
+  sync on 2026-11-07 (the user: "on dirait qu'il y a un truc mal réglé").
+- **Now:** the budget IS one video frame (`CpuClock.h`: 262 × 65 / 312 × 65)
+  paced at `pom2FrameIntervalNs` = frame / clock — 16 651 560 / 19 968 000
+  ns — so the guest sees exactly 1 022 727 / 1 015 625 Hz (it saw
+  1 022 700 / 1 015 650) and the machine refreshes at 60.054 / 50.080 Hz.
+  Each tick is cut to END on a frame boundary (`pom2AlignedTickBudget`),
+  which absorbs the first tick's phase and every overshoot; the 2x / 4x
+  presets end on boundaries too, a custom `--speed` keeps its plain count.
+  The speed readouts (toolbar, palette) quote the clock instead of
+  budget × nominal refresh. `POM2_CPU_CYCLES_PER_FRAME_60HZ` (the
+  controller's bare initialiser, still 17045) is gone.
+- **Deliberately unchanged:** `pom2_bench` keeps 17045 / 20313 — they
+  define its workloads, which `check_bench_identity.sh` and
+  `docs/PERFORMANCE.md` compare across versions. `refreshHz` stays the
+  nominal 60 / 50 for what it labels (rewind seconds, CRT decay). The 50 Hz
+  machine on a 60 Hz monitor still shows one frame in five twice; that is
+  the other half of the audit (a 50 Hz mode / vsync-driven option), not done
+  here.
+- **Pinned by** `pal_timing` (the two intervals, and 1000 ticks with random
+  overshoot that all end on a boundary and lose no frame) and the
+  `static_assert`s in `CpuClock.h`; seven tests that encoded the old 1x
+  now take it from `POM2_TIMING_*`.
+
 ## 2026-11-07 — DIGIDREAM SID Voice Edition froze on the //c (the browser's machine)
 
 - **Report:** "digidream SID plante en wasm". It is not the WASM build: the

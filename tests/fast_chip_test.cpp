@@ -58,7 +58,7 @@ int main()
            "the speed table (User's Guide p. 22)");
 
     EmulationController c;
-    c.setCyclesPerFrame(17045);
+    c.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
     c.setVideoStandard(VideoStandard::NTSC);
     {
         auto st = c.lockState();
@@ -127,7 +127,7 @@ int main()
     burnFrame(c);
     const long fastCycles = burnFrame(c);
     expect(fc.speed() == 37 && !fc.enabled(), "ENABLE + SET_SPEED + lock from 6502 code");
-    expect(fastCycles > 17045 * 8 && fastCycles < 17045 * 9, "an 8.3 MHz frame runs ~8.3x the cycles");
+    expect(fastCycles > POM2_TIMING_NTSC.cyclesPerFrame * 8 && fastCycles < POM2_TIMING_NTSC.cyclesPerFrame * 9, "an 8.3 MHz frame runs ~8.3x the cycles");
     std::printf("  frame at speed 37: %ld cycles\n", fastCycles);
 
     // ── Slow-downs ───────────────────────────────────────────────────────

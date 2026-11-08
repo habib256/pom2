@@ -16,6 +16,8 @@
 
 #include "SystemProfile.h"
 
+#include "CpuClock.h"
+
 namespace pom2 {
 
 namespace {
@@ -39,7 +41,7 @@ const ProfileConfig& cfgAppleII()
         { "roms/apple2_char.rom" },
         /*iieMode=*/false,
         M6502::CpuMode::NMOS,
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         {},   // builtInSlots: all 7 slots free (real Apple ][ exposed 8 physical slots)
     };
     return cfg;
@@ -55,7 +57,7 @@ const ProfileConfig& cfgAppleIIPlus()
         { "roms/apple2_char.rom" },
         /*iieMode=*/false,
         M6502::CpuMode::NMOS,
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         {},   // all slots free
     };
     return cfg;
@@ -93,7 +95,7 @@ const ProfileConfig& cfgAppleIIeUnenhanced()
         // Unenhanced //e = NMOS 6502 (no STZ/BRA/PHX/PLX, no decimal-mode
         // fix). Software that uses CMOS opcodes will trap to NOP/KIL.
         M6502::CpuMode::NMOS,
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         {},   // all 7 slots free (//e has real expansion slots)
     };
     return cfg;
@@ -114,7 +116,7 @@ const ProfileConfig& cfgAppleIIe()
         // Enhanced //e ships a 65C02. The non-enhanced //e (1983) uses
         // the AppleIIeUnenhanced profile (NMOS 6502, 2 KB char ROM).
         M6502::CpuMode::CMOS,
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         {},   // all 7 slots free
     };
     return cfg;
@@ -151,7 +153,7 @@ const ProfileConfig& cfgAppleIIc()
         { "roms/apple2e_char.rom", "roms/apple2_char.rom" },
         /*iieMode=*/true,        // same paging as IIe
         M6502::CpuMode::CMOS,    // //c always shipped 65C02
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         // builtInSlots: [_, ssc, ssc, _, mouse, smartport35, diskii, _]
         // sl1 + sl2 = the //c's two on-board serial ports, both plugged
         // as `ssc` ("printer port" / "modem port" — see the detailed
@@ -222,7 +224,7 @@ const ProfileConfig& cfgAppleIIcPlus()
         // and software can switch it ($C05A/$C05B). Until 2026-10-21 this
         // was a fixed 68180 (4×) budget, Esc did nothing, and the toolbar's
         // "1×" meant 4 MHz on this machine only.
-        17045,
+        POM2_TIMING_NTSC.cyclesPerFrame,
         // builtInSlots: [_, ssc(printer), ssc(modem), _, mouse,
         //                smartport35, diskii, _]. Same dual-serial layout
         // as cfgAppleIIc — //c+ inherits the //c's two on-board RS-232
@@ -255,7 +257,7 @@ const ProfileConfig& cfgAppleIIePAL()
         c.profile              = SystemProfile::AppleIIePAL;
         c.key                  = "iie-pal";
         c.displayName          = "Apple //e Enhanced PAL (50 Hz)";
-        c.defaultCyclesPerFrame = 20313;
+        c.defaultCyclesPerFrame = POM2_TIMING_PAL.cyclesPerFrame;
         c.videoStandard        = VideoStandard::PAL;
         return c;
     }();
@@ -281,7 +283,7 @@ const ProfileConfig& cfgAppleIIeUnenhancedPAL()
         c.profile               = SystemProfile::AppleIIeUnenhancedPAL;
         c.key                   = "iie-u-pal";
         c.displayName           = "Apple //e Unenhanced PAL (50 Hz)";
-        c.defaultCyclesPerFrame = 20313;
+        c.defaultCyclesPerFrame = POM2_TIMING_PAL.cyclesPerFrame;
         c.videoStandard         = VideoStandard::PAL;
         return c;
     }();
@@ -295,7 +297,7 @@ const ProfileConfig& cfgAppleIIcPAL()
         c.profile              = SystemProfile::AppleIIcPAL;
         c.key                  = "iic-pal";
         c.displayName          = "Apple //c PAL (Le Chat Mauve)";
-        c.defaultCyclesPerFrame = 20313;
+        c.defaultCyclesPerFrame = POM2_TIMING_PAL.cyclesPerFrame;
         c.videoStandard        = VideoStandard::PAL;
         // This profile IS the European //c fitted with the Le Chat Mauve RGB
         // "Adaptateur IIc" on its DB-15 video-expansion connector — the card

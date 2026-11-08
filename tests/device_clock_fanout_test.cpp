@@ -99,7 +99,7 @@ int main()
         for (int i = 0; i < 3; ++i) ctrl.tickFrame();
         assert(near(ctrl.emulatedCpuClockHz(), 3.5 * 1022727.0) &&
                "a plugged TransWarp must hand its 3.5x clock to every device");
-        assert(ctrl.scaledFrameBudget() == static_cast<int64_t>(3.5 * 17045) &&
+        assert(ctrl.scaledFrameBudget() == static_cast<int64_t>(3.5 * POM2_TIMING_NTSC.cyclesPerFrame) &&
                "the budget and the audio clock must agree");
     }
 
