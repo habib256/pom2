@@ -23,7 +23,7 @@
 // burst was therefore silently reverted on exit:
 //
 //   * a profile switch mid-load (applyProfile writes the new profile's
-//     defaultCyclesPerFrame — 20313 on PAL, 68180 on a //c+) came back as
+//     defaultCyclesPerFrame — 20280 on PAL, 68180 on a //c+) came back as
 //     whatever was current when the motor spun up;
 //   * `setVideoStandard` likewise;
 //   * a speed-menu / AI `/speed` change during a load never took effect at
@@ -44,16 +44,16 @@ int main()
     EmulationController ctrl;
 
     // Base is the effective value while no override is engaged.
-    ctrl.setCyclesPerFrame(17045);
-    assert(ctrl.getCyclesPerFrame() == 17045);
-    assert(ctrl.getBaseCyclesPerFrame() == 17045);
+    ctrl.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
+    assert(ctrl.getCyclesPerFrame() == POM2_TIMING_NTSC.cyclesPerFrame);
+    assert(ctrl.getBaseCyclesPerFrame() == POM2_TIMING_NTSC.cyclesPerFrame);
     assert(!ctrl.turboOverrideActive());
 
     // Engage turbo: the effective budget jumps, the base is remembered.
     ctrl.setTurboOverride(1'000'000);
     assert(ctrl.turboOverrideActive());
     assert(ctrl.getCyclesPerFrame() == 1'000'000);
-    assert(ctrl.getBaseCyclesPerFrame() == 17045);
+    assert(ctrl.getBaseCyclesPerFrame() == POM2_TIMING_NTSC.cyclesPerFrame);
 
     // A speed change DURING the burst (speed menu, AI /speed, CLI --speed)
     // updates the base without disturbing the override.
@@ -63,21 +63,21 @@ int main()
     assert(ctrl.getBaseCyclesPerFrame() == 34090);
 
     // A profile switch during the burst goes through the same setter.
-    ctrl.setCyclesPerFrame(20313);              // PAL default
+    ctrl.setCyclesPerFrame(POM2_TIMING_PAL.cyclesPerFrame);   // PAL default
     assert(ctrl.getCyclesPerFrame() == 1'000'000);
 
     // Turbo lifts → the machine lands on what was last asked for, NOT on the
     // value captured when the motor spun up. This is the assertion that
-    // fails on the old MainWindow-member shape (it restored 17045).
+    // fails on the old MainWindow-member shape (it restored the NTSC default).
     ctrl.clearTurboOverride();
     assert(!ctrl.turboOverrideActive());
-    assert(ctrl.getCyclesPerFrame() == 20313 &&
+    assert(ctrl.getCyclesPerFrame() == POM2_TIMING_PAL.cyclesPerFrame &&
            "turbo exit must restore the CURRENT base, not a stale capture");
 
     // Idempotence: a second clear (updateAutoTurbo's `turboEligible == false`
     // branch can reach it) must not move anything.
     ctrl.clearTurboOverride();
-    assert(ctrl.getCyclesPerFrame() == 20313);
+    assert(ctrl.getCyclesPerFrame() == POM2_TIMING_PAL.cyclesPerFrame);
 
     // A //c+ style 4x base survives a turbo round trip untouched.
     ctrl.setCyclesPerFrame(68180);

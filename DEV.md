@@ -1490,7 +1490,8 @@ worker runs 50 Hz and the UI 60 Hz, so ~1 UI render in 6 fell twice inside one
 tick and saw an **empty** log (→ `renderInternal`, no splits) → mid-scanline
 effects (French Touch *Mad Effect*) flickered at the 50/60 beat. Publishing on
 the video-frame boundary decouples the log from both the worker's CPU budget
-(17045/20313 ≠ one video frame) and the UI's vsync; the UI re-renders the same
+(17045/20313 then; one video frame per tick, ending on the boundary, since
+2026-11-07 — CpuClock.h) and the UI's vsync; the UI re-renders the same
 published frame when no new one exists (replay is deterministic + idempotent). A
 reset purges both logs (no ghost replay against the wiped state). The legacy
 synchronous bracket (`beginVideoEventFrame` + `takeVideoEvents` *moves* the log,
@@ -11897,7 +11898,7 @@ deliberate: `activeProfile` is set from the ROM auto-probe (//e if an //e ROM
 resolved, else II+), and the branch below it only runs `applyProfile` when the
 resolved key **differs** from the probe. Expressing the default as a saved-key
 stand-in makes it differ, so `applyProfile` runs — and `applyProfile` is what
-actually installs the PAL video standard, the 20313-cycle frame budget and the
+actually installs the PAL video standard, the 20280-cycle frame budget and the
 `setCpuClock` sweep over every slot card. Setting `activeProfile =
 AppleIIePAL` directly would skip all of that and leave a //e running at 60 Hz
 while the UI claimed PAL. The default becomes `iic-pal` when no //e ROM was found but the //c firmware

@@ -334,7 +334,7 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
     const int kSpeed4x  = kSpeed1x * 4;
     static constexpr int kSpeedMax = 1'000'000;
     const double mhz1x =
-        static_cast<double>(kSpeed1x) * vt.refreshHz / 1e6;
+        static_cast<double>(kSpeed1x) * vt.cpuClockHz / vt.cyclesPerFrame / 1e6;
     const char* speedLabel = "Speed";
     if      (snap.cyclesPerFrame == kSpeed1x)  speedLabel = ICON_FA_GAUGE_SIMPLE " 1×";
     else if (snap.cyclesPerFrame == kSpeed2x)  speedLabel = ICON_FA_GAUGE      " 2×";

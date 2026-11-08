@@ -128,7 +128,7 @@ void usage(const char* prog)
         "  --disk <path>       .dsk/.do/.po/.nib/.woz to boot. Optional:\n"
         "                      without it the machine runs its ROM banner.\n"
         "  --iie               //e mode (pass apple2e.rom via --rom).\n"
-        "  --pal               PAL timing (312 lines, 20313 cycles/frame).\n"
+        "  --pal               PAL timing (312 lines; the historical 20313-cycle frame).\n"
         "  --frames <N>        Frames to run. Default 300.\n"
         "  --cycles-per-frame <N>  Override the frame budget.\n"
         "  --mode <name>       Video pipeline: ntsc medium 4bit mono green\n"
@@ -256,8 +256,12 @@ int main(int argc, char** argv)
     }
     mem.setVideoStandard(pal ? VideoStandard::PAL : VideoStandard::NTSC);
 
-    // 17045 / 20313 — the same per-frame budget EmulationController uses, so
-    // the bench's "frame" is the emulator's frame and the numbers transfer.
+    // 17045 / 20313: the worker's per-tick budget until 2026-11-07, when it
+    // became exactly one video frame (17030 / 20280, CpuClock.h). The bench
+    // keeps the old figures ON PURPOSE — they define its workloads, and
+    // tools/check_bench_identity.sh and every number in docs/PERFORMANCE.md
+    // compare runs of those workloads across versions. 0.1-0.2 % more cycles
+    // per "frame" than the emulator now runs changes no conclusion drawn here.
     if (cyclesPerFrame <= 0) cyclesPerFrame = pal ? 20313 : 17045;
 
     // ── Optional Disk II in slot 6 ────────────────────────────────────────

@@ -171,9 +171,6 @@ int main(int argc, char** argv)
     cpu.setCpuMode(nmos ? M6502::CpuMode::NMOS : M6502::CpuMode::CMOS);
     cpu.hardReset();
     mem.slotBus().reset();
-    // The unenhanced //e's autostart boots only a Disk II signature
-    // ($Cn07 = $3C), so on the real machine one types PR#5; enter $C500.
-    if (nmos) cpu.setProgramCounter(0xC500);
 
     Sink sink;
     sink.mem = &mem; sink.cpu = &cpu;
@@ -187,6 +184,10 @@ int main(int argc, char** argv)
         const uint64_t end = cycles + uint64_t(s * hz);
         while (cycles < end) cycles += uint64_t(cpu.run(4096));
     };
+    // The unenhanced //e's autostart compares $Cn07 too ([C] its F8 ROM at
+    // $FAB9: LDY #$07, against the enhanced ROM's LDY #$05) and so boots a
+    // Disk II only; on the real machine one types PR#5 at the prompt.
+    if (nmos) { run(3); mem.pasteText("PR#5\r", 5); }
     run(25);   // the menu is up at ~17 s
     // The vector the loader installed (LC bank 2 RAM, `+set_ptr TIMER_HANDLER,$FFFE`).
     sink.handler = uint16_t(mem.peekCpuView(0xFFFE) | (mem.peekCpuView(0xFFFF) << 8));

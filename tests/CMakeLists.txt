@@ -1172,6 +1172,7 @@ add_executable(test_rewind_transport
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -1219,6 +1220,7 @@ add_executable(test_ui_worker_contention
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -6421,6 +6423,7 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -6986,6 +6989,7 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -7331,6 +7335,7 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -7678,6 +7683,7 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -9376,6 +9382,7 @@ add_executable(test_debugger
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -11071,6 +11078,7 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
     ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp

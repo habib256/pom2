@@ -32,7 +32,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
 {
     videoStandard_.store(s);
     const VideoTiming& vt = pom2VideoTiming(s);
-    frameIntervalUs.store(1'000'000 / vt.refreshHz);
+    frameIntervalNs.store(pom2FrameIntervalNs(vt));
     // The standard's nominal clock is NOT what the machine runs at when a
     // profile solders an accelerator into its budget: the //c+ carried
     // defaultCyclesPerFrame = 68180 (4 090 908 cycles per emulated second)
@@ -42,8 +42,8 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // tone rendered at 1 kHz while producing four seconds of audio per
     // second of wall clock. Scale by the profile's own budget, which
     // applyProfile has already committed (step 10 sets it before calling
-    // here). On every 1× machine the ratio is exactly 1 (17045/17045,
-    // 20313/20313) so not one constant moves. Both ways: a speed below 1×
+    // here). On every 1× machine the ratio is exactly 1 (17030/17030,
+    // 20280/20280) so not one constant moves. Both ways: a speed below 1×
     // (`--speed`, AI `/speed`) burns fewer cycles a second, and handing the
     // stock clock to the queues then starved them.
     const int base = baseCyclesPerFrame_.load();
@@ -96,62 +96,13 @@ void EmulationController::setVideoStandard(VideoStandard s)
     if (drive35Ext2) drive35Ext2->setStandardClock(vt.cpuClockHz);
 }
 
-// Same derivation as setVideoStandard, times what the ACCELERATOR CARD
-// adds. Without it a plugged TransWarp multiplied the frame's cycle budget
-// but every emuCycles consumer kept the stock clock: the speaker read a 3.5x
-// cycle stamp as 3.5x the time it is, so a 1 kHz tone came out at 298 Hz
-// (bug hunt #7's //c+ defect, arriving through a slot). The caller passes
-// the multiplier it sampled under the lock.
-//
-// The frame's cycle BUDGET has been chunk-granular since 2026-09-09 (the
-// multiplier is re-read every 4096 cycles), while this fan-out stayed
-// frame-granular — sampled once, before the frame's first chunk. The two
-// then disagree for the whole of any frame in which a slow window opens or
-// closes: measured on the `transwarp_chunk_sampling` fixture, a window
-// opening a third of the way in burns 22 901 CPU cycles while every
-// emuCycles consumer was told 3 579 544 Hz (the cycles are worth 1 374 096
-// Hz — 2.61x out), and the frame in which a window CLOSES burns 49 417
-// cycles while they were told 1 022 727 Hz (2.9x the other way). That is a
-// frame of stamps the SpeakerDevice queue and the Mockingboard/Phasor
-// replay cursor read as 2.6-2.9x the time they represent: the cursor
-// starves or runs up onto the producer, trips its re-anchor and drops the
-// backlog — a click per DOS disk read, which is exactly the shape of the
-// //c+ and bug-hunt-#10 defects this function was written to remove.
-//
-// Sampling it where the chunk loop already samples the multiplier costs one
-// double compare per chunk (four to fifteen per frame) and nothing at all on
-// a machine with no accelerator, since `mul` is then permanently 1.0.
-void EmulationController::applyAcceleratorClock(double mul)
-{
-    const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
-    const int base = baseCyclesPerFrame_.load();
-    const double stockHz = static_cast<double>(vt.cpuClockHz) *
-        (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
-    const double hz = stockHz * mul;
-    // Fast path only when the BEAM agrees too: setVideoStandard and a stock
-    // snapshot restore the clock, not the ratio (a //c+ → //e switch kept the
-    // beam at ~1/4 speed; bug hunt 2026-11-07).
-    if (hz == cpuClockHz_.load() && mem.videoClockRatio() == 1.0 / mul) return;
-    cpuClockHz_.store(hz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
-    // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
-    // its backlog then plays at the speed it was made at. The cards' AY
-    // replays do the same through their bus clock (busNow_).
-    if (spk)       spk->setCpuClockAt(mem.getCycleCounter(), hz, stockHz);
-    if (tape)      tape->setCpuClock(hz);
-    if (floppy525) floppy525->setCpuClock(stockHz);   // the Disk II stamps stock time
-    if (floppy35)  floppy35->setCpuClock(hz);
-    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot)   // 0: the aux slot
-        if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
-            card->setCpuClock(hz);
-}
-
 EmulationController::EmulationController() : EmulationController(AudioDevice::OutputMode::Host) {}
 
 EmulationController::EmulationController(AudioDevice::OutputMode audioMode)
     : processor(&mem), writeBackQueue_(*this)
 {
-    cyclesPerFrame.store(POM2_CPU_CYCLES_PER_FRAME_60HZ); processor.setNcr65C02(true);   // Apple's 65C02 is NCR's (M6502.h)
-    baseCyclesPerFrame_.store(POM2_CPU_CYCLES_PER_FRAME_60HZ);
+    cyclesPerFrame.store(POM2_TIMING_NTSC.cyclesPerFrame); processor.setNcr65C02(true);   // Apple's 65C02 is NCR's (M6502.h)
+    baseCyclesPerFrame_.store(POM2_TIMING_NTSC.cyclesPerFrame);
 
     // Audio device first — we want its negotiated sample rate before the
     // cassette starts streaming. miniaudio sometimes negotiates 48 kHz on
@@ -866,16 +817,17 @@ void EmulationController::tickFrame()
     {
         const auto now = std::chrono::steady_clock::now();
         if (lastTickWall_.time_since_epoch().count() != 0) {
-            const auto elapsedUs = std::chrono::duration_cast<
-                std::chrono::microseconds>(now - lastTickWall_).count();
-            const int64_t intervalUs = frameIntervalUs.load();
-            if (intervalUs > 0 && elapsedUs > 0) {
+            const auto elapsedNs = std::chrono::duration_cast<
+                std::chrono::nanoseconds>(now - lastTickWall_).count();
+            const int64_t intervalNs = frameIntervalNs.load();
+            if (intervalNs > 0 && elapsedNs > 0) {
                 // Cap at 4 frames' worth so a backgrounded tab (or a
                 // breakpoint) doesn't dump seconds of emulated time into
-                // one call and freeze the page.
-                const int64_t scaled =
-                    budget * std::min<int64_t>(elapsedUs, intervalUs * 4)
-                           / intervalUs;
+                // one call and freeze the page (double: no 64-bit overflow).
+                const int64_t scaled = static_cast<int64_t>(
+                    static_cast<double>(budget) *
+                    static_cast<double>(std::min<int64_t>(elapsedNs, intervalNs * 4)) /
+                    static_cast<double>(intervalNs));
                 budget = std::max<int64_t>(scaled, 1);
             }
         }
@@ -1447,24 +1399,6 @@ void EmulationController::noteTimeJump()
     }
 }
 
-// NOT inside the __EMSCRIPTEN__ guard: tickFrame — the browser-RAF CPU
-// driver on WASM — routes its chunks through here too. (2026-07-12 bug
-// hunt: defining this below, worker-only, broke the wasm link.)
-int64_t EmulationController::scaledFrameBudget() const
-{
-    const int64_t base = cyclesPerFrame.load();
-    const double  mul  = mem.cpuSpeedMultiplier();
-    if (mul == 1.0) return base;
-    // Guard the arithmetic, not the caller: the multiplier comes from a
-    // card and the base from --speed / the AI /speed endpoint, and their
-    // product is the only place in the loop where either could overflow.
-    const double scaled = static_cast<double>(base) * mul;
-    constexpr double kCeil = 1.0e9;
-    if (scaled <= 1.0)   return 1;
-    if (scaled >= kCeil) return static_cast<int64_t>(kCeil);
-    return static_cast<int64_t>(scaled);
-}
-
 int EmulationController::runCpuSlice(int chunk)
 {
     // The LATCHED HIT is reconciled first (why: further down), so that a
@@ -1838,9 +1772,9 @@ void EmulationController::workerLoop()
             continue;
         }
 
-        // Running: execute one frame's worth of cycles, then sleep until
-        // the next 50/60 Hz boundary (frameIntervalUs follows the video
-        // standard). Using steady_clock keeps wallclock pace without
+        // Running: execute one video frame of cycles, then sleep until the
+        // next tick (frameIntervalNs: one frame at the standard's clock,
+        // 60.054 / 50.080 Hz). Using steady_clock keeps wallclock pace without
         // drifting on busy machines.
         //
         // The beam-racing video-event log is NOT bracketed here: recording
@@ -1886,7 +1820,7 @@ void EmulationController::workerLoop()
         // frame at 3.5× because the multiplier had been read at the frame's
         // start; the chunks after it run at 1× now. Four to fifteen samples a
         // frame, off the bus hot path (TranswarpCard.h § Sampling).
-        const int64_t baseBudget = cyclesPerFrame.load();
+        const int64_t baseBudget = alignedTickBudget();   // ends ON a frame boundary
         bool interrupted = false;
         for (double doneBase = 0.0; doneBase < static_cast<double>(baseBudget); ) {
             // Re-check the mode between chunks so a stop()/park request
@@ -1986,7 +1920,7 @@ void EmulationController::workerLoop()
             }
         }
 
-        nextTick += std::chrono::microseconds(frameIntervalUs.load());
+        nextTick += std::chrono::nanoseconds(frameIntervalNs.load());
         const auto now = clock::now();
         if (now < nextTick) {
             std::this_thread::sleep_for(nextTick - now);

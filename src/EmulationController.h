@@ -433,13 +433,16 @@ public:
     /// when nothing moved, which is every chunk on every machine without an
     /// accelerator and all but the two transition chunks with one.
     void applyAcceleratorClock(double mul);
+    /// The worker's next tick budget, cut to end on a video-frame boundary
+    /// (EmulationController_Clock.cpp). Takes stateMtx briefly.
+    int64_t alignedTickBudget();
 
     /// Disk turbo (~60× while a drive streams). The override COMPOSES with
     /// the base instead of replacing it: the UI used to stash
     /// `getCyclesPerFrame()` in a MainWindow member before writing 1 M, and
     /// anything that changed the speed during the burst — a profile switch,
     /// setVideoStandard, the speed menu, the AI server — was silently undone
-    /// when the drive stopped (a PAL machine restored to the NTSC 17045, a
+    /// when the drive stopped (a PAL machine restored to the NTSC 1x, a
     /// //c+ dropped out of its 4× accelerator). Keeping both halves in the
     /// controller means the exit restores the CURRENT base, whoever set it.
     void setTurboOverride(int n)
@@ -591,15 +594,15 @@ private:
 
     std::atomic<Mode> mode{Mode::Stopped};
     /// EFFECTIVE budget the worker reads every frame.
-    std::atomic<int>  cyclesPerFrame{17045};
+    std::atomic<int>  cyclesPerFrame{POM2_TIMING_NTSC.cyclesPerFrame};
     std::atomic<double> cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
     /// Budget to fall back to when the turbo override lifts. Kept in step
     /// with `cyclesPerFrame` by setCyclesPerFrame; see setTurboOverride.
-    std::atomic<int>  baseCyclesPerFrame_{17045};
+    std::atomic<int>  baseCyclesPerFrame_{POM2_TIMING_NTSC.cyclesPerFrame};
     std::atomic<bool> turboActive_{false};
-    // Worker frame-pacing interval (µs) and the active video standard. PAL
-    // paces at 50 Hz (20000 µs), NTSC at 60 Hz (~16667 µs).
-    std::atomic<int>  frameIntervalUs{1'000'000 / 60};
+    // Worker tick interval (ns): one video frame at the standard's clock,
+    // 19 968 000 PAL / 16 651 560 NTSC (pom2FrameIntervalNs, CpuClock.h).
+    std::atomic<int64_t> frameIntervalNs{pom2FrameIntervalNs(POM2_TIMING_NTSC)};
     /// Wall-clock of the previous `tickFrame()` (single-threaded / WASM
     /// path only). Used to scale the per-call CPU budget by the time that
     /// actually elapsed, since the browser calls us once per DISPLAY

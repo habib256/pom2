@@ -42,6 +42,7 @@ src/DiskImage.cpp
 src/EchoPlusCard.cpp
 src/EchoPlusTMS5220Card.cpp
 src/EmulationController.cpp
+src/EmulationController_Clock.cpp
 src/FloppyEmuDevice.cpp
 src/FloppySoundDevice.cpp
 src/FourPlayCard.cpp

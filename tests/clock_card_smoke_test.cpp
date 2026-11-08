@@ -478,8 +478,8 @@ void testTpRatesAreExactToOnePulse()
         { 0x00,   64 },   // REGISTER_HOLD also programs 64 Hz
         { 0x04,   64 }, { 0x05,  256 }, { 0x06, 2048 },
     };
-    // NTSC and PAL: 20313 cycles/frame × 50 Hz = 1015650 Hz.
-    for (int cpuHz : { 1022727, 1015650 }) {
+    // NTSC and PAL: one 20280-cycle frame per 19.968 ms tick = 1015625 Hz.
+    for (int cpuHz : { 1022727, 1015625 }) {
         for (const auto& c : cases) {
             auto card = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
             card->setCpuClock(static_cast<double>(cpuHz));

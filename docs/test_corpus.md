@@ -90,7 +90,7 @@ Consequences for POM2, cleanly separated:
 2. **Mockingboard Timer-2 IRQ — ✅ supported** (`Via6522` T2 one-shot phase-2,
    `IFR_T2`/`t2Counter`). The sync IRQ *fires*.
 3. **PAL 50 Hz machine timing — ✅ DONE.** The `iie-pal` / `iic-pal` profiles
-   carry true PAL machine timing (312 lines, 20313 cyc/frame, ~50 Hz refresh,
+   carry true PAL machine timing (312 lines, 20280 cyc/frame, 50.08 Hz refresh,
    ~1.0156 MHz), and the geometry follows the video standard everywhere
    (scanner, `$C019`, event log). `DEFAULT_SYNC_TIMER=7479` and the 312-line
    PAL geometry now place the effect vertically and pace the music correctly.

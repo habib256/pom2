@@ -173,7 +173,7 @@ void printUsage()
         "  -p, --preset <ii|ii+|iie-u|iie|iic|iic+|iie-u-pal|iie-pal|iic-pal>\n"
         "                             System profile to boot into\n"
         "  --ii-plus, --ii+           Force II+ mode (ignore roms/apple2e.rom)\n"
-        "  --speed <cycles/frame>     Override CPU pacing (1x: NTSC 17045, PAL 20313)\n"
+        "  --speed <cycles/frame>     Override CPU pacing (1x = one video frame: NTSC 17030, PAL 20280)\n"
         "  --cpu-max                  Run flat-out (speed depends on the host)\n"
         "  --ai-control[=PORT]        Start loopback control + screen capture server.\n"
         "                              Uses the token from the AI Control panel\n"

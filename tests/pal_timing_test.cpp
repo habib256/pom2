@@ -29,6 +29,7 @@
 #include "Memory.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 
@@ -41,14 +42,50 @@ int main()
     // ── 1. Timing table. ─────────────────────────────────────────────────
     const VideoTiming& n = pom2VideoTiming(VideoStandard::NTSC);
     const VideoTiming& p = pom2VideoTiming(VideoStandard::PAL);
-    assert(n.scanlinesPerFrame == 262 && n.refreshHz == 60 && n.cyclesPerFrame == 17045);
-    assert(p.scanlinesPerFrame == 312 && p.refreshHz == 50 && p.cyclesPerFrame == 20313);
+    assert(n.scanlinesPerFrame == 262 && n.refreshHz == 60 && n.cyclesPerFrame == 17030);
+    assert(p.scanlinesPerFrame == 312 && p.refreshHz == 50 && p.cyclesPerFrame == 20280);
+    // One tick = one video frame, paced at frame / clock (2026-11-07).
+    assert(pom2FrameIntervalNs(p) == 19968000 && pom2FrameIntervalNs(n) == 16651560);
+    // Each tick ends ON a frame boundary (CpuClock.h § cyclesPerFrame).
+    {
+        const int64_t f = p.cyclesPerFrame;
+        // In phase: a whole frame.
+        assert(pom2AlignedTickBudget(f, f, 7 * uint64_t(f)) == f);
+        // The last instruction overshot by 5: the next tick is 5 short.
+        assert(pom2AlignedTickBudget(f, f, 7 * uint64_t(f) + 5) == f - 5);
+        // Arbitrary first phase past half a frame: reach the next boundary.
+        assert(pom2AlignedTickBudget(f, f, 7 * uint64_t(f) + 15000) == f - 15000 + f);
+        // ... and before it: the boundary one frame on.
+        assert(pom2AlignedTickBudget(f, f, 7 * uint64_t(f) + 3000) == f - 3000);
+        // The 2x preset ends on a boundary too; a custom budget is untouched.
+        assert(pom2AlignedTickBudget(2 * f, f, 7 * uint64_t(f) + 5) == 2 * f - 5);
+        assert(pom2AlignedTickBudget(30000, f, 12345) == 30000);
+        // Over a run of ticks with random overshoot, every tick ENDS on a
+        // boundary and the machine still advances exactly one frame a tick.
+        uint64_t now = 12345, seed = 1;
+        for (int tick = 0; tick < 1000; ++tick) {
+            const int64_t b = pom2AlignedTickBudget(f, f, now);
+            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            const uint64_t overshoot = (seed >> 33) % 7;          // 0-6 cycles
+            now += uint64_t(b) + overshoot;
+            assert(now % uint64_t(f) == overshoot);
+        }
+        // The first tick ran from phase 12345 past half a frame to the
+        // SECOND boundary; every other tick was exactly one frame.
+        assert(now / uint64_t(f) == 1001);   // no lap lost, none gained
+    }
     assert(p.cpuClockHz == 1015625 && n.cpuClockHz == 1022727);
     assert(n.cyclesPerScanline == 65 && p.cyclesPerScanline == 65);
     assert(n.visibleScanlines == 192 && p.visibleScanlines == 192);
     // Effective clock = cyclesPerFrame × refreshHz lands near the real rates.
-    assert(p.cyclesPerFrame * p.refreshHz == 1015650);   // ≈ 1.0156 MHz PAL
-    assert(n.cyclesPerFrame * n.refreshHz == 1022700);   // ≈ 1.0227 MHz NTSC
+    // The effective clock is the standard's own: one frame per frame-long
+    // tick (it was budget x nominal refresh, 1 015 650 / 1 022 700, until
+    // 2026-11-08).
+    auto effectiveHz = [](const VideoTiming& t) {
+        return double(t.cyclesPerFrame) * 1e9 / double(pom2FrameIntervalNs(t));
+    };
+    assert(std::fabs(effectiveHz(p) - 1015625.0) < 0.01);
+    assert(std::fabs(effectiveHz(n) - 1022727.0) < 0.1);
 
     // ── 2. frameCycleToPos geometry. ─────────────────────────────────────
     // Absolute line 280: NTSC wraps (280 % 262 = 18 → visible line 18); PAL
@@ -155,7 +192,7 @@ int main()
                && "floatingBus must use the live scanlinesPerFrame");
 
         // The PAL frame repeats with period 312 × 65 = 20280 cycles, NOT
-        // the 20313 CPU budget per UI tick (those are deliberately
+        // the 20280 CPU budget per worker tick (those are deliberately
         // decoupled — see CpuClock.h).
         constexpr uint64_t kPalFrame = 312ull * 65;
         for (uint64_t probe : {0ull, 4321ull, 15000ull}) {
