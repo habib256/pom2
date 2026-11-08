@@ -15,7 +15,6 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [STORAGE-015](#storage-015) | 🟢 | Reported — after 1.2 | Disk II / DOS 3.3 RWTS fails at accelerated ×4; Dirtbike title does not load |
 | [STORAGE-014](#storage-014) | 🟢 | Confirmed: mitigated residue | ProDOS host folder: guest writes racing four eject commits are decoded under the lock |
 | [STORAGE-002](#storage-002) | 🟡 | Partial: API gap; needs decision | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🧊 | Frozen — triage 2026-10-28 | SmartPort ProDOS multi-partition |
@@ -23,21 +22,6 @@ an explicit request before scheduling.
 | [STORAGE-003](#storage-003) | 🟢 | Confirmed open: measure first | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
-
-<a id="storage-015"></a>
-
-## STORAGE-015 — Disk II / DOS 3.3 RWTS fails at ×4
-
-**Priority:** 🟢 · **State:** User-reported 2026-11-08; scheduled after 1.2.
-
-At accelerated **×4**, Disk II accesses through DOS 3.3 RWTS do not work:
-**Dirtbike fails to load its title screen**. Reproduce with the same image
-at ×1 and ×4, record the profile and the failing read loop, then investigate
-CPU/drive timing and I/O slowdown. This is separate from MAX fast-forward,
-whose boot timing was corrected in 1.2.
-
-**Acceptance:** Dirtbike loads its title and continues loading at ×4; DOS 3.3
-RWTS reads/writes regressions pass at ×1 and ×4 without changing disk rotation.
 
 <a id="storage-014"></a>
 

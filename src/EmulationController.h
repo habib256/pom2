@@ -420,6 +420,10 @@ public:
     /// //c+ has a 4× accelerator soldered on, and a card plugged outside a
     /// profile switch has to be handed the same number.
     double emulatedCpuClockHz() const { return cpuClockHz_.load(); }
+    /// The machine's own CPU clock — emulatedCpuClockHz() without the speed
+    /// menu's pacing (machineCpuHz, STORAGE-015). What a card plugged later
+    /// is handed through setMachineCpuClock.
+    double machineCpuClockHz() const { return machineCpuClockHz_.load(); }
 
     /// Re-derive `emulatedCpuClockHz()` from the plugged ACCELERATOR card and
     /// fan it back out — a TransWarp is plugged, unplugged and switched at
@@ -595,6 +599,22 @@ private:
     /// EFFECTIVE budget the worker reads every frame.
     std::atomic<int>  cyclesPerFrame{POM2_TIMING_NTSC.cyclesPerFrame};
     std::atomic<double> cpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
+    std::atomic<double> machineCpuClockHz_{ static_cast<double>(POM2_CPU_CLOCK_HZ) };
+    /// The machine's own CPU clock for a requested budget (STORAGE-015):
+    /// `pacedHz` with the speed menu's pacing taken out. MAX is already
+    /// unpaced (1.2); a budget within 1 % of a video frame is a profile's
+    /// legacy 1x (17045 / 20313 against 17030 / 20280) and keeps `pacedHz`
+    /// bit for bit; anything else — x2, x4, a --speed or AI budget, faster
+    /// or slower — is a fast-forward of the whole machine, whose CPU is then
+    /// the standard's crystal times the accelerator `mul`.
+    static double machineCpuHz(const VideoTiming& vt, int requestedBase,
+                               double pacedHz, double mul)
+    {
+        if (requestedBase <= 0 || requestedBase == 1'000'000) return pacedHz;
+        const double pacing = static_cast<double>(requestedBase) / vt.cyclesPerFrame;
+        if (pacing > 0.99 && pacing < 1.01) return pacedHz;
+        return static_cast<double>(vt.cpuClockHz) * mul;
+    }
     /// Budget to fall back to when the turbo override lifts. Kept in step
     /// with `cyclesPerFrame` by setCyclesPerFrame; see setTurboOverride.
     std::atomic<int>  baseCyclesPerFrame_{POM2_TIMING_NTSC.cyclesPerFrame};

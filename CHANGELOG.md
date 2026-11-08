@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-08 — STORAGE-015: the speed menu's x2 / x4 no longer break the Disk II
+
+At x4, DOS 3.3's RWTS read nothing and Dirtbike sat on its boot screen (user
+report). The speed menu's x2 / x4 fast-forward the WHOLE machine — the
+user's rule: everything goes x4, accelerators included, so a //c+ at its 4x
+runs at 16 MHz. POM2 handed every card a "CPU clock" that included the
+menu's pacing, and the Disk II read it as a 4 MHz CPU against its 1 MHz
+bus: the platter turned at a quarter of the program's pace.
+
+- Cards now also get the MACHINE's own clock (`setMachineCpuClock`: the
+  standard's crystal times any accelerator, never the menu's pacing), and
+  the Disk II's platter, sequencer and motor timer run on it. The paced
+  value stays for what maps cycles to host time (audio replay cursors).
+  MAX was already handled this way in 1.2; x2, x4 and any `--speed` / AI
+  budget away from 1x now are too. At 1x nothing moves.
+- Dirtbike reaches its demo loop on the very same cycle at x1, x2 and x4.
+  Pinned by `diskii_speed_x2` / `diskii_speed_x4`.
+- `pom2_headless` sets the video standard as the GUI does (it never handed
+  the Disk II a bus clock, so it could not see the defect) and gains
+  `--pal` and `--speed <1-4>`.
+
 ## 2026-11-08 — AN3 in plain HGR acts one column earlier
 
 A mid-line `$C05E/$C05F` with 80COL off only masks HGR's half-dot delay, and

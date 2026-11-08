@@ -5501,6 +5501,21 @@ target_link_libraries(test_arekkusu_disks PRIVATE POM2::core)
 add_test(NAME arekkusu_disks COMMAND test_arekkusu_disks WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(arekkusu_disks PROPERTIES TIMEOUT 300 LABELS slow)
 
+# ─── STORAGE-015: the speed menu's x2/x4 fast-forwards the whole machine ──
+# Under x4 the crystal handed to the Disk II stayed at 1 MHz while the CPU was
+# told 4 MHz, so the platter turned at a quarter of the program's pace and DOS
+# 3.3's RWTS never read a sector: Dirtbike (the author's own game, tracked)
+# sat on the boot screen. $8234 is in its demo loop, reached after ~40 M
+# cycles at x1; exit 4 means the budget ran out before it.
+foreach(_pom2_speed 2 4)
+    add_test(NAME diskii_speed_x${_pom2_speed}
+             COMMAND pom2_headless --iie --pal --no-setup
+                     --disk ${CMAKE_SOURCE_DIR}/disks_5.4/DIRTBIKE.dsk
+                     --speed ${_pom2_speed} --until $8234 --frames 3000
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(diskii_speed_x${_pom2_speed} PROPERTIES TIMEOUT 120 LABELS slow)
+endforeach()
+
 # ─── Sony 3.5" head step-direction regression ─────────────────────────────
 add_executable(test_sony_seek_direction
     sony_seek_direction_test.cpp
