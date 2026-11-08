@@ -32,9 +32,19 @@ mkdir -p "$DEST"
 cd "$DEST"
 
 download_verified() {
-    local url=$1 out=$2 expected=$3
-    wget -nv --timeout=30 --tries=5 --waitretry=2 --retry-connrefused \
-        --retry-on-http-error=429,500,502,503,504 "$url" -O "$out"
+    local url=$1 out=$2 expected=$3 api=$4
+    if ! wget -nv --timeout=30 --tries=2 --waitretry=2 --retry-connrefused \
+        --retry-on-http-error=429,500,502,503,504 "$url" -O "$out"; then
+        # The browser download endpoint can time out while the asset API works.
+        # Keep the exact asset and digest; curl drops Authorization on redirects.
+        local auth=()
+        if [ -n "${GH_TOKEN:-}" ]; then
+            auth=(-H "Authorization: Bearer $GH_TOKEN")
+        fi
+        curl -fLsS --connect-timeout 10 --max-time 90 --retry 2 \
+            --retry-delay 2 --retry-max-time 120 \
+            -H 'Accept: application/octet-stream' "${auth[@]}" "$api" -o "$out"
+    fi
     echo "$expected  $out" | sha256sum -c -
 }
 
@@ -56,7 +66,8 @@ download_verified() {
 download_verified \
   "https://github.com/AppImage/AppImageKit/releases/download/12/appimagetool-aarch64.AppImage" \
   appimagetool.AppImage \
-  c9d058310a4e04b9fbbd81340fff2b5fb44943a630b31881e321719f271bd41a
+  c9d058310a4e04b9fbbd81340fff2b5fb44943a630b31881e321719f271bd41a \
+  "https://api.github.com/repos/AppImage/AppImageKit/releases/assets/12339808"
 # linuxdeploy, pinned to the IMMUTABLE dated release, not `continuous`.
 #
 # It used to come from `continuous`, and on 2026-09-01 upstream re-uploaded that
@@ -88,7 +99,8 @@ download_verified \
 download_verified \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-aarch64.AppImage" \
   linuxdeploy.AppImage \
-  620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
+  620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff \
+  "https://api.github.com/repos/linuxdeploy/linuxdeploy/releases/assets/313839294"
 # The ET_EXEC runtime, pinned to AppImageKit release **12**. This is not the
 # `continuous` one: upstream never rebuilt the old-style runtime for ARM, so
 #   continuous/runtime-x86_64  -> ET_EXEC
@@ -100,7 +112,8 @@ download_verified \
 download_verified \
   "https://github.com/AppImage/AppImageKit/releases/download/12/runtime-aarch64" \
   runtime-aarch64 \
-  207f8955500cfe8dd5b824ca7514787c023975e083b0269fc14600c380111d85
+  207f8955500cfe8dd5b824ca7514787c023975e083b0269fc14600c380111d85 \
+  "https://api.github.com/repos/AppImage/AppImageKit/releases/assets/12339813"
 
 chmod +x runtime-aarch64
 chmod +x ./*.AppImage

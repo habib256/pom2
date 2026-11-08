@@ -508,6 +508,10 @@ jobs:
       # VCPKG_CRT_LINKAGE=static and so matches POM2's own static CRT. Using a
       # different triplet here would compile a configuration the release never
       # builds, which defeats the point of the job.
+      - name: Prefetch the pinned GLFW archive from official codeload
+        shell: bash
+        run: bash tools/prefetch_vcpkg_glfw.sh
+
       - name: Install GLFW via vcpkg (manifest mode, static triplet)
         run: vcpkg install --triplet x64-windows-static
 
@@ -764,6 +768,8 @@ jobs:
           test "$(git -C imgui rev-parse HEAD)" = "$IMGUI_COMMIT"
 
       - name: Set up Emscripten SDK
+        id: emsdk
+        continue-on-error: true
         uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           # Pinned to the same version release.yml publishes with: a CI job
@@ -771,6 +777,10 @@ jobs:
           # verifying the release. Bump both in one commit.
           version: 6.0.9
           actions-cache-folder: emsdk-cache
+
+      - name: Install the same Emscripten SDK through Git if archive download failed
+        if: steps.emsdk.outcome == 'failure'
+        run: bash tools/setup_emsdk_git_fallback.sh 6.0.9
 
       - name: GLFW abort stubs match key_chord_policy's list
         run: tools/check_glfw_abort_stubs.sh

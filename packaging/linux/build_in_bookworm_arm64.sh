@@ -22,7 +22,7 @@ set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-    ca-certificates git wget file desktop-file-utils \
+    ca-certificates git wget curl file desktop-file-utils \
     build-essential cmake pkg-config \
     zlib1g-dev \
     libglfw3-dev \

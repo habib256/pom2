@@ -390,13 +390,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config file desktop-file-utils wget \
+            cmake g++ pkg-config file desktop-file-utils wget curl \
             libglfw3-dev libgl1-mesa-dev libslirp-dev
 
       - name: Build + AppImage (native arm64, desktop GL)
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
           POM2_JOBS: 2
+          GH_TOKEN: ${{ github.token }}
         run: packaging/linux/build_native_arm64.sh
 
       - name: Verify the AppImage — name, aarch64, ET_EXEC, no bundled GL
@@ -508,10 +509,11 @@ jobs:
       - name: Build POM2 + AppImage in a bookworm arm64 container (GLES)
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           docker run --rm \
             -v "$PWD":/work -w /work \
-            -e POM2_VERSION \
+            -e POM2_VERSION -e GH_TOKEN \
             debian:bookworm-20260824@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 \
             bash /work/packaging/linux/build_in_bookworm_arm64.sh
 
@@ -635,10 +637,11 @@ jobs:
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
           POM2_MCPU: cortex-a72
+          GH_TOKEN: ${{ github.token }}
         run: |
           docker run --rm \
             -v "$PWD":/work -w /work \
-            -e POM2_VERSION -e POM2_MCPU \
+            -e POM2_VERSION -e POM2_MCPU -e GH_TOKEN \
             debian:bookworm-20260824@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443 \
             bash /work/packaging/raspberry/build_in_bookworm_pi.sh
 
@@ -807,6 +810,10 @@ jobs:
         shell: bash
         run: tools/fetch_imgui_pinned.sh
 
+      - name: Prefetch the pinned GLFW archive from official codeload
+        shell: bash
+        run: bash tools/prefetch_vcpkg_glfw.sh
+
       - name: Install GLFW via vcpkg (manifest mode, static triplet)
         # x64-windows-static, NOT the default x64-windows: this triplet carries
         # VCPKG_CRT_LINKAGE=static, so GLFW is compiled /MT and matches POM2's
@@ -926,10 +933,16 @@ jobs:
       # new Emscripten can change the generated JS glue, the pthread shape and
       # the .data packer. Bump this deliberately, in its own commit.
       - name: Install Emscripten
+        id: emsdk
+        continue-on-error: true
         uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           version: 6.0.9
           actions-cache-folder: emsdk-cache
+
+      - name: Install the same Emscripten SDK through Git if archive download failed
+        if: steps.emsdk.outcome == 'failure'
+        run: bash tools/setup_emsdk_git_fallback.sh 6.0.9
 
       - name: Every wasm payload entry is present
         run: packaging/stage_data.sh --verify-wasm-sources
