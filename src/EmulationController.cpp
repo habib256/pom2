@@ -55,6 +55,8 @@ void EmulationController::setVideoStandard(VideoStandard s)
     const double hz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     cpuClockHz_.store(hz);
+    const double machineHz = machineCpuHz(vt, requestedBase, hz, 1.0);
+    machineCpuClockHz_.store(machineHz);
     mem.setVideoStandard(s);
     // The Zip's 4 MHz and its millisecond delays are against the stock clock.
     zipChip_.setStockClockHz(static_cast<double>(vt.cpuClockHz));
@@ -91,6 +93,7 @@ void EmulationController::setVideoStandard(VideoStandard s)
     for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
         if (SlotPeripheral* card = mem.slotBus().peripheral(slot)) {
             card->setCpuClock(hz);
+            card->setMachineCpuClock(machineHz);
             card->setStandardClock(vt.cpuClockHz);
         }
     }

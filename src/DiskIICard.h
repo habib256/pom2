@@ -438,6 +438,10 @@ public:
     /// a Zip or TransWarp it ran out ~4x early in accelerated CPU cycles.
     /// `motorOffDelay` counts STOCK bus cycles, converted here.
     void    setCpuClock(double hz) override { motorClock_.setCpuClock(hz); syncFluxClock(); }
+    /// The machine's clock wins over the paced one (SlotPeripheral.h,
+    /// STORAGE-015): the platter, the sequencer and the 556 keep the
+    /// machine's time whatever the speed menu says.
+    void    setMachineCpuClock(double hz) override { motorClock_.setCpuClock(hz); syncFluxClock(); }
     void    setStandardClock(double hz) override { motorClock_.setBusClock(hz); syncFluxClock(); }
     /// The sequencer steps twice per STOCK bus cycle, so the bus clock is
     /// what places a WOZ FLUX track's 125 ns ticks on the LSS timeline

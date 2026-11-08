@@ -108,6 +108,9 @@ void usage(const char* prog)
         "  --iie                 //e memory mode, for a 16/32 KiB //e dump; the CPU\n"
         "                        follows the dump (unenhanced NMOS, else 65C02).\n"
         "                        Default ROM then: probe roms/apple2e.rom.\n"
+        "  --pal                 The 50 Hz video standard (default NTSC).\n"
+        "  --speed <1-4>         The GUI speed menu's x1 / x2 / x4: the frame's\n"
+        "                        cycle budget times N (capture mode).\n"
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
         "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
         "                        `--prom pom2` forces POM2's even with a dump\n"
@@ -246,6 +249,8 @@ int main(int argc, char** argv)
     int  port        = SuperSerialCard::kDefaultPort;
     int  pasteAfter  = 6;     // emulated seconds before pasting setup
     int  frames      = 0;     // >0 = capture mode (see below)
+    int  speedMul    = 1;     // --speed: the GUI speed menu's x1 / x2 / x4
+    bool pal         = false; // --pal: the 50 Hz video standard
     bool doSetup     = true;
     bool setupGiven  = false;
     bool textDump    = false;
@@ -339,6 +344,10 @@ int main(int argc, char** argv)
             typed.push_back({ at, unescape(v.substr(colon + 1)), false });
         }
         else if (a == "--iie") iie = true;
+        else if (a == "--pal") pal = true;
+        else if (a == "--speed" && i+1 < argc) {
+            if (!parseInt("--speed", argv[++i], 1, 4, speedMul)) return 1;
+        }
         else if (a == "--text-dump" || a == "--screen-text") textDump = true;
         else if (a == "--trace-mli") trace.mli = true;
         else if (a == "--trace-bdos") trace.bdos = true;
@@ -645,6 +654,16 @@ int main(int argc, char** argv)
         else
             std::fprintf(stderr, "[POM2 headless] capture: running %d frames\n", frames);
 
+        // The video standard, as the GUI's applyProfile always sets it, with
+        // the cards plugged: it is what hands every card the crystal clock
+        // (setStandardClock). Without it the Disk II never had one, so this
+        // tool could not see a clock-ratio defect the GUI showed (STORAGE-015).
+        controller.setVideoStandard(pal ? VideoStandard::PAL : VideoStandard::NTSC);
+        controller.setCyclesPerFrame(pom2VideoTiming(controller.getVideoStandard()).cyclesPerFrame);
+        // --speed: exactly what the GUI's speed menu does (MainWindow_Chrome
+        // speed.2x / speed.4x): the frame's cycle budget times N.
+        if (speedMul > 1)
+            controller.setCyclesPerFrame(controller.getCyclesPerFrame() * speedMul);
         const uint64_t startCycles = controller.memory().getCycleCounter();
         const int      frameCycles = controller.getCyclesPerFrame();
         bool reached = false, halted = false;

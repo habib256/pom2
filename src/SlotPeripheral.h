@@ -218,6 +218,17 @@ public:
     /// Mockingboard: a card plugged later via Slot Config used to keep the
     /// NTSC constant under PAL.
     virtual void setCpuClock(double /*hz*/) {}
+    /// The MACHINE's own CPU clock: the standard's crystal times any
+    /// accelerator, never the speed menu's pacing. The menu's x2 / x4 / MAX
+    /// fast-forward the whole machine, so nothing that keeps the machine's
+    /// own time may see them (STORAGE-015, 2026-11-08: the Disk II took the
+    /// paced setCpuClock value as a 4 MHz CPU against its 1 MHz bus, turned
+    /// at a quarter of the program's pace under x4, and DOS 3.3 read
+    /// nothing). setCpuClock keeps the paced value for what maps cycles to
+    /// host time (audio replay cursors). EmulationController calls this
+    /// right AFTER setCpuClock; a host that never does keeps setCpuClock's
+    /// behaviour. Default: no-op; implemented by DiskIICard.
+    virtual void setMachineCpuClock(double /*hz*/) {}
     /// The video STANDARD's nominal clock (1 022 727 NTSC / 1 015 625 PAL),
     /// never scaled by an accelerator. For a timebase that is MECHANICAL —
     /// a platter's RPM is real time, but the IWM that reads it counts ticks

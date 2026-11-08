@@ -1068,6 +1068,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         for (int s = 0; s < SlotBus::kSlotCount; ++s) {
             if (auto* card = st.memory().slotBus().peripheral(s)) {
                 card->setCpuClock(cpuHz);
+                card->setMachineCpuClock(controller->machineCpuClockHz());   // Disk II
                 card->setStandardClock(standardHz);   // Liron's mechanisms
             }
         }

@@ -63,11 +63,12 @@ void EmulationController::applyAcceleratorClock(double mul)
     const double stockHz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     const double hz = stockHz * mul;
+    const double machineHz = machineCpuHz(vt, requestedBase, hz, mul);
     // Fast path only when the BEAM agrees too: setVideoStandard and a stock
     // snapshot restore the clock, not the ratio (a //c+ → //e switch kept the
     // beam at ~1/4 speed; bug hunt 2026-11-07).
     if (hz == cpuClockHz_.load() && mem.videoClockRatio() == 1.0 / mul) return;
-    cpuClockHz_.store(hz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
+    cpuClockHz_.store(hz); machineCpuClockHz_.store(machineHz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
     // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
     // its backlog then plays at the speed it was made at. The cards' AY
     // replays do the same through their bus clock (busNow_).
@@ -76,8 +77,12 @@ void EmulationController::applyAcceleratorClock(double mul)
     if (floppy525) floppy525->setCpuClock(stockHz);   // the Disk II stamps stock time
     if (floppy35)  floppy35->setCpuClock(hz);
     for (int slot = 0; slot < SlotBus::kSlotCount; ++slot)   // 0: the aux slot
-        if (SlotPeripheral* card = mem.slotBus().peripheral(slot))
+        if (SlotPeripheral* card = mem.slotBus().peripheral(slot)) {
             card->setCpuClock(hz);
+            // The machine's time, without the speed menu's pacing: the
+            // Disk II's platter and sequencer (STORAGE-015).
+            card->setMachineCpuClock(machineHz);
+        }
 }
 
 // NOT inside the __EMSCRIPTEN__ guard: tickFrame — the browser-RAF CPU
