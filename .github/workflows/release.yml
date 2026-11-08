@@ -124,15 +124,12 @@ jobs:
   # workflow: that workflow can fail after packages have already been attached.
   # Keep an explicit test gate in this dependency graph.
   #
-  # `--parallel 4` and a 180-minute budget since v0.9.1: the first v0.9.1 run
-  # was cancelled by the 90-minute timeout while still compiling at
-  # `--parallel 1` — the suite had grown to 263 binaries and the runners were
-  # slow that morning (the CI job's `--parallel 2` build of the same tree took
-  # 59 minutes). The old `-j1` guarded against RAM exhaustion on the large
-  # translation units; the nightly sanitizer job has since built the same tree
-  # at `--parallel 4` on the same 4-core / 16 GB runner without trouble, and
-  # ASan objects are the heavier ones. ctest runs at the runner's real width
-  # for the reason given in ci.yml (a narrow run hides a timeout regression).
+  # The test targets compile their own copies of common sources. Use ccache
+  # within this job, as in CI: even a cold cache avoids those duplicate
+  # compilations (the 2026-11-08 CI build hit 86.5% without a restored cache).
+  # No binaries or test results are reused from a different job; every test
+  # still runs here. Keep four compile workers and the 180-minute budget for
+  # a cold host. ctest uses the runner's real width as in ci.yml.
   quality:
     needs: version
     runs-on: ubuntu-latest
@@ -169,7 +166,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev \
-            libslirp-dev libglib2.0-dev ghostscript locales
+            libslirp-dev libglib2.0-dev ccache ghostscript locales
           sudo locale-gen fr_FR.UTF-8
           pkg-config --modversion slirp
           gs --version
@@ -180,15 +177,20 @@ jobs:
 
       - name: Configure and build tests
         run: |
+          ccache --max-size=2G
+          ccache --zero-stats
           cmake -S . -B build-quality \
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=ON \
-            -DPOM2_FETCH_TOMHARTE=ON
+            -DPOM2_FETCH_TOMHARTE=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           test "$(find build-quality/tests/tomharte/6502 -name '*.json' | wc -l)" \
             -eq "$(grep -Evc '^[[:space:]]*(#|$)' tests/tomharte_6502.manifest)"
           test "$(find build-quality/tests/tomharte/wdc65c02 -name '*.json' | wc -l)" \
             -eq "$(grep -Evc '^[[:space:]]*(#|$)' tests/tomharte_wdc65c02.manifest)"
           cmake --build build-quality --parallel 4
+          ccache --show-stats
 
       - name: Run complete test suite
         working-directory: build-quality
