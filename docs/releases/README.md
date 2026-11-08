@@ -7,6 +7,10 @@ version has not yet been bumped. Current behavior is documented in the
 [documentation index](../README.md); changes since a tag appear in
 [CHANGELOG](../../CHANGELOG.md).
 
+GitHub already displays the release title, so the publish workflow omits the
+notes' opening `# POM2 ...` heading. First-installation warnings belong only
+to the current release.
+
 | Release | Notes |
 |---|---|
 | 1.2.0 | [v1.2.0](v1.2.0.md) |
