@@ -973,6 +973,7 @@ set(POM2_RUNTIME_HEADERS
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
     src/Debugger.h
+    src/InterruptLoad.h
     src/OsCallTrace.h
     src/DebuggerSymbols.h
     src/DebuggerSourceMap.h
@@ -1109,6 +1110,7 @@ set(HEADERS
     src/EventRing.h
     src/Memory.h
     src/Debugger.h
+    src/InterruptLoad.h
     src/Debugger_ImGui.h
     src/MediaMount.h
     src/MemoryProfile.h

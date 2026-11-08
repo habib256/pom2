@@ -279,6 +279,9 @@ bool Memory::vblintEdgeInFlight() const
 {
     if (!vblIrqMask || !vblWasActive || vblFrameCycles_ == 0) return false;
     const uint64_t edge = vblFrameBase_ + 192 * 65;   // first VBL line, video cycles
-    const uint64_t va   = videoAccessCycle();
+    // One cycle ahead of the access, like $C019 on the //e: the CPU's PHASE 0
+    // read sees the counters already advanced ([A] arekkusu42's BEAMPOS on
+    // the //c; Memory.cpp $C019 for the full note).
+    const uint64_t va   = videoAccessCycle() + 1;
     return va >= edge && va - vblFrameBase_ < vblFrameCycles_;
 }

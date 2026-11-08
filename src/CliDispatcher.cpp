@@ -160,6 +160,8 @@ void printUsage()
         "  --slot N=KEY               Put card KEY (ssc, grappler, printer, …,\n"
         "                             or 'empty') in slot N, as Slot Config's\n"
         "                             Apply would. Repeatable.\n"
+        "  --ezcolor[=N]              Put an E-Z Color (TMS9918A) in slot N\n"
+        "                             (default 4): --slot N=ezcolor.\n"
         "  --printer-port N:K=V,...   Set the printer side of slot N. Super\n"
         "                             Serial: mode=comm|printer|sicp8|sicp8a,\n"
         "                             dsw1=0xNN, dsw2=0xNN, cable=auto|none|\n"
@@ -280,7 +282,7 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
     };
 
     // ── "--flag VALUE" for a flag that only takes "--flag=VALUE" ────────
-    // `--ai-control`, `--fujinet`, `--fujinet-serial` and
+    // `--ai-control`, `--fujinet`, `--fujinet-serial`, `--ezcolor` and
     // `--rgb-card-invert-bit7` carry their value after an `=`; written with a
     // space the value fell through to the POSITIONAL branch and became
     // `bootDiskPath`. `POM2 --ai-control 6503` therefore armed the server on
@@ -448,6 +450,21 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
             std::string key = spec.substr(2);
             if (key == "empty") key.clear();
             plan.slotCards.emplace_back(spec[0] - '0', key);
+        }
+        else if (a == "--ezcolor" || a.rfind("--ezcolor=", 0) == 0) {
+            // Shorthand for --slot N=ezcolor, the spelling a2shot uses too.
+            int slot = 4;
+            if (a.size() > 9) {
+                const std::string v = a.substr(10);
+                if (v.size() != 1 || v[0] < '1' || v[0] > '7') {
+                    pom2::log().error("CLI", "--ezcolor expects a slot 1-7, got: " + v);
+                    return std::nullopt;
+                }
+                slot = v[0] - '0';
+            } else if (rejectSpacedValue(i, "--ezcolor", looksLikePort)) {
+                return std::nullopt;
+            }
+            plan.slotCards.emplace_back(slot, "ezcolor");
         }
         else if (a == "--printer-port") {
             const char* v = needArg(i, "--printer-port"); if (!v) return std::nullopt;

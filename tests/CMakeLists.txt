@@ -5473,6 +5473,34 @@ endif()
 add_test(NAME video_scanner_sather COMMAND test_video_scanner_sather)
 set_tests_properties(video_scanner_sather PROPERTIES TIMEOUT 15)
 
+# ─── Floating bus vs bytes read on a real PAL //e (Accurapple vidscan) ────
+add_executable(test_floating_bus_measured
+    floating_bus_measured_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_floating_bus_measured PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_floating_bus_measured PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_floating_bus_measured PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_floating_bus_measured PRIVATE winmm ws2_32)
+endif()
+add_test(NAME floating_bus_measured COMMAND test_floating_bus_measured)
+set_tests_properties(floating_bus_measured PROPERTIES TIMEOUT 30)
+
+# ─── arekkusu42's self-checking disks (FLOATBUS, BEAMPOS) on six machines ──
+# The disks are OPTIONAL local references (disks_5.4/arekkusu/, not in git,
+# not in the test-media archive): without them the test skips, an allowed skip
+# (tools/check_ctest_skips.sh). It runs them on scratch copies.
+add_executable(test_arekkusu_disks arekkusu_disks_test.cpp)
+target_link_libraries(test_arekkusu_disks PRIVATE POM2::core)
+add_test(NAME arekkusu_disks COMMAND test_arekkusu_disks WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(arekkusu_disks PROPERTIES TIMEOUT 300 LABELS slow)
+
 # ─── Sony 3.5" head step-direction regression ─────────────────────────────
 add_executable(test_sony_seek_direction
     sony_seek_direction_test.cpp
@@ -9436,6 +9464,28 @@ if(WIN32)
 endif()
 add_test(NAME debugger COMMAND test_debugger)
 set_tests_properties(debugger PROPERTIES TIMEOUT 30)
+
+# ─── Interrupt load: IRQ/NMI share of each video frame (InterruptLoad.h) ──
+add_executable(test_interrupt_load
+    interrupt_load_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_interrupt_load PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_interrupt_load PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_interrupt_load PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_interrupt_load PRIVATE winmm ws2_32)
+endif()
+add_test(NAME interrupt_load COMMAND test_interrupt_load)
+set_tests_properties(interrupt_load PROPERTIES TIMEOUT 30)
 
 
 # ─── Package payload manifest ───────────────────────────────────────────

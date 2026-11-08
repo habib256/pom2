@@ -41,9 +41,11 @@
 //      127.0.0.1 never reach a host listener on 127.0.0.1.
 //   2. Same for 0.0.0.0 (the "this network" hole checkDestination already
 //      names on the socket path).
-//   3. The opt-in still works: allowHostLoopback=true lets the SYN through.
-//      Without this case the test would pass on a backend that dropped
-//      everything.
+//   3. The opt-in still works: allowHostLoopback=true lets a SYN to the
+//      gateway alias 10.0.2.2 reach the host listener, and the default keeps
+//      it out. Without this case the test would pass on a backend that
+//      dropped everything. (libslirp >= 4.9.6 rejects a frame naming
+//      127.0.0.1 directly even with the opt-in; see the case itself.)
 //   4. A DHCP DISCOVER (source 0.0.0.0, destination 255.255.255.255) still
 //      gets an OFFER from slirp's own server — the fence tests the
 //      DESTINATION, so broadcast and multicast stay open, which is what the
@@ -234,11 +236,29 @@ void testGuestCannotReachHostLoopback()
 }
 
 // 3 — the opt-in still opts in, so case 1 is not passing vacuously.
+//
+// Through the GATEWAY ALIAS 10.0.2.2, which libslirp re-opens on 127.0.0.1
+// (`sotranslate_out`) only when `disable_host_loopback` is false — the route
+// a guest is meant to use to reach the host. Until 2026-11 this case dialled
+// 127.0.0.1 directly, but libslirp 4.9.6 (2026-10-25, "Reject martians")
+// drops a guest packet naming 127/8 or 0/8 itself, opt-in or not, so that
+// route no longer exists on a current library. The direct attempt is still
+// made and reported, not asserted: on libslirp < 4.9.6 it gets through.
+// The alias is also checked CLOSED by default, which is libslirp's half of
+// the fence (POM2's half is the direct-destination drop of cases 1-2).
 void testOptInStillReachesLoopback()
 {
-    const Outcome lo = attempt(true, htonl(0x7F000001));
-    assert(lo.tcp && "uthernet_allow_loopback no longer lets the guest connect");
-    std::puts("  allowHostLoopback=true still reaches 127.0.0.1");
+    const uint32_t gateway = htonl(0x0A000202);              // 10.0.2.2
+    const Outcome fenced = attempt(false, gateway);
+    assert(!fenced.tcp && "the 10.0.2.2 alias reached the host with loopback NOT allowed");
+    const Outcome alias = attempt(true, gateway);
+    assert(alias.tcp && "uthernet_allow_loopback no longer lets the guest reach the host via 10.0.2.2");
+    std::puts("  allowHostLoopback: 10.0.2.2 -> host loopback closed by default, open when allowed");
+
+    const Outcome direct = attempt(true, htonl(0x7F000001));
+    std::printf("  allowHostLoopback=true, 127.0.0.1 named directly: %s\n",
+                direct.tcp ? "reached (libslirp < 4.9.6)"
+                           : "refused by libslirp itself (>= 4.9.6 rejects martians)");
 }
 
 // 4 — the fence tests the DESTINATION only, so the broadcast the guest needs

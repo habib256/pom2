@@ -80,6 +80,11 @@ private:
         bool profiling = false, historyEnabled = false;
         std::vector<Debugger::ProfileEntry> profile;
         std::vector<Debugger::TraceEntry> history;
+        /// Interrupt share of each completed video frame, oldest first, in
+        /// percent (the histogram's input), and its summary.
+        std::vector<float> interruptLoad;
+        InterruptLoad::Summary interruptSummary;
+        uint32_t interruptEntriesLast = 0;
         pom2::OsTraceKinds trace;
         /// 64 KiB of main RAM, copied so the disassembly can be laid out
         /// after the lock is released.

@@ -23,7 +23,8 @@ ALLOW=$(printf '%s\n' \
   $'crt_glass_resample\t*' \
   $'crt_barrel_view\t*' \
   $'videx_videoterm_boot\t*' \
-  $'card_snapshot_contract\tVideoterm+ROM' )
+  $'card_snapshot_contract\tVideoterm+ROM' \
+  $'arekkusu_disks\t*' )
 # Since 2026-11-01 the test-media archive (pom2_media_202611) carries every disk and
 # ROM the suite opens — the SoftCard II's CP/M 2.28B, the Applicard's boot
 # disk and ROM, the UltraTerm's ROMs, the Premium SoftCard's CP/M 2.25 and
@@ -31,6 +32,10 @@ ALLOW=$(printf '%s\n' \
 # softcard2_card, applicard_card, videx_ultraterm, premium_softcard, a2audit,
 # mb_audit and saturn_card may not skip any more. A new medium goes into the
 # archive AND tools/test_media.sha256, not into this list.
+# arekkusu_disks runs arekkusu42's FLOATBUS / VIDMODES disks, which are
+# optional local references (disks_5.4/arekkusu/, not in the test-media
+# archive), so its skip is allowed in both shapes (`*`). The ROMs it also
+# needs are covered by the many tests that may not skip.
 # videx_videoterm_boot is the one ROM-gated test whose dumps are deliberately
 # NOT in the tree: the Videoterm firmware and character ROMs are third-party
 # and are fetched at run time (ROM Status → RetroBIOS a2vidtrm.zip), pending

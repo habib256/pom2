@@ -187,8 +187,9 @@ void testPerLinePageSplitDoesNotGhostAcrossSegments()
             for (int y = 0; y < 192; ++y) {
                 mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 5);
                 mem.memRead(SET_PAGE1);
-                // hpos 45 → column 20 (PAGE2 maps to hpos - 25), mid-line.
-                mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 45);
+                // hpos 44 → column 20 (PAGE2 maps to hpos - 24 since the
+                // 2026-11-08 re-anchoring), mid-line.
+                mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 44);
                 mem.memRead(SET_PAGE2);
             }
         d.render(mem);
@@ -240,7 +241,10 @@ void testPageSplitInsideMixedTextBand()
         for (int y = 160; y < 192; ++y) {
             mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 5);
             mem.memRead(leftPage);
-            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 45);
+            // hpos 44 → column 20 (PAGE2 at `hpos - 24` since the 2026-11-08
+            // re-anchoring; it was hpos 45 at `hpos - 25`): the band splits
+            // at x 280 of 560.
+            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 44);
             mem.memRead(rightPage);
         }
         d.render(mem);
@@ -302,10 +306,12 @@ void testMovingCheckerboardBarsOnIIcAdapter()
             mem.setCycleCounter(base + y * 65 + 5);
             mem.memRead(inBar(y) ? CLR_HIRES : SET_HIRES);
             // Source's partial bars show HGR through the TV in the middle.
+            // Columns 8 and 34: HIRES maps to hpos - 24 since the 2026-11-08
+            // re-anchoring (it was 25 + col at hpos - 25).
             if (inBar(y) && (f & 1)) {
-                mem.setCycleCounter(base + y * 65 + 25 + 8);
+                mem.setCycleCounter(base + y * 65 + 24 + 8);
                 mem.memRead(SET_HIRES);
-                mem.setCycleCounter(base + y * 65 + 25 + 34);
+                mem.setCycleCounter(base + y * 65 + 24 + 34);
                 mem.memRead(CLR_HIRES);
             }
         }

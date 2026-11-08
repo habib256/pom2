@@ -26,15 +26,18 @@
 //  5. the access window (silicon-strict, the card's default): a burst with
 //     no time between the bytes loses them and counts them; spaced, it lands;
 //     the gap each mode needs
+//  6. an NMOS indexed store's phantom read, through the real CPU
 //
 // 1-4 drive the ports with no CPU time between accesses, so they switch the
 // window off; 5 puts it back.
 
 #include "EzColorCard.h"
 #include "CardVideoSource.h"
+#include "M6502.h"
 #include "Memory.h"
 
 #include <cstdio>
+#include <initializer_list>
 #include <memory>
 #include <vector>
 
@@ -256,6 +259,74 @@ int main()
         const long pal = firstF(1015625.0);
         const long palWant = long(double(k) * 1015625.0 / 1022727.0 + 0.999);
         CHECK(pal >= palWant - 1 && pal <= palWant + 1 && "PAL host: the VDP's own 59.94 Hz");
+    }
+
+    // ── An indexed store's phantom read REACHES the card (NMOS) ──────────
+    // `STA $C080,X` with X = $40 reads $C0C0 one cycle before it writes it
+    // (M6502::nmosIndexDummyRead). Report from pom2games: the byte lands at
+    // the pointer and not one further, "so the read does not reach the card".
+    // It does; what differs is the VDP.
+    {
+        struct Rig {
+            Memory mem;
+            M6502 cpu{ &mem };
+            EzColorCard* card = nullptr;
+            explicit Rig(bool window) {
+                mem.setCpu(&cpu);
+                cpu.setCpuMode(M6502::CpuMode::NMOS);
+                auto c = std::make_unique<EzColorCard>();
+                card = c.get();
+                card->vdp().setSiliconStrictMode(window);
+                mem.slotBus().plug(4, std::move(c));
+                // R1: 16 KB, display off (the free zone: the chip's easiest).
+                mem.memWrite(0xC0C1, 0x80); mem.memWrite(0xC0C1, 0x81);
+                card->advanceCycles(64);
+            }
+            void run(std::initializer_list<uint8_t> code, int instrs) {
+                uint16_t a = 0x0300;
+                for (uint8_t b : code) mem.memWrite(a++, b);
+                cpu.setProgramCounter(0x0300);
+                for (int i = 0; i < instrs; ++i) cpu.run(1);
+                card->advanceCycles(64);
+            }
+        };
+        // LDX #$40 / LDA #$A5 / STA $C080,X
+        const std::initializer_list<uint8_t> store = { 0xA2, 0x40, 0xA9, 0xA5, 0x9D, 0x80, 0xC0 };
+
+        // Window off, each access served on the spot: the phantom read takes
+        // the pointer forward and the byte lands one further.
+        Rig lax(false);
+        lax.mem.memWrite(0xC0C1, 0x00); lax.mem.memWrite(0xC0C1, 0x41);   // write $0100
+        lax.run(store, 3);
+        CHECK(lax.card->vdp().vramData()[0x0101] == 0xA5 && "phantom read advanced the pointer");
+        CHECK(lax.card->vdp().vramAddress() == 0x0102);
+
+        // Window on (the default). The store comes 1 cycle behind the read,
+        // inside the access the read scheduled: the write retargets that one
+        // pending access, the slot fires once, with the newer byte, at the
+        // unmoved pointer. The read is not lost: it is the reason the store
+        // counts as a too-fast access. [D] openMSX VDP.cc (via POM1's
+        // TMS9918.cpp, see writeData). [F] No capture of a real TMS9918A
+        // under a 1 us read→write pair is known; settled by a logic analyser
+        // on the VRAM bus of a real card.
+        Rig strict(true);
+        const uint8_t untouched = strict.card->vdp().vramData()[0x0101];
+        strict.mem.memWrite(0xC0C1, 0x00); strict.mem.memWrite(0xC0C1, 0x41);
+        strict.card->vdp().resetDroppedWriteCount();
+        strict.run(store, 3);
+        CHECK(strict.card->vdp().vramData()[0x0100] == 0xA5 && "merged into the read's slot");
+        CHECK(strict.card->vdp().vramData()[0x0101] == untouched);
+        CHECK(strict.card->vdp().vramAddress() == 0x0101);
+        CHECK(strict.card->vdp().droppedWriteCount() == 1 && "and the host can see it");
+
+        // On $C0n1 the phantom read is a status read, in either mode: it
+        // clears the byte flip-flop, so a register port written through
+        // `STA $C081,X` never completes a pair. No VDP timing in this one.
+        Rig flip(true);
+        // LDX #$40 / LDA #$34 / STA $C081,X / LDA #$52 / STA $C081,X
+        flip.run({ 0xA2, 0x40, 0xA9, 0x34, 0x9D, 0x81, 0xC0, 0xA9, 0x52, 0x9D, 0x81, 0xC0 }, 5);
+        CHECK((flip.card->vdp().vramAddress() & 0xFF) == 0x52 && "second byte taken as a first");
+        CHECK((flip.card->vdp().vramAddress() & 0x3F00) != 0x1200 && "no write-address command");
     }
 
     // ── The E-Z Color's picture never takes the Apple's screen ───────────

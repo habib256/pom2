@@ -45,10 +45,15 @@ constexpr uint16_t IIE_80COL_ON = 0xC00D;
 constexpr uint16_t DHIRES_ON    = 0xC05E;
 
 constexpr int W         = 560;
-constexpr int kSplitDot = 21 * 14;     // 294 — hpos 45 → col 21 (`hpos - 24`), the 80COL split
-// The TEXT split at the same hpos lands on col 21 too: TEXT lands one column right of the `hpos - 25` page mapping (2026-11-08) — AppleWin GH#656 / MAME PR #15247 photos
+// The 80COL split: hpos 45 → col 21 (`hpos - 24`, with PAGE2) since
+// 2026-11-08. [A] Logic analyser on a real PAL //e rev B (Accurapple
+// logic_ana/ls166.csv @ 69f45f3): the first aux load after a mid-line STA
+// $C00D belongs to the byte a PAGE2 flip reaches (raster_switch_kind_offset).
+// Re-anchored 2026-11-08 with the $C019 one-cycle lead (arekkusu42 BEAMPOS; Apple2Display_Beam.cpp beamColForEvent): every switch kind moved one column right.
+constexpr int kSplitDot = 21 * 14;     // 294
+// The TEXT split at the same hpos lands on col 22: one column right of PAGE2 — AppleWin GH#656 / MAME PR #15247 photos
 // (Apple2Display_Beam.cpp beamColForEvent).
-constexpr int kTextSplitDot = 21 * 14; // 294
+constexpr int kTextSplitDot = 22 * 14; // 308
 constexpr int kBandTop  = 96;          // row-aligned (12 * 8)
 
 // Fill main + aux text page ($0400-$07FF) and HGR page ($2000-$3FFF) with
@@ -91,7 +96,7 @@ void makeBeam(Memory& m)
     for (int y = kBandTop; y < 192; ++y) {
         m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → col 0
         m.memRead(CLR_TEXT);              // DHGR from column 0
-        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 21 (`hpos - 24`)
+        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 22 (`hpos - 23`)
         m.memRead(SET_TEXT);              // 80-col text from column 20
     }
 }

@@ -94,6 +94,15 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.historyEnabled = ctrl.debugger().historyEnabled();
         snap.profile = ctrl.debugger().profile();
         snap.history = ctrl.debugger().history();
+        {
+            const InterruptLoad& load = ctrl.debugger().interruptLoad();
+            const auto frames = load.frames();
+            snap.interruptLoad.reserve(frames.size());
+            for (const auto& f : frames)
+                snap.interruptLoad.push_back(static_cast<float>(100.0 * f.share()));
+            snap.interruptSummary = load.summary();
+            snap.interruptEntriesLast = frames.empty() ? 0 : frames.back().entries;
+        }
         const pom2::OsCallTrace& os = ctrl.debugger().osCalls();
         snap.trace = os.kinds();
         if (os.emitted() != osEmitted_) {
@@ -188,6 +197,22 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
             ctrl.debugger().clearMeasurements();
         }
         ImGui::TextWrapped("Cycles include IRQ/NMI entry steps. History shows registers after each step. Reset and rewind clear measurements.");
+        // Interrupt load per video frame (InterruptLoad.h): how much of each
+        // frame the IRQ/NMI handlers took, e.g. a Mockingboard player.
+        if (snap.profiling || !snap.interruptLoad.empty()) {
+            const auto& s = snap.interruptSummary;
+            if (s.frames)
+                ImGui::Text("Interrupt load per frame: last %.1f %%  mean %.1f %%  peak %.1f %%  (%u entries last frame, %zu frames)",
+                            100.0 * s.last, 100.0 * s.mean, 100.0 * s.peak,
+                            snap.interruptEntriesLast, s.frames);
+            else
+                ImGui::TextUnformatted("Interrupt load per frame: waiting for the first complete frame");
+            if (!snap.interruptLoad.empty())
+                ImGui::PlotHistogram("##irqload", snap.interruptLoad.data(),
+                                     static_cast<int>(snap.interruptLoad.size()), 0,
+                                     "IRQ/NMI share of each frame, 0-100 %", 0.0f, 100.0f,
+                                     ImVec2(-1.0f, 60.0f));
+        }
         ImGui::BeginChild("##measurements", ImVec2(0, 140), true);
         if (ImGui::BeginTable("##profile", 4)) {
             ImGui::TableSetupColumn("Address"); ImGui::TableSetupColumn("Symbol");

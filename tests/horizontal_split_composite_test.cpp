@@ -41,10 +41,11 @@ constexpr uint16_t SET_HIRES = 0xC057;
 constexpr uint16_t SET_PAGE1 = 0xC054;
 
 constexpr int W            = 560;          // composite signal width
-// Byte column where text takes over: hpos 45 → col 21. TEXT lands one column right of the `hpos - 25` page mapping (2026-11-08) — AppleWin GH#656 / MAME PR #15247 photos
+// Byte column where text takes over: hpos 45 → col 22 (`hpos - 23`), one column right of PAGE2 — AppleWin GH#656 / MAME PR #15247 photos.
+// Re-anchored 2026-11-08 with the $C019 one-cycle lead (arekkusu42 BEAMPOS; Apple2Display_Beam.cpp beamColForEvent): every switch kind moved one column right.
 // (Apple2Display_Beam.cpp beamColForEvent).
-constexpr int kSplitCol    = 21;
-constexpr int kSplitSample = kSplitCol * 14;   // 294
+constexpr int kSplitCol    = 22;
+constexpr int kSplitSample = kSplitCol * 14;   // 308
 constexpr int kBandTop     = 96;           // row-aligned (12 * 8)
 
 uint16_t textRowAddr(int row)
@@ -158,7 +159,7 @@ int main()
     for (int y = kBandTop; y < 192; ++y) {
         beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → col 0
         beam.memRead(CLR_TEXT);              // graphics from column 0
-        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 21 (`hpos - 24`)
+        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 22 (`hpos - 23`)
         beam.memRead(SET_TEXT);              // text from column 20
     }
     const auto sBeam = signalOf(beam);

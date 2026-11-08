@@ -113,9 +113,6 @@ std::vector<Edge> edgesOf(VideoStandard std)
 
 void check(VideoStandard std, const char* name, int lastVblLine)
 {
-    // MAD EFFECT's documented contract: the edge sits 13 cycles before the
-    // line boundary, i.e. at hpos 52 of a 65-cycle line.
-    constexpr int kEdgeHpos = 0;
 
     const auto edges = edgesOf(std);
     std::printf("%s: %zu edge(s)\n", name, edges.size());
@@ -132,21 +129,25 @@ void check(VideoStandard std, const char* name, int lastVblLine)
     for (const auto& e : edges) (e.toDisplay ? toDisplay : toVbl) = &e;
     assert(toVbl && toDisplay);
 
-    // Leaving VBL': line 0, cycle 0. Two intra-line phases were tried
-    // against the real MAD EFFECT disk and both measured WORSE (see the
-    // note at the top); line 192 must also read VBL from its first cycle,
-    // which pal_timing / vbl_smoke independently require.
-    (void)lastVblLine;
-    assert(toDisplay->line == 0 &&
-           "VBL'→DISPLAY must land on line 0, cycle 0");
-    assert(toDisplay->hpos == kEdgeHpos &&
-           "no intra-line phase: measured against MAD EFFECT, any shift "
-           "moves its lit-run starts further outside the visible window");
+    // A READ of $C019 sees each edge ONE cycle before the line boundary
+    // (2026-11-08): the CPU reads in PHASE 0, after the scanner's counters
+    // advanced, while the floating bus of the same cycle was fetched before.
+    // [A] arekkusu42's BEAMPOS (VidModes disk, 2026-04-21) checks exactly
+    // this against the floating bus and failed by one cycle without it, on
+    // every //e and on the //c. That one cycle is the whole lead: the larger
+    // intra-line phases tried against MAD EFFECT (note at the top) stay
+    // rejected, and the display's switch columns moved with it so MAD
+    // EFFECT's placements do not change. In beam coordinates the reads below
+    // change on the last cycle of the line BEFORE the boundary.
+    assert(toDisplay->line == lastVblLine &&
+           "VBL'→DISPLAY must read on the last cycle of the last VBL line");
+    assert(toDisplay->hpos == 64 &&
+           "one cycle ahead of the line boundary, no more");
 
-    // Entering VBL': line 192, cycle 0.
-    assert(toVbl->line == 192 &&
-           "DISPLAY→VBL' must land on line 192, cycle 0");
-    assert(toVbl->hpos == kEdgeHpos &&
+    // Entering VBL': the last cycle of line 191.
+    assert(toVbl->line == 191 &&
+           "DISPLAY→VBL' must read on the last cycle of line 191");
+    assert(toVbl->hpos == 64 &&
            "both edges share the same intra-line phase");
 }
 

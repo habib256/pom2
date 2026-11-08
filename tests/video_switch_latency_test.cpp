@@ -25,6 +25,18 @@
 //        box sits one column right of the PAGE2 box.
 //    [A] arekkusu42 "VIDMODE LATENCY" photos, MAME PR #15247: TEXT/MIXED 3
 //        PH0 cycles against PAGE2 2.
+//    [A] Logic-analyser traces of a real PAL //e rev B, S. Champailler
+//        (Accurapple `composite/tests/logic_ana/{palhal,palhal2,hal5,ls166}.csv`
+//        @ gitlab.com/wiz21/accurapple 69f45f3; numbers read off by POM2 on
+//        2026-11-08, the files are AGPL and not copied). Mid-line `BIT
+//        $C050/$C051` from $6000, A15 as the access marker: GR+2 at the
+//        PAL/HAL moves 2.41 us (+-4 ns, 8 of 8 flips) after the access
+//        cycle starts, between the 3rd and 4th LDPS of the line from there;
+//        the LS166's parallel inputs show the new mode's dots on the 4th
+//        LDPS (+3.21 us), for all three visible flips. With the scanner's
+//        one-cycle fetch-to-load pipeline [B] (Sather IIe ch. 8), a PAGE2
+//        flip changes the byte loaded on the 3rd: TEXT is one byte later,
+//        the signal-level reading of the two photo sets above.
 //
 // 2. The READ that flips a mode returns the floating-bus byte of the mode
 //    BEFORE the flip (the scanner fetched it in PHASE 1, the switch changes
@@ -90,11 +102,11 @@ void testMidLineColumn()
     mem.setCycleCounter(at(11, 5));  mem.memRead(0xC054);
     mem.setCycleCounter(at(50, 40)); mem.memRead(0xC051);
     mem.setCycleCounter(at(51, 5));  mem.memRead(0xC050);
-    // hpos 25, the last cycle at which PAGE2 still governs the whole line
-    // (hpos - 25 = column 0); TEXT one column in.
-    mem.setCycleCounter(at(90, 25));  mem.memRead(0xC055);
+    // hpos 24, the last cycle at which PAGE2 still governs the whole line
+    // (hpos - 24 = column 0); TEXT one column in.
+    mem.setCycleCounter(at(90, 24));  mem.memRead(0xC055);
     mem.setCycleCounter(at(91, 5));   mem.memRead(0xC054);
-    mem.setCycleCounter(at(100, 25)); mem.memRead(0xC051);
+    mem.setCycleCounter(at(100, 24)); mem.memRead(0xC051);
     mem.setCycleCounter(at(101, 5));  mem.memRead(0xC050);
     // MIXED: lines 160+ become text from the switch on.
     mem.setCycleCounter(at(170, 40)); mem.memRead(0xC053);
@@ -111,18 +123,20 @@ void testMidLineColumn()
     const int page0 = firstLit(px, 90);
     const int text0 = firstLit(px, 100);
     const int mixed = firstLit(px, 170);
-    std::printf("first lit x: PAGE2@40=%d TEXT@40=%d PAGE2@25=%d TEXT@25=%d MIXED@40=%d\n",
+    std::printf("first lit x: PAGE2@40=%d TEXT@40=%d PAGE2@24=%d TEXT@24=%d MIXED@40=%d\n",
                 page, text, page0, text0, mixed);
 
-    // PAGE2 anchor, hpos - 25 (2026-11-08, French Touch's DIX — CCII part
-    // 1's 8-cell grid, Mad Effect's silhouette edges, OLDSKOOL's HiRes
-    // splits; DEV § Horizontal splits): column 15 → x 105.
-    CHECK(page == 15 * 7, "PAGE2 at hpos 40 shows from column 15");
+    // PAGE2 anchor, hpos - 24: French Touch's DIX placements (CCII part 1's
+    // 8-cell grid, Mad Effect's silhouette edges, OLDSKOOL's HiRes splits;
+    // DEV § Horizontal splits), re-anchored on 2026-11-08 together with the
+    // $C019 one-cycle lead ([A] arekkusu42's BEAMPOS), which keeps those
+    // $C019-synced placements on screen exactly where they were: column 16.
+    CHECK(page == 16 * 7, "PAGE2 at hpos 40 shows from column 16");
     // TEXT / MIXED: one column later than PAGE2 on the same cycle.
-    CHECK(text == page + 7, "TEXT at hpos 40 shows one column right of PAGE2 (column 16)");
-    CHECK(mixed == page + 7, "MIXED at hpos 40 shows one column right of PAGE2 (column 16)");
-    CHECK(page0 == 0, "PAGE2 at hpos 25 governs the whole line");
-    CHECK(text0 == 7, "TEXT at hpos 25 shows from column 1");
+    CHECK(text == page + 7, "TEXT at hpos 40 shows one column right of PAGE2 (column 17)");
+    CHECK(mixed == page + 7, "MIXED at hpos 40 shows one column right of PAGE2 (column 17)");
+    CHECK(page0 == 0, "PAGE2 at hpos 24 governs the whole line");
+    CHECK(text0 == 7, "TEXT at hpos 24 shows from column 1");
 }
 
 void testFloatingBusBeforeFlip(bool iie)
