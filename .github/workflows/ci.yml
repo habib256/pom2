@@ -508,9 +508,9 @@ jobs:
       # VCPKG_CRT_LINKAGE=static and so matches POM2's own static CRT. Using a
       # different triplet here would compile a configuration the release never
       # builds, which defeats the point of the job.
-      - name: Prefetch the pinned GLFW archive from official codeload
+      - name: Prefetch pinned vcpkg sources from official codeload
         shell: bash
-        run: bash tools/prefetch_vcpkg_glfw.sh
+        run: bash tools/prefetch_vcpkg_sources.sh
 
       - name: Install GLFW via vcpkg (manifest mode, static triplet)
         run: vcpkg install --triplet x64-windows-static

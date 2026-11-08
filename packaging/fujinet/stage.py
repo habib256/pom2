@@ -9,6 +9,7 @@ carry opaque executables. Their SHA-256 values are GitHub release digests.
 import argparse
 import hashlib
 import io
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -16,7 +17,7 @@ import tarfile
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 import zipfile
 
 
@@ -31,6 +32,12 @@ ARCHIVES = {
                     "0bc96fc537218a3ea2385d8465e005a4620221c2841271963faf7195c664cda5"),
     "linux-x64": ("fujinet-pc-APPLE_v1.5.2_ubuntu-22.04-amd64.tar.gz",
                   "7351f0e8e8ab334d49aa17863c53fc446118055412a69133ecfa3b673ba0ddbb"),
+}
+ASSET_IDS = {
+    "macos-arm64": 352305000,
+    "macos-x64": 352305006,
+    "windows-x64": 352305009,
+    "linux-x64": 352304995,
 }
 TARGETS = {
     "macos": ("macos-arm64", "macos-x64"),
@@ -126,10 +133,29 @@ def safe_files(blob, name):
                 yield Path(*path.parts[1:]), archive.extractfile(item).read(), item.mode & 0o777
 
 
-def download_archive(source):
+class AssetRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        redirected = super().redirect_request(request, fp, code, message, headers, newurl)
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def download_archive(source, asset_id=None):
     for attempt in range(4):
         try:
-            with urlopen(source, timeout=90) as response:
+            if attempt and asset_id:
+                request = Request(
+                    "https://api.github.com/repos/FujiNetWIFI/fujinet-firmware/"
+                    "releases/assets/" + str(asset_id),
+                    headers={"Accept": "application/octet-stream"})
+                token = os.environ.get("GH_TOKEN")
+                if token:
+                    request.add_header("Authorization", "Bearer " + token)
+                response = build_opener(AssetRedirectHandler()).open(request, timeout=90)
+            else:
+                response = urlopen(source, timeout=90)
+            with response:
                 return response.read()
         except HTTPError as error:
             if error.code not in (429, 500, 502, 503, 504):
@@ -152,7 +178,7 @@ def stage_one(tag, root, archive_dir=None):
         blob = local.read_bytes()
     else:
         print("Fetching", source, flush=True)
-        blob = download_archive(source)
+        blob = download_archive(source, ASSET_IDS[tag])
     actual = hashlib.sha256(blob).hexdigest()
     if actual != digest:
         raise ValueError("FujiNet archive SHA-256 mismatch for " + name + ": " + actual)

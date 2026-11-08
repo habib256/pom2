@@ -253,12 +253,13 @@ jobs:
       - name: Build POM2 + AppImage in the pinned bionic builder
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           IMAGE="$(echo "$BUILDER_IMAGE" | tr '[:upper:]' '[:lower:]')"
           docker pull "$IMAGE"
           docker run --rm \
             -v "$PWD":/work -w /work \
-            -e POM2_VERSION \
+            -e POM2_VERSION -e GH_TOKEN \
             -e POM2_APPIMAGE_TOOLS_DIR=/opt/appimage-tools \
             "$IMAGE" \
             bash /work/packaging/linux/build_in_bionic.sh
@@ -745,6 +746,7 @@ jobs:
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
           POM2_MACOS_ARCHS: arm64;x86_64
+          GH_TOKEN: ${{ github.token }}
           # CMake honours CMAKE_PREFIX_PATH from the environment — this is what
           # points find_package(glfw3) at the universal static build instead of
           # whatever Homebrew copy happens to be on the image.
@@ -810,9 +812,9 @@ jobs:
         shell: bash
         run: tools/fetch_imgui_pinned.sh
 
-      - name: Prefetch the pinned GLFW archive from official codeload
+      - name: Prefetch pinned vcpkg sources from official codeload
         shell: bash
-        run: bash tools/prefetch_vcpkg_glfw.sh
+        run: bash tools/prefetch_vcpkg_sources.sh
 
       - name: Install GLFW via vcpkg (manifest mode, static triplet)
         # x64-windows-static, NOT the default x64-windows: this triplet carries
@@ -837,6 +839,7 @@ jobs:
         shell: cmd
         env:
           POM2_VERSION: ${{ needs.version.outputs.pom2_version }}
+          GH_TOKEN: ${{ github.token }}
         run: call package_windows_release.bat
 
       - name: Verify POM2.exe is self-contained (no DLL, clean import table)
