@@ -1951,9 +1951,16 @@ static void testUntouchedFilesKeepTheHostCopy()
 
 int main()
 {
+    // Unbuffered, so a crash still leaves the last section that passed in
+    // the log: on 2026-11-08 the Linux CI leg died with a SIGSEGV here and
+    // only the stderr warnings survived (stdout was lost in the buffer).
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     testFolderTextModeAndMetadata();
+    std::printf("prodos_volume_smoke: text mode + metadata OK\n");
     testHostConflictKeepsBothCopies();
+    std::printf("prodos_volume_smoke: host conflict keeps both copies OK\n");
     testConcurrentConflictCopiesNeverReplaceEachOther();
+    std::printf("prodos_volume_smoke: concurrent conflict copies OK\n");
     testEmptyFolder();
     testSeedlingAndSapling();
     testNameSanitisationAndCollisions();

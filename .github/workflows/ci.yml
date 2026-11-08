@@ -567,13 +567,17 @@ jobs:
             # contention (MainWindow's paddle/keyboard access disciplines under
             # a live worker), the audio source teardown, the HTTP server's
             # handler thread, the SP link worker and the print spooler. These
-            # are the tests that have more than one thread.
+            # are the tests that have more than one thread. prodos_volume_smoke
+            # joined on 2026-11-08: it runs two host-folder decodes at once
+            # (testConcurrentConflictCopiesNeverReplaceEachOther), and the
+            # Linux leg crashed once there with SIGSEGV, not reproducible on
+            # macOS under ASan or TSan.
             #
             # `targets` lists their executables so this leg builds NINE
             # binaries instead of two hundred. The first run of this job spent
             # 50 of its 51 minutes compiling test binaries it then never ran.
-            filter: '(rewind_transport|ui_worker_contention|audio_source_teardown|ai_control_server_smoke|sp_over_slip_link|printer_history|thread_guard|fujinet_net_device|child_process)'
-            targets: '--target test_rewind_transport test_ui_worker_contention test_audio_source_teardown test_ai_control_server test_sp_over_slip_link test_printer_history test_thread_guard test_fujinet_net_device test_child_process'
+            filter: '(rewind_transport|ui_worker_contention|audio_source_teardown|ai_control_server_smoke|sp_over_slip_link|printer_history|thread_guard|fujinet_net_device|child_process|prodos_volume_smoke)'
+            targets: '--target test_rewind_transport test_ui_worker_contention test_audio_source_teardown test_ai_control_server test_sp_over_slip_link test_printer_history test_thread_guard test_fujinet_net_device test_child_process test_prodos_volume'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
