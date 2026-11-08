@@ -34,10 +34,18 @@
 //     of the last text line — the beam position of the three reads that
 //     matched, and of the next $C050 read.
 //
-// Usage: grouik_sync_probe [--nmos] [--seconds N] [--disk DIX.po]
+// Usage: grouik_sync_probe [--nmos | --iic] [--seconds N] [--disk DIX.po]
 // --nmos: unenhanced //e ROM + NMOS 6502 (default: enhanced, 65C02).
+// --iic:  //c PAL + Mockingboard 4c (65C02). loader.a syncs a //c on its
+//         VBL INTERRUPT ($C05B / $C019 = VBLINT / $C070), which rises at the
+//         END of the display, where a //e syncs on the end of VBL; both must
+//         reach "END OF DISPLAY + 11" and launch T1 on the same cycle.
 
 #include "Apple2Display.h"
+#include "DiskIICard.h"
+#include "IIcExternalSmartPort.h"
+#include "IIcMouse.h"
+#include "IWMDevice.h"
 #include "CpuClock.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -47,6 +55,7 @@
 #include "SlotBus.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
+#include "SuperSerialCard.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -70,6 +79,7 @@ struct Sink : pom2::MemoryWatchSink {
     Memory* mem = nullptr;
     M6502* cpu = nullptr;
     uint16_t handler = 0;       // TIMER_HANDLER, read off $FFFE once set
+    uint16_t t1Addr = 0xC204, t2Addr = 0xC208;   // the MB's T1CL / T2CL (slot 2; //c: $C4xx)
     // 1
     std::vector<std::pair<uint64_t, uint8_t>> c019;
     // 2
@@ -88,19 +98,29 @@ struct Sink : pom2::MemoryWatchSink {
     std::map<std::pair<int,int>, int> landT1, landT2;
     // 5: soft-switch writes, histogram of the beam cycle within the line
     std::map<uint16_t, std::map<int, int>> writes;
+    std::map<uint16_t, std::map<int, int>> switchReads;   // display-time reads of $C050-$C05F
     std::map<int, int> pageReads;   // $C054/$C055 READS (LDA (CELLn),Y), cycle within line
+    std::vector<std::pair<uint64_t, bool>> flips;   // (cycle, true = PAGE2)
 
     void noteAccess(uint16_t addr, uint8_t v, bool write) override {
         if (write) { ++writes[addr][pos(mem->videoAccessCycle()).h]; return; }
+        if (addr >= 0xC050 && addr <= 0xC05F && addr != 0xC054 && addr != 0xC055 && pos(mem->videoAccessCycle()).line < 192)
+            ++switchReads[addr][pos(mem->videoAccessCycle()).h];
         const uint64_t c = mem->videoAccessCycle();
         if (addr == 0xC019) { if (c019.size() < 200000) c019.push_back({c, v}); return; }
         if (addr == 0xC050) { if (fumes.size() < 400000) fumes.push_back({c, v}); return; }
-        if (addr == 0xC054 || addr == 0xC055) { ++pageReads[pos(c).h]; return; }
-        if (addr == 0xC204) {           // T1CL
+        if (addr == 0xC054 || addr == 0xC055) {
+            const Pos p = pos(c);
+            ++pageReads[p.h];
+            flips.push_back({c, addr == 0xC055});
+            if (flips.size() > 2000000) flips.erase(flips.begin(), flips.begin() + 1000000);
+            return;
+        }
+        if (addr == t1Addr) {           // T1CL
             if (entryPending) { ++t1cl[v]; ++entryT1[{entryPos.line, entryPos.h}]; entryPending = false; }
             return;
         }
-        if (addr == 0xC208) {           // T2CL
+        if (addr == t2Addr) {           // T2CL
             if (entryPending) { ++t2cl[v]; ++entryT2[{entryPos.line, entryPos.h}]; entryPending = false; }
             return;
         }
@@ -134,19 +154,23 @@ void histPos(const char* title, const std::map<std::pair<int,int>, int>& h)
 
 int main(int argc, char** argv)
 {
-    bool nmos = false;
+    bool nmos = false, iic = false;
+    int choice = 7;   // DIX menu: 7 = Crazy Cycles II, 9 = Mad Effect, 14 = OLDSKOOL
     double seconds = 75;
     std::string diskArg, pngArg;
     std::vector<double> shots;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--nmos") nmos = true;
+        else if (a == "--iic") iic = true;
+        else if (a == "--choice" && i + 1 < argc) choice = std::atoi(argv[++i]);
         else if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
         else if (a == "--disk" && i + 1 < argc) diskArg = argv[++i];
         else if (a == "--png" && i + 1 < argc) pngArg = argv[++i];        // path prefix
         else if (a == "--shot" && i + 1 < argc) shots.push_back(std::atof(argv[++i]));
     }
-    const std::string rom = pom2::findResource(nmos ? "roms/apple2e_unenh.rom" : "roms/apple2e.rom");
+    const std::string rom = pom2::findResource(
+        iic ? "roms/apple2c-32Kv0.rom" : nmos ? "roms/apple2e_unenh.rom" : "roms/apple2e.rom");
     std::string disk = diskArg.empty() ? pom2::findResource("disks_3.5/DIX.po") : diskArg;
     if (disk.empty()) disk = pom2::findResource("disks_3.5/DIX-fix.po");
     if (rom.empty() || disk.empty()) { std::printf("SKIP: missing ROM or DIX\n"); return 77; }
@@ -157,32 +181,73 @@ int main(int argc, char** argv)
     mem.resetSoftSwitches();
     mem.setIIEMode(true);
     mem.setVideoStandard(VideoStandard::PAL);
-    if (!mem.loadAppleIIRom(rom.c_str(), false)) return 1;
     M6502 cpu(&mem);
     mem.setCpu(&cpu);
-    auto mb = std::make_unique<MockingboardCard>(2, MockingboardCard::Variant::AC);
-    mb->setCpu(&cpu); mb->setCpuClock(hz); mb->setStandardClock(hz);
-    mem.slotBus().plug(2, std::move(mb));
-    auto sp = std::make_unique<pom2::SmartPortCard>(5);
+    // The 32 KB //c's own $C500 firmware talks to the rear-port 3.5" over the
+    // SmartPort bus through the machine's IWM: wire both as
+    // iic_external_smartport does (its units are the slot-5 card's).
+    pom2::IWMDevice iwm;
+    pom2::IIcExternalSmartPort extPort(&mem.slotBus());
+    if (iic) {
+        mem.setIWM(&iwm);
+        mem.setIWMAuthoritative(true);
+        mem.setExternalSmartPort(&extPort);
+    }
+    if (!mem.loadAppleIIRom(rom.c_str(), iic)) return 1;
     auto unit = std::make_unique<pom2::SmartPort35Unit>();
     if (!unit->loadImage(disk)) { std::printf("FAIL: %s\n", unit->lastError().c_str()); return 1; }
+    auto sp = std::make_unique<pom2::SmartPortCard>(5);
     sp->setUnit(0, std::move(unit));
-    mem.slotBus().plug(5, std::move(sp));
+    if (iic) {
+        // The //c's built-ins (CLAUDE.md § System profiles) and the
+        // Mockingboard 4c in the CPU socket: virtual slot 3, dormant at
+        // $C400 until DIX's boot writes $C403 (boot_unidisk.a).
+        for (int s = 1; s <= 2; ++s)
+            mem.slotBus().plug(s, std::make_unique<SuperSerialCard>(s));
+        mem.slotBus().plug(4, std::make_unique<IIcMouse>());
+        auto d2 = std::make_unique<DiskIICard>(6);
+        d2->setIWM(&iwm);
+        mem.slotBus().plug(6, std::move(d2));
+        auto mb = std::make_unique<MockingboardCard>(3);
+        mb->setCpu(&cpu); mb->setCpuClock(hz); mb->setStandardClock(hz);
+        mem.slotBus().plug(3, std::move(mb));
+        mem.slotBus().plug(5, std::move(sp));
+    } else {
+        auto mb = std::make_unique<MockingboardCard>(2, MockingboardCard::Variant::AC);
+        mb->setCpu(&cpu); mb->setCpuClock(hz); mb->setStandardClock(hz);
+        mem.slotBus().plug(2, std::move(mb));
+        mem.slotBus().plug(5, std::move(sp));
+    }
     cpu.setCpuMode(nmos ? M6502::CpuMode::NMOS : M6502::CpuMode::CMOS);
     cpu.hardReset();
     mem.slotBus().reset();
+    if (iic) {
+        // Boot slot 5 as POM2's bootFromSlot does (the nox_mb4c probe's
+        // shape): the Monitor's text/keyboard setup, then $C500.
+        for (int a = 0x400; a < 0x800; ++a) mem.memWrite(uint16_t(a), 0xA0);
+        const uint8_t zp[][2] = {{0x21,40}, {0x23,24}, {0x29,4}, {0x32,255},
+                                {0x36,0xF0}, {0x37,0xFD}, {0x38,0x1B}, {0x39,0xFD}};
+        for (const auto& p : zp) mem.memWrite(p[0], p[1]);
+        // Armed AFTER the resets, which clear it (Core::bootSlot's order).
+        mem.setIicSmartPortArmed(true);
+        cpu.setProgramCounter(0xC500);
+    }
 
     Sink sink;
     sink.mem = &mem; sink.cpu = &cpu;
+    if (iic) { sink.t1Addr = 0xC404; sink.t2Addr = 0xC408; }
     mem.setWatchSink(&sink);
-    for (uint16_t a : {0xC019, 0xC050, 0xC054, 0xC055, 0xC204, 0xC208}) mem.setReadWatch(a, true);
+    for (uint16_t a : {uint16_t(0xC019), uint16_t(0xC050), uint16_t(0xC054), uint16_t(0xC055),
+                       sink.t1Addr, sink.t2Addr}) mem.setReadWatch(a, true);
+    for (uint16_t a : {0xC051, 0xC052, 0xC053, 0xC056, 0xC057, 0xC05E, 0xC05F}) mem.setReadWatch(a, true);
     const uint16_t kSwitches[] = {0xC054, 0xC055, 0xC056, 0xC057, 0xC05E, 0xC05F, 0xC00C, 0xC00D};
     for (uint16_t a : kSwitches) mem.setWriteWatch(a, true);
 
     uint64_t cycles = 0;
     auto run = [&](double s) {
         const uint64_t end = cycles + uint64_t(s * hz);
-        while (cycles < end) cycles += uint64_t(cpu.run(4096));
+        while (cycles < end)
+            cycles += uint64_t(cpu.run(static_cast<int>(std::min<uint64_t>(4096, end - cycles))));
     };
     // The unenhanced //e's autostart compares $Cn07 too ([C] its F8 ROM at
     // $FAB9: LDY #$07, against the enhanced ROM's LDY #$05) and so boots a
@@ -211,7 +276,8 @@ int main(int argc, char** argv)
     if (sink.afterT2) mem.setReadWatch(sink.afterT2, true);
     std::printf("after .T1sync at $%04X, after .T2sync at $%04X\n", sink.afterT1, sink.afterT2);
     std::printf("%s, TIMER_HANDLER at $%04X, menu choice $%02X\n",
-                nmos ? "NMOS 6502 (unenhanced //e ROM)" : "65C02 (enhanced //e ROM)",
+                iic ? "65C02 (//c PAL + Mockingboard 4c)"
+                    : nmos ? "NMOS 6502 (unenhanced //e ROM)" : "65C02 (enhanced //e ROM)",
                 sink.handler, mem.peekCpuView(0xDFFF));
 
     // 1. TIMERS_SYNC ran before the menu: the precise loop's reads are the
@@ -228,7 +294,7 @@ int main(int argc, char** argv)
             std::printf("\n1. TIMERS_SYNC precise loop: %zu iterations; the exiting $C019 read\n"
                         "   is at line %d cycle %d (value $%02X); the one before at line %d cycle %d ($%02X).\n"
                         "   Exit point (BMI not taken, +3) = line %d cycle %d.\n"
-                        "   FT: \"IIe => START OF DISPLAY + 5 cycles\".\n",
+                        "   FT: \"IIe => START OF DISPLAY + 5 cycles\", \"IIc => END OF DISPLAY + 5\".\n",
                         end - start, p.line, p.h, v,
                         pos(sink.c019[end - 1].first).line, pos(sink.c019[end - 1].first).h,
                         sink.c019[end - 1].second, pos(c + 3).line, pos(c + 3).h);
@@ -238,12 +304,12 @@ int main(int argc, char** argv)
     }
     sink.c019.clear();
 
-    // Select Crazy Cycles II: RIGHT x7 then RETURN (MENU/main.a: 21 = next).
-    for (int i = 0; i < 7; ++i) { mem.pasteRawKeys("\x15", 1); run(0.3); }
+    // Select the part: RIGHT x choice then RETURN (MENU/main.a: 21 = next).
+    for (int i = 0; i < choice; ++i) { mem.pasteRawKeys("\x15", 1); run(0.3); }
     std::printf("menu choice now $%02X\n", mem.peekCpuView(0xDFFF));
     sink.t1cl.clear(); sink.t2cl.clear(); sink.entryT1.clear(); sink.entryT2.clear();
     sink.landT1.clear(); sink.landT2.clear();
-    sink.fumes.clear(); sink.writes.clear(); sink.pageReads.clear();
+    sink.fumes.clear(); sink.writes.clear(); sink.pageReads.clear(); sink.switchReads.clear();
     mem.pasteRawKeys("\r", 1);
     {
         Apple2Display display;
@@ -320,6 +386,16 @@ int main(int argc, char** argv)
         for (const auto& [c, n] : top) { std::printf(" %d:%d", c, n); if (++shown == 10) break; }
         std::printf("\n");
     }
+    std::printf("   display-time READS of $C050-$C05F (not $C054/5):\n");
+    for (const auto& [addr, h] : sink.switchReads) {
+        int total = 0; for (const auto& [c, n] : h) total += n;
+        std::vector<std::pair<int,int>> top(h.begin(), h.end());
+        std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        std::printf("   $%04X: %7d reads |", addr, total);
+        int shown = 0; for (const auto& [c, n] : top) { std::printf(" %d:%d", c, n); if (++shown == 10) break; }
+        std::printf("\n");
+    }
+
     // 7. Part I's cells: 8 page flips 5 cycles apart per displayed line.
     //    Sharp cells need every flip on a 5-byte boundary: POM2 maps a PAGE2
     //    access at cycle h to column h-24 (fetch side), so h = 24,29,..,59.
@@ -329,6 +405,82 @@ int main(int argc, char** argv)
         std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.second > b.second; });
         int shown = 0;
         for (const auto& [c, n] : top) { std::printf(" %d:%d", c, n); if (++shown == 16) break; }
+        std::printf("\n");
+        // Grid phase: the column each flip takes effect at under POM2's
+        // PAGE2 mapping (byteCol = h - 25, Apple2Display_Beam.cpp), mod 5.
+        // Grouik's 8 cells x 5 bytes fill 40 columns: phase 0 is sharp.
+        std::map<int, int> phase;
+        for (const auto& [c, n] : sink.pageReads)
+            if (c >= 25 && c < 65 && n > 1000)
+                phase[(c - 25) % 5] += n;
+        std::printf("   cell-grid phase (column mod 5 of every flip, expect all at 0):");
+        for (const auto& [ph, n] : phase) std::printf(" %d:%d", ph, n);
+        std::printf("\n");
+    }
+    // 8. Window symmetry (MAD EFFECT: each displayed line opens page 1 with
+    //    $C054 and closes it with $C055, Table1[i] + Table2[i] = 45, so the
+    //    silhouette is symmetric — its axis must be the screen's centre,
+    //    column 20 when columns run 0..39 and a window [a, b) is centred on
+    //    (a + b) / 2). Columns under POM2's PAGE2 mapping (h - 24).
+    {
+        std::map<int, int> twiceCentre;
+        for (std::size_t i = 1; i < sink.flips.size(); ++i) {
+            const auto& o = sink.flips[i - 1]; const auto& c = sink.flips[i];
+            if (o.second || !c.second) continue;              // $C054 then $C055
+            const Pos po = pos(o.first), pc = pos(c.first);
+            if (po.line != pc.line || po.line >= 192) continue;
+            const int a = po.h - kVideoAccessColumnOffset, b = pc.h - kVideoAccessColumnOffset;
+            if (a < 0 || b > 40 || b <= a) continue;
+            ++twiceCentre[a + b];
+        }
+        // The last complete frame, line by line (first 12 displayed lines).
+        if (!sink.flips.empty()) {
+            std::map<uint64_t, int> page2PerFrame;
+            for (const auto& f : sink.flips)
+                if (f.second && pos(f.first).line < 192) ++page2PerFrame[f.first / kFrame];
+            uint64_t lastFrame = sink.flips.back().first / kFrame - 1; int best = -1;
+            for (const auto& [fr, n] : page2PerFrame) if (n > best) { best = n; lastFrame = fr; }
+            int printed = -1;
+            std::printf("\n   frame %llu, flips per line (h:page):", (unsigned long long)lastFrame);
+            for (const auto& f : sink.flips) {
+                if (f.first / kFrame != lastFrame) continue;
+                const Pos p = pos(f.first);
+                if (p.line > 11) continue;
+                if (p.line != printed) { std::printf("\n     line %3d:", p.line); printed = p.line; }
+                std::printf(" %d:%c", p.h, f.second ? '2' : '1');
+            }
+            std::printf("\n");
+        }
+        // MAD EFFECT's silhouette edge: per displayed line, a $C054 in HBL
+        // (h < 25) followed by ONE $C055 later on the same line — the $C055's
+        // beam cycle is the edge. All of them must land in the visible
+        // window: the feasible PAGE2 offsets k are those with
+        // min(h) - k >= 0 and max(h) - k <= 39.
+        {
+            std::map<int, long> edgeH;
+            for (std::size_t i = 1; i < sink.flips.size(); ++i) {
+                const auto& o = sink.flips[i - 1]; const auto& c = sink.flips[i];
+                if (o.second || !c.second) continue;
+                const Pos po = pos(o.first), pc = pos(c.first);
+                if (po.line != pc.line || po.line >= 192 || po.h >= 25 || pc.h < 25) continue;
+                ++edgeH[pc.h];
+            }
+            if (!edgeH.empty()) {
+                const int lo = edgeH.begin()->first, hi = edgeH.rbegin()->first;
+                long total = 0; for (auto& [h, n] : edgeH) total += n;
+                std::printf("\n   silhouette edges ($C055 after an HBL $C054): %ld, beam cycle %d..%d"
+                            " -> feasible PAGE2 offsets k in [%d, %d] (POM2 uses 25)\n",
+                            total, lo, hi, hi - 39, lo);
+                std::printf("   edge histogram:");
+                for (auto& [h, n] : edgeH) std::printf(" %d:%ld", h, n);
+                std::printf("\n");
+            }
+        }
+        std::printf("\n8. page-1 windows per line: 2 x centre column (expect 40 = centred):");
+        int shown = 0;
+        std::vector<std::pair<int,int>> top(twiceCentre.begin(), twiceCentre.end());
+        std::sort(top.begin(), top.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        for (const auto& [v, n] : top) { std::printf(" %d:%d", v, n); if (++shown == 8) break; }
         std::printf("\n");
     }
     std::printf("\nend %.1f s, PC=$%04X\n", cycles / hz, cpu.getProgramCounter());

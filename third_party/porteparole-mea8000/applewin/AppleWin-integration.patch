@@ -1,0 +1,204 @@
+diff --git a/AppleWin-VS2022.vcxproj b/AppleWin-VS2022.vcxproj
+index 0b8242df..96391a8f 100644
+--- a/AppleWin-VS2022.vcxproj
++++ b/AppleWin-VS2022.vcxproj
+@@ -113,6 +113,8 @@
+     <ClInclude Include="source\RGBMonitor.h" />
+     <ClInclude Include="source\Riff.h" />
+     <ClInclude Include="source\SAM.h" />
++    <ClInclude Include="source\Mea8000.h" />
++    <ClInclude Include="source\PorteParole.h" />
+     <ClInclude Include="source\SaveState.h" />
+     <ClInclude Include="source\SerialComms.h" />
+     <ClInclude Include="source\SNESMAX.h" />
+@@ -189,6 +191,7 @@
+     <ClCompile Include="source\MockingboardCardManager.cpp" />
+     <ClCompile Include="source\RGBMonitor.cpp" />
+     <ClCompile Include="source\SAM.cpp" />
++    <ClCompile Include="source\PorteParole.cpp" />
+     <ClCompile Include="source\Debugger\Debug.cpp" />
+     <ClCompile Include="source\Debugger\Debugger_Assembler.cpp" />
+     <ClCompile Include="source\Debugger\Debugger_Color.cpp" />
+diff --git a/AppleWin-VS2022.vcxproj.filters b/AppleWin-VS2022.vcxproj.filters
+index 15796760..e7c599dc 100644
+--- a/AppleWin-VS2022.vcxproj.filters
++++ b/AppleWin-VS2022.vcxproj.filters
+@@ -175,6 +175,9 @@
+     <ClCompile Include="source\SAM.cpp">
+       <Filter>Source Files\Emulator</Filter>
+     </ClCompile>
++    <ClCompile Include="source\PorteParole.cpp">
++      <Filter>Source Files\Emulator</Filter>
++    </ClCompile>
+     <ClCompile Include="source\YamlHelper.cpp">
+       <Filter>Source Files\Emulator</Filter>
+     </ClCompile>
+@@ -519,6 +522,12 @@
+     <ClInclude Include="source\SAM.h">
+       <Filter>Source Files\Emulator</Filter>
+     </ClInclude>
++    <ClInclude Include="source\PorteParole.h">
++      <Filter>Source Files\Emulator</Filter>
++    </ClInclude>
++    <ClInclude Include="source\Mea8000.h">
++      <Filter>Source Files\Emulator</Filter>
++    </ClInclude>
+     <ClInclude Include="source\YamlHelper.h">
+       <Filter>Source Files\Emulator</Filter>
+     </ClInclude>
+diff --git a/AppleWin-VS2026.vcxproj b/AppleWin-VS2026.vcxproj
+index c9a60c94..aa2ef019 100644
+--- a/AppleWin-VS2026.vcxproj
++++ b/AppleWin-VS2026.vcxproj
+@@ -113,6 +113,8 @@
+     <ClInclude Include="source\RGBMonitor.h" />
+     <ClInclude Include="source\Riff.h" />
+     <ClInclude Include="source\SAM.h" />
++    <ClInclude Include="source\Mea8000.h" />
++    <ClInclude Include="source\PorteParole.h" />
+     <ClInclude Include="source\SaveState.h" />
+     <ClInclude Include="source\SerialComms.h" />
+     <ClInclude Include="source\SNESMAX.h" />
+@@ -189,6 +191,7 @@
+     <ClCompile Include="source\MockingboardCardManager.cpp" />
+     <ClCompile Include="source\RGBMonitor.cpp" />
+     <ClCompile Include="source\SAM.cpp" />
++    <ClCompile Include="source\PorteParole.cpp" />
+     <ClCompile Include="source\Debugger\Debug.cpp" />
+     <ClCompile Include="source\Debugger\Debugger_Assembler.cpp" />
+     <ClCompile Include="source\Debugger\Debugger_Color.cpp" />
+diff --git a/AppleWin-VS2026.vcxproj.filters b/AppleWin-VS2026.vcxproj.filters
+index 15796760..e7c599dc 100644
+--- a/AppleWin-VS2026.vcxproj.filters
++++ b/AppleWin-VS2026.vcxproj.filters
+@@ -175,6 +175,9 @@
+     <ClCompile Include="source\SAM.cpp">
+       <Filter>Source Files\Emulator</Filter>
+     </ClCompile>
++    <ClCompile Include="source\PorteParole.cpp">
++      <Filter>Source Files\Emulator</Filter>
++    </ClCompile>
+     <ClCompile Include="source\YamlHelper.cpp">
+       <Filter>Source Files\Emulator</Filter>
+     </ClCompile>
+@@ -519,6 +522,12 @@
+     <ClInclude Include="source\SAM.h">
+       <Filter>Source Files\Emulator</Filter>
+     </ClInclude>
++    <ClInclude Include="source\PorteParole.h">
++      <Filter>Source Files\Emulator</Filter>
++    </ClInclude>
++    <ClInclude Include="source\Mea8000.h">
++      <Filter>Source Files\Emulator</Filter>
++    </ClInclude>
+     <ClInclude Include="source\YamlHelper.h">
+       <Filter>Source Files\Emulator</Filter>
+     </ClInclude>
+diff --git a/source/Card.cpp b/source/Card.cpp
+index 0fdf6b72..0ed3fad3 100644
+--- a/source/Card.cpp
++++ b/source/Card.cpp
+@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ #include "Memory.h"
+ #include "MouseInterface.h"
+ #include "SAM.h"
++#include "PorteParole.h"
+ #include "SerialComms.h"
+ #include "SNESMAX.h"
+ #include "VidHD.h"
+@@ -154,6 +155,8 @@ std::string Card::GetCardName(const SS_CARDTYPE cardType)
+ 		return MockingboardCard::GetSnapshotCardNamePhasor();
+ 	case CT_Echo:
+ 		return "Echo";
++	case CT_PorteParole:
++		return PorteParoleCard::GetSnapshotCardName();
+ 	case CT_SAM:
+ 		return SAMCard::GetSnapshotCardName();
+ 	case CT_80Col:
+@@ -197,6 +200,8 @@ SS_CARDTYPE Card::GetCardType(const std::string & card)
+ 		return CT_MockingboardC;
+ 	else if (card == MockingboardCard::GetSnapshotCardNamePhasor())
+ 		return CT_Phasor;
++	else if (card == PorteParoleCard::GetSnapshotCardName())
++		return CT_PorteParole;
+ 	else if (card == SAMCard::GetSnapshotCardName())
+ 		return CT_SAM;
+ 	else if (card == Disk2InterfaceCard::GetSnapshotCardName() || card == Disk2InterfaceCard::GetSnapshotCardNameOld())
+diff --git a/source/Card.h b/source/Card.h
+index 641dca05..412e47d4 100644
+--- a/source/Card.h
++++ b/source/Card.h
+@@ -30,6 +30,7 @@ enum SS_CARDTYPE
+ 	CT_MegaAudio,		// Soundcard
+ 	CT_SDMusic,			// Soundcard
+ 	CT_BreakpointCard,
++	CT_PorteParole,		// Ediciel MEA8000 (append: registry values are persistent)
+ 	CT_NUM_CARDS,
+ 	CT_Undefined = -1	// NB. Only for cmd line struct
+ };
+diff --git a/source/CardManager.cpp b/source/CardManager.cpp
+index 6c6adf76..1b0b4110 100644
+--- a/source/CardManager.cpp
++++ b/source/CardManager.cpp
+@@ -40,6 +40,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ #include "MouseInterface.h"
+ #include "ParallelPrinter.h"
+ #include "SAM.h"
++#include "PorteParole.h"
+ #include "SerialComms.h"
+ #include "SNESMAX.h"
+ #include "Uthernet1.h"
+@@ -98,6 +99,9 @@ void CardManager::InsertInternal(UINT slot, SS_CARDTYPE type)
+ 	case CT_Echo:
+ 		m_slot[slot] = new DummyCard(type, slot);
+ 		break;
++	case CT_PorteParole:
++		m_slot[slot] = new PorteParoleCard(slot);
++		break;
+ 	case CT_SAM:
+ 		m_slot[slot] = new SAMCard(slot);
+ 		break;
+@@ -416,6 +420,7 @@ void CardManager::GetCardChoicesForSlot(const UINT slot, const SS_CARDTYPE currC
+ 	//	CT_MegaAudio,	// Exclude mb-audit test h/w for now
+ 	//	CT_SDMusic,		// Exclude mb-audit test h/w for now
+ 	CT_SAM,
++	CT_PorteParole,
+ 	// (continue with alphabetic)
+ 	CT_Uthernet,
+ 	CT_Uthernet2,
+diff --git a/source/CmdLine.cpp b/source/CmdLine.cpp
+index 2abd2ba1..319de4f0 100644
+--- a/source/CmdLine.cpp
++++ b/source/CmdLine.cpp
+@@ -248,6 +248,10 @@ bool ProcessCmdLine(LPSTR lpCmdLine)
+ 					g_cmdLine.slotInfo[slot].card = CT_SDMusic;
+ 					g_cmdLine.supportExtraMBCardTypes = true;
+ 				}
++				else if (strcmp(lpCmdLine, "porteparole") == 0)
++				{
++					g_cmdLine.slotInfo[slot].card = CT_PorteParole;
++				}
+ 				else if (strcmp(lpCmdLine, "breakpointcard") == 0)
+ 				{
+ 					g_cmdLine.slotInfo[slot].card = CT_BreakpointCard;
+diff --git a/source/Windows/AppleWin.cpp b/source/Windows/AppleWin.cpp
+index d4bca56e..9cff26c6 100644
+--- a/source/Windows/AppleWin.cpp
++++ b/source/Windows/AppleWin.cpp
+@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+ #include "StdAfx.h"
++#include "../PorteParole.h"
+ 
+ #include "Windows/AppleWin.h"
+ #include "Windows/HookFilter.h"
+@@ -170,7 +171,7 @@ static void ContinueExecution()
+ 	const bool bWasFullSpeed = g_bFullSpeed;
+ 	g_bFullSpeed =	 (g_dwSpeed == SPEED_MAX) || 
+ 					 bScrollLock_FullSpeed ||
+-					 (GetCardMgr().GetDisk2CardMgr().IsConditionForFullSpeed() && !Spkr_IsActive() && !GetCardMgr().GetMockingboardCardMgr().IsActiveToPreventFullSpeed()) ||
++					 (GetCardMgr().GetDisk2CardMgr().IsConditionForFullSpeed() && !Spkr_IsActive() && !GetCardMgr().GetMockingboardCardMgr().IsActiveToPreventFullSpeed() && !PorteParoleActive()) ||
+ 					 IsDebugSteppingAtFullSpeed();
+ 
+ 	if (g_bFullSpeed)

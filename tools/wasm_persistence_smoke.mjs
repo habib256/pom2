@@ -9,12 +9,15 @@ import os from 'node:os';
 import path from 'node:path';
 
 const bundle = path.resolve(process.argv[2] || 'wasm');
+const lazyDisk = 'bundled_disks/A2FILECMD-PRODOS-XL-1.0.2mg';
+let lazyRequests = 0;
 const files = new Map([
   ['/', ['index.html', 'text/html']],
   ['/index.html', ['index.html', 'text/html']],
   ['/POM2.js', ['POM2.js', 'text/javascript']],
   ['/POM2.wasm', ['POM2.wasm', 'application/wasm']],
   ['/POM2.data', ['POM2.data', 'application/octet-stream']],
+  ['/' + lazyDisk, [lazyDisk, 'application/octet-stream']],
 ]);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -42,6 +45,7 @@ async function chromeBinary() {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (new URL(request.url, 'http://localhost').pathname === '/' + lazyDisk) ++lazyRequests;
   const entry = files.get(new URL(request.url, 'http://localhost').pathname);
   if (!entry) { response.writeHead(404).end(); return; }
   try {
@@ -162,6 +166,9 @@ try {
   })()`);
 
   await navigate('write');
+  assert.equal(lazyRequests, 0, 'A2FileCmd downloaded during startup');
+  assert.equal(await evaluate(`Module.FS.analyzePath('/${lazyDisk}').exists`), false,
+    'A2FileCmd is still in the startup packfile');
   assert.equal(await evaluate("typeof Module.FS?.syncfs"), 'function');
   // Exercise a real browser chooser and File.arrayBuffer -> MEMFS -> C++
   // callback. DevTools supplies a local fixture instead of user interaction.
@@ -379,7 +386,25 @@ try {
   const importedCheckpoint = Buffer.from((await checkpoint()).bytes);
   assert(importedCheckpoint.includes(Buffer.alloc(1024, 0xAA)), 'boot disk missing from session');
   assert(importedCheckpoint.includes(Buffer.alloc(1024, 0xFF)), 'second disk missing from session');
-  console.log('WASM browser: disk import/boot, text upload, //c Mockingboard, tab pause/resume, persistence and exact cross-profile //c/floppy/HDV checkpoint reload passed');
+  // Download the curated image, then reuse it without overwriting writes.
+  await evaluate(`Module.pom2FetchBundledDisk('${lazyDisk}')`);
+  assert.equal(lazyRequests, 1);
+  assert.equal(await evaluate(`Module.FS.stat('/${lazyDisk}').size`), 33553984);
+  await evaluate(`Module.FS.writeFile('/${lazyDisk}', new Uint8Array([42]));
+    Module.pom2FetchBundledDisk('${lazyDisk}')`);
+  assert.equal(lazyRequests, 1);
+  assert.equal(await evaluate(`Module.FS.readFile('/${lazyDisk}')[0]`), 42);
+  // A direct link must fetch before main(), then mount the complete image.
+  await click(20, 10); await mouse('mouseMoved', 90, 78); await sleep(600); await click(400, 78);
+  await waitFor(() => evaluate('!Module.pom2FlushInFlight && !Module.pom2StateDirty'), 'lazy boot settings flush');
+  await navigate('lazy', lazyDisk, 'iie');
+  await waitFor(() => evaluate(`(() => {
+    Module._pom2_persist_now();
+    return Module.FS.readFile('/persistent/state.cfg', {encoding:'utf8'}).includes('${lazyDisk}');
+  })()`), 'A2FileCmd direct-link boot');
+  assert.equal(lazyRequests, 2);
+  assert.equal(await evaluate(`Module.FS.stat('/${lazyDisk}').size`), 33553984);
+  console.log('WASM browser: lazy A2FileCmd download/boot, disk import, text upload, //c Mockingboard, tab pause/resume, persistence and exact cross-profile //c/floppy/HDV checkpoint reload passed');
 } finally {
   socket?.close();
   if (browser && browser.exitCode === null && browser.signalCode === null) {

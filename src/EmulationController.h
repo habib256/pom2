@@ -140,9 +140,8 @@ public:
     /// only for any out-of-tree caller. Internal call sites should pick
     /// floppySound525()/floppySound35() explicitly.
     FloppySoundDevice& floppySound() { return *floppy525; }
-    /// User inserted or ejected a 5.25" disk. Plays the Virtual ][ lid
-    /// recording when that bank is selected; the MAME bank stays silent
-    /// here (a Disk II insert never clicked — startup restore must not thunk).
+    /// Explicit 5.25" insertion/ejection: Virtual ][ lid or optional MAME
+    /// door recording. Startup path restore and resets do not call this.
     void noteFloppyLatch(bool inserting);
     /// The 3.5" insert/eject click for a SLOT-CARD bay (Liron, SmartPort
     /// 3.5" unit). The on-board Sony drives click from `Sony35Drive::

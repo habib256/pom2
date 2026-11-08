@@ -46,7 +46,12 @@ void EmulationController::setVideoStandard(VideoStandard s)
     // 20280/20280) so not one constant moves. Both ways: a speed below 1×
     // (`--speed`, AI `/speed`) burns fewer cycles a second, and handing the
     // stock clock to the queues then starved them.
-    const int base = baseCyclesPerFrame_.load();
+    // The UI/CLI/API MAX bucket is the 1,000,000-cycle work budget. It
+    // fast-forwards emulated time; interpreting it as a 60 MHz oscillator
+    // makes the Disk II boot ROM miss every nibble on its fixed bus clock.
+    // Custom 2x/4x CPU-frequency settings retain their existing clock model.
+    const int requestedBase = baseCyclesPerFrame_.load();
+    const int base = requestedBase == 1'000'000 ? vt.cyclesPerFrame : requestedBase;
     const double hz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     cpuClockHz_.store(hz);
@@ -992,7 +997,8 @@ void EmulationController::coldBoot()
 void EmulationController::noteFloppyLatch(bool inserting)
 {
     if (!floppy525) return;
-    if (floppy525->bank() != FloppySoundDevice::Bank::VirtualII) return;
+    // Only explicit media changes call this. The device chooses its bank's
+    // door recording (including optional MAME extras); resets never latch it.
     floppy525->latch(inserting);
 }
 

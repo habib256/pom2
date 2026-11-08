@@ -43,9 +43,11 @@
 
 #include <string>
 
+#ifndef __EMSCRIPTEN__
 namespace {
 constexpr const char* kRomOfferTitle = "Download the Apple II ROMs?";
 }
+#endif
 
 void MainWindow::renderRomDownloadOffer()
 {

@@ -42,10 +42,10 @@ constexpr uint16_t SET_PAGE1 = 0xC054;
 
 constexpr int W       = 280;          // legacy 280-wide framebuffer
 constexpr int H       = 192;
-// Byte column where text takes over: hpos 45 → col 22. TEXT lands one column right of the `hpos - 24` page mapping — AppleWin GH#656 / MAME PR #15247 photos
-// (Apple2Display_Beam.cpp beamColForEvent). A PAGE2 flip at hpos 45 would land at 21.
-constexpr int kSplitCol  = 22;
-constexpr int kSplitPx   = kSplitCol * 7;   // 154
+// Byte column where text takes over: hpos 45 → col 21. TEXT lands one column right of the `hpos - 25` page mapping (2026-11-08) — AppleWin GH#656 / MAME PR #15247 photos
+// (Apple2Display_Beam.cpp beamColForEvent). A PAGE2 flip at hpos 45 would land at 20.
+constexpr int kSplitCol  = 21;
+constexpr int kSplitPx   = kSplitCol * 7;   // 147
 constexpr int kBandTop   = 96;        // row-aligned (12 * 8): split band start
 
 uint16_t textRowAddr(int row)
@@ -109,6 +109,9 @@ int main()
     // window offset: the scanner latches column c's byte in phi1 of the
     // cycle whose phi2 the CPU uses, so a switch there first shows at c+1.
     // Measured against French Touch MAD EFFECT (2026-07-31, see CHANGELOG).
+    // That is the RAW mapping; beamColForEvent then puts PAGE2 / HiRes /
+    // AN3 one column earlier (hpos - 25) and TEXT / MIXED at hpos - 24
+    // (2026-11-08, French Touch's DIX — DEV § Horizontal splits).
     assert(Apple2Display::frameCycleToPos(0).byteCol == 0);          // HBL → col 0
     assert(Apple2Display::frameCycleToPos(23).byteCol == 0);         // still HBL
     assert(Apple2Display::frameCycleToPos(24).byteCol == 0);         // last HBL cyc
@@ -152,7 +155,7 @@ int main()
     for (int y = kBandTop; y < H; ++y) {
         beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → byteCol 0
         beam.memRead(CLR_TEXT);              // graphics from column 0
-        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 22 (`hpos - 23`)
+        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 21 (`hpos - 24`)
         beam.memRead(SET_TEXT);              // text from column 20
     }
     const auto fBeam = frameOf(beam);

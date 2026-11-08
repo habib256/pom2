@@ -761,7 +761,7 @@ are checked by reading back each byte. They are not transactional: a later
 failure can leave earlier bytes changed.
 
 `--speed` sets a cycles-per-frame budget: normal
-speed is one video frame: 17030 for NTSC or 20280 for PAL. `--cpu-max` runs without normal pacing;
+speed is one video frame: 17030 for NTSC or 20280 for PAL. `--cpu-max` fast-forwards emulated time while keeping the machine’s device clocks consistent;
 the achievable emulation speed depends on the host.
 CLI speed values above 2000000 are clamped with a warning; the HTTP `/speed`
 endpoint rejects out-of-range values instead.
@@ -893,6 +893,13 @@ The browser opens a PAL Apple //c and boots DIX-fix by default, with the
 Apple II Screen docked on the left and Drives on the right. URL parameters
 `?preset=...&disk=...` override the machine and boot image; `?nodisk=1`
 starts without a disk. Changing only `preset` keeps the default DIX-fix image.
+
+**File > Boot A2FileCmd** downloads its 32 MiB image on first use. It is
+excluded from the startup packfile; DIX and the small games remain available
+immediately. A `?disk=bundled_disks/A2FILECMD-PRODOS-XL-1.0.2mg` link also
+downloads it before starting the machine. Reusing it within the page preserves
+guest writes; save a session or enable Automatic resume to keep those writes
+across reloads.
 For an II+ without a boot image, use `?preset=ii%2B&nodisk=1` (`%2B` encodes
 the plus sign in the profile name).
 

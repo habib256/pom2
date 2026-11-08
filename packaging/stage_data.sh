@@ -20,7 +20,7 @@
 #                                   before the build: CMake drops a missing
 #                                   --preload-file, so the browser bundle
 #                                   could ship without its //c + //e ROMs)
-#   stage_data.sh --list [kind]     print manifest entries (dir|file|wasm|deny|
+#   stage_data.sh --list [kind]     print manifest entries (dir|file|lazy|wasm|deny|
 #                                   all|parsed — `parsed` is CMake's dump format)
 #
 # `--verify` is the guard every CI package job runs. It exists because both
@@ -41,17 +41,20 @@ log() { printf '%s\n' "$*"; }
 # Read the manifest into three arrays. Blank lines and #-comments are dropped;
 # an unknown kind is a hard error rather than a silent skip, so a typo in the
 # manifest cannot quietly remove a font from every package.
-DIRS=() FILES_SRC=() FILES_DST=() WASM=() DENY=() DENYGLOB=()
+DIRS=() FILES_SRC=() FILES_DST=() LAZY_SRC=() LAZY_DST=() WASM=() DENY=() DENYGLOB=()
 while read -r kind src dst _rest; do
     case "$kind" in
         ''|'#'*) continue ;;
         dir)  [ -n "$src" ] || die "manifest: 'dir' with no path";  DIRS+=("$src") ;;
-        file) [ -n "$src" ] || die "manifest: 'file' with no path"
+        file|lazy) [ -n "$src" ] || die "manifest: '$kind' with no path"
+              if [ "$kind" = lazy ]; then
+                  LAZY_SRC+=("$src"); LAZY_DST+=("${dst:-$src}")
+              fi
               FILES_SRC+=("$src"); FILES_DST+=("${dst:-$src}") ;;
         wasm) WASM+=("$src") ;;
         deny) DENY+=("$src") ;;
         denyglob) DENYGLOB+=("$src") ;;
-        *)    die "manifest: unknown entry kind '$kind' (dir|file|wasm|deny|denyglob)" ;;
+        *)    die "manifest: unknown entry kind '$kind' (dir|file|lazy|wasm|deny|denyglob)" ;;
     esac
 done < <(sed 's/#.*//' "$MANIFEST")
 
@@ -59,7 +62,7 @@ done < <(sed 's/#.*//' "$MANIFEST")
 # The one payload kind no parser validated (PKG-3, bug hunt 2026-11-01).
 if [ "${1:-}" = "--verify-wasm-sources" ]; then
     bad=0
-    for x in "${WASM[@]:-}"; do
+    for x in "${WASM[@]:-}" "${LAZY_SRC[@]:-}"; do
         [ -n "$x" ] || continue
         p="$REPO_ROOT/$x"
         if [ -d "$p" ]; then
@@ -81,6 +84,8 @@ if [ "${1:-}" = "--list" ]; then
         deny) printf '%s\n' "${DENY[@]:-}" ;;
         file) for i in "${!FILES_SRC[@]}"; do
                   printf '%s\t%s\n' "${FILES_SRC[$i]}" "${FILES_DST[$i]}"; done ;;
+        lazy) for i in "${!LAZY_SRC[@]}"; do
+                  printf '%s\t%s\n' "${LAZY_SRC[$i]}" "${LAZY_DST[$i]}"; done ;;
         all)  printf '%s\n' "${DIRS[@]:-}"
               for i in "${!FILES_SRC[@]}"; do printf '%s\n' "${FILES_DST[$i]}"; done ;;
         # The same shape CMake dumps to <build>/bundle_manifest.parsed, so
@@ -89,11 +94,12 @@ if [ "${1:-}" = "--list" ]; then
               for x in "${DIRS[@]:-}"; do [ -n "$x" ] && printf 'dir\t%s\n' "$x"; done
               for i in "${!FILES_SRC[@]}"; do
                   printf 'file\t%s\t%s\n' "${FILES_SRC[$i]}" "${FILES_DST[$i]}"; done
+              for x in "${LAZY_DST[@]:-}"; do [ -n "$x" ] && printf 'lazy\t%s\n' "$x"; done
               for x in "${WASM[@]:-}"; do [ -n "$x" ] && printf 'wasm\t%s\n' "$x"; done
               for x in "${DENY[@]:-}"; do [ -n "$x" ] && printf 'deny\t%s\n' "$x"; done
               for x in "${DENYGLOB[@]:-}"; do [ -n "$x" ] && printf 'denyglob\t%s\n' "$x"; done
               ;;
-        *)    die "--list takes dir|file|wasm|deny|all|parsed" ;;
+        *)    die "--list takes dir|file|lazy|wasm|deny|all|parsed" ;;
     esac
     exit 0
 fi

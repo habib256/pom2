@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v1.1.2 — Apple II Family Emulator
+# 🍏 POM2 v1.2.0 — Apple II Family Emulator
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 [![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
@@ -21,7 +21,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 [Bundled disks](#bundled-disks) · [Controls](#handy-controls) · [Build it](#build-it) ·
 [Documentation](#documentation)**
 
-> **v1.1.2:** [What's new](docs/releases/v1.1.2.md) ·
+> **v1.2.0:** [What's new](docs/releases/v1.2.0.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
@@ -81,8 +81,8 @@ it and launch POM2. Keep the executable and its accompanying folders together.
   unavailable, add `--appimage-extract-and-run`.
 
   ```bash
-  chmod +x POM2-v1.1.2-x86_64.AppImage
-  ./POM2-v1.1.2-x86_64.AppImage
+  chmod +x POM2-v1.2.0-x86_64.AppImage
+  ./POM2-v1.2.0-x86_64.AppImage
   ```
 
 - **macOS:** open the `.dmg` and drag **POM2** into *Applications*.
@@ -247,6 +247,8 @@ options.
 
 POM2 is by Arnaud Verhille and is released under the [GPL-3.0](LICENSE). It draws
 on MAME, AppleWin, OpenEmulator and MicroM8 hardware and video work; the Monitor
-II and Disk II artwork is based on [sscanf/apple2e-emulator](pic/retro/). French
+II and Disk II artwork is based on [sscanf/apple2e-emulator](pic/retro/). The
+Ediciel Porte Parole speech card runs Sébastien Pourcel's
+[PorteParole-MEA8000](https://github.com/mocheez13/PorteParole-MEA8000). French
 Touch and other Apple II authors made the included demos, games and tools. Full
 licenses and notices are in [THIRD-PARTY.md](THIRD-PARTY.md).

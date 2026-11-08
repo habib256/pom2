@@ -54,7 +54,12 @@
 void EmulationController::applyAcceleratorClock(double mul)
 {
     const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
-    const int base = baseCyclesPerFrame_.load();
+    // The UI/CLI/API MAX bucket is the 1,000,000-cycle work budget. It
+    // fast-forwards emulated time; interpreting it as a 60 MHz oscillator
+    // makes the Disk II boot ROM miss every nibble on its fixed bus clock.
+    // Custom 2x/4x CPU-frequency settings retain their existing clock model.
+    const int requestedBase = baseCyclesPerFrame_.load();
+    const int base = requestedBase == 1'000'000 ? vt.cyclesPerFrame : requestedBase;
     const double stockHz = static_cast<double>(vt.cpuClockHz) *
         (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
     const double hz = stockHz * mul;

@@ -498,9 +498,14 @@ private:
     bool     cpuIdle_         = false;
     bool     machineRunning_  = false;   // setMachineRunning
     Memory::DisplayState liveStateAtRun_{};
-    // Fold the switches moved while the CPU was idle onto `s`. No-op when the
-    // CPU is running.
-    void applyIdleSwitchOverride(Memory::DisplayState& s, Memory& mem) const;
+    // Only allocated after beam racing starts. Compare live input bytes,
+    // never the RAM temporarily rewound by BeamTimeRam. A pause preserves
+    // the published picture; host edits and single steps use live RAM.
+    std::vector<uint8_t> liveVideoRamAtRun_;
+    bool idleVideoRamEdited_ = true;
+    void updateIdleVideoRam(Memory& mem, bool cycleMoved);
+    // Fold host switch edits onto `s`; true if any override was applied.
+    bool applyIdleSwitchOverride(Memory::DisplayState& s, Memory& mem) const;
 
     // ── Static-text frame skip ──────────────────────────────────────────
     // A Callgrind profile (2026-07-30) put ~30 % of POM2's total work in the

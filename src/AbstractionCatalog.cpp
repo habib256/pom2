@@ -227,8 +227,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "write timing.", "SamCard.h/.cpp, Dac8Audio.h/.cpp" },
     { "porteparole", "Audio", "Porte Parole (Ediciel, MEA8000 French speech)", AbsLevel::L1,
       "The card's $C0n0 data/status and $C0n1 command from its manual; the "
-      "MEA8000 per its data sheet over MAME's synthesis, every frequency "
-      "scaled by the board's 4 MHz crystal; status D7 only, D0-D6 floating",
+      "unmodified MEA8000 engine by Sébastien Pourcel (PorteParole-MEA8000), "
+      "clocked at 4 MHz; status D7 only, D0-D6 floating",
       "No ROM to run (the driver is on the disk). The optional 2 KB memory "
       "socket and the chip's coefficient quantisation are not modelled.",
       "PorteParoleCard.h/.cpp, Mea8000.h/.cpp" },

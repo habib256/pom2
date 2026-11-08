@@ -7,6 +7,7 @@ wasm/index.html
 wasm/POM2.js
 wasm/POM2.wasm
 wasm/POM2.data
+wasm/bundled_disks/
 wasm/POM2.worker.js
 DIST/
 imgui/

@@ -49,7 +49,7 @@ constexpr uint16_t SET_PAGE2  = 0xC055;
 
 constexpr int W        = 280;
 constexpr int H        = 192;
-constexpr int kSplitPx = 21 * 7;       // 147 — hpos 45 → col 21 (`hpos - 24`)
+constexpr int kSplitPx = 20 * 7;       // 140 — hpos 45 → col 20 (`hpos - 25`, 2026-11-08)
 constexpr int kBandTop = 96;
 
 // Fill HGR page 1 ($2000-$3FFF) and page 2 ($4000-$5FFF) with DISTINCT
@@ -112,7 +112,7 @@ int main()
     for (int y = kBandTop; y < H; ++y) {
         beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → col 0
         beam.memRead(SET_PAGE1);             // page 1 from column 0
-        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → col 21 (mapping is `hpos - 24`)
+        beam.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → col 20 (PAGE2 maps to `hpos - 25`)
         beam.memRead(SET_PAGE2);             // page 2 from column 20
     }
     const auto fBeam = frameOf(beam);

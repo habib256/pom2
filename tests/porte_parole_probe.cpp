@@ -21,7 +21,7 @@
 // probeOutDir(). A manual check: it asserts nothing, and the disk is not in
 // the repository (apple2.org.za, "Ediciel Porte Parole v11 Side 1.dsk").
 //
-//   porte_parole_probe <side1.dsk> [--seconds N] [--type SEC:TEXT]... [--out DIR]
+//   porte_parole_probe <side1.dsk> [--disk2 PATH] [--seconds N] [--type SEC:TEXT]... [--out DIR]
 //
 // TEXT takes \r for RETURN. A copy of the disk is booted, never the file.
 
@@ -96,15 +96,16 @@ void writeWav(const std::string& path, const std::vector<float>& s, uint32_t rat
 int main(int argc, char** argv)
 {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <side1.dsk> [--seconds N] [--type SEC:TEXT]... [--out DIR]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <side1.dsk> [--disk2 PATH] [--seconds N] [--type SEC:TEXT]... [--out DIR]\n", argv[0]);
         return 1;
     }
-    std::string disk = argv[1], outArg;
+    std::string disk = argv[1], disk2, outArg;
     double seconds = 40;
     std::vector<std::pair<double, std::string>> typed;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
-        if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
+        if (a == "--disk2" && i + 1 < argc) disk2 = argv[++i];
+        else if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
         else if (a == "--out" && i + 1 < argc) outArg = argv[++i];
         else if (a == "--type" && i + 1 < argc) {
             const std::string v = argv[++i];
@@ -129,6 +130,13 @@ int main(int argc, char** argv)
     for (const char* p : {"roms/disk2.rom", "../roms/disk2.rom"})
         if (fs::exists(p)) { drive->loadBootRom(p); break; }
     if (!drive->insertDisk(copy.string())) { std::fprintf(stderr, "insertDisk failed\n"); return 1; }
+    if (!disk2.empty()) {
+        const fs::path copy2 = fs::path(outDir) / "porte_parole_side2.dsk";
+        fs::copy_file(disk2, copy2, fs::copy_options::overwrite_existing, ec);
+        if (ec || !drive->insertDisk(1, copy2.string())) {
+            std::fprintf(stderr, "cannot mount drive 2: %s\n", disk2.c_str()); return 1;
+        }
+    }
     mem.slotBus().plug(6, std::move(drive));
 
     M6502 cpu(&mem);
@@ -155,6 +163,7 @@ int main(int argc, char** argv)
     for (uint64_t done = 0; done < total;) {
         const double now = done / kCpuHz;
         while (typedNext < typed.size() && typed[typedNext].first <= now) {
+            std::printf("[%.1fs] screen before input:\n%s\n", now, screenText(mem.data()).c_str());
             const auto& t = typed[typedNext++].second;
             mem.pasteText(t.c_str(), t.size());
             std::printf("[%.1fs] typed \"%s\"\n", now, t.c_str());

@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 1.1.2 LANGUAGES CXX)
+project(pom2_imgui VERSION 1.2.0 LANGUAGES CXX)
 if(APPLE)
     # Native macOS hooks use Objective-C++: Finder/Dock open-file events
     # and the AppKit file chooser.
@@ -37,6 +37,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(POM2_BUNDLE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/bundle.manifest")
 set(POM2_BUNDLE_DIRS  "")
 set(POM2_BUNDLE_FILES "")
+set(POM2_BUNDLE_LAZY "")
 set(POM2_BUNDLE_WASM  "")
 set(POM2_BUNDLE_DENY  "")
 set(POM2_BUNDLE_DENYGLOB "")
@@ -101,12 +102,15 @@ if(EXISTS "${POM2_BUNDLE_MANIFEST}")
         list(GET _fields 1 _src)
         if(_kind STREQUAL "dir")
             list(APPEND POM2_BUNDLE_DIRS "${_src}")
-        elseif(_kind STREQUAL "file")
+        elseif(_kind STREQUAL "file" OR _kind STREQUAL "lazy")
             set(_dst "${_src}")
             if(_n GREATER 2)
                 list(GET _fields 2 _dst)
             endif()
             list(APPEND POM2_BUNDLE_FILES "${_src}|${_dst}")
+            if(_kind STREQUAL "lazy")
+                list(APPEND POM2_BUNDLE_LAZY "${_dst}")
+            endif()
         elseif(_kind STREQUAL "wasm")
             list(APPEND POM2_BUNDLE_WASM "${_src}")
         elseif(_kind STREQUAL "denyglob")
@@ -175,7 +179,7 @@ foreach(_x ${POM2_BUNDLE_FILES})
     string(REPLACE "|" "\t" _x "${_x}")
     string(APPEND _pom2_parsed "file\t${_x}\n")
 endforeach()
-foreach(_k WASM DENY DENYGLOB)
+foreach(_k LAZY WASM DENY DENYGLOB)
     string(TOLOWER "${_k}" _kl)
     foreach(_x ${POM2_BUNDLE_${_k}})
         string(APPEND _pom2_parsed "${_kl}\t${_x}\n")
@@ -1443,6 +1447,13 @@ if(EMSCRIPTEN)
     # FORCE_FILESYSTEM + preload-file: ROMs are baked into POM2.data
     # at build time. Settings persistence routes through IDBFS
     # (mounted at /persistent in the shell preRun hook).
+    set(_pom2_lazy_js "Module.pom2LazyDisks = [")
+    foreach(_dst IN LISTS POM2_BUNDLE_LAZY)
+        string(APPEND _pom2_lazy_js "\"${_dst}\",")
+    endforeach()
+    string(APPEND _pom2_lazy_js "];\n")
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
+                  CONTENT "${_pom2_lazy_js}")
     set(POM2_WASM_LINK
         "-sUSE_GLFW=3"
         "-sUSE_WEBGL2=1"
@@ -1456,7 +1467,8 @@ if(EMSCRIPTEN)
         "-sFORCE_FILESYSTEM=1"
         "-lidbfs.js"
         "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS','ccall','cwrap']"
-        "--pre-js" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
         "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html"
     )
     # Preload the package payload into POM2.data. Each clause maps an on-disk
@@ -1506,6 +1518,9 @@ if(EMSCRIPTEN)
         string(REPLACE "|" ";" _pom2_parts "${_pom2_pair}")
         list(GET _pom2_parts 0 _pom2_src)
         list(GET _pom2_parts 1 _pom2_dst)
+        if(_pom2_dst IN_LIST POM2_BUNDLE_LAZY)
+            continue()
+        endif()
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}")
             list(APPEND POM2_WASM_LINK
                 "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${_pom2_src}@/${_pom2_dst}")
@@ -1530,6 +1545,7 @@ if(EMSCRIPTEN)
     endforeach()
     target_link_options(${PROJECT_NAME} PRIVATE ${POM2_WASM_LINK})
     set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html")
     # Match shell.html's <canvas id="canvas"> ID convention.

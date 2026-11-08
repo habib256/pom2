@@ -464,29 +464,6 @@ void Apple2Display::patchMixedTextBand(Memory& mem,
     textTintPass(state, kMixedTextFirstScanline, kHeight);
 }
 
-// See the member comment in the header. Only the fields that moved since the
-// last render with the CPU running are copied — an event-driven change made
-// while the machine still ran is already in `liveStateAtRun_` and is left to
-// the published frame (and to the beam-race replay) to describe.
-void Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
-                                            Memory& mem) const
-{
-    if (!cpuIdle_) return;
-    const Memory::DisplayState live = mem.getDisplayState();
-    const Memory::DisplayState& was = liveStateAtRun_;
-    if (live.textMode    != was.textMode)    s.textMode    = live.textMode;
-    if (live.mixedMode   != was.mixedMode)   s.mixedMode   = live.mixedMode;
-    if (live.page2       != was.page2)       s.page2       = live.page2;
-    if (live.hiRes       != was.hiRes)       s.hiRes       = live.hiRes;
-    if (live.eightyCol   != was.eightyCol)   s.eightyCol   = live.eightyCol;
-    if (live.an3         != was.an3)         s.an3         = live.an3;
-    if (live.altChar     != was.altChar)     s.altChar     = live.altChar;
-    if (live.dhgr        != was.dhgr)        s.dhgr        = live.dhgr;
-    if (live.eightyStore != was.eightyStore) s.eightyStore = live.eightyStore;
-    if (live.an0         != was.an0)         s.an0         = live.an0;
-    if (live.an2         != was.an2)         s.an2         = live.an2;
-}
-
 void Apple2Display::render(Memory& mem)
 {
     // The static-text skip key is published when render() returns, on every
@@ -539,6 +516,7 @@ void Apple2Display::render(Memory& mem)
             ? ((frameCounter / kFlashHalfPeriodFrames) & 1u) != 0
             : ((mem.videoNow() / static_cast<uint64_t>(vt.cpuClockHz / 4)) & 1u) != 0;
     }
+    const bool cycleMoved = mem.getCycleCounter() != lastRenderCycle_;
     // Is the machine actually running? (see the cpuIdle_ member comment)
     {
         const uint64_t cyc = mem.getCycleCounter();
@@ -595,6 +573,7 @@ void Apple2Display::render(Memory& mem)
     // display tests drive this class, poking soft switches into Memory with
     // no clock running at all.
     auto events = mem.takeVideoEvents();
+    updateIdleVideoRam(mem, cycleMoved);
     Memory::DisplayState state = mem.getDisplayState();
     //
     // Last: a STOPPED machine publishes nothing at all (no cycles, no frame

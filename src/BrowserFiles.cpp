@@ -36,6 +36,16 @@ std::optional<BrowserFileResult> takeBrowserFile()
     return {};
 #endif
 }
+bool loadBrowserBundledDisk(const std::string& prefix)
+{
+#ifdef __EMSCRIPTEN__
+    if (pending) return false;
+    return EM_ASM_INT({ return Module.pom2LoadBundledDisk(UTF8ToString($0)) ? 1 : 0; }, prefix.c_str());
+#else
+    (void)prefix;
+    return false;
+#endif
+}
 bool downloadBrowserFile(const std::string& path, const std::string& name, std::string& error)
 {
 #ifdef __EMSCRIPTEN__

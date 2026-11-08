@@ -123,6 +123,12 @@ for f in "${ARTEFACTS[@]}"; do
     fi
 done
 # Rename the entry document so the deployment URL is clean.
+while IFS=$'\t' read -r lazy_src lazy_dst; do
+    [ -n "$lazy_src" ] || continue
+    mkdir -p "$WASM_DIR/$(dirname "$lazy_dst")"
+    cp -f "$lazy_src" "$WASM_DIR/$lazy_dst"
+done < <(packaging/stage_data.sh --list lazy)
+
 if [ -f "$WASM_DIR/POM2.html" ]; then
     mv -f "$WASM_DIR/POM2.html" "$WASM_DIR/index.html"
 fi

@@ -41,7 +41,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 
   | Grade | Evidence |
   |---|---|
-  | **A** | Measured on **real hardware** — scope, capture, run on the iron. |
+  | **A** | Measured on **real hardware** — scope, capture, run on the iron. This includes **code whose cycle timings were tuned on the iron**: French Touch's DIX (Grouik, fenarinarsa), whose rasters only line up on a real PAL machine, is the silicon reference for beam and 6522 timing (ruling of 2026-11-08). Where its comments are stale, its code wins: `loader.a`'s "IRL" T1CL/T2CL ranges predate its own prologue. |
   | **B** | **Primary document** — chip datasheet, Sather, Apple technical reference, a specification (IWM rev 19, WOZ/MOOF/2IMG), a patent, an Apple TIL note. |
   | **C** | **ROM disassembly** — //c/+ firmware, RWTS, a card ROM. Proof of what the software *expects*: the contract, not the silicon. |
   | **D** | **Another emulator** — MAME, AppleWin, izapple2, OpenEmulator, Virtual ][, all equal. Useful, fallible. |
@@ -602,7 +602,7 @@ and a cache hit opens no socket, so a second run works offline.
 
 ## Version string locations
 
-Current release: **v1.1.2**. **Single source of truth = `CMakeLists.txt`
+Current release: **v1.2.0**. **Single source of truth = `CMakeLists.txt`
 `project(pom2_imgui VERSION x.y.z ...)`.** A `configure_file` expands it into
 `build/generated/Version.h` (from `src/Version.h.in`); all C++ pulls the
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::
@@ -627,15 +627,14 @@ cannot `#include` the header:
   the first-launch warning (macOS, `xattr`, Windows), which the README links to
   and no longer carries; copy it from the previous notes
 
-**Before every release — and whenever a ROM or a test medium is added — update
-the two archive.org items**: `pom2_firm` (`pom2_firm.zip`, the zip the ROM
-download fetches) and `pom2_media_202611` (`pom2_media.zip` +
-`tools/test_media.sha256`). Both are rebuilt from the tree
-(2026-11-01: `roms/*` → `pom2_firm.zip`; the manifest's files →
-`pom2_media.zip`); their first incarnations (`pom2_roms_202610`,
-`pom2_testmedia_20261029`) went dark on 2026-10-31. A dump or disk that is only in someone's `roms/`
-is missing for every user and every CI job. Checklist:
-`docs/backlog/release-1.0.md` § archive.org media.
+**Archive updates follow catalogue/manifest changes, not release tags**
+(`docs/backlog/release-1.0.md` § archive.org media, corrected 2026-11-01).
+Add new ROM-catalogue entries to `pom2_firm/pom2_firm.zip`, and new
+`tools/test_media.sha256` entries to `pom2_media_202611/pom2_media.zip`.
+The strict CI fetch checks every manifest entry; unchanged archives need no
+upload. Their first incarnations (`pom2_roms_202610`,
+`pom2_testmedia_20261029`) went dark on 2026-10-31. A dump or disk only in a
+local `roms/` is missing for every user and CI job.
 
 `tools/check_version_strings.sh` (CI Linux job) fails when any of these
 disagrees with `project(VERSION)`, or when the release-notes file is missing.

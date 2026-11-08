@@ -17,6 +17,7 @@
 #
 #   dir      <path>        copy the whole tree; destination defaults to <path>
 #   file     <src> [<dst>] copy one file; <dst> is relative to the payload root
+#   lazy     <src> [<dst>] desktop file; browser fetches it on first use
 #   wasm     <path>        browser build ONLY — never in a desktop package
 #   deny     <path>        must NEVER appear in any package. Enforced three
 #                          ways: excluded from the install() rules and the
@@ -95,7 +96,7 @@ wasm floppyemu
 
 # Curated disks explicitly selected for this release. Keep user libraries
 # excluded; named source/destination pairs also feed the WASM preload.
-file packaging/disks/A2FILECMD-PRODOS-XL-1.0.2mg bundled_disks/A2FILECMD-PRODOS-XL-1.0.2mg
+lazy packaging/disks/A2FILECMD-PRODOS-XL-1.0.2mg bundled_disks/A2FILECMD-PRODOS-XL-1.0.2mg
 file packaging/disks/DIX-fix.po bundled_disks/DIX-fix.po
 file packaging/disks/DIRTBIKE.dsk bundled_disks/DIRTBIKE.dsk
 file packaging/disks/CHROMABREAK.po bundled_disks/CHROMABREAK.po

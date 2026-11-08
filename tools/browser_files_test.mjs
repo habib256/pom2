@@ -22,7 +22,7 @@ const context = {
     },
   },
   FS: { mkdirTree() {}, writeFile(path, bytes) { files.set(path, [...bytes]); },
-    analyzePath(path) { return {exists: [...files.keys()].some(file => file.startsWith(path + '/'))}; },
+    analyzePath(path) { return {exists: files.has(path) || [...files.keys()].some(file => file.startsWith(path + '/'))}; },
     readFile(path) { if (!files.has(path)) throw new Error('missing file'); return new Uint8Array(files.get(path)); },
   },
   URL: { createObjectURL() { return 'blob:test'; }, revokeObjectURL(url) { revoked.push(url); } },
@@ -109,3 +109,47 @@ assert(last().removed);
 assert.deepEqual(revoked, ['blob:test']);
 assert.equal(context.Module.pom2DownloadFile('/missing', 'session.pom2session'), false);
 console.log('browser files: import/export, bounds, cancellation and failures passed');
+
+// Lazy images never start downloading during startup. Concurrent requests
+// share a transfer, and reusing a mounted image preserves guest writes.
+context.AbortController = AbortController;
+context.clearTimeout = clearTimeout;
+context.setTimeout = setTimeout;
+const lazyPath = 'bundled_disks/A2FILECMD.2mg';
+context.Module.pom2LazyDisks = [lazyPath];
+let downloads = 0;
+let response = () => new Response(new Uint8Array([1, 2, 3]));
+context.fetch = async () => { ++downloads; return response(); };
+const fetchDisk = context.Module.pom2FetchBundledDisk;
+assert.equal(downloads, 0);
+await assert.rejects(fetchDisk('../outside'), /Unknown/);
+const one = fetchDisk(lazyPath), two = fetchDisk(lazyPath);
+assert.equal(one, two, 'concurrent fetches duplicated the download');
+assert.equal(await one, '/' + lazyPath);
+assert.equal(downloads, 1);
+files.get('/' + lazyPath)[0] = 42;
+await fetchDisk(lazyPath);
+assert.equal(downloads, 1);
+assert.equal(files.get('/' + lazyPath)[0], 42);
+files.delete('/' + lazyPath);
+response = () => new Response('missing', {status: 404});
+await assert.rejects(fetchDisk(lazyPath), /HTTP 404/);
+assert(!files.has('/' + lazyPath));
+response = () => new Response(new Uint8Array(), {headers: {'Content-Length': '67108865'}});
+await assert.rejects(fetchDisk(lazyPath), /64 MiB/);
+response = () => new Response(new Uint8Array());
+await assert.rejects(fetchDisk(lazyPath), /Empty/);
+response = () => new Response(new Uint8Array([4, 5]));
+assert.equal(context.Module.pom2LoadBundledDisk('A2FILECMD'), true);
+assert.equal(choose(2), false, 'picker raced a pending download');
+assert.equal(context.Module.pom2LoadBundledDisk('A2FILECMD'), false);
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.deepEqual(calls.at(-1), [2, '/' + lazyPath, '']);
+assert(!context.Module.pom2FilePickerActive);
+files.delete('/' + lazyPath);
+response = () => { throw new Error('offline'); };
+assert(context.Module.pom2LoadBundledDisk('A2FILECMD'));
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.match(calls.at(-1)[2], /offline/);
+assert(!context.Module.pom2FilePickerActive);
+console.log('browser lazy disks: deduplication, reuse, bounds, failure and retry passed');

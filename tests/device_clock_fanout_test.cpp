@@ -24,6 +24,13 @@
 // //c+ does not read as "4×" and picking 1× does not un-solder it.
 
 #include "CpuClock.h"
+#include "DiskIICard.h"
+#include "TestTempPath.h"
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <vector>
 #include "EmulationController.h"
 #include "SystemProfile.h"
 #include "TranswarpCard.h"
@@ -51,6 +58,21 @@ int main()
         ctrl.setCyclesPerFrame(pom2VideoTiming(VideoStandard::PAL).cyclesPerFrame);
         ctrl.setVideoStandard(VideoStandard::PAL);
         assert(near(ctrl.emulatedCpuClockHz(), 1015625.0) && "a 1x PAL machine keeps its nominal");
+    }
+    // MAX is wall-clock fast-forward, not a fictitious 60 MHz CPU. In the
+    // latter case the Disk II's fixed bus clock makes its boot-ROM loops
+    // miss the nibble windows and remain at $C65E forever.
+    for (auto standard : {VideoStandard::NTSC, VideoStandard::PAL}) {
+        EmulationController ctrl(AudioDevice::OutputMode::Offline);
+        ctrl.setCyclesPerFrame(1'000'000);
+        ctrl.setVideoStandard(standard);
+        ctrl.applyAcceleratorClock(1.0);
+        assert(ctrl.getCyclesPerFrame() == 1'000'000);
+        assert(near(ctrl.emulatedCpuClockHz(), pom2VideoTiming(standard).cpuClockHz) &&
+               "MAX must preserve the machine clock while increasing its work budget");
+        ctrl.applyAcceleratorClock(3.5);
+        assert(near(ctrl.emulatedCpuClockHz(), 3.5 * pom2VideoTiming(standard).cpuClockHz) &&
+               "MAX must retain an installed accelerator's multiplier");
     }
     // The //c+: its 4 MHz is its built-in accelerator since 2026-10-21 (a
     // ZipChip its ROM sets fast at reset), on a 1x budget — and the devices
@@ -109,6 +131,35 @@ int main()
     for (const pom2::SystemProfile p : pom2::allProfiles()) {
         const auto& cfg = pom2::profileConfig(p);
         assert(cfg.defaultCyclesPerFrame == pom2VideoTiming(cfg.videoStandard).cyclesPerFrame);
+    }
+    // Run the actual Disk II boot ROM at MAX. A synthetic disk's first
+    // sector writes a marker, so this checks read timing rather than a label.
+    const auto systemRom = pom2::findResource("roms/apple2p.rom");
+    const auto diskRom = pom2::findResource("roms/disk2.rom");
+    if (!systemRom.empty() && !diskRom.empty()) {
+        const auto path = pom2test::tempPath("max-clock-boot.dsk");
+        std::vector<uint8_t> image(143360, 0);
+        const std::array<uint8_t, 9> code{1, 0xA9, 0xA5, 0x8D, 0, 3, 0x4C, 6, 8};
+        std::copy(code.begin(), code.end(), image.begin());
+        { std::ofstream out(path, std::ios::binary);
+          out.write(reinterpret_cast<const char*>(image.data()), image.size()); assert(out.good()); }
+        EmulationController ctrl(AudioDevice::OutputMode::Offline);
+        ctrl.memory().setIIEMode(false);
+        assert(ctrl.memory().loadAppleIIRom(systemRom.c_str()));
+        ctrl.cpu().setCpuMode(M6502::CpuMode::NMOS);
+        auto disk = std::make_unique<DiskIICard>(6);
+        assert(disk->loadBootRom(diskRom));
+        disk->setCpu(&ctrl.cpu());
+        assert(disk->insertDisk(path));
+        ctrl.memory().slotBus().plug(6, std::move(disk));
+        ctrl.setCyclesPerFrame(1'000'000);
+        ctrl.setVideoStandard(VideoStandard::NTSC);
+        ctrl.coldBoot(); ctrl.cpu().setProgramCounter(0xC600);
+        ctrl.setMode(EmulationController::Mode::Running);
+        for (int i = 0; i < 10 && ctrl.memory().peekMainRam(0x0300) != 0xA5; ++i) ctrl.tickFrame();
+        ctrl.setMode(EmulationController::Mode::Stopped);
+        assert(ctrl.memory().peekMainRam(0x0300) == 0xA5 && "Disk II must boot at MAX");
+        std::error_code ec; std::filesystem::remove(path, ec);
     }
     std::printf("device_clock_fanout: 1x NTSC/PAL nominal, //c+ accelerator 4 MHz, toolbar buckets OK\n");
     return 0;

@@ -984,6 +984,30 @@ has the same observable order for free (`apple2e.cpp` @ 5346a8ce
 :1397-1400). Pinned by `vbl_ioudis_annunciator` §5 and the corpus title
 `dix-digidream-sid-iic`.
 
+**The VBLINT edge is the //e's VBL edge plus 192 lines, to the cycle**
+*(2026-11-08)*. [A] French Touch's `loader.a` (TIMERS_SYNC) syncs both
+machines with one loop of 20279 cycles, one short of a PAL frame, so each
+read lands one cycle earlier until it falls just before the edge:
+
+- On a //e it reads VBLBAR, and finds the END of VBL ("IIe => START OF
+  DISPLAY + 5").
+- On a //c it reads VBLINT, and finds the START of VBL ("IIc => END OF
+  DISPLAY + 5").
+
+The //e path then waits 192 lines, so both launch T1 on the same cycle. In
+POM2 the //e's exiting read is at line 311 cycle 64 and the //c's at line 191
+cycle 64.
+
+On the real DIX disk, a //c PAL with a Mockingboard 4c and a //e PAL land
+every timer, both dejitter loops and Crazy Cycles II's page grid on the same
+cycles (`grouik_sync_probe --iic`). OLDSKOOL's switches also land on the same
+cycles on the //c's 65C02 and on the NMOS //e. On the 65C02, its
+`LSR abs,X` takes 6 cycles, and the 1-cycle reserved NOP `$03` that follows it
+(French Touch's "65C02 fix") restores the NMOS 7.
+
+Pinned by `ft_loader_sync`, which runs the loop transcribed byte for byte. A
+one-cycle shift of the //c edge fails it.
+
 **The //c's ACIAs never read as the floating bus** *(2026-10-06)*. Its two
 6551s (`$C098-$C09F` printer port, `$C0A8-$C0AF` modem port) are soldered
 to the board, so when no slot-1/2 SSC models one (a hand-built bench, a card
@@ -1541,6 +1565,12 @@ one-way shortcut, and flickered.
   (`videoRewindTo`) moves RAM to each band, both directions, for the RGBA,
   composite and mixed-band replays alike. The destructor re-applies
   everything, so RAM comes back bit-exact.
+- **Pause:** retain beam-time RAM if the CPU stops with no host edit.
+  While the log is armed, the display keeps 36 KiB of live main/aux video
+  inputs to distinguish pausing from a debugger edit. Changed RAM, changed
+  switches or a single step use live RAM immediately. Pausing OLDSKOOL on
+  //c used to change 924 pixels of the last published picture; the same
+  run now changes zero (`drol_pageflip_render` also pins host edits).
 - **Frames with no soft-switch event** stay on the full-frame paths
   (`renderInternalBeamTime`, and the composite full-frame band), cut into
   `beamCuts_` bands, so their buffer domain does not change. Only writes into
@@ -1580,21 +1610,50 @@ maps it to `{scanline, byteCol}` with `byteCol = clamp((emuCycle % 65) − 24, 0
 40)` (the 40-byte visible window opens at horizontal cycle 25; the −24 is one
 cycle earlier because the scanner latches a byte in phi1 of the cycle whose phi2
 the CPU uses, calibrated on MAD EFFECT's `$C055`). **Per-kind offset**
-(`Apple2Display_Beam.cpp::beamColForEvent`, 2026-09-02): that −24 is right for a
-*fetch-side* switch — PAGE2 `$C054/$C055`, which picks the address read on the
-NEXT fetch — but a *display-side* DHIRES/AN3 switch (`$C05E/$C05F`, the DHGR colour clock)
-re-interprets the byte fetched NOW, one column LEFT, so **only Dhgr / An3**
-events get `−25`. Without it OLDSKOOL FORT ET VERT's AN3-driven raster bands
-drew one character cell right of the TV-set art (user-confirmed, both RGB and
-composite). HiRes (`$C056/$C057`) is NOT shifted — it is a graphics-mode/address
-switch, fetch-side like PAGE2, and MAD EFFECT flips lo/hi-res mid-line to place
-its beam-raced picture; shifting HiRes pulled those regions one cell too far left
-(regression caught 2026-09-02). TEXT and MIXED land one column RIGHT of a
-PAGE2 flip made on the same cycle — `hpos − 23` *(2026-11-01)*: [A] tomcw,
-AppleWin GH#656, real //e PAL photos; [B] Sather, *Understanding the Apple
-IIe* p. 8-12 (GR delayed two scanner clocks); `beamColForEvent` carries the
-citations, audit `docs/audits/parite-apple2video-2026-11-01.md`. 80Col and
-80STORE stay on −24.
+(`Apple2Display_Beam.cpp::beamColForEvent`; current since **2026-11-08**):
+
+| Switch | Column | Why |
+|---|---|---|
+| PAGE2 `$C054/$C055`, 80STORE, HiRes `$C056/$C057` | `hpos − 25` | address switches: they pick what the NEXT fetch reads |
+| DHIRES / AN3 `$C05E/$C05F` | `hpos − 25` | display side: re-interprets the byte fetched now |
+| TEXT `$C050/$C051`, MIXED `$C052/$C053` | `hpos − 24` | one cycle after a PAGE2 flip on the same cycle |
+| everything else (80Col …) | `hpos − 24` | the base window |
+
+The TEXT/MIXED lag behind PAGE2 is the measured part: [A] tomcw, AppleWin
+GH#656, real //e PAL photos; [B] Sather, *Understanding the Apple IIe*
+p. 8-12 (GR delayed two scanner clocks); audit
+`docs/audits/parite-apple2video-2026-11-01.md`. Where PAGE2 itself sits was
+re-derived on 2026-11-08 from French Touch's DIX, the release built for real
+PAL machines, with `grouik_sync_probe` (target `probes`). French Touch's
+timings were tuned on the real machines, so they are graded [A] (CLAUDE.md):
+
+- [A] Crazy Cycles II part 1 draws 8 cells × 5 bytes with PAGE2 flips 5
+  cycles apart. At −24 every boundary sat one column right, leaving a sliver
+  at column 0 and a 4-byte last cell. At −25 every flip is at cell phase 0.
+- [A] Mad Effect's silhouette edges sweep beam cycles 40-64, and they all
+  land on screen only for an offset of exactly 25.
+- OLDSKOOL FORT ET VERT's only mid-line switches are HiRes at cycles 25/26.
+  With both switches at −24 it sat 2 columns off, and still 1 column off
+  with PAGE2 alone moved.
+
+The user checked both by eye in POM2 with PAGE2 + HiRes at −25 (a visual
+check, not a hardware measurement): OLDSKOOL is "parfait" on the
+unenhanced //e PAL (it is 6502-only), Mad Effect is "parfait", and
+Mad Effect 2 (whose first column was broken) and Crazy Cycles II are
+"parfaitement calé", and Crazy Cycles "marche parfaitement".
+
+**History**, so nobody re-tunes against one demo again:
+
+- −24 for PAGE2 was calibrated on 2026-07-31 against a standalone
+  `MADEF.dsk` of unknown build. Its source ships both a "REAL PAL" and an
+  AppleWin `RET_VBL`.
+- HiRes was pulled back from −25 on 2026-09-02 against that same −24 chain.
+
+Do not move a single kind against a single demo: calibrate all of French
+Touch's parts at once with `grouik_sync_probe`.
+The stale T1CL/T2CL "IRL" comments in `loader.a` predate the current 13-cycle
+PHA prologue. Corrected for it, their ranges are $0A..$11 and $D0..$D7, and
+POM2's reads fall inside them.
 The HiRes/PAGE2 half is pinned by `raster_switch_kind_offset`; the AN3/DHGR −1 is
 validated against the live demo. The shared
 `forEachBeamSegment(frameStart, events, paint)` builds, per visible scanline, the
@@ -1617,7 +1676,7 @@ unchanged). Pinned by `horizontal_split` (RGBA) and `horizontal_split_composite`
 (signal): lower band re-flips every scanline → left window == HGR reference,
 right window == TEXT reference on the same line. The per-kind column offset is
 pinned separately by `raster_switch_kind_offset` (a mid-line HiRes split lands
-one byte column left of a PAGE2 split on the same cycle).
+on the same byte column as a PAGE2 split on the same cycle).
 
 The **560-wide IIe / Le Chat Mauve modes** (80-col text, DHGR, DLGR, Chat Mauve)
 also split mid-line, in both outputs:
@@ -3302,6 +3361,11 @@ OpenEmulator's recordings (licence not stated), fetched into
 `roms/floppy_extras/` by `tools/install_drive_extras.py`, never packaged.
 `FloppySoundDevice::loadExtras`; without them both hooks are silent.
 
+`floppy_latch_events` drives the public mount helper and all three controller
+resets with distinct synthetic door recordings in both banks. An explicit
+mount is audible immediately; saved-path restoration and resets do not play
+the lid. Optional MAME door extras use the same controller event as Virtual ][.
+
 **Step/seek decision** (MAME parity): `step(newTrack, emuCycles)`
 measures gap in emulated CPU cycles (MAME `floppy.cpp:~1532-1540`).
 Wall-clock audio frames would be wrong under disk turbo (~60×):
@@ -3404,54 +3468,95 @@ path through a real 6502; DC decay; reset).
 
 ### Porte Parole (`PorteParoleCard`, `Mea8000`)
 
-*(2026-11-07.)* Ediciel's French text-to-speech card (Matra & Hachette, 1983,
-board CE 638009 L01; catalog `porteparole`, slot 4 by default). The card is
-an RTC / Philips **MEA8000** on the bus and nothing else that software uses:
-`$C0n0` = data write / status read, `$C0n1` = command, A0 the only address
-line decoded, a 4.000 MHz crystal, no slot ROM (the driver is on the disk),
-no IRQ. Its manual's Annexe 5 is the card's whole contract; the chip has a
-data sheet (Signetics, 1985) and a Philips application note (Technical
-Publication 101, 1983), both grade B. Sources and every departure are in
-the headers; the short version:
+The `porteparole` card (slot 4 by default, `--slot 4=porteparole`) now runs
+**Sébastien Pourcel's MEA8000 engine directly**, from
+`third_party/porteparole-mea8000/src/Mea8000.h` at `0984c9ef`.
+The imported source is unchanged, credited and GPL-2.0-or-later.
+It replaces POM2's earlier MAME-derived integer synthesis. The author has
+validated his engine in practice against his card; POM2's integration is
+checked against that engine, with no new claim of independent hardware validation.
 
-| | MAME `mea8000.cpp` @ 5346a8ce | POM2 | Evidence |
-|---|---|---|---|
-| Frequencies on a 4 MHz crystal | Hz kept, frames shorter | everything x 4/3.84, frames x 0.96 | [B] TP101 Table 2 "when using a clock frequency of 3,84 MHz" |
-| Pitch | table value | table x 1.024 | [B] TP101 Table 2 note |
-| First frame | amplitude ramps DOWN to 0 | ramps UP from 0 | [B] TP101 p. 10 |
-| Status D0-D6 | 0 | floating bus | [B] data sheet Fig. 5 |
-| REQ after a frame byte | never drops | 0 for 2 µs | [B] TP101 p. 10, Fig. 20 |
-| REQ after the starting pitch | at once | at the next 8 ms grid point | [B] TP101 p. 10 |
-| Output | 16 bits interpolated | 11 bits into the x8 interpolator, 8-bit DAC | [B] TP101 pp. 5, 12 |
-| Noise table | `machine().rand()` | fixed xorshift seed | [F] the chip's noise source is undocumented |
+`Mea8000.cpp` provides a copyable adapter and binary snapshots. The core owns
+all synthesis and quartz timing: 4 MHz, 480 clocks per native sample,
+48 kHz output, 12-clock REQ turnaround, busy-write rejection, pitch and noise,
+floating-point resonators (including decay while stopped), FM2 code 16 = 1110,
+and its analogue LP4 3 kHz / HP2 120 Hz output profile. There is no additional
+POM2 pitch correction, 8 ms startup wait or DAC quantisation.
 
-The MAME first-frame fade was the visible one: a one-frame CONT loop was
-silent, and every utterance's first frame decayed instead of rising.
+`PorteParoleCard` converts CPU cycles to quartz clocks independently of the
+host audio rate and linearly resamples the 48 kHz stream for the mixer.
+At 48 kHz its queued PCM agrees sample for sample with the reference.
+Temporary and host queues are bounded, and silence still advances the core
+so that resonators settle between utterances.
 
-**Timing.** The card counts the chip's output ticks (clock / 60 = 66 667 Hz)
-from CPU cycles alone, then derives the host samples from those ticks (box
-average of the ~1.5 ticks per 44.1 kHz sample). An earlier shape split each
-advance at host-sample boundaries too, and the floating-point tick phase —
-so the cycle a frame ended on — depended on the host's sample phase:
-`porte_parole_card` §7 caught two cards in the same state drifting apart.
-**Reset:** the MEA8000 has no reset pin, so Ctrl-Reset leaves it talking;
-power-up is STOP. **Snapshot** (`PPA` v1, session kind 20): the whole chip,
-its tick phase and the REQ window; not the host-rate queue.
+The POM2 bus wrapper retains A0 register mirrors, floating bus in D0-D6
+(the data sheet leaves these pins floating), no slot ROM or IRQ, and the
+existing reset wiring: Ctrl-Reset leaves speech running, power resets it.
+The AppleWin-specific DirectSound wrapper is not compiled.
+Optional socket Z7 memory, J2 speaker pass-through and the write synchroniser
+remain unmodelled.
 
-**Not modelled:** the optional 2 KB memory socket Z7 (`$C800-$CEFF`, a 2716
-or 6116, "normally delivered without"), the J2 speaker pass-through (the card
-is mixed as its own source), the 74LS74 write synchroniser.
+Snapshots use `PPA` v3 / `MEA` v2: all 51 reference state fields (including
+noise, output filter histories and output scheduling phase) and the quartz
+conversion remainder with its CPU frequency. v2 card blobs remain readable. The host audio queue/resampler resets on load. v1 blobs from
+the previous synthesis engine are rejected without changing the card; they
+cannot resume speech in the new engine. The enclosing session format is unchanged.
 
-**Validated** by `porte_parole_card` (bus contract, REQ pacing, the 7.68 ms
-frame, pitch 106.7 Hz for code 50, the first-frame rise, fade/STOP, snapshot,
-and the manual's Annexe 2 polling loop on a 6502; the MAME first-frame and
-pitch behaviours fail it) and by `porte_parole_probe` (manual, needs the
-disk): Ediciel's v1.1 side 1 boots on a 64 KB ][+ to the menu in ~75 s,
-`F` + "IL FAIT BEAU" gives the manual's own transcription `- I L- FAI- BAU.`,
-and `E` speaks 0.75 s: three voiced syllables at 130, 128→120 and 104→100 Hz
-with the unvoiced F between — a falling declarative contour. [F] Nobody has
-compared it with a real card's recording yet; the mirror's `Porte Parole -
-Sample.mp3` is the obvious reference.
+**Timing bug hunt (2026-11-08).** The quartz accumulator retains the
+undivided numerator modulo CPU Hz; adding divided clock fractions lost a
+quartz clock at exact PAL/NTSC boundaries depending on instruction slicing.
+Lifecycle rebasing uses the completed Memory bus counter (CPU's absolute
+counter minus its instruction scratch), avoiding a skipped previous opcode
+on restore/attach/power. `onTimeJump` also rebases this cursor so a CPU-only
+jump does not synthesize elapsed time from the abandoned timeline.
+Regression tests reproduce all three failures before the fixes.
+
+Validation: `mea8000_upstream` runs the original 187 checks;
+`porte_parole_reference` compares byte acceptance, REQ, states and exact PCM
+through the adapter and card, across all frame durations, noise, STOP,
+CONT, busy writes, snapshots and chunk boundaries. `porte_parole_card`
+checks the slot bus, host resampling, reset, snapshots and the manual's
+polling driver running on the 6502. `porte_parole_probe` remains available
+for manually booting Ediciel's disk and exporting WAV output.
+
+**Original software exercise (2026-11-08).** With the ][+ ROM, Disk II in
+slot 6 and Porte Parole in slot 4, the disk's own `CLAVIERPARLE` produces
+nonzero PCM for every A-Z / 0-9 key (36 separately paced keys). The text
+synthesizer translates `IL FAIT BEAU` to `- I L- FAI- BAU.` and speaks it
+three times (~0.92 s of chip activity per reading). The original $0300
+Ediciel driver plays all four `LOGO0.R` messages. EdiLogo boots, loads the
+manual's `LOGO.PARLE` procedures, runs `PARLER`, reloads the procedures,
+executes `ESSAI` (square, spiral, circle; messages 1/2/4), then `PARLE 3`
+and `SILENCE`, returning to its prompt. Its support binaries and bank were
+copied byte for byte onto a working copy of its disk, as instructed by the
+manual. The graphic editor loads and plays `BRUIT1.U` and `MUSIQUE.U` with
+both P (current) and O (original). All 51 scheduled audio windows are
+nonzero. Probe logs and WAVs live under `/tmp/porte-software-live/`; the
+machine-readable result is `build/porteparole-software/verified-results.json`.
+
+These are software compatibility / PCM checks; the user also confirmed the
+live keyboard's letters and digits by ear. They do not establish phonetic
+correctness of every message or analogue parity. PICOLO was not present in
+the acquired EdiLogo disk images and is still untested. One initial GUI boot
+showed an I/O error after selecting `/speed` preset `max`. A controlled MAX
+boot also stalls in the Disk II ROM; normal 1x boots reach the menu.
+`applyAcceleratorClock` scales device CPU Hz with the base pacing budget,
+so this MAX setting overclocks the CPU relative to the Disk II bus. It is
+not the disk-turbo override and is unsuitable for this loading test. The
+initial I/O error itself was not reproduced identically. Release hardening
+now treats the 1,000,000-cycle MAX bucket as fast-forward at the nominal
+clock (times any installed accelerator), preserving the Disk II bus/CPU ratio.
+`device_clock_fanout` verifies MAX under NTSC/PAL and boots an actual Disk II
+PROM from a synthetic marker disk. Custom 2x/4x clock settings retain their
+previous semantics. `porte_parole_probe --disk2 PATH` mounts a copied
+second disk for these multi-disk exercises and logs screens before input.
+
+**Release 1.2 hardening.** Invalid integer fields are checked before calling
+upstream `LoadState`: its native exceptions cannot be caught by the standard
+WASM build, where a corrupt buffered-byte count previously aborted the module.
+`mea8000_snapshot_validation` exercises 26 invalid field values atomically;
+the same standalone test runs in WASM CI and release builds without enabling
+exceptions globally.
 
 ## TransWarp (Applied Engineering)
 
@@ -6562,6 +6667,12 @@ samples the live framebuffer, which the rewind restore updates), so it's
 documentation + polish rather than new plumbing.
 
 ## IWM (//c+ on-board)
+
+**Release diagnostics.** `iwm_underrun_diagnostic` checks that the 5.25-inch
+shadow FSM and probes with no Sony selected emit no underrun warning. A
+3.5-inch write underrun is reported once per process, including across guest
+retries; the WHD write gate still clears on every occurrence. Host logging
+does not change the guest state machine or snapshots.
 
 `IWMDevice.{h,cpp}` — a port of MAME `machine/iwm.{h,cpp}`, identical to
 [D] `mame0287` for the bit windows, `read_register_update_delay`, `mode_w`,

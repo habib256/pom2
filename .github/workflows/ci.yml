@@ -778,6 +778,13 @@ jobs:
       - name: Build WASM target
         run: ./build_wasm.sh
 
+      - name: Reject malformed speech snapshots without WASM exceptions
+        run: |
+          em++ -std=c++17 -O2 -Isrc src/Mea8000.cpp \
+            tests/mea8000_snapshot_validation_test.cpp \
+            -o build_wasm/mea8000_snapshot_validation.js
+          node build_wasm/mea8000_snapshot_validation.js
+
       - name: Verify artifacts were produced
         run: |
           for f in wasm/index.html wasm/POM2.js wasm/POM2.wasm; do
@@ -798,6 +805,7 @@ jobs:
             wasm/POM2.js
             wasm/POM2.wasm
             wasm/POM2.data
+            wasm/bundled_disks
           if-no-files-found: error
           retention-days: 14
 
@@ -819,6 +827,7 @@ jobs:
           set -euo pipefail
           mkdir -p _site/wasm
           cp wasm/index.html wasm/POM2.js wasm/POM2.wasm wasm/POM2.data _site/wasm/
+          cp -R wasm/bundled_disks _site/wasm/
           cat > _site/index.html <<'EOF'
           <!doctype html><meta charset="utf-8">
           <meta http-equiv="refresh" content="0; url=wasm/">

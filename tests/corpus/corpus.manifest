@@ -84,6 +84,30 @@ title dix-auto iie-pal dix
   run 59
   check digidream-sid            # 1590
 
+# OFV/main.a has a separate 65C02 raster routine. LEFT three times selects
+# entry 14 (0 -> 16 -> 15 -> 14), not entry 13, which is DIGIDREAM.
+# The checkerboard starts at frame 2048. Consecutive checks keep its motion
+# covered on the //c; display_beam_regressions checks the RGB pixels too.
+title dix-oldskool-iic iic-pal ci dix
+  boot 5
+  mockingboard 4
+  smartport 1 disks_3.5/DIX-fix.po sha256=e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df
+  rgb 7 iic
+  run 25
+  key LEFT
+  run 1
+  key LEFT
+  run 1
+  key LEFT
+  run 1
+  key RETURN
+  run 44
+  check checkerboard-a
+  run 0.22
+  check checkerboard-b
+  run 0.22
+  check checkerboard-c
+
 # ── The author's own GPL software, tracked in the tree.
 
 title dirtbike iie-pal games

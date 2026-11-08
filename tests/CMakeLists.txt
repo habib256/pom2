@@ -8859,6 +8859,29 @@ add_test(NAME vbl_ioudis_annunciator COMMAND test_vbl_ioudis_annunciator
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(vbl_ioudis_annunciator PROPERTIES TIMEOUT 10)
 
+# ft_loader_sync: French Touch's cycle-exact sync (DIX loader.a .SyncDetect,
+# transcribed) on a //e PAL and a //c PAL — the //e's $C019 VBLBAR edge and
+# the //c's VBLINT edge must sit exactly 192 lines apart (2026-11-08).
+add_executable(test_ft_loader_sync
+    ft_loader_sync_test.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_ft_loader_sync PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ft_loader_sync PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ft_loader_sync PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ft_loader_sync PRIVATE winmm)
+endif()
+add_test(NAME ft_loader_sync COMMAND test_ft_loader_sync
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(ft_loader_sync PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+
 # ─── Disk35Image write-back atomicity guard ──────────────────────────────
 add_executable(test_disk35_atomic_save
     disk35_atomic_save_test.cpp
@@ -9822,9 +9845,22 @@ pom2_add_headless_test(test_sam_card
     SOURCES sam_card_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
-# Ediciel Porte Parole + MEA8000: the bus contract from the card's manual and
-# the chip's data sheet, REQ pacing, the 4 MHz crystal's frame length and
-# pitch, fade/STOP, snapshot, and the manual's own polling loop on a 6502.
+# Unmodified upstream regression plus POM2 PCM/bus differential coverage.
+add_executable(test_mea8000_upstream
+    ${CMAKE_SOURCE_DIR}/third_party/porteparole-mea8000/tests/TestMea8000.cpp)
+target_include_directories(test_mea8000_upstream PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/porteparole-mea8000/src)
+add_test(NAME mea8000_upstream COMMAND test_mea8000_upstream)
+set_tests_properties(mea8000_upstream PROPERTIES TIMEOUT 30)
+pom2_add_headless_test(test_mea8000_snapshot_validation
+    NAME mea8000_snapshot_validation TIMEOUT 20
+    SOURCES mea8000_snapshot_validation_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+pom2_add_headless_test(test_porte_parole_reference
+    NAME porte_parole_reference TIMEOUT 30
+    SOURCES porte_parole_reference_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_porte_parole_card
     NAME porte_parole_card TIMEOUT 30
     SOURCES porte_parole_card_test.cpp
@@ -9890,6 +9926,16 @@ pom2_add_headless_test(test_ssc_firmware
 pom2_add_headless_test(test_device_clock_fanout
     NAME device_clock_fanout TIMEOUT 20
     SOURCES device_clock_fanout_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_iwm_underrun_diagnostic
+    NAME iwm_underrun_diagnostic TIMEOUT 20
+    SOURCES iwm_underrun_diagnostic_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_floppy_latch_events
+    NAME floppy_latch_events TIMEOUT 20
+    SOURCES floppy_latch_events_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_iwm_stale_sony

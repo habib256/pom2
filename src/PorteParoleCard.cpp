@@ -29,11 +29,17 @@
 namespace pom2 {
 
 namespace {
-// clock / 480 x 8: 66 667 output ticks a second at 4 MHz.
-constexpr double kTickHz = PorteParoleCard::kChipClockHz * Mea8000::kSuperSampling /
-                           Mea8000::kClockDivider;
+constexpr uint32_t kNativeRate = Mea8000::kOutputRate;
 constexpr std::size_t kMaxQueue = 8192;
-constexpr std::size_t kSnapshotBytes = 4 + Mea8000::kSnapshotBytes + 8 + 4;
+constexpr std::size_t kSnapshotV2Bytes = 4 + Mea8000::kSnapshotBytes + 8;
+constexpr std::size_t kSnapshotBytes = kSnapshotV2Bytes + 8;
+
+// Outside an instruction, getCycleCountNow still includes the last opcode
+// scratch count. All lifecycle methods run at a completed bus boundary.
+uint64_t boundaryCycle(const M6502* cpu)
+{
+    return cpu->getCycleCountNow() - uint64_t(cpu->getCurrentInstructionCycles());
+}
 } // namespace
 
 struct PorteParoleCard::AudioSrc : AudioSource, RateAware {
@@ -58,7 +64,7 @@ struct PorteParoleCard::AudioSrc : AudioSource, RateAware {
 };
 
 PorteParoleCard::PorteParoleCard(int slot)
-    : audio_(std::make_unique<AudioSrc>(*this)), slot_(slot) {}
+    : audio_(std::make_unique<AudioSrc>(*this)), slot_(slot) { scratch_.reserve(481); }
 
 PorteParoleCard::~PorteParoleCard() = default;
 
@@ -68,8 +74,7 @@ void PorteParoleCard::setCpu(M6502* cpu)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     cpu_ = cpu;
-    lastCycle_ = cpu ? cpu->getCycleCountNow() : 0;
-    reqLowUntil_ = 0;
+    lastCycle_ = cpu ? boundaryCycle(cpu) : 0;
 }
 
 void PorteParoleCard::setCpuClock(double hz)
@@ -77,7 +82,10 @@ void PorteParoleCard::setCpuClock(double hz)
     std::lock_guard<std::mutex> lock(mtx_);
     // No sync() here, for the Echo+'s reason: the setters run between
     // instructions, after advanceCycles has brought the card to the boundary.
-    if (std::isfinite(hz) && hz >= 100000 && hz <= 1000000000) cpuHz_ = hz;
+    if (std::isfinite(hz) && hz >= 100000 && hz <= 1000000000) {
+        clockRemainder_ *= hz / cpuHz_;
+        cpuHz_ = hz;
+    }
 }
 
 void PorteParoleCard::setSampleRate(uint32_t hz)
@@ -85,7 +93,8 @@ void PorteParoleCard::setSampleRate(uint32_t hz)
     std::lock_guard<std::mutex> lock(mtx_);
     if (hz < 8000 || hz > 192000 || hz == rate_) return;
     rate_ = hz;
-    samplePhase_ = 0.0;
+    samplePhase_ = 0;
+    previousSample_ = 0;
     pcm_.clear();
 }
 
@@ -103,10 +112,10 @@ void PorteParoleCard::onPowerCycle()
     std::lock_guard<std::mutex> lock(mtx_);
     chip_.reset();
     pcm_.clear();
-    tickPhase_ = samplePhase_ = tickSum_ = 0.0;
-    tickCount_ = 0;
-    reqLowUntil_ = 0;
-    lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : lastCycle_;
+    clockRemainder_ = 0.0;
+    samplePhase_ = 0;
+    previousSample_ = 0;
+    lastCycle_ = cpu_ ? boundaryCycle(cpu_) : lastCycle_;
 }
 
 void PorteParoleCard::onUnplug() { onPowerCycle(); }
@@ -117,8 +126,9 @@ void PorteParoleCard::onTimeJump()
     // belongs to the timeline that was left.
     std::lock_guard<std::mutex> lock(mtx_);
     pcm_.clear();
-    tickSum_ = 0.0;
-    tickCount_ = 0;
+    samplePhase_ = 0;
+    previousSample_ = 0;
+    if (cpu_) lastCycle_ = boundaryCycle(cpu_);
 }
 
 void PorteParoleCard::sync()
@@ -135,9 +145,10 @@ void PorteParoleCard::syncAt(uint64_t now)
         advance(now - lastCycle_);
     } else if (lastCycle_ - now > 1024) {
         // Time ran backwards (a rewind the card was not told of): restart
-        // the queue and the REQ window from here.
+        // the host resampler from here.
         pcm_.clear();
-        reqLowUntil_ = 0;
+        samplePhase_ = 0;
+        previousSample_ = 0;
     }
     lastCycle_ = now;
 }
@@ -157,62 +168,36 @@ void PorteParoleCard::advanceCycles(int cycles)
     }
 }
 
-// The chip's ticks are counted from CPU cycles ALONE, and the host samples
-// are derived from the chip's ticks. Splitting one advance at host-sample
-// boundaries (the Echo+'s shape) made the floating-point tick phase — and so
-// the cycle a frame ended on — depend on the host sample rate's phase: two
-// cards in the same machine state drifted apart (porte_parole_card #7).
+// Convert CPU cycles to quartz clocks once, independently of host audio rate.
 void PorteParoleCard::advance(uint64_t cycles)
 {
-    const double t = tickPhase_ + double(cycles) * kTickHz / cpuHz_;
-    const double whole = std::floor(t);
-    tickPhase_ = t - whole;
-    uint64_t ticks = static_cast<uint64_t>(whole);
-    while (ticks > 0 && chip_.running()) {
-        pushTick(chip_.tick());
-        --ticks;
-    }
-    if (ticks > 0) {
-        // Idle: only the chip's free-running 8 ms grid moves (Mea8000.h,
-        // departure 7), and the host hears silence.
-        chip_.idle(ticks);
-        pushSilence(ticks);
+    // Keep the numerator remainder, not a repeatedly divided fraction of a
+    // quartz clock. Integer CPU Hz then uses exact integer-valued doubles:
+    // 65 PAL cycles always produce 256 clocks, even when advanced one by one.
+    const double exact = clockRemainder_ + double(cycles) * kChipClockHz;
+    const auto clocks = static_cast<uint64_t>(std::floor(exact / cpuHz_));
+    clockRemainder_ = exact - double(clocks) * cpuHz_;
+    // Bound temporary PCM storage even for large headless/turbo advances.
+    uint64_t left = clocks;
+    while (left) {
+        const uint64_t count = std::min<uint64_t>(left, 40000);
+        scratch_.clear();
+        chip_.advanceClocks(count, &scratch_);
+        for (int16_t sample : scratch_) pushSample(sample);
+        left -= count;
     }
 }
 
-void PorteParoleCard::pushTick(int16_t level)
+void PorteParoleCard::pushSample(int16_t level)
 {
-    tickSum_ += level;
-    ++tickCount_;
-    samplePhase_ += double(rate_) / kTickHz;
-    if (samplePhase_ >= 1.0) {
-        samplePhase_ -= 1.0;
-        // Box-average the ~1.5 chip ticks of each host sample: the chip's
-        // 64 kHz stream point-sampled at 44.1 kHz would fold its x8
-        // interpolation images into the audible band.
-        pcm_.push_back(float(tickSum_ / tickCount_) / 32768.0f);
-        tickSum_ = 0.0; tickCount_ = 0;
+    samplePhase_ += rate_;
+    while (samplePhase_ >= kNativeRate) {
+        samplePhase_ -= kNativeRate;
+        const double t = 1.0 - double(samplePhase_) / rate_;
+        pcm_.push_back(float(previousSample_ + (level - previousSample_) * t) / 32768.0f);
         if (pcm_.size() > kMaxQueue) pcm_.pop_front();
     }
-}
-
-void PorteParoleCard::pushSilence(uint64_t ticks)
-{
-    const double s = samplePhase_ + double(ticks) * double(rate_) / kTickHz;
-    auto whole = static_cast<uint64_t>(s);
-    samplePhase_ = s - double(whole);
-    whole = std::min<uint64_t>(whole, kMaxQueue);
-    for (uint64_t i = 0; i < whole; ++i) {
-        // The first sample after an utterance closes its last partial box.
-        pcm_.push_back(tickCount_ ? float(tickSum_ / tickCount_) / 32768.0f : 0.0f);
-        tickSum_ = 0.0; tickCount_ = 0;
-    }
-    while (pcm_.size() > kMaxQueue) pcm_.pop_front();
-}
-
-bool PorteParoleCard::reqVisible() const
-{
-    return chip_.acceptsByte() && lastCycle_ >= reqLowUntil_;
+    previousSample_ = level;
 }
 
 uint8_t PorteParoleCard::deviceSelectRead(uint8_t)
@@ -220,7 +205,7 @@ uint8_t PorteParoleCard::deviceSelectRead(uint8_t)
     std::lock_guard<std::mutex> lock(mtx_);
     sync();
     // [B] D7 = REQ; D0-D6 float (header).
-    return static_cast<uint8_t>((reqVisible() ? 0x80 : 0x00) | (openBus() & 0x7F));
+    return static_cast<uint8_t>((chip_.acceptsByte() ? 0x80 : 0x00) | (openBus() & 0x7F));
 }
 
 void PorteParoleCard::deviceSelectWrite(uint8_t low4, uint8_t value)
@@ -231,8 +216,6 @@ void PorteParoleCard::deviceSelectWrite(uint8_t low4, uint8_t value)
         chip_.writeCommand(value);
     } else {
         chip_.writeData(value);
-        reqLowUntil_ = lastCycle_ +
-            uint64_t(std::ceil(kReqRecoverySeconds * cpuHz_));
     }
 }
 
@@ -257,46 +240,48 @@ std::vector<float> PorteParoleCard::drainSamples(std::size_t count)
 }
 
 // ─── Snapshot ────────────────────────────────────────────────────────────
-// 'P' 'P' 'A' 1, the chip, the tick phase (the chip's place between two of
-// its own ticks) and what is left of the REQ recovery window, in cycles.
-// The host-rate queue and phase are host state and are not saved.
+// PPA v3: reference core (including its analogue histories and 48 kHz
+// scheduler) plus the undivided quartz remainder and its CPU frequency. Host PCM is discarded on load.
+// v1 used a different synthesis engine and cannot represent this state.
 
 void PorteParoleCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    out.insert(out.end(), {'P', 'P', 'A', 1});
+    out.insert(out.end(), {'P', 'P', 'A', 3});
     chip_.appendSnapshot(out);
-    uint64_t bits; std::memcpy(&bits, &tickPhase_, 8);
+    uint64_t bits; std::memcpy(&bits, &clockRemainder_, 8);
     byteio::putU64(out, bits);
-    const uint64_t left = reqLowUntil_ > lastCycle_ ? reqLowUntil_ - lastCycle_ : 0;
-    byteio::putU32(out, static_cast<uint32_t>(std::min<uint64_t>(left, 0xFFFFFFFFu)));
+    std::memcpy(&bits, &cpuHz_, 8);
+    byteio::putU64(out, bits);
 }
 
 void PorteParoleCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     // A versioned prefix: bytes past it are a later version's tail (the
     // contract's P3b), so a longer blob loads its known part.
-    if (!data || len < kSnapshotBytes || data[0] != 'P' || data[1] != 'P' ||
-        data[2] != 'A' || data[3] != 1)
-        return;
-    len = kSnapshotBytes;
+    if (!data || len < kSnapshotV2Bytes || data[0] != 'P' || data[1] != 'P' ||
+        data[2] != 'A' || (data[3] != 2 && data[3] != 3)) return;
+    const bool legacy = data[3] == 2;
+    if (!legacy && len < kSnapshotBytes) return;
     Mea8000 chip;
     if (!chip.loadSnapshot(data + 4, Mea8000::kSnapshotBytes)) return;
     byteio::Reader r(data, len);
     r.pos = 4 + Mea8000::kSnapshotBytes;
-    const uint64_t bits = r.u64();
-    double phase; std::memcpy(&phase, &bits, 8);
-    const uint32_t reqLeft = r.u32();
-    // 2 µs at the fastest CPU clock setCpuClock accepts is 2000 cycles.
-    if (!std::isfinite(phase) || phase < 0.0 || phase >= 1.0 || reqLeft > 2000) return;
+    uint64_t bits = r.u64();
+    double remainder; std::memcpy(&remainder, &bits, 8);
+    double savedHz = 1.0; // v2 stored a fraction of one quartz clock
+    if (!legacy) {
+        bits = r.u64(); std::memcpy(&savedHz, &bits, 8);
+        if (!std::isfinite(savedHz) || savedHz < 100000 || savedHz > 1000000000) return;
+    }
+    if (!std::isfinite(remainder) || remainder < 0 || remainder >= savedHz) return;
     std::lock_guard<std::mutex> lock(mtx_);
     chip_ = chip;
-    tickPhase_ = phase;
-    if (cpu_) lastCycle_ = cpu_->getCycleCountNow();
-    reqLowUntil_ = lastCycle_ + reqLeft;
+    clockRemainder_ = savedHz == cpuHz_ ? remainder : remainder * (cpuHz_ / savedHz);
+    if (cpu_) lastCycle_ = boundaryCycle(cpu_);
     pcm_.clear();
-    tickSum_ = 0.0;
-    tickCount_ = 0;
+    samplePhase_ = 0;
+    previousSample_ = 0;
 }
 
 } // namespace pom2

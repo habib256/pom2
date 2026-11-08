@@ -311,6 +311,19 @@
     });
   });
   Module.preRun.push(function() {
+    if (!_disk || !(Module.pom2LazyDisks || []).includes(_disk)) return;
+    const addDep = Module.addRunDependency || addRunDependency;
+    const delDep = Module.removeRunDependency || removeRunDependency;
+    addDep('pom2-bundled-disk');
+    setStatus('Loading POM2: downloading A2FileCmd…');
+    Module.pom2FetchBundledDisk(_disk).catch(function(error) {
+      const index = _args.indexOf(_disk);
+      if (index >= 0) _args.splice(index, 1);
+      errEl.style.display = 'block';
+      errEl.textContent = 'Disk download failed: ' + error.message + '\nStarting without a disk.';
+    }).finally(function() { delDep('pom2-bundled-disk'); });
+  });
+  Module.preRun.push(function() {
     // Reach the runtime through `Module` rather than the bare globals: the
     // shell's <script> is a different scope from the generated glue, and
     // which names leak into the page has changed across Emscripten releases.

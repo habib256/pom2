@@ -203,9 +203,8 @@ bool mountDiskIICommon(EmulationController& ctrl, DiskIICard& card, int drive,
     }
     if (ok) {
         noteHostMediaSwap(ctrl);   // see noteHostMediaSwap
-        // Virtual ][ lid-close. No-op on the MAME bank, so a startup
-        // restore — which does not come through here — and every test
-        // mount stay silent. See EmulationController::noteFloppyLatch.
+        // Explicit user insertion: play the selected bank's door. Startup
+        // restore and resets do not come through here.
         ctrl.noteFloppyLatch(true);
     }
     if (!ok && error.empty()) error = "insert failed";

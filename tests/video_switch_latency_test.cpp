@@ -90,10 +90,11 @@ void testMidLineColumn()
     mem.setCycleCounter(at(11, 5));  mem.memRead(0xC054);
     mem.setCycleCounter(at(50, 40)); mem.memRead(0xC051);
     mem.setCycleCounter(at(51, 5));  mem.memRead(0xC050);
-    // The last HBL cycle: PAGE2 governs the whole line, TEXT one column in.
-    mem.setCycleCounter(at(90, 24));  mem.memRead(0xC055);
+    // hpos 25, the last cycle at which PAGE2 still governs the whole line
+    // (hpos - 25 = column 0); TEXT one column in.
+    mem.setCycleCounter(at(90, 25));  mem.memRead(0xC055);
     mem.setCycleCounter(at(91, 5));   mem.memRead(0xC054);
-    mem.setCycleCounter(at(100, 24)); mem.memRead(0xC051);
+    mem.setCycleCounter(at(100, 25)); mem.memRead(0xC051);
     mem.setCycleCounter(at(101, 5));  mem.memRead(0xC050);
     // MIXED: lines 160+ become text from the switch on.
     mem.setCycleCounter(at(170, 40)); mem.memRead(0xC053);
@@ -110,16 +111,18 @@ void testMidLineColumn()
     const int page0 = firstLit(px, 90);
     const int text0 = firstLit(px, 100);
     const int mixed = firstLit(px, 170);
-    std::printf("first lit x: PAGE2@40=%d TEXT@40=%d PAGE2@24=%d TEXT@24=%d MIXED@40=%d\n",
+    std::printf("first lit x: PAGE2@40=%d TEXT@40=%d PAGE2@25=%d TEXT@25=%d MIXED@40=%d\n",
                 page, text, page0, text0, mixed);
 
-    // PAGE2 anchor (MAD EFFECT-calibrated hpos - 24): column 16 → x 112.
-    CHECK(page == 16 * 7, "PAGE2 at hpos 40 shows from column 16");
+    // PAGE2 anchor, hpos - 25 (2026-11-08, French Touch's DIX — CCII part
+    // 1's 8-cell grid, Mad Effect's silhouette edges, OLDSKOOL's HiRes
+    // splits; DEV § Horizontal splits): column 15 → x 105.
+    CHECK(page == 15 * 7, "PAGE2 at hpos 40 shows from column 15");
     // TEXT / MIXED: one column later than PAGE2 on the same cycle.
-    CHECK(text == page + 7, "TEXT at hpos 40 shows one column right of PAGE2 (column 17)");
-    CHECK(mixed == page + 7, "MIXED at hpos 40 shows one column right of PAGE2 (column 17)");
-    CHECK(page0 == 0, "PAGE2 at hpos 24 governs the whole line");
-    CHECK(text0 == 7, "TEXT at hpos 24 shows from column 1");
+    CHECK(text == page + 7, "TEXT at hpos 40 shows one column right of PAGE2 (column 16)");
+    CHECK(mixed == page + 7, "MIXED at hpos 40 shows one column right of PAGE2 (column 16)");
+    CHECK(page0 == 0, "PAGE2 at hpos 25 governs the whole line");
+    CHECK(text0 == 7, "TEXT at hpos 25 shows from column 1");
 }
 
 void testFloatingBusBeforeFlip(bool iie)

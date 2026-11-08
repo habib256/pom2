@@ -24,6 +24,26 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-011](#cards-011) | 🟢 | Done 2026-10-28 — move the register map to DEV.md, then archive (ID also reused at `CHANGELOG.md:945`) | ALS "The CP/M Card" (6 MHz Z80B, own 64 KB, CP/M Plus) |
+| [CARDS-015](#cards-015) | ✅ | Implemented 2026-11-08 | Porte Parole: run Sébastien Pourcel’s PorteParole-MEA8000 engine directly |
+
+<a id="cards-015"></a>
+
+## CARDS-015 — Integrate Sébastien Pourcel's PorteParole-MEA8000
+
+**State:** Implemented 2026-11-08, following the explicit request to implement
+his engine and the clarification that his practical validation is the basis.
+
+The unmodified portable engine at `0984c9ef` is now compiled directly;
+POM2's old synthesis is replaced. Its resonators, FM2 table, pitch, noise,
+REQ turnaround, busy-write behaviour and analogue profile are used together.
+POM2 supplies the slot bus, CPU-clock conversion, host audio resampling and
+versioned snapshots. The upstream 187 checks and differential PCM tests
+cover the port. See [DEV](../../DEV.md#porte-parole-porteparolecard-mea8000)
+and [import provenance](../../third_party/porteparole-mea8000/POM2-IMPORT.md).
+
+The practical validation belongs to the reference author; a new independent
+hardware recording comparison is not claimed for POM2. The missing upstream
+scripts have not been recreated.
 
 <a id="cards-002"></a>
 

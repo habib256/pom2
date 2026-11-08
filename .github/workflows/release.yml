@@ -937,6 +937,13 @@ jobs:
       - name: Build the WASM bundle
         run: ./build_wasm.sh
 
+      - name: Reject malformed speech snapshots without WASM exceptions
+        run: |
+          em++ -std=c++17 -O2 -Isrc src/Mea8000.cpp \
+            tests/mea8000_snapshot_validation_test.cpp \
+            -o build_wasm/mea8000_snapshot_validation.js
+          node build_wasm/mea8000_snapshot_validation.js
+
       - name: Verify the bundle — files present, size bounded
         run: |
           set -euo pipefail
@@ -961,8 +968,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          (cd wasm && zip -9 "../dist/POM2-v${POM2_VERSION}-web-wasm.zip" \
-                index.html POM2.js POM2.wasm POM2.data)
+          (cd wasm && zip -9 -r "../dist/POM2-v${POM2_VERSION}-web-wasm.zip" \
+                index.html POM2.js POM2.wasm POM2.data bundled_disks)
           ls -lh dist/*.zip
 
       # The online demo is not this zip: ci.yml's `pages` job deploys the

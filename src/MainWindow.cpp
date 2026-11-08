@@ -1385,7 +1385,7 @@ void MainWindow::render()
     if (hostCursorWanted_ != hostCursorHidden_) {
         EM_ASM({
             var c = Module['canvas'];
-            if (c) c.style.cursor = $0 ? 'none' : '';
+            if (c) c.style.cursor = $0 ? "none" : "";
         }, hostCursorWanted_ ? 1 : 0);
         hostCursorHidden_ = hostCursorWanted_;
     }

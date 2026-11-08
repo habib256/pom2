@@ -17,6 +17,7 @@
 #include "Memory.h"
 
 #include <cassert>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -186,7 +187,8 @@ void testPerLinePageSplitDoesNotGhostAcrossSegments()
             for (int y = 0; y < 192; ++y) {
                 mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 5);
                 mem.memRead(SET_PAGE1);
-                mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 44);
+                // hpos 45 → column 20 (PAGE2 maps to hpos - 25), mid-line.
+                mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 45);
                 mem.memRead(SET_PAGE2);
             }
         d.render(mem);
@@ -214,7 +216,8 @@ void testPerLinePageSplitDoesNotGhostAcrossSegments()
 
 // ── 4. A page split INSIDE the mixed text band, under the composite demod ─
 // The band used to be painted once from the end-of-frame state, so a
-// per-line PAGE1 (cycle 5) / PAGE2 (cycle 44) split in rows 160-191 drew
+// per-line PAGE1 (cycle 5) / PAGE2 (cycle 45, hpos - 25 = column 20, the
+// middle of the line) split in rows 160-191 drew
 // both halves from one page — under the three composite pipelines only.
 // References are frames with the same event SHAPE but one page throughout,
 // so all three go through the per-segment painter.
@@ -237,7 +240,7 @@ void testPageSplitInsideMixedTextBand()
         for (int y = 160; y < 192; ++y) {
             mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 5);
             mem.memRead(leftPage);
-            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 44);
+            mem.setCycleCounter(base + static_cast<uint64_t>(y) * kCyclesPerLine + 45);
             mem.memRead(rightPage);
         }
         d.render(mem);
@@ -261,6 +264,66 @@ void testPageSplitInsideMixedTextBand()
     std::puts("  page split inside the mixed text band: OK");
 }
 
+// OFV/main.a switches between page-2 lo-res checkerboards and HGR, with
+// four moving 20-line bars. Replay several positions into the SAME display:
+// every dot must belong to this frame, including where a bar used to sit.
+void testMovingCheckerboardBarsOnIIcAdapter()
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    mem.setVideoStandard(VideoStandard::PAL);
+    auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::IIcAdapter);
+    auto* rgb = card.get();
+    mem.slotBus().plug(7, std::move(card));
+    Apple2Display d;
+    d.setAuxMemory(mem.auxData());
+    d.setChatMauveCard(rgb);
+    d.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+    d.setMachineRunning(true);
+    fillHgr(mem, 0x4000, 0);
+    for (int row = 0; row < 24; ++row)
+        for (int col = 0; col < 40; ++col)
+            mem.memWrite(static_cast<uint16_t>(textRowAddr(row) + 0x400 + col),
+                         ((col - row * 2) & 3) < 2 ? 0xFF : 0);
+    mem.memRead(CLR_TEXT); mem.memRead(CLR_MIXED);
+    mem.memRead(SET_PAGE2); mem.memRead(0xC05F); mem.memRead(SET_HIRES);
+    constexpr uint64_t frameCycles = 65 * 312;
+    for (int f = 0; f < 60; ++f) {
+        const std::array<int, 4> bars{{(f * 3) % 172, (f * 3 + 43) % 172,
+                                     (f * 3 + 86) % 172, (f * 3 + 129) % 172}};
+        const uint64_t base = (f + 1) * frameCycles;
+        mem.setCycleCounter(base);
+        mem.beginVideoEventFrame();
+        auto inBar = [&](int y) {
+            for (int top : bars) if (y >= top && y < top + 20) return true;
+            return false;
+        };
+        for (int y = 0; y < 192; ++y) {
+            mem.setCycleCounter(base + y * 65 + 5);
+            mem.memRead(inBar(y) ? CLR_HIRES : SET_HIRES);
+            // Source's partial bars show HGR through the TV in the middle.
+            if (inBar(y) && (f & 1)) {
+                mem.setCycleCounter(base + y * 65 + 25 + 8);
+                mem.memRead(SET_HIRES);
+                mem.setCycleCounter(base + y * 65 + 25 + 34);
+                mem.memRead(CLR_HIRES);
+            }
+        }
+        d.render(mem);
+        assert(d.width() == 560);
+        const uint32_t* pixels = d.pixels();
+        for (int y = 0; y < 192; ++y)
+            for (int x = 0; x < 560; ++x) {
+                const int col = x / 14;
+                const bool visible = inBar(y) && (!(f & 1) || col < 8 || col >= 34);
+                const uint32_t want = visible && ((col - (y / 8) * 2) & 3) < 2
+                    ? 0xFFFFFFFF : 0xFF000000;
+                assert(pixels[y * 560 + x] == want && "moving checkerboard left stale raster pixels");
+            }
+    }
+    std::puts("  //c adapter: 60 moving checkerboard frames, every dot current: OK");
+}
+
 } // namespace
 
 int main()
@@ -270,6 +333,7 @@ int main()
     testMixedClearedInVblRepaintsTextBand();
     testEightyToFortyColumnSplitIsOneFrame();
     testPerLinePageSplitDoesNotGhostAcrossSegments();
+    testMovingCheckerboardBarsOnIIcAdapter();
     std::puts("display_beam_regressions: OK");
     return 0;
 }

@@ -17,25 +17,31 @@
 // Per-kind mid-line soft-switch column offset.
 //
 // A mid-line soft switch's visible column is NOT the same for every switch
-// kind. `frameCycleToPos` maps a switch to `byteCol = hpos - 24`, calibrated
-// on MAD EFFECT's mid-line $C055 (PAGE2) — a *fetch-side* switch (it changes
-// the address the scanner reads NEXT, so its effect appears at the following
-// byte). A *display-side* hi-res/DHIRES switch ($C056/$C057, $C05E/$C05F)
-// re-interprets the byte being fetched NOW, so its effect lands one character
-// cell (7 px) to the LEFT of a PAGE2 flip performed on the same cycle.
+// kind. Raw `frameCycleToPos` maps a cycle to `byteCol = hpos - 24` (the
+// 40-byte window opens at horizontal cycle 25). `beamColForEvent` then
+// places each kind (2026-11-08):
+//   - PAGE2 / 80STORE / HiRes ($C054/$C055, $C056/$C057): hpos - 25. They
+//     change the ADDRESS the scanner fetches next.
+//   - DHIRES / AN3 ($C05E/$C05F): hpos - 25 (re-interprets the byte now).
+//   - TEXT / MIXED ($C050-$C053): hpos - 24, ONE cycle after a PAGE2 flip
+//     on the same cycle. [A] tomcw, AppleWin GH#656, real //e PAL photos.
 //
-// Applying the page-calibrated -24 to those drew OLDSKOOL FORT ET VERT's
-// HGR-mode raster bands one cell RIGHT of the TV-set art the demo frames them
-// around (French Touch, SHADOW party 2021 — user-confirmed 2026-09-02 on the
-// genuine-NMOS `Apple //e Unenhanced PAL` profile, in BOTH the Chat Mauve RGB
-// and the OpenEmulator composite paths). `Apple2Display_Beam.cpp`'s
-// `beamColForEvent` now pulls HiRes / Dhgr / An3 back one column while PAGE2
-// (and everything MAD EFFECT / DROL / DIX pin) stays on -24.
+// [A] The -25 for PAGE2 and HiRes comes from French Touch's DIX, the release
+// built for real PAL machines, measured with `grouik_sync_probe`:
+//   - Crazy Cycles II part 1's 8-cell grid is whole only at -25.
+//   - Mad Effect's silhouette edges admit an offset of exactly 25.
+//   - OLDSKOOL FORT ET VERT's HiRes splits sat 2 columns off at -24.
+// The user then checked OLDSKOOL, Mad Effect, Mad Effect 2 and CCII by eye in
+// POM2: a visual check of the emulator, not a hardware measurement.
 //
-// This test pins the RELATIONSHIP — a hi-res mid-line split lands exactly one
-// byte column left of a PAGE2 split at the same cycle — so a future retune of
-// the -24 base moves both together and can't silently re-open the OLDSKOOL
-// misalignment.
+// History:
+//   - 2026-07-31: PAGE2 got -24 from a standalone MADEF.dsk of unknown
+//     build.
+//   - 2026-09-02: HiRes was pulled back to -24 against that same chain.
+//
+// This test pins the RELATIONSHIPS: HiRes splits on the same column as PAGE2,
+// TEXT splits one column right of both, and all of them follow the base. A
+// retune of the base therefore moves them together.
 
 #include "Apple2Display.h"
 #include "Memory.h"
@@ -48,6 +54,7 @@
 namespace {
 
 constexpr uint16_t CLR_TEXT   = 0xC050;   // graphics
+constexpr uint16_t SET_TEXT   = 0xC051;   // text    (one cycle late)
 constexpr uint16_t SET_HIRES  = 0xC057;   // hi-res  (display-side)
 constexpr uint16_t CLR_HIRES  = 0xC056;   // lo-res  (display-side)
 constexpr uint16_t CLR_PAGE2  = 0xC054;   // page 1  (fetch-side)
@@ -56,7 +63,7 @@ constexpr uint16_t SET_PAGE2  = 0xC055;   // page 2  (fetch-side)
 constexpr int W = 280;
 constexpr int H = 192;
 constexpr int kBandTop = 96;              // 12*8, row-aligned band start
-constexpr int kMidHpos = 45;             // hpos 45 → base col 21 (hpos-24)
+constexpr int kMidHpos = 45;             // hpos 45 → raw col 21 (hpos-24)
 
 uint16_t hgrAddr(int y, int page)
 {
@@ -75,6 +82,11 @@ uint16_t loresAddr(int row, int page)
 // data patterns. HGR page 1 = 0x00 (black); HGR page 2 = 0x2A and lo-res
 // $0400 = 0xAA are both non-black. The reference frame is all-left (all
 // black), so `splitCol` finds the first non-black column = the split.
+// The TEXT case fills text page 1 with $20 (inverse space, a solid cell on
+// every scanline) instead of the lo-res $AA: '*' has blank top and bottom
+// glyph rows, which is where the probed scanlines fall.
+bool gSolidText = false;
+
 void populate(Memory& m)
 {
     for (int y = 0; y < 192; ++y)
@@ -84,7 +96,8 @@ void populate(Memory& m)
         }
     for (int row = 0; row < 24; ++row)
         for (int col = 0; col < 40; ++col) {
-            m.memWrite(loresAddr(row, 1) + col, static_cast<uint8_t>(0xAA)); // LORES right: non-black
+            m.memWrite(loresAddr(row, 1) + col,                         // LORES right: non-black
+                       static_cast<uint8_t>(gSolidText ? 0x20 : 0xAA));         // (TEXT: solid inverse)
             m.memWrite(loresAddr(row, 2) + col, static_cast<uint8_t>(0xAA));
         }
 }
@@ -176,33 +189,44 @@ int main()
     const auto refPage2      = fullFrame(SET_HIRES, SET_PAGE2);   // non-black HGR
     const auto refLores      = fullFrame(CLR_HIRES, CLR_PAGE2);   // non-black lo-res
 
-    // ── PAGE2 (fetch-side): splits on the page-calibrated column 21. ──────
+    // ── PAGE2: hpos 45 - 25 = column 20. ─────────────────────────────────
     // Left = HIRES page 1 (black), right = HIRES page 2 (non-black).
     const auto beamPage2 = beamSplit(SET_PAGE2, SET_HIRES, CLR_PAGE2);
-    assertSplitAt(beamPage2, refHiresBlack, refPage2, 21,
-                  "PAGE2 mid-line split must stay on hpos-24 (col 21)");
-    std::printf("  PAGE2 (fetch-side) splits at col 21\n");
+    assertSplitAt(beamPage2, refHiresBlack, refPage2, 20,
+                  "PAGE2 mid-line split must land on hpos-25 (col 20)");
+    std::printf("  PAGE2 splits at col 20\n");
 
-    // ── HI-RES: NOT shifted — splits at the SAME column as PAGE2 (21). ────
+    // ── HI-RES: the SAME column as PAGE2 (20). ────────────────────────────
     // Left = HIRES (black), right = LORES (non-black), same scanline.
-    // $C056/$C057 is a graphics-MODE/address switch, fetch-side like PAGE2;
-    // MAD EFFECT flips lo/hi-res mid-line to place its beam-raced picture, and
-    // pulling HiRes one column left dragged those regions too far left (user
-    // report 2026-09-02). Only the DHIRES/AN3 colour clock gets the -1.
+    // $C056/$C057 changes the fetched address like PAGE2. OLDSKOOL FORT ET
+    // VERT's only mid-line switches are HiRes at beam cycles 25/26, and it
+    // lines up with its TV-set art only here.
     const auto beamHires = beamSplit(CLR_HIRES, SET_HIRES, CLR_PAGE2);
-    assertSplitAt(beamHires, refHiresBlack, refLores, 21,
-                  "HIRES mid-line split must stay on hpos-24 (col 21), same as "
-                  "PAGE2 — it is NOT the display-side -25 kind");
-    std::printf("  HIRES splits at col 21 (= PAGE2, unshifted)\n");
+    assertSplitAt(beamHires, refHiresBlack, refLores, 20,
+                  "HIRES mid-line split must land on PAGE2's column (20)");
+    std::printf("  HIRES splits at col 20 (= PAGE2)\n");
 
-    // The -25 shift is scoped to DHIRES/AN3 ($C05E/$C05F, the DHGR colour
-    // clock): OLDSKOOL FORT ET VERT's raster bands are AN3-driven and align
-    // one column left, user-confirmed in RGB and composite. That is validated
-    // against the live demo rather than pinned synthetically here — a clean
-    // AN3/DHGR mid-line split needs a full double-res frame; the beamColForEvent
-    // switch (An3/Dhgr get col-1, HiRes/Page2/Text do not) is the unit under
-    // test and this file locks the HiRes/PAGE2 half of it.
+    // ── TEXT: one column RIGHT of PAGE2 (21). ─────────────────────────────
+    // Left = HIRES page 1 (black), right = TEXT page 1 ($AA cells). The
+    // per-line restore re-asserts graphics, then TEXT is thrown at hpos 45.
+    gSolidText = true;
+    const auto beamText = beamSplit(SET_TEXT, CLR_TEXT, SET_HIRES);
+    std::vector<uint32_t> refText;
+    {
+        Memory m; populate(m);
+        m.memRead(SET_HIRES); m.memRead(CLR_PAGE2); m.memRead(SET_TEXT);
+        refText = frameOf(m);
+    }
+    gSolidText = false;
+    assertSplitAt(beamText, refHiresBlack, refText, 21,
+                  "TEXT mid-line split must land one column right of PAGE2 "
+                  "(hpos-24, col 21)");
+    std::printf("  TEXT splits at col 21 (= PAGE2 + 1)\n");
 
-    std::printf("raster_switch_kind_offset: OK (HiRes = PAGE2; AN3/DHGR -1)\n");
+    // DHIRES/AN3 also map to hpos-25. That mapping is validated against the
+    // live demo rather than pinned here, because a clean AN3/DHGR mid-line
+    // split needs a full double-res frame.
+
+    std::printf("raster_switch_kind_offset: OK (HiRes = PAGE2 = hpos-25; TEXT = PAGE2+1)\n");
     return 0;
 }

@@ -238,11 +238,16 @@ int main()
         advanceTo(mem, 3 * kFrame + 100);
         assert(mem.videoWriteLogArmed());
         assert(mem.videoRewindBegin()); mem.videoRewindEnd();   // log is live
+        // The CPU already changed live RAM after the published picture.
+        // Pausing alone must keep the bytes fetched for that picture.
+        for (uint16_t a = 0x2000; a < 0x2028; ++a) mem.memWrite(a, 0);
         Apple2Display d;
         d.setAuxMemory(mem.auxData());
         d.render(mem);                                     // running
         const std::vector<uint32_t> before(d.pixels(), d.pixels() + W * H);
         d.render(mem);                                     // no cycles: idle
+        const std::vector<uint32_t> frozen(d.pixels(), d.pixels() + W * H);
+        assert(before == frozen && "pausing must not replace beam-time RAM with later live bytes");
         for (uint16_t a = 0x2000; a < 0x2028; ++a) mem.memWrite(a, 0x7F);
         d.render(mem);
         const std::vector<uint32_t> after(d.pixels(), d.pixels() + W * H);

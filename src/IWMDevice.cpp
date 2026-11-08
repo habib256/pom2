@@ -61,6 +61,7 @@
 //     splice point (TRK +6650) ignoré»).
 
 #include "IWMDevice.h"
+#include <atomic>
 
 #include <cstdio>
 #include <cstdlib>
@@ -905,8 +906,15 @@ void IWMDevice::sync(uint64_t nowCycles)
                             // intent to write would otherwise fire
                             // this every boot/media-change because
                             // whd_'s cold value (0xBF) has bit 7 set.
-                            if (writeDataLoaded_) {
-                                pom2::log().warn("IWM", "write underrun");
+                            // The 5.25" path is written by DiskIICard, and
+                            // SmartPort probes also exercise this shadow FSM
+                            // without a Sony selected. Neither is an IWM
+                            // disk-write failure. Keep real 3.5" diagnostics
+                            // bounded even if guest software retries forever.
+                            static std::atomic_flag warned = ATOMIC_FLAG_INIT;
+                            if (writeDataLoaded_ && sony_ &&
+                                !warned.test_and_set(std::memory_order_relaxed)) {
+                                pom2::log().warn("IWM", "3.5-inch write underrun (further occurrences suppressed)");
                             }
                             flushWrite(nextSync);
                             writeClockStop();

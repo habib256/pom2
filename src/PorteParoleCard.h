@@ -14,6 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Credit: Sébastien Pourcel (GitHub mocheez13) — his PorteParole-MEA8000,
+// an emulation of this card checked against a real one (GPL-2.0-or-later,
+// third_party/porteparole-mea8000/, THIRD-PARTY.md), is the reference this
+// card uses directly (CARDS-015).
+//
 // PorteParoleCard — Ediciel's "Porte Parole" (Matra & Hachette, 1983,
 // board CE 638009 L01): a French text-to-speech card built round an RTC /
 // Philips MEA8000 (`Mea8000.h`). Developed by Eric Cheval at Matra with the
@@ -32,7 +37,7 @@
 //   * "Il a besoin d'une horloge externe de 4MHz élaborée par un oscillateur
 //     à quartz" — X1 reads 4.000 on the board photo. That is the data
 //     sheet's maximum, not its 3.84 MHz nominal: the voice runs 4 % high
-//     (Mea8000.h, departure 1).
+//     (4 MHz / 480 native samples per second).
 //   * "Le synthétiseur donne son statut en bit D7 : si le bit est à zéro,
 //     pas besoin de données ; s'il est à 1, une donnée doit être envoyée."
 //     D0-D6 float ([B] data sheet Fig. 5), so they read the Apple's floating
@@ -84,10 +89,6 @@ public:
     static constexpr int kDefaultSlot = 4;
     /// [B] manual Annexe 5 + the 4.000 crystal on the board.
     static constexpr double kChipClockHz = 4000000.0;
-    /// [B] Philips TP101 p. 10: REQ stays inactive "for about 2 µs" after
-    /// each byte of a frame (data sheet Fig. 7: 3 µs max).
-    static constexpr double kReqRecoverySeconds = 2e-6;
-
     explicit PorteParoleCard(int slot = kDefaultSlot);
     ~PorteParoleCard() override;
 
@@ -126,22 +127,19 @@ private:
     void sync();
     void syncAt(uint64_t now);
     void advance(uint64_t cycles);
-    void pushTick(int16_t level);
-    void pushSilence(uint64_t ticks);
-    bool reqVisible() const;
+    void pushSample(int16_t level);
 
     std::unique_ptr<AudioSrc> audio_;
     int slot_;
     mutable std::mutex mtx_;
     M6502* cpu_ = nullptr;
     uint64_t lastCycle_ = 0;
-    uint64_t reqLowUntil_ = 0;
     Mea8000 chip_;
     double cpuHz_ = 1022727.0;
-    double tickPhase_ = 0.0;      ///< fraction of a chip output tick
-    double samplePhase_ = 0.0;    ///< fraction of a host sample, counted in chip ticks
-    double tickSum_ = 0.0;        ///< chip ticks since the last host sample
-    int tickCount_ = 0;
+    double clockRemainder_ = 0.0; ///< cycles * 4 MHz remainder, modulo cpuHz_
+    uint32_t samplePhase_ = 0;   ///< host resampling phase, modulo 48000
+    int16_t previousSample_ = 0;
+    std::vector<int16_t> scratch_;
     std::deque<float> pcm_;
     uint32_t rate_ = kAudioSampleRate;
     float volume_ = 0.7f;

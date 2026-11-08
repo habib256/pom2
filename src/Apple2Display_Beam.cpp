@@ -44,6 +44,66 @@
 
 using namespace pom2::a2disp;
 
+// See the member comment in the header. Only the fields that moved since the
+// last render with the CPU running are copied — an event-driven change made
+// while the machine still ran is already in `liveStateAtRun_` and is left to
+// the published frame (and to the beam-race replay) to describe.
+bool Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
+                                            Memory& mem) const
+{
+    if (!cpuIdle_) return false;
+    bool changed = false;
+    const Memory::DisplayState live = mem.getDisplayState();
+    const Memory::DisplayState& was = liveStateAtRun_;
+    if (live.textMode    != was.textMode) { s.textMode    = live.textMode; changed = true; }
+    if (live.mixedMode   != was.mixedMode) { s.mixedMode   = live.mixedMode; changed = true; }
+    if (live.page2       != was.page2) { s.page2       = live.page2; changed = true; }
+    if (live.hiRes       != was.hiRes) { s.hiRes       = live.hiRes; changed = true; }
+    if (live.eightyCol   != was.eightyCol) { s.eightyCol   = live.eightyCol; changed = true; }
+    if (live.an3         != was.an3) { s.an3         = live.an3; changed = true; }
+    if (live.altChar     != was.altChar) { s.altChar     = live.altChar; changed = true; }
+    if (live.dhgr        != was.dhgr) { s.dhgr        = live.dhgr; changed = true; }
+    if (live.eightyStore != was.eightyStore) { s.eightyStore = live.eightyStore; changed = true; }
+    if (live.an0         != was.an0) { s.an0         = live.an0; changed = true; }
+    if (live.an2         != was.an2) { s.an2         = live.an2; changed = true; }
+    return changed;
+}
+
+void Apple2Display::updateIdleVideoRam(Memory& mem, bool cycleMoved)
+{
+    constexpr size_t bytesPerBank = 0x0800 + 0x4000;
+    if (!cpuIdle_) {
+        // Only a frame with beam-time RAM needs an input copy for pause.
+        if (!mem.videoWriteLogArmed()) {
+            liveVideoRamAtRun_.clear();
+            idleVideoRamEdited_ = true;
+            return;
+        }
+        liveVideoRamAtRun_.resize(bytesPerBank * 2);
+        idleVideoRamEdited_ = false;
+    } else if (cycleMoved || liveVideoRamAtRun_.empty()) {
+        idleVideoRamEdited_ = true;
+        return;
+    } else if (idleVideoRamEdited_) {
+        return;
+    }
+    size_t offset = 0;
+    for (const uint8_t* bank : {mem.data(), mem.videoAuxData()}) {
+        const auto checkOrCopy = [&](size_t address, size_t count) {
+            auto* saved = liveVideoRamAtRun_.data() + offset;
+            if (cpuIdle_) {
+                if (std::memcmp(saved, bank + address, count) != 0)
+                    idleVideoRamEdited_ = true;
+            } else {
+                std::memcpy(saved, bank + address, count);
+            }
+            offset += count;
+        };
+        checkOrCopy(0x0400, 0x0800);
+        checkOrCopy(0x2000, 0x4000);
+    }
+}
+
 bool Apple2Display::usesLegacyPath(Memory& mem, const Memory::DisplayState& state) const
 {
     // Mirror the early-return branches at the top of renderInternalBand: a
@@ -181,20 +241,59 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
         // ONLY the DHIRES/AN3 colour clock ($C05E/$C05F) lands one column
         // left. OLDSKOOL FORT ET VERT's raster bands are AN3-driven (its
         // colour comes from the DHIRES artifact clock), and that is what the
-        // -25 fixes — user-confirmed in both RGB and composite. HiRes
-        // ($C056/$C057) does NOT get shifted: it is a graphics-MODE/address
-        // switch, and MAD EFFECT flips lo/hi-res mid-line to place its
-        // beam-raced picture — shifting HiRes pulled those regions one column
-        // too far left (user report 2026-09-02). So HiRes stays with PAGE2 /
-        // TextMode on the fetch-side -24.
+        // -25 fixes — user-confirmed in both RGB and composite. HiRes and
+        // PAGE2 moved to the same -25 on 2026-11-08 (below).
         case Memory::VideoEventKind::Dhgr:    // derived DHIRES state
         case Memory::VideoEventKind::An3:     // $C05E/$C05F  (AN3/DHIRES)
             col -= 1;                       // display-side: effect one col left
             if (col < 0) col = 0;
             break;
+        // PAGE2 / 80STORE: hpos - 25 too (2026-11-08). Two parts of French
+        // Touch's DIX — the release built for real PAL machines ("IRL
+        // machines PAL", loader.a) — fix it, on the same loader sync chain:
+        // (French Touch's timings were tuned on real PAL machines, so they
+        // are graded A, CLAUDE.md § grades.)
+        // [A] Crazy Cycles II part 1 flips pages 8 times a line, 5 cycles
+        //     apart (`LDA (CELLn),Y`), to draw 8 cells x 5 bytes = 40
+        //     columns; at -24 every boundary sat one column right (a black
+        //     sliver at column 0, a 4-byte last cell). At -25 the grid is
+        //     whole (grouik_sync_probe § 7, "cell-grid phase").
+        // [A] Mad Effect's silhouette edge (the `LDA $C055` after an HBL
+        //     `LDA $C054`, routine.a) sweeps beam cycles 40..64; every edge
+        //     lands on screen only for an offset in [25, 40] — at -24 the
+        //     cycle-64 extreme fell past column 39.
+        // The 2026-07-31 -24 came from a standalone MADEF.dsk of unknown
+        // build: its source ships a "REAL PAL APPLE II" and an
+        // "APPLEWIN/A2PC" RET_VBL a few cycles apart, and that disk is no
+        // longer in the tree to tell which. TEXT / MIXED keep their measured
+        // one-cycle lag behind a PAGE2 flip ([A] photos, below): hpos - 24.
+        // HiRes ($C056/$C057) with them: like PAGE2 it changes the ADDRESS
+        // the scanner fetches, and two French Touch parts the user checked
+        // by eye on 2026-11-08 put it there — OLDSKOOL FORT ET VERT, whose
+        // only mid-line switches are HiRes at beam cycles 25/26 (its AN3
+        // writes all fall in HBL), sat 2 columns off at -24 for both and one
+        // with PAGE2 alone moved; Mad Effect 2's LoRes reads at cycles 22-32
+        // made its first column wrong from top to bottom. Checked by eye in
+        // POM2 by the user on 2026-11-08 (a visual check of the emulator,
+        // not a hardware measurement), with PAGE2 + HiRes at -25: OLDSKOOL
+        // "parfait"
+        // on the unenhanced //e PAL (NMOS — it is 6502-only), Mad Effect
+        // "parfait", Mad Effect 2 and Crazy Cycles II "parfaitement calé". (The 2026-09-02
+        // report that pulled HiRes back to -24 was made against the old
+        // PAGE2 -24 chain and the standalone MADEF.dsk.)
+        case Memory::VideoEventKind::HiRes:
+        case Memory::VideoEventKind::Page2:
+        case Memory::VideoEventKind::EightyStore: {
+            const VideoTiming& t = pom2VideoTiming(vstd);
+            const int hpos = static_cast<int>(
+                e.emuCycle % static_cast<uint64_t>(t.cyclesPerScanline));
+            col = std::clamp(hpos - (kVideoAccessColumnOffset + 1), 0, 40);
+            break;
+        }
         // TEXT ($C050/$C051) and MIXED ($C052/$C053) reach the screen ONE
         // cycle after a PAGE2 flip made on the same cycle, so they land one
-        // column RIGHT of the page-calibrated -24 (i.e. hpos - 23).
+        // column RIGHT of the PAGE2 mapping (hpos - 25 since 2026-11-08,
+        // i.e. hpos - 24 here; it was hpos - 23 against the old -24).
         // [A] tomcw, AppleWin GH#656 (2019), real //e PAL photos: after
         //     Sather's VBL sync, `LDA $C055/$C054` on line 0 and
         //     `LDA $C050/$C051` on line 7 at the same phase — the GR box is
@@ -209,15 +308,15 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
         // [B] Sather, Understanding the Apple IIe p. 8-12: GR+2 (GR delayed
         //     two scanner clocks) selects GRAPHICS vs TEXT patterns in the
         //     video ROM; a page flip only changes the next fetch's address.
-        // Computed from hpos (not col+1) so a switch at the last HBL cycle
-        // (hpos 24) lands at column 1 and one at hpos 23 still at column 0.
+        // Computed from hpos (not col+1) so a switch at hpos 25 lands at
+        // column 1 and one in HBL (hpos <= 24) at column 0.
         // Audit: docs/audits/parite-apple2video-2026-11-01.md, Rapport 2.
         case Memory::VideoEventKind::TextMode:
         case Memory::VideoEventKind::MixedMode: {
             const VideoTiming& t = pom2VideoTiming(vstd);
             const int hpos = static_cast<int>(
                 e.emuCycle % static_cast<uint64_t>(t.cyclesPerScanline));
-            col = std::clamp(hpos - (kVideoAccessColumnOffset - 1), 0, 40);
+            col = std::clamp(hpos - kVideoAccessColumnOffset, 0, 40);   // PAGE2 + 1
             break;
         }
         default:
@@ -358,11 +457,12 @@ Apple2Display::BeamTimeRam::BeamTimeRam(Apple2Display& d, Memory& m,
     // Built AFTER renderCardPicture, never before: a VidHD paints SHR from
     // aux $2000-$9FFF in one pass, and a rewind armed first left lines 0-102
     // (below $6000) at the frame start and the rest live — a shear at ~102.
-    // Stopped (pause, breakpoint, single step): the debugger's pokes and the
-    // stepped stores are stamped after the published frame, so a rewind
-    // would hide them until the machine ran a whole frame again. Live RAM,
-    // as for the soft switches poked while idle (applyIdleSwitchOverride).
-    if (d.cpuIdle_) return;
+    // A pause alone keeps beam-time RAM. Host edits and single steps are
+    // stamped after the published frame and must show immediately instead.
+    if (d.cpuIdle_) {
+        auto stoppedState = m.getDisplayStateAtFrameStart();
+        if (d.idleVideoRamEdited_ || d.applyIdleSwitchOverride(stoppedState, m)) return;
+    }
     // A frame with no soft-switch event cuts bands only for writes into the
     // pages it shows: a write elsewhere (the hidden page) cannot change the
     // picture, and an extra band would only move the paint off the

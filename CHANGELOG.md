@@ -10,6 +10,99 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.0 marker** — 2026-11-08. Release notes: [v1.2.0](docs/releases/v1.2.0.md).
+
+## 2026-11-08 — Pausing a raster effect keeps its published picture
+
+- Preserve beam-time video RAM when the CPU stops without an edit. Pausing
+  OLDSKOOL on the //c changed 924 pixels into later live-memory contents;
+  the same deterministic run now changes none. Debugger RAM/switch edits
+  and single steps still show immediately. The regression fails before the
+  fix and checks the host-poke path as well.
+
+## 2026-11-08 — Lighter browser startup and bounded IWM diagnostics
+
+- The manifest marks A2FileCmd as a lazy browser asset. Desktop packages
+  keep it; WASM fetches it through File > Boot A2FileCmd or a direct disk
+  link. Failed transfers can be retried; successful reuse preserves writes.
+  Startup artifacts total 18.3 MiB instead of 50.3 MiB.
+- IWM underruns from the Disk II shadow path and probes with no Sony drive
+  selected are not disk-write failures. Keep those silent and report an
+  actual 3.5-inch underrun once, retaining the exact guest handshake.
+- Explicit 5.25-inch media changes also reach the optional MAME door
+  recordings. Restoring a disk path and resetting the controller remain
+  separate from the insertion/ejection sound.
+
+## 2026-11-08 — Release 1.2 hardening: MAX disk timing and browser snapshots
+
+- MAX/`--cpu-max` fast-forward no longer presents the Disk II with a 60 MHz
+  CPU against a 1 MHz bus, which stalled its boot-ROM read loops. The MAX
+  work budget stays large while device clock relationships stay intact;
+  custom CPU frequency settings and real accelerator policies are preserved.
+- Validate every MEA8000 integer state field before the upstream throwing
+  loader: exception catching is disabled in WASM, so malformed speech state
+  previously aborted the browser module. A standalone WASM regression and
+  native atomic-rejection checks now cover this path in CI and release jobs.
+
+## 2026-11-08 — Porte Parole timing bug hunt
+
+- Fix CPU-attached restores skipping the previous opcode's cycles, and
+  CPU-only time jumps rendering the skipped timeline as audio.
+- Keep quartz conversion remainders before division: one second gives the
+  same chip state for PAL/NTSC whether advanced in one batch or cycle by cycle.
+- PPA v3 preserves that remainder exactly; v2 snapshots remain readable.
+  Regression tests reproduce the three timing faults before correction.
+
+## 2026-11-08 — Porte Parole uses Sébastien Pourcel's engine
+
+- Porte Parole: replace POM2's synthesis with Sébastien Pourcel's unmodified
+  PorteParole-MEA8000 engine, including its analogue output and STOP decay;
+  integrate cycle timing, host audio and v2 speech snapshots, with upstream
+  regression and exact PCM comparison tests.
+
+## 2026-11-08 — PAGE2 and HiRes switches land one column earlier (French Touch beam calibration)
+
+- **What was wrong:** a mid-line PAGE2 (`$C054/$C055`) or HiRes
+  (`$C056/$C057`) switch was drawn from column `hpos − 24`, one column too
+  far right:
+  - OLDSKOOL FORT ET VERT sat 2 columns off its TV-set art (its only
+    mid-line switches are HiRes at beam cycles 25/26);
+  - Mad Effect 2's first column was wrong from top to bottom;
+  - Crazy Cycles II part 1's 8-cell page-flip grid left a sliver at
+    column 0 and a 4-byte last cell.
+- **Now:** PAGE2, 80STORE and HiRes map to `hpos − 25`, the column AN3 and
+  DHGR already used. TEXT and MIXED keep their measured one-cycle lag
+  behind a PAGE2 flip ([A] AppleWin GH#656 photos), so they move from
+  `hpos − 23` to `hpos − 24` (`Apple2Display_Beam.cpp::beamColForEvent`).
+- **How it was found:** French Touch's DIX (the release built for real PAL
+  machines) was measured with the new `grouik_sync_probe` (target
+  `probes`):
+  - CCII's grid is at phase 0 for every flip;
+  - Mad Effect's silhouette edges admit an offset of exactly 25;
+  - the user checked by eye in POM2 that OLDSKOOL (on the unenhanced
+    //e PAL), Mad Effect, Mad Effect 2, Crazy Cycles and Crazy Cycles II
+    now line up — the five DIX parts whose corpus frames were re-blessed.
+- **Why the old values were wrong:**
+  - The −24 came on 2026-07-31 from a standalone `MADEF.dsk` of unknown
+    build. Its source carries both a real-PAL and an AppleWin `RET_VBL`.
+  - HiRes was pulled back to −24 on 2026-09-02 against that same chain.
+- **Not a 6522 bug:** `loader.a`'s "IRL" T1CL/T2CL ranges predate its
+  current 13-cycle PHA prologue. Corrected for it, they read $0A..$11 and
+  $D0..$D7, and POM2 falls inside both (mb-audit agrees on the read-back).
+- **Pinned by** `raster_switch_kind_offset`: HiRes = PAGE2 = col 20 at
+  hpos 45, and TEXT one column right of them.
+- **The //c + Mockingboard 4c needed nothing.** French Touch's loader syncs a
+  //c on its VBL interrupt instead of the end of `$C019`, and POM2 puts that
+  edge 192 lines after the //e's, to the cycle. On the real DIX disk the //c
+  lands every timer and the CCII grid on the same cycles as the //e PAL
+  (`grouik_sync_probe --iic`). OLDSKOOL's 65C02 patch (`LSR abs,X` + the
+  1-cycle NOP `$03`) also gives the NMOS timing on POM2's 65C02.
+  New test `ft_loader_sync` runs that loader loop on both machines; a
+  one-cycle shift of the //c edge fails it.
+  The user then ran DIX on the //c by eye: "DIX marche nickel pour //c".
+- **French Touch's code is graded A** (`CLAUDE.md`): its timings were tuned
+  on real machines, and the user rules it the silicon reference.
+
 ## 2026-11-08 — One worker tick is one video frame, ending on its boundary
 
 - **What was wrong:** the worker ran `cyclesPerFrame` = round(clock / 60 or

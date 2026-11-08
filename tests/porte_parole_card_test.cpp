@@ -14,27 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// porte_parole_card — the Ediciel Porte Parole (PorteParoleCard.h) and its
-// MEA8000 (Mea8000.h), offline and on a real 6502 bus.
-//
-//  1. Bus: status = REQ in D7 only, D0-D6 the floating bus ([B] MEA8000
-//     data sheet Fig. 5 — MAME returns zeros there), at either A0; writes
-//     decode A0 only, so $C0n2/$C0n3 are data/command again.
-//  2. After the starting pitch REQ waits for the 8 ms grid (Philips TP101
-//     p. 10); after a frame byte it drops for "about 2 µs".
-//  3. REQ after the 4th byte of a frame waits for the running frame's end:
-//     512 output ticks at 4 MHz / 60 = 7.68 ms, not the nominal 8 ms.
-//  4. Pitch is the table value x 1.024 (TP101 Table 2) and scales with the
-//     4 MHz crystal: code 50 sounds at 100 x 1.024 x 4 / 3.84 = 106.7 Hz
-//     (MAME: 100 Hz). The first frame fades IN (TP101 p. 10; MAME fades it
-//     out, which silenced a one-frame CONT loop). The DAC is 8 bits.
-//  5. With CONT = 0 a stream that runs dry plays one fade-out frame and
-//     stops (silence, REQ back); STOP is immediate; noise frames sound.
-//  6. Ctrl-Reset leaves the chip talking (no reset pin); power stops it.
-//  7. A snapshot taken mid-word resumes to the same samples.
-//  8. The manual's own polling loop (Annexe 2: LDA $C0C0 / ROL / BCC,
-//     STA $C0C0), run by the 6502 through Memory and the SlotBus, delivers
-//     every byte and makes sound.
+// Porte Parole integration: Sébastien Pourcel's core on POM2's slot bus,
+// reference REQ turnaround, audio, reset, snapshots and the 6502 driver.
 
 #include "M6502.h"
 #include "Memory.h"
@@ -120,13 +101,13 @@ int main()
         c.deviceSelectWrite(0, 50);
         const int gridWait = waitReq(c);
         std::printf("REQ after the starting pitch: %.3f ms\n", gridWait / kCpuHz * 1000.0);
-        expect(gridWait > int(0.0075 * kCpuHz) && gridWait <= int(0.00769 * kCpuHz),
-               "after a starting pitch REQ waits for the 8 ms grid (7.68 ms from power-up)");
+        expect(gridWait >= 3 && gridWait <= 4,
+               "starting pitch uses the reference 12-quartz-clock turnaround");
         c.deviceSelectWrite(0, kB1);
         expect(!req(c), "REQ is low right after a frame byte");
-        c.advanceCycles(3);   // ceil(2 us x 1.0227 MHz)
-        expect(req(c), "REQ is back about 2 us later");
-        for (uint8_t v : {kB2, kB3, b4(0, 0)}) { c.advanceCycles(3); c.deviceSelectWrite(0, v); }
+        c.advanceCycles(4);   // ceil(3 us x 1.0227 MHz)
+        expect(req(c), "REQ is back after 12 quartz clocks");
+        for (uint8_t v : {kB2, kB3, b4(0, 0)}) { c.advanceCycles(4); c.deviceSelectWrite(0, v); }
         expect(c.chipSnapshot().state() == Mea8000::State::Started, "4 bytes start");
         int waited = 0;                         // frame 1 began at that write
         for (uint8_t v : {kB1, kB2, kB3, b4(0, 0)}) {
@@ -159,7 +140,6 @@ int main()
         const double late = rms(c.drainSamples(1u << 20));
         std::printf("first frame: rms %.4f in its first quarter, %.4f in its last\n", early, late);
         expect(late > 2.0 * early, "the first frame fades in, not out");
-        expect((c.chipSnapshot().output() & 0xFF) == 0, "the DAC is 8 bits");
         c.advanceCycles(int(0.02 * kCpuHz));    // into the repeats
         (void)c.drainSamples(1u << 20);
         for (int i = 0; i < 40; ++i) c.advanceCycles(int(0.01 * kCpuHz));
@@ -174,7 +154,7 @@ int main()
         std::printf("pitch code 50: %zu samples, rms %.4f, period %d samples = %.1f Hz\n",
                     s.size(), rms(s), bestLag, f0);
         expect(rms(s) > 0.01, "a repeated (CONT) frame keeps sounding");
-        expect(std::fabs(f0 - 106.67) < 1.5, "code 50 sounds at 106.7 Hz on 4 MHz");
+        expect(std::fabs(f0 - 104.167) < 1.5, "code 50 sounds at 104.2 Hz on 4 MHz");
     }
 
     // ── 5. Fade-out, STOP, noise ─────────────────────────────────────────
@@ -192,8 +172,10 @@ int main()
         c.advanceCycles(8);
         expect(req(c), "REQ is back in STOP mode");
         (void)c.drainSamples(1u << 20);
+        c.advanceCycles(int(0.1 * kCpuHz));
+        (void)c.drainSamples(1u << 20);
         c.advanceCycles(int(0.01 * kCpuHz));
-        expect(rms(c.drainSamples(1u << 20)) == 0.0, "STOP mode is silent");
+        expect(rms(c.drainSamples(1u << 20)) == 0.0, "STOP analogue tail settles");
 
         c.deviceSelectWrite(0, 60);
         frame(c, 2, 16);                        // PI = 16: noise, 32 ms
@@ -206,7 +188,6 @@ int main()
         expect(noise > 0.005, "a noise frame sounds");
         c.deviceSelectWrite(1, 0x10);
         expect(c.chipSnapshot().state() == Mea8000::State::Stopped, "STOP is immediate");
-        expect(c.chipSnapshot().output() == 0, "STOP silences the output");
     }
 
     // ── 6. Reset vs power ────────────────────────────────────────────────
@@ -248,7 +229,7 @@ int main()
         const double ra = rms(a.drainSamples(1u << 20)), rb = rms(b.drainSamples(1u << 20));
         expect(ra > 0.01 && std::fabs(ra - rb) < 0.01 * ra, "and sounds the same");
         std::vector<uint8_t> junk = blob;
-        junk[4 + 4] = 9;                        // the chip's state byte
+        junk[4 + 3] = 99;                        // the chip's state byte
         PorteParoleCard c(4);
         std::vector<uint8_t> before; c.appendSnapshotState(before);
         c.loadSnapshotState(junk.data(), junk.size());
@@ -302,6 +283,46 @@ int main()
         expect(rms(s) > 0.01, "and the card speaks");
     }
 
+    // Restore at an instruction boundary with a nonzero CPU cycle scratch
+    // (the normal state after run()). Compare a live CPU-attached card with
+    // its detached clone after exactly the same elapsed CPU cycles.
+    {
+        Memory mem;
+        M6502 cpu(&mem);
+        mem.setCpu(&cpu);
+        mem.memWrite(0x0300, 0xEA); // NOP: two cycles, no card I/O
+        mem.memWrite(0x0301, 0x4C); // JMP $0300: three cycles
+        mem.memWrite(0x0302, 0x00); mem.memWrite(0x0303, 0x03);
+        cpu.setProgramCounter(0x0300);
+        cpu.run(5);
+        auto owned = std::make_unique<PorteParoleCard>(4);
+        auto* card = owned.get();
+        card->setCpu(&cpu); card->setCpuClock(4000000);
+        mem.slotBus().plug(4, std::move(owned));
+        PorteParoleCard expected;
+        expected.setCpuClock(4000000);
+        std::vector<uint8_t> blob;
+        expected.advanceCycles(12345);
+        expected.appendSnapshotState(blob);
+        card->loadSnapshotState(blob.data(), blob.size());
+        const auto start = mem.getCycleCounter();
+        cpu.run(5);
+        expected.advanceCycles(int(mem.getCycleCounter() - start));
+        std::vector<uint8_t> a, b;
+        card->appendSnapshotState(a); expected.appendSnapshotState(b);
+        expect(a == b, "CPU-attached restore does not skip the previous instruction's cycles");
+
+        // A CPU-only time jump must rebase the card immediately as well.
+        card->onPowerCycle(); expected.onPowerCycle();
+        mem.setCycleCounter(50000);
+        card->onTimeJump();
+        const auto jumpStart = mem.getCycleCounter();
+        cpu.run(5);
+        expected.advanceCycles(int(mem.getCycleCounter() - jumpStart));
+        a.clear(); b.clear();
+        card->appendSnapshotState(a); expected.appendSnapshotState(b);
+        expect(a == b, "time jump does not synthesize the skipped timeline");
+    }
     std::printf("porte_parole_card: %d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

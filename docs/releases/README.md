@@ -9,6 +9,7 @@ version has not yet been bumped. Current behavior is documented in the
 
 | Release | Notes |
 |---|---|
+| 1.2.0 | [v1.2.0](v1.2.0.md) |
 | 1.1.2 | [v1.1.2](v1.1.2.md) |
 | 1.1.0 | [v1.1.0](v1.1.0.md) |
 | 1.0.0 | [v1.0.0](v1.0.0.md) |

@@ -46,9 +46,9 @@ constexpr uint16_t DHIRES_ON    = 0xC05E;
 
 constexpr int W         = 560;
 constexpr int kSplitDot = 21 * 14;     // 294 — hpos 45 → col 21 (`hpos - 24`), the 80COL split
-// The TEXT split at the same hpos lands one column later, col 22: TEXT lands one column right of the `hpos - 24` page mapping — AppleWin GH#656 / MAME PR #15247 photos
+// The TEXT split at the same hpos lands on col 21 too: TEXT lands one column right of the `hpos - 25` page mapping (2026-11-08) — AppleWin GH#656 / MAME PR #15247 photos
 // (Apple2Display_Beam.cpp beamColForEvent).
-constexpr int kTextSplitDot = 22 * 14; // 308
+constexpr int kTextSplitDot = 21 * 14; // 294
 constexpr int kBandTop  = 96;          // row-aligned (12 * 8)
 
 // Fill main + aux text page ($0400-$07FF) and HGR page ($2000-$3FFF) with
@@ -91,7 +91,7 @@ void makeBeam(Memory& m)
     for (int y = kBandTop; y < 192; ++y) {
         m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 5);   // HBL → col 0
         m.memRead(CLR_TEXT);              // DHGR from column 0
-        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 22 (`hpos - 23`)
+        m.setCycleCounter(static_cast<uint64_t>(y) * 65 + 45);  // hpos 45 → TEXT from col 21 (`hpos - 24`)
         m.memRead(SET_TEXT);              // 80-col text from column 20
     }
 }

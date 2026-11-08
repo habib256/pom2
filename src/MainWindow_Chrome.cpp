@@ -24,6 +24,7 @@
 // panels itself, which is what stopped the two drifting apart.
 
 #include "MainWindow.h"
+#include "BrowserFiles.h"
 #include "TextScreenCapture.h"
 
 #include "AudioCoordinator.h"
@@ -410,6 +411,15 @@ void MainWindow::renderMenuBar()
         if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::DiskLibrary);
+#ifdef __EMSCRIPTEN__
+        if (ImGui::MenuItem("Boot A2FileCmd") &&
+            pom2::loadBrowserBundledDisk("A2FILECMD")) {
+            browserDiskTargetsDrive_ = false;
+            browserDiskProfile_ = activeProfile;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Download A2FileCmd on first use, then boot it (32 MiB).");
+#endif
         // Every drive of the machine, the Drives window's own list and
         // actions (collectDrivePictures / runDriveRackAction): it used to
         // offer the primary Disk II's drive 1 and the primary HDV only, so a
