@@ -1049,9 +1049,11 @@ uint8_t Memory::softSwitchAccess(uint16_t addr, bool isWrite, uint8_t writeVal)
         // already add the in-flight instruction progress — this is the
         // same stamp, and it matters for beam-racing code that polls
         // $C019 to find the VBL edge.
-        const uint64_t now = videoAccessCycle();
-        // NO intra-line phase shift is applied here, and that is a
-        // measured conclusion rather than an omission.
+        // ONE cycle ahead (PHASE 0 read, counters advanced): [A] arekkusu42's
+        // BEAMPOS, //e and //c (DEV § Horizontal splits; beamColForEvent).
+        const uint64_t now = videoAccessCycle() + 1;
+        // Beyond that one cycle, NO intra-line phase shift is applied, and
+        // that is a measured conclusion rather than an omission.
         //
         // French Touch's MAD EFFECT (//e PAL + Mockingboard, GPLv3 sources
         // in disks_5.4/demo/madef/) syncs its whole frame off this edge and

@@ -178,6 +178,18 @@ empties both results without disabling collection or removing user stops.
 Reset, rewind, session load and instruction patches also clear measurements.
 Profiling/history keep the debugger hook active even with no breakpoint set.
 
+While **Profile CPU steps** is on, the panel also shows the **interrupt load
+per frame**: the share of each video frame the 6502 spent inside IRQ or NMI
+handlers, as last / mean / peak over the last 256 frames, with a histogram.
+A Mockingboard player running from the 6522's timer IRQ shows up there as the
+part of each frame the music takes. No cooperation from the program is
+needed: a handler starts at the interrupt entry and ends when SP climbs back
+to the level it had before the entry (its RTI, or a handler that drops its
+frame and jumps). The frame is the video frame an instruction starts in, and
+the share is over the CPU cycles that frame actually ran, so it stays right
+under an accelerator. A handler already running when profiling starts counts
+as main-loop time until its RTI; BRK is not counted as interrupt time.
+
 ## Source correspondence
 
 The **Source** section loads a POM2 `.p2map` text file. Each nonempty row is an

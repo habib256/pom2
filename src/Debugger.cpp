@@ -240,9 +240,21 @@ void Debugger::setHistoryEnabled(bool enabled)
     historyEnabled_ = enabled;
 }
 
+uint64_t Debugger::frameOfRetired(int cycles) const
+{
+    if (!memory_) return 0;
+    // The hook runs after Memory::advanceCycles: the counter is past the
+    // instruction, so its start is `cycles` back. Beam clock, not CPU clock:
+    // an accelerator lengthens neither the line nor the frame.
+    const uint64_t start = memory_->getCycleCounter() - static_cast<uint64_t>(cycles);
+    const uint64_t frame = static_cast<uint64_t>(
+        pom2VideoTiming(memory_->videoStandard()).cyclesPerFrame);
+    return memory_->videoCycleAt(start) / frame;
+}
 void Debugger::clearMeasurements()
 {
     profile_.clear();
+    interruptLoad_.reset();
     historyHead_ = historyCount_ = 0;
 }
 
@@ -256,6 +268,7 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     osCalls_.retire6502();                 // ...and so is its trace offer
     if (cycles <= 0) return;
     if (profiling_) {
+        interruptLoad_.stepped(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
         auto& entry = profile_[{pc, curBank_}];
         entry.bank = curBank_;
         entry.pc = pc;
@@ -286,6 +299,7 @@ void Debugger::onInterruptEntered(const M6502& cpu, uint16_t, int cycles)
     // the interrupted instruction's (aux, LC RAM…), which filed the entry
     // under a phantom zero-visit row beside the real handler's.
     if (!profiling_ || cycles <= 0) return;
+    interruptLoad_.entered(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
     const uint16_t pc = cpu.getProgramCounter();
     const DebugBank bank = resolveBank(pc);
     auto& entry = profile_[{pc, bank}];

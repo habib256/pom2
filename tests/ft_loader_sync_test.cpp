@@ -35,10 +35,16 @@
 // browser's default machine, by one cycle.
 //
 // What this pins, in POM2's beam coordinates (line, cycle within the line):
-//   - //e: the exiting read is at line 311 cycle 64, the last VBL cycle, and
-//     the read before it at line 0 cycle 0 read $80.
-//   - //c: the exiting read is at line 191 cycle 64, the last display cycle,
-//     and the read before it at line 192 cycle 0 read $80.
+//   - //e: the exiting read is at line 311 cycle 63, and the read before it
+//     at line 311 cycle 64 read $80 — the first cycle whose $C019 read sees
+//     DISPLAY, one cycle ahead of the line boundary.
+//   - //c: the exiting read is at line 191 cycle 63, and the read before it
+//     at line 191 cycle 64 read VBLINT set.
+//   - Both at the same cycle of the line, 192 lines apart: what DIX needs.
+// The one-cycle lead of $C019 / VBLINT is [A] arekkusu42's BEAMPOS
+// (VidModes disk, 2026-04-21), which failed by exactly that cycle on //e and
+// //c; until 2026-11-08 the two exits were on cycle 64 and the display's
+// switch columns were one column left to compensate.
 // grouik_sync_probe measures the same thing on the real DIX disk, where both
 // machines then land the synced code on the same cycle (2026-11-08).
 //
@@ -177,6 +183,8 @@ Exit runSync(const std::string& rom, bool iic)
 
 } // namespace
 
+static int iieExitH = -1;
+
 int main()
 {
     int ran = 0;
@@ -191,10 +199,11 @@ int main()
             std::printf("  //e PAL: exit read line %d cycle %d ($%02X), before it line %d cycle %d ($%02X), %zu precise steps\n",
                         e.line, e.h, e.v, e.prevLine, e.prevH, e.prevV, e.precise);
             CHECK(e.precise >= 1, "//e PAL: the precise loop never iterated (transcription?)");
-            CHECK(e.line == 311 && e.h == 64 && (e.v & 0x80) == 0,
-                  "//e PAL: the exiting $C019 read must be the last VBL cycle (line 311 cycle 64), got line %d cycle %d", e.line, e.h);
-            CHECK(e.prevLine == 0 && e.prevH == 0 && (e.prevV & 0x80),
-                  "//e PAL: the read before must be the first display cycle (line 0 cycle 0, $80)");
+            CHECK(e.line == 311 && e.h == 63 && (e.v & 0x80) == 0,
+                  "//e PAL: the exiting $C019 read must be line 311 cycle 63, got line %d cycle %d", e.line, e.h);
+            CHECK(e.prevLine == 311 && e.prevH == 64 && (e.prevV & 0x80),
+                  "//e PAL: the read before must see DISPLAY one cycle ahead (line 311 cycle 64, $80)");
+            iieExitH = e.h;
         }
     }
     const std::string iic = firstExisting("roms/apple2c-32Kv0.rom");
@@ -208,10 +217,12 @@ int main()
             std::printf("  //c PAL: exit read line %d cycle %d ($%02X), before it line %d cycle %d ($%02X), %zu precise steps\n",
                         c.line, c.h, c.v, c.prevLine, c.prevH, c.prevV, c.precise);
             CHECK(c.precise >= 1, "//c PAL: the precise loop never iterated (transcription?)");
-            CHECK(c.line == 191 && c.h == 64 && (c.v & 0x80) == 0,
-                  "//c PAL: the exiting $C019 read must be the last display cycle (line 191 cycle 64), got line %d cycle %d", c.line, c.h);
-            CHECK(c.prevLine == 192 && c.prevH == 0 && (c.prevV & 0x80),
-                  "//c PAL: VBLINT must read set from line 192 cycle 0, the //e edge + 192 lines");
+            CHECK(c.line == 191 && c.h == 63 && (c.v & 0x80) == 0,
+                  "//c PAL: the exiting $C019 read must be line 191 cycle 63, got line %d cycle %d", c.line, c.h);
+            CHECK(c.prevLine == 191 && c.prevH == 64 && (c.prevV & 0x80),
+                  "//c PAL: VBLINT must read set one cycle ahead of line 192 (line 191 cycle 64)");
+            CHECK(iieExitH < 0 || iieExitH == c.h,
+                  "//e and //c must exit on the same cycle of the line (DIX launches both on one beam cycle)");
         }
     }
     if (ran == 0) return 77;

@@ -10,6 +10,99 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-08 — AN3 in plain HGR acts one column earlier
+
+A mid-line `$C05E/$C05F` with 80COL off only masks HGR's half-dot delay, and
+on a real PAL //e that reaches the byte fetched in the access cycle itself,
+one column left of a PAGE2 flip. The logic-analyser trace `test_p_line88`
+from Accurapple's repository shows it: the first byte delayed again after
+`AN3ON` is the 2nd shift-register load from the access. POM2 had AN3 on
+PAGE2's column in both cases. It now takes `hpos − 25` with 80COL off and
+keeps `hpos − 24` with 80COL on, where AN3 switches double hi-res, the case
+DIX's OLDSKOOL was checked against. Pinned by `raster_switch_kind_offset`;
+the corpus is unchanged.
+
+## 2026-11-08 — arekkusu42's test disks, as optional references
+
+`arekkusu_disks` runs the two self-checking programs of arekkusu42's FLOATBUS
+and VIDMODES disks, FLOATBUS's nine spot checks and BEAMPOS's `$C019`
+alignment, on //e unenhanced and enhanced and on the //c, PAL and NTSC. All
+twelve runs pass. The disks are optional local references in
+`disks_5.4/arekkusu/`: not in git, not in the test-media archive, and the
+test skips without them (an allowed skip in `tools/check_ctest_skips.sh`).
+They carry no licence beyond the author's name and include Apple's ProDOS and
+BASIC.SYSTEM.
+
+## 2026-11-08 — slirp_loopback_fence: libslirp now rejects 127.0.0.1 itself
+
+The test failed on Homebrew's libslirp 4.9.7. Since 4.9.6 ("Reject
+martians", 2026-10-25) libslirp drops a guest packet naming 127/8 or 0/8 on
+its own, even with `uthernet_allow_loopback`, and the test's opt-in case
+dialled 127.0.0.1 directly. The opt-in still works through the gateway alias
+`10.0.2.2`, the route libslirp documents. The test now checks that alias,
+closed by default and open when allowed, and only reports the direct route.
+POM2's own drop of those destinations stays for older libraries.
+
+## 2026-11-08 — A real PAL //e's own traces, and arekkusu42's test disks: $C019 one cycle earlier
+
+Stéphane Champailler's Accurapple repository holds measurements of a real
+European //e rev B: logic-analyser traces of its video generator, bytes read
+off its floating bus, a scope capture of a Disk II read path. It also carries
+two of arekkusu42's test disks, FLOATBUS and VIDMODES. POM2 took the numbers,
+not the files (AGPL; the disks are not redistributed either), and ran the
+disks in a scratch directory.
+
+- **`$C019` and the //c's VBLINT read one cycle earlier.** arekkusu42's
+  BEAMPOS ("C019 ALIGNMENTS") failed by exactly one cycle between that edge
+  and the floating bus, on every //e and on the //c: the CPU reads in PHASE 0,
+  after the scanner's counters advanced. It passes now, on //e unenhanced and
+  enhanced and on the //c, PAL and NTSC.
+- **Every mid-line switch moved one column right**, PAGE2/HIRES/80COL/AN3 to
+  `hpos − 24` and TEXT/MIXED to `hpos − 23`. For programs that sync on
+  `$C019`, which is all of French Touch, the two moves cancel: DIX's corpus
+  frames reappear pixel for pixel, only a couple of frames earlier or later,
+  and the corpus was re-recorded on that check. It is also the absolute rule
+  the logic analyser gives, and the one video-RAM stores always had.
+- **80COL now splits with PAGE2**, not one column later: the traces put its
+  first or last aux load in the byte a PAGE2 flip reaches.
+- **TEXT and HIRES are measured, not only seen.** TEXT reaches the LS166 one
+  load after LORES/HIRES, which is POM2's rule.
+- **The floating bus matches the iron**: the three windows read on the real
+  machine (`floating_bus_measured`, new) and FLOATBUS's nine spot checks.
+- **The Disk II read pulse** is one LSS cycle on the scope, as POM2 has always
+  modelled it on MAME's word.
+- **The speaker is unchanged.** The recordings are acoustic, through a phone,
+  and they disagree with the model fitted to them. AUDIO-012 records what
+  would settle it.
+
+## 2026-11-08 — The debugger shows the interrupt load of each frame
+
+While profiling, the Debugger panel shows how much of each video frame the
+6502 spent in IRQ/NMI handlers: last, mean and peak over 256 frames, and a
+histogram. For a French Touch demo it is the share of the frame its
+Mockingboard player takes. The idea comes from French Touch's AppleWin fork,
+where the program had to mark its own code with `$C066-$C069` writes; POM2
+follows the handler from its entry to the return of SP, so a disk needs no
+change. `InterruptLoad.h`, pinned by `interrupt_load`.
+
+## 2026-11-03 — The E-Z Color under an NMOS phantom read; `--ezcolor[=N]`
+
+pom2games reported two open points on the E-Z Color (`LETTRE_POM2_EZCOLOR.md`).
+The ][+ frame IRQ one was the `apple2p.rom` vector, already fixed by `RomErrata.h`.
+
+**The NMOS phantom read does reach the card; no code changed.** On
+`STA $C080,X` with X = `$40`, the card gets the read and then the write. With the
+access window on, the write lands 1 cycle later, inside the access the read has
+just scheduled. It retargets that one pending access, so the byte lands at the
+unmoved pointer and the store counts in `droppedWriteCount()`. With the window
+off (`--ezcolor-lax` in a2shot) the byte lands one further, as in a2run. The
+merge is openMSX's model, not a capture of a real chip, so it stays an [F]. On
+`$C0n1` the phantom read clears the byte flip-flop in either mode. All of it is
+now pinned in `ezcolor_card`.
+
+**`--ezcolor[=N]`** is shorthand for `--slot N=ezcolor`, slot 4 when bare, and
+applies like Slot Config's Apply, as `--slot` does.
+
 **v1.2.0 marker** — 2026-11-08. Release notes: [v1.2.0](docs/releases/v1.2.0.md).
 
 ## 2026-11-08 — Pausing a raster effect keeps its published picture

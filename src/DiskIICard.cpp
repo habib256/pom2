@@ -1257,6 +1257,10 @@ void DiskIICard::advanceNoise(uint64_t extraCycles)
 // pipe latency on $C0nC reads. PULSE is set for exactly one LSS cycle
 // when the head crosses a flux transition, fed from
 // DiskImage::getNextTransition (the flux model port).
+// [A] Scope on a real Disk II (S. Champailler, Accurapple diskii/
+//     capture_ls174_and_p6_1.csv @ 69f45f3): the P6 sees a 0.482 us pulse,
+//     one LSS cycle, on all 13 transitions (MC3470: 1.026 us; LS174 cuts it).
+//     Its 1.12-1.51 us delay is uniform, unobservable, not modelled.
 void DiskIICard::lssSync(uint64_t extraCycles)
 {
     if (active == MODE_IDLE) return;

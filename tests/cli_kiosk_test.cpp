@@ -708,6 +708,24 @@ int main()
     std::printf("classifyDiskForSlot 2IMG header (trailer/offset): OK\n");
     testFujiNetSlotExplicitness();
     std::printf("parseCli --fujinet slot preference vs explicit: OK\n");
+    {
+        // --ezcolor[=N]: shorthand for --slot N=ezcolor, slot 4 when bare.
+        bool help = false;
+        using Card = std::pair<int, std::string>;
+        auto four = parse({"POM2", "--ezcolor=4"}, help);
+        assert(four && four->slotCards == std::vector<Card>{Card(4, "ezcolor")});
+        auto seven = parse({"POM2", "--ezcolor=7"}, help);
+        assert(seven && seven->slotCards == std::vector<Card>{Card(7, "ezcolor")});
+        auto bare = parse({"POM2", "--ezcolor", "game.dsk"}, help);
+        assert(bare && bare->slotCards == std::vector<Card>{Card(4, "ezcolor")});
+        assert(bare->bootDiskPath == "game.dsk");
+        assert(!parse({"POM2", "--ezcolor=0"}, help));
+        assert(!parse({"POM2", "--ezcolor=8"}, help));
+        assert(!parse({"POM2", "--ezcolor=4x"}, help));
+        assert(!parse({"POM2", "--ezcolor="}, help));
+        assert(!parse({"POM2", "--ezcolor", "4"}, help) && "written with a space");
+    }
+    std::printf("parseCli --ezcolor[=N]: OK\n");
     testSpaceSeparatedValueRejected();
     std::printf("parseCli rejects \"--flag VALUE\" for =VALUE flags: OK\n");
     testVersionFlag();

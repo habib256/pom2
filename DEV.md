@@ -584,6 +584,12 @@ computes `6 * 7`; negative controls for the text-page SRAM.
 
 ### E-Z Color Graphics Interface (`EzColorCard`)
 
+An NMOS `STA $C0n0,X` reaches the card twice, read then write. With the access
+window on, the write merges into the access the read scheduled: the byte lands
+at the unmoved pointer and counts as a drop. With the window off it lands one
+further. [D] openMSX's model; [F] no capture of the real chip (pinned
+`ezcolor_card`).
+
 Catalog `ezcolor`, any slot, no ROM. Steve Ciarcia's card from BYTE, August
 1982: a TMS9918A with 16 KB of VRAM on a 10.738635 MHz crystal and its own
 video output. MAME `a2bus/ezcgi.cpp`: `$C0n0` the data port, `$C0n1` the
@@ -903,6 +909,17 @@ its Applesoft sequence has three steps; the 1985 //e book's reads *"HBL
 scanned memory begins `$18` bytes before display scanned memory"* and its
 sequence has **two** — `30 HBL = HBL+1024` is simply gone, because on a //e
 there is no A12 image to add. Asserted by `video_scanner_sather`.
+
+**And the silicon agrees** *(2026-11-08)*. `floating_bus_measured` matches
+POM2's floating bus against 250 bytes READ OFF a real PAL //e rev B: a
+program that fills HGR and text page 1 with their own addresses and samples
+`$C070` on every cycle of three windows ([A] S. Champailler, Accurapple
+`composite/video_scanner/vidscan.s` @ 69f45f3; only the numbers are used).
+They cover the end of an HGR line into the next line's doubled HBL address,
+the absence of A12 on a //e, a MIXED text row after line 159, and the VBL
+after line 191 scanning HIRES addresses again. One recorded byte differs from
+RAM (`26` for `25`), unexplained, so it is a wildcard. Run as a ][+ the
+MIXED windows fail, which is the test's negative control.
 
 **A //e RESET clears the DHGR (AN3) latch, and POM2 kept it** *(fixed
 2026-11-01)*. `resetSoftSwitches(warm)` preserved `display.dhgr`, citing MAME
@@ -1614,10 +1631,29 @@ the CPU uses, calibrated on MAD EFFECT's `$C055`). **Per-kind offset**
 
 | Switch | Column | Why |
 |---|---|---|
-| PAGE2 `$C054/$C055`, 80STORE, HiRes `$C056/$C057` | `hpos − 25` | address switches: they pick what the NEXT fetch reads |
-| DHIRES / AN3 `$C05E/$C05F` | `hpos − 25` | display side: re-interprets the byte fetched now |
-| TEXT `$C050/$C051`, MIXED `$C052/$C053` | `hpos − 24` | one cycle after a PAGE2 flip on the same cycle |
-| everything else (80Col …) | `hpos − 24` | the base window |
+| PAGE2 `$C054/$C055`, 80STORE, HiRes `$C056/$C057`, 80COL `$C00C/$C00D` | `hpos − 24` | they reach the byte fetched in the NEXT cycle, as a store to video RAM does |
+| DHIRES / AN3 `$C05E/$C05F`, 80COL on (double hi-res on/off) | `hpos − 24` | with them; checked by eye on OLDSKOOL, not measured |
+| DHIRES / AN3 `$C05E/$C05F`, 80COL off (HGR half-dot mask) | `hpos − 25` | the byte fetched IN the access cycle: [A] logic analyser, below |
+| TEXT `$C050/$C051`, MIXED `$C052/$C053`, ALTCHAR | `hpos − 23` | one cycle after a PAGE2 flip on the same cycle |
+
+**Re-anchored on 2026-11-08 (evening), every kind one column right, together
+with a one-cycle lead on `$C019` and the //c's VBLINT.** The values in the
+history below (−25 / −24) are the same placements in the old convention. [A]
+arekkusu42's BEAMPOS (VidModes disk, 2026-04-21) compares the `$C019` edge
+with the floating bus, two reads POM2 stamps alike, and failed by exactly one
+cycle on every //e and on the //c: the CPU reads in PHASE 0, after the
+scanner's counters advanced. With the lead it passes, and so does its
+FLOATBUS disk (nine spot checks per machine), on //e unenhanced and enhanced,
+//c, PAL and NTSC. Since every French Touch part syncs on `$C019`, its code
+now runs one cycle earlier; moving the columns one right cancels that, and
+the corpus frames of DIX (menu, the automatic tour's 16 parts, OLDSKOOL and
+DIGIDREAM SID on the //c) reappear **pixel for pixel**, only at a slightly
+different instant. The new convention is also the absolute one the logic
+analyser gives (below): a flip in bus cycle N reaches the byte fetched in
+N + 1, `hpos − 24`, the rule video-RAM stores always had.
+The user then ran DIX by eye in POM2 on the //c PAL with the re-anchored
+build, the same day: "DIX est excellent" (a visual check of the emulator,
+not a hardware measurement).
 
 The TEXT/MIXED lag behind PAGE2 is the measured part: [A] tomcw, AppleWin
 GH#656, real //e PAL photos; [B] Sather, *Understanding the Apple IIe*
@@ -1651,6 +1687,23 @@ Mad Effect 2 (whose first column was broken) and Crazy Cycles II are
 
 Do not move a single kind against a single demo: calibrate all of French
 Touch's parts at once with `grouik_sync_probe`.
+
+**Measured on the silicon** *(2026-11-08)*: logic-analyser traces of a real PAL
+//e rev B ([A] S. Champailler, Accurapple `composite/tests/logic_ana` @
+69f45f3) give the per-kind order directly. After the soft-switch access cycle,
+LORES/HIRES change the LS166's load on the 3rd LDPS, TEXT on the 4th (GR+2
+moves 2.41 µs after the access), and 80COL's first or last aux load belongs to
+the 3rd. So 80COL joined PAGE2/HiRes; it had fallen to TEXT's rule, one
+column late. Pinned by `raster_switch_kind_offset`.
+AN3 is the one kind whose column depends on the state. With 80COL off it only
+masks HGR's half-dot delay (bit 7), and the trace `test_p_line88.lac`
+(Accurapple's `multi_tests.s` test_P: `LDA AN3OFF / LDA $01 / LDA AN3ON` mid-line
+in HGR) shows the IOU's AN3 pin move 0.8 µs into the access and the first
+byte delayed again after AN3ON on the 2nd LDPS from the access — the byte
+fetched in that cycle, one column left of PAGE2. With 80COL on, AN3 starts or
+stops the aux loads, which follow 80COL's schedule; that case keeps PAGE2's
+column. `beamColForEvent` gets the 80COL state of the event's own moment
+from a pre-pass in time order.
 The stale T1CL/T2CL "IRL" comments in `loader.a` predate the current 13-cycle
 PHA prologue. Corrected for it, their ranges are $0A..$11 and $D0..$D7, and
 POM2's reads fall inside them.
@@ -9072,6 +9125,16 @@ libslirp). The same policy now lives in four places — `W5100Device`,
 changes; they are not interchangeable (an IPRAW DHCP broadcast
 must pass the backend and would fail `checkDestination`).
 
+**libslirp 4.9.6 closed the direct route itself** *(2026-10-25 upstream,
+found 2026-11-08)*. Its "Reject martians" fix drops a guest packet naming
+127/8 or 0/8 whatever `disable_host_loopback` says, so with the opt-in a
+guest reaches the host only through the gateway alias `10.0.2.2` — which is
+the route libslirp documents. `slirp_loopback_fence` failed on Homebrew's
+4.9.7 because its opt-in case dialled 127.0.0.1 directly; it now checks the
+alias (closed by default, open when allowed) and only reports the direct
+route. POM2's own drop stays: it is what closes the direct route on an older
+library.
+
 **A CS8900A reset clears the decoded multicast hash mask** *(same hunt)*.
 The Logical Address Filter at PacketPage `$0150-$0157` is zeroed by the
 reset's `std::fill`, but `shouldAccept` tests `hashMask_`, the decoded
@@ -12577,6 +12640,21 @@ breakpoint, and missed it outright when the entry runs once. The four
 verbs call `clearForTimeJump()`, which is what a rewind already did for the
 same reason. Pinned in `debugger` (`testStepOverDecodesTheCpuView`,
 `testResetClearsTheLatchedStop`).
+
+#### Interrupt load per frame (`InterruptLoad.h`)
+
+The share of each video frame spent inside IRQ/NMI handlers, fed by the
+debugger while profiling is on and shown under the profile table. The idea
+is French Touch's: their AppleWin fork (branch `extended_debugger`, commit
+`2e8e150f95`, 2020-10-22) drew the same bar, but the guest had to bracket its
+own code with writes to `$C066-$C069` ("FT Monitoring Card"). POM2 follows
+the handler instead, from `M6502DebugHook::onInterruptEntered` to the step
+where SP climbs back to its pre-entry level, so an unmodified disk measures.
+Each instruction is charged whole to the video frame it starts in
+(`Memory::videoCycleAt`, the beam's clock); the share's denominator is the
+CPU cycles that frame ran. Nothing on the fast loop. Pinned by
+`interrupt_load`: one IRQ per frame into a handler of exactly 5N + 14 cycles,
+every completed frame must report exactly that.
 
 ### OS-call trace (`OsCallTrace.h/.cpp`)
 

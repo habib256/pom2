@@ -51,6 +51,7 @@
 #ifndef POM2_DEBUGGER_H
 #define POM2_DEBUGGER_H
 
+#include "InterruptLoad.h"
 #include "M6502.h"
 #include "MemoryWatchSink.h"
 #include "OsCallTrace.h"
@@ -153,6 +154,9 @@ public:
     void clearMeasurements();
     std::vector<ProfileEntry> profile(std::size_t limit = 20) const;
     std::vector<TraceEntry> history() const;
+    /// Share of each video frame spent inside IRQ/NMI handlers, measured
+    /// while profiling is on (InterruptLoad.h). Cleared with the measurements.
+    const InterruptLoad& interruptLoad() const { return interruptLoad_; }
     void onStepCompleted(const M6502& cpu, uint16_t pc, int cycles) override;
     void onInterruptEntered(const M6502& cpu, uint16_t interruptedPc, int cycles) override;
     /// Disarm without firing. Safe to call from a thread that does NOT hold
@@ -265,6 +269,9 @@ private:
     bool profiling_ = false;
     bool historyEnabled_ = false;
     std::map<DebugAddress, ProfileEntry> profile_;
+    InterruptLoad interruptLoad_;
+    /// Video frame the instruction that just retired STARTED in.
+    uint64_t frameOfRetired(int cycles) const;
     const Memory* memory_ = nullptr;
     DebugBank curBank_{}, resumeBank_{};
     DebugBank resolveBank(uint16_t addr, bool write = false) const;

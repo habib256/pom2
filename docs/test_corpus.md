@@ -231,6 +231,25 @@ built image.
 
 ---
 
+### arekkusu42's self-checking disks — optional references (2026-11-08)
+
+`disks_5.4/arekkusu/FloatBus_260213.po` and `VidModes_260421.po` are OPTIONAL
+local references: not in git, not in the test-media archive, and
+`arekkusu_disks` skips without them (an allowed skip). No licence on the disks
+beyond "AREKKUSU 2025-2026", and they carry Apple's ProDOS 8 2.4.3 and
+BASIC.SYSTEM. Where present, two of their programs print their
+own verdict and are run by `arekkusu_disks` on six machines (//e unenhanced and
+enhanced, //c; PAL and NTSC):
+
+- **FLOATBUS** — nine floating-bus spot checks, "ALL SPOTCHECKS PASSED".
+- **BEAMPOS** (VIDMODES menu, 6) — "TEST C019:ALIGNMENTS": the floating bus at a
+  fixed distance from the `$C019` / VBLINT edge. It failed by one cycle on every
+  machine until `$C019` and VBLINT read one cycle ahead (CHANGELOG 2026-11-08).
+
+The rest of VIDMODES (VIDSYNC, VIDMODES, FLASHHZ, SWITCHES, LANGSEL, the
+CALIBRATE and EXAMPLES folders) is visual: no verdict without a photo of the
+real machine to compare with.
+
 ## 2. Disk II controller hell (flux / WOZ)
 
 **Logical-sector** emulation (`.dsk`, `.po`) is not enough: these titles require

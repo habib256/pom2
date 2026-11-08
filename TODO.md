@@ -76,6 +76,7 @@ romsets, where noted).
 | [DISPLAY-001](docs/backlog/display.md#display-001) | A real VidHD capture: SHR 320/640/fill and a `$C022`/`$C034` colour screen. |
 | [DISPLAY-011](docs/backlog/display.md#display-011) | Fetch Eve Leonard for a third Eve golden; the other residuals need a board. |
 | [AUDIO-011](docs/backlog/audio.md#audio-011) | Recordings of a real SSI263 sweeping INFLECT / RATE / ARTIC. |
+| [AUDIO-012](docs/backlog/audio.md#audio-012) | A scope capture across a real //e speaker for one `$C030` toggle and a known square. |
 
 ### Needs a decision
 

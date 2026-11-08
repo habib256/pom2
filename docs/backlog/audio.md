@@ -16,6 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [AUDIO-011](#audio-011) | 🟠 | Needs hardware oracle | Bug hunt #16's speech residue |
+| [AUDIO-012](#audio-012) | 🟡 | Needs an electrical capture | Speaker cone response (no physical model) |
 | [AUDIO-003](#audio-003) | 🟡 | Confirmed open: reference recording | Compare Mockingboard output level with MAME |
 | [AUDIO-005](#audio-005) | 🧊 | Frozen — triage 2026-10-28 | Analog output stage. |
 | [AUDIO-006](#audio-006) | 🟢 | Confirmed (design); not measured | Mutex contention. |
@@ -84,6 +85,37 @@ mute preserves speech playback time on Cricket/Echo and Sound II, and the
 Cricket/Echo callback applies a 5 ms gain ramp without scratch allocation.
 See [CHANGELOG](../../CHANGELOG.md#2026-10-17--speech-keeps-its-place-while-muted)
 and `ssi263_speech_timeline` for the audible-reference regression.
+
+<a id="audio-012"></a>
+
+## AUDIO-012 — Speaker cone response
+
+**Priority:** 🟡 · **State:** Needs an electrical capture (opened 2026-11-08).
+POM2's speaker is MAME's ideal path: a two-level step, band-limited, DC
+blocked (`SpeakerDevice.h`). A real cone does not follow a step; it rings.
+
+**Evidence so far.**
+
+- [A, acoustic] S. Champailler (Accurapple, gitlab.com/wiz21/accurapple @
+  69f45f3, `speaker/real_2e/one_tick.wav`, AGPL, not copied): one `$C030`
+  click of a real //e, through a microphone. Read off by POM2 on
+  2026-11-08: a first swing of about 2 kHz, then a ring at 430-460 Hz whose
+  amplitude falls to about a quarter in 15 ms.
+- [D] Accurapple models the cone as two damped oscillators, 3875 Hz then
+  480 Hz, fitted to its recordings (its `speaker/maths.lyx`, CC BY-NC-ND).
+  The 480 Hz ring agrees with the click above; the 3875 Hz does not.
+- [F] Every recording in that repo is acoustic (phone, webcam, desk mic): the
+  room, the mic and the phone's own processing are in the numbers, which is
+  why the two disagree on the first swing.
+
+**Why not implemented.** A model tuned on one phone recording would be a
+grade-F voicing presented as the machine's. It would move POM2 away from the
+silicon, not towards it.
+
+**Acceptance criterion.** A scope capture ACROSS the speaker terminals (or of
+the driver transistor's collector) for a single `$C030` toggle and for a
+known square, on a real //e; then a model fitted to that, behind a setting,
+with the capture's numbers pinned in a test.
 
 <a id="audio-003"></a>
 

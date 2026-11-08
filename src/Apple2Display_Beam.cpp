@@ -234,7 +234,26 @@ void Apple2Display::renderInternalSegment(Memory& mem, const Memory::DisplayStat
 // Subtracting after the [0,40] clamp equals clamping hpos-25 for every
 // in-range value, so a switch thrown in HBL (byteCol already 0 — the DIX
 // menu's $C056/$C057) stays at column 0 and does not move.
-static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
+// RE-ANCHORED 2026-11-08 (evening), every switch kind one column right of the
+// values documented below, together with the $C019 / //c VBLINT one-cycle lead
+// (Memory.cpp). The two moves cancel for any program that syncs on $C019 —
+// all of French Touch's DIX, MAD EFFECT, OLDSKOOL — so the columns checked by
+// eye on those stay exactly where they were. What changes is the convention,
+// which now matches the silicon in absolute terms:
+// [A] arekkusu42's BEAMPOS (VidModes disk, 2026-04-21) fails on POM2 by
+//     exactly one cycle between $C019's edge and the floating bus, on //e
+//     and //c alike, and passes with the lead.
+// [A] Logic analyser on a real PAL //e rev B (S. Champailler, Accurapple
+//     logic_ana @ 69f45f3): a LORES/HIRES flip in bus cycle N reaches the
+//     LS166 on the load of the byte fetched in N + 1, i.e. hpos - 24 with the
+//     access stamped on N — the same pipeline as a store to video RAM, which
+//     has always been hpos - 24 (kVideoAccessColumnOffset).
+// So: PAGE2 / 80STORE / HIRES / 80COL / AN3 / DHGR at hpos - 24, TEXT /
+// MIXED / ALTCHAR at hpos - 23. The -25 values in the comments below are
+// the same placements in the old convention. Pinned by
+// raster_switch_kind_offset, ft_loader_sync and vbl_edge_phase.
+static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd,
+                           bool eightyColNow)
 {
     int col = Apple2Display::frameCycleToPos(e.emuCycle, vstd).byteCol;
     switch (e.kind) {
@@ -245,8 +264,22 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
         // PAGE2 moved to the same -25 on 2026-11-08 (below).
         case Memory::VideoEventKind::Dhgr:    // derived DHIRES state
         case Memory::VideoEventKind::An3:     // $C05E/$C05F  (AN3/DHIRES)
-            col -= 1;                       // display-side: effect one col left
-            if (col < 0) col = 0;
+            // Two effects, two columns (2026-11-08, evening):
+            //  * 80COL ON — AN3 turns double hi-res on or off, i.e. the aux
+            //    loads, on 80COL's own schedule: hpos - 24, with PAGE2. This
+            //    is the placement DIX's OLDSKOOL raster bands were checked
+            //    against by eye; not measured on a board.
+            //  * 80COL OFF — AN3 only masks HGR's half-dot delay (bit 7), and
+            //    that reaches the byte fetched IN the access cycle, one column
+            //    earlier: hpos - 25. [A] Logic analyser on a real PAL //e rev
+            //    B (S. Champailler, Accurapple video_scanner/
+            //    test_p_line88.lac @ 69f45f3, driven by multi_tests.s test_P:
+            //    LDA AN3OFF / LDA $01 / LDA AN3ON mid-line in HGR): the IOU's
+            //    AN3 pin moves 0.8 us into the access, and the first byte
+            //    delayed again after AN3ON is the 2nd LDPS from the access
+            //    (+1.30 us), the load of the byte fetched in that cycle; a
+            //    bit-7 byte loaded while AN3 is off is not delayed.
+            if (!eightyColNow) col = std::max(col - 1, 0);
             break;
         // PAGE2 / 80STORE: hpos - 25 too (2026-11-08). Two parts of French
         // Touch's DIX — the release built for real PAL machines ("IRL
@@ -281,13 +314,32 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
         // "parfait", Mad Effect 2 and Crazy Cycles II "parfaitement calé". (The 2026-09-02
         // report that pulled HiRes back to -24 was made against the old
         // PAGE2 -24 chain and the standalone MADEF.dsk.)
+        // [A] Logic analyser on a real PAL //e rev B (S. Champailler,
+        //     Accurapple logic_ana/ls166.csv @ 69f45f3, read off 2026-11-08):
+        //     mid-line BIT $C056 and BIT $C057, twice each, change the LS166's
+        //     load on the 3rd LDPS after the access cycle starts — HIRES's
+        //     one-14M-late load (+2.296 us against +2.224) included — while a
+        //     TEXT flip on the same machine first shows on the 4th. HiRes one
+        //     byte left of TEXT is therefore measured, not only seen.
+        // 80COL ($C00C/$C00D) joined them on 2026-11-08 (then at hpos - 25,
+        // now hpos - 24 with the rest, see the re-anchoring note), on a
+        // measurement:
+        // [A] logic analyser on a real PAL //e rev B (S. Champailler,
+        //     Accurapple logic_ana/ls166.csv @ 69f45f3): after a mid-line
+        //     STA $C00D the first aux load (PHASE 0's extra LDPS) comes
+        //     +1.73 us after the write cycle starts, and its main partner is
+        //     the 3rd LDPS — the byte a PAGE2 flip on that cycle reaches;
+        //     STA $C00C drops the aux load at the same place. It had fallen
+        //     to TEXT's rule, one column late. Pinned by
+        //     raster_switch_kind_offset.
         case Memory::VideoEventKind::HiRes:
         case Memory::VideoEventKind::Page2:
-        case Memory::VideoEventKind::EightyStore: {
+        case Memory::VideoEventKind::EightyStore:
+        case Memory::VideoEventKind::EightyCol: {
             const VideoTiming& t = pom2VideoTiming(vstd);
             const int hpos = static_cast<int>(
                 e.emuCycle % static_cast<uint64_t>(t.cyclesPerScanline));
-            col = std::clamp(hpos - (kVideoAccessColumnOffset + 1), 0, 40);
+            col = std::clamp(hpos - kVideoAccessColumnOffset, 0, 40);         // re-anchored: was - 25
             break;
         }
         // TEXT ($C050/$C051) and MIXED ($C052/$C053) reach the screen ONE
@@ -305,6 +357,11 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
         //     ][+, IIgs, //c PAL): TEXT and MIXED 3 PH0 cycles vs PAGE2 2
         //     (marked "glitching, approximate") — MAME apple2video.cpp
         //     txt_w/mix_w delayed_update(3) vs scr_w delayed_update(2).
+        // [A] Logic analyser on a real PAL //e rev B (S. Champailler,
+        //     Accurapple logic_ana traces @ 69f45f3): GR+2 moves 2.41 us
+        //     after the access cycle starts and the LS166 loads the new
+        //     mode's dots on the 4th LDPS from there, one byte after the
+        //     byte a PAGE2 flip can reach (video_switch_latency_test.cpp).
         // [B] Sather, Understanding the Apple IIe p. 8-12: GR+2 (GR delayed
         //     two scanner clocks) selects GRAPHICS vs TEXT patterns in the
         //     video ROM; a page flip only changes the next fetch's address.
@@ -316,13 +373,17 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd)
             const VideoTiming& t = pom2VideoTiming(vstd);
             const int hpos = static_cast<int>(
                 e.emuCycle % static_cast<uint64_t>(t.cyclesPerScanline));
-            col = std::clamp(hpos - kVideoAccessColumnOffset, 0, 40);   // PAGE2 + 1
+            col = std::clamp(hpos - (kVideoAccessColumnOffset - 1), 0, 40);   // PAGE2 + 1
             break;
         }
+        case Memory::VideoEventKind::AltChar:
+            // The video ROM's input, like TEXT's GR+2: it moved with TEXT
+            // (was the page-calibrated -24, TEXT's old value). Unmeasured.
+            col = std::min(col + 1, 40);
+            break;
         default:
-            // Everything else stays on the page-calibrated -24. Page2 /
-            // 80Store are fetch-side (addressing) and MAD EFFECT / DROL / DIX
-            // pin them there.
+            // An2 (no video effect on a //e) and Cut (a renderer band edge
+            // placed by the video write log's own rule) stay on the base.
             break;
     }
     return col;
@@ -366,13 +427,31 @@ void Apple2Display::forEachBeamSegment(
                      events.end());
     }
 
-    // Raster order: scanline ascending, then byte column within the line.
-    // (Stable so two switches at the same beam position keep push order.)
-    std::stable_sort(events.begin(), events.end(),
-        [std](const Memory::VideoEvent& a, const Memory::VideoEvent& b) {
-            if (a.scanline != b.scanline) return a.scanline < b.scanline;
-            return beamColForEvent(a, std) < beamColForEvent(b, std);
+    // Each event's column, computed once in push (time) order so a kind
+    // whose column depends on the display state (AN3: 80COL) sees the state
+    // of its own moment. Then raster order: scanline ascending, then byte
+    // column (stable, so two switches at one beam position keep push order).
+    std::vector<int> evCol(events.size());
+    {
+        Memory::DisplayState s = start;
+        for (size_t i = 0; i < events.size(); ++i) {
+            evCol[i] = beamColForEvent(events[i], std, s.eightyCol);
+            if (events[i].kind != Memory::VideoEventKind::Cut)
+                applyVideoEvent(s, events[i].kind, events[i].value);
+        }
+        std::vector<size_t> order(events.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            if (events[a].scanline != events[b].scanline)
+                return events[a].scanline < events[b].scanline;
+            return evCol[a] < evCol[b];
         });
+        std::vector<Memory::VideoEvent> sortedEv; sortedEv.reserve(order.size());
+        std::vector<int> sortedCol; sortedCol.reserve(order.size());
+        for (size_t i : order) { sortedEv.push_back(events[i]); sortedCol.push_back(evCol[i]); }
+        events.swap(sortedEv);
+        evCol.swap(sortedCol);
+    }
 
     // Per visible scanline, the ordered list of column segments [prevEnd,
     // colEnd) and the display state active across each. Events on a scanline
@@ -397,7 +476,7 @@ void Apple2Display::forEachBeamSegment(
         int prevCol = 0;
         while (ei < events.size() && events[ei].scanline == y) {
             if (events[ei].kind == Memory::VideoEventKind::Cut) { cutAt[y] = true; ++ei; continue; }
-            const int col = beamColForEvent(events[ei], std);
+            const int col = evCol[ei];
             if (col > prevCol) { segs.push_back({col, cur, latch}); prevCol = col; }
             if (events[ei].kind == Memory::VideoEventKind::Dhgr &&
                 cur.dhgr && !events[ei].value)

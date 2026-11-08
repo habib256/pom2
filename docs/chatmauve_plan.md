@@ -651,6 +651,31 @@ Model 80COL as inferred from
 the VID7M/LDPS cadence rather than read from the switch, behind a toggle,
 so the PoP regression reproduces as on the real box. Off by default.
 
+*What the adapter can see, measured (2026-11-08).* [A] Logic-analyser traces
+of a real PAL //e rev B (S. Champailler, Accurapple logic_ana and
+video_scanner captures @ 69f45f3) give the cadence of the two signals the
+DB-15 carries, mode by mode — a //e, not a //c, so the //c IOU is assumed
+to behave alike ([F] until a //c capture):
+
+| Display | LDPS per byte | VID7M |
+|---|---|---|
+| 80-column text, or double hi-res (80COL on, AN3 off) | two: an aux load in PHASE 0 (+1.73 us after a mid-line `STA $C00D`), the main one in PHASE 1 | 14 MHz dots |
+| HGR 40 columns, AN3 on | one; a byte with bit 7 set is loaded one 14M period late (LDPS periods 105 then 91 samples at 100 MHz instead of 98) | 7 MHz, one pulse stretched at that load |
+| HGR 40 columns, AN3 off (80COL off) | one, never late, whatever bit 7 says (`test_p_line88`) | 7 MHz, regular |
+| any mode, horizontal or vertical blanking | none | — |
+
+*The hypothesis this supports* ([F], not modelled): the adapter cannot see
+AN3 at all with 80COL off unless the picture holds bytes with bit 7 set,
+and sees nothing during blanking. Its latch input would then depend on the
+picture's content and on WHEN the program switches — which is what the
+documented symptoms look like: PoP dropping to mono after the first attract
+loop, fenarinarsa's non-reproducible pattern sheets, and "80COL must have
+been written since the last `$C05E→$C05F`" (a level the adapter only learns
+from a doubled LDPS). Coding it now would be a guess at the adapter's
+circuit with nothing to check it against. **Settled by:** the adapter's
+schematic (forum.silicium.org clone thread, § 6), or PoP's attract loop on a
+real //c adapter compared frame by frame with a candidate model.
+
 **P6 — Video tap (1-2 d). ◔ First rung landed 2026-09-02**: the mode LATCH
 now beam-races — `forEachBeamSegment` walks it in parallel with
 DisplayState from the same event log (a Dhgr ON→OFF event = the AN3 rising
@@ -693,7 +718,8 @@ Purplesoft need.
 | Eve rev B palette (rev A is rev B rotated, see § 1) | a capture from an owner (system-cfg, WDA forums) |
 | ~~RVB Graph HGR colour registers~~ **Closed 2026-10-20**: its manual (§ 3.6) | — |
 | RVB Graph: decoding of `$C740-$C7FF`, a read of `$C0Fx`, the exact fill of a 0 between two runs | a board, or a schematic |
-| //c adapter internals | a schematic exists in a clone thread on forum.silicium.org (behind a bot wall; readable with a browser) |
+| //c adapter internals — how it turns the LDPS/VID7M cadence (P5 table, measured on a //e) into AN3 and 80COL | a schematic exists in a clone thread on forum.silicium.org (behind a bot wall; readable with a browser); or PoP's attract loop on a real adapter |
+| Which byte a Féline/Eve applies a new latch value to, after the AN3 edge (the edge itself is measured: 0.8 us into the access cycle, `test_p_line88`) | a capture of the card's RGB output around a mid-line `$C05E→$C05F`; POM2 keeps the column checked by eye on DIX |
 | Mixed-mode boundary: "cut / repeat" vs "next quadruplet" | both are reproduced by the mux+latch model; Extasie's own images decide (P1) |
 
 ## 7. Sources
@@ -719,3 +745,24 @@ Purplesoft need.
   schematic; **not** the RVB Graph, despite what § 3.6 used to say.
 - MAME `apple2video.cpp` `dhgr_update` (the byte-level Video-7 rules POM2
   ports today).
+- **[A] Logic-analyser traces of a real PAL //e rev B's video generator**,
+  S. Champailler (Accurapple, gitlab.com/wiz21/accurapple @ 69f45f3,
+  `composite/tests/logic_ana/*.csv` and `composite/video_scanner/*.lac`,
+  AGPL — read, cite the numbers, do not copy the files). The PAL/HAL's
+  VID7M, LDPS, SEGB, GR+2, H0, PHASE0, 7M and 14M, the LS166's dot stream
+  and parallel inputs, the video ROM's inputs, the IOU, with 6502 A15 as
+  the access marker; the driving program (`la_gr_txt.s`) flips TEXT/GR,
+  LORES/HIRES and 80COL mid-line. These are the //c adapter's own input
+  signals (§ 1), so they are the oracle for the dot-level tap of § 4.
+  Already read off (2026-11-08): GR+2 moves 2.41 us after the access cycle;
+  TEXT reaches the 4th LDPS, LORES/HIRES and 80COL the 3rd (pinned by
+  `raster_switch_kind_offset`); in 80 columns the aux byte loads on an extra
+  LDPS in PHASE 0. Its author's notes (`TODOS.org`) also record VID7M
+  following a GR+2 fall two 14M periods late when SEGB holds, and at once
+  when SEGB falls with it. AN3 (test_p_line88, 80COL off): the IOU pin moves 0.8 us into
+  the access and the half-dot mask reaches the byte fetched in that cycle.
+  Not yet read off: SEGA lagging H0 by one cycle (its notebook says Sather's
+  table 8.1 is wrong there), the ROM-input timing of the GR40/TXT40 switch
+  (test_j), and a capture with 80COL ON and AN3 toggled, which would settle
+  the double hi-res column POM2 still holds by eye. `test_p_first_line` is
+  triggered on the AN3 access, not on VBL: it cannot date the first line.
