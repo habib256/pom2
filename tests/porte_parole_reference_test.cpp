@@ -122,9 +122,9 @@ int main()
         source.appendSnapshotState(legacy);
         legacy[3] = 2;
         legacy.resize(legacy.size() - 8); // remove the v3 frequency denominator
-        double phase = 0.5; uint64_t bits;
-        std::memcpy(&bits, &phase, 8);
-        for (int i = 0; i < 8; ++i) legacy[legacy.size()-8+i] = uint8_t(bits >> (8*i));
+        double phase = 0.5; uint64_t phaseBits;
+        std::memcpy(&phaseBits, &phase, 8);
+        for (int i = 0; i < 8; ++i) legacy[legacy.size()-8+i] = uint8_t(phaseBits >> (8*i));
         pom2::PorteParoleCard migrated;
         migrated.setCpuClock(8000000);
         migrated.loadSnapshotState(legacy.data(), legacy.size());

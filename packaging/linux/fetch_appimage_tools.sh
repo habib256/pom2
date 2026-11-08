@@ -33,7 +33,8 @@ cd "$DEST"
 
 download_verified() {
     local url=$1 out=$2 expected=$3
-    wget -q "$url" -O "$out"
+    wget -nv --timeout=30 --tries=5 --waitretry=2 --retry-connrefused \
+        --retry-on-http-error=429,500,502,503,504 "$url" -O "$out"
     echo "$expected  $out" | sha256sum -c -
 }
 

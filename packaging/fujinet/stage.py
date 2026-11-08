@@ -11,8 +11,11 @@ import hashlib
 import io
 from pathlib import Path
 import shutil
+import sys
 import tarfile
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 import zipfile
 
@@ -123,6 +126,23 @@ def safe_files(blob, name):
                 yield Path(*path.parts[1:]), archive.extractfile(item).read(), item.mode & 0o777
 
 
+def download_archive(source):
+    for attempt in range(4):
+        try:
+            with urlopen(source, timeout=90) as response:
+                return response.read()
+        except HTTPError as error:
+            if error.code not in (429, 500, 502, 503, 504):
+                raise
+            failure = error
+        except (URLError, OSError) as error:
+            failure = error
+        if attempt == 3:
+            raise failure
+        print("FujiNet download failed; retrying:", failure, file=sys.stderr, flush=True)
+        time.sleep(2 ** attempt)
+
+
 def stage_one(tag, root, archive_dir=None):
     name, digest = ARCHIVES[tag]
     source = BASE + "/" + name
@@ -132,8 +152,7 @@ def stage_one(tag, root, archive_dir=None):
         blob = local.read_bytes()
     else:
         print("Fetching", source, flush=True)
-        with urlopen(source, timeout=90) as response:
-            blob = response.read()
+        blob = download_archive(source)
     actual = hashlib.sha256(blob).hexdigest()
     if actual != digest:
         raise ValueError("FujiNet archive SHA-256 mismatch for " + name + ": " + actual)
