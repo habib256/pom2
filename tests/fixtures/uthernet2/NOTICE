@@ -1,0 +1,78 @@
+NOTICE
+======
+
+Uthernet2 is licensed under the Apache License, Version 2.0 (see
+LICENSE). This file lists third-party materials included in or used to
+build this project.
+
+------------------------------------------------------------------------
+Bundled under the Mozilla Public License 1.1 and a BSD license
+------------------------------------------------------------------------
+
+src/test/resources/ip65test.bin
+
+    A test fixture: this project's own src/test/asm/ip65test.s (Apache
+    License 2.0) linked with the IP65 TCP/IP stack and its Apple II
+    Uthernet II driver.
+
+    IP65
+    The Initial Developer of the Original Code is Jonno Downes.
+    Portions created by the Initial Developer are Copyright (C) 2009
+    Jonno Downes. All Rights Reserved.
+    Licensed under the Mozilla Public License Version 1.1
+    (http://www.mozilla.org/MPL/).
+
+    drivers/w5100.s
+    Copyright (c) 2013, Oliver Schmidt. All rights reserved.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the conditions in that
+    file's header are met; it is distributed "AS IS", without warranty.
+
+    Source of the Covered Code: https://github.com/cc65/ip65, commit
+    25a9c5aa9480ddab0e506108ec7f1ce538165d28, unmodified.
+    src/test/asm/Makefile rebuilds the fixture from it.
+
+The fixture is used only to verify the card; it is not part of the
+published plug-in jar. That is a good-faith reading of the licenses, not
+a legal conclusion.
+
+src/apple/disks/uthernet2-dos33.dsk, src/apple/disks/uthernet2-prodos.po,
+src/test/resources/telnet.bin, src/test/resources/gopher.bin
+
+    This project's TELNET and GOPHER programs (src/apple, Apache License
+    2.0) linked with the same IP65 code, under the same licenses, from
+    the same commit, as the fixture above. src/apple/Makefile rebuilds
+    them.
+
+------------------------------------------------------------------------
+Font
+------------------------------------------------------------------------
+
+src/apple/tables.s (the Soft-70 font)
+
+    Derived from Tom Thumb, a 3x5 font by Robey Pointer based on Brian
+    Swetland's VT100 emulator font, as converted in Adafruit's GFX library
+    (Fonts/TomThumb.h). Both authors have authorized its use under CC0 or
+    CC-BY 3.0 (http://robey.lag.net/2010/01/23/tiny-monospace-font.html);
+    this project uses it under CC0. src/apple/gentables.py does the
+    conversion.
+
+------------------------------------------------------------------------
+Used to build, not included
+------------------------------------------------------------------------
+
+cc65 (https://github.com/cc65/cc65) assembles and links the utilities;
+AppleCommander (https://applecommander.github.io/, GPL) writes the disk
+images.
+
+------------------------------------------------------------------------
+Consulted, not included
+------------------------------------------------------------------------
+
+The WIZnet W5100 datasheet (version 1.2.4) and the Uthernet II User's and
+Programmer's Manual (a2RetroSystems, 17 Nov 18), including its schematic,
+are the references for the model; see HARDWARE-REFERENCE.md.
+
+AppleWin's Uthernet II implementation (source/Uthernet2.cpp, GPL) was
+read as a cross-check of behavior on points the datasheet doesn't settle,
+each listed in HARDWARE-REFERENCE.md. No code was taken from it.

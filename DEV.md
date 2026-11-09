@@ -9304,6 +9304,15 @@ Pinned by `uthernet_cs8900_smoke`.
 
 ### Uthernet II (W5100)
 
+**Independent IP65 software on the 6502** *(2026-11-09)*: the three
+`uthernet2_{ip65,telnet,gopher}_integration` tests run unmodified binaries
+from sbabcoc/Uthernet2 through the production CPU, Memory, SlotBus, card and
+built-in NAT. IP65 checks DHCP, DNS and TCP echo; the disk utilities check
+Telnet negotiation/ANSI/input/FIN and Gopher menu selection/document paging
+against local servers. Fixtures, source revision, hashes, notices and the
+ROM substitute's limits are in `tests/fixtures/uthernet2/README.md`. No
+Internet service, downloaded Apple ROM or libslirp is needed by these tests.
+
 **DISCON waits for the owed tail from CLOSE_WAIT too** *(2026-11-06, bug
 hunt 2026-11-01 round 2, NET-1)*. The peer half-closed, the guest SENDs its
 answer (`sendData` allows CLOSE_WAIT), the host takes part of it and SEND_OK
