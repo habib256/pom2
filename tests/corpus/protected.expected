@@ -1,0 +1,13 @@
+# POM2 compatibility corpus - recorded frames (VALIDATION-006).
+# Written by `pom2_corpus --bless`; see tests/corpus/README.md.
+# <title> <check> <frame hash> fw=<firmware fingerprint>
+captain-goodnight arrived 92318ac1ab393389 fw=1c7f33d5d64a
+captain-goodnight running 127ba836bd356604 fw=1c7f33d5d64a
+captain-goodnight title d5a020feaa9c2647 fw=1c7f33d5d64a
+captain-goodnight turn-disk 938bcf6cd1fefa65 fw=1c7f33d5d64a
+prince-of-persia dungeon f9cd697e913845dd fw=dd709ebbd095
+prince-of-persia after-input 0757ef065313d0f4 fw=dd709ebbd095
+prince-of-persia title e32bb57880cd0951 fw=dd709ebbd095
+
+bandits-flux game 48308bc8a44111ee fw=1c7f33d5d64a
+bandits-flux title 0b12107c58341149 fw=1c7f33d5d64a

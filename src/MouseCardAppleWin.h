@@ -167,6 +167,7 @@ public:
     /// the CPU clock rescales the distance to the next edge instead of
     /// re-phasing it: the interrupts stay 1/60 s apart in real time.
     void setCpuClock(double hz) override;
+    void setMachineCpuClock(double hz) override;
     void setStandardClock(double hz) override { if (hz > 0) { stdHz_ = hz; restretch(); } }
     /// The VBL interrupt rate TIMEDATA put in force at the last INIT: 50 or
     /// 60, or 0 when no program asked — then the card runs at its default
@@ -302,6 +303,10 @@ private:
     // other (60 Hz on PAL, 50 Hz on NTSC) runs free from the last edge.
     int8_t          timeDataPending_ = -1;
     int8_t          vblRate_         = -1;
+    // Ignore paced notifications once the host supplies machine time, so
+    // a pending edge is rescaled only for a real hardware clock change.
+    bool            machineClockSet_ = false;
+    void            applyMachineClock(double hz);
     double          cpuHz_           = 1022727.0;
     double          stdHz_           = 0.0;   // 0 = not given: no accelerator
     uint64_t        vblStretch_      = 1;     // ceil(cpuHz_ / stdHz_), >= 1

@@ -179,6 +179,35 @@ void untouchedFileIsWrittenInPlace()
     CHECK(readFile(p) == pattern(7));
 }
 
+void explicitSaveReportsTheDiversion()
+{
+    const fs::path p = workDir() / "explicit.dsk";
+    const auto mounted = pattern(17), external = pattern(101);
+    writeFile(p, mounted);
+    auto img = mount(p);
+    rewriteExternally(p, external);
+    touchTrack(*img, 5);
+    CHECK(img->saveDirty());
+    CHECK(!img->hasUnsavedChanges());
+    const auto copies = siblings(p, ".guest-");
+    CHECK(copies.size() == 1);
+    CHECK(readFile(p) == external);
+    if (copies.size() != 1) return;
+    CHECK(readFile(copies.front()) == mounted);
+    const auto status = img->persistence();
+    CHECK(status.state == "diverted");
+    CHECK(status.error.find(copies.front().string()) != std::string::npos);
+
+    // Explicit flushes and a later clean save must keep naming the copy.
+    touchTrack(*img, 9);
+    CHECK(img->saveDirty());
+    CHECK(img->saveDirty());
+    CHECK(img->persistence().state == "diverted");
+    CHECK(img->persistence().error.find(copies.front().string()) != std::string::npos);
+    CHECK(siblings(p, ".guest-").size() == 1);
+    CHECK(readFile(p) == external);
+}
+
 void touchedButIdenticalFileIsNotAChange()
 {
     const fs::path p = workDir() / "touched.dsk";
@@ -371,6 +400,7 @@ void partlyDecodableTrackIsRefusedAndRecovered()
 int main()
 {
     externalChangeDivertsSectorImage();
+    explicitSaveReportsTheDiversion();
     untouchedFileIsWrittenInPlace();
     touchedButIdenticalFileIsNotAChange();
     twoMountsOfOneImageDoNotDivertEachOther();

@@ -134,6 +134,25 @@ int main()
         ++failures;
     };
 
+    // The IWM's motor-disable timer follows machine time across menu-speed
+    // changes, while a hardware accelerator still buys fewer crystal ticks
+    // per host CPU cycle. No mounted medium is needed for the enable lines.
+    for (int accelerator : {1, 4}) for (int pace : {1, 2, 4}) {
+        auto timerCard = std::make_unique<pom2::LironCard>(kSlot);
+        timerCard->setStandardClock(1022727.0);
+        timerCard->setCpuClock(1022727.0 * accelerator * pace);
+        timerCard->setMachineCpuClock(1022727.0 * accelerator);
+        timerCard->deviceSelectWrite(0x9, 0);
+        if (!timerCard->iwm().devsel()) fail("motor-on did not enable Liron drive");
+        timerCard->deviceSelectWrite(0x8, 0);
+        timerCard->advanceCycles(600000 * accelerator);
+        if (!timerCard->iwm().devsel()) fail("Liron motor-disable timer expired early");
+        timerCard->setCpuClock(1022727.0 * accelerator);
+        timerCard->setMachineCpuClock(1022727.0 * accelerator);
+        timerCard->advanceCycles(700000 * accelerator);
+        if (timerCard->iwm().devsel()) fail("menu pacing delayed Liron motor disable");
+    }
+
     // ── The card announces itself the way ProDOS scans for it ────────────
     // Apple II Reference Manual appendix C: $Cn01/$Cn03/$Cn05 identify a
     // disk device, and $Cn07 = $00 marks the SmartPort class. These come

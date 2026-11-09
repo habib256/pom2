@@ -182,11 +182,12 @@ bool parseManifest(std::istream& in, Manifest& out, std::string& error)
         if (out.titles.empty()) return fail("'" + kw + "' before any title");
         Title& t = out.titles.back();
 
-        if (kw == "diskii" || kw == "smartport" || kw == "hdd") {
+        if (kw == "diskii" || kw == "smartport" || kw == "hdd" || kw == "swap") {
             if (w.size() < 3 || w.size() > 4)
                 return fail(kw + " takes a drive (1 or 2), a path and an optional sha256=");
             Device d;
-            d.kind = kw;
+            d.kind = kw == "swap" ? "diskii" : kw;
+            d.deferred = kw == "swap";
             d.line = lineNo;
             if (!parseInt(w[1], 1, 2, d.unit)) return fail("drive must be 1 or 2");
             d.media = w[2];
@@ -195,9 +196,20 @@ bool parseManifest(std::istream& in, Manifest& out, std::string& error)
                     return fail("expected sha256=<64 lowercase hex digits>");
                 d.sha256 = w[3].substr(7);
             }
+            bool mounted = false;
             for (const Device& other : t.devices)
-                if (other.kind == kw && other.unit == d.unit)
-                    return fail(kw + " drive " + w[1] + " given twice");
+                if (other.kind == d.kind && other.unit == d.unit && !other.deferred)
+                    mounted = true;
+            if (!d.deferred && mounted)
+                return fail(kw + " drive " + w[1] + " given twice");
+            if (d.deferred) {
+                if (!mounted) return fail("swap needs an initial diskii mount in that drive");
+                Step step;
+                step.kind = Step::Kind::Swap;
+                step.deviceIndex = t.devices.size();
+                step.line = lineNo;
+                t.steps.push_back(step);
+            }
             t.devices.push_back(std::move(d));
             continue;
         }

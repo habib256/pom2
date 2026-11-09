@@ -86,6 +86,8 @@ public:
     /// The emulated CPU clock (accelerated, PAL…), for the conversion to the
     /// VDP's own time (header).
     void    setCpuClock(double hz) override { clk_.setCpuClock(hz); }
+    // Menu pacing fast-forwards this device along with the machine.
+    void    setMachineCpuClock(double hz) override { clk_.setCpuClock(hz); }
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 

@@ -1,0 +1,35 @@
+# Optional real protected media. Download only into a temporary directory;
+# pass it as --root. Sources, hashes and scope: protected.md.
+title captain-goodnight iie-u protected
+  diskii 1 captain-a.woz sha256=85dde3ce4b6ca17cb30db8d0be060c916092332853568abb8d941594571aa332
+  run 30
+  check title
+  key SPACE
+  run 10
+  check turn-disk
+  swap 1 captain-b.woz sha256=6f522c7d0cb9919db127a864b440acb7d18bfc25d422dba26b43268ca732d465
+  key SPACE
+  run 20
+  check arrived
+  run 30
+  check running
+
+title prince-of-persia iie protected
+  diskii 1 prince-a.woz sha256=7e31597f1b1c11a025238fa75027150c1b4329936bbeb4da7e33134b8ac8cdb7
+  run 30
+  check title
+  key SPACE
+  run 30
+  check dungeon
+  key RIGHT
+  run 2
+  check after-input
+
+# WOZ2 INFO v3 with 19 FLUX-mapped quarter-track positions.
+title bandits-flux iie-u protected flux
+  diskii 1 bandits.woz sha256=0a2472f65c73eee0afb9b9ec795892a22b967e545fb21ae34dc7f12faf241687
+  run 30
+  check title
+  key SPACE
+  run 20
+  check game

@@ -98,6 +98,25 @@ int main()
     assert(card.deviceSelectRead(0) == 0x7F);
     assert(capture(card) == capture(acceleratedTwin));
 
+    // Changing menu pacing on the same card must leave the seven phase-0
+    // ticks alone, while a hardware accelerator still divides CPU cycles.
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            SnesMaxCard paced(4);
+            paced.setStandardClock(stock);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                paced.onPowerCycle();
+                paced.setCpuClock(stock * accelerator * pacing);
+                paced.setMachineCpuClock(stock * accelerator);
+                paced.setButtons(0, SnesMaxCard::B);
+                paced.deviceSelectWrite(0, 0);
+                paced.advanceCycles(7 * accelerator - 1);
+                assert(paced.deviceSelectRead(0) == 0xFF);
+                paced.advanceCycles(1);
+                assert(paced.deviceSelectRead(0) == 0x7F);
+            }
+        }
+
     // The exact slot bus dispatch, including mirrors and paced latch.
     SlotBus bus;
     auto device = std::make_unique<SnesMaxCard>(4);

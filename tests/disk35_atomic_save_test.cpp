@@ -38,6 +38,7 @@
 #include "Disk35Image.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -94,6 +95,37 @@ int main()
     fs::create_directories(base);
 
     std::vector<std::uint8_t> block(kBlk, 0xAB);
+
+    // An explicit save preserves an external rewrite and reports the sibling
+    // holding the guest's complete disk, just as background autosave does.
+    {
+        const fs::path img = base / "external.po";
+        const auto original = makeRawImage();
+        writeFile(img, original);
+        pom2::Disk35Image d;
+        assert(d.loadFile(img.string()));
+        d.setWriteBackEnabled(true);
+        auto external = original; external[0] ^= 1;
+        writeFile(img, external);
+        fs::last_write_time(img, fs::last_write_time(img) + std::chrono::seconds(5));
+        assert(d.writeBlock(5, block.data()));
+        assert(d.saveDirty() && !d.hasUnsavedChanges());
+        assert(readFile(img) == external);
+        fs::path copy;
+        for (const auto& entry : fs::directory_iterator(base))
+            if (entry.path().filename().string().find("external.guest-") == 0)
+                copy = entry.path();
+        assert(!copy.empty());
+        auto expected = original;
+        std::memcpy(expected.data() + 5 * kBlk, block.data(), kBlk);
+        assert(readFile(copy) == expected);
+        assert(d.persistence().state == "diverted");
+        assert(d.persistence().error.find(copy.string()) != std::string::npos);
+        assert(d.saveDirty());
+        assert(d.persistence().state == "diverted");
+        assert(d.loadFile(img.string()));
+        assert(d.persistence().state == "saved");
+    }
 
     // ── Part 1: a successful save must not rewrite the original inode ────
     {

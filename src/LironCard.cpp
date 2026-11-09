@@ -738,6 +738,13 @@ void LironCard::restoreFlushBayDirty(int bay, uint64_t lineage)
     (void)images_[static_cast<std::size_t>(bay)].restoreDirtyFor(lineage);
 }
 
+void LironCard::noteFlushBayDiversion(int bay, uint64_t lineage,
+                                      const std::string& path)
+{
+    if (bay < 0 || bay >= kMaxUnits) return;
+    images_[static_cast<std::size_t>(bay)].noteDiversionFor(lineage, path);
+}
+
 bool LironCard::flushBay(int bay, std::string& errOut)
 {
     errOut.clear();

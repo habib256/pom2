@@ -84,7 +84,7 @@ bool DiskImage::loadReadOnlySession(const uint8_t* data, size_t len, std::string
 
 size_t DiskImage::sessionStorageBytes() const
 {
-    size_t bytes = sizeof(DiskImage) + wozRaw.capacity();
+    size_t bytes = sizeof(DiskImage) + tracks.capacity() * sizeof(TrackBuffer) + wozRaw.capacity();
     for (const auto& bits : bitStream) bytes += bits.capacity();
     for (const auto& flux : fluxStream) bytes += flux.capacity() * sizeof(int);
     return bytes;

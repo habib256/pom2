@@ -96,6 +96,8 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     /// replay cursor. Set by PhasorCard::setCpuClock, exactly as
     /// MockingboardCard::AudioSrc::cpuClockHz is.
     std::atomic<double>   cpuClockHz { kAyClockHz };
+    // Unpaced machine clock; zero preserves standalone setCpuClock callers.
+    std::atomic<double>   machineCpuClockHz { 0.0 };
     /// Slot phase-0 clock feeding the four AYs' pin-22 CLOCK — set by
     /// PhasorCard::setStandardClock; 0 = never given, follow `cpuClockHz`.
     /// An accelerator raises `cpuClockHz` and must not raise the pitch.
@@ -104,6 +106,13 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
     {
         const double bus = busClockHz.load(std::memory_order_relaxed);
         return bus > 0.0 ? bus : cpuClockHz.load(std::memory_order_relaxed);
+    }
+
+    double replayClockHz() const
+    {
+        const double machine = machineCpuClockHz.load(std::memory_order_relaxed);
+        return ayClockHz() * (machine > 0.0
+            ? cpuClockHz.load(std::memory_order_relaxed) / machine : 1.0);
     }
 
     void setSampleRate(uint32_t hz) override
@@ -277,11 +286,11 @@ struct PhasorCard::AudioSrc : public AudioSource, public RateAware
             liveEchoStereo = echoStereoSnap;
         }
         const double cyclesPerSample =
-            ayClockHz() / static_cast<double>(sr);   // stamps are bus ticks
+            replayClockHz() / static_cast<double>(sr);   // paced bus-tick stamps
         // Jitter buffer: the cursor trails the producer by two 20 ms bursts
         // and is re-anchored when it starves or catches up.
         const uint64_t burst = static_cast<uint64_t>(
-            ayClockHz() / 50.0);
+            replayClockHz() / 50.0);
         // Plus this callback's own span: the whole buffer is rendered at
         // once, so the backlog must cover it or its tail renders ahead of
         // the producer. Negligible at a desktop's 256 frames; ~43 ms with
@@ -656,10 +665,16 @@ bool PhasorCard::isMuted() const
     return audio_->muted.load(std::memory_order_relaxed);
 }
 
-// EmulationController::setVideoStandard calls this on every slot card when
-// the machine switches between the 262-line/1.0227 MHz and 312-line/
-// 1.0156 MHz timebases. Same body as MockingboardCard::setCpuClock — the
-// four AYs hang off the same phase-0 line the two Mockingboard chips do.
+// Machine time excludes menu pacing but retains hardware acceleration.
+void PhasorCard::setMachineCpuClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    std::lock_guard<std::mutex> lk(mtx_);
+    busClock_.setCpuClock(hz);
+    if (audio_) audio_->machineCpuClockHz.store(hz, std::memory_order_relaxed);
+}
+
+// Paced CPU time remains the conversion used by audio and speech.
 void PhasorCard::setCpuClock(double hz)
 {
     if (!(hz > 0.0)) return;

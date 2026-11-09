@@ -50,6 +50,7 @@
 #include "SuperSerialCard.h"
 
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -448,8 +449,87 @@ int testProdosHardDisk()
 
 } // namespace
 
+// Menu changes leave the same DMA budget and retired NOP count; the
+// hardware accelerator remains in the CPU-to-slot-bus conversion.
+void testMachineClock()
+{
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            Memory actualMemory, referenceMemory;
+            AlsCpmCard actual, reference;
+            actual.setMemory(&actualMemory); reference.setMemory(&referenceMemory);
+            for (auto* card : {&actual, &reference}) {
+                card->setStandardClock(stock);
+                card->slotRomWrite(0, 0);
+                for (unsigned i = 0xE000; i < 0xF000; ++i)
+                    card->pokeCardRam(uint16_t(i), 0);
+                auto state = card->z80().getState();
+                state.pc = 0xE000;
+                card->z80().setState(state);
+            }
+            reference.setCpuClock(stock * accelerator);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                actual.setCpuClock(stock * accelerator * pacing);
+                actual.setMachineCpuClock(stock * accelerator);
+                const uint16_t before = actual.z80().getState().pc;
+                const int spent = actual.dmaRun(256);
+                const int referenceSpent = reference.dmaRun(256);
+                CHECK(spent >= 256 && spent <= 256 + 8 * accelerator);
+                CHECK(spent == referenceSpent);
+                const int retired = uint16_t(actual.z80().getState().pc - before);
+                const double expected = 256.0 * 6000000 / (4 * stock * accelerator);
+                CHECK(retired >= int(expected) - 2 && retired <= int(expected) + 4);
+                CHECK(actual.z80().getState().pc == reference.z80().getState().pc);
+            }
+        }
+}
+
+// A live accelerator transition preserves the time left before the next
+// 60 Hz interrupt. IFF1 stays clear so the pending line is observable.
+void testPendingTickClockTransition()
+{
+    for (double stock : {1022727.0, 1015625.0})
+        for (bool accelerate : {false, true}) {
+            Memory mem;
+            AlsCpmCard card;
+            card.setMemory(&mem);
+            card.setStandardClock(stock);
+            const double oldHz = stock * (accelerate ? 1 : 4);
+            const double newHz = stock * (accelerate ? 4 : 1);
+            card.setCpuClock(oldHz);
+            card.setMachineCpuClock(oldHz);
+            card.slotRomWrite(0, 0);
+            for (unsigned i = 0xE000; i < 0xF000; ++i) card.pokeCardRam(uint16_t(i), 0);
+            auto state = card.z80().getState();
+            state.pc = 0xE000;
+            card.z80().setState(state);
+            const uint64_t start = mem.getCycleCounter();
+            card.dmaRun(1); // schedules the first tick at start + oldHz/60
+            const uint64_t period = uint64_t(oldHz / 60);
+            const uint64_t now = start + period / 4;
+            mem.advanceCycles(int(now - mem.getCycleCounter()));
+            card.setCpuClock(newHz * 2); // controller sends paced, then machine
+            card.setMachineCpuClock(newHz);
+            // Repeated menu fan-out must not alter the pending deadline.
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                card.setCpuClock(newHz * pacing);
+                card.setMachineCpuClock(newHz);
+            }
+            const uint64_t deadline = now + uint64_t(std::ceil(
+                static_cast<long double>(start + period - now) * newHz / oldHz));
+            mem.advanceCycles(int(deadline - 32 - mem.getCycleCounter()));
+            card.dmaRun(1);
+            CHECK(!card.z80().getState().irqLine && "accelerator transition fired the 60 Hz tick early");
+            mem.advanceCycles(int(deadline - mem.getCycleCounter()));
+            card.dmaRun(1);
+            CHECK(card.z80().getState().irqLine && "accelerator transition delayed the pending 60 Hz tick");
+        }
+}
+
 int main()
 {
+    testPendingTickClockTransition();
+    testMachineClock();
     testWindow();
     testSnapshot();
     testTiming();

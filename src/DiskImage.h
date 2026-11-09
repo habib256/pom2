@@ -55,13 +55,8 @@
 #include <string>
 #include <vector>
 
-/// NOTE — sizeof(DiskImage) is ~242 KB: the track buffers live IN the object
-/// (`tracks`, below), which is what keeps the LSS hot path indirection-free.
-/// Never declare one on the stack of a secondary thread — macOS gives a
-/// std::thread 512 KB total, and the insert path already stacks one temporary
-/// per frame (insertDisk → prepareDisk → loadFile), which is how the AI
-/// control server's HTTP thread SIGBUSed on arm64 macOS (2026-08-23).
-/// Heap-allocate temporaries (`std::make_unique<DiskImage>()`) instead.
+/// Track storage is heap-backed: stack temporaries no longer carry 228 KiB
+/// of nibble buffers, and moving an image transfers those buffers.
 class DiskImage final : public pom2::AutosavedMedium
 {
 public:
@@ -594,9 +589,9 @@ private:
     pom2::MediaAutosave autosave_;
     uint64_t lineage_ = 0;   // this mount, for commit ordering; 0 = unnamed
 
-    // 35 × 6656 = ~228 KB. Heap allocation would also work but a flat
-    // member fits the "one concern, plain data" style of POM2.
-    std::array<TrackBuffer, kTracks> tracks;
+    // Fixed count, heap-backed; deep copy and constant-time buffer moves.
+    // Only construction sizes this vector; loaders preserve kTracks.
+    std::vector<TrackBuffer> tracks;
     std::array<bool, kTracks>        dirty{};
 
     // ── Non-WOZ write framing (see writeFlux) ───────────────────────────

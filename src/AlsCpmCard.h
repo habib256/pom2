@@ -90,7 +90,9 @@ public:
 
     bool dmaActive() const override { return enabled_; }
     int  dmaRun(int cycles6502) override;
-    void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
+    void setCpuClock(double hz) override;
+    // Menu pacing advances the whole machine; only hardware clocks divide Z80 work.
+    void setMachineCpuClock(double hz) override;
     void setStandardClock(double hz) override { if (hz > 0.0) { stockHz_ = hz; } }
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
@@ -114,6 +116,7 @@ private:
 
     bool appleWindow(uint16_t addr) const { return bank_ == 0 && addr < 0xE000; }
     void clockTicks();
+    void setTickCpuClock(double hz);
 
     Memory* mem_ = nullptr;
     M6502*  cpu_ = nullptr;
@@ -130,6 +133,7 @@ private:
     double syncExtra_  = 0.0;     // bus cycles the Apple accesses added, this instruction
     double busCarry_   = 0.0;     // fractional CPU cycles owed (accelerator)
     double cpuHz_      = 0.0;
+    bool machineClockSet_ = false; // paced setters stop driving the clock after this hook
     double stockHz_    = 0.0;
     double busPerT_    = 0.0;     // Apple bus cycles per Z80 T-state
     double ratio_      = 1.0;     // CPU cycles per bus cycle (accelerator)

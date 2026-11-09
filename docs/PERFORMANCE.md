@@ -864,3 +864,19 @@ optimized profile (§ 1) before paying that implementation cost; the ≥10 %
 guard-share floor from § 7.4 still applies. This revalidation supports keeping
 the task open, not scheduling a broad table implementation from the 23 %
 whole-function sample alone.
+
+
+## 12. Heap-backed DiskImage tracks, 2026-11-09
+
+STORAGE-003 moves 35 × 6656 bytes from the object into a fixed-count vector.
+On this ARM64 build `sizeof(DiskImage)` falls from 253624 to 20688 bytes;
+copy remains deep and move transfers the buffers. The motivation is stack
+safety and avoiding a 228 KiB track-buffer copy during media installation.
+
+[The consolidation audit](audits/core-consolidation-2026-11-09.md) records
+nine paired runs over three workloads, followed by five longer ABBA/BAAB
+disk blocks. All 74 timed runs preserve the compared cycle/RAM/frame
+identities. Host load caused large drift; an initial apparent disk slowdown
+did not reproduce in four of five confirmation blocks. No throughput gain
+is claimed, and these noisy results cannot certify a sub-percent effect.
+The constrained-stack, storage-writeback and writable-session gates pass.

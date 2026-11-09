@@ -29,6 +29,7 @@ public:
     AudioSource* audioSource() override;
     void setCpu(M6502* cpu);
     void setCpuClock(double hz) override;
+    void setMachineCpuClock(double hz) override;
     void setStandardClock(double hz) override;
     void advanceCycles(int cycles) override;
     void onReset() override;
@@ -63,6 +64,7 @@ private:
     pom2::ay::DcBlocker psgDc_[2];
     std::deque<std::array<float, 2>> pcm_;
     double cpuHz_ = 1022727, busHz_ = 1022727;
+    double machineCpuHz_ = 0; // VIA divider only; zero keeps standalone hosts' clock
     bool busClockSet_ = false;
     double viaPhase_ = 0, speechPhase_ = 0, samplePhase_ = 0;
     uint32_t rate_ = kAudioSampleRate;

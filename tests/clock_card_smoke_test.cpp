@@ -491,6 +491,73 @@ void testTpRatesAreExactToOnePulse()
     }
 }
 
+// Menu pacing must leave both guest-visible oscillator phases untouched,
+// while a hardware accelerator changes their CPU-cycle representation.
+void testMachineClockOwnsOscillators()
+{
+    // Exact 250-cycle TP half-period makes the pending-edge assertion
+    // independent of Q8 quantisation on either video standard.
+    ClockCard timer(4);
+    timer.setMachineCpuClock(1024000);
+    armTpInterrupts(timer, 6);
+    timer.advanceCycles(100);
+    timer.setCpuClock(16384000);
+    timer.setMachineCpuClock(4096000);
+    timer.advanceCycles(599);
+    assert(!timer.slotIrqAsserted());
+    timer.advanceCycles(1);
+    assert(timer.slotIrqAsserted());
+
+    for (const int stock : {1022727, 1015625}) {
+        auto reference = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+        auto paced = ClockCard::makeForTest(4, &fixedTime_2026_05_09_14_37_42);
+        for (ClockCard* card : {reference.get(), paced.get()}) {
+            card->setMachineCpuClock(stock);
+            armTpInterrupts(*card, 6);
+            card->deviceSelectWrite(0, kModeTimeReadShifted | kBitIrqEnable);
+            card->deviceSelectWrite(0, kModeTimeReadShifted | kBitStb | kBitIrqEnable);
+            card->advanceCycles(123);
+        }
+        int edges = 0;
+        for (int c = 0; c < stock; c += 61) {
+            // The controller sends paced first, machine second. Once bound,
+            // neither notification may perturb an unchanged machine clock.
+            paced->setCpuClock(stock * ((c / 61) % 2 ? 4.0 : 0.37));
+            paced->setMachineCpuClock(stock);
+            reference->advanceCycles(61);
+            paced->advanceCycles(61);
+            assert(reference->slotIrqAsserted() == paced->slotIrqAsserted());
+            if (paced->slotIrqAsserted()) ++edges;
+            assert((reference->deviceSelectRead(0) & 0x80) ==
+                   (paced->deviceSelectRead(0) & 0x80));
+        }
+        assert(edges >= 2047 && edges <= 2049);
+
+        // Partway to DATA_OUT's next edge, change the hardware clock.
+        ClockCard phase(4);
+        phase.setMachineCpuClock(stock);
+        phase.deviceSelectWrite(0, kModeTimeReadShifted);
+        phase.deviceSelectWrite(0, kModeTimeReadShifted | kBitStb);
+        const auto level = phase.deviceSelectRead(0) & 0x80;
+        const int elapsed = stock / 3;
+        phase.advanceCycles(elapsed);
+        phase.setCpuClock(stock * 16.0); // paced 4x, hardware 4x
+        phase.setMachineCpuClock(stock * 4.0);
+        phase.advanceCycles((stock - elapsed) * 4 - 1);
+        assert((phase.deviceSelectRead(0) & 0x80) == level);
+        phase.advanceCycles(1);
+        assert((phase.deviceSelectRead(0) & 0x80) != level);
+        paced->setCpuClock(stock * 16.0);
+        paced->setMachineCpuClock(stock * 4.0);
+        const int acceleratedEdges = countIrqPulses(*paced, stock * 4);
+        assert(acceleratedEdges >= 2047 && acceleratedEdges <= 2049);
+        paced->setCpuClock(stock * 4.0);
+        paced->setMachineCpuClock(stock);
+        const int returnedEdges = countIrqPulses(*paced, stock);
+        assert(returnedEdges >= 2047 && returnedEdges <= 2049);
+    }
+}
+
 // Mode code 7 on the PARALLEL C0/C1/C2 field is MODE_TEST, not TP 4096 Hz.
 //
 // MAME `upd1990a.cpp:198-205` `stb_w`: `if (is_serial_mode()) m_c =
@@ -893,6 +960,7 @@ int main()
     testTpRatesProduceExpectedPulseCounts();
 
     testTpRatesAreExactToOnePulse();
+    testMachineClockOwnsOscillators();
     std::printf("TP rates 64/256/2048 Hz → IRQ pulse counts: OK\n");
 
     testModeSevenIsTestNotTp4096();

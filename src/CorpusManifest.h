@@ -49,11 +49,13 @@ struct Device {
     std::string media;     ///< path relative to the corpus root
     std::string sha256;    ///< expected SHA-256 of `media`, "" = unchecked
     int         line = 0;
+    bool        deferred = false; ///< mounted by a swap step, not at boot
 };
 
 struct Step {
-    enum class Kind { Run, Key, Text, Check };
+    enum class Kind { Run, Key, Text, Check, Swap };
     Kind          kind = Kind::Run;
+    std::size_t   deviceIndex = 0; ///< Swap: entry in Title::devices
     double        seconds = 0;   ///< Run: emulated seconds
     std::uint8_t  key = 0;       ///< Key: the 7-bit code
     std::string   text;          ///< Text: typed as pasted; Check: its name

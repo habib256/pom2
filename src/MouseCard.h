@@ -166,6 +166,8 @@ public:
     ///     (SlotBusClock.h).
     /// [D] MAME mouse.cpp:188 @ mame0287 — M68705P3(config, m_mcu, 2043600).
     void    setCpuClock(double hz) override { busClock_.setCpuClock(hz); }
+    // Menu pacing fast-forwards this device along with the machine.
+    void    setMachineCpuClock(double hz) override { busClock_.setCpuClock(hz); }
     void    setStandardClock(double hz) override { busClock_.setBusClock(hz); }
 
 private:

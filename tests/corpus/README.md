@@ -15,7 +15,8 @@ build/pom2_corpus --bless                  # record this run's frames
 ```
 
 Exit 0: nothing failed. Exit 1: a frame changed, a check is unrecorded, or a
-setup failed. Exit 2: usage or manifest error. Exit 77: no title could run.
+setup or scripted disk swap failed. Exit 2: usage or manifest error.
+Exit 77: no title could run (also with `--bless`).
 
 ## What a check compares
 
@@ -76,6 +77,8 @@ run   <seconds>                        # emulated seconds, at the profile's cloc
 key   <RETURN|LEFT|RIGHT|UP|DOWN|ESC|SPACE|TAB|DELETE|c|$hh>
 type  "<text>"                         # pasted; \r \n \t \\ \" escapes
 check <name>                           # hash the frame now
+swap <1|2> <path> [sha256=<hex>]        # replace an initially mounted Disk II
+                                      # disk at this point, without reboot
 ```
 
 The parser refuses an unknown keyword, a duplicate title or check, a slot
@@ -84,4 +87,16 @@ title with no check. Each refusal is pinned in `corpus_manifest`.
 
 `corpus.expected` holds one line per check, `<title> <check> <hash>
 fw=<fingerprint>`. `--bless` writes it sorted and replaces only the titles
-that ran.
+whose scripts completed. An interrupted script retains all its old lines
+and makes the command fail, even if earlier checks succeeded. Completed
+titles with changed frame hashes can still be blessed deliberately.
+
+## Optional protected disks
+
+[protected.md](protected.md) records the sources and temporary-download recipe
+for Captain Goodnight (including its side-B swap), Prince of Persia and
+Bandits (real FLUX tracks).
+`protected.manifest` and `protected.expected` are separate from the default
+corpus: commercial images are neither tracked nor packaged. All swap media
+are copied and hash-checked before the title starts, just like initial media.
+A missing or mismatched side B skips the whole title, never a partial pass.

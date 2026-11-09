@@ -2932,8 +2932,8 @@ from it, and the lazy sync advances the VIAs by `busTicks(cpuCycles)`, a
 CPU→phase-0 divider with a fractional carry that passes through at ratio 1.
 `setMachineCpuClock` supplies the divider's CPU rate without menu pacing.
 Before 2026-09-29 a TransWarp made every note 3.5× sharp and every T1-paced
-tune 3.5× fast. Since 2026-11-09 the Mockingboard also consumes
-`setMachineCpuClock`: its VIA divider uses the machine's CPU clock without
+tune 3.5× fast. Since 2026-11-09 the Mockingboard and Phasor also consume
+`setMachineCpuClock`: their VIA dividers use the machine's CPU clock without
 menu pacing, so x2/x4 fast-forward both VIAs along with the machine while a
 hardware accelerator still leaves phase 0 alone. AY event replay and its
 jitter-buffer lag scale by `setCpuClock / setMachineCpuClock`; the tone
@@ -2941,8 +2941,18 @@ generators retain their nominal clock and pitch. The timer matrix in
 `accelerator_clock_chunk` covers PAL/NTSC, x1/x2/x4, half speed, MAX and a
 TransWarp; `mockingboard_audio_quality` covers dense replay at x4 on desktop
 and browser buffer sizes, also combined with a hardware accelerator.
-**Open: other cards under a non-stock `--speed` (CPU-1, bug hunt 2026-11-01
-round 2).** Handing the cards the speed-scaled clock instead was tried and
+The same machine-clock contract now covers MouseCard's MCU, E-Z Color's
+VDP, SNES MAX's seven-tick latch and Echo+ TMS5220's VIA. Echo+ keeps its
+speech/PCM conversion on the paced CPU clock. `snesmax_card` and
+`echoplus_tms5220` cover speed transitions; Phasor PWM replay is covered by
+`phasor_timeline`. SoftCard Z80, SoftCard II, Premium SoftCard, Applicard,
+ALS CP/M, Liron and Workstation Card now use the machine clock for their
+guest-cycle budgets too. ClockCard and MouseCardAppleWin preserve pending
+timer phases across menu changes and rescale them on hardware-clock changes.
+ClockCard's calendar still uses host civil time. Remaining CPU-1 work concerns
+SSI263 guest timing, hybrid speech/PCM timelines and the Super Serial Card's
+guest-timer versus external-transport contract.
+Handing the cards the speed-scaled clock instead was tried and
 withdrawn on 2026-11-06: `setStandardClock` carries two meanings a speed must
 treat differently. As a RATIO against the CPU clock (`SlotBusClock`: the VIAs,
 the Disk II sequencer's steps, the SoftCard Z80) it must follow the speed, or a
@@ -2951,7 +2961,7 @@ cycles (the Sony platter's RPM, a WOZ FLUX track's 125 ns ticks, the SSI263's
 XCK) it must stay nominal, or at 2× a FLUX track and a 3.5" platter turn half
 as fast as the sequencer and the IWM expect, and the disk stops reading. The
 fix separates machine time from wall time in the card clock API, card by card.
-`PhasorCard` still needs that separation. Until `setStandardClock` is first
+Until `setStandardClock` is first
 called the card follows the CPU clock (hand-built cards in tests). Pinned by
 `mockingboard_smoke`, `phasor_card_smoke` (3.5× cases) and
 `accelerator_clock_chunk`. The **event queue** it once lacked arrived on 2026-09-09:
@@ -4171,6 +4181,17 @@ A `.hdv` suffix keeps a small volume on the hard-disk route; extension and
 geometry still select the loader, whose content checks determine acceptance.
 
 ### DiskImage
+
+The 35 × 6656-byte nibble buffers live in a fixed-count vector on the heap
+(STORAGE-003, 2026-11-09). On this ARM64 build the object shrinks from
+253624 to 20688 bytes; copies remain deep, moves transfer the buffers.
+Session memory accounting includes their capacity. A moved-from image must
+be destroyed, reassigned, ejected or reloaded before inspection; `loadFile`
+clears its stale dirty state before flushing. The session validator ejects
+its sources after moving them, so destruction cannot flush a pending burst
+through transferred buffers. Stack, copy/move/reload and session-burst
+regressions cover these contracts; measurements are recorded in the
+[consolidation audit](docs/audits/core-consolidation-2026-11-09.md).
 
 **An address field routes only when its checksum checks out** *(2026-09-08,
 bug hunt #5)*. `decodeNibbles` / `decodeNibbles13` check `vol ^ trk ^ sec`

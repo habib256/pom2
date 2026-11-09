@@ -115,6 +115,22 @@ int main()
         expect(false, "two titles");
     }
 
+    {
+        Manifest swaps;
+        expect(parses("title flip iie\ndiskii 1 a.woz\nrun 30\nswap 1 b.woz\nkey SPACE\ncheck game\n", swaps, error),
+               "a scripted disk flip parses");
+        if (!swaps.titles.empty()) {
+            const auto& flip = swaps.titles.front();
+            expect(flip.devices.size() == 2 && flip.devices[1].deferred,
+                   "side B is not mounted at boot");
+            expect(flip.steps[1].kind == Step::Kind::Swap && flip.steps[1].deviceIndex == 1,
+                   "swap retains its place and media index");
+        }
+        refuses("title flip iie\nswap 1 b.woz\ncheck x\n", 2, "swap without initial mount");
+        refuses("title flip iie\ndiskii 1 a.woz\nswap 2 b.woz\ncheck x\n", 3, "swap wrong drive");
+        refuses("title flip iie\ndiskii 1 a.woz\nswap 1 b.woz sha256=no\ncheck x\n", 3, "swap bad hash");
+    }
+
     // ── Refusals, each on its line.
     refuses("run 5\n", 1, "a step before any title");
     refuses("title a iie\n  frob 1\n  check x\n", 2, "an unknown keyword");

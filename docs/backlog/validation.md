@@ -17,7 +17,7 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [VALIDATION-006](#validation-006) | ✅ | Done 2026-11-06 | Headless compatibility corpus with a published pass rate |
 | [VALIDATION-001](#validation-001) | 🟡 | Needs hardware oracle | Disk II opposing-magnet response on a real //c |
-| [VALIDATION-003](#validation-003) | 🟡 | Partial: make repeatable | Spiradisc / RWTS18 |
+| [VALIDATION-003](#validation-003) | 🟡 | Partial: automated boot/gameplay checks | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
 | [VALIDATION-005](#validation-005) | 🟢 | Unknown: GUI-only, retest on 1.0 | A2 File Cmd one-in-three GUI-only DHGR failure |
 
@@ -47,8 +47,7 @@ one-cycle device-timing regression.
 
 **Left for later, by name:** the `docs/test_corpus.md` titles whose media are
 not in the tree or the archive (DROL, the Purplesoft and Extasie disks); the
-protected-disks set, once VALIDATION-003 records its WOZ SHA-256s; a //c-class
-title (the facade boots them, none is in the manifest yet); and the check
+remaining protected titles beyond the optional protected corpus; and the check
 itself stays a *change detector*. Whether a frame is right was decided by eye
 when it was blessed, and audio is not compared at all.
 
@@ -129,6 +128,14 @@ completion, other captures and physical-hardware comparison remain unverified.
 These are dated manual observations, not automated protection goldens.
 Rerun on 2026-10-27 after the Disk II stock-time change: the same
 milestones reproduced (audit, "Rerun 2026-10-27").
+
+**2026-11-09:** [protected.manifest](../../tests/corpus/protected.manifest)
+records these media's SHA-256s and replay scripts, including Captain's side-B
+swap. Three titles / nine visually reviewed checks pass (Captain, Prince,
+and Bandits); Bandits adds a real INFO-v3 FLUX capture, with reads observed
+on all 19 FLUX positions during boot. [Evidence and scope](../audits/core-consolidation-2026-11-09.md).
+Later gameplay and hardware comparison remain outside these checks.
+
 
 <a id="validation-004"></a>
 

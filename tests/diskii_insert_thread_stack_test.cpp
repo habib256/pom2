@@ -23,7 +23,8 @@
 // macOS gives it 512 KB and ___chkstk_darwin's probe walked off the guard
 // page. The AI control server's HTTP thread reaches insertDisk exactly like
 // this, so the crash was a real app crash, not a test artefact. The fix
-// heap-allocates the temporaries (see the NOTE on `class DiskImage`).
+// heap-allocated the temporaries. STORAGE-003 now moves the track storage
+// itself off the stack; direct value copies below cover the whole class.
 //
 // To make the regression fail on EVERY platform rather than only where the
 // default thread stack happens to be small, the insert runs here on a pthread
@@ -77,6 +78,29 @@ struct InsertJob {
 // same-file-still-dirty re-read (installDisk → prepareDisk → loadFile).
 void runInserts(InsertJob& job)
 {
+    // Three values alone exceeded 512 KiB before STORAGE-003. Check actual
+    // nibble content, copy independence, move and reuse through the loader.
+    static_assert(sizeof(DiskImage) < 32 * 1024, "track buffers returned to the stack");
+    DiskImage first;
+    first.setWriteBackEnabled(false);
+    assert(first.loadFile(*job.pathA));
+    DiskImage second(first);
+    const auto original = first.nibbleAt(0, 0);
+    second.setWriteBackEnabled(true);
+    second.writeNibbleAt(0, 0, original ^ 1);
+    assert(first.nibbleAt(0, 0) == original);
+    assert(second.nibbleAt(0, 0) == (original ^ 1));
+    DiskImage third(std::move(second));
+    assert(third.nibbleAt(0, 0) == (original ^ 1));
+    assert(second.loadFile(*job.pathB));
+    assert(second.nibbleAt(0, 0) == original);
+    third = first;
+    assert(third.nibbleAt(0, 0) == original);
+    third = std::move(second);
+    assert(third.isLoaded());
+    second.eject();
+    assert(second.loadFile(*job.pathA));
+
     bool ok = job.card->insertDisk(0, *job.pathA);
     ok = ok && job.card->insertDisk(0, *job.pathB);
     ok = ok && job.card->ejectDisk(0);

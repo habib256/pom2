@@ -40,6 +40,10 @@ void framing() {
     const auto path = makeDisk("pom2-session-framing.dsk", DiskImage::kBytesPerImage);
     const Blob original = read(path);
     auto image = std::make_unique<DiskImage>(), restored = std::make_unique<DiskImage>();
+    // Session memory limits include the heap-backed nibble buffers, even
+    // before a medium is loaded or any derived bit/flux streams are built.
+    assert(image->sessionStorageBytes() >= sizeof(DiskImage) +
+           size_t(DiskImage::kTracks) * DiskImage::kNibblesPerTrack);
     image->setWriteBackEnabled(true); assert(image->loadFile(path));
     const int64_t ticks[] = {0, 8, 24, 40, 56, 64, 80, 96, 112, 120, 136, 152, 160, 176, 192};
     image->writeFlux(0, 0, 29, 15, ticks, 0); // capture in the middle of a nibble/cell
@@ -108,6 +112,78 @@ void diskII() {
     assert(disk->driveImage(0).saveDirty() && read(path) == original);
     auto legacy = changed; legacy.version = 4;
     assert(!pom2::restoreSession(legacy, state.cpu(), state.memory(), ctrl->machineId(), error));
+    std::filesystem::remove(path);
+}
+void diskIIPendingBurst() {
+    const auto path = makeDisk("pom2-session-pending-burst.nib",
+                               size_t(DiskImage::kTracks) * DiskImage::kNibblesPerTrack);
+    auto source = std::make_unique<DiskIICard>(6);
+    source->setWriteBackEnabled(true); assert(source->insertDisk(path));
+    source->deviceSelectWrite(0x9, 0); // motor on
+    source->deviceSelectWrite(0xF, 0); // write mode
+    Blob runtime; source->appendSnapshotState(runtime);
+    // Construct a valid captured controller burst without a firmware fixture.
+    // The v3 media blocks precede v4's count, line level and start timestamp.
+    size_t burst = DiskIICard::kSnapFixedBytes;
+    for (int d = 0; d < DiskIICard::kDriveCount; ++d)
+        if (runtime[burst++]) burst += 8 + DiskImage::kMediaSnapshotBytes;
+    const auto put64 = [&](size_t pos, uint64_t value) {
+        for (int i = 0; i < 8; ++i) runtime[pos + size_t(i)] = uint8_t(value >> (8 * i));
+    };
+    // lssCycle and cpuCycleTotal precede the two per-drive clock arrays.
+    const size_t clocks = DiskIICard::kSnapFixedBytes - 2 * DiskIICard::kDriveCount * 8 - 16;
+    runtime[9] = 1; // MODE_ACTIVE, including on hosts without a P6 ROM
+    put64(clocks, 128); put64(clocks + 8, 64);
+    runtime[burst] = 1;
+    put64(burst + 5, 0);
+    runtime.insert(runtime.begin() + burst + 13, 8, 0);
+    put64(burst + 13, 8);
+    source->loadSnapshotState(runtime.data(), runtime.size());
+    Blob captured; source->appendSnapshotState(captured);
+    assert(captured[burst] == 1); // capture really contains an unflushed transition
+    Blob saved; std::string error;
+    assert(source->appendSessionState(saved, error));
+    auto target = std::make_unique<DiskIICard>(6);
+    DiskIICard::SessionRestore prepared;
+    // Rejected file input must not execute its untrusted write burst during
+    // validator destruction. This span overflows the nibble cell count if
+    // flushed, producing a length_error instead of an ordinary refusal.
+    Blob invalid = saved;
+    const uint64_t excessive = uint64_t{1} << 34;
+    for (int i = 0; i < 8; ++i) invalid[4 + clocks + size_t(i)] = uint8_t(excessive >> (8 * i));
+    assert(!target->prepareSessionState(invalid.data(), invalid.size(), prepared, error, true, true));
+    assert(error == "invalid session Disk II timeline");
+    // A consistent CPU/LSS pair must not conceal an enormous pending write.
+    for (int i = 0; i < 8; ++i)
+        invalid[4 + clocks + 8 + size_t(i)] = uint8_t((excessive / 2) >> (8 * i));
+    assert(!target->prepareSessionState(invalid.data(), invalid.size(), prepared, error, true, true));
+    assert(error == "invalid session Disk II timeline");
+    for (uint64_t span : {uint64_t{400000}, uint64_t{400002}}) {
+        Blob boundary = saved;
+        for (int i = 0; i < 8; ++i) {
+            boundary[4 + clocks + size_t(i)] = uint8_t(span >> (8 * i));
+            boundary[4 + clocks + 8 + size_t(i)] = uint8_t((span / 2) >> (8 * i));
+        }
+        assert(target->prepareSessionState(boundary.data(), boundary.size(), prepared, error, true, true)
+               == (span == 400000));
+    }
+    // Capture also refuses unsupported spans rather than writing an archive
+    // that its own loader cannot restore. Leave the destination untouched.
+    Blob excessiveRuntime = runtime;
+    for (int i = 0; i < 8; ++i) {
+        excessiveRuntime[clocks + size_t(i)] = uint8_t(excessive >> (8 * i));
+        excessiveRuntime[clocks + 8 + size_t(i)] = uint8_t((excessive / 2) >> (8 * i));
+    }
+    source->loadSnapshotState(excessiveRuntime.data(), excessiveRuntime.size());
+    Blob refused{0x45};
+    assert(!source->appendSessionState(refused, error));
+    assert(refused == Blob{0x45});
+    source->loadSnapshotState(runtime.data(), runtime.size());
+    // The temporary validator must not flush after moving its track buffers.
+    assert(target->prepareSessionState(saved.data(), saved.size(), prepared, error, true, true));
+    assert(prepared.media[0]->isLoaded());
+    assert(prepared.runtime.size() == runtime.size());
+    source->driveImage(0).eject(); // discard this test's synthetic host write
     std::filesystem::remove(path);
 }
 void raw35() {
@@ -185,6 +261,6 @@ void sonyPartialWrite() {
 }
 }
 int main() {
-    framing(); diskII(); raw35(); captured35(); sonyPartialWrite();
+    framing(); diskII(); diskIIPendingBurst(); raw35(); captured35(); sonyPartialWrite();
     std::puts("writable session media: all passed");
 }

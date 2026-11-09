@@ -84,6 +84,12 @@ void EchoPlusTMS5220Card::setCpuClock(double hz) {
         cpuHz_ = hz; if (!busClockSet_) busHz_ = hz;
     }
 }
+void EchoPlusTMS5220Card::setMachineCpuClock(double hz) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    // No sync here, for the same instruction-boundary reason as setCpuClock.
+    if (std::isfinite(hz) && hz >= 100000 && hz <= 1000000000)
+        machineCpuHz_ = hz;
+}
 void EchoPlusTMS5220Card::setStandardClock(double hz) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (std::isfinite(hz) && hz >= 100000 && hz <= 10000000) {
@@ -120,7 +126,8 @@ void EchoPlusTMS5220Card::advanceCycles(int cycles) {
     else if (cycles > 0) { advance(uint64_t(cycles)); lastCycle_ += uint64_t(cycles); }
 }
 void EchoPlusTMS5220Card::advance(uint64_t cycles) {
-    const double ticks = double(cycles) * busHz_ / cpuHz_ + viaPhase_;
+    const double ticks = double(cycles) * busHz_ /
+        (machineCpuHz_ > 0 ? machineCpuHz_ : cpuHz_) + viaPhase_;
     const auto whole = uint64_t(ticks);
     viaPhase_ = ticks - double(whole);
     for (uint64_t left = whole; left;) {

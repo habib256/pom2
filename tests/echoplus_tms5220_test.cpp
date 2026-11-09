@@ -15,7 +15,55 @@ void writeAy(EchoPlusTMS5220Card& card, int chip, uint8_t reg, uint8_t value) {
     card.slotRomWrite(0, select | 7); card.slotRomWrite(0, select | 4);
     card.slotRomWrite(1, value); card.slotRomWrite(0, select | 6); card.slotRomWrite(0, select | 4);
 }
+void checkMachineClock() {
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            EchoPlusTMS5220Card paced;
+            paced.setStandardClock(stock);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                paced.setCpuClock(stock * accelerator * pacing);
+                paced.setMachineCpuClock(stock * accelerator);
+                for (int low : {4, 8}) {
+                    paced.slotRomWrite(low, 0xFF);
+                    paced.slotRomWrite(low + 1, 0xFF);
+                }
+                paced.advanceCycles(1000 * accelerator);
+                // Loading starts at $FFFF; the first tick is the VIA's
+                // reload delay. Both timers then retire 999 ticks.
+                for (int low : {4, 8}) {
+                    const unsigned count = paced.slotRomRead(low) |
+                        (unsigned(paced.slotRomRead(low + 1)) << 8);
+                    assert(count == 0xFFFF - 999 &&
+                           "menu pacing must not divide the Echo+ VIA clock");
+                }
+            }
+        }
+
+    // Only VIA conversion changes. At the same paced CPU rate, speech and
+    // PCM must match a standalone host that supplies setCpuClock alone.
+    EchoPlusTMS5220Card paced, reference;
+    for (auto* card : {&paced, &reference}) {
+        card->setStandardClock(1000000);
+        card->setCpuClock(8000000);
+        card->slotRomWrite(3, 0xFF); card->slotRomWrite(2, 0xFF);
+        writeAy(*card, 0, 0, 64); writeAy(*card, 0, 7, 0x3E); writeAy(*card, 0, 8, 15);
+        const std::array<uint8_t, 16> voice = {69,9,33,34,34,146,84,165,42,85,169,74,85,170,82,149};
+        card->deviceSelectWrite(0, 0x60);
+        for (auto byte : voice) card->deviceSelectWrite(0, byte);
+    }
+    paced.setMachineCpuClock(4000000);
+    for (int block = 0; block < 8; ++block) {
+        paced.advanceCycles(80000); reference.advanceCycles(80000);
+        std::array<float, 441> actual{}, expected{};
+        paced.audioSource()->fillAudioBuffer(actual.data(), int(actual.size()));
+        reference.audioSource()->fillAudioBuffer(expected.data(), int(expected.size()));
+        assert(actual == expected && "the machine clock must not retime speech or PCM");
+        assert(std::any_of(actual.begin(), actual.end(), [](float v) { return std::abs(v) > 0.001f; }));
+        assert(paced.deviceSelectRead(0) == reference.deviceSelectRead(0));
+    }
+}
 int main() {
+    checkMachineClock();
     EchoPlusTMS5220Card card;
     card.setCpuClock(1000000);
     assert(card.deviceSelectRead(0) == 0x7F);

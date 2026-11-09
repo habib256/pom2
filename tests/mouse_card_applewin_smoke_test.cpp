@@ -786,6 +786,45 @@ void test_timedata_sets_the_vbl_rate()
     assert(n >= 58 && n <= 63);   // the rig's ~61 at a steady clock, ±2
 }
 
+// The PAL card's default 60 Hz timer is off the beam. Menu pacing cannot
+// move its pending edge; a real accelerator must preserve the time left.
+void test_offbeam_machine_clock_transitions()
+{
+    const auto path = writeTempBlob(std::vector<uint8_t>(0x800, 0), "offbeam_clock.bin");
+    for (const bool accelerate : {false, true}) {
+        Memory mem;
+        mem.setVideoStandard(VideoStandard::PAL);
+        auto card = std::make_unique<MouseCardAppleWin>(4);
+        assert(card->loadRom(path));
+        auto* raw = card.get();
+        mem.slotBus().plug(4, std::move(card));
+        raw->onReset();
+        raw->setVblCycles(20280);
+        constexpr double stock = 1015625.0;
+        raw->setStandardClock(stock);
+        raw->setMachineCpuClock(stock);
+        constexpr uint16_t base = 0xC0C0;
+        primePiaForOutput(mem, base);
+        pulseCommand(mem, base, 0x08); // VBL interrupts, default 60 Hz
+        mem.advanceCycles(1);         // phase the independent timer
+        const int period = static_cast<int>(stock / 60.0 + 0.5);
+        const int elapsed = period / 3;
+        mem.advanceCycles(elapsed);
+        for (int n = 0; n < 100; ++n) {
+            raw->setCpuClock(stock * (n % 2 ? 4.0 : 0.37));
+            raw->setMachineCpuClock(stock);
+        }
+        const int mul = accelerate ? 4 : 1;
+        raw->setCpuClock(stock * mul * 4.0);
+        raw->setMachineCpuClock(stock * mul);
+        mem.advanceCycles((period - elapsed) * mul - 1);
+        assert(!raw->slotIrqAsserted());
+        mem.advanceCycles(1);
+        assert(raw->slotIrqAsserted());
+    }
+    std::remove(path.c_str());
+}
+
 // TN Mouse #3: with the mouse off "any mouse motion is ignored" and the
 // position is kept until it is turned back on — the pointer must not jump
 // by the distance travelled meanwhile.
@@ -857,6 +896,7 @@ int main()
     test_vbl_irq_on_beam_under_accelerator();
     test_getclamp_reads_the_window_and_leaves_the_pointer();
     test_timedata_sets_the_vbl_rate();
+    test_offbeam_machine_clock_transitions();
     test_mouse_off_ignores_motion();
     test_fast_motion_does_not_wrap();
 

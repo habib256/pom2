@@ -19,7 +19,7 @@ an explicit request before scheduling.
 | [STORAGE-002](#storage-002) | 🟡 | Partial: API gap; needs decision | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🧊 | Frozen — triage 2026-10-28 | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🧊 | Frozen — deliberate limit | A `.nib` track is not normalised to one 200 ms revolution |
-| [STORAGE-003](#storage-003) | 🟢 | Confirmed open: measure first | `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed. |
+| [STORAGE-003](#storage-003) | ✅ | Done 2026-11-09 | Heap-backed `DiskImage` track storage and constrained-stack coverage |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
 
@@ -121,11 +121,17 @@ the format-documentation criterion; it does not claim a new test execution.
 
 <a id="storage-003"></a>
 
-## STORAGE-003 — `DiskImage` is a 242 KB object, and the stack-overflow class is only patched, not closed.
+## STORAGE-003 — Heap-backed DiskImage track storage
 
-**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): best-of-9 `pom2_bench` with `tracks` on the heap before adopting.
+**Priority:** ✅ · **State:** Done 2026-11-09. The track buffers are heap-backed;
+ARM64 object size is 20688 bytes instead of 253624. Copies/moves/reloads and
+three simultaneous values run under a constrained 512 KiB stack. Session
+accounting includes the buffers, and validators eject moved-from media before
+destruction. [Validation and timing limits](../audits/core-consolidation-2026-11-09.md).
 
-**Acceptance criterion (after revalidation):** Remove large DiskImage stack temporaries at the remaining sites and run constrained-stack media tests.
+The original rationale below describes the pre-change implementation.
+
+**Acceptance criterion:** Remove the large in-object buffers and run constrained-stack media tests plus before/after benchmarks.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1499). Original dates and estimates are retained below.
 

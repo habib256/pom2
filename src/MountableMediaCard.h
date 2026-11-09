@@ -278,6 +278,11 @@ public:
     /// whose flag the capture had retired, were gone with it.
     virtual void restoreFlushBayDirty(int /*bay*/, uint64_t /*lineage*/) {}
 
+    /// Successful deferred flush: report a diverted target to the same mount.
+    /// Caller holds stateMutex; a replacement medium must remain untouched.
+    virtual void noteFlushBayDiversion(int /*bay*/, uint64_t /*lineage*/,
+                                       const std::string& /*path*/) {}
+
     /// Phase 1 of a two-phase EJECT, with `stateMutex` held: lift out what
     /// the save-on-eject would write, WITHOUT touching the medium. Leaving it
     /// mounted is the point — phase 2 can fail (disk full, read-only parent),
