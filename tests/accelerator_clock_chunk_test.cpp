@@ -155,6 +155,83 @@ void checkMockingboardStaysOnPhase0()
            "an accelerator re-clocked the Mockingboard's 6522");
 }
 
+// Menu pacing fast-forwards the whole machine. Compare all four counters
+// against elapsed machine time, including speed changes and a real TransWarp:
+// the menu multiplier must disappear from the divider, the accelerator must
+// remain. Exercise the controller fan-out and per-instruction lazy catch-up.
+void checkMockingboardFollowsSpeedMenu()
+{
+    for (auto standard : {VideoStandard::NTSC, VideoStandard::PAL}) {
+        const auto& vt = pom2VideoTiming(standard);
+        for (bool accelerated : {false, true}) {
+            EmulationController c(AudioDevice::OutputMode::Offline);
+            MockingboardCard* mb;
+            {
+                auto st = c.lockState();
+                if (accelerated) {
+                    auto tw = std::make_unique<pom2::TranswarpCard>(4);
+                    tw->setMemory(&st.memory());
+                    st.memory().slotBus().plug(4, std::move(tw));
+                }
+                auto card = std::make_unique<MockingboardCard>(5);
+                card->setCpu(&st.cpu());
+                mb = card.get();
+                st.memory().slotBus().plug(5, std::move(card));
+            }
+            loadNops(c);
+            c.setMode(EmulationController::Mode::Running);
+            // No setVideoStandard between transitions: the chunk fan-out
+            // must update the card when the menu alone changes its budget.
+            c.setCyclesPerFrame(vt.cyclesPerFrame);
+            c.setVideoStandard(standard);
+            for (int budget : {vt.cyclesPerFrame, 2 * vt.cyclesPerFrame,
+                               4 * vt.cyclesPerFrame, vt.cyclesPerFrame,
+                               vt.cyclesPerFrame / 2, 1'000'000}) {
+                c.setCyclesPerFrame(budget);
+                c.tickFrame(); // settle clock fan-out and instruction residue
+                uint16_t before[2][2];
+                uint64_t start;
+                auto counter = [&](int chip, int timer) {
+                    const int reg = timer == 0 ? 4 : 8;
+                    return static_cast<uint16_t>(mb->peekViaRegister(chip, reg) |
+                        (mb->peekViaRegister(chip, reg + 1) << 8));
+                };
+                {
+                    auto st = c.lockState();
+                    for (int chip = 0; chip < 2; ++chip) {
+                        const int base = chip * 0x80;
+                        mb->slotRomWrite(base + 0x0B, 0); // one-shot T1, timed T2
+                        mb->slotRomWrite(base + 0x04, 0xFF);
+                        mb->slotRomWrite(base + 0x05, 0xFF);
+                        mb->slotRomWrite(base + 0x08, 0xFF);
+                        mb->slotRomWrite(base + 0x09, 0xFF);
+                        for (int t = 0; t < 2; ++t) before[chip][t] = counter(chip, t);
+                    }
+                    start = st.memory().getCycleCounter();
+                }
+                c.tickFrame();
+                auto st = c.lockState();
+                const auto elapsed = st.memory().getCycleCounter() - start;
+                const double multiplier = accelerated ? 3.5 : 1.0;
+                const auto ticks = static_cast<uint64_t>(elapsed / multiplier);
+                for (int chip = 0; chip < 2; ++chip) {
+                    for (int t = 0; t < 2; ++t) {
+                        // T1 reloads its $FFFF latch every N+2 ticks; T2
+                        // wraps at 65536. MAX crosses several such periods.
+                        const auto expected = static_cast<uint16_t>(t == 0 ? ticks % 65537 : ticks);
+                        const auto got = static_cast<uint16_t>(before[chip][t] - counter(chip, t));
+                        assert(std::abs(static_cast<int16_t>(got - expected)) <= 3 &&
+                               "the Mockingboard timer must follow menu pacing, not CPU acceleration");
+                    }
+                }
+                std::printf("  Mockingboard %s budget %d, accelerator %.1fx: timers follow %llu CPU cycles\n",
+                    standard == VideoStandard::PAL ? "PAL" : "NTSC", budget, multiplier,
+                    static_cast<unsigned long long>(elapsed));
+            }
+        }
+    }
+}
+
 // The //e aux slot is SlotBus slot 0 (PremiumSoftCard::kAuxSlot), and every
 // clock fan-out walked slots 1-7: the Premium SoftCard's Z80 divided by the
 // stock NTSC 1 022 727 Hz for ever — 0.7 % fast on PAL, ~3.5x under a
@@ -247,6 +324,7 @@ int main()
     }
     // 5. The accelerator must leave phase-0 devices alone.
     checkMockingboardStaysOnPhase0();
+    checkMockingboardFollowsSpeedMenu();
     // 6. The //e aux slot (slot 0) is a card too.
     checkAuxSlotGetsTheClock();
     std::puts("accelerator_clock_chunk OK");

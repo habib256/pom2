@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // NatHost — the host's network stack as the built-in virtual network uses
-// it: non-blocking TCP and UDP sockets, and nothing else.
+// it: non-blocking IPv4/IPv6 TCP and UDP sockets, explicit host listeners,
+// and a blocking native DNS exchange used only by bounded resolver workers.
 //
 // A seam, for the reason `W5100Socket.h` is one: the relays (NatTcp, NatUdp)
 // are state machines worth testing exhaustively, and a test that needs a real
@@ -11,16 +12,14 @@
 // the test IS the remote peer. `makeHostNetwork()` (NatHostSockets.cpp) is
 // the production implementation over SocketCompat.h — POSIX and Winsock.
 //
-// No call waits. The backend is pumped from the CPU thread under stateMutex
+// No socket call waits. The backend is pumped from the CPU thread under stateMutex
 // (NetworkBackend.h), so an operation that would block reports that and
 // returns.
 //
 // Addresses and ports are HOST byte order here, as everywhere in the NAT.
 //
-// [D] Shape after Casso `Seams/IHostNetwork.h` @ 2d899adf (MIT). Not taken:
-//     its Listen/Accept (POM2's built-in network forwards no inbound port)
-//     and its DNS-server query (POM2 answers DNS from the host RESOLVER
-//     instead of relaying to a server — NatDns.h says why).
+// [D] Shape after Casso `Seams/IHostNetwork.h` @ 2d899adf (MIT), extended
+//     with IPv6 and host-configured listeners; guests cannot open listeners.
 
 #ifndef POM2_NAT_HOST_H
 #define POM2_NAT_HOST_H
@@ -28,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include "NatPacket.h"
 
 namespace pom2 {
 namespace nat {
@@ -35,6 +35,8 @@ namespace nat {
 struct Endpoint {
     uint32_t ip   = 0;
     uint16_t port = 0;
+    Ipv6 ipv6{};
+    bool isIpv6 = false;
 };
 
 enum class ConnectState : uint8_t { Pending, Connected, Failed };
@@ -59,6 +61,7 @@ public:
     virtual IoStatus     receive(uint8_t* buffer, std::size_t capacity, std::size_t& received) = 0;
     /// Half-close: this side has no more to send; receiving goes on.
     virtual void         shutdownSend() = 0;
+    virtual std::unique_ptr<HostSocket> accept(Endpoint& /*peer*/) { return nullptr; }
 
     // ── UDP ───────────────────────────────────────────────────────────────
     /// False when the datagram could not be sent; UDP permits the loss.
@@ -78,10 +81,17 @@ public:
     /// to choose a port on the host (W5100Device's `localPortAllowed` draws
     /// the same line for the Uthernet II).
     virtual std::unique_ptr<HostSocket> openUdp() = 0;
+    virtual std::unique_ptr<HostSocket> openTcp6() { return nullptr; }
+    virtual std::unique_ptr<HostSocket> openUdp6() { return nullptr; }
+    /// Explicit host-side publication only; no guest packet can bind a port.
+    virtual std::unique_ptr<HostSocket> listenTcp(const Endpoint&) { return nullptr; }
+    virtual std::unique_ptr<HostSocket> bindUdp(const Endpoint&) { return nullptr; }
 };
 
 /// The host's real sockets, or nullptr on a build with none (the browser).
 std::unique_ptr<HostNetwork> makeHostNetwork();
+/// Blocking native DNS exchange. Only called on DnsProxy's bounded workers.
+Bytes queryHostDns(const Bytes& query);
 
 }  // namespace nat
 }  // namespace pom2

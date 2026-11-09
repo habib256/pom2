@@ -7,8 +7,11 @@
 #include "NatDns.h"
 
 #include "W5100Resolver.h"
+#include "ThreadGuard.h"
 
 #include <cstring>
+#include <algorithm>
+#include <thread>
 
 namespace pom2 {
 namespace nat {
@@ -109,13 +112,20 @@ void DnsProxy::query(uint16_t guestPort, View payload, uint64_t nowMs, const Emi
         return;
     }
     Bytes asked(payload.data, payload.data + question.end);   // header + question
+    // The native exchange sends precisely this single question. In particular
+    // an EDNS additional record was not copied, so its count must not survive.
+    wr16(asked.data() + 6, 0); wr16(asked.data() + 8, 0); wr16(asked.data() + 10, 0);
 
-    if (question.klass != kClassIn || question.type != kTypeA) {
-        emit(guestPort, reply(asked, kNoError, nullptr));
+    if (question.klass != kClassIn) {
+        emit(guestPort, reply(asked, kNotImp, nullptr));
         return;
     }
-    if (!plainHostName(question.name)) {
+    if (!plainHostName(question.name) && !(question.name.empty() && question.type != kTypeA)) {
         emit(guestPort, reply(asked, kNxDomain, nullptr));
+        return;
+    }
+    if (question.type != kTypeA) {
+        queryRaw(guestPort, asked, nowMs, emit);
         return;
     }
     if (!resolver_) {
@@ -133,7 +143,7 @@ void DnsProxy::query(uint16_t guestPort, View payload, uint64_t nowMs, const Emi
         if (p.guestPort == guestPort && rd16(p.query.data()) == rd16(asked.data()))
             return;                                           // the same query again
     }
-    if (pending_.size() >= kMaxPending) {
+    if (pending() >= kMaxPending) {
         emit(guestPort, reply(asked, kServFail, nullptr));
         return;
     }
@@ -165,6 +175,7 @@ void DnsProxy::query(uint16_t guestPort, View payload, uint64_t nowMs, const Emi
 
 void DnsProxy::pump(uint64_t nowMs, const Emit& emit)
 {
+    pumpRaw(nowMs, emit);
     if (pending_.empty() || !resolver_) return;
     resolver_->poll();
     for (std::size_t i = 0; i < pending_.size();) {
@@ -184,6 +195,71 @@ void DnsProxy::pump(uint64_t nowMs, const Emit& emit)
             done = false;
         if (done) pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(i));
         else      ++i;
+    }
+}
+
+void DnsProxy::queryRaw(uint16_t port, const Bytes& query, uint64_t now, const Emit& emit)
+{
+    if (!lookup_) { emit(port, reply(query, kNotImp, nullptr)); return; }
+    std::shared_ptr<Job> job;
+    for (const auto& p : raw_) {
+        if (p.query.size() != query.size() ||
+            !std::equal(query.begin() + 12, query.end(), p.query.begin() + 12)) continue;
+        if (p.port == port && rd16(p.query.data()) == rd16(query.data())) return;
+        job = p.job;
+    }
+    if (pending() >= kMaxPending) { emit(port, reply(query, kServFail, nullptr)); return; }
+    if (!job) {
+        if (tokenMs_) tokens_ = std::min(16.0, tokens_ + (now - tokenMs_) * .004);
+        tokenMs_ = now;
+        if (tokens_ < 1) { emit(port, reply(query, kServFail, nullptr)); return; }
+        tokens_ -= 1;
+        {
+            std::lock_guard<std::mutex> lock(workers_->mutex);
+            if (workers_->active >= kMaxPending) { emit(port, reply(query, kServFail, nullptr)); return; }
+            ++workers_->active;
+        }
+        job = std::make_shared<Job>();
+        auto workers = workers_;
+        auto lookup = lookup_;
+        try {
+            std::thread([job, workers, lookup, query] {
+                Bytes answer;
+                runGuarded("NatDns", [&] { answer = lookup(query); });
+                { std::lock_guard<std::mutex> lock(job->mutex); job->answer = std::move(answer); job->ready = true; }
+                { std::lock_guard<std::mutex> lock(workers->mutex); --workers->active; }
+            }).detach();
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(workers_->mutex);
+            --workers_->active;
+            emit(port, reply(query, kServFail, nullptr));
+            return;
+        }
+    }
+    raw_.push_back({port, query, now + kTimeoutMs, job});
+}
+
+void DnsProxy::pumpRaw(uint64_t now, const Emit& emit)
+{
+    for (auto it = raw_.begin(); it != raw_.end();) {
+        Bytes answer;
+        bool ready;
+        { std::lock_guard<std::mutex> lock(it->job->mutex); ready = it->job->ready; if (ready) answer = it->job->answer; }
+        if (!ready && now < it->deadline) { ++it; continue; }
+        Question asked, returned;
+        parseQuestion({it->query.data(), it->query.size()}, asked);
+        const auto equalName = [](const std::string& a, const std::string& b) {
+            auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : c; };
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
+                [&](char x, char y) { return lower(x) == lower(y); });
+        };
+        if (answer.size() < 12 || answer.size() > 65507 || !(answer[2] & 0x80) ||
+            rd16(answer.data() + 4) != 1 || !parseQuestion({answer.data(), answer.size()}, returned) ||
+            !equalName(returned.name, asked.name) || returned.type != asked.type || returned.klass != kClassIn)
+            answer = reply(it->query, kServFail, nullptr);
+        wr16(answer.data(), rd16(it->query.data()));
+        emit(it->port, answer);
+        it = raw_.erase(it);
     }
 }
 

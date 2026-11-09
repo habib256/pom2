@@ -2921,20 +2921,28 @@ until 2026-08-01 (full reasoning + numbers → `CHANGELOG.md`):
 
 The AY tick rate derives from the **unaccelerated slot bus** clock,
 not an accelerator's CPU clock — pin 22 is the phase-0 line, so PAL runs at
-1 015 625 Hz (12 cents below NTSC). Two clocks reach the card:
+1 015 625 Hz (12 cents below NTSC). Three clocks reach the card:
 `setCpuClock` (accelerated, fanned out by `applyAcceleratorClock` and
 `setVideoStandard`) drives only what is counted in CPU cycles — the
-emuCycles replay cursor, the burst, the SSI263's phoneme timer — while
+audio replay pacing and the SSI263's phoneme timer — while
 `setStandardClock` (the un-multiplied standard clock, from
 `setVideoStandard` and Slot Config Apply, never from the accelerator path)
 feeds `SlotBusClock` (`SlotBusClock.h`): the AY `ticksPerSample` derives
 from it, and the lazy sync advances the VIAs by `busTicks(cpuCycles)`, a
 CPU→phase-0 divider with a fractional carry that passes through at ratio 1.
+`setMachineCpuClock` supplies the divider's CPU rate without menu pacing.
 Before 2026-09-29 a TransWarp made every note 3.5× sharp and every T1-paced
-tune 3.5× fast. **Open: a non-stock `--speed` (CPU-1, bug hunt 2026-11-01
-round 2).** The speed scales `setCpuClock` but not `setStandardClock`, so at 2×
-a T1-paced tune runs at half tempo against the raster and at MAX the VIAs
-barely move. Handing the cards the speed-scaled clock instead was tried and
+tune 3.5× fast. Since 2026-11-09 the Mockingboard also consumes
+`setMachineCpuClock`: its VIA divider uses the machine's CPU clock without
+menu pacing, so x2/x4 fast-forward both VIAs along with the machine while a
+hardware accelerator still leaves phase 0 alone. AY event replay and its
+jitter-buffer lag scale by `setCpuClock / setMachineCpuClock`; the tone
+generators retain their nominal clock and pitch. The timer matrix in
+`accelerator_clock_chunk` covers PAL/NTSC, x1/x2/x4, half speed, MAX and a
+TransWarp; `mockingboard_audio_quality` covers dense replay at x4 on desktop
+and browser buffer sizes, also combined with a hardware accelerator.
+**Open: other cards under a non-stock `--speed` (CPU-1, bug hunt 2026-11-01
+round 2).** Handing the cards the speed-scaled clock instead was tried and
 withdrawn on 2026-11-06: `setStandardClock` carries two meanings a speed must
 treat differently. As a RATIO against the CPU clock (`SlotBusClock`: the VIAs,
 the Disk II sequencer's steps, the SoftCard Z80) it must follow the speed, or a
@@ -2942,7 +2950,8 @@ fast-forward is not one. As an ABSOLUTE rate that turns physical time into
 cycles (the Sony platter's RPM, a WOZ FLUX track's 125 ns ticks, the SSI263's
 XCK) it must stay nominal, or at 2× a FLUX track and a 3.5" platter turn half
 as fast as the sequencer and the IWM expect, and the disk stops reading. The
-fix separates machine time from wall time in the card clock API, card by card. Same on `PhasorCard`. Until `setStandardClock` is first
+fix separates machine time from wall time in the card clock API, card by card.
+`PhasorCard` still needs that separation. Until `setStandardClock` is first
 called the card follows the CPU clock (hand-built cards in tests). Pinned by
 `mockingboard_smoke`, `phasor_card_smoke` (3.5× cases) and
 `accelerator_clock_chunk`. The **event queue** it once lacked arrived on 2026-09-09:
@@ -9022,16 +9031,49 @@ it exists: it is the more complete stack.
 
 | File | Owns |
 |---|---|
-| `NatPacket.*` | Ethernet / ARP / IPv4 / ICMP echo / UDP / TCP, parse and build |
+| `NatPacket.*` | Ethernet / ARP / IPv4 / IPv6 / ICMP echo / UDP / TCP, checksums, bounded fragment reassembly |
 | `NatDhcp.*` | one guest, one fixed lease |
-| `NatDns.*` | the DNS server at 10.0.2.3 — **answered, not relayed** |
+| `NatDns.*` | DNS at 10.0.2.3 and fd00:2::3; asynchronous host lookups and native DNS records |
 | `NatUdp.*`, `NatTcp.*` | the two relays |
 | `NatHost.h`, `NatHostSockets.cpp` | the host socket seam and its real implementation |
 | `BuiltinNatBackend.*` | the gateway (ARP, ping, DHCP), the frame queue, **the fence** |
 
-What it carries: UDP and TCP outbound, ping to the gateway, DHCP, DNS `A`
-queries. What it does not: IP fragments, other ICMP, inbound connections
-(there is no port forwarding), IPv6, other DNS record types (answered empty).
+What it carries: IPv4/IPv6 UDP and TCP, IPv4 DHCP, ping to the virtual
+router, DNS records, fragment reassembly and explicit TCP/UDP port forwards.
+IPv6 advertises `fd00:2::/64` by SLAAC, with router `fe80::2`, gateway
+`fd00:2::2` and DNS `fd00:2::3`. ND validates hop limit and options; RAs are
+refreshed every 200 seconds. Reassembly is capped at 32 datagrams per family,
+expires after 30 s (IPv4) / 60 s (IPv6), and rejects conflicting IPv4 overlaps
+and every IPv6 overlap. Large host UDP replies are fragmented to the 1500-byte
+MTU. Other ICMP is not relayed to the Internet.
+
+**Two POM2 computers on the same LAN.** Publish only the guest services that
+should be reachable. With POM2 closed, put this in each computer's `state.cfg`
+(plain values, no quotation marks), then relaunch or replug the Ethernet card:
+
+```ini
+ethernet_backend=builtin
+uthernet_nat_forwards=tcp:0.0.0.0:6502:23;udp:0.0.0.0:6502:6502
+```
+
+Each rule is `tcp|udp:bind-ip:host-port:guest-port`, separated by semicolons.
+Here TCP port 6502 on the computer reaches the guest's telnet port 23; UDP
+6502 reaches guest UDP 6502 and preserves host source port 6502 when that
+guest service initiates traffic. `0.0.0.0` listens on the LAN interfaces;
+use the computer's specific LAN address to select one interface, or
+`127.0.0.1` for local access only. No rule means no published port. The list
+is capped at 32 and malformed lists are rejected as a whole; binding failures
+are logged with the host port. A nonempty list selects the built-in NAT even
+when the general choice is `slirp`.
+
+Both guests can retain 10.0.2.15: they are on separate virtual networks. If
+the computers are 192.168.1.10 and 192.168.1.11, guest A contacts
+**192.168.1.11:6502**, and guest B contacts **192.168.1.10:6502**. Their guest
+applications must listen on the guest ports in the rules, and the computers'
+firewalls must allow those published ports. This is IP service forwarding;
+Ethernet broadcasts and non-IP protocols do not cross between the computers.
+It applies to Uthernet I and Uthernet II MACRAW/IPRAW; W5100 TCP/UDP offload
+uses its own host sockets and LISTEN controls.
 
 **The fence is one pure function**, `nat::routeDestination`, pinned as a table.
 Same decision and same setting (`uthernet_allow_loopback`) as
@@ -9054,16 +9096,15 @@ Same decision and same setting (`uthernet_allow_loopback`) as
 A refused TCP connection is **reset** and opens no host socket; a refused
 datagram is dropped.
 
-**DNS is answered from the host resolver** — `W5100Resolver`, the same
-asynchronous, capped, rate-limited resolver the Uthernet II's virtual DNS
-uses — rather than relayed to the host's DNS server. A relay must know that
-server's address, for which there is no portable call (resolv.conf, stale
-under a VPN on macOS; `GetNetworkParams` on Windows), and it forwards whatever
-the guest wrote, unmetered. `getaddrinfo` is the same everywhere, honours the
-host's configuration, and the resolver already allows four new names a second.
-`W5100Resolver::peek` was added for it: the answer in hand or "not yet",
-**never** a new lookup — without it, asking again on every pump started a
-lookup per pump.
+**DNS A queries use the host resolver** — `W5100Resolver`, including its
+cache and hosts-file behaviour. Other IN record types use native wire queries
+on capped workers (`res_nsend` on Unix; the system DNS-server list on Windows,
+with TCP fallback for truncated UDP answers). This preserves AAAA/MX/TXT/PTR/
+SRV data, compression and negative response codes. Queries are validated,
+pending requests are capped at eight per virtual DNS server, retries share a
+lookup, new wire lookups are limited to four/second, and deadlines are 8 s.
+No native resolver call blocks the emulator lock. `W5100Resolver::peek` checks
+late A answers without starting another lookup.
 
 **UDP is address-restricted**: a datagram reaches the guest only from an
 address that flow has written to (any port of it — TFTP answers from a port it
@@ -9073,9 +9114,13 @@ choose a port on the host.
 
 **TCP** holds the SYN-ACK until the host connect completes, so "refused"
 reaches the guest as a reset rather than as a connection that opens and dies.
-No congestion control (the virtual wire drops nothing); the oldest
-unacknowledged segment is resent every second, eight times, then reset. 32
-connections, 32 UDP flows. [F] there is no zero-window probe.
+No congestion control on the virtual wire. Retransmission backs off from 1 s
+to 60 s, with eight retries. Zero-window probes have a separate persist timer,
+also backing off to 60 s, which keeps probing without exhausting that retry
+budget; opening the window resumes the stream without duplicating its first
+byte. Accepted inbound connections initiate a guest-side SYN and wait for its
+SYN-ACK before exchanging data. Limits: 32 TCP connections, 32 UDP flows,
+512 IPv6 peer/address pairs.
 
 Grades: the protocols are [B] (RFCs 768, 791-793, 826, 894, 1035, 1071, 2131,
 2132, cited at each site); the structure is [D] Casso @ 2d899adf (MIT) and the

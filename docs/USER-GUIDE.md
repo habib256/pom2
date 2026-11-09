@@ -507,17 +507,33 @@ For card keys, firmware details and implementation notes, see
 - **Uthernet II:** TCP/UDP use host sockets on desktop Linux, macOS and Windows.
   With `uthernet_allow_loopback=true`, `LISTEN` accepts local TCP clients at
   `127.0.0.1` on the guest's chosen port (1024+; 1985/6502/6503 excluded).
-  LAN listening/port forwarding is not implemented.
+  These W5100 offload LISTEN controls remain local. LAN services can use
+  Uthernet I or raw Ethernet modes with the built-in NAT rules below.
   Uthernet I and raw Ethernet modes need a virtual network, and every desktop
   build has one: libslirp where the package includes it (the ARM64, Raspberry
   Pi and Pi 400 Linux packages; `-DPOM2_ENABLE_SLIRP=ON` for a source build),
   and POM2's own built-in network everywhere else — Windows included. Both
   give the Apple II the same addresses (itself `10.0.2.15`, gateway
   `10.0.2.2`, DNS `10.0.2.3`, or simply DHCP), reach the internet and the
-  local network outbound only, and do **not** reach programs on your own
+  local network, and do **not** reach programs on your own
   computer unless `uthernet_allow_loopback=true`. The built-in network
-  carries TCP, UDP, DHCP, DNS look-ups of host names and ping to the gateway;
+  carries IPv4/IPv6 TCP and UDP, DHCP, DNS records, IP fragments and ping to the gateway;
   it has not yet been run on Windows by the author.
+- **Two POM2 instances on the same LAN:** with POM2 closed, add these plain
+  values to `state.cfg` on each computer, then restart POM2:
+
+  ```ini
+  ethernet_backend=builtin
+  uthernet_nat_forwards=tcp:0.0.0.0:6502:23;udp:0.0.0.0:6502:6502
+  ```
+
+  This publishes host TCP 6502 to guest TCP 23, and host UDP 6502 to guest
+  UDP 6502. Adapt the guest ports to the applications you run. Both guests
+  may retain `10.0.2.15`; connect to **the other computer's LAN IP**, port
+  **6502**. Allow that port in the host firewall. `0.0.0.0` listens on all
+  IPv4 interfaces; a specific LAN IP selects one interface. No rule publishes
+  no port. This forwards IP services; it does not bridge Ethernet broadcasts
+  or non-IP traffic. [Full rule syntax](../DEV.md#the-built-in-virtual-network-builtinnatbackend).
 - **FujiNet:** The macOS, Windows x64 and Linux x64 desktop packages include
   [FujiNet-PC Apple v1.5.2](https://github.com/FujiNetWIFI/fujinet-firmware/releases/tag/v1.5.2)
   and its CONFIG disk. POM2 relays SmartPort calls to that program or a

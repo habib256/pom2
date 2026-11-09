@@ -16,17 +16,36 @@ namespace nat {
 
 TcpConnection::TcpConnection(GuestSink& sink, const Key& key,
                              std::unique_ptr<HostSocket> host, const TcpSegment& syn,
-                             uint32_t isn, uint64_t nowMs)
+                             uint32_t isn, uint64_t nowMs, bool inbound)
     : sink_(sink), key_(key), host_(std::move(host)), ourIsn_(isn), ourUnacked_(isn),
       ourNext_(isn), guestNext_(syn.sequence + 1), guestWindow_(syn.window),
       mss_(syn.mss != 0 ? std::min(syn.mss, kMaxMss) : kDefaultMss),
       startedMs_(nowMs), lastSendMs_(nowMs)
 {
+    if (inbound) {
+        inbound_ = true;
+        state_ = State::SynSent;
+        ourNext_ = isn + 1;
+        guestNext_ = 0;
+        sendToGuest(kTcpSyn, isn, nullptr, 0, kMaxMss);
+    }
 }
 
 void TcpConnection::onGuestSegment(const TcpSegment& segment)
 {
     if (segment.flags & kTcpRst) { close(); return; }
+    if (state_ == State::SynSent) {
+        if ((segment.flags & (kTcpSyn | kTcpAck)) != (kTcpSyn | kTcpAck) ||
+            segment.acknowledgment != ourNext_) return;
+        guestNext_ = segment.sequence + 1;
+        guestWindow_ = segment.window;
+        mss_ = segment.mss ? std::min(segment.mss, kMaxMss) : kDefaultMss;
+        ourUnacked_ = ourNext_;
+        state_ = State::Established;
+        retransmits_ = 0;
+        sendAck();
+        return;
+    }
     // While the host connect is pending the guest can only be resending its
     // SYN; the SYN-ACK goes out when the connect completes.
     if (state_ != State::Established) return;
@@ -34,7 +53,8 @@ void TcpConnection::onGuestSegment(const TcpSegment& segment)
     // A repeated SYN means the guest missed our SYN-ACK.
     if ((segment.flags & kTcpSyn) && segment.sequence + 1 == guestNext_ &&
         ourUnacked_ == ourIsn_ + 1) {
-        sendToGuest(kTcpSyn | kTcpAck, ourIsn_, nullptr, 0, kMaxMss);
+        if (inbound_) sendAck();
+        else sendToGuest(kTcpSyn | kTcpAck, ourIsn_, nullptr, 0, kMaxMss);
         return;
     }
     // Any OTHER SYN on an established connection: the guest rebooted or was
@@ -55,8 +75,10 @@ void TcpConnection::onGuestSegment(const TcpSegment& segment)
 void TcpConnection::onAck(const TcpSegment& segment)
 {
     const uint32_t delta = segment.acknowledgment - ourUnacked_;
+    if (delta > inFlight()) return;
     guestWindow_ = segment.window;
-    if (delta == 0 || delta > inFlight()) return;
+    if (guestWindow_) { persisting_ = false; persistBackoff_ = 0; }
+    if (delta == 0) return;
 
     const std::size_t dataAcked = std::min<std::size_t>(delta, toGuest_.size());
     toGuest_.erase(toGuest_.begin(), toGuest_.begin() + static_cast<std::ptrdiff_t>(dataAcked));
@@ -98,11 +120,21 @@ void TcpConnection::onFin(const TcpSegment& segment)
 void TcpConnection::pump(uint64_t nowMs)
 {
     if (state_ == State::Connecting) { pumpConnect(nowMs); return; }
+    if (state_ == State::SynSent) {
+        if (nowMs - startedMs_ >= kConnectTimeoutMs) { resetAndClose(); return; }
+        if (nowMs - lastSendMs_ >= (kRetransmitMs << std::min(retransmits_, 4))) {
+            sendToGuest(kTcpSyn, ourIsn_, nullptr, 0, kMaxMss);
+            lastSendMs_ = nowMs;
+            ++retransmits_;
+        }
+        return;
+    }
     if (state_ != State::Established) return;
 
     pumpHostWrite();
     if (state_ == State::Established) pumpHostRead();
     if (state_ == State::Established) pumpGuestSend(nowMs);
+    if (state_ == State::Established) pumpPersist(nowMs);
     if (state_ == State::Established) pumpRetransmit(nowMs);
     // Both directions finished and everything the guest sent has reached
     // the host: nothing is left to carry.
@@ -174,7 +206,7 @@ void TcpConnection::pumpGuestSend(uint64_t nowMs)
         ourNext_   += static_cast<uint32_t>(count);
         lastSendMs_ = nowMs;
     }
-    if (hostEof_ && !finSent_ && inFlight() == toGuest_.size()) {
+    if (hostEof_ && !finSent_ && guestWindow_ > inFlight() && inFlight() == toGuest_.size()) {
         sendToGuest(kTcpFin | kTcpAck, ourNext_, nullptr, 0, 0);
         ++ourNext_;
         finSent_    = true;
@@ -190,6 +222,7 @@ void TcpConnection::pumpGuestSend(uint64_t nowMs)
 /// long lost its transfer (bug hunt 2026-11-07).
 void TcpConnection::pumpRetransmit(uint64_t nowMs)
 {
+    if (guestWindow_ == 0) return;
     const uint64_t rto = std::min<uint64_t>(
         kRetransmitMs << std::min(retransmits_, 6), kMaxRtoMs);
     if (inFlight() == 0 || nowMs - lastSendMs_ < rto) return;
@@ -207,6 +240,30 @@ void TcpConnection::pumpRetransmit(uint64_t nowMs)
         sendToGuest(kTcpAck | kTcpPsh, ourUnacked_, payload.data(), payload.size(), 0);
     } else if (finSent_ && !finAcked_) {
         sendToGuest(kTcpFin | kTcpAck, ourUnacked_, nullptr, 0, 0);
+    }
+}
+
+void TcpConnection::pumpPersist(uint64_t nowMs)
+{
+    if (guestWindow_ || (toGuest_.empty() && !hostEof_)) {
+        persisting_ = false;
+        persistBackoff_ = 0;
+        return;
+    }
+    if (!persisting_) { persisting_ = true; persistMs_ = nowMs; return; }
+    const auto delay = std::min<uint64_t>(kRetransmitMs << persistBackoff_, kMaxRtoMs);
+    if (nowMs - persistMs_ < delay) return;
+    persistMs_ = nowMs;
+    persistBackoff_ = std::min(persistBackoff_ + 1, 6u);
+    if (!toGuest_.empty()) {
+        const uint8_t byte = toGuest_.front();
+        sendToGuest(kTcpAck, ourUnacked_, &byte, 1, 0);
+        // A reopening receiver can accept this byte. Count it only once.
+        if (inFlight() == 0) ++ourNext_;
+    } else if (finSent_ && !finAcked_) {
+        sendToGuest(kTcpFin | kTcpAck, ourUnacked_, nullptr, 0, 0);
+    } else {
+        sendToGuest(kTcpAck, ourNext_ - 1, nullptr, 0, 0);
     }
 }
 
@@ -273,7 +330,7 @@ void TcpRelay::startOutbound(const TcpSegment& syn, uint64_t nowMs)
     std::unique_ptr<HostSocket> socket;
     if (network_ && connections_.size() < kMaxConnections && router_ &&
         router_(syn.destinationIp, syn.destinationPort, host))
-        socket = network_->openTcp();
+        socket = host.isIpv6 ? network_->openTcp6() : network_->openTcp();
     if (!socket || !socket->connect(host)) { sendReset(syn); return; }
 
     const TcpConnection::Key key{ syn.sourcePort, syn.destinationIp, syn.destinationPort };
@@ -288,6 +345,15 @@ void TcpRelay::pump(uint64_t nowMs)
         if (it->second->closed()) it = connections_.erase(it);
         else                      ++it;
     }
+}
+
+void TcpRelay::acceptInbound(uint16_t guestPort, const Endpoint& peer,
+                            std::unique_ptr<HostSocket> socket, uint64_t nowMs)
+{
+    const TcpConnection::Key key{guestPort, peer.ip, peer.port};
+    if (!socket || connections_.size() >= kMaxConnections || connections_.count(key)) return;
+    connections_[key] = std::make_unique<TcpConnection>(sink_, key, std::move(socket),
+        TcpSegment{}, takeIsn(), nowMs, true);
 }
 
 /// RFC 793's reset for a segment with no connection: for a segment with the

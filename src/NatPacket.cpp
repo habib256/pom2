@@ -117,6 +117,70 @@ bool parseIpv4(View p, Ipv4Packet& out)
     return true;
 }
 
+void Ipv4Reassembler::expire(uint64_t nowMs)
+{
+    for (auto it = pending_.begin(); it != pending_.end();)
+        if (nowMs - it->second.started >= kTimeoutMs) it = pending_.erase(it);
+        else ++it;
+}
+
+Bytes Ipv4Reassembler::accept(View p, uint64_t nowMs)
+{
+    expire(nowMs);
+    if (p.size < 20 || p.data[0] >> 4 != 4) return {};
+    const std::size_t h = (p.data[0] & 15) * 4, total = rd16(p.data + 2);
+    if (h < 20 || h > p.size || total < h || total > p.size || checksum(p.data, h)) return {};
+    const uint16_t flags = rd16(p.data + 6);
+    if (flags & 0x8000) return {};
+    if (!(flags & 0x3fff)) return Bytes(p.data, p.data + total);
+    const std::size_t offset = (flags & 0x1fff) * 8, size = total - h;
+    const bool more = flags & 0x2000;
+    const auto key = std::make_tuple(rd32(p.data + 12), rd32(p.data + 16), p.data[9], rd16(p.data + 4));
+    if ((flags & 0x4000) || size == 0 || offset + size > 65515 || (more && size % 8)) {
+        pending_.erase(key); return {};
+    }
+    if (!pending_.count(key) && pending_.size() >= kMaxPending) return {};
+    auto inserted = pending_.try_emplace(key);
+    Assembly& a = inserted.first->second;
+    if (inserted.second) a.started = nowMs;
+    const auto end = offset + size;
+    if ((a.last && (end > a.end || (!more && end != a.end))) ||
+        (!more && a.data.size() > end)) { pending_.erase(key); return {}; }
+    a.data.resize(std::max(a.data.size(), end));
+    a.present.resize(a.data.size());
+    for (std::size_t i = 0; i < size; ++i) {
+        if (a.present[offset + i] && a.data[offset + i] != p.data[h + i]) {
+            pending_.erase(key); return {};
+        }
+        if (!a.present[offset + i]) { a.present[offset + i] = 1; ++a.count; }
+        a.data[offset + i] = p.data[h + i];
+    }
+    if (offset == 0) a.first = true;
+    if (!more) { a.last = true; a.end = end; }
+    if (!a.first || !a.last || a.count != a.end) return {};
+    Bytes out = buildIpv4(std::get<0>(key), std::get<1>(key), std::get<2>(key), std::get<3>(key), a.data);
+    pending_.erase(key);
+    return out;
+}
+
+std::vector<Bytes> fragmentIpv4(uint32_t source, uint32_t destination, uint8_t protocol,
+                               uint16_t id, const Bytes& payload, std::size_t mtu)
+{
+    if (mtu < 28 || payload.size() > 65515) return {};
+    if (payload.size() + 20 <= mtu) return {buildIpv4(source, destination, protocol, id, payload)};
+    const auto chunk = ((mtu - 20) / 8) * 8;
+    std::vector<Bytes> out;
+    for (std::size_t at = 0; at < payload.size(); at += chunk) {
+        const auto size = std::min(chunk, payload.size() - at);
+        Bytes p = buildIpv4(source, destination, protocol, id, Bytes(payload.begin() + at, payload.begin() + at + size));
+        wr16(p.data() + 6, static_cast<uint16_t>(at / 8 | (at + size < payload.size() ? 0x2000 : 0)));
+        wr16(p.data() + 10, 0);
+        wr16(p.data() + 10, checksum(p.data(), 20));
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
 bool parseUdp(const Ipv4Packet& packet, UdpDatagram& out)
 {
     const View p = packet.payload;
@@ -262,6 +326,128 @@ Bytes buildIcmpEchoReply(View request)
     p[2] = p[3] = 0;
     wr16(p.data() + 2, checksum(p.data(), p.size()));
     return p;
+}
+
+// [B] RFC 8200 §§ 3, 4, 8: bounded extension walking and IPv6 pseudo-header.
+bool parseIpv6(View p, Ipv6Packet& out)
+{
+    if (p.size < 40 || p.data[0] >> 4 != 6) return false;
+    const std::size_t end = 40 + rd16(p.data + 4);
+    if (end > p.size) return false;
+    std::copy_n(p.data + 8, 16, out.source.begin());
+    std::copy_n(p.data + 24, 16, out.destination.begin());
+    out.hopLimit = p.data[7];
+    uint8_t next = p.data[6];
+    std::size_t at = 40;
+    for (int n = 0; next == 0 || next == 60 || next == 43; ++n) {
+        if (n >= 8 || at + 8 > end) return false;
+        // Routing headers with nonzero Segments Left require routing, which
+        // this endpoint must not perform (nor use to bypass the perimeter).
+        if (next == 43 && p.data[at + 3]) return false;
+        const auto size = (std::size_t(p.data[at + 1]) + 1) * 8;
+        if (at + size > end || (next == 0 && at != 40)) return false;
+        // Unknown options whose action bits require discard are not ignored.
+        if (next != 43) {
+            for (std::size_t i = at + 2; i < at + size;) {
+                if (!p.data[i]) { ++i; continue; }
+                if (i + 2 > at + size || i + 2 + p.data[i + 1] > at + size ||
+                    (p.data[i] & 0xc0)) return false;
+                i += 2 + p.data[i + 1];
+            }
+        }
+        next = p.data[at]; at += size;
+    }
+    out.protocol = next;
+    out.payload = {p.data + at, end - at};
+    return out.hopLimit != 0;
+}
+
+uint16_t checksum6(const Ipv6& source, const Ipv6& destination, uint8_t protocol, View p)
+{
+    uint32_t sum = protocol + static_cast<uint32_t>(p.size);
+    for (int i = 0; i < 16; i += 2) sum += rd16(source.data() + i) + rd16(destination.data() + i);
+    return checksum(p.data, p.size, sum);
+}
+
+Bytes buildIpv6(const Ipv6& source, const Ipv6& destination, uint8_t protocol,
+                const Bytes& payload, uint8_t hopLimit)
+{
+    if (payload.size() > 65535) return {};
+    Bytes out(40 + payload.size());
+    out[0] = 0x60;
+    wr16(out.data() + 4, static_cast<uint16_t>(payload.size()));
+    out[6] = protocol; out[7] = hopLimit;
+    std::copy(source.begin(), source.end(), out.begin() + 8);
+    std::copy(destination.begin(), destination.end(), out.begin() + 24);
+    std::copy(payload.begin(), payload.end(), out.begin() + 40);
+    return out;
+}
+
+std::vector<Bytes> fragmentIpv6(const Ipv6& source, const Ipv6& destination,
+                               uint8_t protocol, uint32_t id, const Bytes& payload)
+{
+    if (payload.size() > 65535) return {};
+    if (payload.size() <= 1460) return {buildIpv6(source, destination, protocol, payload)};
+    std::vector<Bytes> out;
+    constexpr std::size_t chunk = 1448;
+    for (std::size_t at = 0; at < payload.size(); at += chunk) {
+        const auto size = std::min(chunk, payload.size() - at);
+        Bytes fragment(8 + size);
+        fragment[0] = protocol;
+        wr16(fragment.data() + 2, static_cast<uint16_t>(at | (at + size < payload.size() ? 1 : 0)));
+        wr32(fragment.data() + 4, id);
+        std::copy_n(payload.data() + at, size, fragment.data() + 8);
+        out.push_back(buildIpv6(source, destination, 44, fragment));
+    }
+    return out;
+}
+
+void Ipv6Reassembler::expire(uint64_t now)
+{
+    for (auto it = pending_.begin(); it != pending_.end();)
+        if (now - it->second.started >= 60000) it = pending_.erase(it);
+        else ++it;
+}
+
+Bytes Ipv6Reassembler::accept(View p, uint64_t now)
+{
+    expire(now);
+    Ipv6Packet ip;
+    if (!parseIpv6(p, ip)) return {};
+    if (ip.protocol != 44) return Bytes(p.data, p.data + 40 + rd16(p.data + 4));
+    if (ip.payload.size < 8) return {};
+    const auto* f = ip.payload.data;
+    const auto key = std::make_tuple(ip.source, ip.destination, rd32(f + 4));
+    const auto bits = rd16(f + 2);
+    const std::size_t offset = bits & 0xfff8, size = ip.payload.size - 8;
+    const bool more = bits & 1;
+    // [B] RFC 8200 § 4.5, RFC 5722: never accept overlapping IPv6 fragments.
+    if (f[1] || (bits & 6) || !size || offset + size > 65535 || (more && size % 8) ||
+        (f[0] != kProtoTcp && f[0] != kProtoUdp && f[0] != kProtoIcmp6) ||
+        (offset == 0 && size < (f[0] == kProtoTcp ? 20u : 8u)) ||
+        (offset == 0 && f[0] == kProtoIcmp6 && size && f[8] >= 133 && f[8] <= 137)) {
+        pending_.erase(key); return {};
+    }
+    if (!offset && !more) return buildIpv6(ip.source, ip.destination, f[0], Bytes(f + 8, f + 8 + size), ip.hopLimit);
+    if (!pending_.count(key) && pending_.size() >= 32) return {};
+    auto insertion = pending_.try_emplace(key);
+    auto& a = insertion.first->second;
+    if (insertion.second) { a.started = now; a.protocol = f[0]; a.hop = ip.hopLimit; }
+    const auto end = offset + size;
+    if (a.protocol != f[0] || (a.last && (end > a.end || (!more && end != a.end))) ||
+        (!more && a.data.size() > end)) { pending_.erase(key); return {}; }
+    a.data.resize(std::max(a.data.size(), end));
+    a.present.resize(a.data.size());
+    for (std::size_t i = offset; i < end; ++i) {
+        if (a.present[i]) { pending_.erase(key); return {}; }
+        a.present[i] = 1; ++a.count; a.data[i] = f[8 + i - offset];
+    }
+    if (!offset) { a.first = true; a.hop = ip.hopLimit; }
+    if (!more) { a.last = true; a.end = end; }
+    if (!a.first || !a.last || a.count != a.end) return {};
+    Bytes result = buildIpv6(ip.source, ip.destination, a.protocol, a.data, a.hop);
+    pending_.erase(key);
+    return result;
 }
 
 }  // namespace nat

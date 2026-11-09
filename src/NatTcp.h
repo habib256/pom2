@@ -22,13 +22,10 @@
 // [B] RFC 793 § 3.4 (reset generation), § 3.9 (segment arrival), RFC 1122
 //     § 4.2.2.6 (536 is the MSS when the option is absent).
 // [D] After Casso `Devices/Network/TcpNat` + `TcpNatConnection` @ 2d899adf
-//     (MIT). Not taken: inbound connections (port forwards). Added: a bound
-//     on the connection table and on how long a host connect may stay
-//     pending.
-// [F] No zero-window probe: if the guest advertises a window of 0 and then
-//     never sends a window update, the connection stalls until the guest
-//     speaks. A real peer would probe. Settled by: a guest stack found to
-//     rely on the probe.
+//     (MIT). Added: explicit inbound connections, a bound on the connection
+//     table and on how long either handshake may stay pending.
+// [B] RFC 9293 § 3.8.6.1: zero-window probes back off without exhausting
+//     the retransmission budget while the receiver keeps its window shut.
 
 #ifndef POM2_NAT_TCP_H
 #define POM2_NAT_TCP_H
@@ -53,6 +50,7 @@ class TcpConnection
 public:
     enum class State : uint8_t {
         Connecting,     ///< guest SYN received, host connect in progress
+        SynSent,        ///< accepted host socket, waiting for guest SYN-ACK
         Established,
         Closed,
     };
@@ -77,7 +75,7 @@ public:
     static constexpr uint64_t    kConnectTimeoutMs = 30000;
 
     TcpConnection(GuestSink& sink, const Key& key, std::unique_ptr<HostSocket> host,
-                  const TcpSegment& syn, uint32_t isn, uint64_t nowMs);
+                  const TcpSegment& syn, uint32_t isn, uint64_t nowMs, bool inbound = false);
 
     void  onGuestSegment(const TcpSegment& segment);
     void  pump(uint64_t nowMs);
@@ -102,6 +100,7 @@ private:
     void pumpHostRead();
     void pumpGuestSend(uint64_t nowMs);
     void pumpRetransmit(uint64_t nowMs);
+    void pumpPersist(uint64_t nowMs);
 
     GuestSink&                  sink_;
     Key                         key_;
@@ -123,6 +122,10 @@ private:
     uint64_t                    startedMs_ = 0;
     uint64_t                    lastSendMs_ = 0;
     int                         retransmits_ = 0;
+    uint64_t                    persistMs_ = 0;
+    unsigned                    persistBackoff_ = 0;
+    bool                        persisting_ = false;
+    bool                        inbound_ = false;
 };
 
 class TcpRelay
@@ -140,6 +143,8 @@ public:
         : sink_(sink), network_(network), router_(std::move(router)) {}
 
     void onGuestSegment(const TcpSegment& segment, uint64_t nowMs);
+    void acceptInbound(uint16_t guestPort, const Endpoint& peer,
+                       std::unique_ptr<HostSocket> socket, uint64_t nowMs);
     void pump(uint64_t nowMs);
     void closeAll() { connections_.clear(); }
     std::size_t connectionCount() const { return connections_.size(); }

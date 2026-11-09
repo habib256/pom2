@@ -24,9 +24,10 @@
 //   10.0.2.3      the DNS server (answered from the host resolver, NatDns.h)
 //   10.0.2.15     what DHCP hands out
 //
-// UDP and TCP are relayed through host sockets (NatUdp.h, NatTcp.h). Not
-// carried: IP fragments, ICMP other than ping to the gateway, inbound
-// connections (there is no port forwarding), IPv6.
+// UDP and TCP are relayed through host sockets (NatUdp.h, NatTcp.h), with
+// bounded IPv4/IPv6 fragment reassembly and explicit TCP/UDP port forwards.
+// IPv6 uses fd00:2::/64, router fe80::2, gateway fd00:2::2, DNS fd00:2::3,
+// with ND and SLAAC advertisements. Other ICMP is not relayed to the Internet.
 //
 // THE GUEST IS INSIDE THE LOOPBACK PERIMETER (CLAUDE.md)
 // ------------------------------------------------------
@@ -74,6 +75,9 @@ inline constexpr uint32_t kGatewayIp   = 0x0A000202;   // 10.0.2.2
 inline constexpr uint32_t kDnsIp       = 0x0A000203;   // 10.0.2.3
 inline constexpr uint32_t kGuestIp     = 0x0A00020F;   // 10.0.2.15
 inline constexpr uint32_t kLoopbackIp  = 0x7F000001;   // 127.0.0.1
+inline constexpr Ipv6 kGateway6 = {0xfd,0,0,2,0,0,0,0,0,0,0,0,0,0,0,2};
+inline constexpr Ipv6 kDns6 = {0xfd,0,0,2,0,0,0,0,0,0,0,0,0,0,0,3};
+inline constexpr Ipv6 kRouter6 = {0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,2};
 
 /// What the fence decides for one destination.
 enum class Route : uint8_t {
@@ -91,10 +95,19 @@ struct RoutePolicy {
 /// means UDP. On `Route::Host`, `host` is where the traffic really goes.
 Route routeDestination(uint32_t destination, uint16_t port, bool tcp,
                        const RoutePolicy& policy, Endpoint& host);
+Route routeDestination6(const Ipv6& destination, uint16_t port, bool tcp,
+                        const RoutePolicy& policy, Endpoint& host);
 
 }  // namespace nat
 
 struct BuiltinNatOptions {
+    struct PortForward {
+        bool tcp = true;
+        nat::Endpoint bind{nat::kLoopbackIp, 0};
+        uint16_t guestPort = 0;
+    };
+    std::vector<PortForward> forwards;
+    std::function<nat::Bytes(const nat::Bytes&)> dnsLookup;
     /// Let the guest reach the host's loopback interface: through the
     /// gateway address (10.0.2.2 -> 127.0.0.1) and by naming 127/8 directly.
     /// FALSE by default; key `uthernet_allow_loopback`.
@@ -107,6 +120,10 @@ struct BuiltinNatOptions {
     /// test supplies its own so retransmission and idle timeouts are exact.
     std::function<uint64_t()> nowMs;
 };
+
+/// Semicolon-separated tcp|udp:bind-ip:host-port:guest-port rules.
+/// An invalid list is rejected atomically. 0.0.0.0 publishes on the LAN.
+bool parseNatForwards(const std::string& text, std::vector<BuiltinNatOptions::PortForward>& out);
 
 /// True on a build with host sockets (every desktop; not the browser).
 bool builtinNatAvailable();
