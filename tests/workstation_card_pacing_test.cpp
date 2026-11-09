@@ -55,14 +55,25 @@ bool exists(const char* p) { std::ifstream f(p, std::ios::binary); return f.good
 /// Host cycles spent before the card's firmware acquires its LocalTalk node
 /// address — the last milestone of its boot, ~5.6 M cycles in. `grain` 0
 /// means "a realistic instruction stream", 2 to 7 cycles at a time.
-uint64_t cyclesToNodeAcquisition(const std::string& rom, int grain)
+uint64_t cyclesToNodeAcquisition(const std::string& rom, int grain,
+                                 int accelerator = 1, int menuPace = 1)
 {
     pom2::WorkstationCard card(7);
     if (!card.loadRom(rom)) return 0;
+    card.setStandardClock(1020000);
+    card.setCpuClock(1020000.0 * accelerator * menuPace);
+    card.setMachineCpuClock(1020000.0 * accelerator);
 
     uint64_t host = 0;
     unsigned lfsr = 0xACE1u;
-    while (host < 40'000'000ull) {
+    bool changedPace = false;
+    while (host < 40'000'000ull * accelerator) {
+        if (menuPace > 1 && !changedPace && host >= 1'000'000ull * accelerator) {
+            // A live menu-speed transition changes wall time, not card time.
+            card.setCpuClock(1020000.0 * accelerator);
+            card.setMachineCpuClock(1020000.0 * accelerator);
+            changedPace = true;
+        }
         int g = grain;
         if (g == 0) {   // a 16-bit maximal LFSR, so the mix is reproducible
             lfsr = (lfsr >> 1) ^ (-(lfsr & 1u) & 0xB400u);
@@ -108,6 +119,14 @@ int main()
     std::printf("  spread %.2f %%\n", spread);
     assert(spread < 1.0 &&
            "the card's 65C02 runs at a rate that depends on the slice size");
+
+    for (int pace : {2, 4}) {
+        const uint64_t paced = cyclesToNodeAcquisition(rom, 24, 1, pace);
+        assert(paced && paced > slice * 99 / 100 && paced < slice * 101 / 100);
+    }
+    const uint64_t accelerated = cyclesToNodeAcquisition(rom, 24, 4, 4);
+    assert(accelerated && accelerated > slice * 4 * 99 / 100 &&
+           accelerated < slice * 4 * 101 / 100);
 
     std::printf("OK workstation_card_pacing\n");
     return 0;

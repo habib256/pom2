@@ -1,0 +1,9 @@
+# Optional PLASMA/Pleiades smoke test; see plasma.md for media retrieval.
+# Keep separate from the default/CI corpus and distribution media.
+title plasma-forth iie plasma
+  diskii 1 /tmp/pom2-PLFORTH.po sha256=dfe66ed20f5c46b5ffa0c5e2a13b6118629ebbb17612392109590073c9022b94
+  run 120
+  check boot
+  type "123 456 + .\r"
+  run 3
+  check arithmetic

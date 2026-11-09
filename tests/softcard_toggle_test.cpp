@@ -294,8 +294,42 @@ void testZ80AccessStamps()
     assert(r->stamps == want);
 }
 
+// Menu changes leave the same DMA budget and retired NOP count; the
+// hardware accelerator remains in the CPU-to-slot-bus conversion.
+void testMachineClock()
+{
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            Memory actualMemory, referenceMemory;
+            SoftCardZ80 actual, reference;
+            actual.setMemory(&actualMemory); reference.setMemory(&referenceMemory);
+            for (auto* card : {&actual, &reference}) {
+                card->setStandardClock(stock);
+                card->slotRomWrite(0, 0);
+                auto* mem = card == &actual ? &actualMemory : &referenceMemory;
+                for (unsigned i = 0; i < 0x2000; ++i)
+                    mem->memWrite(SoftCardZ80::xlate(uint16_t(i)), 0);
+            }
+            reference.setCpuClock(stock * accelerator);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                actual.setCpuClock(stock * accelerator * pacing);
+                actual.setMachineCpuClock(stock * accelerator);
+                const uint16_t before = actual.z80().getState().pc;
+                const int spent = actual.dmaRun(256);
+                const int referenceSpent = reference.dmaRun(256);
+                assert(spent >= 256 && spent <= 256 + 8 * accelerator);
+                assert(spent == referenceSpent);
+                const int retired = uint16_t(actual.z80().getState().pc - before);
+                const double expected = 256.0 / (2 * accelerator);
+                assert(retired >= int(expected) - 2 && retired <= int(expected) + 4);
+                assert(actual.z80().getState().pc == reference.z80().getState().pc);
+            }
+        }
+}
+
 int main()
 {
+    testMachineClock();
     testZ80AccessStamps();
     testAcceleratorDoesNotSpeedTheZ80();
     testXlate();

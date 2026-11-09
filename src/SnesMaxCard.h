@@ -37,6 +37,8 @@ public:
     void deviceSelectWrite(uint8_t offset, uint8_t) override;
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override;
+    // The latch follows machine time; menu pacing fast-forwards it too.
+    void setMachineCpuClock(double hz) override { setCpuClock(hz); }
     void setStandardClock(double hz) override;
     void onPowerCycle() override;
     void appendSnapshotState(std::vector<uint8_t>& out) const override;

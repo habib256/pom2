@@ -176,6 +176,7 @@ public:
     /// The (possibly accelerated) CPU clock — drives the emuCycles replay
     /// cursor only. Mirrors MockingboardCard::setCpuClock.
     void    setCpuClock(double hz) override;
+    void    setMachineCpuClock(double hz) override;
     /// Slot phase-0 clock: the four AYs' input clock and the two 6522s'
     /// timer clock, which an accelerator does not speed up. Mirrors
     /// MockingboardCard::setStandardClock.

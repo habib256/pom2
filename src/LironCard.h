@@ -185,13 +185,18 @@ public:
     bool         prepareFlushBay(int bay, PendingBayFlush& out,
                                  std::string& errOut) override;
     void         restoreFlushBayDirty(int bay, uint64_t lineage) override;
+    void         noteFlushBayDiversion(int bay, uint64_t lineage,
+                                        const std::string& path) override;
     /// Forwarded to every mechanism (Sony35Drive::setStandardClock).
     void         setStandardClock(double hz) override;
     /// The IWM's drive-disable delay (~1 s of the 7M crystal) is real time:
     /// under a Zip or TransWarp the card's private IWM counted it in
     /// accelerated cycles and dropped the drive ~4x early, as the //c+ IWM
     /// did before Memory::stockCyclesBetween (IWMDevice::setStockSpan).
+    /// Menu pacing advances the whole machine and must not change this
+    /// ratio. The machine notification follows setCpuClock before ticking.
     void         setCpuClock(double hz) override { if (hz > 0.0) cpuHz_ = hz; }
+    void         setMachineCpuClock(double hz) override { setCpuClock(hz); }
     void         setBayWriteBack(int bay, bool on) override;
     void         setBayHostWriteProtected(int bay, bool on) override;
 

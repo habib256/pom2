@@ -227,7 +227,8 @@ public:
     /// nothing). setCpuClock keeps the paced value for what maps cycles to
     /// host time (audio replay cursors). EmulationController calls this
     /// right AFTER setCpuClock; a host that never does keeps setCpuClock's
-    /// behaviour. Default: no-op; implemented by DiskIICard and MockingboardCard.
+    /// behaviour. Default: no-op; phase-0 devices override this separately from
+    /// the paced audio replay clock.
     virtual void setMachineCpuClock(double /*hz*/) {}
     /// The video STANDARD's nominal clock (1 022 727 NTSC / 1 015 625 PAL),
     /// never scaled by an accelerator. For a timebase that is MECHANICAL —

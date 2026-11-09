@@ -30,8 +30,11 @@ Eleven domains swept read-only on `b9818f5d`; ten defects fixed and pinned,
 ~20 more verified and deferred, plus a four-part audit of the test suite
 itself — [evidence](docs/audits/bug-hunt-2026-11-01-round2.md). The three
 deferred items worth scheduling first: a non-stock `--speed` leaves some slot
-cards' phase-0 bus clock unscaled (CPU-1, open for Phasor and other cards;
-Disk II and Mockingboard fixed 2026-11-08/09; the first fix was withdrawn, see
+cards' phase-0 bus clock unscaled (CPU-1, open for SSI263, hybrid speech/PCM
+and serial timing;
+Disk II, Mockingboard, Phasor, MouseCard, E-Z Color, SNES MAX and Echo+ VIA
+fixed 2026-11-08/09; followed by the five Z80 cards, Liron, Workstation,
+ClockCard and MouseCardAppleWin; the first fix was withdrawn, see
 DEV § Mockingboard); one host folder could be
 served into two bays with both writing it back (MED-1, fixed 2026-11-06); a
 W5100 `DISCON` from `SOCK_CLOSE_WAIT` dropped the TX tail the guest was told
@@ -58,7 +61,6 @@ criterion. Move an item when its next action or dependency changes.
 
 | Task | Next action |
 |---|---|
-| [STORAGE-003](docs/backlog/storage.md#storage-003) | Best-of-9 `pom2_bench` with `DiskImage::tracks` on the heap. |
 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
 | [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`ImageWriter.cpp`, `Apple2Display.cpp`); split the DiskImage WOZ save half. |
 | [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only pass on `M6502`, verified by unchanged Harte/Klaus. |
@@ -97,7 +99,7 @@ romsets, where noted).
 | [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen` answers POST: GET-only check (405) with a smoke assertion. |
 | [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
 | [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
-| [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | Add `frontend_device_panel_concurrency` and `drive_rack_interaction` to the TSan leg. |
+| [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | ImGui panel/replug and drive-rack tests added to nightly TSan; obtain Linux run evidence and cover screenshot/`demodMutex` interaction. |
 | [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | One more card-pointer panel under replug, or close. |
 | [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | An env-var table in `printUsage()`. |
 | [ARCH-012](docs/backlog/architecture-tooling.md#arch-012) | Namespace migration, one directory at a time. |
@@ -107,7 +109,7 @@ romsets, where noted).
 | [NETWORK-005](docs/backlog/network.md#network-005) | Atomic in-flight flag shown in the UI and `/status`. |
 | [NETWORK-010](docs/backlog/network.md#network-010) | LAN mapping, when someone names a need. |
 | [AUDIO-006](docs/backlog/audio.md#audio-006) | Measure lock wait after ARCH-003; change only on a measured wait. |
-| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Record WOZ SHA-256s and probe commands (feeds VALIDATION-006). |
+| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Protected corpus now pins Captain/Prince boot and gameplay plus Bandits FLUX; later levels and hardware comparison remain. |
 | [VALIDATION-005](docs/backlog/validation.md#validation-005) | Six GUI runs on a copy of A2 File Cmd 1.0; close as stale if quiet. |
 | [DISPLAY-010](docs/backlog/display.md#display-010) | F6 luminance-neutral row dim, on report. |
 
@@ -181,7 +183,7 @@ reading, not measurements.
 | Harte vectors over **every** opcode on every build | small to medium | Today a SHA-256-pinned subset runs (`tests/tomharte_*.manifest`). |
 | A CI guard: the test run modified no tracked file | small | `git status --porcelain` after ctest. Cheap; it is the check behind the rule that a test booting a tracked image copies it first. |
 | A single-site mutation script (flip one line, expect one named test to fail) | small | Mutation controls are done by hand today. |
-| Corpus titles: Karateka, Choplifter, Lode Runner, Space Quarks, Border Zone, and the six FLUX-track titles | varies | The FLUX titles are the ones that matter: no real FLUX WOZ is in the corpus, so the 2026-11-06 time-base change is pinned on synthetic tracks only. Feeds [VALIDATION-006](docs/backlog/validation.md#validation-006). |
+| Corpus titles: Karateka, Choplifter, Lode Runner, Space Quarks, Border Zone, and the six FLUX-track titles | varies | Bandits now supplies one real-FLUX capture in the optional protected corpus (19 FLUX positions read during boot); other captures remain useful. Feeds [VALIDATION-006](docs/backlog/validation.md#validation-006). |
 
 ### Seen and not taken
 

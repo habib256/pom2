@@ -9,6 +9,19 @@
 #include <cstdint>
 #include <utility>
 
+namespace {
+// Bound deferred work from file input to one nominal revolution, matching
+// the session LSS catch-up budget. Longer live bursts require a later capture.
+constexpr uint64_t kMaxSessionWriteSpan = 400000;
+bool sessionWriteSpanSafe(int count, int64_t start, uint64_t end)
+{
+    if (count <= 0) return true;
+    if (start < 0) return false;
+    const auto first = static_cast<uint64_t>(start);
+    return end >= first ? end - first <= kMaxSessionWriteSpan : first - end <= 32;
+}
+}
+
 void DiskIICard::appendSessionIdentity(std::vector<uint8_t>& out) const
 {
     out.push_back(1);
@@ -43,6 +56,9 @@ bool DiskIICard::installSessionIdentity(const std::vector<uint8_t>& bytes)
 
 bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& error) const
 {
+    if (!sessionWriteSpanSafe(writePosition, writeStartTime, lssCycle)) {
+        error = "Disk II pending write burst exceeds session budget"; return false;
+    }
     std::vector<uint8_t> b, runtime;
     appendSnapshotState(runtime);
     // D2S1 v4's fixed controller header is followed by two optional nibble
@@ -82,7 +98,14 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
     if (!r.blob(staged.runtime, 1024 * 1024)) {
         error = "invalid session Disk II runtime"; return false;
     }
-    auto validator = std::make_unique<DiskIICard>(slot_);
+    // File validation must never flush a captured burst, including on a
+    // rejection before the untrusted timeline has been checked.
+    const auto discardValidator = [](DiskIICard* card) {
+        card->setWriteBackEnabled(false);
+        delete card;
+    };
+    auto validator = std::unique_ptr<DiskIICard, decltype(discardValidator)>(
+        new DiskIICard(slot_), discardValidator);
     validator->bootRom = bootRom; validator->bootRomLoaded = bootRomLoaded;
     validator->bootRom13 = bootRom13; validator->bootRom13Loaded = bootRom13Loaded;
     validator->p6Rom = p6Rom; validator->p6RomLoaded = p6RomLoaded;
@@ -120,8 +143,8 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
         valid = valid && (validator->lssCycle >= target || target - validator->lssCycle <= 400000);
     }
     if (validator->writePosition > 0) {
-        valid = valid && validator->writeStartTime >= 0 &&
-            uint64_t(validator->writeStartTime) <= validator->lssCycle + 32;
+        valid = valid && sessionWriteSpanSafe(validator->writePosition,
+            validator->writeStartTime, validator->lssCycle);
         for (int i = 0; i < validator->writePosition; ++i)
             valid = valid && validator->writeBuffer[i] >= validator->writeStartTime &&
                 uint64_t(validator->writeBuffer[i]) <= validator->lssCycle + 32;
@@ -132,8 +155,11 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
     if (canonical != staged.runtime) {
         error = "invalid or unsupported session Disk II state"; return false;
     }
-    for (int d = 0; d < kDriveCount; ++d)
+    for (int d = 0; d < kDriveCount; ++d) {
         staged.media[d] = std::make_unique<DiskImage>(std::move(validator->images[d]));
+        // Retire the source mount metadata after transferring its buffers.
+        validator->images[d].eject();
+    }
     out = std::move(staged);
     return true;
 }

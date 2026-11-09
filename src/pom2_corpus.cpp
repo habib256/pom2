@@ -177,6 +177,7 @@ struct TitleResult {
     std::string firmware;
     std::vector<std::string> firmwareFiles;
     std::vector<CheckResult> checks;
+    bool completed = false; // every script step ran, independent of frame matches
     double seconds = 0;   // emulated
     double wall = 0;      // host seconds
 };
@@ -246,13 +247,13 @@ TitleResult runTitle(const Title& t, const Options& opt,
         std::vector<std::uint8_t> bytes;
         if (!readFile(src, bytes))
             return skip("media not present: " + d.media +
-                        " (tools/fetch_test_media.py fetches the test media)");
+                        " (see this corpus's setup instructions)");
         if (!d.sha256.empty() && pom2::sha256Hex(bytes.data(), bytes.size()) != d.sha256)
             return skip("media differs from the manifest's sha256: " + d.media);
         std::error_code ec;
         fs::create_directories(titleScratch, ec);
         const fs::path copy = titleScratch /
-            (d.kind + std::to_string(d.unit) + "_" + src.filename().string());
+            (std::to_string(mounts.size()) + "_" + d.kind + std::to_string(d.unit) + "_" + src.filename().string());
         std::ofstream out(copy, std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(bytes.data()),
                   static_cast<std::streamsize>(bytes.size()));
@@ -344,6 +345,7 @@ TitleResult runTitle(const Title& t, const Options& opt,
     }
 
     for (const Mount& m : mounts) {
+        if (m.device->deferred) continue;
         const int unit = m.device->unit - 1;
         bool ok = false;
         if (m.device->kind == "diskii") ok = core.insertDisk(unit, m.copy.string());
@@ -367,6 +369,14 @@ TitleResult runTitle(const Title& t, const Options& opt,
             // 4096-cycle slices: the chunk the application's worker runs.
             while (cycles < end)
                 cycles += core.run(static_cast<int>(std::min<long long>(4096, end - cycles)));
+            break;
+        }
+        case Step::Kind::Swap: {
+            const Device* device = &t.devices.at(s.deviceIndex);
+            const auto mount = std::find_if(mounts.begin(), mounts.end(),
+                [device](const Mount& m) { return m.device == device; });
+            if (mount == mounts.end() || !core.insertDisk(device->unit - 1, mount->copy.string()))
+                return fail("swapping " + device->media + ": " + core.lastError());
             break;
         }
         case Step::Kind::Key:
@@ -401,6 +411,7 @@ TitleResult runTitle(const Title& t, const Options& opt,
         }
         }
     }
+    r.completed = true;
     r.seconds = static_cast<double>(cycles) / clockHz;
     if (core.cpuState().halted) r.reason = "CPU halted (KIL/STP) at the end";
     r.outcome = anyChanged ? Outcome::Fail : anyUnrecorded ? Outcome::New : Outcome::Pass;
@@ -548,16 +559,15 @@ int main(int argc, char** argv)
                   passed, ran, pct(passed, ran), checksOk, checks, pct(checksOk, checks),
                   failed, fresh, skipped);
 
-    if (opt.bless) {
+    if (opt.bless && ran > 0) {
         pom2::corpus::Expectations next = expected;
-        int recorded = 0, setupFailed = 0;
+        int recorded = 0, executionFailed = 0;
         for (const TitleResult& r : results) {
             if (r.outcome == Outcome::Skip) continue;
-            // A title whose SETUP failed (copy, ROM, mount, boot) ran no
-            // check: keep what it had recorded instead of erasing it, and do
-            // not exit 0 (bug hunt 2026-11-07 — it used to erase the lines,
-            // print "Blessed" and succeed).
-            if (r.outcome == Outcome::Fail && r.checks.empty()) { ++setupFailed; continue; }
+            // A failed mount can occur after checks (a disk swap). Never
+            // replace a complete baseline with a partial script. Completed
+            // runs with changed hashes remain eligible for an intentional bless.
+            if (!r.completed) { ++executionFailed; continue; }
             for (auto it = next.begin(); it != next.end();)
                 it = it->first.first == r.title->id ? next.erase(it) : std::next(it);
             for (const CheckResult& c : r.checks) {
@@ -565,13 +575,15 @@ int main(int argc, char** argv)
                 ++recorded;
             }
         }
-        std::ofstream out(opt.expected, std::ios::binary | std::ios::trunc);
-        out << pom2::corpus::formatExpectations(next);
-        if (!out) { std::fprintf(stderr, "cannot write %s\n", opt.expected.string().c_str()); return 2; }
+        if (recorded) {
+            std::ofstream out(opt.expected, std::ios::binary | std::ios::trunc);
+            out << pom2::corpus::formatExpectations(next);
+            if (!out) { std::fprintf(stderr, "cannot write %s\n", opt.expected.string().c_str()); return 2; }
+        }
         std::printf("Blessed: %d check(s) recorded into %s\n", recorded, opt.expected.string().c_str());
-        if (setupFailed) {
-            std::fprintf(stderr, "%d title(s) failed their setup and kept their old lines\n",
-                         setupFailed);
+        if (executionFailed) {
+            std::fprintf(stderr, "%d title(s) did not complete and kept their old lines\n",
+                         executionFailed);
             return 1;
         }
     } else {
@@ -598,10 +610,10 @@ int main(int argc, char** argv)
         std::printf("Report: %s\n", opt.report.string().c_str());
     }
 
-    if (opt.bless) return 0;
     if (ran == 0) {
         std::printf("SKIP: no title could run (see the reasons above)\n");
         return 77;
     }
+    if (opt.bless) return 0;
     return (failed || fresh) ? 1 : 0;
 }

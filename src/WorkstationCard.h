@@ -235,6 +235,7 @@ public:
     void onReset() override;
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override;
+    void setMachineCpuClock(double hz) override { setCpuClock(hz); }
     /// The un-accelerated bus clock: the card's 65C02 and its interval timer
     /// keep their own crystal's pace whatever accelerator the HOST runs.
     void setStandardClock(double hz) override;

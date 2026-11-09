@@ -24,6 +24,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace {
 // Snapshot blob: "ALS1", flags (bit0 enabled, bit1 firstBoot, bit2 bank,
@@ -119,6 +120,40 @@ double AlsCpmCard::appleAccess()
     syncExtra_ += (edge - pos) + 1.0 - 3.0 * busPerT_;
     if (cpu_) cpu_->setInFlightCycles(static_cast<int>(edge * ratio_));
     return edge;
+}
+
+void AlsCpmCard::setCpuClock(double hz)
+{
+    // Standalone hosts can still supply this hook alone. Once machine time
+    // is supplied, the preceding paced setter must not rebase the deadline.
+    if (!machineClockSet_) setTickCpuClock(hz);
+}
+
+void AlsCpmCard::setMachineCpuClock(double hz)
+{
+    if (!std::isfinite(hz) || hz <= 0.0) return;
+    machineClockSet_ = true;
+    setTickCpuClock(hz);
+}
+
+void AlsCpmCard::setTickCpuClock(double hz)
+{
+    if (!std::isfinite(hz) || hz <= 0.0 || hz == cpuHz_) return;
+    const double oldHz = cpuHz_ > 0.0 ? cpuHz_ : (stockHz_ > 0.0 ? stockHz_ : kStockHz);
+    if (mem_ && nextTick_ != 0) {
+        const uint64_t now = mem_->getCycleCounter();
+        // The pending edge belongs to the independent 60 Hz oscillator.
+        // Preserve its remaining time when CPU cycles change their duration;
+        // an edge already due remains due rather than getting postponed.
+        if (nextTick_ > now) {
+            const long double remaining = std::ceil(
+                static_cast<long double>(nextTick_ - now) * hz / oldHz);
+            const uint64_t room = std::numeric_limits<uint64_t>::max() - now;
+            nextTick_ = remaining >= static_cast<long double>(room)
+                ? std::numeric_limits<uint64_t>::max() : now + static_cast<uint64_t>(remaining);
+        }
+    }
+    cpuHz_ = hz;
 }
 
 // 60 Hz from the emulated clock. While the 6502 has the bus the Z80 cannot

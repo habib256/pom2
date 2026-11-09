@@ -27,6 +27,10 @@
 #include "EmulationController.h"
 #include "M6502.h"
 #include "Mockingboard.h"
+#include "PhasorCard.h"
+#include "MouseCard.h"
+#include "ResourcePaths.h"
+#include "EzColorCard.h"
 #include "PremiumSoftCard.h"
 #include "Memory.h"
 #include "SlotBus.h"
@@ -159,13 +163,14 @@ void checkMockingboardStaysOnPhase0()
 // against elapsed machine time, including speed changes and a real TransWarp:
 // the menu multiplier must disappear from the divider, the accelerator must
 // remain. Exercise the controller fan-out and per-instruction lazy catch-up.
-void checkMockingboardFollowsSpeedMenu()
+template<class Card>
+void checkSoundCardFollowsSpeedMenu()
 {
     for (auto standard : {VideoStandard::NTSC, VideoStandard::PAL}) {
         const auto& vt = pom2VideoTiming(standard);
         for (bool accelerated : {false, true}) {
             EmulationController c(AudioDevice::OutputMode::Offline);
-            MockingboardCard* mb;
+            Card* mb;
             {
                 auto st = c.lockState();
                 if (accelerated) {
@@ -173,7 +178,7 @@ void checkMockingboardFollowsSpeedMenu()
                     tw->setMemory(&st.memory());
                     st.memory().slotBus().plug(4, std::move(tw));
                 }
-                auto card = std::make_unique<MockingboardCard>(5);
+                auto card = std::make_unique<Card>(5);
                 card->setCpu(&st.cpu());
                 mb = card.get();
                 st.memory().slotBus().plug(5, std::move(card));
@@ -221,15 +226,113 @@ void checkMockingboardFollowsSpeedMenu()
                         const auto expected = static_cast<uint16_t>(t == 0 ? ticks % 65537 : ticks);
                         const auto got = static_cast<uint16_t>(before[chip][t] - counter(chip, t));
                         assert(std::abs(static_cast<int16_t>(got - expected)) <= 3 &&
-                               "the Mockingboard timer must follow menu pacing, not CPU acceleration");
+                               "the sound-card timer must follow menu pacing, not CPU acceleration");
                     }
                 }
-                std::printf("  Mockingboard %s budget %d, accelerator %.1fx: timers follow %llu CPU cycles\n",
-                    standard == VideoStandard::PAL ? "PAL" : "NTSC", budget, multiplier,
+                std::printf("  %.*s %s budget %d, accelerator %.1fx: timers follow %llu CPU cycles\n",
+                    int(mb->name().size()), mb->name().data(), standard == VideoStandard::PAL ? "PAL" : "NTSC", budget, multiplier,
                     static_cast<unsigned long long>(elapsed));
             }
         }
     }
+}
+
+// Equal CPU work at equal hardware clocks must produce equal peripheral
+// work regardless of the menu's pacing. Snapshot comparison includes the
+// E-Z Color beam and framebuffer; the mouse reports retired MCU cycles.
+void checkOtherBusDevicesFollowSpeedMenu()
+{
+    for (double hz : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4})
+            for (int pacing : {1, 2, 4}) {
+                MouseCard mouse(4), referenceMouse(4);
+                const auto eprom = pom2::findResource("roms/mouse_341-0270-c.bin");
+                const auto mcu = pom2::findResource("roms/mouse_341-0269.bin");
+                assert(mouse.loadRoms(eprom, mcu));
+                assert(referenceMouse.loadRoms(eprom, mcu));
+                EzColorCard video, referenceVideo;
+                for (auto* card : {static_cast<SlotPeripheral*>(&mouse),
+                                   static_cast<SlotPeripheral*>(&video)}) {
+                    card->setStandardClock(hz);
+                    card->setCpuClock(hz * accelerator * pacing);
+                    card->setMachineCpuClock(hz * accelerator);
+                }
+                for (auto* card : {static_cast<SlotPeripheral*>(&referenceMouse),
+                                   static_cast<SlotPeripheral*>(&referenceVideo)}) {
+                    card->setStandardClock(hz);
+                    card->setCpuClock(hz * accelerator);
+                }
+                for (int i = 0; i < 300; ++i) {
+                    mouse.advanceCycles(251);
+                    referenceMouse.advanceCycles(251);
+                    video.advanceCycles(251);
+                    referenceVideo.advanceCycles(251);
+                }
+                assert(mouse.mcuCyclesRun() > 0);
+                assert(mouse.mcuCyclesRun() == referenceMouse.mcuCyclesRun());
+                std::vector<uint8_t> actual, expected;
+                video.appendSnapshotState(actual);
+                referenceVideo.appendSnapshotState(expected);
+                assert(actual == expected);
+            }
+}
+
+// The aux-slot Z80 must retire the same work per emulated machine time
+// when the menu changes. Exercise the real chunk fan-out, not just setters.
+void checkAuxSlotFollowsSpeedMenu()
+{
+    for (auto standard : {VideoStandard::NTSC, VideoStandard::PAL})
+        for (bool accelerated : {false, true}) {
+            EmulationController c(AudioDevice::OutputMode::Offline);
+            PremiumSoftCard* card;
+            {
+                auto st = c.lockState();
+                st.memory().setIIEMode(true);
+                if (accelerated) {
+                    auto tw = std::make_unique<pom2::TranswarpCard>(4);
+                    tw->setMemory(&st.memory());
+                    st.memory().slotBus().plug(4, std::move(tw));
+                }
+                auto owned = std::make_unique<PremiumSoftCard>();
+                owned->setMemory(&st.memory());
+                card = owned.get();
+                st.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(owned));
+                // An all-NOP Z80 address space, including the card's own DRAM.
+                for (unsigned a = 0; a < 65536; ++a)
+                    st.memory().auxPhysical(static_cast<uint16_t>(a)) = 0;
+            }
+            loadNops(c);
+            const auto& vt = pom2VideoTiming(standard);
+            c.setCyclesPerFrame(vt.cyclesPerFrame);
+            c.setVideoStandard(standard);
+            c.setMode(EmulationController::Mode::Running);
+            c.tickFrame(); // establish the hardware accelerator's ratio
+            {
+                auto st = c.lockState();
+                card->c07eWrite(PremiumSoftCard::kRunOutOfReset | PremiumSoftCard::kRun);
+            }
+            for (int budget : {vt.cyclesPerFrame, 2 * vt.cyclesPerFrame,
+                               4 * vt.cyclesPerFrame, vt.cyclesPerFrame,
+                               vt.cyclesPerFrame / 2, 1'000'000}) {
+                c.setCyclesPerFrame(budget);
+                uint64_t start;
+                uint16_t before;
+                {
+                    auto st = c.lockState();
+                    start = st.memory().getCycleCounter();
+                    before = card->z80().getState().pc;
+                }
+                c.tickFrame();
+                auto st = c.lockState();
+                const auto elapsed = st.memory().getCycleCounter() - start;
+                const double machineHz = double(vt.cpuClockHz) * (accelerated ? 3.5 : 1.0);
+                // Premium SoftCard's independent 6 MHz oscillator; NOP = 4 T.
+                const auto expected = static_cast<uint16_t>(std::llround(elapsed * PremiumSoftCard::kZ80Hz / machineHz / 4));
+                const auto retired = static_cast<uint16_t>(card->z80().getState().pc - before);
+                assert(std::abs(static_cast<int16_t>(retired - expected)) <= 2 &&
+                       "aux-slot Z80 work must follow menu pacing through the controller");
+            }
+        }
 }
 
 // The //e aux slot is SlotBus slot 0 (PremiumSoftCard::kAuxSlot), and every
@@ -250,13 +353,13 @@ void checkAuxSlotGetsTheClock()
     loadNops(*c);
     for (int i = 0; i < 3; ++i) c->tickFrame();
     std::printf("  aux-slot card at 3.5x: holds %9.0f Hz, machine %9.0f Hz\n",
-                psc->cpuClockHz(), c->emulatedCpuClockHz());
-    assert(std::fabs(psc->cpuClockHz() - c->emulatedCpuClockHz()) < 1.0 &&
+                psc->cpuClockHz(), c->machineCpuClockHz());
+    assert(std::fabs(psc->cpuClockHz() - c->machineCpuClockHz()) < 1.0 &&
            "the accelerator fan-out skipped the //e aux slot");
     c->setVideoStandard(VideoStandard::PAL);
     std::printf("  aux-slot card on PAL:  holds %9.0f Hz, machine %9.0f Hz\n",
-                psc->cpuClockHz(), c->emulatedCpuClockHz());
-    assert(std::fabs(psc->cpuClockHz() - c->emulatedCpuClockHz()) < 1.0 &&
+                psc->cpuClockHz(), c->machineCpuClockHz());
+    assert(std::fabs(psc->cpuClockHz() - c->machineCpuClockHz()) < 1.0 &&
            "the video-standard fan-out skipped the //e aux slot");
 }
 
@@ -324,9 +427,12 @@ int main()
     }
     // 5. The accelerator must leave phase-0 devices alone.
     checkMockingboardStaysOnPhase0();
-    checkMockingboardFollowsSpeedMenu();
+    checkSoundCardFollowsSpeedMenu<MockingboardCard>();
+    checkSoundCardFollowsSpeedMenu<PhasorCard>();
+    checkOtherBusDevicesFollowSpeedMenu();
     // 6. The //e aux slot (slot 0) is a card too.
     checkAuxSlotGetsTheClock();
+    checkAuxSlotFollowsSpeedMenu();
     std::puts("accelerator_clock_chunk OK");
     return 0;
 }

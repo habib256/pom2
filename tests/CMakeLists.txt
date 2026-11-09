@@ -10046,6 +10046,11 @@ pom2_add_headless_test(test_c800_release
 set_tests_properties(c800_release PROPERTIES
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+pom2_add_headless_test(test_storage_deferred_diversion
+    NAME storage_deferred_diversion TIMEOUT 20
+    SOURCES storage_deferred_diversion_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_storage_coordinator
     NAME storage_coordinator TIMEOUT 20
     SOURCES storage_coordinator_test.cpp
@@ -10339,6 +10344,11 @@ if(TARGET pom2_corpus)
              COMMAND pom2_corpus --tag ci
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(corpus_ci PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+    add_test(NAME corpus_bless
+             COMMAND ${CMAKE_COMMAND} -DCORPUS=$<TARGET_FILE:pom2_corpus>
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/corpus_bless_work
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/corpus_bless_test.cmake)
+    set_tests_properties(corpus_bless PROPERTIES TIMEOUT 20)
 endif()
 pom2_add_headless_test(test_pom2_core_api
     NAME pom2_core_api TIMEOUT 10 PORTABLE

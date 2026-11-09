@@ -244,7 +244,19 @@ bool MouseCardAppleWin::vblOnBeam() const
 
 void MouseCardAppleWin::setCpuClock(double hz)
 {
-    if (hz <= 0) return;
+    if (!machineClockSet_) applyMachineClock(hz);
+}
+
+void MouseCardAppleWin::setMachineCpuClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    machineClockSet_ = true;
+    applyMachineClock(hz);
+}
+
+void MouseCardAppleWin::applyMachineClock(double hz)
+{
+    if (!(hz > 0.0) || hz == cpuHz_) return;
     const double old = cpuHz_;
     cpuHz_ = hz;
     restretch();

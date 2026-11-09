@@ -10,6 +10,118 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-09 — Preserve concurrent replacements during routed HDV mounts
+
+The HDV mount command now retains its selected slot and outgoing mount
+identity across the unlocked save/read. It refuses a changed route or
+medium before adopting the requested image or changing a SmartPort unit's
+type, preserving the replacement's pending writes.
+
+## 2026-11-09 — Protect routed 3.5-inch mounts from concurrent replacement
+
+The 3.5-inch mounting command's SmartPort route now retains its outgoing
+mount identity and target slot across the unlocked save. A changed mount
+or primary SmartPort slot refuses the operation before it can flush or
+replace the newly installed disk. The generic bay-mount guard did not cover
+this separate route.
+
+## 2026-11-09 — Refuse stale bay mounts after a concurrent replacement
+
+A mount command now keeps the outgoing mount identity captured with its
+write-back payload and verifies it before adopting the requested image.
+If another disk arrived during the unlocked save/read, the stale command
+refuses rather than flushing that disk and replacing it. Same-path remounts
+are distinguished by mount identity.
+
+## 2026-11-09 — Preserve replacement media during a SmartPort type change
+
+Changing a bay's type now verifies that its original mount is still present
+after the unlocked save. A concurrent replacement, including a remount of
+the same file, is left mounted with its new writes pending instead of being
+flushed and destroyed by the stale command.
+
+## 2026-11-09 — Preserve replacement media during a concurrent eject
+
+A bay eject now remains bound to the mount it originally captured. If another
+disk is mounted while the outgoing save runs unlocked, the command refuses
+further work instead of flushing and ejecting the newcomer. This also protects
+a same-path remount, using its mount identity rather than its filename.
+
+## 2026-11-09 — Bound pending Disk II writes in sessions
+
+Session validation now limits a pending Disk II write to 400000 LSS cycles,
+matching the existing catch-up work budget. Consistent CPU/LSS counters alone
+previously allowed enormous write spans that could overflow cell counts on
+resume. Capture refuses the same unsupported spans without altering its output.
+Existing sessions above this limit are rejected; ordinary pending writes and
+the exact boundary remain supported.
+
+## 2026-11-09 — Reject invalid Disk II sessions without flushing them
+
+The temporary Disk II session validator now disables writes before destruction,
+including on failed validation. Previously an invalid saved timeline could be
+rejected, then executed as a pending write during cleanup, terminating POM2
+with `std::length_error`. A crafted active-burst regression reproduces the
+crash before the fix and verifies ordinary rejection after it.
+
+## 2026-11-09 — Core bug hunt: pending ticks, diverted saves and corpus baselines
+
+ALS CP/M keeps the time remaining before its 60 Hz interrupt when the
+hardware accelerator changes, without recalculating it on menu-speed
+notifications. Direct 5.25-inch and 3.5-inch saves now expose the sibling
+path when an external edit diverts the guest's writes. Deferred Liron flushes
+also publish that path, only to the captured mount, preserving later writes.
+Replacement mounts also return the outgoing sibling path, retaining its
+status if the incoming disk cannot load. The original file
+and guest data were already preserved; the persistence status was wrong.
+
+`pom2_corpus --bless` no longer discards later expectations when a disk swap
+fails after an earlier check. Interrupted scripts retain their baseline and
+fail; completed scripts with changed hashes remain blessable. Entirely
+skipped runs return 77 without rewriting expectations.
+
+[Reproductions and scope](docs/audits/core-bug-hunt-2026-11-09.md).
+
+## 2026-11-09 — Machine time for nine more peripheral cards
+
+The five Z80 cards, Liron and Workstation Card now advance with menu speed
+while retaining their hardware clock ratios. ClockCard and MouseCardAppleWin
+preserve pending timer phases across menu changes; hardware-clock changes
+rescale those phases. ClockCard's calendar still follows host civil time.
+Ten targeted tests pass, including real CP/M boots, Workstation node
+acquisition and a controller-to-aux-slot Z80 execution check. The protected
+corpus retains all nine reference frames. Speech and serial timing remain
+open; [scope and evidence](docs/audits/core-consolidation-2026-11-09.md).
+
+## 2026-11-09 — Core clocks, heap-backed tracks and real protected-media corpus
+
+- Menu x2/x4 now fast-forward Phasor timers, the mouse MCU, E-Z Color,
+  SNES MAX's latch and Echo+ TMS5220's VIA with the machine. Hardware
+  acceleration still leaves their peripheral clock alone. Phasor replay
+  scales its event cursor/lag while preserving AY pitch; Echo+ speech/PCM
+  keep their paced conversion. Timer, replay and latch regressions pass.
+- `DiskImage`'s nibble buffers move to the heap: ARM64 object size falls
+  from 253624 to 20688 bytes. The 512 KiB stack test covers deep copies,
+  moves and reload. Session budgets count the new allocation, and the
+  session validator retires moved-from media before its destructor could
+  flush an in-flight burst. Storage and writable-session regressions pass.
+- An optional protected corpus records Captain Goodnight (including a
+  scripted face-B swap), Prince of Persia and Bandits: 3/3 games, 9/9
+  inspected frames. Bandits contains actual FLUX tracks; a diagnostic
+  observed data-register reads at all 19 mapped positions during boot.
+  Commercial images stay in temporary storage; only scripts and hashes
+  enter the repository. The default corpus's 29 checks remain unchanged.
+
+[Evidence, benchmark limits and reproduction](docs/audits/core-consolidation-2026-11-09.md).
+
+## 2026-11-09 — Nightly TSan now includes the existing ImGui harnesses
+
+The TSan matrix built and ran no ImGui panel harness, leaving the tested
+slot-replug/rendering contract outside nightly race detection. It now builds
+and selects `frontend_device_panel_concurrency` and `drive_rack_interaction`,
+both headless. The latter covers drive-rack input on one thread; screenshots
+and `demodMutex` concurrency still need separate coverage (ARCH-003).
+
 ## 2026-11-09 — Built-in NAT: fragments, LAN services, IPv6, DNS records and TCP persist
 
 Two POM2 guests on different LAN computers can publish TCP/UDP services via

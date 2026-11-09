@@ -110,6 +110,8 @@ public:
     void onReset() override;
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
+    // Menu pacing advances the whole machine; only hardware clocks divide Z80 work.
+    void setMachineCpuClock(double hz) override { setCpuClock(hz); }
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;

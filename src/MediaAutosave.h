@@ -358,6 +358,11 @@ public:
 
     /// Every guest write (and anything else that changes what the file owes).
     void noteWrite() { ++writeSerial_; }
+    /// A successful inline commit can divert too. Preserve that notice
+    /// without retiring or replacing any outstanding background operation.
+    void noteDiversion(const std::string& path) {
+        if (!path.empty()) divertedTo_ = path;
+    }
     /// A different medium, or none: forget the in-flight commit and errors.
     void reset() { *this = MediaAutosave{}; }
 
@@ -371,7 +376,7 @@ public:
             error_.clear();
             retryAt_  = {};
             failures_ = 0;
-            if (!r.divertedTo.empty()) divertedTo_ = r.divertedTo;
+            noteDiversion(r.divertedTo);
             return writeSerial_ == capturedSerial_;
         }
         // Log each distinct failure once; the retries would otherwise repeat

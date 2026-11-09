@@ -167,11 +167,27 @@ The blanket claim that no test drives ImGui is obsolete.
 
 ## ARCH-003 — ThreadSanitizer: the GUI half is still open.
 
-**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): no GUI test in the nightly TSan filter.
+**Priority:** 🟡 · **State:** Partial (2026-11-09): headless ImGui panel/replug and drive-rack tests are included in nightly TSan; Linux execution evidence and screenshot/`demodMutex` coverage remain open.
 
 **Acceptance criterion (after revalidation):** Drive ImGui panels, screenshots, slot replug and rewind under TSan without races or deadlocks.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-883). Original dates and estimates are retained below.
+
+**Nightly integration 2026-11-09:** `.github/workflows/ci.yml` now selects
+`frontend_device_panel_concurrency` and `drive_rack_interaction` in both
+the TSan test filter and the executable build list. The first renders
+copied device snapshots after slot replacement and during concurrent replug;
+the second drives ImGui media interactions without a display server. The
+drive-rack harness is single-threaded: adding it does not establish a
+concurrent mount/eject contract. Screenshot rendering and `demodMutex`
+interaction remain separate work; these additions do not close ARCH-003.
+
+**Local validation 2026-11-09:** both added tests pass under AppleClang 21
+ThreadSanitizer on macOS arm64 (RelWithDebInfo, `POM2_SANITIZE=thread`,
+`POM2_TEST_TIMEOUT_SCALE=6`, `halt_on_error=1`, existing `tests/tsan.supp`),
+2/2 in 3.46 s. The workflow YAML parses and its TSan filter selects all
+12 intended tests. This is local evidence; the Ubuntu nightly has not been
+run for this change.
 
 - 🟡 **ThreadSanitizer: the GUI half is still open.** The controller half is
   done and clean (2026-08-17) — a harness drove the real thread shape without a

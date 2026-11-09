@@ -227,8 +227,33 @@ int testBoot()
 
 } // namespace
 
+// Equal machine-cycle budgets retire equal NOPs across menu changes. The
+// standalone reference keeps the hardware CPU clock, including acceleration.
+void testMachineClock()
+{
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            ApplicardCard actual, reference;
+            for (auto* card : {&actual, &reference})
+                CHECK(card->loadRom(std::vector<uint8_t>(ApplicardCard::kRomBytes, 0)));
+            reference.setCpuClock(stock * accelerator);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                actual.setCpuClock(stock * accelerator * pacing);
+                actual.setMachineCpuClock(stock * accelerator);
+                const uint16_t before = actual.z80().getState().pc;
+                actual.advanceCycles(256);
+                reference.advanceCycles(256);
+                const int retired = uint16_t(actual.z80().getState().pc - before);
+                const double expected = 256 * ApplicardCard::kZ80Hz / (4 * stock * accelerator);
+                CHECK(retired >= int(expected) - 1 && retired <= int(expected) + 2);
+                CHECK(actual.z80().getState().pc == reference.z80().getState().pc);
+            }
+        }
+}
+
 int main()
 {
+    testMachineClock();
     testLatches();
     testSnapshot();
     const int boot = testBoot();

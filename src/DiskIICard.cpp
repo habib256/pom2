@@ -352,10 +352,8 @@ bool DiskIICard::prepareDisk(const std::string& path, bool writeBackEnabled,
                              DiskImage& out, std::string& error,
                              const DiskImage::SectorOrder* forcedOrder)
 {
-    // Heap, not stack: a DiskImage is ~242 KB and this sits mid-chain on the
-    // insert path (insertDisk → here → loadFile, one temporary per frame) —
-    // three on a 512 KB macOS std::thread stack is a SIGBUS. The AI control
-    // server's HTTP thread reaches insertDisk directly.
+    // Keep the staged image off the caller's stack. Its nibble buffers are
+    // heap-backed too (STORAGE-003); the staging keeps failed reads atomic.
     auto staged = std::make_unique<DiskImage>();
     staged->setWriteBackEnabled(writeBackEnabled);
     if (!(forcedOrder ? staged->loadFile(path, *forcedOrder) : staged->loadFile(path))) {
@@ -551,13 +549,9 @@ std::shared_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
     DiskImage& img = images[drive];
     std::shared_ptr<DiskImage> pending;
     if (img.isLoaded() && img.hasUnsavedChanges()) {
-        // Move-ASSIGN into an already-heap-allocated image. A `DiskImage` is
-        // ~242 KB and macOS gives a std::thread a 512 KB stack, so neither the
-        // temporary `make_unique(std::move(img))` would materialise nor a
-        // `std::swap` (which builds one) may appear on this path — same rule
-        // as `prepareDisk`. Element-wise array move is a memcpy done in
-        // place: microseconds, and no syscall, which is the whole point of
-        // doing this half under the lock.
+        // Transfer the image into the pending commit. The heap-backed
+        // nibble buffers move by ownership transfer, without copying their
+        // 228 KiB while the controller lock is held.
         pending = std::make_shared<DiskImage>();
         *pending = std::move(img);
         ejecting_[drive] = pending;          // the drive is reserved until it is gone

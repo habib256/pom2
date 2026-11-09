@@ -60,12 +60,15 @@ void ayWrite(PhasorCard& card, int viaIdx, uint8_t regAddr, uint8_t data)
     card.slotRomWrite(base + pom2::Via6522::VIA_ORB, static_cast<uint8_t>(pb & ~0x03));
 }
 
-double measurePwm(bool native)
+double measurePwm(bool native, int pacing = 1, int accelerator = 1)
 {
     Memory mem;
     M6502  cpu(&mem);
     PhasorCard card(4);
     card.setCpu(&cpu);
+    card.setStandardClock(1022727.0);
+    card.setCpuClock(1022727.0 * pacing * accelerator);
+    card.setMachineCpuClock(1022727.0 * accelerator);
     card.setSampleRate(kSr);
     card.setVolume(1.0f);
     card.setMuted(false);
@@ -78,8 +81,8 @@ double measurePwm(bool native)
     ayWrite(card, 0, 8, 0x00);                // channel A volume 0
 
     constexpr int kHalfPeriodCycles = 1000;
-    const double kExpectedHz = 1022727.0 / (2.0 * kHalfPeriodCycles);
-    constexpr int kFrameCycles  = 17045;
+    const double kExpectedHz = 1022727.0 * pacing * accelerator / (2.0 * kHalfPeriodCycles);
+    const int kFrameCycles  = 17045 * pacing * accelerator;
     constexpr int kFrameSamples = 735;
     constexpr int kChunk        = 245;
     constexpr int kFrames       = 40;
@@ -332,6 +335,12 @@ int main()
     const double b = measurePwm(true);
     assert(a > 0.90 && a < 1.10 && "MB-compat: the writes did not land at their cycle stamp");
     assert(b > 0.90 && b < 1.10 && "Phasor-native: the writes did not land at their cycle stamp");
+    for (bool native : {false, true})
+        for (int pacing : {1, 2, 4})
+            for (int accelerator : {1, 4}) {
+                const double ratio = measurePwm(native, pacing, accelerator);
+                assert(ratio > 0.90 && ratio < 1.10);
+            }
     std::puts("phasor_timeline OK");
     return 0;
 }

@@ -139,6 +139,7 @@ public:
     /// wall-clock under PAL (64 Hz became 63.55 Hz for a guest using TP
     /// IRQs as a timebase). Wired from EmulationController::setVideoStandard.
     void setCpuClock(double hz) override;
+    void setMachineCpuClock(double hz) override;
 
     /// Snapshot/rewind: 'CLK1'-tagged blob with the uPD1990AC bit-bang
     /// state (40-bit shift register + edge-detect latches + mode), the
@@ -289,6 +290,10 @@ private:
     /// snapshot loader cannot drift apart.
     int  tpHalfPeriodQ8For(int hz) const;
 
+    // Once supplied, machine time owns these guest-visible oscillators;
+    // later paced notifications must not rescale their pending phases.
+    bool machineClockSet_ = false;
+    void applyMachineClock(double hz);
     double cpuClockHz_       = static_cast<double>(POM2_CPU_CLOCK_HZ);
     int  tpRateHz_           = 0;
     int  tpHalfPeriodQ8_     = 0;

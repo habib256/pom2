@@ -212,6 +212,12 @@ public:
         return true;
     }
 
+    /// Publish a deferred commit's diversion only to its original mount.
+    void noteDiversionFor(uint64_t lineage, const std::string& path) {
+        if (loaded_ && lineage != 0 && lineage == lineage_)
+            autosave_.noteDiversion(path);
+    }
+
     /// Background autosave (MediaAutosave.h), `stateMutex` held: the file
     /// follows the guest's writes about a second after they stop, with the
     /// 800 KB write done by the media commit worker. Dirty state is kept

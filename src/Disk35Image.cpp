@@ -455,13 +455,14 @@ bool Disk35Image::saveDirty()
     // simply not separated in time here.
     PendingWriteBack pending = takeWriteBack();
     if (!pending.valid) return true;
-    std::string error;
-    if (!commitWriteBack(std::move(pending), error)) {
+    std::string error, divertedTo;
+    if (!commitWriteBack(std::move(pending), error, &divertedTo)) {
         lastError_ = error;
         pom2::log().warn("Disk35", lastError_);
         restoreDirty();
         return false;
     }
+    autosave_.noteDiversion(divertedTo);
     return true;
 }
 

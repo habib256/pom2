@@ -516,7 +516,24 @@ int ClockCard::tpHalfPeriodQ8For(int hz) const
 
 void ClockCard::setCpuClock(double hz)
 {
-    if (hz <= 0.0) return;
+    if (!machineClockSet_) applyMachineClock(hz);
+}
+
+void ClockCard::setMachineCpuClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    machineClockSet_ = true;
+    applyMachineClock(hz);
+}
+
+void ClockCard::applyMachineClock(double hz)
+{
+    if (!(hz > 0.0) || hz == cpuClockHz_) return;
+    // Keep the oscillator's elapsed phase across a hardware clock change.
+    // A menu pacing notification never reaches here once machine time is set.
+    dataOutCycles_ = static_cast<uint64_t>(
+        static_cast<long double>(dataOutCycles_) * hz / cpuClockHz_ + 0.5L);
+    const int oldHalfPeriod = tpHalfPeriodQ8_;
     cpuClockHz_ = hz;
     // Re-derive DIRECTLY from the cached rate, not by replaying
     // programTpTimer(lastMode): that function's `default:` leaves the rate
@@ -525,7 +542,10 @@ void ClockCard::setCpuClock(double hz)
     // exactly contradicting this function's contract.
     if (tpRateHz_ > 0) {
         tpHalfPeriodQ8_ = tpHalfPeriodQ8For(tpRateHz_);
-        if (tpAccumQ8_ > tpHalfPeriodQ8_) tpAccumQ8_ = 0;
+        if (oldHalfPeriod > 0)
+            tpAccumQ8_ = std::min(tpHalfPeriodQ8_ - 1, static_cast<int>(
+                static_cast<long double>(tpAccumQ8_) * tpHalfPeriodQ8_ /
+                oldHalfPeriod + 0.5L));
     }
 }
 

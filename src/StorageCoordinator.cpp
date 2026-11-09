@@ -391,23 +391,15 @@ std::string synthVolumeName(const std::vector<std::uint8_t>& bytes)
     return std::string(reinterpret_cast<const char*>(&bytes[kHeader + 1]), len);
 }
 
-/// Write the medium currently in `slot`/`bay` back to its file BEFORE a mount
-/// replaces it — with NO lock held.
-///
-/// `MountableMediaCard::adoptBay` and `mountBay` both flush the image they are
-/// about to destroy (`Block512Backing::adoptImage`/`loadImage` start with
-/// `saveDirty()`), and that flush ran inside the caller's phase-2 critical
-/// section: 179 ms of `stateMutex` for a dirty 32 MiB HDV, with the CPU worker
-/// and the paint thread both stopped — exactly the freeze the two-phase mount
-/// exists to prevent (CLAUDE.md's standing rule). Phase 1 only ever moved the
-/// INCOMING read off the lock; the OUTGOING write stayed on it.
-///
-/// Same three steps as `ejectMediaBay`, and the same refusal on failure: a
-/// mount must not destroy a dirty medium it could not save. That is also what
-/// the inline path did — `adoptImage`/`loadImage` return false when their
-/// `saveDirty()` fails — so the behaviour is unchanged, only the lock is.
+/// Save the outgoing medium before its replacement, with no state lock held.
+/// Capture is locked; commit is unlocked; failure restores dirty state and
+/// refuses the mount. This keeps whole-file writes/fsyncs out of adoptBay's
+/// locked phase (a dirty 32 MiB HDV previously held it for 179 ms).
+/// Optional capturedMount names the medium observed with the payload, so
+/// callers can refuse to replace a newcomer after the unlocked work.
 bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
-                      std::string& error, std::string* notice = nullptr)
+                      std::string& error, std::string* notice = nullptr,
+                      MediaBayInfo* capturedMount = nullptr)
 {
     error.clear();
     Block512Backing::PendingWriteBack pending;
@@ -421,6 +413,7 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
         auto* media = dynamic_cast<MountableMediaCard*>(
             state.memory().slotBus().peripheral(slot));
         if (!media || bay < 0 || bay >= media->bayCount()) return true;
+        if (capturedMount) *capturedMount = media->bayInfo(bay);
         std::string prepareError;
         twoPhase = media->prepareEjectBay(bay, pending, prepareError);
         if (!twoPhase && !prepareError.empty()) {
@@ -452,18 +445,18 @@ bool flushOutgoingBay(EmulationController& controller, int slot, int bay,
         const uint64_t capturedLineage = imageFlush.lineage;
         Disk35Image::PendingWriteBack imagePending =
             imagePayload(std::move(imageFlush));
-        std::string commitError;
-        if (Disk35Image::commitWriteBack(std::move(imagePending), commitError))
-            return true;
-        // Phase 3: re-mark the bay dirty so the still-mounted medium is saved
-        // again on the next attempt, then refuse — the same contract the
-        // block path below keeps, and the reason a failed commit never
-        // silently loses the guest's writes.
-        {
+        std::string commitError, divertedTo;
+        const bool saved = Disk35Image::commitWriteBack(std::move(imagePending), commitError, &divertedTo);
+        // A failed replacement leaves this medium mounted: retain its notice.
+        if (!saved || !divertedTo.empty()) {
             auto state = controller.lockState();
-            if (auto* media = dynamic_cast<MountableMediaCard*>(
-                    state.memory().slotBus().peripheral(slot)))
-                media->restoreFlushBayDirty(bay, capturedLineage);
+            auto* media = dynamic_cast<MountableMediaCard*>(state.memory().slotBus().peripheral(slot));
+            if (media && saved) media->noteFlushBayDiversion(bay, capturedLineage, divertedTo);
+            else if (media) media->restoreFlushBayDirty(bay, capturedLineage);
+        }
+        if (saved) {
+            if (notice && !divertedTo.empty()) *notice = describeDiversion(divertedTo);
+            return true;
         }
         error = "unsaved changes in slot " + std::to_string(slot) + " bay " +
                 std::to_string(bay + 1) + " could not be written: " +
@@ -693,8 +686,9 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
     sweepMountDirDebris(path);
     // Still phase 1, still unlocked: the OUTGOING medium's write-back. See
     // flushOutgoingBay — the adopt below does it otherwise, under the lock.
+    MediaBayInfo original;
     if (std::string flushError;
-        !flushOutgoingBay(controller, slot, bay, flushError, &result.notice))
+        !flushOutgoingBay(controller, slot, bay, flushError, &result.notice, &original))
         return commandError(std::move(flushError));
     Block512Backing::PreparedImage prepared;
     std::string prepareError;
@@ -717,6 +711,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::mountMediaBay(
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
 
+        const auto now = media->bayInfo(bay);
+        if (now.loaded != original.loaded || (original.mountId != 0
+                ? now.mountId != original.mountId : now.path != original.path))
+            return commandError("medium changed during mount; retry");
         bool mounted = false;
         if (preparedOk) {
             std::string adoptError;
@@ -881,20 +879,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
-    // Three critical sections, because save-on-eject is a whole-file
-    // read-modify-write + rename and doing it under `stateMutex` froze the
-    // CPU worker and the paint thread together (CLAUDE.md's standing rule).
-    //   1. locked   — MOVE the payload out (dirty flags retired at capture),
-    //                 medium left MOUNTED
-    //   2. unlocked — commit it (restore the captured dirty set on failure)
-    //   3. locked   — drop the medium
-    // The medium survives phase 1 so a failed commit (disk full) can be
-    // retried: the failure path re-marks the captured blocks. The guest keeps
-    // running through phase 2 and may dirty more; phase 1 cleared only what
-    // it captured, so those keep their flags (a blanket clear once dropped
-    // them from the user's only host copy).
-    // Phases 1-2 repeat (bounded) while the guest writes during the unlocked
-    // commit: phase 3 is then left nothing to decode under the lock.
+    // Save outside the state lock, then eject only the original mount.
+    // Repeat captures for guest writes made while the save runs unlocked.
+    MediaBayInfo original;
+    bool firstCapture = true;
+    const auto sameMount = [&](const MediaBayInfo& now) {
+        return now.loaded == original.loaded && (original.mountId != 0
+            ? now.mountId == original.mountId : now.path == original.path);
+    };
     for (int round = 0; round < 4; ++round) {
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
@@ -913,17 +905,14 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         if (bay < 0 || bay >= media->bayCount())
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
+        const auto now = media->bayInfo(bay);
+        if (firstCapture) { original = now; firstCapture = false; }
+        else if (!sameMount(now)) return commandError("medium changed during eject; retry");
         std::string prepareError;
         twoPhase = media->prepareEjectBay(bay, pending, prepareError);
         if (!twoPhase && !prepareError.empty())
             return commandError(prepareError);
-        // An EMPTY error means "this bay is not block-backed", NOT "nothing to
-        // write": a Liron 3.5" bay lands exactly here, and leaving it to phase
-        // 3 put the whole 800 KB image plus two fsyncs inside `ejectBay`'s
-        // inline `saveDirty()` — under `stateMutex`, which is the one thing
-        // these three phases exist to avoid. `prepareFlushBay` is the same
-        // whole-file capture `flushAll` already uses, and it retires the dirty
-        // flag here, so phase 3 finds the bay clean and writes nothing.
+        // Whole-image bays also capture here, avoiding locked file writes.
         if (!twoPhase) {
             std::string flushError;
             if (!media->prepareFlushBay(bay, imageFlush, flushError) &&
@@ -975,7 +964,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
     }
     auto st = controller.lockState();
     auto* m = dynamic_cast<MountableMediaCard*>(st.memory().slotBus().peripheral(slot));
-    if (!m || bay >= m->bayCount() || !m->bayInfo(bay).hasUnsavedChanges) break;
+    if (!m || bay >= m->bayCount()) break;
+    const auto now = m->bayInfo(bay);
+    if (!sameMount(now)) return commandError("medium changed during eject; retry");
+    if (!now.hasUnsavedChanges) break;
     }
 
     {
@@ -990,6 +982,8 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         if (bay < 0 || bay >= media->bayCount())
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
+        if (!sameMount(media->bayInfo(bay)))
+            return commandError("medium changed during eject; retry");
         // Phase 1 retired what it captured; a straggler past the rounds
         // above kept its flag and this ejectBay flushes it inline.
         click35 = bayHolds35(media->bayInfo(bay));
@@ -1047,23 +1041,9 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
     MediaCommandResult result;
     std::vector<SettingUpdate> updates;
 
-    // Changing the type DESTROYS the unit in the bay, and the destructor
-    // flushes with `(void)backing_.saveDirty()` — a DISCARDED result
-    // (SmartPortHdvUnit.cpp, SmartPort35Unit.cpp). So a write-back that
-    // failed took the only copy of the guest's writes with it and the command
-    // still reported success (bug hunt 4 #3). The sibling that already got
-    // this right is `mountSmartPortUnitAs` above: flush explicitly, and
-    // REFUSE the swap when the flush fails, so the dirty medium stays mounted
-    // and the user can retry.
-    //
-    // Same three critical sections as `ejectMediaBay` — the flush is a
-    // whole-file rewrite plus an fsync, and CLAUDE.md forbids that under
-    // `stateMutex`:
-    //   0. unlocked — size and touch the capture's buffer (MediaMount.h)
-    //   1. locked   — validate, and MOVE the payload out (medium stays)
-    //   2. unlocked — commit it; on failure put the captured dirty set back
-    //                 and abort the type change entirely
-    //   3. locked   — re-resolve, flush any inline remainder, swap the type
+    // Save outside the state lock before replacing the unit. A failed save
+    // must retain its medium; a concurrent replacement must remain untouched.
+    MediaBayInfo original;
     Block512Backing::PendingWriteBack pending;
     MountableMediaCard::PendingBayFlush imageFlush;
     bool twoPhase = false;
@@ -1079,6 +1059,7 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
         if (bay < 0 || bay >= media->bayCount())
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
+        original = media->bayInfo(bay);
         const auto options = media->bayTypeOptions(bay);
         const bool supported = std::any_of(
             options.begin(), options.end(), [&](const auto& option) {
@@ -1158,6 +1139,10 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::setMediaBayType(
         if (bay < 0 || bay >= media->bayCount())
             return commandError("invalid media bay " +
                                 std::to_string(bay + 1));
+        const auto now = media->bayInfo(bay);
+        if (now.loaded != original.loaded || (original.mountId != 0
+                ? now.mountId != original.mountId : now.path != original.path))
+            return commandError("medium changed during type change; retry");
         // Whatever phase 1 could not lift out (a 3.5" unit has no block
         // backing, and the guest may have dirtied more blocks while phase 2
         // ran unlocked) is flushed inline here. `flushBay` is the honest test:
@@ -1236,6 +1221,8 @@ StorageCoordinator::mountDisk35(
     const std::string& path, bool onboard) const
 {
     RoutedMediaCommandResult result;
+    int smartPortSlot = -1;
+    MediaBayInfo original;
     if (drive < 0 || drive >= (onboard ? EmulationController::kSony35Drives : 2)) {
         result.error = "invalid 3.5-inch drive " +
                        std::to_string(drive + 1);
@@ -1245,12 +1232,9 @@ StorageCoordinator::mountDisk35(
     if (!onboard)
         if (auto viaLiron = mountDisk35OnLiron(controller, settings, drive, path)) return *viaLiron;
     sweepMountDirDebris(path);
-    // `mountSmartPortUnitAs` below runs under the lock and starts by flushing
-    // whatever the bay holds (a dirty 32 MiB HDV unit = 115 ms of stateMutex).
-    // Do that write here, with no lock held; the one under the lock then finds
-    // nothing dirty and is a no-op. See flushOutgoingBay.
+    // Capture the SmartPort target with its outgoing save, then verify both
+    // the route and mount identity before replacing media under the lock.
     {
-        int smartPortSlot = -1;
         {
             auto state = controller.lockState();
             const auto cards = topology(state.memory().slotBus());
@@ -1266,7 +1250,7 @@ StorageCoordinator::mountDisk35(
         if (smartPortSlot >= 0) {
             if (std::string flushError;
                 !flushOutgoingBay(controller, smartPortSlot, drive,
-                                  flushError)) {
+                                  flushError, nullptr, &original)) {
                 result.usesSmartPort = true;
                 result.bootSlot = smartPortSlot;
                 result.error = std::move(flushError);
@@ -1278,7 +1262,15 @@ StorageCoordinator::mountDisk35(
     {
         auto state = controller.lockState();
         const auto cards = topology(state.memory().slotBus());
+        if (!onboard && (cards.primarySmartPort ? cards.primarySmartPort->getSlot() : -1) != smartPortSlot) {
+            result.error = "SmartPort target changed during mount; retry"; return result;
+        }
         if (!onboard && cards.primarySmartPort) {
+            const auto now = cards.primarySmartPort->bayInfo(drive);
+            if (now.loaded != original.loaded || (original.mountId != 0
+                    ? now.mountId != original.mountId : now.path != original.path)) {
+                result.error = "medium changed during 3.5-inch mount; retry"; return result;
+            }
             result.usesSmartPort = true;
             result.bootSlot = cards.primarySmartPort->getSlot();
             result.ok = mountSmartPortUnitAs(
@@ -1471,16 +1463,11 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
     if (auto viaLiron = mountHdvOnLiron(controller, settings, path, smartPortOnly)) return *viaLiron;
     RoutedMediaCommandResult result;
     std::vector<SettingUpdate> updates;
+    int targetSlot = -1;
+    MediaBayInfo original;
 
-    // Phase 1, NO lock — this is the 32 MiB case, the largest single stall the
-    // tree had (25.8 ms under the lock before v0.8.5 split it).
-    //
-    // Including the OUTGOING medium's write-back: resolve the bay this mount
-    // is going to overwrite, then flush it here instead of inside the adopt.
-    // See flushOutgoingBay.
+    // Save the chosen outgoing medium unlocked; retain its route and identity.
     {
-        int targetSlot = -1;
-        int targetBay  = 0;
         {
             auto state = controller.lockState();
             const auto cards = topology(state.memory().slotBus());
@@ -1490,14 +1477,14 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
                 targetSlot = cards.primarySmartPort->getSlot();
         }
         if (targetSlot >= 0 &&
-            pom2::imageMountedElsewhereAt(controller, targetSlot, targetBay, path, result.error)) {
+            pom2::imageMountedElsewhereAt(controller, targetSlot, 0, path, result.error)) {
             result.bootSlot = targetSlot;
             return result;
         }
         if (targetSlot >= 0) {
             if (std::string flushError;
-                !flushOutgoingBay(controller, targetSlot, targetBay,
-                                  flushError)) {
+                !flushOutgoingBay(controller, targetSlot, 0,
+                                  flushError, nullptr, &original)) {
                 result.bootSlot = targetSlot;
                 result.error = std::move(flushError);
                 return result;
@@ -1513,6 +1500,19 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
         auto state = controller.lockState();
         auto& bus = state.memory().slotBus();
         const auto cards = topology(bus);
+        const int selectedSlot = !smartPortOnly && cards.preferredBlock()
+            ? cards.preferredBlock()->getSlot() : cards.primarySmartPort ? cards.primarySmartPort->getSlot() : -1;
+        if (selectedSlot != targetSlot) {
+            result.error = "HDV target changed during mount; retry"; return result;
+        }
+        if (selectedSlot >= 0) {
+            auto* media = dynamic_cast<MountableMediaCard*>(bus.peripheral(selectedSlot));
+            const auto now = media->bayInfo(0);
+            if (now.loaded != original.loaded || (original.mountId != 0
+                    ? now.mountId != original.mountId : now.path != original.path)) {
+                result.error = "medium changed during HDV mount; retry"; return result;
+            }
+        }
         if (!smartPortOnly) {
             if (auto* card = cards.preferredBlock()) {
                 auto* peripheral = bus.peripheral(card->getSlot());
@@ -1538,11 +1538,8 @@ StorageCoordinator::RoutedMediaCommandResult StorageCoordinator::mountHdv(
         if (!result.ok && cards.primarySmartPort) {
             result.usesSmartPort = true;
             result.bootSlot = cards.primarySmartPort->getSlot();
-            // `prepared` is still untouched here: the block-card branch above
-            // either takes it and succeeds or returns, so reaching this means
-            // it never ran. Handing it over is what keeps the //c shape (no
-            // block card, built-in SmartPort) from throwing phase 1 away and
-            // reading the whole image a second time under the lock.
+            // The block-card branch either consumed prepared and returned,
+            // or never ran. Reuse its unlocked read for the SmartPort route.
             result.ok = mountSmartPortUnitAs(
                 *cards.primarySmartPort, 0, SmartPortHdvUnit::kKindKey,
                 path, updates, result.error, autoSmartPortSlot_,
@@ -2186,24 +2183,22 @@ bool StorageCoordinator::commitDeferredFlushes(
     bool allSaved = true;
     for (auto& item : deferred) {
         if (!item.payload.valid) continue;
-        // The payload is the complete file, so phase 2 needs nothing from the
-        // card — which is the point: the bus may be rebuilt while this runs.
-        // `Disk35Image::commitWriteBack` is simply POM2's atomic whole-file
-        // writer (sibling temp + fsync + rename), and every bay that fills a
-        // PendingBayFlush holds one of those images.
+        // Commit the complete file without retaining a card alias: the bus
+        // may be rebuilt while this runs. Notify only the captured mount.
         const uint64_t capturedLineage = item.payload.lineage;
         Disk35Image::PendingWriteBack pending = imagePayload(std::move(item.payload));
-        std::string commitError;
-        if (Disk35Image::commitWriteBack(std::move(pending), commitError))
-            continue;
-        // Phase 3: re-mark the bay dirty so the next flush retries. Resolved
-        // by slot under a fresh lock — a card alias would not survive here.
+        std::string commitError, divertedTo;
+        const bool saved = Disk35Image::commitWriteBack(std::move(pending), commitError, &divertedTo);
+        if (saved && divertedTo.empty()) continue;
+        // Phase 3: report diversion or restore dirty state under a fresh lock.
         {
             auto state = controller.lockState();
             auto* media = dynamic_cast<MountableMediaCard*>(
                 state.memory().slotBus().peripheral(item.slot));
-            if (media) media->restoreFlushBayDirty(item.bay, capturedLineage);
+            if (media && saved) media->noteFlushBayDiversion(item.bay, capturedLineage, divertedTo);
+            else if (media) media->restoreFlushBayDirty(item.bay, capturedLineage);
         }
+        if (saved) continue;
         if (!error.empty()) error += "; ";
         error += item.label + ": " +
                  (commitError.empty() ? std::string("write-back failed")

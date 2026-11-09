@@ -327,8 +327,37 @@ void testNoRamWorksBesideTheCard()
     CHECK(r.mem.ramWorksBanks() == 4);
 }
 
+// Equal machine-cycle budgets retire equal NOPs across menu changes. The
+// standalone reference keeps the hardware CPU clock, including acceleration.
+void testMachineClock()
+{
+    for (double stock : {1022727.0, 1015625.0})
+        for (int accelerator : {1, 4}) {
+            Rig a, b;
+            for (auto* rig : {&a, &b}) {
+                for (unsigned i = 0; i < 0x4000; ++i) rig->mem.auxPhysical(uint16_t(i)) = 0;
+                rig->reg(PremiumSoftCard::kRunOutOfReset | PremiumSoftCard::kRun);
+            }
+            auto& actual = *a.card;
+            auto& reference = *b.card;
+            reference.setCpuClock(stock * accelerator);
+            for (double pacing : {1.0, 2.0, 4.0, 1.0, 0.5}) {
+                actual.setCpuClock(stock * accelerator * pacing);
+                actual.setMachineCpuClock(stock * accelerator);
+                const uint16_t before = actual.z80().getState().pc;
+                actual.advanceCycles(256);
+                reference.advanceCycles(256);
+                const int retired = uint16_t(actual.z80().getState().pc - before);
+                const double expected = 256 * PremiumSoftCard::kZ80Hz / (4 * stock * accelerator);
+                CHECK(retired >= int(expected) - 1 && retired <= int(expected) + 2);
+                CHECK(actual.z80().getState().pc == reference.z80().getState().pc);
+            }
+        }
+}
+
 int main()
 {
+    testMachineClock();
     testFlip();
     testCall();
     testRewindCapturesSlot0();

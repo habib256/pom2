@@ -1,0 +1,87 @@
+name: PLASMA compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 4 * * 1' # Monday, 04:43 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plasma-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: ./.github/actions/fetch-test-media
+
+      - name: Restore PLEIADES image
+        id: plasma-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pom2-plasma/PLEIADES-2.21.po
+          key: plasma-0cdbf8eb863d5e19262ca0fc2715b879cda747ff4fddb164cd8e1125ef1fbb1a
+
+      - name: Fetch and verify PLEIADES
+        shell: bash
+        run: |
+          set -euo pipefail
+          media="$HOME/.cache/pom2-plasma/PLEIADES-2.21.po"
+          mkdir -p "$(dirname "$media")"
+          if [ ! -f "$media" ]; then
+            curl --fail --location --retry 3 --max-time 180 \
+              https://raw.githubusercontent.com/dschmenk/PLASMA/f209e30e87fa11e375a511a7376e0b9dfa800162/images/apple/PLEIADES-2.21.po \
+              --output "$media"
+          fi
+          echo "0cdbf8eb863d5e19262ca0fc2715b879cda747ff4fddb164cd8e1125ef1fbb1a  $media" | sha256sum --check
+
+      - name: Cache verified PLEIADES
+        if: steps.plasma-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pom2-plasma/PLEIADES-2.21.po
+          key: plasma-0cdbf8eb863d5e19262ca0fc2715b879cda747ff4fddb164cd8e1125ef1fbb1a
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
+
+      - name: Fetch Dear ImGui (pinned)
+        run: |
+          set -euo pipefail
+          source ./imgui_pin.env
+          git init -q imgui
+          git -C imgui remote add origin "$IMGUI_REPO"
+          git -C imgui fetch --depth 1 origin "$IMGUI_COMMIT"
+          git -C imgui checkout -q FETCH_HEAD
+          test "$(git -C imgui rev-parse HEAD)" = "$IMGUI_COMMIT"
+
+      - name: Build test tools
+        run: |
+          cmake -S . -B build-plasma -DCMAKE_BUILD_TYPE=Release -DPOM2_ENABLE_TESTS=OFF
+          cmake --build build-plasma --parallel 4 --target pom2_corpus pom2_prodos
+
+      - name: Compile and execute inside the Apple II
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p plasma-results
+          # Exit 77 (firmware mismatch/skip) also fails CI: a green run must test.
+          python3 tools/test_plasma_compile.py "$HOME/.cache/pom2-plasma/PLEIADES-2.21.po" \
+            --build build-plasma --frames plasma-results/frames 2>&1 | tee plasma-results/console.log
+
+      - name: Upload log and screenshots
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: plasma-compile-results
+          path: plasma-results/
+          if-no-files-found: ignore
+          retention-days: 14

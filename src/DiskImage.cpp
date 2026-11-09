@@ -164,7 +164,7 @@ bool hostFileIsReadOnly(const std::string& path)
 
 }  // namespace
 
-DiskImage::DiskImage()
+DiskImage::DiskImage() : tracks(kTracks)
 {
     for (auto& t : tracks) t.fill(0xFF);
 }
@@ -655,8 +655,10 @@ bool DiskImage::loadSectorImageFromBuffer(const uint8_t* data, std::size_t len,
 
 bool DiskImage::loadFile(const std::string& imgPath)
 {
+    // A moved-from image owns no tracks; its old dirty flags cannot be flushed.
+    if (tracks.empty()) eject();
     if (!saveDirty()) return false;
-    // Heap, not stack — see the NOTE on class DiskImage (512 KB macOS threads).
+    // Decode separately, then publish the completed image.
     auto replacement = std::make_unique<DiskImage>();
     replacement->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
     replacement->writeBackEnabled = writeBackEnabled;
@@ -819,6 +821,7 @@ bool DiskImage::loadFileUnchecked(const std::string& imgPath)
 
 bool DiskImage::loadFile(const std::string& imgPath, SectorOrder order)
 {
+    if (tracks.empty()) eject(); // reset a moved-from image before the flush
     if (!saveDirty()) return false;
     auto replacement = std::make_unique<DiskImage>();
     replacement->fluxBusHz_ = fluxBusHz_;   // the drive's clock outlives the medium
@@ -2868,11 +2871,12 @@ bool DiskImage::saveDirty()
     PendingWriteBack pending;
     if (!takeWriteBack(pending)) return false;
     if (!pending.valid) return true;
-    std::string error;
-    if (!commitWriteBack(std::move(pending), error)) {
+    std::string error, divertedTo;
+    if (!commitWriteBack(std::move(pending), error, &divertedTo)) {
         lastError = error;
         return false;
     }
+    autosave_.noteDiversion(divertedTo);
     dirty.fill(false);
     wozQtDirty.fill(false);
     anyDirty = false;

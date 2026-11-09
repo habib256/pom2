@@ -95,6 +95,8 @@ public:
     /// 1021800 x 2), not by the 6502 accelerator: under a Zip or TransWarp a
     /// bus cycle costs cpuHz / stockHz cycles of the accelerated budget.
     void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
+    // Menu pacing advances the whole machine; only hardware clocks divide Z80 work.
+    void setMachineCpuClock(double hz) override { setCpuClock(hz); }
     void setStandardClock(double hz) override { if (hz > 0.0) { stockHz_ = hz; } }
 
     // ── snapshot / rewind ────────────────────────────────────────────
