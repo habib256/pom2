@@ -10996,6 +10996,9 @@ add_executable(test_builtin_nat
     ${CMAKE_SOURCE_DIR}/src/NatHostSockets.cpp
     ${CMAKE_SOURCE_DIR}/src/W5100NameResolver.cpp)
 target_include_directories(test_builtin_nat PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(NOT EMSCRIPTEN)
+    target_link_libraries(test_builtin_nat PRIVATE ${POM2_NATIVE_DNS_LIB})
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_builtin_nat PRIVATE Threads::Threads)
 endif()

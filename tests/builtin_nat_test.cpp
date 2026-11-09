@@ -13,7 +13,7 @@
 // exact. A last part swaps in the host's REAL sockets on 127.0.0.1.
 //
 // What is pinned:
-//   1. the codec: checksums, padding, options accepted, fragments refused;
+//   1. codec checksums, padding, options and bounded IP fragment reassembly;
 //   2. THE FENCE, as a table — the gateway is not the host's loopback, and
 //      127/8, 0/8, 169.254/16, 224/4, 240/4 are refused; one opt-in opens
 //      the loopback and nothing else. Without the opt-in case the test
@@ -49,6 +49,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <algorithm>
 
 using namespace pom2;
 using namespace pom2::nat;
@@ -84,6 +86,15 @@ struct FakeSocket final : HostSocket {
     std::size_t  sendCap = SIZE_MAX;         ///< bytes one send() accepts
     std::vector<std::pair<Endpoint, Bytes>> datagramsOut;
     std::deque<std::pair<Endpoint, Bytes>>  datagramsIn;
+    std::deque<std::pair<Endpoint, std::unique_ptr<HostSocket>>> accepted;
+    std::unique_ptr<HostSocket> accept(Endpoint& peer) override
+    {
+        if (accepted.empty()) return nullptr;
+        peer = accepted.front().first;
+        auto socket = std::move(accepted.front().second);
+        accepted.pop_front();
+        return socket;
+    }
 
     FakeSocket(World& w, bool isTcp);
     ~FakeSocket() override;
@@ -130,6 +141,7 @@ struct FakeSocket final : HostSocket {
 };
 
 struct World {
+    std::map<std::pair<bool, uint16_t>, FakeSocket*> listeners;
     std::vector<FakeSocket*> live;
     int          opened = 0, closed = 0;
     ConnectState nextConnect = ConnectState::Pending;
@@ -155,6 +167,16 @@ struct FakeNetwork final : HostNetwork {
     explicit FakeNetwork(World& w) : world(w) {}
     std::unique_ptr<HostSocket> openTcp() override { return std::make_unique<FakeSocket>(world, true); }
     std::unique_ptr<HostSocket> openUdp() override { return std::make_unique<FakeSocket>(world, false); }
+    std::unique_ptr<HostSocket> openTcp6() override { return openTcp(); }
+    std::unique_ptr<HostSocket> openUdp6() override { return openUdp(); }
+    std::unique_ptr<HostSocket> listenTcp(const Endpoint& local) override { return bound(local, true); }
+    std::unique_ptr<HostSocket> bindUdp(const Endpoint& local) override { return bound(local, false); }
+    std::unique_ptr<HostSocket> bound(const Endpoint& local, bool tcp)
+    {
+        auto socket = std::make_unique<FakeSocket>(world, tcp);
+        world.listeners[{tcp, local.port}] = socket.get();
+        return socket;
+    }
 };
 
 struct Names {
@@ -192,12 +214,15 @@ struct Rig {
     uint64_t clock = 1000;
     std::unique_ptr<NetworkBackend> net;
 
-    explicit Rig(bool allowLoopback = false, bool restricted = false)
+    explicit Rig(bool allowLoopback = false, bool restricted = false,
+                 std::vector<BuiltinNatOptions::PortForward> forwards = {}, DnsProxy::Lookup dns = {})
     {
         BuiltinNatOptions o;
         o.allowHostLoopback = allowLoopback;
         o.restricted        = restricted;
         o.nowMs             = [this] { return clock; };
+        o.forwards = std::move(forwards);
+        o.dnsLookup = std::move(dns);
         net = makeBuiltinNatBackend(o, std::make_unique<FakeNetwork>(world),
                                     std::make_unique<FakeResolver>(names));
     }
@@ -266,12 +291,16 @@ struct Rig {
     std::vector<Datagram> datagrams()
     {
         std::vector<Datagram> out;
+        Ipv4Reassembler reassembly;
         for (const Bytes& f : frames()) {
             EthernetFrame e;
             Ipv4Packet    ip;
             UdpDatagram   u;
-            if (parseEthernet(f.data(), f.size(), e) && e.etherType == kEtherTypeIpv4 &&
-                parseIpv4(e.payload, ip) && ip.protocol == kProtoUdp && parseUdp(ip, u))
+            Bytes whole;
+            if (parseEthernet(f.data(), f.size(), e) && e.etherType == kEtherTypeIpv4)
+                whole = reassembly.accept(e.payload, clock);
+            if (whole.empty()) continue;
+            if (parseIpv4({whole.data(), whole.size()}, ip) && ip.protocol == kProtoUdp && parseUdp(ip, u))
                 out.push_back({ ip.source, ip.destination, u.sourcePort, u.destinationPort,
                                 Bytes(u.payload.data, u.payload.data + u.payload.size),
                                 e.destination });
@@ -595,11 +624,12 @@ void testDns()
     rig.sendUdp(kDnsIp, 3000, kDnsPort, dnsQuery(0x2323, "flood.example"));
     CHECK(oneDnsAnswer(rig, 3000).rcode == 2);
 
-    // A type nobody serves: "exists, no such record" — and no host lookup.
+    // An injected resolver with no native wire adapter says NOTIMP rather
+    // than claiming that an existing name has no AAAA record.
     int before = rig.names.resolves;
     rig.sendUdp(kDnsIp, 3000, kDnsPort, dnsQuery(0x3333, "example.com", 28));   // AAAA
     a = oneDnsAnswer(rig, 3000);
-    CHECK(a.rcode == 0 && a.answers == 0 && rig.names.resolves == before);
+    CHECK(a.rcode == 4 && a.answers == 0 && rig.names.resolves == before);
 
     // Bytes that are not a host name never reach the host resolver.
     rig.sendUdp(kDnsIp, 3000, kDnsPort, dnsQuery(0x3434, "a b;c.example"));
@@ -667,18 +697,19 @@ void testUdp()
     s->datagramsIn.push_back({ { kPublicIp, 40123 }, text("DATA") });
     // A stranger writes to the same host port: dropped.
     s->datagramsIn.push_back({ { kOtherIp, 69 }, text("EVIL") });
-    // Too long for one frame: dropped, not truncated.
+    // Too long for one frame: fragmented and reassembled, never truncated.
     s->datagramsIn.push_back({ { kPublicIp, 40123 }, Bytes(1473, 'x') });
     // Exactly the largest that fits: delivered whole.
     s->datagramsIn.push_back({ { kPublicIp, 40123 }, Bytes(1472, 'y') });
     rig.pump(1);
     const auto d = rig.datagrams();
-    CHECK(d.size() == 2);
-    if (d.size() == 2) {
+    CHECK(d.size() == 3);
+    if (d.size() == 3) {
         CHECK(d[0].sourceIp == kPublicIp && d[0].sourcePort == 40123 &&
               d[0].destinationIp == kGuestIp && d[0].destinationPort == 5000 &&
               d[0].payload == text("DATA") && d[0].ethDst == kGuestMac);
-        CHECK(d[1].payload.size() == 1472);
+        CHECK(d[1].payload == Bytes(1473, 'x'));
+        CHECK(d[2].payload == Bytes(1472, 'y'));
     }
 
     // A fenced destination opens nothing and sends nothing.
@@ -979,6 +1010,233 @@ void testTcp()
     }
 }
 
+void transmitIp(NetworkBackend& net, const Bytes& ip, uint16_t type = kEtherTypeIpv4)
+{
+    const auto f = buildEthernet(kBroadcastMac, kGuestMac, type, ip);
+    net.transmit(f.data(), static_cast<int>(f.size()));
+}
+
+void testFragments()
+{
+    std::printf("[8] IPv4 reassembly, bounds, overlap, timeout, large UDP\n");
+    Bytes data(6000);
+    for (std::size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i);
+    const auto udp = buildUdp(kGuestIp, kPublicIp, 6000, 69, data.data(), data.size());
+    const auto fragments = fragmentIpv4(kGuestIp, kPublicIp, kProtoUdp, 99, udp, 700);
+    CHECK(fragments.size() > 2);
+    Rig rig;
+    for (auto it = fragments.rbegin(); it != fragments.rend(); ++it) transmitIp(*rig.net, *it);
+    CHECK(rig.world.opened == 1 && rig.world.last()->datagramsOut[0].second == data);
+    Ipv4Reassembler r;
+    CHECK(r.accept({fragments[0].data(), fragments[0].size()}, 1).empty());
+    CHECK(r.accept({fragments[0].data(), fragments[0].size()}, 2).empty()); // identical duplicate
+    auto conflict = fragments[0]; conflict.back() ^= 1;
+    CHECK(r.accept({conflict.data(), conflict.size()}, 3).empty() && r.pending() == 0);
+    r.accept({fragments[0].data(), fragments[0].size()}, 10);
+    r.expire(10 + Ipv4Reassembler::kTimeoutMs);
+    CHECK(r.pending() == 0);
+    for (unsigned i = 0; i < 40; ++i) {
+        auto f = fragments[0]; wr16(f.data() + 4, i); wr16(f.data() + 10, 0);
+        wr16(f.data() + 10, checksum(f.data(), 20));
+        r.accept({f.data(), f.size()}, 40000);
+    }
+    CHECK(r.pending() == Ipv4Reassembler::kMaxPending);
+    rig.world.last()->datagramsIn.push_back({{kPublicIp, 69}, Bytes(65507, 42)});
+    rig.pump();
+    const auto back = rig.datagrams();
+    CHECK(back.size() == 1 && back[0].payload == Bytes(65507, 42));
+}
+
+void testPersist()
+{
+    std::printf("[9] TCP zero-window probes and recovery\n");
+    Rig rig;
+    const auto ours = handshake(rig, 6100, kPublicIp, 80, 0);
+    auto* s = rig.world.last();
+    if (!s) return;
+    s->toGuest = {'a', 'b', 'c'};
+    rig.pump(1); CHECK(rig.frames().empty());
+    rig.pump(999); CHECK(rig.frames().empty());
+    rig.pump(1);
+    auto probes = rig.segments();
+    CHECK(probes.size() == 1 && probes[0].sequence == ours && probes[0].payload == text("a"));
+    for (int i = 0; i < 12; ++i) {
+        rig.sendTcp(kPublicIp, 6100, 80, kTcpAck, kGuestIsn + 1, ours, {}, 0);
+        rig.pump(60001);
+        probes = rig.segments();
+        CHECK(probes.size() == 1 && probes[0].payload == text("a") && !(probes[0].flags & kTcpRst));
+    }
+    CHECK(rig.world.closed == 0);
+    // The receiver has reopened and accepts the probe; that byte must be
+    // removed once, and the remaining stream resumes from the next sequence.
+    rig.sendTcp(kPublicIp, 6100, 80, kTcpAck, kGuestIsn + 1, ours + 1, {}, 100);
+    rig.pump(1);
+    const auto data = rig.segments();
+    CHECK(data.size() == 1 && data[0].sequence == ours + 1 && data[0].payload == text("bc"));
+}
+
+void testInbound()
+{
+    std::printf("[10] explicit TCP/UDP LAN forwards\n");
+    std::vector<BuiltinNatOptions::PortForward> rules;
+    CHECK(parseNatForwards("tcp:0.0.0.0:6502:23;udp:0.0.0.0:6503:6502", rules));
+    CHECK(rules.size() == 2 && rules[0].bind.ip == 0 && rules[0].guestPort == 23);
+    CHECK(!parseNatForwards("tcp:0.0.0.0:65536:23", rules) && rules.size() == 2);
+    CHECK(!parseNatForwards("udp:127.0.0.1:0:23", rules));
+    Rig rig(false, false, rules);
+    rig.sendUdp(kPublicIp, 1, 9, text("learn MAC"));
+    rig.frames();
+    const Endpoint peer{0xc0a80122, 45000};
+    auto accepted = std::make_unique<FakeSocket>(rig.world, true);
+    auto* socket = accepted.get();
+    auto* listener = rig.world.listeners[{true, 6502}];
+    listener->accepted.emplace_back(peer, std::move(accepted));
+    rig.pump();
+    auto syn = rig.segments();
+    CHECK(syn.size() == 1 && syn[0].flags == kTcpSyn && syn[0].destinationPort == 23);
+    if (syn.size() != 1) return;
+    const auto ours = syn[0].sequence + 1;
+    rig.pump(1000);
+    CHECK(rig.segments().size() == 1); // a lost inbound SYN is retransmitted
+    rig.sendTcp(peer.ip, 23, peer.port, kTcpSyn | kTcpAck, kGuestIsn, ours);
+    auto ack = rig.segments();
+    CHECK(ack.size() == 1 && ack[0].flags == kTcpAck && ack[0].acknowledgment == kGuestIsn + 1);
+    socket->toGuest = {'L','A','N'};
+    rig.pump();
+    const auto data = rig.segments();
+    CHECK(data.size() == 1 && data[0].payload == text("LAN"));
+    rig.sendTcp(peer.ip, 23, peer.port, kTcpAck | kTcpPsh, kGuestIsn + 1, ours + 3, text("ok"));
+    rig.segments(); rig.pump();
+    CHECK(socket->fromGuest == text("ok") && !socket->connectCalled);
+    auto* udp = rig.world.listeners[{false, 6503}];
+    udp->datagramsIn.push_back({peer, text("hello")});
+    rig.pump();
+    auto datagrams = rig.datagrams();
+    CHECK(datagrams.size() == 1 && datagrams[0].destinationPort == 6502 && datagrams[0].payload == text("hello"));
+    rig.sendUdp(peer.ip, 6502, peer.port, text("reply"));
+    CHECK(udp->datagramsOut.size() == 1 && udp->datagramsOut[0].second == text("reply"));
+    rig.sendUdp(kOtherIp, 6502, 6502, text("initiate"));
+    CHECK(udp->datagramsOut.size() == 2 && udp->datagramsOut[1].first.port == 6502);
+}
+
+Bytes rawDnsAnswer(const Bytes& q)
+{
+    Bytes answer = q;
+    // DNS question names are case-insensitive; a native resolver may return
+    // a canonical spelling rather than echoing the client's capitalization.
+    for (std::size_t i = 12; i + 4 < q.size(); ++i)
+        if (answer[i] >= 'A' && answer[i] <= 'Z') answer[i] += 'a' - 'A';
+    wr16(answer.data() + 2, 0x8180); wr16(answer.data() + 6, 1);
+    const uint16_t type = rd16(q.data() + q.size() - 4);
+    Bytes record;
+    if (type == 28) record = Bytes{0x20,1,0x48,0x60,0,0,0,0,0,0,0,0,0,0,0x88,0x88};
+    else if (type == 16) record = {4,'t','e','s','t'};
+    else {
+        if (type == 15) record = {0,10};
+        if (type == 33) record = {0,0,0,0,0x19,0x66};
+        const Bytes name{4,'p','e','e','r',7,'e','x','a','m','p','l','e',0};
+        record.insert(record.end(), name.begin(), name.end());
+    }
+    const auto at = answer.size(); answer.resize(at + 12);
+    wr16(answer.data() + at, 0xc00c); wr16(answer.data() + at + 2, type);
+    wr16(answer.data() + at + 4, 1); wr32(answer.data() + at + 6, 30);
+    wr16(answer.data() + at + 10, static_cast<uint16_t>(record.size()));
+    answer.insert(answer.end(), record.begin(), record.end());
+    return answer;
+}
+
+void testTypedDns()
+{
+    std::printf("[11] native DNS records, compressed wire responses, asynchronous retries\n");
+    std::atomic<int> calls{0};
+    Rig rig(false, false, {}, [&](const Bytes& q) { ++calls; return rawDnsAnswer(q); });
+    for (uint16_t type : {28, 15, 16, 12, 33}) {
+        const auto query = dnsQuery(type, "PeEr.Example", type);
+        rig.sendUdp(kDnsIp, 6200, 53, query);
+        rig.sendUdp(kDnsIp, 6200, 53, query);
+        std::vector<Rig::Datagram> replies;
+        for (int i = 0; i < 1000 && replies.empty(); ++i) {
+            rig.pump(1); replies = rig.datagrams();
+            if (replies.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        CHECK(replies.size() == 1 && replies[0].payload == rawDnsAnswer(query));
+    }
+    CHECK(calls == 5);
+}
+
+void testIpv6()
+{
+    std::printf("[12] IPv6 UDP/TCP, ND/RA, fragmentation and perimeter\n");
+    Ipv6 guest = kGateway6; guest[15] = 15;
+    const Ipv6 peer{0x20,1,0x48,0x60,0,0,0,0,0,0,0,0,0,0,0x88,0x88};
+    Rig rig;
+    auto send = [&](const Ipv6& dest, uint8_t proto, Bytes payload, uint8_t hop = 64) {
+        const auto at = proto == kProtoTcp ? 16 : proto == kProtoUdp ? 6 : 2;
+        wr16(payload.data() + at, 0);
+        auto sum = checksum6(guest, dest, proto, {payload.data(), payload.size()});
+        wr16(payload.data() + at, sum ? sum : 0xffff);
+        transmitIp(*rig.net, buildIpv6(guest, dest, proto, payload, hop), kEtherTypeIpv6);
+    };
+    auto payloads = [&]() {
+        std::vector<Bytes> result;
+        Ipv6Reassembler reassembly;
+        for (const auto& f : rig.frames()) {
+            EthernetFrame e; Ipv6Packet ip;
+            CHECK(parseEthernet(f.data(), f.size(), e) && e.etherType == kEtherTypeIpv6);
+            auto whole = reassembly.accept(e.payload, rig.clock);
+            if (whole.empty()) continue;
+            CHECK(parseIpv6({whole.data(), whole.size()}, ip));
+            CHECK(checksum6(ip.source, ip.destination, ip.protocol, ip.payload) == 0);
+            CHECK(ip.destination == guest);
+            result.emplace_back(ip.payload.data, ip.payload.data + ip.payload.size);
+        }
+        return result;
+    };
+    send(peer, kProtoUdp, buildUdp(0,0,6300,69,reinterpret_cast<const uint8_t*>("v6"),2));
+    auto* socket = rig.world.last();
+    CHECK(socket && socket->datagramsOut.size() == 1 && socket->datagramsOut[0].first.isIpv6 && socket->datagramsOut[0].first.ipv6 == peer);
+    if (!socket) return;
+    Endpoint remote; remote.isIpv6 = true; remote.ipv6 = peer; remote.port = 69;
+    socket->datagramsIn.push_back({remote, Bytes(4000, 42)});
+    rig.pump();
+    auto back = payloads();
+    CHECK(back.size() == 1 && back[0].size() == 4008 && back[0].back() == 42);
+    // Guest fragments arrive in reverse order and still form one UDP message.
+    Bytes udp = buildUdp(0,0,6300,69,Bytes(4000, 41).data(),4000);
+    wr16(udp.data() + 6, 0); wr16(udp.data() + 6, checksum6(guest, peer, 17, {udp.data(),udp.size()}));
+    auto fragments = fragmentIpv6(guest, peer, 17, 0x12345678, udp);
+    for (auto it = fragments.rbegin(); it != fragments.rend(); ++it) transmitIp(*rig.net, *it, kEtherTypeIpv6);
+    CHECK(socket->datagramsOut.size() == 2 && socket->datagramsOut.back().second == Bytes(4000,41));
+    send(kGateway6, 58, Bytes{128,0,0,0,0,1,0,2});
+    back = payloads(); CHECK(back.size() == 1 && back[0][0] == 129);
+    Bytes ns(24); ns[0] = 135; std::copy(kGateway6.begin(), kGateway6.end(), ns.begin() + 8);
+    send(kGateway6, 58, ns, 254); CHECK(rig.frames().empty());
+    send(kGateway6, 58, ns, 255);
+    back = payloads(); CHECK(back.size() == 1 && back[0][0] == 136);
+    Ipv6 routers{}; routers[0] = 0xff; routers[1] = 2; routers[15] = 2;
+    send(routers, 58, Bytes{133,0,0,0,0,0,0,0}, 255);
+    back = payloads(); CHECK(back.size() == 1 && back[0][0] == 134 && back[0].size() == 80);
+    TcpSegment tcp; tcp.sourcePort = 6400; tcp.destinationPort = 80; tcp.sequence = kGuestIsn;
+    tcp.flags = kTcpSyn; tcp.window = 4096; tcp.mss = 1460;
+    send(peer, 6, buildTcp(tcp));
+    socket = rig.world.last(); CHECK(socket && socket->remote.isIpv6);
+    if (!socket) return;
+    socket->connectState = ConnectState::Connected; rig.pump();
+    back = payloads();
+    CHECK(back.size() == 1 && back[0][13] == (kTcpSyn | kTcpAck) && rd16(back[0].data() + 22) == 1440);
+    if (back.size() != 1) return;
+    tcp.acknowledgment = rd32(back[0].data() + 4) + 1;
+    tcp.sequence++; tcp.flags = kTcpAck; tcp.payload = text("hello6");
+    send(peer, 6, buildTcp(tcp)); payloads(); rig.pump();
+    CHECK(socket->fromGuest == text("hello6"));
+    Endpoint host;
+    Ipv6 mapped{}; mapped[10] = mapped[11] = 0xff; mapped[12] = 127; mapped[15] = 1;
+    CHECK(routeDestination6(mapped, 80, true, {}, host) == Route::Refused);
+    CHECK(routeDestination6(mapped, 80, true, {true,false}, host) == Route::Host && host.ip == kLoopbackIp && !host.isIpv6);
+    CHECK(routeDestination6(kRouter6, 80, true, {}, host) == Route::Refused);
+    CHECK(routeDestination6(peer, 80, true, {false,true}, host) == Route::Refused);
+}
+
 // ── 7. Real sockets, on 127.0.0.1 ────────────────────────────────────────
 
 #if POM2_HAS_SOCKETS
@@ -1112,8 +1370,145 @@ void testRealSockets()
     closeHostSocket(echo);
 }
 
+void testTwoNatInstances()
+{
+    std::printf("[13] two NAT instances, real TCP/UDP, wildcard LAN publication\n");
+    Listener reservation;
+    CHECK(reservation.port != 0);
+    if (!reservation.port) return;
+    const auto port = reservation.port;
+    closeHostSocket(reservation.fd);
+    BuiltinNatOptions serverOptions;
+    serverOptions.forwards = {{true,{0,port},6502},{false,{0,port},6502}};
+    Rig server, client;
+    server.net = makeBuiltinNatBackend(serverOptions);
+    BuiltinNatOptions clientOptions; clientOptions.allowHostLoopback = true;
+    client.net = makeBuiltinNatBackend(clientOptions);
+    // Give the listening backend its guest's MAC before any inbound SYN.
+    server.sendIp(kGatewayIp, kProtoIcmp, Bytes(8, 0)); server.frames();
+    client.sendTcp(kGatewayIp, 6503, port, kTcpSyn, kGuestIsn, 0);
+    std::vector<TcpSegment> inbound, outbound;
+    CHECK(until(*client.net, [&] {
+        server.net->poll();
+        auto a = server.segments(); inbound.insert(inbound.end(), a.begin(), a.end());
+        auto b = client.segments(); outbound.insert(outbound.end(), b.begin(), b.end());
+        return !inbound.empty() && !outbound.empty();
+    }));
+    if (inbound.empty() || outbound.empty()) return;
+    CHECK(inbound[0].flags == kTcpSyn && inbound[0].destinationPort == 6502);
+    const auto clientNext = outbound[0].sequence + 1;
+    const auto serverNext = inbound[0].sequence + 1;
+    const auto peerIp = inbound[0].sourceIp;
+    const auto peerPort = inbound[0].sourcePort;
+    client.sendTcp(kGatewayIp, 6503, port, kTcpAck, kGuestIsn + 1, clientNext);
+    server.sendTcp(peerIp, 6502, peerPort, kTcpSyn | kTcpAck, kGuestIsn, serverNext);
+    server.segments();
+    client.sendTcp(kGatewayIp, 6503, port, kTcpAck | kTcpPsh, kGuestIsn + 1, clientNext, text("from A"));
+    std::vector<TcpSegment> data;
+    CHECK(until(*client.net, [&] {
+        server.net->poll(); client.segments();
+        for (auto& s : server.segments()) if (!s.payload.empty()) data.push_back(s);
+        return !data.empty();
+    }));
+    CHECK(data.size() == 1 && data[0].payload == text("from A"));
+    server.sendTcp(peerIp, 6502, peerPort, kTcpAck | kTcpPsh, kGuestIsn + 1, serverNext + 6, text("from B"));
+    data.clear();
+    CHECK(until(*server.net, [&] {
+        client.net->poll(); server.segments();
+        for (auto& s : client.segments()) if (!s.payload.empty()) data.push_back(s);
+        return !data.empty();
+    }));
+    CHECK(data.size() == 1 && data[0].payload == text("from B"));
+    client.sendUdp(kGatewayIp, 6504, port, text("udp A"));
+    std::vector<Rig::Datagram> packets;
+    CHECK(until(*server.net, [&] { client.net->poll(); packets = server.datagrams(); return !packets.empty(); }));
+    CHECK(packets.size() == 1 && packets[0].payload == text("udp A") && packets[0].destinationPort == 6502);
+    if (packets.empty()) return;
+    server.sendUdp(packets[0].sourceIp, 6502, packets[0].sourcePort, text("udp B"));
+    packets.clear();
+    CHECK(until(*client.net, [&] { server.net->poll(); packets = client.datagrams(); return !packets.empty(); }));
+    CHECK(packets.size() == 1 && packets[0].payload == text("udp B") && packets[0].sourcePort == port);
+}
+
+void testRealIpv6()
+{
+    std::printf("[14] real IPv6 UDP/TCP host sockets\n");
+    auto echo = ::socket(AF_INET6, SOCK_DGRAM, 0);
+    sockaddr_in6 address{}; address.sin6_family = AF_INET6;
+    address.sin6_addr = in6addr_loopback;
+    socklen_c length = sizeof(address);
+    if (!isValidSocket(echo) || ::bind(echo, reinterpret_cast<sockaddr*>(&address), length) != 0 ||
+        ::getsockname(echo, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
+        closeHostSocket(echo); std::printf("  SKIP: host IPv6 loopback unavailable\n"); return;
+    }
+    setNonBlocking(echo);
+    Ipv6 loopback{}; loopback[15] = 1;
+    Ipv6 guest = kGateway6; guest[15] = 15;
+    BuiltinNatOptions options; options.allowHostLoopback = true;
+    Rig rig; rig.net = makeBuiltinNatBackend(options);
+    auto send = [&](uint8_t protocol, Bytes payload) {
+        const auto at = protocol == kProtoTcp ? 16 : 6;
+        wr16(payload.data() + at, 0);
+        wr16(payload.data() + at, checksum6(guest, loopback, protocol, {payload.data(), payload.size()}));
+        transmitIp(*rig.net, buildIpv6(guest, loopback, protocol, payload), kEtherTypeIpv6);
+    };
+    auto take = [&](uint8_t protocol, const Bytes& expected) {
+        for (const auto& f : rig.frames()) {
+            EthernetFrame e; Ipv6Packet ip;
+            if (!parseEthernet(f.data(), f.size(), e) || e.etherType != kEtherTypeIpv6 || !parseIpv6(e.payload, ip)) continue;
+            CHECK(checksum6(ip.source, ip.destination, ip.protocol, ip.payload) == 0);
+            if (ip.protocol != protocol) continue;
+            const auto h = protocol == kProtoTcp ? (ip.payload.data[12] >> 4) * 4u : 8u;
+            if (ip.payload.size >= h && Bytes(ip.payload.data + h, ip.payload.data + ip.payload.size) == expected) return true;
+        }
+        return false;
+    };
+    const auto port = netToHost16(address.sin6_port);
+    send(kProtoUdp, buildUdp(0,0,6600,port,reinterpret_cast<const uint8_t*>("six"),3));
+    char buffer[16]{}; sockaddr_in6 from{}; socklen_c fromLength = sizeof(from); iolen_t n = 0;
+    CHECK(until(*rig.net, [&] {
+        n = ::recvfrom(echo, buffer, sizeof(buffer), 0, reinterpret_cast<sockaddr*>(&from), &fromLength);
+        return n > 0;
+    }));
+    CHECK(n == 3 && sendToSocket(echo, "back", 4, reinterpret_cast<sockaddr*>(&from), fromLength) == 4);
+    CHECK(until(*rig.net, [&] { return take(kProtoUdp, text("back")); }));
+    closeHostSocket(echo);
+
+    auto listener = ::socket(AF_INET6, SOCK_STREAM, 0);
+    address.sin6_port = 0; length = sizeof(address);
+    CHECK(isValidSocket(listener));
+    if (!isValidSocket(listener)) return;
+    const bool listening = ::bind(listener, reinterpret_cast<sockaddr*>(&address), length) == 0 &&
+        ::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == 0 && ::listen(listener, 1) == 0;
+    CHECK(listening);
+    if (!listening) { closeHostSocket(listener); return; }
+    setNonBlocking(listener);
+    TcpSegment syn; syn.sourcePort = 6601; syn.destinationPort = netToHost16(address.sin6_port);
+    syn.flags = kTcpSyn; syn.sequence = kGuestIsn; syn.window = 4096;
+    send(kProtoTcp, buildTcp(syn));
+    socket_t accepted = kInvalidSocket;
+    CHECK(until(*rig.net, [&] { accepted = ::accept(listener, nullptr, nullptr); return isValidSocket(accepted); }));
+    if (!isValidSocket(accepted)) { closeHostSocket(listener); return; }
+    std::vector<Bytes> frames;
+    CHECK(until(*rig.net, [&] { frames = rig.frames(); return !frames.empty(); }));
+    if (!frames.empty()) {
+        EthernetFrame e; Ipv6Packet ip;
+        const bool valid = parseEthernet(frames[0].data(), frames[0].size(), e) && parseIpv6(e.payload, ip) && ip.payload.size >= 20;
+        CHECK(valid);
+        if (valid) {
+            syn.flags = kTcpAck; syn.sequence++; syn.acknowledgment = rd32(ip.payload.data + 4) + 1;
+            send(kProtoTcp, buildTcp(syn));
+            CHECK(sendSocket(accepted, "tcp6", 4) == 4);
+            CHECK(until(*rig.net, [&] { return take(kProtoTcp, text("tcp6")); }));
+        }
+    }
+    closeHostSocket(accepted); closeHostSocket(listener);
+}
+
 #else
 void testRealSockets() { std::printf("[7] SKIP: no sockets in this build\n"); }
+void testTwoNatInstances() {}
+void testRealIpv6() {}
 #endif
 
 }  // namespace
@@ -1126,7 +1521,14 @@ int main()
     testDns();
     testUdp();
     testTcp();
+    testFragments();
+    testPersist();
+    testInbound();
+    testTypedDns();
+    testIpv6();
     testRealSockets();
+    testTwoNatInstances();
+    testRealIpv6();
     if (failures) { std::printf("builtin_nat: %d check(s) failed\n", failures); return 1; }
     std::printf("builtin_nat: OK\n");
     return 0;

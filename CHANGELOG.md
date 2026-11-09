@@ -10,6 +10,37 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-09 — Built-in NAT: fragments, LAN services, IPv6, DNS records and TCP persist
+
+Two POM2 guests on different LAN computers can publish TCP/UDP services via
+`uthernet_nat_forwards` (`protocol:bind-ip:host-port:guest-port`, semicolon
+separated). The peer contacts the other computer's LAN address and published
+port; both guests may keep 10.0.2.15. UDP services preserve their published
+source port. No port is published without a rule; invalid lists are rejected
+as a whole. Configuration and an example are in DEV § Built-in virtual network.
+
+The built-in network also reassembles bounded IPv4/IPv6 fragments, fragments
+large UDP replies, supports IPv6 TCP/UDP with ND and SLAAC on fd00:2::/64,
+and answers non-A DNS queries through capped native-query workers. TCP now
+probes a zero receive window with exponential backoff and resumes after a
+lost window update without burning its retransmission budget. The existing
+loopback perimeter also applies to IPv6, including IPv4-mapped addresses.
+
+`builtin_nat` covers the protocol state machines, AAAA/MX/TXT/PTR/SRV replies,
+fragments, IPv6 and two NAT instances exchanging TCP/UDP over real host
+sockets. A two-computer LAN trial and Windows execution remain to be done.
+
+## 2026-11-09 — Mockingboard timers follow the speed menu
+
+At x4, the Mockingboard's VIA timers still ran at the original crystal's
+pace, leaving timer-driven music behind the accelerated machine. Their
+CPU-to-bus divider now uses `setMachineCpuClock`, excluding the menu's
+pacing while retaining any hardware accelerator's ratio. Both VIAs follow
+x2/x4 and other requested speeds; TransWarp still leaves the slot clock
+alone. Audio event replay and its buffer lag follow the menu too, with AY
+tone pitch preserved. Pinned by the PAL/NTSC timer matrix in
+`accelerator_clock_chunk` and dense x4 audio in `mockingboard_audio_quality`.
+
 ## 2026-11-08 — STORAGE-015: the speed menu's x2 / x4 no longer break the Disk II
 
 At x4, DOS 3.3's RWTS read nothing and Dirtbike sat on its boot screen (user

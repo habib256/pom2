@@ -174,6 +174,10 @@ public:
     /// only what is counted in CPU cycles: the replay cursor, and the
     /// SSI263's phoneme length (the chip's own oscillator is real time).
     void setCpuClock(double hz) override;
+    /// CPU clock without the speed menu's pacing: VIA timers keep machine
+    /// time, so x2/x4 fast-forward them along with the rest of the machine.
+    /// A hardware accelerator still divides CPU cycles into phase-0 ticks.
+    void setMachineCpuClock(double hz) override;
     /// The slot bus's phase-0 clock (the video standard's nominal, never
     /// accelerated). The AYs' pin-22 CLOCK and the two 6522s run from it,
     /// as in MAME (a2bus clock): an accelerator must not raise the pitch
@@ -331,8 +335,9 @@ private:
     /// Slot-bus (phase 0) time the VIAs have reached: `lastSyncCycle_`
     /// converted by `busClock_`, so it runs at the STOCK rate whatever the
     /// accelerator does. AY writes are stamped with it and the audio thread
-    /// replays them at the bus clock. Stamped in CPU cycles and replayed at
-    /// the clock in force at PLAYBACK time, a backlog made at one speed was
+    /// replays them at the bus clock times the speed menu's pacing. Stamped
+    /// in CPU cycles and replayed at the clock in force at PLAYBACK time,
+    /// a backlog made at one speed was
     /// played at another — under the //c+ Zip a bell's tail came out 4x
     /// sharp (bug hunt 2026-10-23). Ratio 1 (no accelerator): equal to
     /// `lastSyncCycle_`, cycle for cycle.

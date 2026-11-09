@@ -46,10 +46,9 @@ public:
     static constexpr uint64_t    kIdleMs      = 120000;
     static constexpr std::size_t kMaxFlows    = 32;
     static constexpr std::size_t kMaxPeers    = 32;     ///< per flow
-    /// The largest payload that fits one unfragmented Ethernet frame
-    /// (1500 − 20 − 8). The relay does not fragment; a longer datagram from
-    /// the host is dropped, as a path that cannot carry it would.
-    static constexpr std::size_t kMaxPayload  = 1472;
+    /// Largest IPv4 UDP payload (65535 − 20 − 8). GuestSink fragments it
+    /// to the virtual Ethernet MTU; host datagrams are never truncated.
+    static constexpr std::size_t kMaxPayload  = 65507;
     static constexpr int         kMaxPerPump  = 16;
 
     UdpRelay(GuestSink& sink, HostNetwork* network) : sink_(sink), network_(network) {}
@@ -66,14 +65,15 @@ private:
     struct Flow {
         std::unique_ptr<HostSocket>   socket;
         std::map<uint32_t, uint32_t>  peers;        ///< host address -> shown as
+        std::map<Ipv6, uint32_t>      peers6;
         uint64_t                      lastMs = 0;
     };
 
-    Flow* flowFor(uint16_t guestPort, uint64_t nowMs);
+    Flow* flowFor(uint16_t guestPort, uint64_t nowMs, bool ipv6);
 
     GuestSink&               sink_;
     HostNetwork*             network_;
-    std::map<uint16_t, Flow> flows_;
+    std::map<uint32_t, Flow> flows_;
     std::vector<uint8_t>     buffer_;
 };
 

@@ -29,12 +29,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <map>
+#include <tuple>
 
 namespace pom2 {
 namespace nat {
 
 using Mac = std::array<uint8_t, 6>;
 using Bytes = std::vector<uint8_t>;
+using Ipv6 = std::array<uint8_t, 16>;
+inline constexpr uint16_t kEtherTypeIpv6 = 0x86DD;
+inline constexpr uint8_t kProtoIcmp6 = 58;
 
 inline constexpr Mac kBroadcastMac = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
@@ -67,6 +72,31 @@ inline constexpr uint8_t     kDefaultTtl     = 64;
 struct View {
     const uint8_t* data = nullptr;
     std::size_t    size = 0;
+};
+struct Ipv6Packet {
+    Ipv6 source{}, destination{};
+    uint8_t protocol = 0, hopLimit = 0;
+    View payload;
+};
+bool parseIpv6(View packet, Ipv6Packet& out);
+uint16_t checksum6(const Ipv6& source, const Ipv6& destination, uint8_t protocol, View data);
+Bytes buildIpv6(const Ipv6& source, const Ipv6& destination, uint8_t protocol,
+                 const Bytes& payload, uint8_t hopLimit = 64);
+std::vector<Bytes> fragmentIpv6(const Ipv6& source, const Ipv6& destination,
+                               uint8_t protocol, uint32_t id, const Bytes& payload);
+class Ipv6Reassembler {
+public:
+    Bytes accept(View packet, uint64_t nowMs);
+    void expire(uint64_t nowMs);
+private:
+    struct Assembly {
+        uint64_t started = 0;
+        uint8_t protocol = 0, hop = 0;
+        Bytes data, present;
+        std::size_t end = 0, count = 0;
+        bool first = false, last = false;
+    };
+    std::map<std::tuple<Ipv6, Ipv6, uint32_t>, Assembly> pending_;
 };
 
 struct EthernetFrame {
@@ -124,9 +154,28 @@ uint16_t checksum(const uint8_t* data, std::size_t size, uint32_t sum = 0);
 
 bool parseEthernet(const uint8_t* frame, std::size_t size, EthernetFrame& out);
 bool parseArp(View payload, ArpPacket& out);
-/// Refuses fragments: the relays work on whole datagrams, and no period
-/// Apple II stack fragments what it sends.
+/// Whole datagrams only. The backend calls Ipv4Reassembler first.
 bool parseIpv4(View payload, Ipv4Packet& out);
+/// Bounded IPv4 reassembly; conflicting overlaps discard the entire datagram.
+/// [B] RFC 791 § 3.2. Assemblies expire from their first fragment, not activity.
+class Ipv4Reassembler {
+public:
+    static constexpr uint64_t kTimeoutMs = 30000;
+    static constexpr std::size_t kMaxPending = 32;
+    Bytes accept(View packet, uint64_t nowMs);
+    void expire(uint64_t nowMs);
+    std::size_t pending() const { return pending_.size(); }
+private:
+    struct Assembly {
+        uint64_t started = 0;
+        Bytes data, present;
+        std::size_t end = 0, count = 0;
+        bool first = false, last = false;
+    };
+    std::map<std::tuple<uint32_t, uint32_t, uint8_t, uint16_t>, Assembly> pending_;
+};
+std::vector<Bytes> fragmentIpv4(uint32_t source, uint32_t destination, uint8_t protocol,
+                                uint16_t id, const Bytes& payload, std::size_t mtu = 1500);
 bool parseUdp(const Ipv4Packet& packet, UdpDatagram& out);
 bool parseTcp(const Ipv4Packet& packet, TcpSegment& out);
 

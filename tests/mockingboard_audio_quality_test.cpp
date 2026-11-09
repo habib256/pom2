@@ -180,7 +180,7 @@ double inharmonicFraction(const std::vector<float>& x, double f0, double sr)
 }
 
 // ─── Test 1: a plain tone must be spectrally clean ───────────────────────
-void testTonalPurity()
+void testTonalPurity(int pacing = 1, int accelerator = 1)
 {
     // TP = 16 -> 1022727/(16*16) = 3995 Hz. High enough that a
     // point-sampler folds a lot of energy back (the pre-fix renderer
@@ -191,6 +191,12 @@ void testTonalPurity()
     card.setSampleRate(kSr);
     card.setVolume(1.0f);
     card.setMuted(false);
+
+    if (pacing != 1 || accelerator != 1) {
+        card.setCpuClock(1022727.0 * pacing * accelerator);
+        card.setMachineCpuClock(1022727.0 * accelerator);
+        card.setStandardClock(1022727.0);
+    }
 
     ayWrite(card, 0, 0, kPeriod & 0xFF);
     ayWrite(card, 0, 1, (kPeriod >> 8) & 0x0F);
@@ -346,7 +352,7 @@ void testVolumePwmUnderBurstyProducer()
 // behind the cursor, the backward guard yanked it back, and the two
 // alternated every callback — audible as tempo instability on DD1 while
 // DD2, with a far sparser stream, mostly got away with it.
-void testDenseDigiStreamBothChips(int kChunk)
+void testDenseDigiStreamBothChips(int kChunk, int pacing = 1, int accelerator = 1)
 {
     Memory mem;
     M6502  cpu(&mem);
@@ -363,6 +369,11 @@ void testDenseDigiStreamBothChips(int kChunk)
     // exactly why the first version of this test passed against the buggy
     // cursor it was written to catch.
     card.setCpuClock(kPalClockHz);
+    if (pacing != 1 || accelerator != 1) {
+        card.setCpuClock(kPalClockHz * pacing * accelerator);
+        card.setMachineCpuClock(kPalClockHz * accelerator);
+        card.setStandardClock(kPalClockHz);
+    }
 
     // Chip 0 carries the digi: tone + noise masked, so the channel level
     // IS the value written to R8 and the output is exactly the PCM.
@@ -378,12 +389,12 @@ void testDenseDigiStreamBothChips(int kChunk)
     // A write every 149 cycles = 6864 Hz; 32 writes per PCM period puts
     // the fundamental at 214.5 Hz and every sample-and-hold image exactly
     // on a harmonic of it, so a clean render has NO inharmonic energy.
-    constexpr int kWriteIntervalCycles = 149;
+    const int kWriteIntervalCycles = 149 * accelerator;
     constexpr int kPcmPeriodWrites     = 32;
     const double  kFundamentalHz =
-        kPalClockHz / (kWriteIntervalCycles * kPcmPeriodWrites);
+        kPalClockHz * pacing * accelerator / (kWriteIntervalCycles * kPcmPeriodWrites);
 
-    constexpr int    kFrameCycles  = 20313;   // one PAL video frame
+    const int       kFrameCycles  = 20313 * pacing * accelerator;
     constexpr double kFrameSamples = 882.0;   // 44100 / 50
     // `kChunk` is the REAL miniaudio period (AudioDevice.cpp:
     // periodSizeInFrames): 256 on the desktop, 2048 in the browser, whose
@@ -465,7 +476,7 @@ void testDenseDigiStreamBothChips(int kChunk)
     std::printf("  dense digi (%.0f Hz PCM @ %.0f Hz writes, 2 chips, "
                 "%d-frame callbacks): "
                 "rms=%.4f inharmonic=%.2f %%\n",
-                kFundamentalHz, kPalClockHz / kWriteIntervalCycles, kChunk, rms,
+                kFundamentalHz, kPalClockHz * pacing * accelerator / kWriteIntervalCycles, kChunk, rms,
                 frac * 100.0);
     assert(rms > 0.01);
     // Cursor thrash scatters broadband energy here. A stable cursor keeps
@@ -854,6 +865,8 @@ void testPwmSubSamplePlacement()
 int main()
 {
     testTonalPurity();
+    testTonalPurity(4);
+    testTonalPurity(4, 4);
     std::printf("tonal purity ......... OK\n");
     testNoDcOffset();
     std::printf("DC offset ............ OK\n");
@@ -863,6 +876,10 @@ int main()
     std::printf("dense digi stream .... OK\n");
     testDenseDigiStreamBothChips(2048);
     std::printf("dense digi, browser .. OK\n");
+    testDenseDigiStreamBothChips(256, 4);
+    testDenseDigiStreamBothChips(2048, 4);
+    testDenseDigiStreamBothChips(256, 4, 4);
+    std::printf("dense digi, menu x4 + accelerator .. OK\n");
     testIdleProducerThenResume();
     std::printf("idle then resume ..... OK\n");
     testEnvelopeShapes();

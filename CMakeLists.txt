@@ -2183,6 +2183,24 @@ add_executable(pom2_headless
     src/SystemProfile.cpp
     src/Z80.cpp
 )
+# Native DNS wire queries (NatHostSockets): host resolver on Unix, system DNS
+# server configuration on Windows. Transitive on SDK/test archives.
+if(NOT EMSCRIPTEN)
+    if(WIN32)
+        set(POM2_NATIVE_DNS_LIB iphlpapi)
+    else()
+        set(POM2_NATIVE_DNS_LIB resolv)
+    endif()
+    target_link_libraries(pom2_core PUBLIC ${POM2_NATIVE_DNS_LIB})
+    if(TARGET pom2_core_test)
+        target_link_libraries(pom2_core_test PUBLIC ${POM2_NATIVE_DNS_LIB})
+    endif()
+    target_link_libraries(pom2_headless PRIVATE ${POM2_NATIVE_DNS_LIB})
+    if(TARGET ${PROJECT_NAME})
+        target_link_libraries(${PROJECT_NAME} ${POM2_NATIVE_DNS_LIB})
+    endif()
+endif()
+
 target_include_directories(pom2_headless PRIVATE
     ${POM2_SRC_DIR}
     ${POM2_GENERATED_DIR}

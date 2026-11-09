@@ -114,6 +114,9 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     /// Emulated CPU clock for the emuCycles replay cursor — retuned by
     /// MockingboardCard::setCpuClock on a PAL/NTSC switch.
     std::atomic<double>   cpuClockHz { static_cast<double>(POM2_CPU_CLOCK_HZ) };
+    /// Unpaced CPU clock. Zero preserves standalone hosts' setCpuClock-only
+    /// behaviour; the controller supplies both clocks on every speed change.
+    std::atomic<double>   machineCpuClockHz { 0.0 };
     /// Slot phase-0 clock feeding the AYs' pin-22 CLOCK — set by
     /// MockingboardCard::setStandardClock. 0 = never given: the generators
     /// follow `cpuClockHz` (a hand-built card in a test). Kept apart from
@@ -124,6 +127,12 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
     {
         const double bus = busClockHz.load(std::memory_order_relaxed);
         return bus > 0.0 ? bus : cpuClockHz.load(std::memory_order_relaxed);
+    }
+    double replayClockHz() const
+    {
+        const double machine = machineCpuClockHz.load(std::memory_order_relaxed);
+        return ayClockHz() * (machine > 0.0
+            ? cpuClockHz.load(std::memory_order_relaxed) / machine : 1.0);
     }
 
     // SSI263 mix scratch — member, not a per-callback local: this runs on
@@ -365,8 +374,10 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // first sample of the buffer, undoing the sub-buffer timing on the
         // PAL demos that need it most.
         // The stamps are slot-bus ticks (busNow_), so the cursor runs at the
-        // bus clock: constant whatever an accelerator does.
-        const double cyclesPerSample = ayClockHz() / static_cast<double>(sr);
+        // bus clock, scaled by the speed menu's pacing. A hardware accelerator
+        // leaves it alone; x2/x4 produce that many bus ticks per host second.
+        const double replayHz = replayClockHz();
+        const double cyclesPerSample = replayHz / static_cast<double>(sr);
         // ── Cursor pacing: a JITTER BUFFER, not a chase ───────────────
         // The producer and the consumer move the same number of cycles
         // per second by construction (17045 cycles x 60 Hz = 44100
@@ -412,7 +423,7 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // this card, which is inaudible for a music/SFX peripheral and far
         // cheaper than a resync.
         const uint64_t burst = static_cast<uint64_t>(
-            ayClockHz() / 50.0);
+            replayHz / 50.0);
         // Plus this callback's own span: the whole buffer is rendered at
         // once, so the backlog must cover it or its tail renders ahead of
         // the producer. Negligible at a desktop's 256 frames; ~43 ms with
@@ -549,8 +560,8 @@ struct MockingboardCard::AudioSrc : public AudioSource, public RateAware
         // Phase 0, NOT the CPU clock: an accelerator (TransWarp 3.5x, the
         // //c+ 4x) speeds the 6502 and leaves phase 0 alone. Deriving this
         // from `cpuClockHz` put every note 3.5x sharp under a TransWarp.
-        // `cyclesPerSample` above stays on the CPU clock — it paces the
-        // replay cursor, whose stamps ARE CPU cycles.
+        // The replay cursor above follows the speed menu; the generators
+        // retain the AY clock, preserving tone pitch during fast-forward.
         const float ticksPerSample = static_cast<float>(
             ayClockHz() / 8.0 / static_cast<double>(sr));
         const float invTicksPerSample =
@@ -936,6 +947,14 @@ void MockingboardCard::setCpuClock(double hz)
     if (ssi_) ssi_->setCpuClockHz(hz);
 }
 
+void MockingboardCard::setMachineCpuClock(double hz)
+{
+    if (!(hz > 0.0)) return;
+    std::lock_guard<std::mutex> lk(mtx);
+    busClock_.setCpuClock(hz);
+    if (audio_) audio_->machineCpuClockHz.store(hz, std::memory_order_relaxed);
+}
+
 // Phase 0 of the slot bus: the AYs' CLOCK pin and the 6522s' timer clock.
 // `setVideoStandard` and Slot Config Apply hand it the standard's nominal;
 // `applyAcceleratorClock` never calls it — which is the point.
@@ -1122,7 +1141,7 @@ void MockingboardCard::slotRomWrite(uint8_t low8, uint8_t v)
         // arriving ~40 ms early.
         //
         // Stamped `busNow_`, NOT `lastSyncCycle_`: the consumer's cursor is
-        // anchored to `busNow_` and paced at `ayClockHz()`, as the comment
+        // anchored to `busNow_` and paced at `replayClockHz()`, as the comment
         // over `cyclesPerSample` says ("the stamps are slot-bus ticks"). The
         // PSG queue two functions down has always stamped `busNow_`; the
         // speech queue was the one consumer left on the CPU clock. Under any

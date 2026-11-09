@@ -29,8 +29,9 @@ software that needs it.
 Eleven domains swept read-only on `b9818f5d`; ten defects fixed and pinned,
 ~20 more verified and deferred, plus a four-part audit of the test suite
 itself — [evidence](docs/audits/bug-hunt-2026-11-01-round2.md). The three
-deferred items worth scheduling first: a non-stock `--speed` leaves every slot
-card's phase-0 bus clock unscaled (CPU-1, open: the first fix was withdrawn, see
+deferred items worth scheduling first: a non-stock `--speed` leaves some slot
+cards' phase-0 bus clock unscaled (CPU-1, open for Phasor and other cards;
+Disk II and Mockingboard fixed 2026-11-08/09; the first fix was withdrawn, see
 DEV § Mockingboard); one host folder could be
 served into two bays with both writing it back (MED-1, fixed 2026-11-06); a
 W5100 `DISCON` from `SOCK_CLOSE_WAIT` dropped the TX tail the guest was told

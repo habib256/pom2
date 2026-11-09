@@ -30,6 +30,7 @@ disk_writeback_slot        prefix: disk_writeback_slot<N>, read by the notch mig
 ethernet_backend           hand-edited: slirp | loopback | none (DEV § Network backends)
 uthernet_allow_loopback    hand-edited opt-in to reach the host loopback (CLAUDE.md)
 uthernet_slirp_restricted  hand-edited opt-in, slirp virtual services only
+uthernet_nat_forwards      hand-edited explicit TCP/UDP host-to-guest port forwards (DEV § built-in virtual network)
 transwarp_dsw1             hand-edited DIP switch bank (TransWarp)
 transwarp_dsw2             hand-edited DIP switch bank (TransWarp)
 fujinet_builtin_network    prefix: fujinet_builtin_network_slot<N>, hand-edited

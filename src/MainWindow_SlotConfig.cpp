@@ -463,7 +463,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         const bool allowLoopback = settings->getBool("uthernet_allow_loopback", false);
         const bool restricted    = settings->getBool("uthernet_slirp_restricted", false);
 
-        if (backend == "slirp") {
+        const auto forwardRules = settings->getString("uthernet_nat_forwards", "");
+        if (backend == "slirp" && forwardRules.empty()) {
             pom2::SlirpOptions slirpOpts;
             slirpOpts.allowHostLoopback = allowLoopback;
             slirpOpts.restricted        = restricted;
@@ -474,6 +475,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         pom2::BuiltinNatOptions natOpts;
         natOpts.allowHostLoopback = allowLoopback;
         natOpts.restricted        = restricted;
+        if (!pom2::parseNatForwards(forwardRules, natOpts.forwards))
+            pom2::log().warn(who, "Invalid uthernet_nat_forwards: expected tcp|udp:bind-ip:host-port:guest-port");
         if (auto nat = pom2::makeBuiltinNatBackend(natOpts)) return nat;
         pom2::log().warn(who, "no host Ethernet transport in this build. "
                               "Uthernet II TCP/UDP sockets still work.");
