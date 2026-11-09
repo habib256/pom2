@@ -11018,6 +11018,26 @@ endif()
 add_test(NAME builtin_nat COMMAND test_builtin_nat)
 set_tests_properties(builtin_nat PROPERTIES TIMEOUT 60)
 
+# Real IP65 driver and TCP/IP stack executed on POM2's 6502, through the
+# slot bus and MACRAW -> built-in NAT -> local host server. Utilities are
+# the unchanged executables extracted from sbabcoc/Uthernet2's disks.
+if(TARGET pom2_core_test AND NOT EMSCRIPTEN)
+    add_executable(test_uthernet2_ip65 uthernet2_ip65_integration_test.cpp)
+    target_link_libraries(test_uthernet2_ip65 PRIVATE pom2_core_test)
+    foreach(_uthernet_mode ip65 telnet gopher)
+        if(_uthernet_mode STREQUAL "ip65")
+            set(_uthernet_fixture ip65test)
+        else()
+            set(_uthernet_fixture ${_uthernet_mode})
+        endif()
+        add_test(NAME uthernet2_${_uthernet_mode}_integration
+            COMMAND test_uthernet2_ip65 ${_uthernet_mode}
+                ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/uthernet2/${_uthernet_fixture}.bin)
+        set_tests_properties(uthernet2_${_uthernet_mode}_integration PROPERTIES
+            TIMEOUT 90 LABELS "network;integration")
+    endforeach()
+endif()
+
 # ─── The libslirp half of the loopback perimeter (bug hunt #14, 2026-09-09) ─
 # `cfg.disable_host_loopback` only refuses the ALIAS route (10.0.2.2); a
 # guest frame naming 127.0.0.1 directly was dialled by slirp with the shipped

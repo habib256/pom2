@@ -10,6 +10,21 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-09 — Exercise Uthernet II with independent IP65 software
+
+Three integration tests execute sbabcoc/Uthernet2's unchanged 6502 binaries
+on POM2's CPU and slot bus, through MACRAW and the built-in NAT to local
+servers. They verify IP65 DHCP/DNS/TCP echo, Telnet VT100/80x24 negotiation,
+ANSI positioning and keyboard input, and Gopher menu selection and paging.
+The clients were extracted from the supplied ProDOS disk and match the DOS
+3.3 disk. Tests load the executables directly with a minimal Monitor
+substitute; they do not boot an operating system. Fixture provenance,
+checksums and upstream notices are included. Separate checks with actual
+ROMs also booted DOS 3.3 on a II+ and ProDOS/BASIC.SYSTEM on a IIe and loaded
+both clients from drive 2; all four reached their local server. Screenshots
+and the reproduction steps are recorded with the fixtures. No emulator fix
+was required.
+
 ## 2026-11-09 — Preserve concurrent replacements during routed HDV mounts
 
 The HDV mount command now retains its selected slot and outgoing mount
