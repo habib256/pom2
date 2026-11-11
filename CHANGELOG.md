@@ -10,6 +10,45 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-11 — Built-in NAT: six findings from NeoST's audit
+
+NeoST imported the built-in NAT at `b07f3a0a` (`extern/pom2nat`) and audited
+it under ASan/UBSan: no out-of-bounds read, but six defects, all fixed here
+and pinned by `builtin_nat` [13] and `w5100_name_resolver`.
+
+- **IPv6 alias table never emptied.** IPv6 flows ride the IPv4 relays under
+  a private alias `0xF000xxxx`; the table only grew (cap 512), and an alias
+  was spent BEFORE the fence, so 512 UDP datagrams to `fe80::x` killed IPv6
+  for the session. A refused UDP destination now spends nothing, and an
+  alias no relay names is reclaimed — when the table is full and every 10 s.
+  The cap (2081) is one more than the relays can name at once, so a full
+  table always frees a slot; numbers roll on so a reclaimed one is not
+  reused at once. A reverse map replaced the linear search per packet.
+- **IPv6 DNS waiting table leaked.** The guest's entry went in before
+  `DnsProxy::query`, which ignores responses (QR=1) without a word: 32 of
+  them and IPv6 DNS was dead. `query` now says when it ignored a datagram
+  and the entry is taken back; entries also expire past the proxy's own
+  deadline, since every accepted query is answered by then.
+- **`res_nclose` on macOS** leaked ~250 bytes per raw DNS lookup (+49 MB
+  per 200 000): Apple's libresolv needs `res_ndestroy`.
+- **DNS budget doubled.** The IPv4 and IPv6 proxies each had a bucket, so a
+  guest alternating families got 8 wire lookups a second instead of 4, and
+  16 workers instead of 8. They now share one (`shareBudgetWith`).
+- **Idle TCP never expired, and nothing was dropped on a NIC reset.** A
+  guest that rebooted left connections with nothing in flight — nothing to
+  retransmit, so nothing ever failed — holding the 32 slots. Established
+  connections now expire after RFC 5382's 2 h 4 min of silence, and the
+  new `NetworkBackend::nicReset()`, called on the Uthernet I/II's slot RESET
+  and power cycle, drops every relay, pending DNS answer and IPv6 alias
+  (port-forward listeners stay).
+- **`W5100NameResolver` could freeze the CPU thread.** A timed-out lookup
+  was collected by a second thread; when that thread could not be created,
+  the `std::async` future died in `resolve()` and its destructor joined
+  `getaddrinfo` — under `stateMutex`. One detached worker and a condition
+  variable now; nothing on the caller's side can wait past `waitMs`. Same
+  change: a lookup that throws is a failed lookup instead of an exception
+  rethrown out of `resolve()` by `future.get()`.
+
 ## 2026-11-09 — Exercise Uthernet II with independent IP65 software
 
 Three integration tests execute sbabcoc/Uthernet2's unchanged 6502 binaries

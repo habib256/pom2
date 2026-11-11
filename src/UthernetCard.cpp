@@ -67,6 +67,7 @@ void UthernetCard::onReset()
     // any guest- or UI-programmed address on every Ctrl-Reset. The
     // default is stamped once at construction.
     chip_.reset();
+    if (backend_) backend_->nicReset();
     cyclesSincePoll_ = 0;
 }
 

@@ -106,6 +106,7 @@ void UthernetIICard::onPowerCycle()
 void UthernetIICard::resetChip(bool powerCycle)
 {
     chip_.reset(powerCycle);
+    if (backend_) backend_->nicReset();   // MACRAW / IPRAW traffic went through it
     setMacAddress(kDefaultMac);
     cyclesSincePoll_ = 0;
 }
