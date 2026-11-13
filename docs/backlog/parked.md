@@ -16,7 +16,7 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [PARKED-001](#parked-001) | 🧊 | Frozen | The MAME `a2bus` backlog — what is worth porting, and why. |
-| [PARKED-002](#parked-002) | 🟢 | Done 2026-10-31 — landed as catalog `ezcolor` (CHANGELOG "E-Z Color Graphics Interface"); archive this entry | E-Z Color / TMS9918 card |
+| [PARKED-003](#parked-003) | 🧊 | Frozen | Bare-metal Raspberry Pi edition (Circle, no Linux) |
 
 <a id="parked-001"></a>
 
@@ -116,8 +116,8 @@ an explicit request before scheduling.
 
 **Priority:** 🟢 · **State:** Done 2026-10-31. The card landed as catalog
 `ezcolor` (`EzColorCard.h/.cpp`, POM1's `TMS9918`), with the SDK's
-`attachEzColor`; see the CHANGELOG entries of 2026-10-31. The plan below is
-kept as history until the entry is archived.
+`attachEzColor`; see the CHANGELOG entries of 2026-10-31. Removed from the
+active task index on 2026-11-13; the plan below is kept as history.
 
 **Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
 
@@ -198,3 +198,71 @@ have to be applied twice with nothing to flag the omission. That is
 survivable — `hgrpaint` proves it — but at this volume the question "shared
 module or verbatim copy?" deserves deciding on its own, not during a port.
 → [`a2bus` survey](parked.md#parked-001)
+
+<a id="parked-003"></a>
+
+## PARKED-003 — Bare-metal Raspberry Pi edition (Circle, no Linux)
+
+**Priority:** 🧊 · **State:** Frozen — a good idea, not the moment (user,
+2026-11-13).
+
+**Scheduling condition:** an explicit request. Start with the spike below; it
+decides whether this is weeks or a rewrite.
+
+**Evidence:** survey of 2026-11-13. Sources read: BMApple2 at `6e59565e50`
+(v0.4.4), Circle at tag `Step51.1.1` (`7a81e1b480`), the circle-stdlib README
+at `4fbab627a8`.
+
+**The idea.** Boot a Raspberry Pi straight into POM2, with no operating
+system, the way [BMApple2](https://github.com/jhonnaker1/bmapple2) does for
+KEGS (and BMC64, BMA800XL, BMCoco for their machines). The SD card holds one
+`kernel.img` the Pi firmware starts directly.
+
+**What it buys — and what it does not.**
+
+- Boot in 1-2 s; power off without a shutdown.
+- No system stutter: the governor ramps, IRQ contention and swap hitches that
+  `packaging/raspberry/pi_tuning.sh` fights simply do not exist.
+- HDMI driven at the machine's own rate (BMApple2 runs the Pi 4/5 at the
+  IIgs's exact 59.92 Hz) — for POM2, **50.08 Hz for the PAL profiles**, so
+  French Touch rasters land on a locked display instead of a 60 Hz one.
+- **Not raw speed.** Same code, same CPU, same compiler: the PGO core already
+  does 3000 frames in 0.212 s on a Pi 4 ([PERFORMANCE § 5](../PERFORMANCE.md#5-the-build-recipe-pgo--lto)).
+  Bare metal can even be slower by default: BMApple2 0.4.0 found the firmware
+  left the ARM at 600 MHz until the kernel asked for the full clock.
+
+**Shape.** A *port* around `pom2_core`, not POM2 whole — the shape of
+BMApple2's `src/port/` around an unmodified KEGS:
+
+- `pom2_core` (199 sources) has no GL and no ImGui, `pom2_headless` already
+  runs it with no window, and `Apple2Display` / `AppleWinNtsc` / the OE-CPU
+  demodulator render on the CPU into a framebuffer.
+- BMApple2's Pi layer (Circle kernel, framebuffer, HDMI sound, Pi 4/5 KMS and
+  V3D drivers) is GPL-3 like POM2; check its `docs/THIRD_PARTY.md` file by
+  file before taking any (parts are BMC64's Apache 2.0).
+- A small F10-style menu (machine, media, slots, monitor) replaces the ImGui
+  UI. Out of the first version: the debugger, the Paint editor, the AI control
+  server, URL/TNFS media, networking.
+
+**What Circle gives and what blocks.**
+
+| Need | Status |
+|---|---|
+| `std::thread`, `std::mutex`, `std::condition_variable`, `std::filesystem` | circle-stdlib with **libc++** (`--libcxx`, clang), labelled *experimental* by its README. Its threads run on Circle's **cooperative, non-preemptive** scheduler. |
+| The CPU worker (4096-cycle chunks under `stateMutex`) | Must not rely on preemption. Model it as BMApple2 does: emulation alone on core 1 (Circle's multi-core support), I/O and USB on core 0. |
+| Sound (`AudioDevice`, miniaudio today) | One class to re-seat on Circle's HDMI / PWM / I2S sound devices. |
+| Files (SD card) | Circle's FatFs; autosave and the atomic commit (`AtomicFileReplace.h`) must hold on FAT32 with power cut at any time. |
+| Input | Circle's USB HID keyboard, mouse and gamepad drivers. |
+| GPU shaders (OE composite, CRT stack) | **No GLES under Circle on Pi 4/5** (only Pi 1-3, through the VideoCore firmware). CPU render paths first; BMApple2's own V3D driver later, for the CRT pass. |
+| Network | Circle's own TCP/IP stack and an experimental POSIX socket layer; out of scope at first. |
+
+**Spike (first step, about a day).** Configure circle-stdlib with
+`--libcxx`, build `pom2_core` against it, and list what breaks. Then start
+the CPU worker on core 1 and paint one frame through the Circle framebuffer.
+The list decides the size.
+
+**Cheaper alternative, to weigh before starting.** A minimal Linux
+(Buildroot) booting straight into POM2 with a reserved core (`isolcpus`,
+`SCHED_FIFO`): 3-5 s to the first frame, and it keeps Mesa's GPU shaders,
+threads, the network and the full UI. Less instant and less deterministic
+than bare metal, for a fraction of the work.

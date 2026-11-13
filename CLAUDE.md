@@ -290,7 +290,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | 6502 / 65C02 / Rockwell / WDC | `M6502.h/.cpp` | [§ CPU](DEV.md#cpu) |
 | Z80 core (standalone, zexall-clean) | `Z80.h/.cpp` | [§ Z80 core](DEV.md#z80-core-z80hcpp--softcardcpm-phase-1) |
 | Microsoft SoftCard (Z80 DMA bus master) — catalog `softcard` | `SoftCardZ80.h/.cpp` | [§ SoftCard Z80](DEV.md#softcard-z80-softcardz80hcpp--cpm-phase-2) |
-| ALS "The CP/M Card" (Z80B, own 64 KB, CP/M Plus; map read off ALS's software) — catalog `alscpm` | `AlsCpmCard.h/.cpp` | [CARDS-011](docs/backlog/cards.md#cards-011) |
+| ALS "The CP/M Card" (Z80B, own 64 KB, CP/M Plus; map read off ALS's software) — catalog `alscpm` | `AlsCpmCard.h/.cpp` | [§ ALS CP/M Card](DEV.md#als-the-cpm-card-alscpmcard) |
 | Microsoft SoftCard II (6 MHz Z80, own 64 KB, Am2950 latch at `$C0n0`; not a bus master; izapple2 port) — catalog `softcard2`; its 17 "6502 BIOS calls" decoded into the OS-call trace | `SoftCardIICard.h/.cpp`, `SoftCard2Protocol.h/.cpp` | [§ SoftCard II](DEV.md#softcard-ii-softcardiicard) |
 | PCPI Applicard (6 MHz Z80, own 64 KB, 2 KB boot ROM `roms/applicard_v9.bin`; MAME `a2applicard` port) — catalog `applicard` | `ApplicardCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
 | Premium SoftCard //e — the AUX-slot card (aux 64 KB + 80 col + Z80 on that RAM), seated on SlotBus **slot 0**; setting `premium_softcard`, Machine menu; `$C07E` register, A15 flip and status hooks in `Memory::AuxSlotPort` | `PremiumSoftCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |

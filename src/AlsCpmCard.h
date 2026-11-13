@@ -18,7 +18,8 @@
 // with 64 KB of its own, running ALS's CP/M Plus. No emulator had it; there
 // is no schematic or register list in print. This model is read off ALS's
 // own software (CP/M 3.01C, CPM3.SYSTEM / ZBOOT / CPM3.SYS — disassembly
-// notes in docs/backlog/cards.md, CARDS-011) and its User's Guide § 5.
+// notes in DEV.md § ALS "The CP/M Card", from CARDS-011) and its User's
+// Guide § 5.
 //
 //  - **Bus mastery** works as on the SoftCard: any write to the card's
 //    $Cn00-$CnFF page, by either CPU, toggles the Z80 on or off; while it

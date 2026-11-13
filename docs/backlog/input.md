@@ -13,8 +13,8 @@ an explicit request before scheduling.
 
 ## Task index
 
-| Task | Priority | State | Subject |
-|---|---|---|---|
+No open task: every entry below is implemented (the last on 2026-11-06)
+and kept only so incoming links still resolve.
 
 <a id="input-007"></a>
 

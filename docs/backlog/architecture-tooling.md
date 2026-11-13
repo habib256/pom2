@@ -25,6 +25,8 @@ an explicit request before scheduling.
 | [ARCH-007](#arch-007) | 🧊 | Frozen — triage 2026-10-28 (won't do) | Z80/SoftCard cleanup backlog |
 | [ARCH-012](#arch-012) | 🟢 | Confirmed open (post-1.0) | Inconsistent `pom2::` namespace |
 | [ARCH-013](#arch-013) | 🟢 | Confirmed open | Legacy M6502 style |
+| [ARCH-014](#arch-014) | 🟢 | Ready | No getter to assert every clock-bearing device was retuned |
+| [ARCH-015](#arch-015) | 🟢 | Ready | The window's slot hooks are not covered by the slot-config tests |
 
 <a id="arch-016"></a>
 
