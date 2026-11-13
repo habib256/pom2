@@ -38,7 +38,8 @@ and 640 modes through the display's `CardVideoSource` seam; //e-class slotted
 profiles only. Register behaviour is documented in
 [DEV § VidHD](../../DEV.md#vidhd-vidhdcard) and pinned by `vidhd_card`
 against hand-computed pixels — not yet against a real VidHD capture. Still
-open: IIgs text/border colours, the VidHD's extended text modes, the ][+ aux
+open: the VidHD's extended text modes (the IIgs text/border colours landed
+2026-10-21), the ][+ aux
 mirror, mid-frame SCB/palette changes.
 
 The 2026-10-17 card audit corrected the detection window from `$C0nX` to
@@ -84,7 +85,7 @@ oracles, with golden suites (`purplesoft_eve_screens`, `chatmauve_dot_rules`,
 entry, confirmed on `aad2fee5`:
 
 - **Video-7 AppleColor RGB** — 160×192 chunky mode, F/B HGR, colour text
-  (`LeChatMauveCard.h:109,128,148`).
+  (`LeChatMauveCard.h`: `Variant::Video7`, `Chunky160`, `FgBg`).
 - **RVB Graph** — modelled from its manual on 2026-10-20 (`3c091891`):
   control register at `$C0F0+S+U+K`, eight colour registers at
   `$C70F/$C71F/$C72F/$C73F − Bn`. Unverified on hardware.

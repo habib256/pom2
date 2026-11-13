@@ -65,8 +65,12 @@ amplitude and filter frequency.
 Remaining:
 
 - SSI inflection, articulation and analog waveform synthesis are not
-  modelled by the fixed PCM table (the audio is still cut or looped to the
-  A/!R period, at the table's pitch). Phasor now uses the SSI263AP reset
+  modelled by the default voice, the fixed PCM table (cut or looped to the
+  A/!R period, at the table's pitch). Since 2026-11-06 an opt-in second
+  voice does follow them: `ssi263_voice = formant` (`Ssi263Formant.h/.cpp`,
+  pinned `ssi263_formant`), a register-driven formant synthesiser ported
+  from Casso's, constants grade F. What remains is validating **both**
+  voices against a real SSI263 recording. Phasor now uses the SSI263AP reset
   contract from AppleWin; the older SSI263P reset quirk and Cricket reset
   behavior still need a hardware/firmware comparison.
 - Phasor now implements both SSI263APs, address aliases, native direct

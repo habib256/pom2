@@ -69,7 +69,7 @@ claiming every historical heading is a second task definition.
 
 ## ARCH-004 — Six file-size ceilings were raised by the two hunt rounds, and the owed splits are still owed
 
-**Priority:** 🟠 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): Memory and ImageWriter splits landed; the DiskImage WOZ save half and Apple2Display are owed, and two ceilings have slack.
+**Priority:** 🟠 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md); revalidated 2026-11-13): Memory and ImageWriter splits landed, and the DiskImage WOZ writer is out (2026-11-05 — see below). Owed: `Apple2Display.cpp` and `hgrpaint/HgrPaintEditor.cpp`; three ceilings have slack to lower.
 
 **Acceptance criterion (after revalidation):** Split the identified responsibilities without increasing file-size ceilings; preserve the affected printer, media and snapshot tests.
 
@@ -97,6 +97,13 @@ so `tools/check_file_sizes.sh` failed on that revision, as did the
 (`appendSnapshotState` / `loadSnapshotState`) is `MemorySnapshot.cpp`, and
 the ceiling went 2789 → 2354. Still owed: `DiskImage.cpp`'s WOZ writer,
 `ImageWriter.cpp`, `Apple2Display.cpp`, `hgrpaint/HgrPaintEditor.cpp`.
+
+**2026-11-13:** the WOZ writer has left `DiskImage.cpp` — phase 2 of the
+write-back and `buildWozFromSurface` are in `DiskImage_WriteBack.cpp`
+(2026-11-05, 3329 → 3224), the flux writes in `DiskImageWozFlux.cpp`; only
+the phase-1 capture (`saveDirty` / `takeWriteBack`) stays. Ceilings with
+slack (`wc -l` / budget): `DiskImage.cpp` 3262 / 3280, `Apple2Display.cpp`
+2508 / 2536, `ImageWriter.cpp` 2601 / 2809.
 
 **Documentation recheck 2026-10-20:** the current file-size guard passes;
 the historical ceiling violation is not a current failure. Responsibility
@@ -319,14 +326,14 @@ run for this change.
 
 ## ARCH-012 — Inconsistent `pom2::` namespace
 
-**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): 375 of 484 `src/` files and 23 of 424 tests use `namespace pom2`; post-1.0.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): 375 of 484 `src/` files and 23 of 424 tests used `namespace pom2` then; 459 of 621 and 43 of 505 on 2026-11-13. Post-1.0.
 
 **Acceptance criterion (after revalidation):** Migrate the selected namespace scope without changing exported API or test behavior.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-2254). Original dates and estimates are retained below.
 
 - 🟢 **Inconsistent `pom2::` namespace** — 255/336 top-level files (was
-  163/233 when this was written); `tests/` does not use it. Mechanical
+  163/233 when this was written). Mechanical
   migration, ruling [R3](../decisions/project-scope.md#standing-rulings). Post-1.0.
 
 <a id="arch-013"></a>

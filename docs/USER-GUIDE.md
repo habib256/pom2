@@ -90,8 +90,7 @@ macOS bundle declares common Apple II disk extensions and receives Finder/Dock
 open events. Linux provides a desktop launcher and an Apple II disk MIME type;
 desktop integration must be installed for **Open With** to discover it. On
 Windows, pass an image to `POM2.exe` or drop it on the window; the ZIP package
-does not register file associations. `.moof` is supported by the emulator but
-is not declared in the current macOS/Linux association metadata.
+does not register file associations.
 
 ## Make it yours
 
@@ -261,7 +260,7 @@ connected; an explicitly selected controller is never replaced by another.
 Disconnecting either controller centres its axes and releases its fire button;
 the players do not swap and PDL2/3 do not fall back to the first pad. Host slots
 are saved, not controller serial numbers. Set **Second joystick** back to
-**Off** to restore the first pad's original PDL2/3 sources and button mapping.
+**Off (use first pad's sources)** to restore the first pad's original PDL2/3 sources and button mapping.
 
 Under **Paddle sources**, each paddle also has a **Mode**:
 
@@ -293,8 +292,8 @@ moves, A/B fires; keyboard arrows and either X/Z can drive the left socket.
 Its D-pad/face buttons stop typing keys. Mouse and paddle position modes do
 not apply. The rear analogue sockets are not emulated.
 
-**Atari: right socket** forces the second controller. **Centre** lets the
-game select a socket; its AN0 polarity follows the manual's prose/BASIC but
+**Atari: right socket** forces the second controller. **Atari: centre (software selects)** lets
+the game select a socket; its AN0 polarity follows the manual's prose/BASIC but
 remains provisional because the manual's table contradicts them. Use a
 fixed socket for Wavy Navy. On IIe, enable after boot to avoid the real
 active-low inputs triggering self-test. Apple-key/Shift wiring is unavailable
@@ -348,15 +347,17 @@ Open **Devices → Storage → Cassette deck**. On II/II+/IIe, load `.aci`,
 has no cassette port: its `$C020`/`$C060` accesses serve other hardware and
 do not record or start program-tape playback.
 
-Program WAV input supports PCM 8/16-bit and float32, including supported
-WAVE_FORMAT_EXTENSIBLE forms; 24-bit PCM is refused. MP3/OGG/FLAC inputs
+Program WAV input supports PCM 8/16/24/32-bit and float32, including
+WAVE_FORMAT_EXTENSIBLE forms. MP3/OGG/FLAC inputs
 are decoded into program pulses. Streamed background audio is a separate
 internal deck mode and cannot be embedded in a session.
 
 Guest writes to the cassette output are captured automatically. The deck's
 REC control clears the previous capture for a new recording; Save writes
 captured output as ACI or WAV. Reset preserves tape position and the capture
-buffer. Machine rewind and `.pom2snap` do not restore them; v7
+buffer. Machine rewind takes the recording back with the machine (the
+capture is cut to the rewound frame); `.pom2snap` does not restore tape
+state; v7
 `.pom2session` does include program-tape position and recording state.
 
 ## Controls
@@ -433,13 +434,14 @@ The //c+ adds its physical Sony drives; //c PAL also forces its RGB adapter.
 
 **Machine → Slot Configuration** lets you change cards and mount or boot disks.
 For 1.44 MB MOOF or ProDOS `.po`/`.2mg` images on an enhanced Apple IIe, select
-`superdrive` in a free slot, then choose a 3.5-inch media unit and mount the
+**Apple IIe SuperDrive (1.44M block interface)** (`--slot N=superdrive`) in a
+free slot, then choose a 3.5-inch media unit and mount the
 image. The card provides the ProDOS block interface and accepts 400K/800K GCR
 and 1.44 MB MFM images. The 1.44 MB path emulates the card's block service;
 direct programming of the original SWIM chip and execution of its 65C02 ROM
 are not implemented. The regular SmartPort/Liron and //c+ Sony drives reject
 1.44 MB MFM media.
-For CFFA3000 storage, choose `cffa3` in a free slot (usually slot 7) and
+For CFFA3000 storage, choose **CFFA3000 (SmartPort)** (`cffa3`) in a free slot (usually slot 7) and
 assign images to its eight SmartPort bays. To use its floppy role, configure
 Disk II in another slot (usually slot 6) and mount the floppy image there.
 The CFFA3000's CF/USB file browser and automatic virtual-slot assignment
@@ -475,7 +477,8 @@ At power-on, the supplied ROMs choose boot devices in this order:
 | //c+ | Internal Sony, connected external Sonys, external SmartPort, then first 5¼-inch drive |
 
 The Drives window groups controllers and their drives; its row order is not
-a per-drive boot sequence. **Insert + Boot** selects the mounted controller.
+a per-drive boot sequence. **Insert + boot** (Disk Library) or **Insert and boot** (a drive's file
+picker) selects the mounted controller.
 If its firmware cannot select the requested drive or unit, POM2 reports why;
 on //c+, booting an external SmartPort image requires ejecting Sony disks first.
 
@@ -511,7 +514,8 @@ For card keys, firmware details and implementation notes, see
   Uthernet I or raw Ethernet modes with the built-in NAT rules below.
   Uthernet I and raw Ethernet modes need a virtual network, and every desktop
   build has one: libslirp where the package includes it (the ARM64, Raspberry
-  Pi and Pi 400 Linux packages; `-DPOM2_ENABLE_SLIRP=ON` for a source build),
+  Pi and Pi 400 Linux packages; for a source build, libslirp's development package — `setup_imgui.sh` tries
+  to install it — and `-DPOM2_ENABLE_SLIRP=OFF` turns it off),
   and POM2's own built-in network everywhere else — Windows included. Both
   give the Apple II the same addresses (itself `10.0.2.15`, gateway
   `10.0.2.2`, DNS `10.0.2.3`, or simply DHCP), reach the internet and the
@@ -550,8 +554,9 @@ For card keys, firmware details and implementation notes, see
   Desktop startup enables POM2's built-in `N:` network service by default.
   It serves plain HTTP; TLS/HTTPS, SSH, JSON parsing and the full FujiNet
   network protocol set require the external peer's implementation. For that
-  mode, disable the local service with `fujinet_builtin_network<N>=false`
-  in `state.cfg`, where `<N>` is the FujiNet slot number. Disks, CONFIG and
+  mode, disable the local service with `fujinet_builtin_network_slot<N>=false`
+  in `state.cfg`, where `<N>` is the FujiNet slot number (for example
+  `fujinet_builtin_network_slot7=false`). Disks, CONFIG and
   clock services still require the peer when local `N:` is enabled.
   The FujiNet panel's **Timeout (ms)** control adjusts local calls from
   50 to 5000 ms. Remote host/directory operations and mounted-image block I/O

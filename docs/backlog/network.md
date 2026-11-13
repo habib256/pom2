@@ -20,7 +20,7 @@ an explicit request before scheduling.
 | [NETWORK-005](#network-005) | 🟡 | Confirmed open | [FujiNet] a network-backed SmartPort call freezes the emulator |
 | [NETWORK-007](#network-007) | 🟡 | Needs decision | [FujiNet] //c-class support |
 | [NETWORK-008](#network-008) | 🧊 | Frozen — triage 2026-10-28 | [FujiNet] embedded firmware |
-| [NETWORK-009](#network-009) | 🧊 | Frozen | Uthernet I has no host transport on Windows |
+| [NETWORK-009](#network-009) | 🟡 | Superseded: run the built-in NAT on Windows | Uthernet I on Windows |
 | [NETWORK-010](#network-010) | 🟡 | Confirmed open: LAN mapping only | Uthernet II inbound (`LISTEN`) |
 | [NETWORK-012](#network-012) | 🧊 | Frozen | Uthernet I on WASM |
 
@@ -48,8 +48,8 @@ an explicit request before scheduling.
   still reaches the device through the relay's control plane; when POM2 *is*
   the device, that class of bug cannot exist. Building the firmware into POM2's
   build was re-costed and re-rejected (`docs/fujinet_plan.md` § 8).
-  Out of scope for the native path, deliberately: the `N:` network device
-  (HTTP/SSH/JSON), the modem and CP/M — those stay the relay's job.
+  The `N:` network device is served natively since 2026-08-21
+  (`FujiNetNetDevice`, phase 1); the modem and CP/M stay the relay's job.
   Phases: (1) TNFS client + tests — **done**, and since 2026-08-28 it has a
   caller: `TnfsMedia.*` fetches an image from a TNFS server into a local cache
   and `POM2 tnfs://host/path/image.po` boots it like any other disk. That is
@@ -121,7 +121,7 @@ within five seconds. Keep the remaining validation task scoped to that evidence.
   see `project_iic_smartport_boot`) rather than a slot card. *~1-2 d.*
 
 **Revalidation note 2026-10-06:** premise still holds — `fujinet` is a slot
-card (`src/SlotCardCatalog.h:128`). Since 2026-09-27 the 32 KB //c and the //c+
+card (the `fujinet` row of `src/SlotCardCatalog.h`). Since 2026-09-27 the 32 KB //c and the //c+
 answer their rear-port SmartPort **bus** through `IIcExternalSmartPort`
 (`src/IIcExternalSmartPort.h`), serving the units of the built-in slot-5
 card; that bus responder, not only the `$C500` stub, is now the seam a //c
@@ -142,13 +142,21 @@ FujiNet would hang off.
   needs no second program. Deliberately NOT done: it drags in mbedtls,
   expat, a pinned submodule and a patch set anchored to exact upstream
   text. Revisit only if "having to install a second program" turns out to
-  be the real blocker.
+  be the real blocker. **Since 2026-10-17 it is not:** the macOS, Windows
+  x64 and Linux x64 packages bundle the official FujiNet-PC runtime and POM2
+  launches it as a separate process (`FujiNetRuntime.h`, not Linux ARM), so
+  this entry now concerns only the in-process (`dlopen`) variant.
 
 <a id="network-009"></a>
 
 ## NETWORK-009 — Uthernet I has no host transport on Windows
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** 🟡 · **State:** Superseded 2026-11-05 — the Uthernet I has a
+transport on every desktop build: POM2's own NAT (`BuiltinNatBackend`, over
+the host sockets the Uthernet II uses; CHANGELOG "A network without
+libslirp"), so libslirp on Windows is no longer needed. **What is left:** the
+built-in NAT has never been run on a Windows build. The libslirp analysis
+below is kept as history.
 
 **Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
 

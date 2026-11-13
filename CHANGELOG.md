@@ -10,6 +10,40 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-13 — Documentation checked against the code
+
+Eight read-only reviewers swept CLAUDE.md, README, USER-GUIDE, all of DEV.md,
+the contract documents and the open backlog at `73a9f2fc`; about 2 000
+concrete claims, ~110 failed, each re-checked against the source before it was
+corrected here. What would have misled someone:
+
+- **`POST /reset` reads its kind from the JSON body** — CLAUDE.md said
+  `/reset?kind=soft`, which hard-resets (the query is ignored, no body = hard).
+- **A FujiNet key users were told to write is never read**: the built-in N:
+  service is `fujinet_builtin_network_slot<N>`, not `…_network<N>`.
+- **The SDK**: releases stopped attaching SDK tarballs on 2026-11-08, and the
+  consumer link list named zlib (never linked) and missed resolv /
+  CoreFoundation — fixed in SDK.md and in `package_core_sdk.sh`'s manifest.
+- **Sound II CA1** latches only with the SSI's IRQ enable latched; DEV said
+  polled mode latched it and cited a test function that does not exist.
+- **Stale models**: the ThunderClock fallback ROM (it has read/write entries
+  since 2026-10-20), the PrinterCard `PR#n` trampoline (it prints the first
+  character), the Disk II snapshot version (6), its head reach (quarter-track
+  159), the RamWorks video bank, Le Chat Mauve's snapshot (v5), the
+  ImageWriter's 250 cps, the composite phase (per scanline).
+- **lle_vs_hle**: six switchable pairs (CCS 7710, DAN ][), no embedded Disk II
+  sequencer, no tracked dumps, the RVB Graph registers and the SSI263 formant
+  voice both shipped.
+- **Backlog**: MEMORY-001 (Saturn) was open but shipped on 2026-10-31;
+  NETWORK-009 is superseded by the built-in NAT (left: a Windows run);
+  PARKED-001's survey lists SNES MAX, UltraTerm, Applicard and the Memory
+  Expansion Card as done; CPU-001's state now matches TODO.md.
+- About forty own-source line citations had drifted; the thread-barrier list
+  now names each thread by its guard tag as well.
+
+Code touched only where it carried the same stale text: comments in
+`Memory.h` and `RomCatalog.h`, one string in `AbstractionCatalog.cpp`.
+
 ## 2026-11-13 — Backlog housekeeping; a bare-metal Pi edition parked
 
 - **Retired from the active indexes** (sections kept, so incoming links

@@ -39,22 +39,24 @@ Markdown file cannot:
   [Keeping a level once you have it](#keeping-a-level-once-you-have-it) — the
   panel says *degraded*, not merely *missing*, which is the distinction that
   was invisible.
-- **The switchable boundaries, as in-row buttons.** The four subsystems that
+- **The switchable boundaries, as in-row buttons.** The six subsystems that
   ship both levels — Mouse Card (L0 MAME ⇄ H1 AppleWin), ProDOS block storage
-  (L2 CFFA ⇄ H1 HDV), printer interface (L2 Grappler+ ⇄ H1 synthetic) and the
-  colour pipeline (L1 OpenEmulator ⇄ H1 artifact LUT) — carry a "Switch"
+  (L2 CFFA ⇄ H1 HDV), printer interface (L2 Grappler+ ⇄ H1 synthetic), CCS 7710
+  serial (L2 7710-03 PROMs ⇄ POM2's page), DAN ][ (L2 its EPROM ⇄ POM2's page)
+  and the colour pipeline (L1 OpenEmulator ⇄ H1 artifact LUT) — carry a "Switch"
   column: the side in use says so, the other side offers a `use L0`-style
-  button right on its row. The first three swap the card **in place, in its
-  own slot** and restart the machine (the tooltip warns); the fourth is a
-  render-path change and is instant. A side is greyed when the dump it needs
+  button right on its row. The five card pairs swap the card **in place, in its
+  own slot** and restart the machine (the tooltip warns); the colour pipeline
+  is a render-path change and is instant. A side is greyed when the dump it needs
   is missing, with the reason in the tooltip — offering a switch that would
   silently land on the fallback would repeat the exact mistake the panel
   exists to expose.
 
 The catalog is static data mirroring the master table below. **Edit the two
 together**: the doc carries the evidence, the panel carries the conclusion.
-The catalog (`AbstractionCatalog.cpp`) is a
-subset of this table — it has no rows for the SmartPort bus,
+The catalog (`AbstractionCatalog.cpp`) is meant to be a
+subset of this table (its `ultraterm` row has no row here yet — the Videx
+UltraTerm is in [DEV](../DEV.md#videx-ultraterm-videxultratermcard)) — it has no rows for the SmartPort bus,
 the //c external port, the printer sound or PostScript, which are not cards
 the picker offers. Every card the Slot Configuration picker *does* offer has
 one, and `abstraction_catalog` fails the build's tests when a new card arrives
@@ -116,12 +118,12 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **Speaker** (`SpeakerDevice`) | **L0** | Derived from MAME `spkrdev.cpp:74-327`: 4× oversample, 64-tap windowed sinc, 0.995-pole DC blocker — since 2026-10-05 the window is a Blackman, each intermediate sample integrates its full fractional-cycle window, and the DC-blocker pole is rate-adjusted (0.995 at 44.1 kHz), so no longer verbatim (`SpeakerDevice.h:23-34`, pinned `speaker_audio_quality`) | — |
 | **Cassette** (`CassetteDevice`) | **L1** | Real `$C020` flip-flop / `$C060` comparator sign; the guest's Monitor loops time real zero-crossings out of a host WAV | — |
 | **Mockingboard / Phasor** (`Via6522`, `Ay3_8910`, shared `AyPsgSynth.h`) | **L1** | T1/T2, IFR/IER, port latches + DDR, CA1 edges, AY counters/LFSR/envelope. The same card answers as the **Mockingboard 4c** on the //c-class internal connector (`$C400-$C4FF`, settings key `iic_expansion_card`; `Mockingboard.h:193-198`) | Documented skips: SR, CA2/CB1/CB2 handshake, PB6 pulse counting — no POM2 card wires them |
-| **SSI263 speech** (`Ssi263`) | **L1 registers / H1 audio** | Register bank, A/!R handshake and IRQ modes follow the AppleWin reference. Durations derive from its PCM read/average/skip path; speech uses a fixed PCM blob per phoneme, not a hardware-calibrated analog synthesizer | The real chip is an analog formant synth; AppleWin's blob is the only extant reference (MAME has no SSI263) |
+| **SSI263 speech** (`Ssi263`) | **L1 registers / H1 audio** | Register bank, A/!R handshake and IRQ modes follow the AppleWin reference. Durations derive from its PCM read/average/skip path; the default voice uses a fixed PCM blob per phoneme; an opt-in second voice (`ssi263_voice`, `Ssi263Formant.h/.cpp`) is a register-driven formant synthesiser ported from Casso's, constants grade F | The real chip is an analog formant synth; AppleWin's blob is the only extant recorded reference (MAME has no SSI263), and nothing validates the formant voice against a real chip |
 | **Echo+ TMS5220C + 2×AY** (`echoplus_tms`) | **L1** | TMS5220C FIFO/LPC/lattice/DAC, one VIA and two AY8913s with CPU-timed stereo audio | Immediate command interface; physical pin delays and analog output calibration remain unvalidated |
 | **Floppy mechanical sounds** (`FloppySoundDevice`) | **H2** | Host sample playback, driven by `emuCycles`-stamped phase strobes. Two banks (`FloppySoundDevice::Bank`): MAME's 10-WAV seek/spin set (default) and the Virtual ][ Disk II recordings, loaded only from a local, gitignored `roms/virtual_ii_sons/` | Nothing on the bus to model — it is literally acoustics |
 | **Printer mechanical sounds** (`PrinterSoundDevice`) | **H2** | **Synthesised** bandpassed-noise grains per character / line feed, ported from web-a2e's `printer-sound.js`; an optional user-supplied Virtual ][ "Matrix Printer" loop replaces grains when selected and decoded | Nothing on the bus to model |
 | **DiskImage / WOZ** | **L0** | Bit-cell / flux-transition store; `getNextTransition` verbatim MAME `floppy.cpp` | `.dsk` has no flux, so its bitstream is *reconstructed* (sync-FF padding ≥ 5) — exactly what real hardware infers |
-| **Disk II** (`DiskIICard`) | **L0** | Real 341-0028-A **P6 LSS PROM** indexed per LSS cycle; real P5A boot PROM; per-drive angular position vs MAME `m_revolution_start_time` | Without an explicitly loaded P6 dump, non-WOZ media can use the legacy H1 32-cycle nibble gate. Any mounted WOZ forces LSS using the embedded sequencer table if needed |
+| **Disk II** (`DiskIICard`) | **L0** | Real 341-0028-A **P6 LSS PROM** indexed per LSS cycle when `diskii_p6.rom` is present; real P5A boot PROM when `disk2.rom` is, otherwise POM2's own (`DiskIIBootRom.h`); per-drive angular position vs MAME `m_revolution_start_time` | Without an explicitly loaded P6 dump, non-WOZ media can use the legacy H1 32-cycle nibble gate. Without the P6 dump a WOZ is read and written by POM2's own sequencer (`DiskIICard::ownSequencerStep`); the embedded Apple table is gone since 2026-10-29 |
 | **IWM** (`IWMDevice`) | **L0** | Verbatim MAME `machine/iwm.cpp`: `m_active`/`m_rw`/read-walker/write-window state machines | Only sub-CPU-cycle Q3 phase unmodelled |
 | **SmartPortHub / Sony35Drive** | **L0/L1** | Zoned GCR, LSTRB register strobes, DSKCHG latch polarity per MAME `floppy.cpp:560/672/723` | — |
 | **CFFA 2.0** (`CffaCard` + `AtaBlockDevice`) | **L2** | **Real 4 KB firmware dump executes** over an ATA taskfile model isomorphic to MAME's `cs0_r/cs0_w` | ATA layer skips DMA / IRQ / SMART; CHD backing is not implemented and is closed as out of scope in the standing decisions |
@@ -169,7 +171,7 @@ whenever a ROM dump exists but the chip behind it does not need to.
 | **Porte Parole** (`porteparole`, `PorteParoleCard` + `Mea8000`) | **L1** | Ediciel's French speech card: A0-mirrored data/status and command registers, 4 MHz quartz, no ROM. Sébastien Pourcel's unmodified floating-point MEA8000 engine supplies synthesis, 12-clock REQ turnaround, resonator decay, noise and the analogue output profile. POM2 supplies CPU timing, host resampling and snapshots (DEV § Porte Parole) | Exact silicon noise, quantisation and analogue fidelity remain unmeasured; optional 2 KB memory is not modelled |
 | **S.A.M.** (`sam`, `SamCard` + `Dac8Audio`) | **L1 — and complete** | Port of MAME `a2sam`: any `$C0nX` write drives an 8-bit DAC; the speech is S.A.M.'s own 6502 code, so every write is stamped with the exact CPU cycle it lands on and reconstructed by `Dac8Audio` | No ROM and nothing readable: the card's fidelity is its write timing |
 | **SoftCard Z80** — see the row above; the catalog key is `softcard` | | | |
-| **Le Chat Mauve** (`LeChatMauveCard`, variants Féline / Adaptateur //c / Eve / RVB Graph / Video-7) | **L1** | One catalog key, five variants by `chatmauve_variant` (`LeChatMauveCard.h:27-52`; `docs/chatmauve_plan.md`, P0–P2 landed). **RVB Graph** (II/II+): its manual's full programming model — control register `$C0F0+S+U+K` (text colour, dotted / four-colour, register lock), eight colour registers `$C70F-$C73F − Bn`. Patent 2-bit mode latch (AN3 clocks 80COL). **Féline / //c**: LCM HGR (2-bit cell + 3-bit window) and mixed DHGR (per-byte 560/140 mux, colour cell *cut* / last BW dot *repeated*) == AppleWin `RGBMonitor.cpp`, pinned `chatmauve_dot_rules`. **Eve**: sixteen `$C0B0-$C0BF` switches, CPREG auto-write into aux (`Memory::setAuxShadow`), table IX-1 from Purplesoft's own `& GR` tables, TXT16 (hi = background), TXTGREEN. **Video-7**: the four patent DHGR modes including 160 chunky. The cards are combinational on the 14 MHz stream; since 2026-09-02 the mode latch beam-races (each band painted with the latch of its own moment, pinned `chatmauve_latch_split`), the rest of the card state is still sampled **per frame** | Not a dot tap. Eve colour decoder is measured/manual rules: the public PLS100 was decoded (`tools/decode_eve_pla.py`) and turned out to be a dot router, so it cannot settle DASH (renders as HRAPPLE), SPEC1/2 or COL280 `main = LSB` (P3 closed as bounded). Mid-line `$C0Bx` and the in-cell dot position land at the frame (P6). //c adapter infers 80COL from VID7M/LDPS; POM2 reads the switch (P5). RVB Graph text-colour and HGR colour registers not modelled (P4, partial) |
+| **Le Chat Mauve** (`LeChatMauveCard`, variants Féline / Adaptateur //c / Eve / RVB Graph / Video-7) | **L1** | One catalog key, five variants by `chatmauve_variant` (`LeChatMauveCard.h:27-52`; `docs/chatmauve_plan.md`, P0–P2 landed). **RVB Graph** (II/II+): its manual's full programming model — control register `$C0F0+S+U+K` (text colour, dotted / four-colour, register lock), eight colour registers `$C70F-$C73F − Bn`. Patent 2-bit mode latch (AN3 clocks 80COL). **Féline / //c**: LCM HGR (2-bit cell + 3-bit window) and mixed DHGR (per-byte 560/140 mux, colour cell *cut* / last BW dot *repeated*) == AppleWin `RGBMonitor.cpp`, pinned `chatmauve_dot_rules`. **Eve**: sixteen `$C0B0-$C0BF` switches, CPREG auto-write into aux (`Memory::setAuxShadow`), table IX-1 from Purplesoft's own `& GR` tables, TXT16 (hi = background), TXTGREEN. **Video-7**: the four patent DHGR modes including 160 chunky. The cards are combinational on the 14 MHz stream; since 2026-09-02 the mode latch beam-races (each band painted with the latch of its own moment, pinned `chatmauve_latch_split`), the rest of the card state is still sampled **per frame** | Not a dot tap. Eve colour decoder is measured/manual rules: the public PLS100 was decoded (`tools/decode_eve_pla.py`) and turned out to be a dot router, so it cannot settle DASH (renders as HRAPPLE), SPEC1/2 or COL280 `main = LSB` (P3 closed as bounded). Mid-line `$C0Bx` and the in-cell dot position land at the frame (P6). //c adapter infers 80COL from VID7M/LDPS; POM2 reads the switch (P5). RVB Graph: control and colour registers modelled from its manual (P4 done 2026-10-20) |
 
 ## The interesting cases
 
@@ -349,7 +351,7 @@ Every one of these is documented in-repo. They are the price list.
 | Grappler `/STROBE` collapsed | The 7-clock pulse timer is invisible; anything timing the strobe would see zero width |
 | ~~`PrinterCard` Pascal block absent~~ | Closed 2026-09-29: `printer` and the Grappler+ stub carry a real `$Cn0D-$Cn10` entry table (PINIT/PREAD/PWRITE/PSTATUS, `PascalPrinterRom.h`) and class `$10`, so Pascal printer drivers bind |
 | `MouseCardAppleWin` delta copy | No quadrature rate limit; needs a compensating cursor sync the L0 card does not |
-| SSI263 phoneme blob | Arbitrary formant/filter sweeps outside the 62-phoneme set are not reproducible |
+| SSI263 phoneme blob (default voice) | Arbitrary formant/filter sweeps outside the 62-phoneme set are not reproducible; the opt-in formant voice follows them, unvalidated |
 | ImageWriter character ROMs | Not chip dumps: the dot patterns Apple **published** in the ImageWriter/II Technical Reference Appendix C, transcribed by mikedaley/web-a2e (MIT) and re-generated into `src/ImageWriterRom.h`. Same provenance class as the SSI263 blob — the transcription is MIT, the typeface design is Apple's. Codes outside the tables fall back to POM2's bundled CP437 font |
 | `ClockCard` synthetic ROM | No `$C800` driver load for tools that pull the driver off the card |
 | Uthernet II `LISTEN` local host mapping | With `uthernet_allow_loopback`, desktop sockets accept TCP on `127.0.0.1:Sn_PORT`; privileged/POM2 ports stay fenced. LAN binding and libslirp port forwarding are not implemented. |
@@ -413,8 +415,8 @@ Ordered by how much the gate has changed since the original decision.
 | **CFFA CHD backing** | L2 (raw LBA) | Not scheduled | CHD is not implemented; the standing scope decision closes this extension as out of scope, rather than promising a phase 2 |
 | **Display per-scanline incremental** | L1 beam-raced | L0 | Would fix the documented unidirectional mid-frame page-split limit (renders full-page today) |
 | **Composite analog IIR** | L1 (1-bit + FIR) | L1+ | Marked academic in TODO, *5–10 d* |
-| **SSI263 formant synth** | H1 audio | L1 | No VALIDATED reference exists: MAME's `ssi263hle.cpp` is a self-declared-wrong Votrax SC-01A stand-in, and Casso's register-driven formant synthesiser (MIT, `CassoEmuCore/Devices/Ssi263.cpp` @ 2d899adf) is hand-tuned against a recording that is not in its repository. Still original DSP work, with Casso's ROM-table read as a starting point |
-| **Le Chat Mauve Eve decoder + video tap** | L1 (registers + measured pixel rules; mode latch beam-raced) | L0 combinational on a 14 MHz tap | Plan P3 is closed as bounded — the decoded PLS100 is a router, so DASH, COL280 bit order and SPEC1/2 need a schematic or board trace, not the fuse map. P6 (the rest of the mid-line switches land at the dot) is open. P5 inferred-80COL on the //c adapter is optional. P4 RVB Graph beyond its four strobes is gated on its manual |
+| **SSI263 formant synth** — shipped as the opt-in `ssi263_voice=formant` (2026-11-06); what remains is validation | H1 audio | L1 | No VALIDATED reference exists: MAME's `ssi263hle.cpp` is a self-declared-wrong Votrax SC-01A stand-in, and Casso's register-driven formant synthesiser (MIT, `CassoEmuCore/Devices/Ssi263.cpp` @ 2d899adf) is hand-tuned against a recording that is not in its repository. Still original DSP work, with Casso's ROM-table read as a starting point |
+| **Le Chat Mauve Eve decoder + video tap** | L1 (registers + measured pixel rules; mode latch beam-raced) | L0 combinational on a 14 MHz tap | Plan P3 is closed as bounded — the decoded PLS100 is a router, so DASH, COL280 bit order and SPEC1/2 need a schematic or board trace, not the fuse map. P6 (the rest of the mid-line switches land at the dot) is open. P5 inferred-80COL on the //c adapter is optional. P4 (RVB Graph, from its manual) is done since 2026-10-20 |
 
 ### Keeping a level once you have it
 
@@ -423,16 +425,16 @@ structural hole here worth naming.
 
 Several ROM-driven L paths in the table can degrade to a lower level when
 their dump is absent: Disk II can use the legacy 32-cycle nibble gate without
-`diskii_p6.rom` when no WOZ is mounted; a WOZ forces LSS with the embedded
-sequencer table. The mouse falls back from L0 to the H1 `mouseaw`, `ClockCard`
+`diskii_p6.rom` when no WOZ is mounted; a WOZ then runs POM2's own
+sequencer (`ownSequencerStep`). The mouse falls back from L0 to the H1 `mouseaw`, `ClockCard`
 falls back to its synthetic ROM, `GrapplerCard` to `buildStubRom()`,
 `SuperSerialCard` to its hand-assembled page. (The Grappler 1981, the PIC, the
 Videoterm and the Workstation Card refuse instead: no dump, empty slot.) That is
 correct product behaviour — the user still gets a working machine. But it means
 **the L path can stop being exercised without anything failing**.
 
-CI does not cover the gap either: several dumps are in fact git-tracked and
-used by tests (`diskii_p6.rom`, the mouse ROMs, `liron.rom`,
+CI does not cover the gap either: several dumps are fetched into `roms/` by
+`tools/fetch_test_media.py` (none is git-tracked) and used by tests (`diskii_p6.rom`, the mouse ROMs, `liron.rom`,
 `grappler_plus.bin`, the ThunderClock EPROM), but the real guard in the
 ctest gate was that tests **SKIP rather than fail** when a dump is
 absent (e.g. `tests/mouse_card_axis_parity_test.cpp`) — so nothing

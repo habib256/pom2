@@ -122,7 +122,7 @@ registry, theme, docking, palette · WASM build · Packaging.
 | 🧊 **PostScript by delegation** | Delegates to a host Ghostscript; document the dependency, no in-process renderer |
 | 🧊 **Remaining WASM browser extras** (touch input, worklet tuning) | These remain frozen. Desktop file drops onto the browser canvas already work through GLFW/Emscripten. Direct disk-image selection is implemented through File > Import disk and boot and empty-drive Insert actions. Text/session upload/download, IndexedDB automatic resume and PAL wall-time CPU pacing are implemented; RAF still follows the host display. See the [browser import contract](../USER-GUIDE.md#browser-disk-import). The public demo is linked from README; distribution decisions remain separate release gates. |
 | 🧊 **Apple ][ Original (1977) profile** | Rev-0 fidelity work remains frozen. Generic profile/session tests include it (`system_profile_smoke`, `session_machine`); the latter uses synthetic firmware and does not certify original-ROM or rev-0 hardware behavior. |
-| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
+| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color (Saturn and E-Z Color have since shipped on explicit request, 2026-10-31) | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
 
 ## Standing rulings
 

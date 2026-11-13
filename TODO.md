@@ -62,7 +62,7 @@ criterion. Move an item when its next action or dependency changes.
 | Task | Next action |
 |---|---|
 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
-| [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`ImageWriter.cpp`, `Apple2Display.cpp`); split the DiskImage WOZ save half. |
+| [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`DiskImage.cpp`, `ImageWriter.cpp`, `Apple2Display.cpp`); split `Apple2Display.cpp` (the DiskImage WOZ writer is out since 2026-11-05). |
 | [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only pass on `M6502`, verified by unchanged Harte/Klaus. |
 
 ### Needs a hardware oracle
@@ -96,7 +96,7 @@ romsets, where noted).
 
 | Task | Next action |
 |---|---|
-| [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen` answers POST: GET-only check (405) with a smoke assertion. |
+| [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen.ppm` answers POST: GET-only check (405) with a smoke assertion. |
 | [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
 | [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | ImGui panel/replug and drive-rack tests added to nightly TSan; obtain Linux run evidence and cover screenshot/`demodMutex` interaction. |
@@ -108,6 +108,7 @@ romsets, where noted).
 | [ARCH-008](docs/backlog/architecture-tooling.md#arch-008) | Paint-editor seam on a report only (editors are frozen). |
 | [NETWORK-005](docs/backlog/network.md#network-005) | Atomic in-flight flag shown in the UI and `/status`. |
 | [NETWORK-010](docs/backlog/network.md#network-010) | LAN mapping, when someone names a need. |
+| [NETWORK-009](docs/backlog/network.md#network-009) | Run the Uthernet I over the built-in NAT on a Windows build and record it. |
 | [AUDIO-006](docs/backlog/audio.md#audio-006) | Measure lock wait after ARCH-003; change only on a measured wait. |
 | [VALIDATION-003](docs/backlog/validation.md#validation-003) | Protected corpus now pins Captain/Prince boot and gameplay plus Bandits FLUX; later levels and hardware comparison remain. |
 | [VALIDATION-005](docs/backlog/validation.md#validation-005) | Six GUI runs on a copy of A2 File Cmd 1.0; close as stale if quiet. |
@@ -122,6 +123,7 @@ Remaining 1.0 release gates and the candidate checklist:
 |---|---|
 | [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
 | [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
+| [RELEASE-010](docs/backlog/release-1.0.md#release-010) | Decide whether a pre-push check and a guard against GL calls outside `OpenGLShader.h` are still needed, or close. |
 | [RELEASE-012](docs/backlog/release-1.0.md#release-012) | Fix the ][+ dump's IRQ vector at the source: corrected `apple2p.rom` in `pom2_firm.zip`, report to RetroBIOS, then move the digests together (in-memory errata until then); upload the repaired Service Disk copy. |
 
 For the Disk Library follow-up, the requested order is
@@ -181,7 +183,6 @@ reading, not measurements.
 |---|---|---|
 | "Seen by the guest" tests for the host disk tools: the tool writes, the real DOS / ProDOS reads it back | medium | The open item it would settle: `pom2_prodos` volumes have not been read by a real ProDOS. |
 | Harte vectors over **every** opcode on every build | small to medium | Today a SHA-256-pinned subset runs (`tests/tomharte_*.manifest`). |
-| A CI guard: the test run modified no tracked file | small | `git status --porcelain` after ctest. Cheap; it is the check behind the rule that a test booting a tracked image copies it first. |
 | A single-site mutation script (flip one line, expect one named test to fail) | small | Mutation controls are done by hand today. |
 | Corpus titles: Karateka, Choplifter, Lode Runner, Space Quarks, Border Zone, and the six FLUX-track titles | varies | Bandits now supplies one real-FLUX capture in the optional protected corpus (19 FLUX positions read during boot); other captures remain useful. Feeds [VALIDATION-006](docs/backlog/validation.md#validation-006). |
 

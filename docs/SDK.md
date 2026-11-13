@@ -506,8 +506,8 @@ application or a tool built to show that pipeline.
 
 Its commit and capabilities come from running the installed archive, so they
 describe those bytes. It refuses a tree with uncommitted changes unless given
-`--allow-dirty`, and the manifest then says `-dirty`. The `core-sdk` job of
-`release.yml` builds both hosts and attaches them to each tagged release.
+`--allow-dirty`, and the manifest then says `-dirty`. Releases no longer attach SDK tarballs (the `core-sdk` job left `release.yml`
+in `2e12dccf`, 2026-11-08): run `tools/package_core_sdk.sh` to produce one.
 
 `Core::sdkInfo()` gives a running host the same three facts. `commit` is re-read on
 every build, with `-dirty` for uncommitted changes and `unknown` outside a Git
@@ -529,9 +529,11 @@ checkout. A capability name is added with its API and never reused:
 | `rgbcard` | `attachRgbCard` and its calls |
 | `smartport35` | `attachSmartPort` and its calls |
 
-**System dependencies**, for linking: libslirp and zlib everywhere, plus CoreAudio,
-AudioToolbox and AudioUnit on macOS, or libdl, pthread and libm on Linux.
-`find_package(pom2_core)` finds them. miniaudio opens no device on a headless run.
+**System dependencies**, for linking: libslirp when the build found it (no zlib);
+resolv (iphlpapi on Windows) for the host DNS; CoreAudio, AudioToolbox,
+AudioUnit and CoreFoundation on macOS, or libdl, pthread and libm on Linux.
+`find_package(pom2_core)` finds Threads and, when the archive carries it,
+libslirp; the system libraries come with the link interface. miniaudio opens no device on a headless run.
 
 **ROMs**: none ship, and the facade reads no file it was not handed.
 
