@@ -165,8 +165,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "aux-shadow + table IX-1 from Purplesoft; Video-7 keeps 160 chunky",
       "Not the PLA and not a 14 MHz tap: mid-line switches land at the frame "
       "(P6), Eve DASH/COL280 still prose (P3), IIc 80COL is read not inferred "
-      "(P5), RVB Graph has its $C0F0-$C0F3 strobes but not its colour "
-      "registers (P4 partial). docs/chatmauve_plan.md",
+      "(P5); the RVB Graph's control and colour registers come from its "
+      "manual (P4). docs/chatmauve_plan.md",
       "LeChatMauveCard.h/.cpp, Apple2Display.cpp" },
     { "ezcolor", "Video", "E-Z Color (TMS9918A VDP)", AbsLevel::L1,
       "MAME ezcgi decode ($C0n0 data, $C0n1 register, /INT = slot IRQ); "

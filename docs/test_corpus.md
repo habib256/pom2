@@ -13,8 +13,9 @@
 > Reproduce the stated profile/media configuration when rechecking a row.
 >
 > Commercial game images are **user-provided** and are not bundled for these
-> tests. Release packages do include the firmware listed in the package
-> manifest; a source checkout uses its tracked ROM dumps. This document
+> tests. Desktop packages and the source tree carry no firmware (the browser
+> bundle alone has the //c + //e base): fetch the dumps with
+> `tools/fetch_test_media.py` or the in-app ROM download. This document
 > describes what to test and why it is hard, rather than distributing game images.
 
 > **⭐ Priority reference — [DIX](https://github.com/Fr3nchT0uch/DIX/)**
@@ -293,7 +294,7 @@ The foundation must be flawless **before** the video demos can pass.
 | **Klaus Dormann — `65C02_extended_opcodes_test`** | 65C02 extended opcodes (BBR/BBS/RMB/SMB, `STZ`, `(zp)`, etc.). | ✅ `klaus_65c02_extended` **PASSES** @ `$24F1` (cf. `DEV.md` §CPU). |
 | **NMOS "illegal opcodes" suites** (visual6502-derived) | Behavior of the undocumented 6502 NMOS opcodes. | 🟢 Partially — the `#1` dashboard row now records the $5C 8-cyc delta as **deliberate** (matches MAME, not Harte). Mainly covers the subset used in practice. Complete via `cpu_cycle_count_test`. |
 
-> ~300 `ctest`s in total (Klaus 6502+65C02, `cpu_cycle_count`, disk, video,
+> ~490 `ctest`s in total (2026-11-13) (Klaus 6502+65C02, `cpu_cycle_count`, disk, video,
 > audio…) — `ci.yml` asserts a floor on that count (`expected=300`) on every
 > push, so a failed oracle download cannot silently shrink the suite. Headless CI is ✅ DONE —
 > `.github/workflows/ci.yml` runs the suite on every push.

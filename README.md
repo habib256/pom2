@@ -101,8 +101,8 @@ allow POM2.
 3. **Insert a disk.** Drop an image onto the window, or open **File → Disk
    Library** for the [included disks](#bundled-disks).
 
-POM2 reads `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`, `.2mg` and
-`.hdv`. The desktop version also takes a `.zip`, a `.gz`, an http(s) URL or a
+POM2 reads `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.nb2`, `.woz`, `.moof`, `.2mg`,
+`.hdv` and `.image` (a raw 400K/800K/1.44 MB 3.5" image). The desktop version also takes a `.zip`, a `.gz`, an http(s) URL or a
 `tnfs://` URL, and keeps the guest's writes in a local copy.
 
 New to the Apple II? With no disk inserted the machine keeps trying to boot, so
@@ -173,8 +173,8 @@ controls. The choice is remembered between launches.
 
 For two-player joystick games, choose **Second joystick → Automatic (another
 controller)** in the same panel, or select a controller explicitly. Each pad
-then controls one player, with A/B as fire. Set it back to **Off** to use both
-sticks of one controller again.
+then controls one player, with A/B as fire. Set it back to **Off (use first pad's sources)**
+to use both sticks of one controller again.
 
 Each paddle's **Mode** can also be **Velocity (hold position)**, with adjustable
 speed and a **Centre** button, or **Absolute (throttle)** for a throttle axis

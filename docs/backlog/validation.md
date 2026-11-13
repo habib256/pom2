@@ -105,7 +105,7 @@ real //c.
 
 ## VALIDATION-003 — Spiradisc / RWTS18
 
-**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): milestones reached on 2026-10-27; record WOZ SHA-256s and probe commands so VALIDATION-006 can replay them.
+**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): milestones reached on 2026-10-27; since 2026-11-09 `tests/corpus/protected.manifest` pins Captain, Prince and Bandits with their SHA-256s; later levels and a hardware comparison remain.
 
 **Acceptance criterion (after revalidation):** Run the named protected titles on real WOZ images and record weak-bit/spiral behavior against their expected boot result.
 
@@ -153,7 +153,7 @@ Later gameplay and hardware comparison remain outside these checks.
 
 **Priority:** 🟢 · **State:** Unknown ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): six GUI runs on a copy of the A2 File Cmd 1.0 image; close as stale if it does not reproduce.
 
-**Acceptance criterion:** Reproduce or refute `DHGR.RAW: not an image` followed by a corrupt HGR in the GUI with A2 File Cmd 0.9.5 (`hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-0.9.5.2mg`).
+**Acceptance criterion:** Reproduce or refute `DHGR.RAW: not an image` followed by a corrupt HGR in the GUI with A2 File Cmd 1.0, on a copy of `hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-1.0.2mg` (the 0.9.5 image is no longer in the tree).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md), "Retour A2FC 2026-09-09": seen in the GUI only, once in three, on 0.6.8; never headless, card or not; same bytes in RAM. Points after `Apple2Display::render` or at GUI timing. Recovered 2026-10-07.
 

@@ -26,7 +26,7 @@
 // profile shows up without touching this file.
 //
 // What is NOT expressible there is the peripheral side: each card probes its
-// own candidates at its own plug site in MainWindow.cpp / ClockCard.cpp. This
+// own candidates at its own plug site in SlotCardFactory.cpp / ClockCard.cpp. This
 // table names those, in the same order the code tries them, with what the
 // dump is and what happens when it is absent — that last column is the one
 // that matters, because most card ROMs are optional and degrade rather than

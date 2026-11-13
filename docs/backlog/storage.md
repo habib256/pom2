@@ -181,7 +181,7 @@ and [CHANGELOG](../../CHANGELOG.md).
   snapshot** (snapshot v2 with nibble track buffers,
   `DiskIICard` snapshot v2, pinned `rewind_disk_write` — see [UI/UX]
   Rewind) and the
-  **Applesauce CNib2 format** (detected at `DiskImage.cpp:544`, pinned
+  **Applesauce CNib2 format** (detected in `DiskImage.cpp`'s CNib2 branch of the `.nib` loader, pinned
   `disk_cnib2_smoke`) — only the literal `.nib2`/`.app` extensions are
   still missing from `classifyDiskForSlot` / `accept525`.
 

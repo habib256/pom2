@@ -176,14 +176,15 @@ verify behavior on macOS, Windows and Linux without overriding another app's
 default association.
 
 **Code reconciliation 2026-10-19:** `packaging/macos/Info.plist.in` declares
-`.dsk`, `.do`, `.po`, `.nib`, `.woz`, `.d13`, `.2mg` and `.hdv`.
+`.dsk`, `.do`, `.po`, `.nib`, `.woz`, `.d13`, `.2mg` and `.hdv` (and `.moof`
+since).
 `HostOpenFiles_mac.mm` receives Finder/Dock open events and `main.cpp` drains
 the queue into the normal file-drop path. Linux installs `POM2.desktop`
 (`Exec=POM2 %f`) and `pom2-disk.xml`; `.po` has a lower MIME weight to avoid
 winning against gettext files. Linux/Windows positional disk arguments are
 handled by the CLI. This is implemented plumbing, not proof of an installed
-package's association behavior. Remaining: Windows registration, extension
-coverage (including `.moof`) and clean-host open/default-association checks.
+package's association behavior. Remaining: Windows registration, the macOS
+handler rank, and clean-host open/default-association checks.
 
 <a id="ui-011"></a>
 

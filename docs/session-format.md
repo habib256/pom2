@@ -200,7 +200,7 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Payload size | u32, exactly file size minus 24 |
 | Controller configuration | u32 length + bytes (up to 64) |
 | Core snapshot | u32 length + existing ENV/CPU/MEM/MEX snapshot (up to 17 MiB) |
-| Cassette (v7+) | u32 length + CTS1 state (up to 9 MiB); empty means no tape |
+| Cassette (v7+) | u32 length + CTS state (magic `CTS` + byte 1) (up to 9 MiB); empty means no tape |
 | Eight slot records | u8 kind + length-prefixed identity (up to 16 KiB) + state (within the 32 MiB file limit; 1 MiB in v1) |
 | CRC32 | u32 IEEE reversed-polynomial CRC over all preceding bytes |
 
@@ -343,7 +343,7 @@ both floppy and HDV source files and reloading their IndexedDB checkpoints.
 CFFA identity is a loaded flag followed by its complete 4096-byte EEPROM.
 Its state is a length-prefixed CFA1/ATA runtime (the rewind blob's CFA2
 form adds the EEPROM, which a session already carries in its identity), one taskfile-advance flag,
-and a length-prefixed BMS1 block medium. This extra flag distinguishes
+and a length-prefixed block medium (magic `BMS` + byte 1). This extra flag distinguishes
 IDENTIFY from READ/WRITE without changing the rewind format.
 TransWarp identity is empty or its 4096-byte firmware; volatile state uses
 the existing versioned snapshot, including displaced motherboard ROM.
@@ -351,7 +351,7 @@ Other v7 cards use their existing snapshot formats and empty identities.
 Each is decoded on a detached validator and must round-trip canonically;
 Phasor timers are range-checked before loading.
 
-CTS1 stores flags, cassette cycle stamps, the current segment remainder,
+The CTS block (`CTS` + byte 1) stores flags, cassette cycle stamps, the current segment remainder,
 playback index, rewind carry, and bounded loaded/recorded duration vectors
 (maximum 1,048,576 transitions each). It contains no host path. Hardware
 state resumes exactly; host mixer settings and audio output queues remain

@@ -1265,8 +1265,8 @@ private:
     std::array<uint8_t, 0x2000>  auxLcHigh{};
 
     // RamWorks III backing store. The four `aux*` arrays above are the
-    // "currently visible" bank — kept at fixed addresses so Apple2Display
-    // can cache the auxData() pointer once. Switching banks memcpys the
+    // bank the CPU selected — kept at fixed addresses (the scanner reads
+    // bank 0 through videoAuxData(), re-read every render). Switching banks memcpys the
     // visible buffers into `ramWorksBacking_[prev]` and the new bank out
     // of `ramWorksBacking_[curr]`. Stride per bank = 64K + 4K + 4K + 8K =
     // 80K. `ramWorksBanks_ == 1` disables the swap path entirely (stock

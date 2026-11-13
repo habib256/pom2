@@ -228,6 +228,7 @@ identified by slot. Z80 instructions and other card CPU execution remain
 outside the 6502 debugger's profiling/breakpoint hooks.
 
 Implementation: `DebugAddress.h`, `MemoryCpuView.cpp`, `Debugger.*`,
-`DebuggerSymbols.h`, `DebuggerSourceMap.h` and `Debugger_ImGui.*`.
+`Debugger_Assembler.cpp`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`,
+`InterruptLoad.h`, `Debugger_ImGui.*` and `MemoryViewer_ImGui.*`.
 Regression cases run in the `debugger` test, with the memory-routing matrix
 in `memory_cpu_view`, `bus_fastpath` and `ramworks_smoke`.

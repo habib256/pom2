@@ -15,16 +15,17 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [CPU-001](#cpu-001) | 🟡 | To design | Optional cycle-stepped 6502 core |
+| [CPU-001](#cpu-001) | 🟡 | In progress: design, no code yet | Optional cycle-stepped 6502 core |
 | [MEMORY-002](#memory-002) | 🟡 | Confirmed open; revalidated 2026-11-07 | `Memory::memRead` hot path |
 | [MEMORY-003](#memory-003) | 🟢 | Needs hardware oracle (bank) | Language Card power-on bank; the Apple card's own F8 ROM |
-| [MEMORY-001](#memory-001) | 🧊 | Frozen | Saturn 128K LC |
 
 <a id="cpu-001"></a>
 
 ## CPU-001 — Optional cycle-stepped 6502 core
 
-**Priority:** 🟡 · **State:** To design ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)).
+**Priority:** 🟡 · **State:** In progress — design only, no second core in
+`src/` yet ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md); listed
+under "Core — in progress" in TODO.md).
 
 **Acceptance criterion:** A second core, selected per profile or by a setting,
 issues one bus access per cycle in silicon order and samples IRQ/NMI in the
@@ -64,8 +65,9 @@ offset" turned out to be the 6522 read-back bias, not the CPU, and
 `dix_menu_raster_probe` is a probe, not a pinned expectation. So this entry's
 value is argued from the *mechanism* (an instruction-granular model cannot
 express a per-cycle placement), not from a measured failure. What would settle
-it: VALIDATION-006's headless corpus giving DIX a recorded per-frame screen
-hash, then the same corpus under the cycle-stepped core — a differential, which
+it: VALIDATION-006's headless corpus, which since 2026-11-06 gives DIX a
+recorded per-frame screen hash (`pom2_corpus --tag dix`), run again under the
+cycle-stepped core — a differential, which
 is the only honest way to claim an improvement. Until then the correct
 statement in any report is "POM2 is instruction-accurate with per-device
 compensation", not "cycle exact".
@@ -85,9 +87,9 @@ Mockingboard T1 IRQ phase, the 6522 T1 read-back bias tuned on TRIBU.
   corpus regression — and record the DIX differential (same corpus, both
   cores) in `docs/audits/`, since that differential is the only evidence that
   the new core actually buys demo accuracy rather than just cycle purity.
-- Sequence note: **VALIDATION-006 comes first**. Without a recorded per-frame
-  expectation for DIX there is no way to tell an improvement from a
-  regression, and a cycle-stepped core will move timings everywhere at once.
+- Sequence note: **VALIDATION-006 came first** and is done (2026-11-06).
+  Without a recorded per-frame expectation for DIX there was no way to tell
+  an improvement from a regression, and a cycle-stepped core will move timings everywhere at once.
 
 <a id="memory-002"></a>
 
@@ -144,7 +146,10 @@ as AppleWin issue #700 measured on hardware. Two points remain:
 
 ## MEMORY-001 — Saturn 128K LC
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** ✅ · **State:** Done 2026-10-31 (`f7bcc8fb`) — catalog key
+`saturn`, `SaturnCard.h/.cpp`, pinned by `saturn_card`; see
+[DEV § Saturn 128K](../../DEV.md#saturn-128k-saturncard). Removed from the
+active task index on 2026-11-13; the original entry is kept below.
 
 **Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
 

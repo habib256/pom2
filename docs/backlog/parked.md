@@ -43,8 +43,9 @@ an explicit request before scheduling.
     picture shown while TEXT + AN0, `PR#3` pinned on the real firmware by
     `videx_videoterm_boot` → [DEV § Videx Videoterm](../../DEV.md#videx-videoterm-videxvideotermcard).
     Left: the other MAME character sets (APL, Epson, French, German,
-    Katakana…) as a setting, and the cousins `a2ultraterm`, `suprterminal`,
-    which the `CardVideoSource` seam was shaped to take.
+    Katakana…) as a setting, and the cousin `suprterminal`, which the
+    `CardVideoSource` seam was shaped to take (`a2ultraterm` shipped
+    2026-10-31 as catalog `ultraterm`, `VidexUltratermCard`).
     *(Was: the clearest functional hole — a II/II+ had no 80 columns at
     all; the card that made word processors and CP/M usable on a II+.)*
   - **Mountain Computer Music System** (`a2mcms`) — the real blind spot for
@@ -55,8 +56,8 @@ an explicit request before scheduling.
   - **E-Z Color Graphics Interface** (`ezcgi`) — a **TMS9918 in an Apple II
     slot**: hardware sprites on a machine that has none. Re-ranked after
     looking at POM1: the expensive part is already written there, and better
-    than MAME's, with 31 k lines of original software behind it. Scoped,
-    estimated and parked → [§ E-Z Color](parked.md#parked-002).
+    than MAME's, with 31 k lines of original software behind it. **Done
+    2026-10-31** as catalog `ezcolor` → [§ E-Z Color](parked.md#parked-002).
   - ~~**Applied Engineering TransWarp** (`transwarp`)~~ **done** —
     `TranswarpCard`, pinned by `transwarp_card`. The estimate held (the
     `cyclesPerFrame` plumbing did the work) but the shape was wrong twice:
@@ -71,8 +72,9 @@ an explicit request before scheduling.
   - ~~**4play** (`4play`)~~ **done** — `FourPlayCard`, pinned by
     `fourplay_card`. It was not a shift register: `read_c0nx` returns one
     byte per player and `device_start()` is empty. **SNES MAX** (`snesmax`)
-    is still open and is the larger of the two — its controller is serial, so
-    the card clocks a latch/shift protocol rather than exposing four ports.
+    is done too (2026-10-17, `SnesMaxCard`) — the larger of the two: its
+    controller is serial, so the card clocks a latch/shift protocol rather
+    than exposing four ports.
     Both are modern homebrew, so their value is the current Apple II scene
     (and `pom2adventure`), not a period catalogue.
   - **TimeMaster H.O.** (`timemasterho`) — the other common clock beside the
@@ -84,8 +86,9 @@ an explicit request before scheduling.
     (CHANGELOG 2026-09-26, "Same day — printer detection, for A2 File Cmd").
     *(Was: the third printer lineage beside the Grappler+ and the synthetic
     card.)*
-  - **Memory Expansion Card / RamFactor** (`a2memexp`) — a slot RAM disk,
-    distinct from the AUX-slot RamWorks POM2 has. Gives a II+ a RAM disk.
+  - **Memory Expansion Card / RamFactor** (`a2memexp`) — the Memory
+    Expansion Card is done (catalog `slinky`, CARDS-009); **RamFactor** is
+    what is left: same register model, no ROM shipped.
 
   **Heavier, only if the appetite is there.**
 
@@ -100,8 +103,8 @@ an explicit request before scheduling.
     project in itself.
 
   **Deliberately skipped.** LANceGS (two Ethernet cards already), the Z80
-  variants (`a2applicard`, `softcard3`, `titan3plus2` — the Microsoft SoftCard
-  covers it), IEEE-488, ComputerEyes, and the modern storage cards (`a2sd`,
+  variants (`softcard3`, `titan3plus2` — the Microsoft SoftCard covers them;
+  `a2applicard` shipped anyway on request, 2026-10-31, catalog `applicard`), IEEE-488, ComputerEyes, and the modern storage cards (`a2sd`,
   `booti`, `sider`) that FujiNet + CFFA + HDV already cover.
 
   **What a hardware archive adds that MAME does not.** Not schematics —

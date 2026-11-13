@@ -69,8 +69,8 @@ manifest = {
     "host": host,
     "capabilities": [v for k, v in values if k == "capability"],
     "system_dependencies": {
-        "darwin-arm64": ["CoreAudio", "AudioToolbox", "AudioUnit", "libslirp", "zlib"],
-        "linux-x86_64": ["libdl", "pthread", "libm", "libslirp", "zlib"],
+        "darwin-arm64": ["CoreAudio", "AudioToolbox", "AudioUnit", "CoreFoundation", "resolv", "libslirp"],
+        "linux-x86_64": ["libdl", "pthread", "libm", "resolv", "libslirp"],
     }[host],
     "roms": "none shipped; see SDK.md § Delivery for what each machine loads",
     "files": files,
