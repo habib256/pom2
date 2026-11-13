@@ -10,6 +10,24 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-13 — Backlog housekeeping; a bare-metal Pi edition parked
+
+- **Retired from the active indexes** (sections kept, so incoming links
+  still resolve): CARDS-011 (ALS CP/M Card), CARDS-015 (Porte Parole on
+  Sébastien Pourcel's engine), STORAGE-003 (heap-backed `DiskImage` tracks),
+  VALIDATION-006 (the compatibility corpus) and PARKED-002 (E-Z Color).
+- **The ALS CP/M Card's register map moved to DEV.md**, as CARDS-011 asked:
+  it is the only description of the card anywhere and was living in a
+  backlog entry. The moved facts now carry their grades — the User's Guide
+  [B], everything read off ALS's software [C], the RTC's 60 Hz on PAL [F]
+  with what would settle it.
+- **ARCH-014 and ARCH-015 were missing from their index** while `TODO.md`
+  scheduled them; added. `input.md`'s empty index now says why it is empty.
+- **PARKED-003 — a bare-metal Raspberry Pi edition** (Circle, no Linux, the
+  BMApple2 approach): frozen, with what it buys (boot, no OS jitter, HDMI at
+  50.08 Hz for PAL — not raw speed), what blocks, and a one-day spike to
+  size it.
+
 ## 2026-11-11 — Built-in NAT: six findings from NeoST's audit
 
 NeoST imported the built-in NAT at `b07f3a0a` (`extern/pom2nat`) and audited

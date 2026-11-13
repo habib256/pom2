@@ -15,7 +15,6 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [VALIDATION-006](#validation-006) | ✅ | Done 2026-11-06 | Headless compatibility corpus with a published pass rate |
 | [VALIDATION-001](#validation-001) | 🟡 | Needs hardware oracle | Disk II opposing-magnet response on a real //c |
 | [VALIDATION-003](#validation-003) | 🟡 | Partial: automated boot/gameplay checks | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
@@ -25,7 +24,8 @@ an explicit request before scheduling.
 
 ## VALIDATION-006 — Headless compatibility corpus with a published pass rate
 
-**Priority:** ✅ · **State:** Done 2026-11-06 — `pom2_corpus`
+**Priority:** ✅ · **State:** Done 2026-11-06, removed from the active task index on
+2026-11-13 — `pom2_corpus`
 ([tests/corpus/README.md](../../tests/corpus/README.md)); first pass rate
 recorded in [corpus-2026-11-07](../audits/corpus-2026-11-07.md). Retained
 here for stable incoming links.
