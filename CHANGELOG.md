@@ -50,6 +50,23 @@ defect it is about.
   noticed when the fix to MAME's 16 made `$1A` read as well — a 16-tick
   window still resyncs inside GCR's longest run of two zeros.
 
+## 2026-11-16 — CI names the tests it expects, not just how many
+
+Item 5 of the 2026-11-01 round-2 test audit. CI's only check that the suite
+was whole was a floor of 300 against 490 registered tests, and whole blocks
+are registered under a condition: Klaus 6502/65C02 and zexdoc/zexall only
+when their configure-time download landed, the `headless_*` captures only
+when the ROM was there at configure, ~80 tests only `if(TARGET
+pom2_core_test)`. Any of those could vanish with the job green — 490 − 80
+still clears 300. `tools/ctest_registered.txt` now lists every registered
+name (a ratchet: it may grow, not shrink; a second word ties a name to one
+platform) and `tools/check_ctest_inventory.sh` fails the Linux and macOS
+jobs, naming each missing test, before ctest runs. The list was armed from
+the names CI run 43864134648 actually executed, not from a local tree:
+Linux 491, macOS 490, the difference `native_file_dialog`. The floor stays
+as the coarse check; `check_ctest_skips.sh` still owns the test that is
+registered and skips.
+
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
 ## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner

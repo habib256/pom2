@@ -231,7 +231,8 @@ Ranked by how much false confidence each removes.
    And `AtomicFileReplace.h`'s six `_WIN32` branches — which every media
    write-back goes through — are executed by **no CI job at all**, because
    `atomic_file_replace` is not in the portable set.
-5. **The ctest count floor is 300 against 360 registered tests**, so every
+5. *Fixed 2026-11-16: `tools/check_ctest_inventory.sh` + `tools/ctest_registered.txt`
+   (CHANGELOG).* **The ctest count floor is 300 against 360 registered tests**, so every
    configure-time-gated test (Klaus, zexall/zexdoc, Tom Harte, the three
    headless ROM tests) can vanish silently. Assert the gated names
    individually.

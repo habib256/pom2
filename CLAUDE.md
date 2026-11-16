@@ -24,7 +24,10 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
   a source from a test's link line, so the set of linked `src/**.cpp` is
   recorded in `tools/coverage_linked_sources.txt` and may grow but not shrink.
   `--self-test` exercises that guard's logic with no build tree (it runs in CI
-  before the instrumented rebuild).
+  before the instrumented rebuild). The same ratchet for **test names**:
+  `tools/ctest_registered.txt` (`tools/check_ctest_inventory.sh`, Linux +
+  macOS CI) — a test registered under a condition (a download, a ROM at
+  configure, a target) goes in it in the same commit.
 - `docs/PERFORMANCE.md` — core profile (callgrind recipe + `pom2_bench`), the optimisations already done and **why**, and the PGO/LTO build recipe. Read before "optimising" anything on the hot path.
 - `CHANGELOG.md` — resolved items + the **why** behind non-obvious fixes.
 - `docs/releases/v<x.y.z>.md` (or `v<x.y>.md`) — the release notes for that tag, written by hand. The publish job tries both conventions and uses the first hit as the GitHub Release body (generated commit list only as fallback, and it says so loudly).
