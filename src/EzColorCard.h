@@ -28,13 +28,19 @@
 // pin 29, /NMI; the text calls INT and Reset/Sync "jumper connections ...
 // available for various optional enhancements", so a card without JP2 has
 // no interrupt at all. POM2 models the jumper (`setInterruptWiring`,
-// setting `ezcolor_interrupt`): `Nmi` is the published wiring, `Open` the
-// card with JP2 left off, and `Irq` — the DEFAULT — a card rewired to pin
-// 30, which is how [D] MAME ezcgi.cpp:123 @ mame0287 wires it and how the
-// software written for POM2's card (pom2games) takes the frame interrupt
-// (CHANGELOG 2026-11-03, the ][+ frame IRQ report). The default is a
-// compatibility choice, not the schematic's (CARDS-016). The NMI is the
-// bus's /NMI line (SlotPeripheral::assertNmi): edge-triggered, wire-OR'd.
+// setting `ezcolor_interrupt`): `Nmi` — the DEFAULT — is the published
+// wiring, `Open` the card with JP2 left off, and `Irq` a card rewired to pin
+// 30, which is how [D] MAME ezcgi.cpp:123 @ mame0287 wires it. The default
+// was IRQ until 2026-11-16, when pom2games, the software written for POM2's
+// card, asked for the schematic's (CARDS-016). The NMI is the bus's /NMI
+// line (SlotPeripheral::assertNmi): edge-triggered, wire-OR'd.
+//
+// A guest handler on NMI gets nothing saved: [C] every ROM POM2 runs vectors
+// $FFFA straight to $03FB. The IRQ path differs by machine — the ][ / ][+
+// Monitor stores A at $45 first ($FA40: STA $45 … JMP ($03FE)); the
+// enhanced //e pushes A, X, Y and the memory state and takes the handler's
+// RTI back into the ROM ($C3FA → $C400 … $FC74: JMP ($03FE)). So a handler
+// shared by both vectors starts at $03FB with STA $45 (pom2games' note).
 //
 // The VDP is POM1's TMS9918 (TMS9918.h, imported as-is): sprites with the
 // 4/5th-sprite and collision flags, the four modes, the access window, the
@@ -95,7 +101,7 @@ public:
     enum class InterruptWiring : uint8_t { Irq, Nmi, Open };
     void setInterruptWiring(InterruptWiring w);
     InterruptWiring interruptWiring() const { return wiring_; }
-    /// The settings spelling: "irq" | "nmi" | "open"; anything else is Irq.
+    /// The settings spelling: "irq" | "nmi" | "open"; anything else is Nmi.
     static InterruptWiring parseInterruptWiring(std::string_view s);
     TMS9918&       vdp()       { return vdp_; }
     const TMS9918& vdp() const { return vdp_; }
@@ -132,7 +138,7 @@ private:
     TMS9918 vdp_;
     M6502* cpu_ = nullptr;
     pom2::SlotBusClock clk_;   // CPU cycles → the VDP's nominal-NTSC cycles
-    InterruptWiring wiring_ = InterruptWiring::Irq;
+    InterruptWiring wiring_ = InterruptWiring::Nmi;
 };
 
 #endif // POM2_EZCOLOR_CARD_H

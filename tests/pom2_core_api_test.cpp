@@ -756,6 +756,10 @@ void testEzColor(const std::string& sourceDir)
     assert(plus.ezColorState().address == 0x0104);
     assert(plus.ezColorVram(vram, 1, 0x0103) == 1 && vram[0] == 0x44);
 
+    // JP2 on /NMI is the default; this run puts it on /IRQ, as the ][+ boots
+    // with I set and nothing at $03FB. ezcolor_card § 7 runs the NMI itself.
+    assert(plus.ezColorState().interrupt == pom2::EzColorInterrupt::Nmi);
+    assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Irq));
     reg(1, 0xE0);                                    // display on + IE
     plus.run(40000);                                 // past a frame
     s = plus.ezColorState();
@@ -764,11 +768,11 @@ void testEzColor(const std::string& sourceDir)
     assert(plus.read(0xC0F1) & 0x80);                // the port read returns F…
     s = plus.ezColorState();
     assert(!(s.status & 0x80) && !s.irqAsserted);    // …and clears it
-    // Jumper JP2: IRQ by default, NMI as BYTE published it, or open.
+    // Jumper JP2: NMI by default, as BYTE published it, IRQ, or open.
     assert(s.interrupt == pom2::EzColorInterrupt::Irq);
     assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Open));
     assert(plus.ezColorState().interrupt == pom2::EzColorInterrupt::Open);
-    assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Irq));
+    assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Nmi));
 
     const pom2::FramebufferView v = plus.renderEzColorFrame();
     assert(v.pixels && v.width == 288 && v.height == 216);

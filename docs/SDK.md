@@ -206,15 +206,23 @@ Color Graphics Interface (BYTE, August 1982) in an empty slot of a ][+ or a
 its register / status port, so a probe of any other `$C0nX` touches the chip
 (find the card by writing a VRAM byte and reading it back). The VDP is
 POM1's TMS9918; its `/INT` (R1 bit 5 with the frame flag F, dropped by a
-`$C0n1` read) goes where jumper JP2 takes it, and a bus reset resets it.
+`$C0n1` read) goes where jumper JP2 takes it — `/NMI` by default, as
+published — and a bus reset resets it.
 
-- `setEzColorInterrupt(EzColorInterrupt)` moves JP2: `Irq` (the default,
-  bus pin 30), `Nmi` (pin 29, the wiring BYTE published) or `Open` (no
-  interrupt). An NMI is taken on the line's falling edge: one per frame as
-  long as the handler reads `$C0n1`, none while `/INT` stays low, and `SEI`
-  does not mask it — a handler that reads the status while the program is
-  between the two bytes of a register write tears that pair.
-  `ezColorState().interrupt` reports the position.
+- `setEzColorInterrupt(EzColorInterrupt)` moves JP2: `Nmi` (the default,
+  bus pin 29, the wiring BYTE published), `Irq` (pin 30, the card rewired,
+  as MAME has it) or `Open` (no interrupt). An NMI is taken on the line's
+  falling edge: one per frame as long as the handler reads `$C0n1`, none
+  while `/INT` stays low, and `SEI` does not mask it — a handler that reads
+  the status while the program is between the two bytes of a register write
+  tears that pair. `ezColorState().interrupt` reports the position.
+- **Nothing is saved on an NMI.** Every Apple II ROM vectors `$FFFA` straight
+  to `$03FB`. The IRQ path is not the same: the ][ / ][+ Monitor stores A at
+  `$45` before `JMP ($03FE)` (`$FA40`), the enhanced //e pushes A, X, Y and
+  the memory state and takes the handler's `RTI` back into the ROM
+  (`$C3FA`). A handler shared by both vectors therefore opens `$03FB` with
+  `STA $45` and jumps to the common code, which restores A from `$45`
+  before its `RTI` (pom2games' note, 2026-11-16).
 
 - `ezColorState()` reads R0-R7, the status (F, 5S, C, fifth-sprite number),
   the VRAM pointer, `/INT`, the mode and the drop counter **without touching

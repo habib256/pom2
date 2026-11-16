@@ -23,7 +23,8 @@
 //     says otherwise)
 //  2. a Graphics I screen: one pattern, one colour, the R7 border — rendered
 //     by the VDP's raster into the card's 288 × 216 picture
-//  3. the frame interrupt: slot IRQ with R1 IE, dropped by the status read
+//  3. the frame interrupt: /NMI (JP2's default) or slot IRQ with R1 IE,
+//     dropped by the status read
 //  4. bus reset, snapshot round trip, never the Apple's screen by itself
 //  5. the access window (silicon-strict, the card's default): a burst with
 //     no time between the bytes loses them and counts them; spaced, it lands;
@@ -112,14 +113,20 @@ int main()
     CHECK(px(ox + 8, oy + 100) == (TMS9918::kPalette[6] | 0xFF000000u) && "every cell");
     CHECK(px(2, 2) == (TMS9918::kPalette[4] | 0xFF000000u) && "R7 border");
 
-    // 3. Frame interrupt.
-    CHECK(!card->slotIrqAsserted());
+    // 3. Frame interrupt — on /NMI, JP2's default (§ 7 covers the edges),
+    // then on /IRQ.
+    CHECK(!card->slotIrqAsserted() && !card->slotNmiAsserted());
     reg(mem, 1, 0xE0);                                  // + IE
     frames(1);
-    CHECK(card->slotIrqAsserted() && "frame flag + IE = slot IRQ");
-    const uint8_t st = mem.memRead(kCtrl);
+    CHECK(card->slotNmiAsserted() && !card->slotIrqAsserted() && "frame flag + IE = /NMI");
+    uint8_t st = mem.memRead(kCtrl);
     CHECK((st & 0x80) && "F set in the status");
-    CHECK(!card->slotIrqAsserted() && "status read drops /INT");
+    CHECK(!card->slotNmiAsserted() && "status read drops /INT");
+    card->setInterruptWiring(EzColorCard::InterruptWiring::Irq);
+    frames(1);
+    CHECK(card->slotIrqAsserted() && !card->slotNmiAsserted() && "JP2 on IRQ: slot IRQ");
+    st = mem.memRead(kCtrl);
+    CHECK((st & 0x80) && !card->slotIrqAsserted() && "status read drops /INT");
 
     // 4. Snapshot, reset, the monitor.
     std::vector<uint8_t> blob;
@@ -366,8 +373,10 @@ int main()
         };
 
         EzColorCard* a = mk(3);
-        CHECK(a->interruptWiring() == EzColorCard::InterruptWiring::Irq && "IRQ by default");
-        a->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
+        CHECK(a->interruptWiring() == EzColorCard::InterruptWiring::Nmi && "NMI by default, as published");
+        CHECK(EzColorCard::parseInterruptWiring("irq") == EzColorCard::InterruptWiring::Irq);
+        CHECK(EzColorCard::parseInterruptWiring("open") == EzColorCard::InterruptWiring::Open);
+        CHECK(EzColorCard::parseInterruptWiring("") == EzColorCard::InterruptWiring::Nmi);
         setR1(3, 0xE0);                                     // 16 KB, display on, IE
         frame(a);
         CHECK(nmis == 1 && a->slotNmiAsserted() && !a->slotIrqAsserted() && "NMI, not IRQ");
@@ -380,7 +389,6 @@ int main()
 
         // Wire-OR: a second card pulling a line already low is no edge.
         EzColorCard* b = mk(5);
-        b->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
         setR1(5, 0xE0);
         frame(b);
         CHECK(nmis == 2 && b->slotNmiAsserted() && "line already low (slot 3)");
@@ -422,7 +430,6 @@ int main()
         auto c = std::make_unique<EzColorCard>();
         EzColorCard* e = c.get();
         e->vdp().setSiliconStrictMode(false);
-        e->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
         mc.slotBus().plug(3, std::move(c));
         mc.memWrite(0xC0B1, 0xE0); mc.memWrite(0xC0B1, 0x81);
         mc.memWrite(0x0300, 0xEA);                          // NOP

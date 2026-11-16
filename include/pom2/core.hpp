@@ -142,7 +142,7 @@ struct EzColorState {
     std::uint8_t  status = 0;                   ///< F, 5S, C and the fifth-sprite number
     std::uint16_t address = 0;                  ///< the auto-incrementing VRAM pointer
     bool          irqAsserted = false;          ///< the VDP's /INT is low: R1 IE and F
-    EzColorInterrupt interrupt = EzColorInterrupt::Irq;   ///< jumper JP2
+    EzColorInterrupt interrupt = EzColorInterrupt::Nmi;   ///< jumper JP2
     bool          siliconStrict = true;         ///< the access window is enforced
     /// Port accesses the chip dropped because they came inside a closed
     /// access window — since attachEzColor() or resetEzColorDropCount().
@@ -390,7 +390,7 @@ public:
     /// output, no ROM. The card decodes A0 only (BYTE's Fig. 4): every even
     /// $C0nX is the data port, every odd one the register / status port. The
     /// VDP's /INT (R1 bit 5 and the frame flag; a $C0n1 read drops it) goes
-    /// where jumper JP2 takes it — the slot IRQ by default, see
+    /// where jumper JP2 takes it — /NMI by default, as published, see
     /// setEzColorInterrupt(). Any slotted machine, a ][+
     /// as well as a //e; a //c refuses. `siliconStrict` enforces the VDP's
     /// access window as the chip does (POM1's model, openMSX's slot tables:
@@ -398,9 +398,10 @@ public:
     /// select 4 KB / 16 KB addressing; it is what the application runs.
     bool attachEzColor(int slot = 4, bool siliconStrict = true);
     bool ezColorAttached() const;
-    /// Jumper JP2: where the VDP's /INT goes. `Irq` (default, bus pin 30),
-    /// `Nmi` (pin 29, the wiring BYTE published — edge-triggered, one NMI per
-    /// frame, not maskable by SEI) or `Open` (no interrupt). False with no
+    /// Jumper JP2: where the VDP's /INT goes. `Nmi` (default, bus pin 29, the
+    /// wiring BYTE published — edge-triggered, one NMI per frame, not
+    /// maskable by SEI, nothing saved: the ROM jumps to $03FB), `Irq` (pin 30,
+    /// rewired, as MAME) or `Open` (no interrupt). False with no
     /// card. Can be moved at any time; an NMI fires if /INT is already low.
     bool setEzColorInterrupt(EzColorInterrupt wiring);
     /// The chip's registers and counters, read without side effects; all
