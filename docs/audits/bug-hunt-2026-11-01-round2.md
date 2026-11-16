@@ -223,7 +223,9 @@ Ranked by how much false confidence each removes.
    `ENVIRONMENT` line plus a `pom2test::timeScale()` helper fixes the category.
    `POM2_WALLCLOCK_TESTS` is also missing eight tests that now assert wall
    clock.
-4. **The portable/Windows leg bypasses three mechanisms** — no
+4. *Fixed 2026-11-16 for `SKIP_RETURN_CODE`, the time scale and
+   `atomic_file_replace` (CHANGELOG); `test_property_sweep` stays Linux/macOS.*
+   **The portable/Windows leg bypasses three mechanisms** — no
    `SKIP_RETURN_CODE 77`, no TIMEOUT floor/scale, no `test_property_sweep` —
    because `tests/CMakeLists.txt:42-46` returns before reaching them. Concrete
    consequence: `bus_fastpath:122` and `memory_cpu_view:215` `return 77`, a
