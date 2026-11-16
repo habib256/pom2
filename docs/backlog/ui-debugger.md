@@ -16,7 +16,6 @@ an explicit request before scheduling.
 | Task | Priority | State | Subject |
 |---|---|---|---|
 | [UI-002](#ui-002) | 🟡 | Partial: panels still use typed paths | Native picker integration and platform verification |
-| [UI-003](#ui-003) | 🟡 | Partial: `/screen` method check | HTTP screen-method and status-inventory review |
 | [UI-004](#ui-004) | 🧊 | Frozen — triage 2026-10-28 | Deeper guided tutorials |
 | [UI-006](#ui-006) | 🧊 | Frozen — triage 2026-10-28 | Airier default layout |
 | [UI-005](#ui-005) | 🧊 | Frozen | MicroM8-style 3D voxel view ("Voxel Cube") |
@@ -46,40 +45,6 @@ cancel/open/save evidence on every OS. Windows is not validated by a macOS build
 
 UI-001 (inline-argument step-over) was corrected on 2026-10-17; see CHANGELOG
 and the expanded `debugger` regression suite.
-
-<a id="ui-003"></a>
-
-## UI-003 — Bug hunt #16's debugger residue
-
-**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `/cpu` and debugger items fixed; `/screen` still answers POST.
-
-**Acceptance criterion (after revalidation):** Define and verify the screenshot endpoint's method contract and the intended media-status inventory; retain existing CPU-validation and debugger regressions.
-
-**Evidence:** [original report](../archive/todo-2026-10-05.md#source-1978). Original dates and estimates are retained below.
-
-- 🟡 **Bug hunt #16's debugger residue** *(2026-09-09; read, not fixed)*:
-  `POST /screen.ppm` is answered (no method check); `POST /cpu` masks an
-  out-of-range `pc`/`p` silently; write watches are short-circuited under
-  `flatBus_` while read watches are not; a watchpoint hit during a Step
-  reports `pc=$0000`; a step-over transient survives an unrelated stop
-  (MAME drops temporaries); `/status`'s `disks` is Disk-II-only. *2 h.*
-
-**Reconciliation 2026-10-19:** The paragraph above is a historical report,
-not a current defect list. `Debugger` now records the actual instruction PC
-on an explicit step, drops transients on unrelated stops, and applies flat-bus
-write/high-address read watches. Bank-qualified stops/profiling and `.p2map`
-source correspondence are also implemented; see the
-[debugger guide](../debugger-banks.md).
-
-**HTTP source check 2026-10-20:** `handleCpuSet` validates every supplied
-register before changing state: `pc` is 0–65535, the other five registers
-0–255, and malformed/out-of-range values receive 400. The old masking claim
-is superseded. `handleScreen` still does not check the method; deciding and
-verifying its method contract remains. `/status.disks` describes the attached
-Disk II controller, while `block_storage` and `floppy_storage` separately
-report persistence state. It is inaccurate to call all of `/status`
-Disk-II-only; a complete mounted-media inventory remains a separate scope
-choice. No new endpoint execution is claimed by this source reconciliation.
 
 <a id="ui-004"></a>
 

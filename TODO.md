@@ -96,7 +96,6 @@ romsets, where noted).
 
 | Task | Next action |
 |---|---|
-| [UI-003](docs/backlog/ui-debugger.md#ui-003) | `/screen.ppm` answers POST: GET-only check (405) with a smoke assertion. |
 | [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
 | [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | ImGui panel/replug and drive-rack tests added to nightly TSan; obtain Linux run evidence and cover screenshot/`demodMutex` interaction. |

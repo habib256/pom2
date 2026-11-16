@@ -902,8 +902,10 @@ void AiControlServer::handleClient(socket_t fd)
 
 // ─── Endpoint implementations ─────────────────────────────────────────────
 
-void AiControlServer::handleStatus(socket_t fd, const Request& /*req*/)
+void AiControlServer::handleStatus(socket_t fd, const Request& req)
 {
+    // A read: POST used to be answered like GET (UI-003).
+    if (req.method != "GET") { sendJsonError(fd, 405, "GET only"); return; }
     std::string profile;
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -1789,8 +1791,12 @@ void AiControlServer::handleScreenText(socket_t fd, const Request& req)
     sendJsonOk(fd, body.str());
 }
 
-void AiControlServer::handleScreen(socket_t fd, const Request& /*req*/)
+void AiControlServer::handleScreen(socket_t fd, const Request& req)
 {
+    // A read: `POST /screen.ppm` used to return the frame (UI-003, bug
+    // hunt #16). Checked before the display, so the contract does not
+    // depend on whether one is attached.
+    if (req.method != "GET") { sendJsonError(fd, 405, "GET only"); return; }
     if (!display_) { sendJsonError(fd, 503, "no display attached"); return; }
     // Render under stateMutex so we don't race the CPU thread mutating
     // VRAM mid-scan — same contract as MainWindow::render().
