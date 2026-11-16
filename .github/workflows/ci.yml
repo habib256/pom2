@@ -320,6 +320,11 @@ jobs:
             echo "A missing oracle download (Klaus, zexall) or a dropped add_test() silently shrinks the suite."
             exit 1
           fi
+          # The floor counts; this names. A gated block (Klaus, zexall, the
+          # headless ROM tests, ~80 behind TARGET pom2_core_test) can vanish
+          # and still clear 300 — tools/ctest_registered.txt lists every one.
+          ../tools/check_ctest_inventory.sh --self-test
+          ../tools/check_ctest_inventory.sh .
 
       # --parallel $(nproc), not the historical 2. The suite used to be green
       # only BECAUSE it ran two-wide: 132 of 189 declared TIMEOUTs were 5 or
@@ -477,6 +482,11 @@ jobs:
             echo "A missing oracle download (Klaus, zexall) or a dropped add_test() silently shrinks the suite."
             exit 1
           fi
+          # The floor counts; this names. A gated block (Klaus, zexall, the
+          # headless ROM tests, ~80 behind TARGET pom2_core_test) can vanish
+          # and still clear 300 — tools/ctest_registered.txt lists every one.
+          ../tools/check_ctest_inventory.sh --self-test
+          ../tools/check_ctest_inventory.sh .
 
       - name: Record the source tree before ctest
         run: tools/check_tracked_unchanged.sh --record build/tree-before-ctest.state
