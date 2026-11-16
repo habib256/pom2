@@ -82,6 +82,24 @@ fails on a ctest skip, so the change loosens nothing. The timeout floor and
 `test_property_sweep` remain Linux/macOS-only (every portable case already
 carries 120 s).
 
+## 2026-11-16 — The audio buffer ladder's climb has a test
+
+From the 2026-11-01 mutation audit: the device-buffer ladder that cured the
+Raspberry Pi and phone-browser crackle was reached by no test past its pure
+rules. The climb, the learned rung (`audio_buffer_learned`), the pin and the
+browser's one-climb-per-load were five fields of `AudioCoordinator`, read
+through the real `AudioDevice` and the wall clock, and CI has no audio
+device. They are now `AudioBufferLadder.h` — the same move, for the same
+reason, as `AudioDeviceWatch.h`, `MouseGrab.h` and `KeyChord.h` — and
+`AudioCoordinator` only feeds it the device's counters and applies the rung
+it answers. No behaviour change. `audio_buffer_ladder` drives it with a fake
+clock and counter: the climb at three late callbacks, the window's expiry
+and restart, the top rung, no climb while pinned or closed, one climb per
+browser load, a restart from the learned rung (a Pi that reached 2048
+yesterday starts there), stale settings dropped, and persist → restore.
+Three fault injections (drop the learned max, the browser deferral, the
+restart from the learned rung) each fail it.
+
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
 ## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner

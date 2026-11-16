@@ -2631,7 +2631,10 @@ a phone's browser runs the whole emulated frame between two callbacks.
   not a rung's worth. Counted in `AudioDevice::audioDataCallback`
   (`lateCallbacks()`), shown in the Audio panel.
 * **The climb**: `AudioCoordinator::tick()` (once per UI frame, from
-  `MainWindow::render`) moves one rung when three late callbacks land
+  `MainWindow::render`) feeds the device's counters to `AudioBufferLadder.h`
+  — the ladder's state (window, learned rung, pin, the browser's one climb
+  per load) with no device and no clock in it, pinned by
+  `audio_buffer_ladder` — and moves one rung when three late callbacks land
   inside one ten-second window, through `AudioDevice::reconfigurePeriod` —
   a hot re-open that keeps the source list (`initAudio` no longer clears
   it; `shutdownAudio` still does) and tells every `RateAware` source the
