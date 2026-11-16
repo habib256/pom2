@@ -16,9 +16,11 @@
 
 // ezcolor_card — the E-Z Color Graphics Interface (EzColorCard.h) in slot 3
 // of a ][+, driven through the real bus (Memory::memRead / memWrite at
-// $C0B0 / $C0B1, MAME ezcgi.cpp's decode):
+// $C0B0 / $C0B1 and their mirrors — BYTE Fig. 4 decodes A0 only):
 //
-//  1. registers and VRAM through the two ports, the read-ahead, $FF elsewhere
+//  1. registers and VRAM through the two ports, the read-ahead, every
+//     even / odd $C0BX a mirror of them (MAME reads $FF there; the schematic
+//     says otherwise)
 //  2. a Graphics I screen: one pattern, one colour, the R7 border — rendered
 //     by the VDP's raster into the card's 288 × 216 picture
 //  3. the frame interrupt: slot IRQ with R1 IE, dropped by the status read
@@ -27,6 +29,7 @@
 //     no time between the bytes loses them and counts them; spaced, it lands;
 //     the gap each mode needs
 //  6. an NMOS indexed store's phantom read, through the real CPU
+//  7. jumper JP2: /INT on IRQ, NMI (edge, wire-OR, snapshot) or nothing
 //
 // 1-4 drive the ports with no CPU time between accesses, so they switch the
 // window off; 5 puts it back.
@@ -69,13 +72,21 @@ int main()
     };
 
     // 1. Ports.
-    CHECK(mem.memRead(0xC0B2) == 0xFF && mem.memRead(0xC0BF) == 0xFF);
     reg(mem, 1, 0x80);                                  // 16 KB, display off
     writeAddr(mem, 0x1234);
     for (uint8_t b : { 0x11, 0x22, 0x33 }) mem.memWrite(kData, b);
     CHECK(card->vdp().vramData()[0x1234] == 0x11 && card->vdp().vramData()[0x1236] == 0x33);
     readAddr(mem, 0x1234);
     CHECK(mem.memRead(kData) == 0x11 && mem.memRead(kData) == 0x22 && "read-ahead buffer");
+    // A0 is the only address line on the card ([B] BYTE Aug. 1982 Fig. 4):
+    // $C0B3 / $C0BD are the register port, $C0BE / $C0B2 the data port.
+    mem.memWrite(0xC0B3, 0x00); mem.memWrite(0xC0BD, 0x40 | 0x15);   // write address $1500
+    mem.memWrite(0xC0BE, 0x5A); mem.memWrite(0xC0B2, 0xA5);
+    CHECK(card->vdp().vramData()[0x1500] == 0x5A && card->vdp().vramData()[0x1501] == 0xA5
+          && "every even $C0BX is the data port, every odd one the register port");
+    mem.memWrite(0xC0B7, 0x00); mem.memWrite(0xC0B9, 0x15);           // read address $1500
+    CHECK(mem.memRead(0xC0BC) == 0x5A && mem.memRead(0xC0B4) == 0xA5 && "mirrored reads");
+    CHECK((mem.memRead(0xC0BF) & 0x1F) == (mem.memRead(kCtrl) & 0x1F) && "odd = status");
 
     // 2. Graphics I: name table $0000, colours $2000, patterns $0800.
     reg(mem, 0, 0x00);
@@ -258,7 +269,10 @@ int main()
         CHECK(acc >= 4 * k - 4 && acc <= 4 * k + 4 && "a 4x CPU: the frame takes 4x the cycles");
         const long pal = firstF(1015625.0);
         const long palWant = long(double(k) * 1015625.0 / 1022727.0 + 0.999);
-        CHECK(pal >= palWant - 1 && pal <= palWant + 1 && "PAL host: the VDP's own 59.94 Hz");
+        CHECK(pal >= palWant - 1 && pal <= palWant + 1 && "PAL host: the VDP's own 59.92 Hz");
+        // The VDP's frame is its own 262 x 342 clocks, not the 59.94 Hz
+        // broadcast field (17062) — POM1 989d019b, ported 2026-11-16.
+        static_assert(TMS9918::kCyclesPerFrame == 17067, "342 x 262 x 4/21");
     }
 
     // ── An indexed store's phantom read REACHES the card (NMOS) ──────────
@@ -327,6 +341,101 @@ int main()
         flip.run({ 0xA2, 0x40, 0xA9, 0x34, 0x9D, 0x81, 0xC0, 0xA9, 0x52, 0x9D, 0x81, 0xC0 }, 5);
         CHECK((flip.card->vdp().vramAddress() & 0xFF) == 0x52 && "second byte taken as a first");
         CHECK((flip.card->vdp().vramAddress() & 0x3F00) != 0x1200 && "no write-address command");
+    }
+
+    // ── Jumper JP2: /INT on /IRQ, /NMI or nothing (CARDS-016) ───────────
+    // [B] BYTE Aug. 1982 Fig. 4: /INT → JP2 → bus pin 29, /NMI. The NMI is
+    // taken on the line's FALLING EDGE: one per frame while the handler reads
+    // the status, none while /INT stays low, and the bus is a wire-OR of every
+    // slot (a second card pulling a line already low is not an edge).
+    {
+        Memory m;
+        int nmis = 0;
+        m.slotBus().setNmiRouter([&] { ++nmis; });
+        auto mk = [&](int slot) {
+            auto c = std::make_unique<EzColorCard>();
+            EzColorCard* p = c.get();
+            p->vdp().setSiliconStrictMode(false);
+            m.slotBus().plug(slot, std::move(c));
+            return p;
+        };
+        auto ctl = [&](int slot) { return uint16_t(0xC081 + slot * 16); };
+        auto setR1 = [&](int slot, uint8_t v) { m.memWrite(ctl(slot), v); m.memWrite(ctl(slot), 0x81); };
+        auto frame = [](EzColorCard* c) {
+            for (int i = 0; i < TMS9918::kCyclesPerFrame / 64 + 1; ++i) c->advanceCycles(64);
+        };
+
+        EzColorCard* a = mk(3);
+        CHECK(a->interruptWiring() == EzColorCard::InterruptWiring::Irq && "IRQ by default");
+        a->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
+        setR1(3, 0xE0);                                     // 16 KB, display on, IE
+        frame(a);
+        CHECK(nmis == 1 && a->slotNmiAsserted() && !a->slotIrqAsserted() && "NMI, not IRQ");
+        frame(a);
+        CHECK(nmis == 1 && "/INT still low: no second edge without a status read");
+        (void)m.memRead(ctl(3));                            // the handler reads the status
+        CHECK(!a->slotNmiAsserted() && !m.slotBus().nmiLineLow());
+        frame(a);
+        CHECK(nmis == 2 && "released, then the next frame is a new edge");
+
+        // Wire-OR: a second card pulling a line already low is no edge.
+        EzColorCard* b = mk(5);
+        b->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
+        setR1(5, 0xE0);
+        frame(b);
+        CHECK(nmis == 2 && b->slotNmiAsserted() && "line already low (slot 3)");
+        (void)m.memRead(ctl(3));
+        CHECK(m.slotBus().nmiLineLow() && nmis == 2 && "slot 5 still holds it");
+        (void)m.memRead(ctl(5));
+        CHECK(!m.slotBus().nmiLineLow());
+        m.slotBus().plug(5, nullptr);
+
+        // Open: the frame flag rises, nothing leaves the card.
+        a->setInterruptWiring(EzColorCard::InterruptWiring::Open);
+        frame(a);
+        CHECK(a->vdp().irqAsserted() && !a->slotNmiAsserted() && !a->slotIrqAsserted() && nmis == 2);
+        // Moving the jumper with /INT low pulls the new line at once: an edge.
+        a->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
+        CHECK(nmis == 3 && a->slotNmiAsserted());
+        a->setInterruptWiring(EzColorCard::InterruptWiring::Irq);
+        CHECK(!a->slotNmiAsserted() && a->slotIrqAsserted() && "back on pin 30");
+
+        // A snapshot restores the /NMI LEVEL with no edge: the saved machine
+        // already took it. A spurious NMI here would run the guest's handler
+        // twice after every rewind.
+        a->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);   // edge 4
+        std::vector<uint8_t> nmiBlob;
+        a->appendSnapshotState(nmiBlob);
+        (void)m.memRead(ctl(3));                            // line high again
+        const int nmisBefore = nmis;
+        a->loadSnapshotState(nmiBlob.data(), nmiBlob.size());
+        CHECK(a->slotNmiAsserted() && m.slotBus().nmiLineLow() && nmis == nmisBefore
+              && "restored low, no edge");
+        m.slotBus().plug(3, nullptr);
+        CHECK(!m.slotBus().nmiLineLow() && "unplug releases the line");
+
+        // Through the real CPU: Memory routes the edge to M6502::setNMI and
+        // the next step vectors through $FFFA (3 bytes pushed, I set).
+        Memory mc;
+        M6502 cpu{ &mc };
+        mc.setCpu(&cpu);
+        auto c = std::make_unique<EzColorCard>();
+        EzColorCard* e = c.get();
+        e->vdp().setSiliconStrictMode(false);
+        e->setInterruptWiring(EzColorCard::InterruptWiring::Nmi);
+        mc.slotBus().plug(3, std::move(c));
+        mc.memWrite(0xC0B1, 0xE0); mc.memWrite(0xC0B1, 0x81);
+        mc.memWrite(0x0300, 0xEA);                          // NOP
+        cpu.setProgramCounter(0x0300);
+        cpu.setStatusRegister(uint8_t(cpu.getStatusRegister() | 0x04));   // SEI: NMI ignores it
+        const uint8_t sp = cpu.getStackPointer();
+        frame(e);
+        cpu.run(1);
+        // The entry pushed the NOP's own address and P with B clear; read the
+        // stack rather than PC, which depends on what $FFFA holds here.
+        CHECK(mc.memRead(uint16_t(0x0100 + sp)) == 0x03 && mc.memRead(uint16_t(0x0100 + uint8_t(sp - 1))) == 0x00
+              && "NMI entry pushed PC = $0300");
+        CHECK((mc.memRead(uint16_t(0x0100 + uint8_t(sp - 2))) & 0x10) == 0 && "an NMI, not a BRK");
     }
 
     // ── The E-Z Color's picture never takes the Apple's screen ───────────

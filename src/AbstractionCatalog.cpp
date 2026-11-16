@@ -169,7 +169,8 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "manual (P4). docs/chatmauve_plan.md",
       "LeChatMauveCard.h/.cpp, Apple2Display.cpp" },
     { "ezcolor", "Video", "E-Z Color (TMS9918A VDP)", AbsLevel::L1,
-      "MAME ezcgi decode ($C0n0 data, $C0n1 register, /INT = slot IRQ); "
+      "BYTE's schematic decode (A0 only: even $C0nX data, odd register), "
+      "/INT through jumper JP2 to IRQ (default), NMI (as published) or open; "
       "POM1's TMS9918: four modes, sprites with 5th-sprite and collision "
       "flags, the access window, a progressive raster synced to the CPU's "
       "in-flight cycle",

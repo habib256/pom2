@@ -1544,6 +1544,7 @@ private:
     /// Before the bus drops its cards: both pointers go.
     void clearCardVideoSources();
     void applyCardMonitorSetting();
+    void renderEzColorJumper();
     /// File ▸ Open disk from URL (MainWindow_OpenUrl.cpp): the download runs
     /// on its own thread; the frame loop boots the image when it lands.
     struct UrlFetch {

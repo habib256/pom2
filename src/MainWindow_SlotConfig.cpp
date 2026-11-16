@@ -846,6 +846,9 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             // screen by itself).
             auto card = std::make_unique<EzColorCard>();
             card->setCpu(&st.cpu());
+            // Jumper JP2: where /INT goes (irq | nmi | open; EzColorCard.h).
+            card->setInterruptWiring(EzColorCard::parseInterruptWiring(
+                settings->getString("ezcolor_interrupt", "irq")));
             EzColorCard* ez = card.get();
             st.memory().slotBus().plug(s, std::move(card));
             plugCardVideoSource(ez, s, "ezcolor");

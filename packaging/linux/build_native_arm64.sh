@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # build_native_arm64.sh — the GENERIC Linux ARM64 release: COMPILE + PACKAGE.
 #
-# The sibling of build_in_bookworm_arm64.sh, and the differences are the whole
-# reason both exist:
+# The sibling of build_in_bookworm_arm64.sh: the SAME pinned debian:bookworm
+# container on the native arm64 runner (release.yml), so the same glibc 2.36
+# floor — the floor POM1's aarch64 AppImage has. It used to build on the
+# runner's own ubuntu-24.04-arm userland, which stamped GLIBC_2.39 and left
+# out every ARM distro older than Ubuntu 24.04 (Debian 12, Ubuntu 22.04, …);
+# an AppImage never bundles glibc, so an old floor is what makes it run
+# everywhere (2026-11-16). What still differs from the Pi build:
 #
-#   · This one builds on the runner's OWN userland (ubuntu-24.04-arm, glibc
-#     2.39) — no container. That sets the package's glibc floor at 2.39, so it
-#     targets CURRENT ARM distros: Ubuntu 24.04+, Fedora 40+, Debian trixie.
 #   · Desktop OpenGL, not GLES. An ARM64 laptop or server has a normal GL
 #     driver; the GLES tier exists for the Pi's V3D, which caps desktop GL at
 #     3.1 and cannot serve POM2's 3.2 core request.
@@ -21,12 +23,27 @@
 # libstdc++.so.6 outright, so a dynamic GLIBCXX dependency would be an
 # unsatisfiable requirement on any host older than the runner.
 #
-# Honoured env: POM2_VERSION, POM2_JOBS.
+# Honoured env: POM2_VERSION, POM2_JOBS, POM2_INSTALL_DEPS (=1 inside the
+# bookworm container: install the build dependencies with apt first).
 # Usage: packaging/linux/build_native_arm64.sh
 set -euxo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
+
+if [ "${POM2_INSTALL_DEPS:-0}" = 1 ]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates git wget curl file desktop-file-utils \
+        build-essential cmake pkg-config \
+        zlib1g-dev \
+        libglfw3-dev libgl1-mesa-dev \
+        libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+        libslirp-dev
+    # The bind-mounted repo is owned by the host uid, not root.
+    git config --global --add safe.directory '*'
+fi
 
 # --- AppImage tooling -------------------------------------------------------
 # Same pinned digests as the Pi job (shared script). Staged inside the work

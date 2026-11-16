@@ -24,6 +24,21 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 
+<a id="cards-016"></a>
+
+## CARDS-016 — E-Z Color: the VDP's /INT on /NMI, as published
+
+**Priority:** ✅ · **State:** Done 2026-11-16 — the bus `/NMI` line
+(`SlotPeripheral::assertNmi`, edge-triggered wire-OR) and the card's jumper
+JP2 (`EzColorCard::setInterruptWiring`, setting `ezcolor_interrupt`, Card
+Monitor, SDK `setEzColorInterrupt`). Pinned by `ezcolor_card` § 7. Removed
+from the active index; see CHANGELOG 2026-11-16 and
+[DEV § /NMI](../../DEV.md#nmi--pin-29-2026-11-16).
+
+**Left open:** the default stays `irq` (MAME's wiring, and what pom2games'
+code takes), not the schematic's `nmi`. Revisit with pom2games once their
+code runs on both.
+
 <a id="cards-015"></a>
 
 ## CARDS-015 — Integrate Sébastien Pourcel's PorteParole-MEA8000

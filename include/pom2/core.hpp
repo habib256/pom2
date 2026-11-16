@@ -134,11 +134,15 @@ struct FramebufferView {
 /// The E-Z Color card's TMS9918A, read the way a debugger reads it: nothing
 /// here touches the chip (the status keeps F / 5S / C, the read-ahead and the
 /// address latch are left alone).
+/// Where the E-Z Color's jumper JP2 takes the VDP's /INT.
+enum class EzColorInterrupt : std::uint8_t { Irq, Nmi, Open };
+
 struct EzColorState {
     std::array<std::uint8_t, 8> registers{};   ///< R0-R7 as last written
     std::uint8_t  status = 0;                   ///< F, 5S, C and the fifth-sprite number
     std::uint16_t address = 0;                  ///< the auto-incrementing VRAM pointer
-    bool          irqAsserted = false;          ///< /INT, i.e. the slot IRQ: R1 IE and F
+    bool          irqAsserted = false;          ///< the VDP's /INT is low: R1 IE and F
+    EzColorInterrupt interrupt = EzColorInterrupt::Irq;   ///< jumper JP2
     bool          siliconStrict = true;         ///< the access window is enforced
     /// Port accesses the chip dropped because they came inside a closed
     /// access window — since attachEzColor() or resetEzColorDropCount().
@@ -383,15 +387,22 @@ public:
     bool rgbCardAttached() const;
     /// Install the E-Z Color Graphics Interface (Steve Ciarcia, BYTE, August
     /// 1982) in an empty slot: a TMS9918A with 16 KB of VRAM and its own video
-    /// output, no ROM — only $C0n0 (data) and $C0n1 (register / status) answer,
-    /// every other $C0nX reads $FF. The VDP's /INT is the slot IRQ (R1 bit 5
-    /// and the frame flag; a $C0n1 read drops it). Any slotted machine, a ][+
+    /// output, no ROM. The card decodes A0 only (BYTE's Fig. 4): every even
+    /// $C0nX is the data port, every odd one the register / status port. The
+    /// VDP's /INT (R1 bit 5 and the frame flag; a $C0n1 read drops it) goes
+    /// where jumper JP2 takes it — the slot IRQ by default, see
+    /// setEzColorInterrupt(). Any slotted machine, a ][+
     /// as well as a //e; a //c refuses. `siliconStrict` enforces the VDP's
     /// access window as the chip does (POM1's model, openMSX's slot tables:
     /// the gap needed depends on the mode and the beam) and makes R1 bit 7
     /// select 4 KB / 16 KB addressing; it is what the application runs.
     bool attachEzColor(int slot = 4, bool siliconStrict = true);
     bool ezColorAttached() const;
+    /// Jumper JP2: where the VDP's /INT goes. `Irq` (default, bus pin 30),
+    /// `Nmi` (pin 29, the wiring BYTE published — edge-triggered, one NMI per
+    /// frame, not maskable by SEI) or `Open` (no interrupt). False with no
+    /// card. Can be moved at any time; an NMI fires if /INT is already low.
+    bool setEzColorInterrupt(EzColorInterrupt wiring);
     /// The chip's registers and counters, read without side effects; all
     /// zero (strict true) when no card is attached.
     EzColorState ezColorState() const;

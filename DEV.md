@@ -662,21 +662,33 @@ further. [D] openMSX's model; [F] no capture of the real chip (pinned
 
 Catalog `ezcolor`, any slot, no ROM. Steve Ciarcia's card from BYTE, August
 1982: a TMS9918A with 16 KB of VRAM on a 10.738635 MHz crystal and its own
-video output. MAME `a2bus/ezcgi.cpp`: `$C0n0` the data port, `$C0n1` the
-register port, other offsets `$FF`, the VDP's /INT on the slot IRQ, a bus
-reset resets its registers (`TMS9918::resetPin`) and keeps its VRAM, as
+video output. [B] Its Fig. 4 (p. 65) decodes /DS, R/W and **A0 only**, so
+every even `$C0nX` is the data port and every odd one the register port —
+[D] MAME `a2bus/ezcgi.cpp:234-260` @ mame0287 reads `$FF` above `$C0n1`, and
+POM2 did too until 2026-11-16. The VDP's /INT goes where **jumper JP2**
+takes it (`EzColorCard::setInterruptWiring`, setting `ezcolor_interrupt`,
+Card Monitor ▸ "E-Z Color /INT (JP2)", SDK `setEzColorInterrupt`): the
+schematic wires it to pin 29, **/NMI**; POM2 defaults to the slot **IRQ**
+(MAME's wiring, and what pom2games' code takes), and `open` is the card
+built without JP2. The NMI rides the bus's `/NMI` line: a wire-OR of the
+slots (`SlotPeripheral::assertNmi`) that calls `M6502::setNMI` on its
+falling edge only, so a card holding it low gets one NMI, and a snapshot
+restores the level with no edge (`restoreNmiLevel`). A bus
+reset (jumper JP1) resets its registers (`TMS9918::resetPin`) and keeps its VRAM, as
 MAME's `tms9928a.cpp` `device_reset`; only a power cycle (`onPowerCycle`,
 the cold boot) gives VRAM its power-on pattern. The VDP is **POM1's** (`TMS9918.h/.cpp`, the same author's
 Apple-1 emulator, P-LAB Graphic Card), imported as-is so the two stay
 syncable: namespace `pom2::tms`, no `pom1::Peripheral` base, byte-vector
 state (`appendState` / `loadState` = POM1's serialize / deserialize field
-for field), the 17062-cycle NTSC frame (59.94 Hz on the VDP's own crystal)
-defined in the header. Writes call `renderBeamCatchUp` and a status read
+for field), the VDP's own frame defined in the header — 262 lines of 342
+clocks on its 10.738635 MHz crystal, 17067 nominal CPU cycles, 59.92 Hz (until
+2026-11-16 the 59.94 Hz broadcast field, 17062, which the VDP does not draw;
+POM1 `989d019b`). Writes call `renderBeamCatchUp` and a status read
 `syncSpriteScanToBeam` with the CPU's in-flight cycles (POM1's Étapes 0/1),
 so mid-line register writes split the raster where the beam is. Those
-17062 cycles are nominal-NTSC ones: the card converts the Apple's CPU cycles
+17067 cycles are nominal-NTSC ones: the card converts the Apple's CPU cycles
 through a `SlotBusClock` (`setCpuClock`), so a TransWarp, a Zip or a PAL
-machine leaves the VDP on its 59.94 Hz frame and its access-window timing
+machine leaves the VDP on its 59.92 Hz frame and its access-window timing
 (ratio 1, every cycle as is, on a stock NTSC machine and in the SDK).
 
 The card's monitor is its own: the 288 × 216 picture is a `CardVideoSource`
@@ -3978,6 +3990,24 @@ contribution. Pinned: `slot_peripheral_irq_smoke`.
 Mockingboard keeps `cpu_` for `getCycleCountNow()` lazy-sync only;
 Disk II keeps `cpu_` for sub-instruction LSS accuracy on Q6L reads.
 MouseCard and SSC dropped `cpu_`.
+
+### `/NMI` — pin 29 *(2026-11-16)*
+
+Every slot shares one `/NMI` line ([B] Apple II Reference Manual 1979,
+Table 33), wire-OR'd like `/IRQ`, but the 6502 takes an NMI on its
+**falling edge** ([B] MCS6500 hardware manual), not on its level. So the
+aggregation is not `/IRQ`'s per-source mask in the CPU: `SlotBus` keeps the
+mask of the slots pulling the line (`forwardSlotNmi`) and calls the
+`NmiRouter` — `M6502::setNMI()`, installed by `Memory::setCpu` — only when
+the line goes from released to pulled. A second card joining a line already
+low, or a card re-asserting, is no edge; a NMI pending in the CPU when the
+line goes high still fires, as on the chip. Cards call protected
+`assertNmi(bool)` (idempotent, auto-released on unplug); a snapshot load
+calls `restoreNmiLevel(bool)`, which sets the level with no edge, because
+the saved machine already took it — like the IRQ lines, the CPU's pending
+NMI is not in the snapshot. The first user is the E-Z Color's jumper JP2;
+in MAME only the TimeMaster H.O. (DIP 3) and the Excel-9 raise it
+(`raise_slot_nmi` @ mame0287). Pinned by `ezcolor_card` § 7.
 
 ### Hand-written slot ROMs (`SlotRomAsm.h`)
 
