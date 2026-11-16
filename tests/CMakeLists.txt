@@ -2181,6 +2181,16 @@ target_include_directories(test_audio_device_watch PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME audio_device_watch COMMAND test_audio_device_watch)
 set_tests_properties(audio_device_watch PROPERTIES TIMEOUT 10)
 
+# ─── The buffer ladder's state (AudioBufferLadder.h) ──────────────────────
+# The climb, the learned rung, the pin and the browser's one climb per load,
+# driven by a fake clock and counter. Before this file the state lived in
+# AudioCoordinator behind the real device, and no test reached it (2026-11-01
+# mutation audit).
+add_executable(test_audio_buffer_ladder audio_buffer_ladder_test.cpp)
+target_include_directories(test_audio_buffer_ladder PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME audio_buffer_ladder COMMAND test_audio_buffer_ladder)
+set_tests_properties(audio_buffer_ladder PROPERTIES TIMEOUT 10)
+
 
 # ─── Host audio device buffer ladder ──────────────────────────────────────
 # AudioBufferPolicy.h (the rungs, the late-callback rule, the climb) and

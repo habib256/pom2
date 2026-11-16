@@ -431,19 +431,15 @@ void AudioCoordinator::restore(Settings& settings,
     // to 2048 frames yesterday does not crackle through the climb again
     // today. A learned value below the platform default is stale (the
     // default moved) and is ignored.
-    pinnedFrames_  = static_cast<std::uint32_t>(
-        std::max(0, settings.getInt("audio_buffer_frames", 0)));
-    learnedFrames_ = static_cast<std::uint32_t>(
-        std::max(0, settings.getInt("audio_buffer_learned", 0)));
     {
-        using P = pom2::AudioBufferPolicy;
-        const auto platform = device_.platform();
-        if (!P::isRung(pinnedFrames_, platform)) pinnedFrames_ = 0;
-        if (!P::isRung(learnedFrames_, platform)) learnedFrames_ = 0;
-        if (pinnedFrames_)
-            applyLadderRung(pinnedFrames_, "pinned in the settings", true);
-        else if (learnedFrames_ > device_.periodFrames())
-            applyLadderRung(learnedFrames_, "learned on an earlier run");
+        const AudioBufferLadder::Rung r = ladder_.restore(
+            settings.getInt("audio_buffer_frames", 0),
+            settings.getInt("audio_buffer_learned", 0),
+            device_.periodFrames(), device_.platform());
+        if (r.frames != 0)
+            applyLadderRung(r.frames, r.pinned ? "pinned in the settings"
+                                               : "learned on an earlier run",
+                            r.pinned);
     }
 
     speaker.setVolume(settings.getFloat("speaker_volume", 1.0f));
@@ -505,8 +501,8 @@ void AudioCoordinator::persist(Settings& settings,
     settings.setFloat("master_volume", device_.getMasterVolume());
     settings.setBool("master_muted", device_.isMasterMuted());
     settings.setBool("audio_mono_downmix", device_.isMonoDownmix());
-    settings.setInt("audio_buffer_frames", static_cast<int>(pinnedFrames_));
-    settings.setInt("audio_buffer_learned", static_cast<int>(learnedFrames_));
+    settings.setInt("audio_buffer_frames", static_cast<int>(ladder_.pinned()));
+    settings.setInt("audio_buffer_learned", static_cast<int>(ladder_.learned()));
     settings.setFloat("speaker_pan", speaker.pan.load());
     settings.setFloat("cassette_pan", cassette.pan.load());
     settings.setFloat("floppy_sound_pan", floppy525.pan.load());
@@ -561,7 +557,7 @@ AudioCoordinator::BufferSnapshot AudioCoordinator::captureBuffer() const
     s.sampleRate    = device_.getActualSampleRate();
     s.bufferMs      = device_.bufferSeconds() * 1000.0;
     s.lateCallbacks = device_.lateCallbacks();
-    s.pinnedFrames  = pinnedFrames_;
+    s.pinnedFrames  = ladder_.pinned();
     s.minFrames     = P::kMinPeriodFrames;
     s.maxFrames     = P::maxPeriodFrames(device_.platform());
     s.available     = device_.isAvailable();
@@ -594,30 +590,24 @@ void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& 
                             std::to_string(before) + "), " + why);
     }
     // A new window: the old device's late callbacks are not the new one's.
-    lateAtWindowStart_ = device_.lateCallbacks();
-    windowStartSec_    = -1.0;
+    ladder_.restartWindow(device_.lateCallbacks());
 }
 
 void AudioCoordinator::pinBuffer(std::uint32_t frames)
 {
-    using P = pom2::AudioBufferPolicy;
-    if (frames != 0 && !P::isRung(frames, device_.platform())) return;
-    pinnedFrames_ = frames;
-    if (frames != 0) {
-        applyLadderRung(frames, "pinned in the Audio panel", true);
-    } else {
+    if (frames == 0) {
         // Back to automatic: keep the current rung as the ladder's start, and
         // tell the browser's memory it is no longer a pin (WASM-5).
         device_.reconfigurePeriod(device_.periodFrames(), false);
-        learnedFrames_     = std::max(learnedFrames_, device_.periodFrames());
-        lateAtWindowStart_ = device_.lateCallbacks();
-        windowStartSec_    = -1.0;
     }
+    if (!ladder_.pin(frames, device_.periodFrames(), device_.lateCallbacks(),
+                     device_.platform()))
+        return;
+    if (frames != 0) applyLadderRung(frames, "pinned in the Audio panel", true);
 }
 
 void AudioCoordinator::tick()
 {
-    using P = pom2::AudioBufferPolicy;
     using clock = std::chrono::steady_clock;
     static const auto t0 = clock::now();
     const double now = std::chrono::duration<double>(clock::now() - t0).count();
@@ -646,28 +636,18 @@ void AudioCoordinator::tick()
             else if (!quiet)
                 pom2::log().warn("Audio", std::string(AudioDeviceWatch::describe(why)) +
                                  " and none could be opened; retrying in the background");
-            windowStartSec_ = -1.0;        // late callbacks of the old device
+            ladder_.forgetWindow();        // late callbacks of the old device
             return;
         }
     }
 
-    if (pinnedFrames_ != 0 || !device_.isAvailable() || climbDeferred_) return;
-    const std::uint64_t late = device_.lateCallbacks();
-    if (windowStartSec_ < 0.0 || now - windowStartSec_ > P::kWindowSec) {
-        windowStartSec_    = now;
-        lateAtWindowStart_ = late;
-        return;
-    }
-    const std::uint64_t lateInWindow = late - lateAtWindowStart_;
-    const std::uint32_t current = device_.periodFrames();
-    const std::uint32_t next =
-        P::escalatedPeriodFrames(current, lateInWindow, device_.platform());
-    if (next == current) return;
-    learnedFrames_ = std::max(learnedFrames_, next);
-    if (AudioDevice::appliesAtNextLoad()) climbDeferred_ = true;
-    applyLadderRung(next, std::to_string(lateInWindow) +
+    const AudioBufferLadder::Climb climb = ladder_.poll(
+        now, device_.lateCallbacks(), device_.periodFrames(), device_.platform(),
+        device_.isAvailable(), AudioDevice::appliesAtNextLoad());
+    if (climb.frames == 0) return;
+    applyLadderRung(climb.frames, std::to_string(climb.lateInWindow) +
                               " late callbacks in the last " +
-                              std::to_string(static_cast<int>(now - windowStartSec_ + 0.5)) +
+                              std::to_string(static_cast<int>(climb.windowSec + 0.5)) +
                               " s — the host could not keep the smaller buffer fed");
 }
 

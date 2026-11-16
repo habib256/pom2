@@ -277,7 +277,8 @@ Ranked by how much false confidence each removes.
 injection seam `RomFetchSources::download` already has); the audio buffer
 ladder's *climb* (`AudioCoordinator::tick`, `learnedFrames_`,
 `audio_buffer_learned` are reached by no test, so the Pi/phone crackle can
-return silently); `TMS9918`'s `~regs[3]` UB fix, which is value-identical and
+return silently — *fixed 2026-11-16: `AudioBufferLadder.h`, pinned by
+`audio_buffer_ladder`*); `TMS9918`'s `~regs[3]` UB fix, which is value-identical and
 therefore unpinnable by construction — its guard is the nightly job, not the
 425-case suite; the held paste's hash hoist; the Machine-menu Premium SoftCard
 tick; `mount35`'s lost `click` argument; and the E-Z Color's in-instruction

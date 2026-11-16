@@ -23,6 +23,7 @@
 #ifndef POM2_AUDIO_COORDINATOR_H
 #define POM2_AUDIO_COORDINATOR_H
 
+#include "AudioBufferLadder.h"
 #include "AudioDeviceWatch.h"
 
 #include <array>
@@ -230,15 +231,9 @@ private:
     EmulationController*       controller_ = nullptr;
     std::vector<AudioSource*>  sources_;
 
-    // The ladder's state (AudioBufferPolicy.h). UI thread only.
-    std::uint32_t pinnedFrames_  = 0;   ///< 0 = automatic
-    std::uint32_t learnedFrames_ = 0;   ///< highest rung the ladder reached
-    std::uint64_t lateAtWindowStart_ = 0;
+    // The ladder's state (AudioBufferLadder.h). UI thread only.
+    AudioBufferLadder ladder_;
     AudioDeviceWatch deviceWatch_;      ///< when to re-open a lost device
-    double        windowStartSec_    = -1.0;
-    /// Browser: one climb per session — it is remembered for the next load,
-    /// so the late callbacks that follow are still the OLD buffer's.
-    bool          climbDeferred_     = false;
     void applyLadderRung(std::uint32_t frames, const std::string& why, bool pinned = false);
 };
 

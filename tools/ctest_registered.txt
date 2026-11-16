@@ -36,6 +36,7 @@ arekkusu_disks
 assembler6502
 ata_block_device
 atomic_file_replace
+audio_buffer_ladder
 audio_buffer_policy
 audio_coordinator
 audio_device_watch
