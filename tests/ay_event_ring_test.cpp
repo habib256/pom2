@@ -31,6 +31,14 @@ struct Ev {
 
 }  // namespace
 
+// A consistent malloc/free replacement of the global allocator is legal C++,
+// but GCC 15 (ubuntu-26.04 runner) inlines it into std::vector's destructor
+// and reports free() on a pointer from `operator new` as a mismatch. Silenced
+// for these two definitions only; GCC < 11 has no such warning to name.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void* operator new(std::size_t n)
 {
     ++g_allocs;
@@ -40,6 +48,9 @@ void* operator new(std::size_t n)
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic pop
+#endif
 
 int main()
 {

@@ -26,7 +26,11 @@ family — `array-bounds`, `stringop-overflow`, `stringop-overread`,
 `free-nonheap-object` (the third run found the last in
 `SpOverSlipLink::control`, a plain reserve + push_back) — stays warnings
 (still printed) but no longer fails the build (`CMakeLists.txt`, next to
-`POM2_WARN_FLAGS`); `use-after-free` and `maybe-uninitialized` stay fatal. GCC < 15 and clang are
+`POM2_WARN_FLAGS`); `use-after-free` and `maybe-uninitialized` stay fatal.
+The fourth run found `-Wmismatched-new-delete` in `ay_event_ring_test.cpp`,
+whose malloc/free replacement of the global allocator (to count
+allocations) GCC 15 inlines into `std::vector`'s destructor. That warning
+can catch real bugs, so it is silenced around those two definitions only. GCC < 15 and clang are
 untouched. No product code was involved (the GCC quick-compile job stayed
 green).
 
