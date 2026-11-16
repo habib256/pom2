@@ -462,6 +462,14 @@ void testMemoryRoundtrip(EmulationController& ctrl, pom2::AiControlServer& /*srv
     assert(r.status == 405 && r.body.empty());
     r = oneShot(kTestPort, "DELETE /screen.ppm HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
     assert(r.status == 405);
+    // The two reads are GET-only like every other read (UI-003): a POST
+    // used to be answered with the frame / the status body.
+    r = oneShot(kTestPort, "POST /screen.ppm HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                           "Content-Length: 0\r\n\r\n");
+    assert(r.status == 405);
+    r = oneShot(kTestPort, "POST /status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                           "Content-Length: 0\r\n\r\n");
+    assert(r.status == 405);
     // RFC 7230 § 3.2.4 / § 3.3.3: whitespace before the colon, and repeated
     // framing headers, are 400s — `Transfer-Encoding : chunked` used to
     // slip past the refusal above and read the body as empty.

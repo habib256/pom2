@@ -10,6 +10,19 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-16 — UI-003: `/screen.ppm` and `/status` are GET-only
+
+The last residue of bug hunt #16: every AI-control endpoint already refused
+the wrong method with a 405 except these two reads, which answered a `POST`
+like a `GET` (the frame, the status body). Both now check the method before
+anything else — `/screen.ppm` before the display, so the contract does not
+depend on whether one is attached. `ai_control_server_smoke` asserts both
+405s and fails on the reverted handlers. The other items of that report were
+already fixed (debugger, `POST /cpu` validation); a complete mounted-media
+inventory in `/status` was ruled out of scope by the 2026-10-28 triage
+(`block_storage` / `floppy_storage` report persistence; `disks` stays the
+Disk II's).
+
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
 ## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner

@@ -8040,8 +8040,8 @@ Language-Card RAM, since the raw main array holds the ROM image at
 unknown bank too. Pinned by `ai_control_mem_bank`. `POST /cpu` validates all
 supplied registers before changing any: `pc` is 0–65535, A/X/Y/P/SP are
 0–255, and malformed or out-of-range values receive 400. The older masking
-report is superseded. `/screen.ppm` still has no method check; GET is the
-documented client method. The former flat-bus write-watch, explicit-step
+report is superseded. `/screen.ppm` and `/status` are GET-only (405
+otherwise, UI-003). The former flat-bus write-watch, explicit-step
 PC attribution and step-over transient findings were corrected in the current
 debugger; see [bank-aware debugging](docs/debugger-banks.md). `/status`'s
 `disks` lists the Disk II only; block images have a separate
@@ -8153,7 +8153,8 @@ while this table and the handler implementations give the detailed contract):
 
 JSON successes include `"ok":true`; failures include `"ok":false` and an
 `error` string. `/screen.ppm` returns binary PPM instead. Use the documented
-methods: `/status` and `/screen.ppm` currently do not enforce GET themselves.
+methods: every endpoint answers any other one with 405 (pinned by
+`ai_control_server_smoke`).
 Requests are limited to a 64 KiB preamble and 1 MiB body; chunked request
 bodies are refused. File paths are canonicalised (a final-component symlink is
 refused) and must then land in one of three places (`safeCwdRelativePath`):
