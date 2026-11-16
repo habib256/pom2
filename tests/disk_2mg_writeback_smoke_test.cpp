@@ -17,7 +17,7 @@
 // Pins 2IMG / .2mg write-back: after a sector mutation + saveDirty, the
 // rewritten file must (a) preserve the 64-byte header byte-for-byte and
 // any comment/creator trailer chunks, and (b) reflect the new data in
-// the payload region.
+// the payload region — two sectors exchanged on track 17, nothing else.
 //
 // Why this matters: the 2IMG header carries the creator code, volume
 // number, and write-protect flag — losing them on round-trip would
@@ -156,18 +156,45 @@ int main()
         std::remove(path.c_str());
         return 1;
     }
-    // Mutate a nibble so dirty[track] is set and saveDirty has work to do.
-    // Track 17 is the DOS 3.3 VTOC track — convenient marker. The write goes
-    // in a sync gap (SyncGapWrite.h): `writeNibbleAt(17, 100, 0xAA)` landed
-    // inside a field, and a track with a sector that no longer decodes is
-    // now refused instead of "saved" with that sector's old bytes. The point
-    // of this test is NOT to verify the bytes change; it's to verify the 2IMG
-    // envelope is intact after saveDirty walks the dirty track through the
-    // sector branch.
-    if (pom2test::writeInSyncGap(img, 17) < 0) {
-        std::fprintf(stderr, "no sync gap on track 17\n");
+    // Change two SECTORS, not one sync byte. The old mutation went in a sync
+    // gap, which decodes to the bytes the file already held — so every
+    // assertion below held for a save that never touched the payload, and
+    // this is the only test of the 2IMG write path (bug hunt 2026-11-01
+    // round 2, test quality item 6). A data field carries no sector number
+    // (D5 AA AD + 342 + checksum + DE AA EB, Beneath Apple DOS ch. 3), so
+    // exchanging two of them on one track leaves every sector decodable and
+    // the track's sectors swapped: the payload must come back with exactly
+    // those two 256-byte sectors exchanged, at the header's data offset.
+    constexpr int kTrack = 17;
+    constexpr int kDataField = 3 + 342 + 1 + 3;
+    std::vector<int> fields;
+    for (int i = 0; i + kDataField <= DiskImage::kNibblesPerTrack; ++i)
+        if (img.nibbleAt(kTrack, i) == 0xD5 && img.nibbleAt(kTrack, i + 1) == 0xAA &&
+            img.nibbleAt(kTrack, i + 2) == 0xAD)
+            fields.push_back(i);
+    if (fields.size() < 2) {
+        std::fprintf(stderr, "fewer than two data fields on track %d\n", kTrack);
         std::remove(path.c_str());
         return 1;
+    }
+    // Two fields whose contents differ — a swap of equal sectors is invisible.
+    int fa = -1, fb = -1;
+    for (std::size_t a = 0; a < fields.size() && fb < 0; ++a)
+        for (std::size_t b = a + 1; b < fields.size() && fb < 0; ++b)
+            for (int k = 3; k < kDataField - 3; ++k)
+                if (img.nibbleAt(kTrack, fields[a] + k) !=
+                    img.nibbleAt(kTrack, fields[b] + k)) {
+                    fa = fields[a]; fb = fields[b]; break;
+                }
+    if (fb < 0) {
+        std::fprintf(stderr, "track %d: every data field identical\n", kTrack);
+        std::remove(path.c_str());
+        return 1;
+    }
+    for (int k = 0; k < kDataField; ++k) {
+        const uint8_t x = img.nibbleAt(kTrack, fa + k);
+        img.writeNibbleAt(kTrack, fa + k, img.nibbleAt(kTrack, fb + k));
+        img.writeNibbleAt(kTrack, fb + k, x);
     }
     if (!img.saveDirty()) {
         std::fprintf(stderr, "save failed: %s\n", img.getLastError().c_str());
@@ -197,7 +224,27 @@ int main()
         return 1;
     }
 
-    std::printf("disk_2mg_writeback_smoke OK: header+trailer preserved across "
-                "save\n");
+    // The payload: exactly two sectors changed, on the mutated track, each
+    // now holding the other's original bytes.
+    std::vector<int> changed;
+    for (int sec = 0; sec < DiskImage::kTracks * DiskImage::kSectorsPerTrack; ++sec)
+        if (std::memcmp(newFile.data() + 64 + sec * 256,
+                        origFile.data() + 64 + sec * 256, 256) != 0)
+            changed.push_back(sec);
+    if (changed.size() != 2 ||
+        changed[0] / DiskImage::kSectorsPerTrack != kTrack ||
+        changed[1] / DiskImage::kSectorsPerTrack != kTrack ||
+        std::memcmp(newFile.data() + 64 + changed[0] * 256,
+                    origFile.data() + 64 + changed[1] * 256, 256) != 0 ||
+        std::memcmp(newFile.data() + 64 + changed[1] * 256,
+                    origFile.data() + 64 + changed[0] * 256, 256) != 0) {
+        std::fprintf(stderr,
+            "round-trip: payload does not carry the two swapped sectors of "
+            "track %d (%zu sector(s) changed)\n", kTrack, changed.size());
+        return 1;
+    }
+
+    std::printf("disk_2mg_writeback_smoke OK: header+trailer preserved, "
+                "payload carries the write\n");
     return 0;
 }

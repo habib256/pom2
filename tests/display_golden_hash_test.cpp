@@ -77,6 +77,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <set>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -808,6 +809,23 @@ int main()
                          static_cast<unsigned long long>(r.second));
             ++failures;
         }
+    }
+    // Every pinned path must have RUN. Without this, a loop that stopped
+    // producing results let the 185 pins decay to one with the test green
+    // (bug hunt 2026-11-01 round 2, test quality item 6). Names are unique
+    // keys on both sides, so equal sizes + no MISSING above = same set.
+    std::set<std::string> produced;
+    for (const auto& r : results) produced.insert(r.first);
+    for (const auto& g : kGolden)
+        if (!produced.count(g.first)) {
+            std::fprintf(stderr, "NOT RUN: golden %s produced no frame\n",
+                         g.first.c_str());
+            ++failures;
+        }
+    if (produced.size() != results.size()) {
+        std::fprintf(stderr, "display golden: %zu duplicate path name(s)\n",
+                     results.size() - produced.size());
+        ++failures;
     }
     if (failures) {
         std::fprintf(stderr, "display golden: %d mismatch(es)\n", failures);

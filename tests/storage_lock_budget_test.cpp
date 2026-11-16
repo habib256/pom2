@@ -69,16 +69,32 @@ struct Contender {
     ~Contender() { stop = true; th.join(); }
 };
 
-void dirtyUnit(pom2::SmartPortUnit* u, uint32_t blocks)
+/// Returns the fill byte written, so a case can check it reached the file.
+uint8_t dirtyUnit(pom2::SmartPortUnit* u, uint32_t blocks)
 {
     // A different byte every call. The cases share big.hdv, and case A's
     // mount flushes its 0xA5 blocks into it: with a fixed fill every later
     // case wrote bytes the file already held, nothing went dirty, and B and
     // C measured an eject / mount with nothing to save (bug hunt 2026-11-01).
     static uint8_t fill = 0xA5;
-    std::vector<uint8_t> buf(512, fill++);
+    const uint8_t used = fill++;
+    std::vector<uint8_t> buf(512, used);
     for (uint32_t i = 0; i < blocks; ++i) u->writeBlock(i, buf.data());
     assert(u->hasUnsavedChanges() && "the case has something to save");
+    return used;
+}
+
+/// The first and last dirtied byte of the image file. A case that times an
+/// operation must also check the operation HAPPENED: a no-op measures 0 us
+/// and passes the floor (bug hunt 2026-11-01 round 2, test quality item 6;
+/// B and C discarded their results).
+bool fileHolds(const std::string& path, uint32_t blocks, uint8_t fill)
+{
+    std::ifstream f(path, std::ios::binary);
+    char first = 0, last = 0;
+    if (!f.seekg(0) || !f.get(first)) return false;
+    if (!f.seekg(static_cast<std::streamoff>(blocks) * 512 - 1) || !f.get(last)) return false;
+    return static_cast<uint8_t>(first) == fill && static_cast<uint8_t>(last) == fill;
 }
 
 pom2::SmartPortCard* plugSmartPort(EmulationController& ctrl)
@@ -140,7 +156,8 @@ int main()
         assert(storage.setMediaBayType(controller, settings, 5, 0, std::string(pom2::SmartPortHdvUnit::kKindKey)).ok);
         assert(storage.mountMediaBay(controller, settings, 5, 0, big).ok);
         assert(storage.setMediaBayWriteBack(controller, settings, 5, 0, true).ok);
-        { auto st = controller.lockState(); dirtyUnit(card->unit(0), kDirty); }
+        uint8_t fill = 0;
+        { auto st = controller.lockState(); fill = dirtyUnit(card->unit(0), kDirty); }
         Contender con(controller);
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         con.maxWaitUs = 0;
@@ -150,6 +167,11 @@ int main()
         (void)storage.applySmartPortPanel(controller, settings, 5, cmd);
         const auto tot = std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - t0).count();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        {
+            auto st = controller.lockState();
+            assert((!card->unit(0) || card->unit(0)->path() != big) && "the eject happened");
+        }
+        assert(fileHolds(big, kDirty, fill) && "the eject saved the dirty unit");
         check("SmartPort panel eject of a dirty 8 MiB unit", con.maxWaitUs.load(), tot);
     }
     // C. mountDisk35 over a dirty SmartPort unit.
@@ -160,7 +182,8 @@ int main()
         assert(storage.setMediaBayType(controller, settings, 5, 0, std::string(pom2::SmartPortHdvUnit::kKindKey)).ok);
         assert(storage.mountMediaBay(controller, settings, 5, 0, big).ok);
         assert(storage.setMediaBayWriteBack(controller, settings, 5, 0, true).ok);
-        { auto st = controller.lockState(); dirtyUnit(card->unit(0), kDirty); }
+        uint8_t fill = 0;
+        { auto st = controller.lockState(); fill = dirtyUnit(card->unit(0), kDirty); }
         Contender con(controller);
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         con.maxWaitUs = 0;
@@ -168,7 +191,12 @@ int main()
         const auto r = storage.mountDisk35(controller, settings, 0, po);
         const auto tot = std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - t0).count();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        (void)r;
+        assert(r.ok && "mountDisk35 over the dirty unit succeeded");
+        {
+            auto st = controller.lockState();
+            assert(card->unit(0) && card->unit(0)->path() == po && "the 3.5\" disk landed in unit 0");
+        }
+        assert(fileHolds(big, kDirty, fill) && "the outgoing HDV was saved first");
         check("mountDisk35 over a dirty 8 MiB unit", con.maxWaitUs.load(), tot);
     }
     // D. The SmartPort panel's MOUNT over a dirty unit (bug hunt 2026-11-01):

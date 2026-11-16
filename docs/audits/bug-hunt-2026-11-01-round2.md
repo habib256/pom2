@@ -235,7 +235,9 @@ Ranked by how much false confidence each removes.
    configure-time-gated test (Klaus, zexall/zexdoc, Tom Harte, the three
    headless ROM tests) can vanish silently. Assert the gated names
    individually.
-6. **Loose assertions where the specific value is the point.**
+6. **Loose assertions where the specific value is the point.** *Fixed
+   2026-11-16, each with a mutation control (CHANGELOG); `printer_glyph`
+   had already been fixed.*
    `disk_2mg_writeback` is a documented tautology — every assertion holds for a
    file `saveDirty()` never touched, and it is the only test of the 2IMG write
    path. `sony35_iwm_read_path` asserts the *cardinality* of the working IWM
