@@ -1301,17 +1301,21 @@ else()
     set(POM2_WARN_FLAGS "-Wall -Wextra -Wshadow")
     if(POM2_WERROR)
         string(APPEND POM2_WARN_FLAGS " -Werror")
-        # GCC 15 (ubuntu-26.04's, 2026-11) reports two flow-sensitive
-        # diagnostics on libstdc++'s inlined std::vector code that are not
-        # defects in ours: -Warray-bounds on an insert of a 7-byte literal's
-        # range (tnfs_client_hostile) and -Wstringop-overflow on a push_back
-        # after an initializer list (Woz35Fixture.h). Both stay WARNINGS —
-        # still printed, so a real one is seen — but no longer stop a
-        # -Werror build. GCC < 15 and clang are untouched.
+        # GCC 15 (ubuntu-26.04's, 2026-11) reports the flow-sensitive
+        # object-size diagnostics on libstdc++'s inlined std::vector code
+        # where ours has no defect, one per CI run: -Warray-bounds on an
+        # insert of a 7-byte literal's range (tnfs_client_hostile),
+        # -Wstringop-overflow on a push_back after an initializer list
+        # (Woz35Fixture.h), -Wfree-nonheap-object on reserve + push_back +
+        # insert (SpOverSlipLink::control). That family stays WARNINGS —
+        # still printed, so a real one is seen — but no longer stops a
+        # -Werror build. -Wuse-after-free and -Wmaybe-uninitialized stay
+        # fatal. GCC < 15 and clang are untouched.
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
            AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
             string(APPEND POM2_WARN_FLAGS
-                " -Wno-error=array-bounds -Wno-error=stringop-overflow")
+                " -Wno-error=array-bounds -Wno-error=stringop-overflow"
+                " -Wno-error=stringop-overread -Wno-error=free-nonheap-object")
         endif()
     endif()
 endif()
