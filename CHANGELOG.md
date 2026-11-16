@@ -19,7 +19,13 @@ job went red on `main` from the 2026-11-15 nightly: `-Warray-bounds`
 (an error under `-Werror`) misreads `vector::insert` of a 7-byte string
 literal's range in `tnfs_client_hostile_test.cpp` as a copy past a 1-byte
 bound. A false positive — the reply is now spelled out as one initialiser
-list. No product code was involved (the GCC quick-compile job stayed green).
+list. The next run hit a second one, `-Wstringop-overflow` on a `push_back`
+after an initializer list in `Woz35Fixture.h`, so rather than one CI cycle
+per false positive: under `POM2_WERROR` with **GCC ≥ 15**, `array-bounds` and
+`stringop-overflow` stay warnings (still printed) but no longer fail the
+build (`CMakeLists.txt`, next to `POM2_WARN_FLAGS`). GCC < 15 and clang are
+untouched. No product code was involved (the GCC quick-compile job stayed
+green).
 
 ## 2026-11-16 — The generic ARM64 AppImage gets POM1's glibc floor
 
