@@ -359,9 +359,13 @@ int main()
     //     short address field and never a 700-byte data field, which is
     //     exactly the shape the numbers had.
     //
-    // Only mode $0A works, and that is correct rather than a limitation: it
-    // is the 14-tick window, and the Sony cell is 14.17 ticks. $02 and $12
-    // (28 and 36 ticks) are the 4 µs 5.25" settings.
+    // Two modes work, and which two is the point: $0A is the 14-tick window
+    // against a 14.17-tick Sony cell, and $1A's 16 ticks ([D] MAME
+    // iwm.cpp window_size, the row POM2 once carried as 18) still resyncs on
+    // every transition before GCR's longest run of two zeros drifts out of
+    // it. $02 and $12 (28 and 36 ticks) are the 4 µs 5.25" settings and
+    // read nothing. Until 2026-11-16 this said "only $0A" — true while the
+    // $1A row was the 18-tick slip, and never checked: the test counted.
     if (!iwmPass) {
         std::printf("sony35_gcr_zones: OK — encoder→decoder round-trips all "
                     "five zones on both heads (control only)\n");
@@ -374,12 +378,14 @@ int main()
     // never self-clears and a polling loop reports one byte many times.
     const uint8_t kModes[] = { 0x02, 0x0A, 0x12, 0x1A };
     int workingModes = 0;
+    unsigned workingMask = 0;   // bit i = kModes[i] read a full track
     uint8_t bestMode  = 0x0A;
     int bestSectors   = -1;
     int bestScore     = -1;
     if (gDump) std::printf("  mode | nibbles | D5AA96 | D5AAAD | sectors\n");
     uint64_t now = 1000;
-    for (uint8_t m : kModes) {
+    for (std::size_t mi = 0; mi < sizeof(kModes); ++mi) {
+        const uint8_t m = kModes[mi];
         const TrackResult r = readTrack(iwm, drive, payload, 0, false, m, now);
         if (gDump)
             std::printf("   $%02X | %7zu | %6d | %6d | %d/12\n",
@@ -390,7 +396,23 @@ int main()
         if (score > bestScore) {
             bestScore = score; bestSectors = r.sectors; bestMode = m;
         }
-        if (r.sectors == 12 && r.mismatched == 0) ++workingModes;
+        if (r.sectors == 12 && r.mismatched == 0) {
+            ++workingModes;
+            workingMask |= 1u << mi;
+        }
+    }
+    // WHICH modes, not how many (bug hunt 2026-11-01 round 2, test quality
+    // item 6): counting let a permuted window table leave the wrong modes
+    // working with the test green. The answer is {$0A, $1A}, for the reason
+    // given above the sweep.
+    constexpr unsigned kExpectedMask = (1u << 1) | (1u << 3);   // $0A, $1A
+    if (workingModes != 0 && workingMask != kExpectedMask) {
+        std::printf("FAIL: the IWM modes that read a full track are not "
+                    "exactly {$0A, $1A}:");
+        for (std::size_t mi = 0; mi < sizeof(kModes); ++mi)
+            if (workingMask & (1u << mi)) std::printf(" $%02X", kModes[mi]);
+        std::printf(" — suspect the window table (IWMDevice::windowSize)\n");
+        ++failures;
     }
     if (workingModes == 0) {
         std::printf("FAIL: no IWM window setting reads a full track. Best was "

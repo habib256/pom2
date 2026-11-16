@@ -23,6 +23,33 @@ inventory in `/status` was ruled out of scope by the 2026-10-28 triage
 (`block_storage` / `floppy_storage` report persistence; `disks` stays the
 Disk II's).
 
+## 2026-11-16 — Four tests that could not fail now can
+
+Item 6 of the 2026-11-01 round-2 test audit: assertions loose enough that
+the defect they guard would pass. Each fix was checked by re-introducing the
+defect it is about.
+
+- **`disk_2mg_writeback`** was a tautology — its only write was one sync
+  byte, which decodes to the sectors the file already held, so a save that
+  never touched the payload passed, and it is the only test of the 2IMG
+  write path. It now exchanges two data fields on track 17 (a data field
+  carries no sector number, so the track still decodes whole) and requires
+  exactly those two sectors swapped at the header's offset. Control: drop the
+  decoded sectors in `commitWriteBack` → "0 sector(s) changed".
+- **`display_golden_hash`** never checked that every pinned path ran; 185
+  goldens could decay to one. It now fails on a golden that produced no frame
+  (`NOT RUN`) or a duplicate name.
+- **`storage_lock_budget`** B and C timed an eject and a mount without
+  checking either happened — a no-op measures 0 µs. Both now require the
+  medium gone / the 3.5" disk in unit 0, and the dirty blocks in the file.
+- **`sony35_iwm_read_path`** counted the IWM modes that read a full track
+  instead of naming them, so a permuted window table stayed green (swapping
+  the 14- and 28-tick rows leaves one mode working). It now requires
+  {`$0A`, `$1A`}. Its comment said "only `$0A` works": that was true while
+  POM2's `$1A` row was the 18-tick transcription slip, and the count never
+  noticed when the fix to MAME's 16 made `$1A` read as well — a 16-tick
+  window still resyncs inside GCR's longest run of two zeros.
+
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
 ## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner
