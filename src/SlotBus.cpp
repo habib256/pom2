@@ -33,6 +33,7 @@ void SlotPeripheral::attachToBus(SlotBus* bus, int slot)
     // for re-asserting after attach if the card immediately requests
     // it via assertIrq().
     irqAsserted_ = false;
+    nmiAsserted_ = false;
 }
 
 void SlotPeripheral::detachFromBus()
@@ -43,7 +44,9 @@ void SlotPeripheral::detachFromBus()
     // its own onUnplug() — easy to forget, and the cause of the legacy
     // "stuck IRQ across profile switch" bug.
     if (irqAsserted_ && bus_) bus_->forwardSlotIrq(busSlot_, false);
+    if (nmiAsserted_ && bus_) bus_->forwardSlotNmi(busSlot_, false, false);
     irqAsserted_ = false;
+    nmiAsserted_ = false;
     bus_ = nullptr;
     busSlot_ = -1;
 }
@@ -84,6 +87,20 @@ void SlotPeripheral::assertIrq(bool asserted)
     if (asserted == irqAsserted_) return;
     irqAsserted_ = asserted;
     if (bus_) bus_->forwardSlotIrq(busSlot_, asserted);
+}
+
+void SlotPeripheral::assertNmi(bool asserted)
+{
+    if (asserted == nmiAsserted_) return;
+    nmiAsserted_ = asserted;
+    if (bus_) bus_->forwardSlotNmi(busSlot_, asserted, true);
+}
+
+void SlotPeripheral::restoreNmiLevel(bool asserted)
+{
+    if (asserted == nmiAsserted_) return;
+    nmiAsserted_ = asserted;
+    if (bus_) bus_->forwardSlotNmi(busSlot_, asserted, false);
 }
 
 // ─── SlotBus ────────────────────────────────────────────────────────────

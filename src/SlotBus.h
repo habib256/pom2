@@ -76,6 +76,10 @@ public:
     /// or empty function to disconnect.
     using IrqRouter = std::function<void(int slot, bool asserted)>;
 
+    /// NMI routing sink: called once per FALLING EDGE of the wire-OR'd /NMI
+    /// line (pin 29). Memory installs a closure calling `M6502::setNMI()`.
+    using NmiRouter = std::function<void()>;
+
     /// Open-bus source for unclaimed reads. Memory installs a closure
     /// returning `Memory::floatingBus()`; tests may leave it unset, in
     /// which case `openBus()` answers $FF (the pre-2026-09-07 constant).
@@ -295,6 +299,25 @@ public:
         if (irqRouter) irqRouter(slot, asserted);
     }
 
+    /// Install (or replace) the NMI router; an empty function disconnects.
+    void setNmiRouter(NmiRouter sink) { nmiRouter = std::move(sink); }
+
+    /// Called by `SlotPeripheral::assertNmi` / `restoreNmiLevel`. Keeps the
+    /// wire-OR of the slots pulling /NMI and fires the router on the line's
+    /// falling edge only — when the first card pulls it, and `edge` says the
+    /// pull is an event, not a restored level.
+    void forwardSlotNmi(int slot, bool asserted, bool edge) {
+        if (slot < 0 || slot >= kSlotCount) return;
+        const bool wasLow = nmiMask_ != 0;
+        const auto bit = static_cast<uint8_t>(1u << slot);
+        nmiMask_ = asserted ? static_cast<uint8_t>(nmiMask_ | bit)
+                            : static_cast<uint8_t>(nmiMask_ & ~bit);
+        if (edge && !wasLow && nmiMask_ != 0 && nmiRouter) nmiRouter();
+    }
+
+    /// The /NMI line is low (some slot is pulling it).
+    bool nmiLineLow() const { return nmiMask_ != 0; }
+
     /// Apple II RESET line — calls onReset() on every plugged card.
     /// A cold boot passes true to dispatch onPowerCycle() instead.
     /// A power cycle clears activeExpansionSlot. RESET clears it only when
@@ -360,6 +383,9 @@ private:
     /// IRQ routing sink (see `IrqRouter`). Optional — left empty in
     /// tests that don't care, or before Memory wires the CPU.
     IrqRouter irqRouter;
+    /// NMI routing sink (see `NmiRouter`) and the slots pulling /NMI.
+    NmiRouter nmiRouter;
+    uint8_t   nmiMask_ = 0;
     /// Open-bus source (see `FloatingBusFn`). Optional.
     FloatingBusFn floatingBus_;
     pom2::Z80Observer* z80Observer_ = nullptr;

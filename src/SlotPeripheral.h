@@ -373,6 +373,10 @@ public:
     /// the bus — useful for debug panels and tests.
     bool slotIrqAsserted() const { return irqAsserted_; }
 
+    /// Whether this slot is pulling the bus /NMI line (pin 29) low. Mirrors
+    /// what `assertNmi()` last published.
+    bool slotNmiAsserted() const { return nmiAsserted_; }
+
 protected:
     /// Assert (true) or release (false) this slot's contribution to the
     /// CPU's wire-OR'd IRQ line. Idempotent — repeated true→true or
@@ -382,6 +386,21 @@ protected:
     /// auto-release any still-asserted bit before letting the card go,
     /// so cards rarely need to clear in `onUnplug()` themselves.
     void assertIrq(bool asserted);
+
+    /// Pull (true) or release (false) the bus /NMI line, pin 29. Every slot
+    /// shares it, wire-OR'd like /IRQ, but the 6502 takes an NMI on the
+    /// FALLING EDGE of the line, not on its level: SlotBus raises one NMI when
+    /// the first card pulls it low, none while it stays low (a second card
+    /// joining, or this one re-asserting), and another only after every card
+    /// has let go. Idempotent; auto-released on unplug, as `assertIrq`.
+    /// [B] Apple II Reference Manual (1979), Table 33 — pin 29 /NMI;
+    /// [B] MCS6500 hardware manual — NMI is edge-sensitive.
+    void assertNmi(bool asserted);
+
+    /// Set this slot's /NMI contribution from a RESTORED state (a snapshot or
+    /// session load) with no edge: the restored machine had already seen
+    /// that edge. Releasing through it is the same as `assertNmi(false)`.
+    void restoreNmiLevel(bool asserted);
 
     /// What this card should return from a decoded address it does NOT
     /// drive — MAME's `get_open_bus()` tail, which several a2bus cards end
@@ -427,6 +446,7 @@ private:
     SlotBus* bus_       = nullptr;
     int      busSlot_   = -1;
     bool     irqAsserted_ = false;
+    bool     nmiAsserted_ = false;
     pom2::CardTraceSink* cardTrace_ = nullptr;
 };
 

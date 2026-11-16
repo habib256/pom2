@@ -721,7 +721,8 @@ void testRgbCard(const std::string& sourceDir)
 
 // attachEzColor (pom2games, ROGUE on the E-Z Color): any slot of a ][+ or a
 // //e, debug reads that leave the chip alone, the frame interrupt on the
-// slot IRQ, the card's own monitor, and the access window's drop counter.
+// slot IRQ (or wherever jumper JP2 takes it), the A0-only decode, the
+// card's own monitor, and the access window's drop counter.
 void testEzColor(const std::string& sourceDir)
 {
     pom2::Core plus;
@@ -730,13 +731,13 @@ void testEzColor(const std::string& sourceDir)
     assert(plus.renderEzColorFrame().pixels == nullptr);
     std::uint8_t probe = 0x55;
     assert(plus.ezColorVram(&probe, 1) == 0 && probe == 0x55);
+    assert(!plus.setEzColorInterrupt(pom2::EzColorInterrupt::Nmi));   // no card
     assert(plus.attachMockingboard(2));
     assert(!plus.attachEzColor(2));                  // occupied
     assert(!plus.attachEzColor(0) && !plus.attachEzColor(8));
     assert(plus.attachEzColor(7, false));            // the window off: the host
     assert(plus.ezColorAttached());                  // writes with no time between
     assert(!plus.attachEzColor(5));                  // one card
-    assert(plus.read(0xC0F2) == 0xFF);               // only $C0n0 / $C0n1 answer
 
     const auto reg = [&](int r, std::uint8_t v) { plus.write(0xC0F1, v); plus.write(0xC0F1, static_cast<std::uint8_t>(0x80 | r)); };
     reg(1, 0x80);                                    // 16 KB, display off
@@ -749,6 +750,11 @@ void testEzColor(const std::string& sourceDir)
     pom2::EzColorState s = plus.ezColorState();
     assert(s.registers[7] == 0x04 && s.registers[1] == 0x80 && s.address == 0x0103);
     assert(!s.siliconStrict && !s.irqAsserted);
+    // A0 is the card's only address line (BYTE Aug. 1982, Fig. 4): every even
+    // $C0nX is the data port, every odd one the register port.
+    plus.write(0xC0FE, 0x44);
+    assert(plus.ezColorState().address == 0x0104);
+    assert(plus.ezColorVram(vram, 1, 0x0103) == 1 && vram[0] == 0x44);
 
     reg(1, 0xE0);                                    // display on + IE
     plus.run(40000);                                 // past a frame
@@ -758,6 +764,11 @@ void testEzColor(const std::string& sourceDir)
     assert(plus.read(0xC0F1) & 0x80);                // the port read returns F…
     s = plus.ezColorState();
     assert(!(s.status & 0x80) && !s.irqAsserted);    // …and clears it
+    // Jumper JP2: IRQ by default, NMI as BYTE published it, or open.
+    assert(s.interrupt == pom2::EzColorInterrupt::Irq);
+    assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Open));
+    assert(plus.ezColorState().interrupt == pom2::EzColorInterrupt::Open);
+    assert(plus.setEzColorInterrupt(pom2::EzColorInterrupt::Irq));
 
     const pom2::FramebufferView v = plus.renderEzColorFrame();
     assert(v.pixels && v.width == 288 && v.height == 216);

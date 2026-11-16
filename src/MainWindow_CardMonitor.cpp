@@ -35,6 +35,7 @@
 #include "CardVideoSource.h"
 #include "CpuClock.h"
 #include "EmulationController.h"
+#include "EzColorCard.h"
 #include "Logger.h"
 #include "Pom2GL.h"
 #include "Settings.h"
@@ -71,6 +72,39 @@ void MainWindow::clearCardVideoSources()
     display->setCardVideoSource(nullptr);
     cardPanelSource_ = nullptr;
     cardPanelKey_.clear();
+}
+
+// The E-Z Color's jumper JP2 (EzColorCard.h): where the VDP's /INT goes.
+// Moved live, as a jumper moved with the power on; saved for the next plug.
+void MainWindow::renderEzColorJumper()
+{
+    EzColorCard* ez = nullptr;
+    {
+        auto st = controller->lockState();
+        for (int s = 1; s <= 7 && !ez; ++s)
+            ez = dynamic_cast<EzColorCard*>(st.memory().slotBus().peripheral(s));
+    }
+    if (!ez) return;
+    static const char* kItems[] = { "IRQ (pin 30, POM2's default)",
+                                    "NMI (pin 29, BYTE's schematic)",
+                                    "Open (no interrupt)" };
+    int cur = static_cast<int>(ez->interruptWiring());
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::Combo("E-Z Color /INT (JP2)", &cur, kItems, 3)) {
+        static const char* kKeys[] = { "irq", "nmi", "open" };
+        settings->setString("ezcolor_interrupt", kKeys[cur]);
+        if (!settingsReadOnly()) settings->save();
+        auto st = controller->lockState();
+        for (int s = 1; s <= 7; ++s)
+            if (auto* c = dynamic_cast<EzColorCard*>(st.memory().slotBus().peripheral(s)))
+                c->setInterruptWiring(static_cast<EzColorCard::InterruptWiring>(cur));
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Where jumper JP2 takes the VDP's /INT. BYTE's schematic\n"
+                          "(August 1982, Fig. 4) wires it to /NMI; POM2 defaults to\n"
+                          "/IRQ, which software written for POM2's card expects.\n"
+                          "An NMI cannot be masked by SEI: a handler that reads\n"
+                          "$C0n1 can tear a register pair the program is writing.");
 }
 
 void MainWindow::renderCardMonitorPanel()
@@ -121,6 +155,7 @@ void MainWindow::renderCardMonitorPanel()
         auto st = controller->lockState();
         display->setCardMonitor(static_cast<Apple2Display::CardMonitor>(sel));
     }
+    renderEzColorJumper();
 
     // Paint under the lock — paintPicture reads the card's VRAM and CRTC —
     // and upload after.

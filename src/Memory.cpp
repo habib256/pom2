@@ -135,11 +135,10 @@ void Memory::setCpu(M6502* c)
     // An empty function on `c == nullptr` disconnects stray assertIrq()
     // calls from cards that haven't been unplugged yet.
     if (c) {
-        slots.setIrqRouter([c](int slot, bool asserted) {
-            c->setIrqLine(slot, asserted);
-        });
+        slots.setIrqRouter([c](int slot, bool asserted) { c->setIrqLine(slot, asserted); });
+        slots.setNmiRouter([c] { c->setNMI(); });   // /NMI: on the line's falling edge only
     } else {
-        slots.setIrqRouter({});
+        slots.setIrqRouter({}); slots.setNmiRouter({});
     }
 }
 

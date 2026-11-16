@@ -17,10 +17,24 @@
 // EzColorCard — "E-Z Color Graphics Interface", Steve Ciarcia, BYTE, August
 // 1982: a TI TMS9918A video display processor with 16 KB of VRAM on a slot
 // card, 10.738635 MHz crystal, its own video output. Catalog key `ezcolor`.
-// MAME `a2bus/ezcgi.cpp`: $C0n0 is the VDP's data port (VRAM read / write),
-// $C0n1 its register port (status read / address and register writes),
-// every other $C0nX reads $FF; the VDP's /INT is the slot IRQ; a bus reset
-// resets the VDP. No ROM.
+// [B] BYTE Aug. 1982 Fig. 4 (p. 65): the card decodes /DS + R/W + A0 only,
+// so every even $C0nX is the VDP's data port (VRAM read / write) and every
+// odd one its register port (status read / address and register writes) —
+// MAME's ezcgi reads $FF above $C0n1, which the schematic contradicts
+// (EzColorCard.cpp). The bus /RESET reaches the VDP through jumper JP1.
+// No ROM.
+//
+// /INT and jumper JP2. [B] Fig. 4 runs the VDP's /INT through JP2 to bus
+// pin 29, /NMI; the text calls INT and Reset/Sync "jumper connections ...
+// available for various optional enhancements", so a card without JP2 has
+// no interrupt at all. POM2 models the jumper (`setInterruptWiring`,
+// setting `ezcolor_interrupt`): `Nmi` is the published wiring, `Open` the
+// card with JP2 left off, and `Irq` — the DEFAULT — a card rewired to pin
+// 30, which is how [D] MAME ezcgi.cpp:123 @ mame0287 wires it and how the
+// software written for POM2's card (pom2games) takes the frame interrupt
+// (CHANGELOG 2026-11-03, the ][+ frame IRQ report). The default is a
+// compatibility choice, not the schematic's (CARDS-016). The NMI is the
+// bus's /NMI line (SlotPeripheral::assertNmi): edge-triggered, wire-OR'd.
 //
 // The VDP is POM1's TMS9918 (TMS9918.h, imported as-is): sprites with the
 // 4/5th-sprite and collision flags, the four modes, the access window, the
@@ -63,6 +77,7 @@
 #include "TMS9918.h"
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 class M6502;
@@ -73,6 +88,15 @@ public:
     EzColorCard();
 
     void setCpu(M6502* cpu) { cpu_ = cpu; }
+
+    /// Where jumper JP2 takes the VDP's /INT (header). Changing it moves the
+    /// wire with the power on: the old line is released, and the new one is
+    /// pulled at once if /INT is low (an NMI then fires on that edge).
+    enum class InterruptWiring : uint8_t { Irq, Nmi, Open };
+    void setInterruptWiring(InterruptWiring w);
+    InterruptWiring interruptWiring() const { return wiring_; }
+    /// The settings spelling: "irq" | "nmi" | "open"; anything else is Irq.
+    static InterruptWiring parseInterruptWiring(std::string_view s);
     TMS9918&       vdp()       { return vdp_; }
     const TMS9918& vdp() const { return vdp_; }
 
@@ -101,11 +125,14 @@ public:
 
 private:
     int inFlight() const;
-    void updateIrq() { assertIrq(vdp_.irqAsserted()); }
+    /// Publish /INT on the line JP2 selects. `restoring` = from a snapshot:
+    /// an NMI level is restored with no edge (the saved machine took it).
+    void updateIrq(bool restoring = false);
 
     TMS9918 vdp_;
     M6502* cpu_ = nullptr;
     pom2::SlotBusClock clk_;   // CPU cycles → the VDP's nominal-NTSC cycles
+    InterruptWiring wiring_ = InterruptWiring::Irq;
 };
 
 #endif // POM2_EZCOLOR_CARD_H

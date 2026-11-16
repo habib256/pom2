@@ -346,11 +346,28 @@ public:
     static constexpr int kHBlankLenText = 404;     // VDP ticks
     static constexpr int kHBlankLenGfx  = 312;     // VDP ticks
 
-    // POM1's CpuClock.h: a 59.94 Hz NTSC frame in 1.022727 MHz CPU cycles,
-    // (1001 * 1022727 + 30000) / 60000 = 17062. The VDP runs on its own
-    // 10.738635 MHz crystal, so this holds whatever the Apple's video is.
-    static constexpr int kNtscCyclesPerFrame = (1001 * 1022727 + 30000) / 60000;
-    static constexpr int kCyclesPerFrame = kNtscCyclesPerFrame;
+    // One VDP frame in nominal CPU cycles (1.022727 MHz) — the TMS9918A's OWN
+    // frame, not the 59.94 Hz NTSC broadcast field (262.5 lines, 17062 cycles)
+    // this used to be. The VDP draws 262 non-interlaced lines of 342 pixel
+    // clocks at 10.738635 MHz / 2 = 59.922 Hz. The 6502's nominal clock is
+    // 14.31818 MHz / 14 and the VDP pixel clock 14.31818 MHz x 3/8, so one
+    // pixel clock is 4/21 CPU cycle: 342 x 262 x 4 / 21 = 17 067.43 cycles —
+    // the same figure as kVdpTicksPerLine (1368) x 262 / kVdpTicksPerCpuCycle
+    // (21), which the slot-table and beam model already used, so with 17062
+    // the beam wrapped ~5 cycles before its last line ended. Rounded to
+    // 17 067: 0.43 cycle a frame (0.0025 %) against the 0.03 % of 17 062.
+    // Ported from POM1 989d019b (2026-11-15).
+    // [B] TMS9918A data manual (TI) — 342 clocks x 262 lines, on the
+    //     10.738635 MHz crystal the chip requires, so on ANY card carrying it.
+    // [B] Both cards carry their own crystal, asynchronous to the computer's:
+    //     P-LAB Apple-1 Graphic Card doc rev 0.4 § 5 (POM1's card) and the
+    //     E-Z Color's X1, 10.7386 MHz (BYTE, August 1982, Fig. 4 p. 65).
+    // [F] The two crystals are independent, so the real phase between CPU and
+    //     beam drifts by their tolerance; this fixes the NOMINAL ratio only.
+    //     Settled by: a capture of /INT against PHI0 on a real card.
+    static constexpr int kVdpClocksPerLine = 342;
+    static constexpr int kCyclesPerFrame = (kVdpClocksPerLine * 262 * 4) / 21;
+    static_assert(kCyclesPerFrame == 17067, "342 x 262 VDP clocks at 4/21 CPU cycle each");
     // Total NTSC scanlines, VBlank included. Named because it appeared as a
     // bare 262 in three places — beamGeometry() and two hand-rolled copies of
     // the cycle→line division that pom2::tms::rawLineAt now owns.

@@ -295,7 +295,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | PCPI Applicard (6 MHz Z80, own 64 KB, 2 KB boot ROM `roms/applicard_v9.bin`; MAME `a2applicard` port) — catalog `applicard` | `ApplicardCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
 | Premium SoftCard //e — the AUX-slot card (aux 64 KB + 80 col + Z80 on that RAM), seated on SlotBus **slot 0**; setting `premium_softcard`, Machine menu; `$C07E` register, A15 flip and status hooks in `Memory::AuxSlotPort` | `PremiumSoftCard.h/.cpp` | [§ Z80 cards with their own RAM](DEV.md#z80-cards-with-their-own-ram-applicard-premium-softcard) |
 | CCS 7710 serial — a 6850 ACIA in any slot (the SoftCard II CP/M's "type 3" card; slot 1 = its printer, spooled to the ImageWriter); CCS's 7710-03 PROMs execute when in roms/ (LLE reference), else POM2's own page, compared against them by `ccs7710_card`; switch `ccs7710_firmware` — catalog `ccs7710` | `Ccs7710Card.h/.cpp` | [§ CCS 7710](DEV.md#ccs-7710-ccs7710card) |
-| E-Z Color Graphics Interface (BYTE 1982) — a TMS9918A VDP, 16 KB VRAM, its own monitor (Display ▸ Card Monitor); `$C0n0` data, `$C0n1` register, /INT = slot IRQ; the VDP's access window ENFORCED (silicon-strict, drops counted; 8 cycles always safe) — catalog `ezcolor`, SDK `attachEzColor`. The VDP is POM1's (`TMS9918.*`, imported, namespace `pom2::tms`) | `EzColorCard.h/.cpp`, `TMS9918.h/.cpp` | [§ E-Z Color](DEV.md#e-z-color-graphics-interface-ezcolorcard) |
+| E-Z Color Graphics Interface (BYTE 1982) — a TMS9918A VDP, 16 KB VRAM, its own monitor (Display ▸ Card Monitor); every even `$C0nX` data, odd register (A0 only, BYTE Fig. 4); /INT via jumper JP2 (`ezcolor_interrupt`): slot IRQ by default, /NMI as published (the bus /NMI line, edge-triggered, `SlotPeripheral::assertNmi`), or open; the VDP's access window ENFORCED (silicon-strict, drops counted; 8 cycles always safe) — catalog `ezcolor`, SDK `attachEzColor`. The VDP is POM1's (`TMS9918.*`, imported, namespace `pom2::tms`) | `EzColorCard.h/.cpp`, `TMS9918.h/.cpp` | [§ E-Z Color](DEV.md#e-z-color-graphics-interface-ezcolorcard) |
 | DAN ][ Controller (8255 + ATmega serving two SD images as ProDOS volumes; izapple2 `dan2.go`) — its EPROM `roms/dan2_eprom.bin` when present (LLE reference), else POM2's page; switch `dan2_firmware` — catalog `dan2` | `Dan2Card.h/.cpp` | [§ DAN ][](DEV.md#dan--controller-dan2card) |
 | Saturn 128K — eight language cards in any slot, over the bus INH line (`Memory::LcInhibitor`) — catalog `saturn` | `SaturnCard.h/.cpp` | [§ Saturn 128K](DEV.md#saturn-128k-saturncard) |
 | Videx UltraTerm (80-160 col, own video switch, ROM-gated; MAME `a2ultraterm`) — catalog `ultraterm` | `VidexUltratermCard.h/.cpp` | [§ Videx UltraTerm](DEV.md#videx-ultraterm-videxultratermcard) |
@@ -332,7 +332,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | S.A.M. 8-bit DAC (speech) — catalog `sam` | `SamCard.h/.cpp`, `Dac8Audio.h/.cpp` | [§ S.A.M.](DEV.md#sam-8-bit-dac-samcard-dac8audio) |
 | Porte Parole (Ediciel / Matra & Hachette, French text-to-speech) — an MEA8000 at `$C0n0` data/status, `$C0n1` command, slot 4; MAME's synthesis corrected by the data sheet and Philips TP101 (clock-scaled frequencies, pitch x1.024, first frame fades IN) — catalog `porteparole` | `PorteParoleCard.h/.cpp`, `Mea8000.h/.cpp` | [§ Porte Parole](DEV.md#porte-parole-porteparolecard-mea8000) |
 | Character-generator dump conventions (incl. Videx LOWER CASE CHIP) | `CharRomDump.h/.cpp` | [§ Character generators](DEV.md#character-generators-and-the-videx-lower-case-chip) |
-| Slot bus + wire-OR IRQ | `SlotBus.h`, `SlotPeripheral.h` | [§ Slot bus](DEV.md#slot-bus--irq-aggregation) |
+| Slot bus + wire-OR IRQ + edge-triggered /NMI (pin 29) | `SlotBus.h`, `SlotPeripheral.h` | [§ Slot bus](DEV.md#slot-bus--irq-aggregation) |
 | Hand-written slot ROMs — labels, bounded regions, resolved branches | `SlotRomAsm.h` | [§ Hand-written slot ROMs](DEV.md#hand-written-slot-roms-slotromasmh) |
 | DiskImage / DiskIICard / Snapshot | `DiskImage.*`, `DiskIICard.*`, `SnapshotIO.*` | [§ Storage](DEV.md#storage) |
 | Atomic **+ durable** file commit — every write-back goes through it, PDF exports included; `tempSiblingPath` makes the scratch name unique per process *and* per call, so two POM2s on one `$HOME` cannot truncate each other | `AtomicFileReplace.h` | [§ Write-back commit](DEV.md#how-a-media-write-back-commits-atomicfilereplaceh) |
@@ -607,7 +607,7 @@ and a cache hit opens no socket, so a second run works offline.
 
 ## Version string locations
 
-Current release: **v1.2.0**. **Single source of truth = `CMakeLists.txt`
+Current release: **v1.2.1**. **Single source of truth = `CMakeLists.txt`
 `project(pom2_imgui VERSION x.y.z ...)`.** A `configure_file` expands it into
 `build/generated/Version.h` (from `src/Version.h.in`); all C++ pulls the
 version from there (`POM2_VERSION` / `POM2_VERSION_STRING` macros + `pom2::

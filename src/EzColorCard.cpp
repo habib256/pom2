@@ -29,7 +29,7 @@ constexpr char kMagic[4] = { 'E', 'Z', 'C', '1' };
 
 EzColorCard::EzColorCard()
 {
-    vdp_.setIrqStrapped(true);   // the VDP's /INT drives the slot IRQ
+    vdp_.setIrqStrapped(true);   // /INT leaves the chip; JP2 decides where (EzColorCard.h)
     vdp_.setSiliconStrictMode(true);   // the access window, as the chip (header)
     vdp_.reset();
     clk_.setBusClock(static_cast<double>(POM2_CPU_CLOCK_HZ));   // the VDP's tables' unit
@@ -42,13 +42,21 @@ int EzColorCard::inFlight() const
     return c > 0 ? static_cast<int>(clk_.peekBusTicks(static_cast<uint64_t>(c))) : 0;
 }
 
-// MAME ezcgi.cpp read_c0nx: 0 = vram_read, 1 = register_read, else $FF.
+// The whole $C0n0-$C0nF answers, A0 choosing the port: even = data (VRAM),
+// odd = register (status / address and register writes).
+// [B] Ciarcia, "E-Z Color Graphics Interface", BYTE August 1982, Fig. 4
+//     p. 65 and text p. 66: /DS (bus pin 41) and R/W (18) form CSR/CSW
+//     through the 74LS00, A0 (pin 2) goes straight to MODE — "one address
+//     line (typically A0)". No other address line reaches the card.
+// [D] MAME a2bus/ezcgi.cpp:234-260 @ mame0287 decodes offsets 0 and 1 only
+//     and reads $FF elsewhere; overruled by the schematic above (POM2 did
+//     the same until 2026-11-16).
 uint8_t EzColorCard::deviceSelectRead(uint8_t low4)
 {
-    uint8_t v = 0xFF;
-    if (low4 == 0) {
+    uint8_t v;
+    if ((low4 & 1) == 0) {
         v = vdp_.readData();
-    } else if (low4 == 1) {
+    } else {
         vdp_.syncSpriteScanToBeam(inFlight());
         v = vdp_.readControl();   // clears the frame flag: /INT drops
     }
@@ -56,15 +64,36 @@ uint8_t EzColorCard::deviceSelectRead(uint8_t low4)
     return v;
 }
 
-// write_c0nx: 0 = vram_write, 1 = register_write.
 void EzColorCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 {
-    if (low4 > 1) return;
     if (cpu_) vdp_.setLastAccessPc(cpu_->getProgramCounter());   // the drop histogram's site
     vdp_.renderBeamCatchUp(inFlight());
-    if (low4 == 0) vdp_.writeData(v);
-    else           vdp_.writeControl(v);
+    if ((low4 & 1) == 0) vdp_.writeData(v);
+    else                 vdp_.writeControl(v);
     updateIrq();
+}
+
+void EzColorCard::updateIrq(bool restoring)
+{
+    const bool low = vdp_.irqAsserted();
+    assertIrq(wiring_ == InterruptWiring::Irq && low);
+    const bool nmi = wiring_ == InterruptWiring::Nmi && low;
+    if (restoring) restoreNmiLevel(nmi);
+    else           assertNmi(nmi);
+}
+
+void EzColorCard::setInterruptWiring(InterruptWiring w)
+{
+    if (w == wiring_) return;
+    wiring_ = w;
+    updateIrq();
+}
+
+EzColorCard::InterruptWiring EzColorCard::parseInterruptWiring(std::string_view s)
+{
+    if (s == "nmi")  return InterruptWiring::Nmi;
+    if (s == "open") return InterruptWiring::Open;
+    return InterruptWiring::Irq;
 }
 
 void EzColorCard::advanceCycles(int cycles)
@@ -105,5 +134,5 @@ void EzColorCard::appendSnapshotState(std::vector<uint8_t>& out) const
 void EzColorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
 {
     if (!data || len < 4 + TMS9918::kStateBytes || std::memcmp(data, kMagic, 4) != 0) return;
-    if (vdp_.loadState(data + 4, len - 4)) updateIrq();
+    if (vdp_.loadState(data + 4, len - 4)) updateIrq(/*restoring=*/true);
 }

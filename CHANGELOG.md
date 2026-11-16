@@ -10,6 +10,73 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
+
+## 2026-11-16 — The generic ARM64 AppImage gets POM1's glibc floor
+
+The x86_64 AppImage was already built like POM1's, in the same pinned bionic
+image (glibc 2.27, checked by the job). The generic `-aarch64` one was not:
+it compiled on the runner's own ubuntu-24.04-arm userland, stamped
+GLIBC_2.39 and would not start on Debian 12, Ubuntu 22.04 or any older ARM
+distro — and nothing checked the floor. It now builds inside the same pinned
+`debian:bookworm` image as the `raspberry` package (glibc **2.36**, the
+floor of POM1's aarch64 AppImage), still on desktop OpenGL, and the job
+fails if the binary asks for more than GLIBC_2.36
+(`packaging/linux/build_native_arm64.sh`, `POM2_INSTALL_DEPS=1`).
+
+## 2026-11-16 — E-Z Color: the VDP's own frame, and the decode from the schematic
+
+Ported from POM1 `989d019b`, which found it on the P-LAB Graphic Card. The
+TMS9918A draws 262 non-interlaced lines of 342 clocks on its 10.738635 MHz
+crystal: 59.922 Hz, 342 × 262 × 4/21 = 17 067.43 nominal CPU cycles.
+`TMS9918::kCyclesPerFrame` was 17 062, the 59.94 Hz NTSC broadcast field
+(262.5 lines), which the chip does not produce. The per-line model already
+used 1368 VDP ticks at 21 per CPU cycle — 17 067 a frame — so the beam
+wrapped ~5 cycles before its last line ended, and the frame interrupt came
+0.03 % too often. Now 17 067 (0.0025 % off the exact ratio); the phase
+between the card's crystal and the Apple's stays an [F]. Pinned by a
+`static_assert` in the header and in `ezcolor_card`.
+
+The rest of that POM1 commit does not apply as such: its `$CC00-$CFFF`
+decode is the P-LAB card's, and the NMOS dummy bus cycles it added were
+already in POM2's `M6502` (`nmosIndexDummyRead`, `rmwSecondBusCycle`). Its
+comment on the indexed-store trap is carried into `Tms9918Diagnostics.h`.
+POM2's `TMS9918.cpp` is otherwise ahead of POM1's (`resetPin`, the eight-bit
+`~R3`, graded citations): those are for POM1 to pick up.
+
+**The E-Z Color's decode, read off its schematic.** POM1's decode question
+sent this one back to the source: [B] BYTE, August 1982, Fig. 4 p. 65. The
+card forms CSR/CSW from /DS and R/W through one 74LS00 and wires **A0 alone**
+to the VDP's MODE pin — the text says "one address line (typically A0)". So
+every even `$C0nX` is the data port and every odd one the register port.
+POM2 followed [D] MAME `ezcgi.cpp:234-260` @ mame0287, which reads `$FF`
+above `$C0n1`; it now follows the schematic. A program that only touches
+`$C0n0/$C0n1` sees no change. Pinned in `ezcolor_card` (writes and reads
+through four mirrors).
+
+**The bus gets its /NMI line, and the card its jumper JP2 (CARDS-016).**
+The same figure runs the VDP's /INT through jumper JP2 to bus pin 29,
+**/NMI**, where POM2 (and MAME) used /IRQ — and POM2's slot bus had no NMI
+at all: the 6502 core handled one, nothing could raise it. Now:
+
+- **`/NMI` on the slot bus**: a wire-OR of the slots
+  (`SlotPeripheral::assertNmi`) that reaches `M6502::setNMI` on the line's
+  **falling edge** only — one NMI while a card holds it low, none for a
+  second card joining. A snapshot restores the level with no edge
+  (`restoreNmiLevel`), so a rewind does not run the guest's handler twice.
+- **JP2 on the E-Z Color**: `irq` (default, unchanged behaviour), `nmi`
+  (the published wiring) or `open` (no interrupt). Setting
+  `ezcolor_interrupt`, a combo in the Card Monitor panel (moved live), SDK
+  `setEzColorInterrupt` / `EzColorState::interrupt`. The default stays IRQ
+  because pom2games' code takes the frame interrupt that way.
+- Pinned by `ezcolor_card` § 7: NMI not IRQ, no second edge while /INT
+  stays low, the wire-OR across two cards, `open`, a live jumper move, the
+  snapshot level, unplug, and an NMI through the real CPU taken under SEI.
+
+`docs/SDK.md` still said "every other `$C0nX` reads `$FF`" and "17 062
+cycles (59.94 Hz)"; both corrected, and `pom2_core_api`, which pinned the
+`$FF`, now writes through `$C0FE` and checks JP2 through the SDK.
+
 ## 2026-11-13 — Documentation checked against the code
 
 Eight read-only reviewers swept CLAUDE.md, README, USER-GUIDE, all of DEV.md,

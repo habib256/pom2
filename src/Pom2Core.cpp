@@ -876,6 +876,11 @@ bool Core::rgbCardAttached() const
     return impl_->rgbCard != nullptr;
 }
 
+static_assert(static_cast<int>(pom2::EzColorInterrupt::Irq)  == static_cast<int>(EzColorCard::InterruptWiring::Irq)
+           && static_cast<int>(pom2::EzColorInterrupt::Nmi)  == static_cast<int>(EzColorCard::InterruptWiring::Nmi)
+           && static_cast<int>(pom2::EzColorInterrupt::Open) == static_cast<int>(EzColorCard::InterruptWiring::Open),
+              "the SDK's EzColorInterrupt mirrors EzColorCard::InterruptWiring");
+
 bool Core::attachEzColor(int slot, bool siliconStrict)
 {
     if (impl_->iicClass()) {
@@ -903,6 +908,17 @@ bool Core::attachEzColor(int slot, bool siliconStrict)
     return true;
 }
 
+bool Core::setEzColorInterrupt(EzColorInterrupt wiring)
+{
+    if (!impl_->ezColor) {
+        impl_->error = "No E-Z Color card is attached";
+        return false;
+    }
+    impl_->ezColor->setInterruptWiring(static_cast<EzColorCard::InterruptWiring>(wiring));
+    impl_->error.clear();
+    return true;
+}
+
 bool Core::ezColorAttached() const
 {
     return impl_->ezColor != nullptr;
@@ -918,6 +934,7 @@ EzColorState Core::ezColorState() const
     s.status = vdp.statusRegister();
     s.address = vdp.vramAddress();
     s.irqAsserted = vdp.irqAsserted();
+    s.interrupt = static_cast<EzColorInterrupt>(card->interruptWiring());
     s.siliconStrict = vdp.isSiliconStrictMode();
     s.droppedAccesses = vdp.droppedWriteCount();
     return s;

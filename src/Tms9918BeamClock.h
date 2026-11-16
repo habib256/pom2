@@ -28,7 +28,7 @@ namespace pom2::tms {
 // from its own constants (TMS9918 supplies kCyclesPerFrame, 262 lines, 1368
 // ticks/line, 21 ticks/cycle, the active-left tick and 4 ticks/pixel).
 struct BeamGeometry {
-    int cyclesPerFrame;    // CPU cycles per NTSC frame (59.94 Hz)
+    int cyclesPerFrame;    // CPU cycles per VDP frame (262 x 342 clocks, 59.92 Hz)
     int totalLines;        // total scanlines incl. VBlank (262 NTSC)
     int activeLines;       // visible scanlines (192)
     int activeWidth;       // visible pixels per line (256)
