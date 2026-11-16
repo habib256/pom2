@@ -67,6 +67,21 @@ Linux 491, macOS 490, the difference `native_file_dialog`. The floor stays
 as the coarse check; `check_ctest_skips.sh` still owns the test that is
 registered and skips.
 
+## 2026-11-16 — The Windows job runs the atomic file commit
+
+Item 4 of the 2026-11-01 round-2 test audit. Every media write-back goes
+through `AtomicFileReplace.h`, and its `_WIN32` branches ran in no CI job:
+the Windows job configures only a portable subset, and `atomic_file_replace`
+was not in it, though the test already guarded its POSIX-only cases (hard
+links, symlinked targets). It is now the subset's thirteenth case. The
+subset also returned before the directory-wide sweeps, so a test's 77 was a
+skip on Linux and a hard failure on Windows from the same source line
+(`bus_fastpath`, `memory_cpu_view`): `Pom2PortableTests.cmake` now gives its
+cases `SKIP_RETURN_CODE 77` and `POM2_TEST_TIME_SCALE`, and the Windows job
+fails on a ctest skip, so the change loosens nothing. The timeout floor and
+`test_property_sweep` remain Linux/macOS-only (every portable case already
+carries 120 s).
+
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
 ## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner
