@@ -85,8 +85,8 @@ void MainWindow::renderEzColorJumper()
             ez = dynamic_cast<EzColorCard*>(st.memory().slotBus().peripheral(s));
     }
     if (!ez) return;
-    static const char* kItems[] = { "IRQ (pin 30, POM2's default)",
-                                    "NMI (pin 29, BYTE's schematic)",
+    static const char* kItems[] = { "IRQ (pin 30, rewired, as MAME)",
+                                    "NMI (pin 29, BYTE's schematic, default)",
                                     "Open (no interrupt)" };
     int cur = static_cast<int>(ez->interruptWiring());
     ImGui::SetNextItemWidth(260.0f);
@@ -101,10 +101,10 @@ void MainWindow::renderEzColorJumper()
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Where jumper JP2 takes the VDP's /INT. BYTE's schematic\n"
-                          "(August 1982, Fig. 4) wires it to /NMI; POM2 defaults to\n"
-                          "/IRQ, which software written for POM2's card expects.\n"
-                          "An NMI cannot be masked by SEI: a handler that reads\n"
-                          "$C0n1 can tear a register pair the program is writing.");
+                          "(August 1982, Fig. 4) wires it to /NMI, the default.\n"
+                          "An NMI arrives at $03FB with nothing saved (the ][+ ROM\n"
+                          "saves A at $45 for an IRQ) and SEI cannot mask it: a\n"
+                          "handler that reads $C0n1 can tear a register pair.");
 }
 
 void MainWindow::renderCardMonitorPanel()

@@ -35,9 +35,9 @@ Monitor, SDK `setEzColorInterrupt`). Pinned by `ezcolor_card` § 7. Removed
 from the active index; see CHANGELOG 2026-11-16 and
 [DEV § /NMI](../../DEV.md#nmi--pin-29-2026-11-16).
 
-**Left open:** the default stays `irq` (MAME's wiring, and what pom2games'
-code takes), not the schematic's `nmi`. Revisit with pom2games once their
-code runs on both.
+**Default:** `nmi`, the schematic's, from the first release that has the
+jumper (1.2.1) — pom2games asked for it on 2026-11-16
+(`dev/tools/a2shot/LETTRE_POM2_EZCOLOR_JP2.md` in their tree).
 
 <a id="cards-015"></a>
 

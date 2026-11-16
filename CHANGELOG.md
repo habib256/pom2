@@ -12,6 +12,15 @@ marker and the previous one.
 
 **v1.2.1 marker** — 2026-11-16. Release notes: [v1.2.1](docs/releases/v1.2.1.md).
 
+## 2026-11-16 — CI: GCC 15 on the ubuntu-26.04 runner
+
+`ubuntu-latest` became Ubuntu 26.04 with GCC 15, and the Linux build + ctest
+job went red on `main` from the 2026-11-15 nightly: `-Warray-bounds`
+(an error under `-Werror`) misreads `vector::insert` of a 7-byte string
+literal's range in `tnfs_client_hostile_test.cpp` as a copy past a 1-byte
+bound. A false positive — the reply is now spelled out as one initialiser
+list. No product code was involved (the GCC quick-compile job stayed green).
+
 ## 2026-11-16 — The generic ARM64 AppImage gets POM1's glibc floor
 
 The x86_64 AppImage was already built like POM1's, in the same pinned bionic
@@ -64,12 +73,20 @@ at all: the 6502 core handled one, nothing could raise it. Now:
   **falling edge** only — one NMI while a card holds it low, none for a
   second card joining. A snapshot restores the level with no edge
   (`restoreNmiLevel`), so a rewind does not run the guest's handler twice.
-- **JP2 on the E-Z Color**: `irq` (default, unchanged behaviour), `nmi`
-  (the published wiring) or `open` (no interrupt). Setting
-  `ezcolor_interrupt`, a combo in the Card Monitor panel (moved live), SDK
-  `setEzColorInterrupt` / `EzColorState::interrupt`. The default stays IRQ
-  because pom2games' code takes the frame interrupt that way.
-- Pinned by `ezcolor_card` § 7: NMI not IRQ, no second edge while /INT
+- **JP2 on the E-Z Color**: `nmi` (the published wiring, **the default**),
+  `irq` (the card rewired to pin 30, as MAME has it — POM2's behaviour until
+  now) or `open` (no interrupt). Setting `ezcolor_interrupt`, a combo in the
+  Card Monitor panel (moved live), SDK `setEzColorInterrupt` /
+  `EzColorState::interrupt`. The default is NMI at pom2games' request
+  (their `LETTRE_POM2_EZCOLOR_JP2.md`); a program that wants the frame
+  interrupt on IRQ sets `ezcolor_interrupt = irq` or calls the SDK.
+- **pom2games' note, now in `docs/SDK.md` and `EzColorCard.h`**: the NMI
+  arrives at `$03FB` with nothing saved, while the ][ / ][+ Monitor's IRQ path
+  stores A at `$45` ([C] `$FA40`: `STA $45 … JMP ($03FE)`; the enhanced //e
+  pushes it instead, [C] `$C3FA` → `$C400`). A handler shared by both
+  vectors opens `$03FB` with `STA $45`. Checked on the three ROM dumps: all
+  vector `$FFFA` to `$03FB`.
+- Pinned by `ezcolor_card` §§ 3 and 7: the NMI default, NMI not IRQ, no second edge while /INT
   stays low, the wire-OR across two cards, `open`, a live jumper move, the
   snapshot level, unplug, and an NMI through the real CPU taken under SEI.
 

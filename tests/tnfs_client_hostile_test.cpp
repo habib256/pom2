@@ -46,7 +46,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -122,11 +121,9 @@ struct Hostile {
             if (evil == Evil::DirEmptyReply) return {};
             if (evil == Evil::DirMissingNul) return {0x00, 'B', 'A', 'D'};
             // A name, every time, for ever.
-            std::vector<uint8_t> p{0x00};
-            const char* nm = "AAAAAAA";
-            p.insert(p.end(), nm, nm + std::strlen(nm));
-            p.push_back(0x00);
-            return p;
+            // Spelled out: GCC 15's -Warray-bounds misreads an insert of a
+            // string literal's range here (ubuntu-26.04 runner, 2026-11-15).
+            return {0x00, 'A', 'A', 'A', 'A', 'A', 'A', 'A', 0x00};
         }
 
         case pom2::kTnfsStat: {

@@ -91,9 +91,9 @@ void EzColorCard::setInterruptWiring(InterruptWiring w)
 
 EzColorCard::InterruptWiring EzColorCard::parseInterruptWiring(std::string_view s)
 {
-    if (s == "nmi")  return InterruptWiring::Nmi;
+    if (s == "irq")  return InterruptWiring::Irq;
     if (s == "open") return InterruptWiring::Open;
-    return InterruptWiring::Irq;
+    return InterruptWiring::Nmi;
 }
 
 void EzColorCard::advanceCycles(int cycles)

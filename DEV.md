@@ -668,9 +668,13 @@ every even `$C0nX` is the data port and every odd one the register port —
 POM2 did too until 2026-11-16. The VDP's /INT goes where **jumper JP2**
 takes it (`EzColorCard::setInterruptWiring`, setting `ezcolor_interrupt`,
 Card Monitor ▸ "E-Z Color /INT (JP2)", SDK `setEzColorInterrupt`): the
-schematic wires it to pin 29, **/NMI**; POM2 defaults to the slot **IRQ**
-(MAME's wiring, and what pom2games' code takes), and `open` is the card
-built without JP2. The NMI rides the bus's `/NMI` line: a wire-OR of the
+schematic wires it to pin 29, **/NMI**, and that is the default (since
+2026-11-16, at pom2games' request); `irq` is the card rewired to pin 30 (MAME's
+wiring, POM2's default before), and `open` the card built without JP2. An
+NMI arrives at `$03FB` with nothing saved, where the ][ / ][+ Monitor's IRQ
+path stores A at `$45` first ([C] `$FA40`) and the enhanced //e's pushes it
+([C] `$C3FA` → `$C400`): a handler shared by both vectors opens `$03FB` with
+`STA $45`. The NMI rides the bus's `/NMI` line: a wire-OR of the
 slots (`SlotPeripheral::assertNmi`) that calls `M6502::setNMI` on its
 falling edge only, so a card holding it low gets one NMI, and a snapshot
 restores the level with no edge (`restoreNmiLevel`). A bus
