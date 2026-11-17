@@ -827,9 +827,8 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
 
     // Dispatch: walk slots 1..7 and plug whichever card the settings ask
     // for. Anything we don't recognise is logged and skipped.
-    for (int s = 1; s <= 7; ++s) {
-        const std::string& kind = slotCards[s];
-        if      (kind.empty())          continue;
+    auto buildCard = [&](int s, const std::string& kind) {
+        if      (kind.empty())          return;
         else if (kind == "diskii")      plugDiskII(s);
         else if (kind == "hdv")         plugHdv(s);
         else if (kind == "cffa")        plugCffa(s);
@@ -902,7 +901,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             mouseRomStatus = made.status;
             if (!made.warning.empty())
                 pom2::log().warn(made.warningCategory.c_str(), made.warning);
-            if (!made) continue;
+            if (!made) return;
             // A fallback is a LIVE fact, not a configuration change: the
             // user still asked for "mouseaw", and the ROM may be there next
             // launch. The panel reads the live snapshot to show what is
@@ -969,116 +968,77 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
                 "Slot " + std::to_string(s) + " has unknown card type '" +
                 kind + "' — leaving empty");
         }
-    }
+    };
 
-    // The //e auxiliary slot: a Premium SoftCard //e in place of the
-    // extended 80-column card (setting `premium_softcard`, Machine menu),
-    // seated on SlotBus slot 0 (PremiumSoftCard.h). A //e with slots only.
-    if (settings->getBool("premium_softcard", false) && st.memory().isIIE()
-        && !pom2::profileConfig(activeProfile).noPhysicalSlots) {
-        auto psc = std::make_unique<PremiumSoftCard>();
-        psc->setMemory(&st.memory());
-        st.memory().slotBus().plug(PremiumSoftCard::kAuxSlot, std::move(psc));
-    }
+    auto runtimeOverlays = [&] {
+        // The printer's mechanical sound is not owned by any card, but it IS
+        // swept away with the card-owned ones: both rebuild paths call
+        // unregisterAllAudioSources() before getting here. Re-registering it on
+        // every rebuild is what keeps it alive across a profile switch and a Slot
+        // Config "Apply" — registerAudioSource() is idempotent, so the
+        // constructor's first pass through here simply arms it.
+        registerAudioSource(printerSound.get());
 
-    // The printer's mechanical sound is not owned by any card, but it IS
-    // swept away with the card-owned ones: both rebuild paths call
-    // unregisterAllAudioSources() before getting here. Re-registering it on
-    // every rebuild is what keeps it alive across a profile switch and a Slot
-    // Config "Apply" — registerAudioSource() is idempotent, so the
-    // constructor's first pass through here simply arms it.
-    registerAudioSource(printerSound.get());
-
-    // Re-apply a `--fujinet` card requested on the command line.
-    //
-    // It is deliberately not in the settings file (a one-shot CLI card must
-    // not leak into the user's saved slot config), so the re-seed at the top
-    // of this function has just erased it. Doing it here means applyProfile's
-    // step 7 reproduces the card, which matters twice: `--preset` no longer
-    // destroys it moments after the CLI logged success, and because step 7
-    // runs BEFORE step 11's cold boot, the autostart scan still finds a
-    // FujiNet on its first pass.
-    if (cliFujiNetSlot_ > 0 &&
-        !pom2::profileConfig(activeProfile).noPhysicalSlots) {
-        int s = cliFujiNetSlot_;
-        auto& bus = st.memory().slotBus();
-        if (bus.peripheral(s) != nullptr && !cliFujiNetSlotExplicit_) {
-            // Same relocation plugFujiNetFromCli does on the live bus:
-            // slot 7 is POM2's preference and the fresh-install Chat Mauve
-            // lives there, so a remembered `--fujinet` without --fujinet-slot
-            // must not die with "slot is taken after the rebuild".
-            int free = 0;
-            for (int cand = 7; cand >= 1 && free == 0; --cand)
-                if (bus.peripheral(cand) == nullptr) free = cand;
-            if (free != 0) {
-                pom2::log().info("CLI", "--fujinet: slot " +
-                                            std::to_string(s) +
-                                            " holds " +
-                                            std::string(bus.peripheral(s)->name()) +
-                                            ", using free slot " +
-                                            std::to_string(free));
-                s = free;
-                cliFujiNetSlot_ = free;
+        // Re-apply a `--fujinet` card requested on the command line.
+        //
+        // It is deliberately not in the settings file (a one-shot CLI card must
+        // not leak into the user's saved slot config), so the re-seed at the top
+        // of this function has just erased it. Doing it here means applyProfile's
+        // step 7 reproduces the card, which matters twice: `--preset` no longer
+        // destroys it moments after the CLI logged success, and because step 7
+        // runs BEFORE step 11's cold boot, the autostart scan still finds a
+        // FujiNet on its first pass.
+        if (cliFujiNetSlot_ > 0 &&
+            !pom2::profileConfig(activeProfile).noPhysicalSlots) {
+            int s = cliFujiNetSlot_;
+            auto& bus = st.memory().slotBus();
+            if (bus.peripheral(s) != nullptr && !cliFujiNetSlotExplicit_) {
+                // Same relocation plugFujiNetFromCli does on the live bus:
+                // slot 7 is POM2's preference and the fresh-install Chat Mauve
+                // lives there, so a remembered `--fujinet` without --fujinet-slot
+                // must not die with "slot is taken after the rebuild".
+                int free = 0;
+                for (int cand = 7; cand >= 1 && free == 0; --cand)
+                    if (bus.peripheral(cand) == nullptr) free = cand;
+                if (free != 0) {
+                    pom2::log().info("CLI", "--fujinet: slot " +
+                                                std::to_string(s) +
+                                                " holds " +
+                                                std::string(bus.peripheral(s)->name()) +
+                                                ", using free slot " +
+                                                std::to_string(free));
+                    s = free;
+                    cliFujiNetSlot_ = free;
+                }
+            }
+            if (bus.peripheral(s) != nullptr) {
+                pom2::log().warn("CLI", "--fujinet: slot " + std::to_string(s) +
+                                            " is taken after the rebuild — card "
+                                            "not restored");
+            } else {
+                std::string err;
+                // startNow = false: same reason as the settings-driven card
+                // above — the transport is opened once this lock is released.
+                if (!plugFujiNetUnlocked(st, s, cliFujiNetSerial_,
+                                         cliFujiNetSerialPath_, cliFujiNetPort_,
+                                         err, /*startNow=*/false))
+                    pom2::log().warn("CLI", "--fujinet: " + err);
+                else
+                    pendingFujiNetSlots_.push_back(s);
             }
         }
-        if (bus.peripheral(s) != nullptr) {
-            pom2::log().warn("CLI", "--fujinet: slot " + std::to_string(s) +
-                                        " is taken after the rebuild — card "
-                                        "not restored");
-        } else {
-            std::string err;
-            // startNow = false: same reason as the settings-driven card
-            // above — the transport is opened once this lock is released.
-            if (!plugFujiNetUnlocked(st, s, cliFujiNetSerial_,
-                                     cliFujiNetSerialPath_, cliFujiNetPort_,
-                                     err, /*startNow=*/false))
-                pom2::log().warn("CLI", "--fujinet: " + err);
-            else
-                pendingFujiNetSlots_.push_back(s);
-        }
-    }
+    };
 
-    // ── Phase 2: media, once the whole topology exists ────────────────────
-    // Everything above builds EMPTY hardware. Only now can "is this the
-    // primary Disk II / HDV" be answered, which is what the legacy `disk_path`
-    // and `disk_writeback` keys fall back on — asking it while the bus was
-    // half-built is what made a moved primary HDV and the second Disk II drive
-    // restore against the wrong card.
-    //
-    // Runs under the caller's lock (this function takes a StateAccess to prove
-    // it), so it does its file reads there, exactly as the per-card restores
-    // it replaces did. That is the documented profile-switch exception in
-    // MainWindow_Slots.cpp: the CPU worker is stopped across a rebuild anyway.
-    const auto restored =
-        storageCoordinator_->restoreMediaFromSettings(st.memory().slotBus(),
-                                                      *settings);
+    const auto restored = slotConfigCoordinator_->buildResolvedPlan(
+        st, *settings, activeProfile,
+        [&] { return pom2::SlotConfigurationCoordinator::BuildClocks{
+            controller->emulatedCpuClockHz(), controller->machineCpuClockHz(),
+            static_cast<double>(pom2VideoTiming(controller->getVideoStandard()).cpuClockHz) }; },
+        buildCard, runtimeOverlays);
     for (const std::string& warning : restored.warnings)
         pom2::log().warn("Storage", warning);
     for (const std::string& key : restored.unresolvedPathKeys)
         settings->holdUnresolvedPath(key);
-
-    // ── Emulated CPU clock, to every card that takes one ─────────────────
-    // `SlotPeripheral::setCpuClock` is a virtual with a no-op default, and
-    // four cards override it (Mockingboard, Phasor, ClockCard,
-    // WorkstationCard). Only the Mockingboard's plug function set it, so a
-    // Phasor / clock card / Workstation card added through Slot Config Apply
-    // — which re-plugs cards WITHOUT re-running the profile's video-standard
-    // step — kept the NTSC default on a PAL machine: the AY queues starve
-    // against a 0.7 % wrong clock, and the ThunderClock's bit-bang half
-    // period is measured in CPU cycles.
-    {
-        const double cpuHz = controller->emulatedCpuClockHz();
-        const double standardHz = static_cast<double>(
-            pom2VideoTiming(controller->getVideoStandard()).cpuClockHz);
-        // From 0: the //e aux slot's Premium SoftCard times its Z80 too.
-        for (int s = 0; s < SlotBus::kSlotCount; ++s) {
-            if (auto* card = st.memory().slotBus().peripheral(s)) {
-                card->setCpuClock(cpuHz);
-                card->setMachineCpuClock(controller->machineCpuClockHz());   // Disk II
-                card->setStandardClock(standardHz);   // Liron's mechanisms
-            }
-        }
-    }
 
     // The HDV panel's status line is derived, not remembered.
     if (auto* hdv = primaryHdvCard()) {

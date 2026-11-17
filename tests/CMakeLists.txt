@@ -10061,6 +10061,11 @@ pom2_add_headless_test(test_storage_deferred_diversion
     SOURCES storage_deferred_diversion_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+pom2_add_headless_test(test_storage_folder_eject_race
+    NAME storage_folder_eject_race TIMEOUT 20
+    SOURCES storage_folder_eject_race_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_storage_coordinator
     NAME storage_coordinator TIMEOUT 20
     SOURCES storage_coordinator_test.cpp
@@ -10317,6 +10322,11 @@ pom2_add_headless_test(test_mouse_coordinator
 pom2_add_headless_test(test_slot_configuration_coordinator
     NAME slot_configuration_coordinator TIMEOUT 10 PORTABLE
     SOURCES slot_configuration_coordinator_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
+pom2_add_headless_test(test_slot_configuration_build
+    NAME slot_configuration_build TIMEOUT 20
+    SOURCES slot_configuration_build_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_slot_card_factory
@@ -11737,6 +11747,16 @@ add_test(NAME ay_mame_parity COMMAND test_ay_mame_parity)
 set_tests_properties(ay_mame_parity PROPERTIES TIMEOUT 15)
 
 # Real ImGui input frames: clicking an empty drive picture selects that bay.
+add_executable(test_file_path_picker
+    file_path_picker_test.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(test_file_path_picker PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+add_test(NAME file_path_picker COMMAND test_file_path_picker)
+set_tests_properties(file_path_picker PROPERTIES TIMEOUT 15)
+
 add_executable(test_session_file_picker
     session_file_picker_test.cpp
     ${CMAKE_SOURCE_DIR}/src/SessionFilePicker.cpp

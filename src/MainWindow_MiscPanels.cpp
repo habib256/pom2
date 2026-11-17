@@ -21,6 +21,7 @@
 // instance defined there under STB_IMAGE_STATIC, whose symbols are internal
 // to that translation unit.)
 
+#include "FilePathPicker.h"
 #include "MainWindow.h"
 #include "Ccs7710Card.h"
 #include "Dan2Card.h"
@@ -1000,8 +1001,6 @@ void MainWindow::renderAboutDialog()
 void MainWindow::renderTapeFileDialogs()
 {
     auto pathInput = [](const char* label) {
-        // Minimal text-only path widget — POM2 doesn't pull in nativefiledialog.
-        // The user types a path; convenience dirs/files can be appended later.
         ImGui::TextUnformatted(label);
     };
 
@@ -1011,13 +1010,9 @@ void MainWindow::renderTapeFileDialogs()
     }
     if (ImGui::BeginPopupModal("Load Tape", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         pathInput("Tape file path (.aci / .wav / .mp3 / .ogg / .flac)");
-        char buf[512] = {0};
-        std::snprintf(buf, sizeof(buf), "%s", cassetteDeck->dialogPath.c_str());
-        if (ImGui::InputText("##LoadPath", buf, sizeof(buf),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-            cassetteDeck->dialogPath = buf;
-        else
-            cassetteDeck->dialogPath = buf;
+        pom2::filePathInput("##LoadPath", cassetteDeck->dialogPath);
+
+        pom2::browseFilePath(false, "Load tape", "aci,wav,mp3,ogg,flac", cassetteDeck->dialogPath);
 
         // Quick list of cassettes/ directory contents (one click → fill).
         // Through the shared cached listing: a modal re-renders every frame,
@@ -1061,13 +1056,9 @@ void MainWindow::renderTapeFileDialogs()
     }
     if (ImGui::BeginPopupModal("Save Tape", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         pathInput("Output file path (.aci or .wav)");
-        char buf[512] = {0};
-        std::snprintf(buf, sizeof(buf), "%s", cassetteDeck->dialogPath.c_str());
-        if (ImGui::InputText("##SavePath", buf, sizeof(buf),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-            cassetteDeck->dialogPath = buf;
-        else
-            cassetteDeck->dialogPath = buf;
+        pom2::filePathInput("##SavePath", cassetteDeck->dialogPath);
+
+        pom2::browseFilePath(true, "Save tape", "aci,wav", cassetteDeck->dialogPath);
 
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(120, 0))) {

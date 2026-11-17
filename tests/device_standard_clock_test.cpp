@@ -39,18 +39,32 @@
 #include "EmulationController.h"
 #include "LironCard.h"
 #include "Sony35Drive.h"
+#include "CassetteDevice.h"
+#include "SpeakerDevice.h"
+#include "FloppySoundDevice.h"
 
 #include <cstdint>
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
 int failures = 0;
+
+class ClockWitness final : public SlotPeripheral {
+public:
+    double cpu = 0, machine = 0, standard = 0;
+    std::string_view name() const override { return "clock witness"; }
+    void setCpuClock(double hz) override { cpu = hz; }
+    void setMachineCpuClock(double hz) override { machine = hz; }
+    void setStandardClock(double hz) override { standard = hz; }
+};
 
 void expect(bool ok, const char* what)
 {
@@ -130,12 +144,43 @@ int main()
     const int64_t ntsc = POM2_TIMING_NTSC.cpuClockHz;
     const int64_t pal  = POM2_TIMING_PAL.cpuClockHz;
 
-    EmulationController controller;
+    EmulationController controller(AudioDevice::OutputMode::Offline);
     auto* liron = new pom2::LironCard(5);
+    std::array<ClockWitness*, 2> witnesses{};
     {
         auto st = controller.lockState();
         st.memory().slotBus().plug(5, std::unique_ptr<SlotPeripheral>(liron));
+        for (size_t i = 0; i < witnesses.size(); ++i) {
+            auto probe = std::make_unique<ClockWitness>(); witnesses[i] = probe.get();
+            st.memory().slotBus().plug(i == 0 ? 0 : 7, std::move(probe));
+        }
     }
+
+    // These are the non-slot consumers that the former suite could not
+    // inspect. Test BOTH directions at stock and paced rates, with distinct
+    // poison clocks so removing a single fan-out cannot inherit a good value.
+    for (auto standard : {VideoStandard::NTSC, VideoStandard::PAL, VideoStandard::NTSC}) {
+        const auto& timing = pom2VideoTiming(standard);
+        for (int multiplier : {1, 2, 4}) {
+            controller.setCyclesPerFrame(multiplier * timing.cyclesPerFrame);
+            controller.speaker().setCpuClock(12345);
+            controller.cassette().setCpuClock(23456);
+            controller.floppySound525().setCpuClock(34567);
+            controller.floppySound35().setCpuClock(45678);
+            controller.setVideoStandard(standard);
+            const double expected = static_cast<double>(timing.cpuClockHz) * multiplier;
+            expect(controller.speaker().cpuClockHz() == expected, "speaker retuned");
+            expect(controller.cassette().realtimeClockHz() == expected, "cassette monitor retuned");
+            expect(controller.floppySound525().cpuClockHz() == expected, "5.25-inch sound retuned");
+            expect(controller.floppySound35().cpuClockHz() == expected, "3.5-inch sound retuned");
+            for (auto* probe : witnesses) {
+                expect(probe->cpu == expected, "slot/aux paced clock retuned");
+                expect(probe->machine == controller.machineCpuClockHz(), "slot/aux machine clock retuned");
+                expect(probe->standard == timing.cpuClockHz, "slot/aux crystal clock retuned");
+            }
+        }
+    }
+    controller.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
 
     // 1. NTSC: the historical constants (155 745 … 103 999).
     controller.setVideoStandard(VideoStandard::NTSC);

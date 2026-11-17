@@ -32,6 +32,7 @@
 // The keyboard latch and the paste queue own `Memory::kbMutex`, which is why
 // they are among the few things allowed to reach memory without `stateMutex`.
 
+#include "FilePathPicker.h"
 #include "MainWindow.h"
 #include "MediaSource.h"
 #include "PaddleMouse.h"
@@ -898,13 +899,8 @@ void MainWindow::renderPasteFileDialog()
         ImGui::TextUnformatted("Up to 4096 characters are queued; longer files report truncation.");
 #else
         ImGui::TextUnformatted("Path to a text file (Applesoft listing, etc.)");
-        char buf[512] = {0};
-        std::snprintf(buf, sizeof(buf), "%s", pasteDialogPath.c_str());
-        if (ImGui::InputText("##PastePath", buf, sizeof(buf),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-            pasteDialogPath = buf;
-        else
-            pasteDialogPath = buf;
+        pom2::filePathInput("##PastePath", pasteDialogPath);
+        pom2::browseFilePath(false, "Paste from file", "txt,bas", pasteDialogPath);
 #endif
         ImGui::Checkbox("Auto-uppercase", &pasteAutoUppercase);
         ImGui::Separator();

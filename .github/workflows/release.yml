@@ -841,6 +841,10 @@ jobs:
           cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=OFF
           cmake --build build --config Release --parallel 2
 
+      - name: Verify Windows file associations in an isolated registry key
+        shell: powershell
+        run: ./tests/windows_file_associations_test.ps1
+
       - name: Package ZIP
         shell: cmd
         env:

@@ -16,6 +16,7 @@
 
 // ImageWriter_ImGui — see the header for why this panel owns GL state.
 
+#include "FilePathPicker.h"
 #include "ImageWriter_ImGui.h"
 #include "Pom2Build.h"
 
@@ -745,14 +746,16 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
     } else {
         namespace fs = std::filesystem;
         if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save sheet as PNG")) {
-            const std::string path =
+            std::string path =
                 (fs::path(host.saveDir) /
                  (uniqueStem(host.saveDir, "imagewriter-", ".png") +
                   ".png")).string();
-            std::string err;
-            status_ = savePagePng(sheet(sel), path, err)
-                    ? "Saved " + path
-                    : "Save failed: " + err;
+            if (pickFilePath(true, "Save sheet as PNG", "png", path) != FileDialogResult::Cancelled) {
+                std::string err;
+                status_ = savePagePng(sheet(sel), path, err)
+                        ? "Saved " + path
+                        : "Save failed: " + err;
+            }
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(sel.nDone == 0);
@@ -787,15 +790,17 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
             if (sheets.empty()) {
                 status_ = "Nothing to export — the paper is blank.";
             } else {
-                const std::string path =
+                std::string path =
                     (fs::path(host.saveDir) /
                      (uniqueStem(host.saveDir, "imagewriter-", ".pdf") +
                       ".pdf")).string();
-                std::string err;
-                status_ = writeImageWriterPdf(sheets, path, err)
-                        ? "Saved " + std::to_string(sheets.size()) +
-                          " page(s) → " + path
-                        : "PDF save failed: " + err;
+                if (pickFilePath(true, "Save printer PDF", "pdf", path) != FileDialogResult::Cancelled) {
+                    std::string err;
+                    status_ = writeImageWriterPdf(sheets, path, err)
+                            ? "Saved " + std::to_string(sheets.size()) +
+                              " page(s) → " + path
+                            : "PDF save failed: " + err;
+                }
             }
         }
         if (ImGui::IsItemHovered())

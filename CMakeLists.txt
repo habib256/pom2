@@ -432,6 +432,7 @@ set(SOURCES
     src/PrinterCoordinator.cpp
     src/SlotCardFactory.cpp
     src/SlotConfigurationCoordinator.cpp
+    src/SlotConfigurationCoordinator_Build.cpp
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
@@ -732,6 +733,7 @@ set(POM2_FRONTEND_HEADERS
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
     src/NativeFileDialog.h
+    src/FilePathPicker.h
     src/SessionFilePicker.h
     src/DevicePanelCoordinator.h
     src/HostOpenFiles.h
@@ -795,6 +797,7 @@ set(POM2_FRONTEND_SOURCES
     src/PrinterCoordinator.cpp
     src/SlotCardFactory.cpp
     src/SlotConfigurationCoordinator.cpp
+    src/SlotConfigurationCoordinator_Build.cpp
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp
@@ -1796,6 +1799,7 @@ set(POM2_CORE_SOURCES
     src/PrinterCoordinator.cpp
     src/SlotCardFactory.cpp
     src/SlotConfigurationCoordinator.cpp
+    src/SlotConfigurationCoordinator_Build.cpp
     src/SlotProvisioningCoordinator.cpp
     src/SlotRebuildCoordinator.cpp
     src/StorageCoordinator.cpp

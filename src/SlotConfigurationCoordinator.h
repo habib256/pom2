@@ -27,9 +27,11 @@
 #define POM2_SLOT_CONFIGURATION_COORDINATOR_H
 
 #include "SystemProfile.h"
+#include "StorageCoordinator.h"
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <string>
 
 class SlotBus;
@@ -37,6 +39,7 @@ class SlotBus;
 namespace pom2 {
 
 class Settings;
+class StateAccess;
 
 /// The value a slot's card key was last SAVED as — the string every persist
 /// guard (`slotKeyShouldPersist`, `slotKeyIsUserChoice`) must be given as its
@@ -80,6 +83,18 @@ public:
                            bool browserDefaults = false);
 
     const CardMap& effectivePlan() const noexcept { return effectivePlan_; }
+
+    struct BuildClocks { double cpu, machine, standard; };
+    using BuildCard = std::function<void(int, const std::string&)>;
+    /// With the worker stopped and StateAccess held: construct the resolved
+    /// plan, add the profile-eligible auxiliary card, run runtime overlays,
+    /// restore media against the complete topology, then retune every card.
+    /// The caller owns bus clearing and per-card UI/transport wiring; it must
+    /// resolve() for the same profile before calling this method.
+    StorageCoordinator::RestoreSettingsResult buildResolvedPlan(
+        const StateAccess& state, const Settings& settings, SystemProfile profile,
+        const std::function<BuildClocks()>& clockSource, const BuildCard& buildCard,
+        const std::function<void()>& runtimeOverlays = {}) const;
 
     /// Explicitly mutable because this is the staged editor value, not live
     /// hardware and not the effective plan used for construction.

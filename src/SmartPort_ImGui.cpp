@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+#include "FilePathPicker.h"
 #include "SmartPort_ImGui.h"
 
 #include <algorithm>
@@ -160,9 +161,13 @@ SmartPort_ImGui::Result SmartPort_ImGui::render(
             std::strncpy(pathBufs_[k].data(), u.path.c_str(),
                          pathBufs_[k].size() - 1);
         }
-        ImGui::SetNextItemWidth(380.0f);
+        ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x -
+            (nativeFileDialogAvailable() ? 290.0f : 200.0f)));
         ImGui::InputTextWithHint("##path", "/path/to/image.po or .hdv",
                                  pathBufs_[k].data(), pathBufs_[k].size());
+        ImGui::BeginDisabled(u.kind.empty());
+        browseFilePath(false, "Choose SmartPort image", "po,hdv,2mg,woz,moof", pathBufs_[k]);
+        ImGui::EndDisabled();
         ImGui::SameLine();
         const bool typeAllowsMount = !u.kind.empty();
         if (!typeAllowsMount) ImGui::BeginDisabled();

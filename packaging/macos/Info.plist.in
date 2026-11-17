@@ -30,7 +30,7 @@
         <dict>
             <key>CFBundleTypeName</key>     <string>Apple II disk image</string>
             <key>CFBundleTypeRole</key>     <string>Viewer</string>
-            <key>LSHandlerRank</key>        <string>Owner</string>
+            <key>LSHandlerRank</key>        <string>Alternate</string>
             <key>CFBundleTypeExtensions</key>
             <array>
                 <string>dsk</string><string>do</string><string>po</string>

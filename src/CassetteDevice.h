@@ -256,6 +256,7 @@ public:
     /// EmulationController::setVideoStandard with the worker stopped; atomic
     /// so a future unlocked caller can't tear the double.
     void setCpuClock(double hz) { realtimeTimebaseHz_.store(hz > 1.0 ? hz : 1.0); }
+    double realtimeClockHz() const { return realtimeTimebaseHz_.load(); }
 
 private:
     // The Apple II cassette (and its tape file format) is timed in CPU

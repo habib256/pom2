@@ -1,133 +1,148 @@
 # POM2 — TODO
 
-Action queue updated 2026-10-28 · **post-1.0 (v1.0.0 released)**.
-This page answers what to do next. Detailed tasks and acceptance criteria live
-in `docs/backlog/`; dated reports and decisions have their own documents.
+Action queue reconciled **2026-11-17**, against `ce79bb0e` plus the desktop
+association/native-picker implementation dated 2026-11-17. Current release:
+**v1.2.1**. This is a prioritisation of recorded work, not a claim that old
+reports were reproduced or that remote CI ran today.
 
-Current sessions reconstruct supported machines and embed writable media,
-firmware and program tapes; see the [v7 contract](docs/session-format.md).
-The debugger supports bank-qualified stops, profiling and source correspondence;
-see the [debugger guide](docs/debugger-banks.md).
+Domain entries own acceptance criteria and evidence. This index covers all
+**34 non-frozen domain index entries**, **7 remaining release items**, and
+**28 formally frozen entries**. Non-frozen does not mean scheduled: some
+entries require a report, a decision, or a hardware reference. Completed
+entries retained for stable links are excluded from those counts.
 
-## Triage of 2026-10-28
+The [scope ruling](docs/decisions/project-scope.md#the-scope-ruling) still
+applies: core correctness is proactive; supported devices are fixed on report.
+No new card or peripheral without a named piece of software that needs it.
 
-Every open backlog entry was rechecked against `aad2fee5`
-([evidence](docs/audits/backlog-triage-2026-10-28.md)): 4 closed (ARCH-001,
-NETWORK-002, NETWORK-003, UI-007 — see CHANGELOG), 8 frozen with a reopen
-condition, 3 added (CPU-001, VALIDATION-006, ARCH-016), and the RVB Graph
-drift corrected in the parity dashboard and the scope ruling. No entry is left
-in the bare *To verify* state.
+The user's current order is **file associations, then remaining native file
+pickers**. Both implementations are in this working tree; platform acceptance
+is still open. Thumbnail work has not been authorised by that order.
 
-The queue below sorts what remains by **scope tier** (the
-[scope ruling](docs/decisions/project-scope.md#the-scope-ruling): core is
-worked proactively, supported is fixed on report) and by **what unblocks it**.
-**Admission rule:** no new card or peripheral without a named piece of
-software that needs it.
+## 1. Finish acceptance of the requested desktop work
 
-## Bug hunt of 2026-11-01, round 2
+| Task | What is implemented | What remains to close it |
+|---|---|---|
+| [UI-010](docs/backlog/ui-debugger.md#ui-010) | Finder alternate rank; Windows per-user Open with registration/removal shipped in the ZIP; Linux MIME/desktop integration already existed. | Open representative 5.25-inch, 3.5-inch and HDV images from installed packages on macOS/Windows/Linux; preserve another application's defaults. Execute the Windows registry test in Windows CI. |
+| [UI-002](docs/backlog/ui-debugger.md#ui-002) | Native Browse in SmartPort, Media, Disk II/HDV/Sony, cassette, VSDrive, paste and text-spool panels; PNG/PDF save destinations. | Interactive open/save/cancel on the supported desktops, unavailable-backend manual entry, and error/overwrite checks. Shared fake-backend UI tests do not replace OS-dialog execution. |
 
-Eleven domains swept read-only on `b9818f5d`; ten defects fixed and pinned,
-~20 more verified and deferred, plus a four-part audit of the test suite
-itself — [evidence](docs/audits/bug-hunt-2026-11-01-round2.md). The three
-deferred items worth scheduling first: a non-stock `--speed` leaves some slot
-cards' phase-0 bus clock unscaled (CPU-1, open for SSI263, hybrid speech/PCM
-and serial timing;
-Disk II, Mockingboard, Phasor, MouseCard, E-Z Color, SNES MAX and Echo+ VIA
-fixed 2026-11-08/09; followed by the five Z80 cards, Liron, Workstation,
-ClockCard and MouseCardAppleWin; the first fix was withdrawn, see
-DEV § Mockingboard); one host folder could be
-served into two bays with both writing it back (MED-1, fixed 2026-11-06); a
-W5100 `DISCON` from `SOCK_CLOSE_WAIT` dropped the TX tail the guest was told
-was sent (NET-1, fixed 2026-11-06). On the
-test side: ~33 sub-case skips still exit 0 (the detector now sees them), and
-`disks_3.5/The New Print Shop 800K.po` is referenced by `iic_external_smartport`
-but is in no manifest, so one of its "five boots" has never run.
+## 2. Next core work — recommended order, not started
 
-## Action queue
+This order favours data durability and testable correctness over cosmetic
+cleanup. Estimates and priority colours in old reports are historical.
 
-The linked domain entry owns the task's state, evidence and acceptance
-criterion. Move an item when its next action or dependency changes.
+| Order | Task | Concrete next action / completion gate |
+|---|---|---|
+| 1 | [DISPLAY-002](docs/backlog/display.md#display-002) | Add PAL split frame goldens. Separately measure the alleged fallback upload before changing it; ALTCHAR/character-ROM goldens are already done. |
+| 2 | [DISPLAY-011](docs/backlog/display.md#display-011) | Obtain Eve Leonard and pin a third Eve frame. Other board-specific residuals stay conditional on a hardware oracle. |
+| 3 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record isolated AY and speaker streams through one reference output mapping; compare relative gain/bass with the current 0.30 stereo setting. |
+| 4 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003), [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | Extend the existing replug/ImGui harness to another card panel and screenshot/`demodMutex` interaction; collect Linux TSan evidence. Do not create a second overlapping concurrency framework. |
 
-### Core — in progress (at most 5)
+**Existing audit residue, distinct from CPU-001:** the non-stock `--speed`
+clock-domain issue (CPU-1 in the [round-2 audit](docs/audits/bug-hunt-2026-11-01-round2.md))
+is partly fixed. Remaining SSI263, hybrid speech/PCM and serial timing are
+explicitly open in the [2026-11-09 follow-up](docs/audits/core-bug-hunt-2026-11-09.md).
+Reproduce each at normal/x2/x4 before proposing the next fix; the many already
+fixed card clocks are not work remaining.
 
-| Task | Next action |
+## 3. Decisions that unlock a bounded task
+
+| Task | Decision / recommended treatment |
 |---|---|
-| [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | **The cycle exact, not the instruction exact** — a cycle-stepped core issuing one bus access per cycle in silicon order, so a write's placement *within* an instruction exists. This is what lets the beam-raced PAL French Touch / DIX demos be calibrated against the hardware instead of tuned through three independent per-device offsets (Disk II `getCurrentInstructionCycles`, Mockingboard `syncToCpuCycle()+1`, the 6522 T1 −1 bias). Design the microsequences from MAME's `.lst` tables as a **separate** core (a branch on the bus path costs 13-16 %); Harte per-cycle bus ordering is the gate. The recorded DIX expectation now exists (VALIDATION-006, done 2026-11-06): `pom2_corpus --tag dix` checks one frame per part, and a one-cycle Mockingboard regression fails 15 of its 16 checks — so a change can be told apart, but whether a changed frame is *better* still needs eyes or a capture. Not yet known: which DIX effects, if any, are currently mis-timed. |
-| [DISPLAY-002](docs/backlog/display.md#display-002) | ALTCHAR / MouseText ROM goldens added; remaining: PAL split coverage and a separate measurement of the fallback-framebuffer upload. |
-| [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Re-profiled; two guard reorderings rejected because they slow the //e. Isolate the ROM-condition cost before considering a page table (PERFORMANCE.md); no core change retained. |
-| [STORAGE-014](docs/backlog/storage.md#storage-014) | Test a host-folder bay dirtied during each phase-2 commit, or record the residue as an accepted limit. |
+| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Decide captured screen vs supplied cover art. Recommendation: saved screenshots and a text fallback, loaded lazily. Do not boot disks during a library scan. |
+| [STORAGE-002](docs/backlog/storage.md#storage-002) | Decide whether a slot+bay `/media` API is needed. Secondary-bay boot is deliberately refused today; do not label that safeguard a remaining wrong-disk bug. |
+| [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Define explicit typed references for ctest names/card keys before extending the documentation guard. Links and task IDs are already checked. |
+| [ARCH-011](docs/backlog/architecture-tooling.md#arch-011) | Close Apply's lock as intentional while the worker is stopped, unless ARCH-003 produces a concrete concurrency problem. |
+| [NETWORK-001](docs/backlog/network.md#network-001), [NETWORK-007](docs/backlog/network.md#network-007) | Name a use case for native FujiNet phases 2–4 or //c support; otherwise freeze the expansions. Phase 1 and the external relay already work. |
+| [NETWORK-004](docs/backlog/network.md#network-004) | Name a live delayed TNFS peer/version and run mount/read/write with bounded failure; otherwise close the additional validation under the Supported rule. Fake-peer timeout tests already exist. |
+| [RELEASE-010](docs/backlog/release-1.0.md#release-010) | Decide whether a pre-push check and GL-call guard add value beyond the existing quick Linux CI and include guard; implement a concrete guard or close. |
 
-### Core — ready
+## 4. Distribution work and platform evidence
 
-| Task | Next action |
+These are surviving release obligations, not a claim that v1.0 is unreleased.
+Rerun the candidate checklist for each actual release; do not reopen already
+implemented CI infrastructure as new feature work.
+
+| Task | Exact remainder |
 |---|---|
-| [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record MAME with each source isolated; compare with `audio_stereo`'s 0.30. |
-| [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Lower the slack ceilings (`DiskImage.cpp`, `ImageWriter.cpp`, `Apple2Display.cpp`); split `Apple2Display.cpp` (the DiskImage WOZ writer is out since 2026-11-05). |
-| [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only pass on `M6502`, verified by unchanged Harte/Klaus. |
+| [RELEASE-001](docs/backlog/release-1.0.md#release-001) | Record the repository/history media-distribution decision against the current tracked inventory. A history rewrite, if chosen, is a separate destructive operation requiring explicit approval. |
+| [RELEASE-002](docs/backlog/release-1.0.md#release-002) | Establish origin and redistribution terms for all three shipped machine/keyboard photographs, or replace them with cleared assets. |
+| [RELEASE-012](docs/backlog/release-1.0.md#release-012) | Prepare the corrected ][+ ROM archive, upstream report and aligned source digests; publish only within explicit upload/report authorisation. Upload the repaired Service Disk copy through the same media-maintenance process. Keep the old-dump runtime errata. |
+| [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Launch and render the ARM/Pi packages on target hardware, or document the execution limitation. |
+| [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a boot/render smoke, or document the limitation. A universal-binary structural check is not execution evidence. |
+| [RELEASE-011](docs/backlog/release-1.0.md#release-011) | Record a Windows signing policy and clean-machine first launch. macOS notarisation is deferred by an existing decision, not a task to restart. |
+| [NETWORK-009](docs/backlog/network.md#network-009) | Run Uthernet I using the built-in NAT on a Windows build. There is already a desktop transport; a new libslirp port is not the remainder. |
+| [VALIDATION-005](docs/backlog/validation.md#validation-005) | Run A2 File Cmd 1.0 six times in the GUI on a copied image; reproduce and diagnose the DHGR failure or close the stale report. |
+| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Extend protected-title checks beyond boot/entry to gameplay and compare with hardware. Captain/Prince/Bandits boot/gameplay-entry corpus checks already exist. |
 
-### Needs a hardware oracle
+## 5. Fidelity questions waiting for an external reference
 
-Group these into one session with the machines (or a MAME with Apple II
-romsets, where noted).
-
-| Task | What to measure |
+| Task | Missing evidence |
 |---|---|
-| [VALIDATION-001](docs/backlog/validation.md#validation-001) | Real //c: PH1→PH3 gaps of 4…512 cycles while the motor coasts; did the head move? |
-| [VALIDATION-004](docs/backlog/validation.md#validation-004) | DOS 3.1 / 3.1.1 masters on a ][+ with 13-sector PROMs (or MAME `apple2p`). |
-| [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Language Card power-on bank: distinct bytes in banks 1/2, power-cycle, read `$D000`. |
-| [DISPLAY-001](docs/backlog/display.md#display-001) | A real VidHD capture: SHR 320/640/fill and a `$C022`/`$C034` colour screen. |
-| [DISPLAY-011](docs/backlog/display.md#display-011) | Fetch Eve Leonard for a third Eve golden; the other residuals need a board. |
-| [AUDIO-011](docs/backlog/audio.md#audio-011) | Recordings of a real SSI263 sweeping INFLECT / RATE / ARTIC. |
-| [AUDIO-012](docs/backlog/audio.md#audio-012) | A scope capture across a real //e speaker for one `$C030` toggle and a known square. |
+| [VALIDATION-001](docs/backlog/validation.md#validation-001) | Real //c head movement for PH1→PH3 gaps of 4…512 cycles during motor coast. |
+| [VALIDATION-004](docs/backlog/validation.md#validation-004) | DOS 3.1/3.1.1 master boots on a ][+ with 13-sector PROMs, or an identified independent emulator/ROM setup; distinguish disk behavior from an emulator defect. |
+| [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Real Language Card power-on bank with distinct bytes in both banks; its F8-ROM expansion remains frozen with the original ][ profile. |
+| [DISPLAY-001](docs/backlog/display.md#display-001) | Real VidHD SHR 320/640/fill and `$C022`/`$C034` color captures. |
+| [AUDIO-011](docs/backlog/audio.md#audio-011) | Real SSI263 inflection/rate/articulation/level recordings; independent Echo+ board/pin validation is a separate residual. |
+| [AUDIO-012](docs/backlog/audio.md#audio-012) | Electrical capture across the //e speaker for a known toggle/square wave before fitting a physical response model. |
 
-### Needs a decision
+## 6. Conditional work and low-return maintenance
 
-| Task | Question |
+| Task | Reopen/proceed condition and next action |
 |---|---|
-| [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Links and task IDs are checked in CI; define explicit ctest/card reference syntax before extending the guard. |
-| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Miniatures from cover art or a captured screen? (Requested order: this, then [UI-010](docs/backlog/ui-debugger.md#ui-010).) |
-| [ARCH-011](docs/backlog/architecture-tooling.md#arch-011) | Close as "worker stopped during Apply, by design", or wait for ARCH-003? |
-| [STORAGE-002](docs/backlog/storage.md#storage-002) | Add a slot+bay `/media` mount/boot endpoint, or narrow the entry to the API gap? |
-| [NETWORK-001](docs/backlog/network.md#network-001) | Freeze native FujiNet phases 2-4 until a named need? |
-| [NETWORK-007](docs/backlog/network.md#network-007) | Schedule FujiNet on //c-class profiles, or freeze? |
-| [NETWORK-004](docs/backlog/network.md#network-004) | One live delayed-TNFS run against a named peer, or close? |
+| [CPU-001](docs/backlog/cpu-memory.md#cpu-001) | Large optional second CPU core; design only, no implementation. Establish a concrete DIX differential, then per-cycle Harte bus ordering, Klaus and unchanged fast-core identities. This is not the next quick win. |
+| [MEMORY-002](docs/backlog/cpu-memory.md#memory-002) | Profile the ROM-condition share first. Proceed only with ≥10% attributable share and ≥3% repeatable workload gain, without >1% repeatable cross-workload regressions; two reorder prototypes were rejected. |
+| [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Split the remaining Apple2Display responsibility and lower actual slack ceilings. Paint-editor splitting waits for relevant work; Memory and DiskImage WOZ extraction are already done. |
+| [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | First document env vars in `--help`; a full config-precedence unification is a larger separate step, not just that table. |
+| [ARCH-013](docs/backlog/architecture-tooling.md#arch-013) | Comment/declaration-only M6502 cleanup when that code is touched, with unchanged Harte/Klaus/display goldens. |
+| [ARCH-012](docs/backlog/architecture-tooling.md#arch-012) | Namespace migration one directory at a time when doing related work; avoid an isolated repository-wide rewrite. |
+| [AUDIO-006](docs/backlog/audio.md#audio-006) | After ARCH-003, measure actual mutex wait before changing the audio handoff; a lock in source alone is not measured contention. |
+| [NETWORK-005](docs/backlog/network.md#network-005) | On a reported delayed FujiNet need, add an atomic in-flight indicator visible without the blocked machine lock in the UI and `/status`; measure responsiveness. Do not call that an asynchronous I/O implementation. |
+| [NETWORK-010](docs/backlog/network.md#network-010) | LAN inbound mapping only after a named need. Local `LISTEN` already works; specify interface/host port and forwarding policy first. |
+| [DISPLAY-010](docs/backlog/display.md#display-010) | F6 luminance-neutral row dim only on report. F4 is a deliberate choice; F2 overlaps the unscheduled scanline possibilities. |
+| [ARCH-008](docs/backlog/architecture-tooling.md#arch-008) | Paint editor test seam only on a concrete report; sprite seam already landed and editors remain frozen. |
 
-### Supported — fixed on report, or quick wins
+## 7. Frozen — no implementation scheduled
 
-| Task | Next action |
+All **28** formal frozen entries are listed here. They need the domain's
+reopening condition (usually named software or an explicit request), not
+merely an attractive estimate. The possibilities sections below are additional
+ideas without task IDs; they are not commitments either.
+
+| Domain | Frozen entries |
 |---|---|
-| [UI-010](docs/backlog/ui-debugger.md#ui-010) | macOS `LSHandlerRank` Owner → Alternate for `.po`/`.dsk`; document Windows "Open with". |
-| [UI-002](docs/backlog/ui-debugger.md#ui-002) | Move the typed-path panels to `NativeFileDialog`; Windows cancel/open/save check. |
-| [ARCH-003](docs/backlog/architecture-tooling.md#arch-003) | ImGui panel/replug and drive-rack tests added to nightly TSan; obtain Linux run evidence and cover screenshot/`demodMutex` interaction. |
-| [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | One more card-pointer panel under replug, or close. |
-| [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | An env-var table in `printUsage()`. |
-| [ARCH-012](docs/backlog/architecture-tooling.md#arch-012) | Namespace migration, one directory at a time. |
-| [ARCH-014](docs/backlog/architecture-tooling.md#arch-014) | Clock getter for speaker, cassette and floppy sound. |
-| [ARCH-015](docs/backlog/architecture-tooling.md#arch-015) | Cover `plugSlotsFromSettings` headless or move its policy into the coordinator. |
-| [ARCH-008](docs/backlog/architecture-tooling.md#arch-008) | Paint-editor seam on a report only (editors are frozen). |
-| [NETWORK-005](docs/backlog/network.md#network-005) | Atomic in-flight flag shown in the UI and `/status`. |
-| [NETWORK-010](docs/backlog/network.md#network-010) | LAN mapping, when someone names a need. |
-| [NETWORK-009](docs/backlog/network.md#network-009) | Run the Uthernet I over the built-in NAT on a Windows build and record it. |
-| [AUDIO-006](docs/backlog/audio.md#audio-006) | Measure lock wait after ARCH-003; change only on a measured wait. |
-| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Protected corpus now pins Captain/Prince boot and gameplay plus Bandits FLUX; later levels and hardware comparison remain. |
-| [VALIDATION-005](docs/backlog/validation.md#validation-005) | Six GUI runs on a copy of A2 File Cmd 1.0; close as stale if quiet. |
-| [DISPLAY-010](docs/backlog/display.md#display-010) | F6 luminance-neutral row dim, on report. |
+| Storage | [STORAGE-005](docs/backlog/storage.md#storage-005) multi-partition; [STORAGE-007](docs/backlog/storage.md#storage-007) half-track NIB; [STORAGE-008](docs/backlog/storage.md#storage-008) additional Floppy Emu modes; [STORAGE-010](docs/backlog/storage.md#storage-010) NIB revolution normalisation. |
+| Audio/cassette | [AUDIO-004](docs/backlog/audio.md#audio-004) resampling; [AUDIO-005](docs/backlog/audio.md#audio-005) analog stage; [AUDIO-008](docs/backlog/audio.md#audio-008) DAC; [AUDIO-009](docs/backlog/audio.md#audio-009) MIDI; [CASSETTE-001](docs/backlog/cassette.md#cassette-001) enriched cassette playback. |
+| Display | [DISPLAY-003](docs/backlog/display.md#display-003) analog composite; [DISPLAY-008](docs/backlog/display.md#display-008) smooth interpolation; [DISPLAY-012](docs/backlog/display.md#display-012) 80-column color phase without an oracle. |
+| Cards | [CARDS-002](docs/backlog/cards.md#cards-002) Workstation/LocalTalk extension; [CARDS-006](docs/backlog/cards.md#cards-006) SCSI; [CARDS-007](docs/backlog/cards.md#cards-007) VGA; [CARDS-008](docs/backlog/cards.md#cards-008) UDC; [CARDS-010](docs/backlog/cards.md#cards-010) IWM-level controller. |
+| Interface | [UI-004](docs/backlog/ui-debugger.md#ui-004) deeper tutorials; [UI-005](docs/backlog/ui-debugger.md#ui-005) extra voxel polish; [UI-006](docs/backlog/ui-debugger.md#ui-006) unspecified layout refresh; [UI-008](docs/backlog/ui-debugger.md#ui-008) virtual joystick. |
+| Network/browser | [NETWORK-008](docs/backlog/network.md#network-008) in-process FujiNet firmware; [NETWORK-012](docs/backlog/network.md#network-012) browser Ethernet transport; [WASM-002](docs/backlog/wasm.md#wasm-002) mobile touch; [WASM-003](docs/backlog/wasm.md#wasm-003) AudioWorklet tuning. |
+| Architecture/projects | [ARCH-007](docs/backlog/architecture-tooling.md#arch-007) Z80 cleanup; [PARKED-001](docs/backlog/parked.md#parked-001) further card ports; [PARKED-003](docs/backlog/parked.md#parked-003) bare-metal Raspberry Pi. |
 
-### Release
+## What is already done
 
-Remaining 1.0 release gates and the candidate checklist:
-[release-1.0.md](docs/backlog/release-1.0.md).
+**2026-11-17 core batch:** STORAGE-014 now has deterministic phase-2 write
+coverage and fixes the reproduced false host conflict; ARCH-014 adds atomic
+clock inspection and mutation-checked fan-out tests; ARCH-015 moves the real
+slot composition policy into a headless-tested coordinator. The final locked
+host-folder flush after four captures remains an explicit, tested limit.
+See [evidence and limits](docs/audits/core-priorities-2026-11-17.md).
 
-| Task | Next action |
-|---|---|
-| [RELEASE-008](docs/backlog/release-1.0.md#release-008) | Record launch and rendering on ARM/Pi hardware, or document the hardware limitation. |
-| [RELEASE-009](docs/backlog/release-1.0.md#release-009) | Execute the Intel macOS slice and record a smoke test, or document the execution limitation. |
-| [RELEASE-010](docs/backlog/release-1.0.md#release-010) | Decide whether a pre-push check and a guard against GL calls outside `OpenGLShader.h` are still needed, or close. |
-| [RELEASE-012](docs/backlog/release-1.0.md#release-012) | Fix the ][+ dump's IRQ vector at the source: corrected `apple2p.rom` in `pom2_firm.zip`, report to RetroBIOS, then move the digests together (in-memory errata until then); upload the repaired Service Disk copy. |
+Do not schedule these again: heap-backed DiskImage storage (STORAGE-003),
+compatibility corpus (VALIDATION-006), input bindings/controllers, browser
+file import, screen text/PNG/firmware guidance/CRT preview (UI-011–014),
+Porte-Parole and E-Z Color integration. Closed domain anchors remain for
+incoming links. The November 16 test-audit fixes include named ctest inventory,
+Windows atomic-file coverage, stronger assertions, and the audio buffer ladder.
+The round-2 skip detector is already broadened; its old blind spots are not
+an instruction to implement another detector.
 
-For the Disk Library follow-up, the requested order is
-[miniatures](docs/backlog/ui-debugger.md#ui-009), then
-[desktop file associations](docs/backlog/ui-debugger.md#ui-010).
+The [2026-10-28 triage](docs/audits/backlog-triage-2026-10-28.md),
+[round-2 hunt](docs/audits/bug-hunt-2026-11-01-round2.md), and
+[November 9 consolidation](docs/audits/core-consolidation-2026-11-09.md)
+remain historical evidence. Missing media (notably the repaired Service Disk)
+are separate from missing implementation. Gates G2–G5 and RELEASE-003–007
+mostly call for a fresh candidate run, not new CI systems.
 
 <a id="casso-possibilities"></a>
 
