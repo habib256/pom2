@@ -173,11 +173,11 @@ Outcome run(const std::string& rom, const std::string& disk525,
         o.prodosSeen = true;
 
     // ProDOS 8 global page: DEVCNT = number of devices - 1, DEVLST follows.
-    const uint8_t devcnt = mem.memRead(0xBF31);
+    const uint8_t devcnt = mem.peekMainRam(0xBF31);
     o.devcnt = devcnt;
     if (devcnt < 14) {
         for (int i = 0; i <= devcnt; ++i) {
-            const uint8_t d = mem.memRead(static_cast<uint16_t>(0xBF32 + i));
+            const uint8_t d = mem.peekMainRam(static_cast<uint16_t>(0xBF32 + i));
             const int  slot = (d >> 4) & 7;
             const bool dr2  = (d & 0x80) != 0;
             if (slot == 5 && !dr2) o.slot5Drive1 = true;
@@ -276,11 +276,11 @@ Outcome runPlus(const std::string& rom, const std::string& internal35,
     o.screen = scrapeTextPage(mem);
     if (!o.prodosSeen && o.screen.find("ProDOS") != std::string::npos)
         o.prodosSeen = true;
-    const uint8_t devcnt = mem.memRead(0xBF31);
+    const uint8_t devcnt = mem.peekMainRam(0xBF31);
     o.devcnt = devcnt;
     if (devcnt < 14) {
         for (int i = 0; i <= devcnt; ++i) {
-            const uint8_t d = mem.memRead(static_cast<uint16_t>(0xBF32 + i));
+            const uint8_t d = mem.peekMainRam(static_cast<uint16_t>(0xBF32 + i));
             const int  slot = (d >> 4) & 7;
             const bool dr2  = (d & 0x80) != 0;
             if (slot == 5 && !dr2) o.slot5Drive1 = true;
@@ -505,8 +505,10 @@ int main()
     if (romPlus.empty()) {
         std::printf("NOTE: no roms/apple2cp.rom — the //c+ half is skipped\n");
     } else {
-        const std::string psDisk =
-            pom2::findResource("disks_3.5/The New Print Shop 800K.po");
+        // Any second 800K will do for E's rear-port device. The New Print
+        // Shop it named was in no manifest, so E had never run on a runner
+        // (bug hunt 2026-11-01 round 2, test audit item 2).
+        const std::string psDisk = pom2::findResource("disks_3.5/CardCat 1.94.po");
         // D. Nothing in the internal bay, an 800K on the rear port: the
         //    firmware's boot scan finds the external device and boots it.
         {
@@ -525,7 +527,9 @@ int main()
         }
         // E. Internal 3.5" boots (the MIG path, iicplus_boot35's case) with an
         //    external device present: both must end up in ProDOS's list.
-        if (!psDisk.empty()) {
+        if (psDisk.empty()) {
+            std::printf("NOTE: case E needs disks_3.5/CardCat 1.94.po — skipped\n");
+        } else {
             const Outcome o = runPlus(romPlus, disk35, psDisk, /*bootSlot5=*/false);
             dump("E //c+ internal boot + external 3.5", o);
             if (!o.prodosSeen) fail("E: ProDOS did not boot from the internal bay");

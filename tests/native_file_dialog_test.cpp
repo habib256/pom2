@@ -3,6 +3,7 @@
 #include "NativeFileDialog.h"
 #include "ChildProcess.h"
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +17,9 @@ int main()
     const fs::path root = fs::temp_directory_path() /
         ("pom2-native-dialog-" + std::to_string(::getpid()));
     fs::create_directories(root);
+    // 0700: findOnPath skips a group-writable directory, and a umask of 002
+    // (Ubuntu's default for a user) left this one 0775.
+    fs::permissions(root, fs::perms::owner_all, fs::perm_options::replace);
     const fs::path helper = root / "zenity";
     {
         std::ofstream script(helper);
@@ -31,6 +35,21 @@ int main()
     ::setenv("POM2_DIALOG_ARGUMENTS", arguments.c_str(), 1);
     ::setenv("POM2_DIALOG_OUTPUT", picked.c_str(), 1);
     ::setenv("POM2_DIALOG_MODE", "selected", 1);
+    // findOnPath searches /usr/bin and the other system directories BEFORE
+    // PATH (bug hunt #3: a PATH entry must not shadow a system tool), so on a
+    // desktop with a real zenity or kdialog the fake helper is never reached
+    // and the test would open a real dialog and wait for a click. Skip there;
+    // CI images have neither, and run the protocol.
+    for (const char* tool : {"zenity", "kdialog"}) {
+        const std::string found = pom2::ChildProcess::findOnPath(tool);
+        if (!found.empty() && fs::path(found).parent_path() != root) {
+            std::printf("SKIP: %s is installed; the fake helper cannot be reached\n",
+                        found.c_str());
+            std::error_code ec;
+            fs::remove_all(root, ec);
+            return 77;
+        }
+    }
     assert(pom2::nativeFileDialogAvailable());
     std::string result;
     assert(pom2::nativeFileDialog(false, "Open ' $name; file", "dsk,woz", root.string(), "a b.dsk", result)

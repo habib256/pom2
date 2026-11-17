@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Two tests that could not see what they claimed
+
+`iic_external_smartport` case E, one of the "five boots", named `The New Print
+Shop 800K.po`, which is in no manifest, so it skipped silently on every runner
+(test audit of 2026-11-01, item 2). It now uses `CardCat 1.94.po`, which is in
+the manifest, and says so when that image is missing. Its first run failed,
+and the failure was the test's own: it read ProDOS's device table (`$BF31`)
+through the CPU's current paging. A2DeskTop, the internal boot disk, runs with
+RAMRD on, so that read came from aux memory and showed `devcnt=0` in five of
+the eight cases. Read from main RAM, every case lists its real units, and E
+finds S5D1 and S5D2.
+
+`native_file_dialog` installs a fake `zenity` on PATH. `findOnPath` searches
+the system directories before PATH (bug hunt #3), so on a desktop with a real
+zenity the test opened a real file chooser and timed out. It also left its
+helper directory group-writable under a 002 umask, which `findOnPath`
+refuses. Now the directory is 0700, and the test skips with its reason when a
+system zenity or kdialog shadows the fake. CI images have neither, so CI
+still exercises the protocol there.
+
 ## 2026-11-17 — DISPLAY-002: PAL beam-raced splits have frozen frames
 
 `display_golden_hash` pins four PAL frames painted as bands by mid-frame soft
