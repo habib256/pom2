@@ -18,7 +18,7 @@ an explicit request before scheduling.
 | [DISPLAY-001](#display-001) | 🟡 | Partial; needs hardware oracle | VidHD on Apple IIe — SHR display support. |
 | [DISPLAY-011](#display-011) | 🟡 | Partial: Eve Leonard golden; rest needs oracle | Le Chat Mauve — what is left after P0-P2 |
 | [DISPLAY-012](#display-012) | 🧊 | Frozen: needs a colour oracle | 80-column text colour phase under the CPU demodulators |
-| [DISPLAY-002](#display-002) | 🟢 | Partial: ALTCHAR/ROM goldens closed | PAL splits and fallback upload measurement |
+| [DISPLAY-002](#display-002) | 🟢 | Partial: ROM and PAL split goldens closed | Fallback upload measurement |
 | [DISPLAY-008](#display-008) | 🧊 | Frozen — triage 2026-10-28 | "Smooth" interpolated sub-pixel mode |
 | [DISPLAY-010](#display-010) | 🟢 | Partial: F6 only | CRT parity refinements vs OpenEmulator |
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
@@ -128,11 +128,24 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 ## DISPLAY-002 — Golden coverage gaps
 
 **Priority:** 🟢 · **State:** Partial. ALTCHAR/character-ROM golden gaps closed
-2026-11-07; PAL split goldens and fallback-upload measurement remain separate.
+2026-11-07; PAL split goldens closed 2026-11-17; only the fallback-upload
+measurement remains.
 
-**Acceptance criterion for the remainder:** Add PAL beam-raced split goldens
-beyond the existing behavioural tests; separately measure whether the
-fallback-framebuffer upload remains unnecessary.
+**Acceptance criterion for the remainder:** Measure whether OE-GPU's
+fallback-framebuffer upload is actually performed and unused before changing
+it. A measurement, not a code change.
+
+**Closed 2026-11-17:** `display_golden_hash` adds four PAL beam-raced split
+frames — TEXT/HGR bands on line edges, a mid-line TEXT|HGR split over 32
+lines, a PAGE2 flip, DHGR/HGR through AN3 with a mid-line return — under the
+seven integer pipelines and the composite signal: 32 pins, 248 in all. The
+script names raster positions (line, horizontal cycle) and derives each cycle
+from the standard's frame length, in the third frame; every pin is also
+rendered on NTSC and must be identical. Mutation control: reading the PAL
+cycle count on a 262-line frame in `Memory`'s event recorder fails all 32.
+**Limit:** these freeze POM2's current split placement, they do not grade it —
+the column offsets themselves are argued in `Apple2Display_Beam.cpp` and
+pinned by `raster_switch_kind_offset`.
 
 **Closed 2026-11-07:** `display_golden_hash` adds four real Enhanced-ROM
 scenes (40/80 columns × ALTCHAR off/on), freezing all seven deterministic
@@ -144,10 +157,8 @@ inverse lowercase and main/aux cell order. The ROM is **not tracked**:
 `fetch-test-media` action. Missing or corrupt ROMs fail explicitly with the
 fixture-fetch command, including in record mode.
 
-**Remaining:** PAL beam-raced splits currently have behavioural coverage
-(`display_dirty_skip`), rather than frozen split hashes. OE-GPU's purported
-unused ~430 KB fallback upload is still a measurement question, not a
-confirmed performance defect.
+**Remaining:** OE-GPU's purported unused ~430 KB fallback upload is still a
+measurement question, not a confirmed performance defect.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1079);
 [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Earlier waves
