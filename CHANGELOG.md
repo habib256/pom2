@@ -10,6 +10,20 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Character sets and the Linux file picker speak English
+
+The character-set rows (the picker, the toolbar combo, ROM Status) carried
+French and German names — "Français", "FR Canadien", "Deutsch", "banque FR" —
+in an otherwise English UI. They are now "French", "French Canadian",
+"German", "FR bank"; nothing matched on those strings.
+
+The zenity / kdialog picker followed the desktop's language, so a fr_FR
+session showed "Annuler" / "Ouvrir" around POM2's English. The child now runs
+with `LANGUAGE=en_US:en`, which outranks `LC_ALL` / `LC_MESSAGES` / `LANG`
+for gettext (GTK) and KDE's translations while `LANG` keeps its UTF-8 codeset,
+so accented host file names still display. The environment is built before
+the fork: the child may not allocate.
+
 ## 2026-11-17 — Two tests that could not see what they claimed
 
 `iic_external_smartport` case E, one of the "five boots", named `The New Print

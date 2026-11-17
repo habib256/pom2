@@ -14,9 +14,12 @@
 #elif !defined(__APPLE__) && !defined(__EMSCRIPTEN__)
 #include "ChildProcess.h"
 #include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 #endif
 
 namespace pom2 {
@@ -97,6 +100,18 @@ FileDialogResult nativeFileDialog(bool save, const std::string& title,
     std::vector<char*> argv;
     for (auto& arg : owned) argv.push_back(arg.data());
     argv.push_back(nullptr);
+    // POM2's UI is English; the picker would otherwise follow the desktop's
+    // language (a fr_FR session showed "Annuler" / "Ouvrir" in an English
+    // UI). LANGUAGE outranks LC_ALL / LC_MESSAGES / LANG for gettext (GTK)
+    // and KDE's translations, while LANG keeps its UTF-8 codeset, so host
+    // file names with accents still display. Built before the fork: the child
+    // may not allocate.
+    std::string languageVar = "LANGUAGE=en_US:en";
+    std::vector<char*> envp;
+    for (char** e = environ; e && *e; ++e)
+        if (std::strncmp(*e, "LANGUAGE=", 9) != 0) envp.push_back(*e);
+    envp.push_back(languageVar.data());
+    envp.push_back(nullptr);
     long maxFd = ::sysconf(_SC_OPEN_MAX);
     if (maxFd < 3 || maxFd > 65536) maxFd = 65536;
     int channel[2];
@@ -108,7 +123,7 @@ FileDialogResult nativeFileDialog(bool save, const std::string& title,
         const int nullFd = ::open("/dev/null", O_RDWR);
         if (nullFd >= 0) { ::dup2(nullFd, STDIN_FILENO); ::dup2(nullFd, STDERR_FILENO); }
         for (int fd = 3; fd < maxFd; ++fd) ::close(fd);
-        ::execv(executable.c_str(), argv.data());
+        ::execve(executable.c_str(), argv.data(), envp.data());
         ::_exit(127);
     }
     ::close(channel[1]);
