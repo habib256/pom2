@@ -50,24 +50,24 @@ const std::vector<CharRomEntry>& catalogStorage()
         { CharRomLocale::AppleIIeUS_Unenhanced,
           "//e — US Unenhanced (342-0133-A)",      "roms/apple2e_char_us_unenh.rom",    true },
         { CharRomLocale::AppleIIeFrench,
-          "//e/c — Français (342-0274-A)",         "roms/apple2e_char_fr.rom",          true },
+          "//e/c — French (342-0274-A)",           "roms/apple2e_char_fr.rom",          true },
         { CharRomLocale::AppleIIeFrenchCanadian,
-          "//e/c — FR Canadien Enhanced",          "roms/apple2e_char_frca.rom",        true },
+          "//e/c — French Canadian Enhanced",      "roms/apple2e_char_frca.rom",        true },
         { CharRomLocale::AppleIIeFrenchCanadianUnenhanced,
-          "//e — FR Canadien (341-0168-A)",        "roms/apple2e_char_frca_unenh.rom",  true },
+          "//e — French Canadian (341-0168-A)",    "roms/apple2e_char_frca_unenh.rom",  true },
         { CharRomLocale::AppleIIeUK_Enhanced,
           "//e/c — UK Enhanced (342-0273-A)",      "roms/apple2e_char_uk.rom",          true },
         { CharRomLocale::AppleIIeUK_Unenhanced,
           "//e — UK Unenhanced (341-0160-A)",      "roms/apple2e_char_uk_unenh.rom",    true },
         { CharRomLocale::AppleIIeGerman,
-          "//e/c — Deutsch (341-0161-A)",          "roms/apple2e_char_de.rom",          true },
+          "//e/c — German (341-0161-A)",           "roms/apple2e_char_de.rom",          true },
         { CharRomLocale::AppleIIeGermanImproved,
-          "//e/c — Deutsch Improved",              "roms/apple2e_char_de_improved.rom", true },
+          "//e/c — German Improved",               "roms/apple2e_char_de_improved.rom", true },
 
         // The genuine 342-0274-A: one 8 KB part holding BOTH sets, as fitted
         // to the French //e (MAME `apple2eefr` gfx1). Offered as two entries
         // because POM2 selects a bank at load time instead of modelling the
-        // machine's charset switch. Note the older "Français" entry above is
+        // machine's charset switch. Note the older "French" entry above is
         // a 4 KB dump that is byte-identical to the FR-CA unenhanced one and
         // is NOT the 342-0274-A part: it is that part's FR bank with the
         // MouseText replaced by uppercase — the FR bank of the UNENHANCED
@@ -79,9 +79,9 @@ const std::vector<CharRomEntry>& catalogStorage()
         // part these two rows load. The two 8 KB dumps differ in exactly
         // the 32 MouseText glyphs ($40-$5F) of each bank.
         { CharRomLocale::AppleIIeFrench8k_FR,
-          "//e — Français 342-0274-A (banque FR)", "roms/342-0274-a.e9",                true, 0, 8192 },
+          "//e — French 342-0274-A (FR bank)",     "roms/342-0274-a.e9",                true, 0, 8192 },
         { CharRomLocale::AppleIIeFrench8k_US,
-          "//e — Français 342-0274-A (banque US)", "roms/342-0274-a.e9",                true, 1, 8192 },
+          "//e — French 342-0274-A (US bank)",     "roms/342-0274-a.e9",                true, 1, 8192 },
         { CharRomLocale::AppleIIeFrenchTouchBlock,
           "//e — French Touch (Block ASCII custom)", "roms/apple2e_char_ft_blockascii.rom", true, -1, 8192 },
         { CharRomLocale::AppleIIeUS_MouseTextIIgs,

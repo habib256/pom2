@@ -429,8 +429,8 @@ void AudioCoordinator::restore(Settings& settings,
     // The device buffer (AudioBufferPolicy.h): a pinned rung wins; otherwise
     // the rung the ladder reached last time, so a Raspberry Pi that climbed
     // to 2048 frames yesterday does not crackle through the climb again
-    // today. A learned value below the platform default is stale (the
-    // default moved) and is ignored.
+    // today. A learned value that is not a rung of this platform is
+    // dropped; one at or below the device's current buffer applies nothing.
     {
         const AudioBufferLadder::Rung r = ladder_.restore(
             settings.getInt("audio_buffer_frames", 0),
@@ -576,6 +576,7 @@ void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& 
                             std::to_string(frames) + " frames (" + why + ")");
         return;
     }
+    if (!pinned) ladder_.reached(frames);
     if (device_.periodFrames() != before) {
         log().info("Audio", "device buffer: " + std::to_string(before) +
                             " -> " + std::to_string(frames) + " frames (" +
@@ -590,7 +591,7 @@ void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& 
                             std::to_string(before) + "), " + why);
     }
     // A new window: the old device's late callbacks are not the new one's.
-    ladder_.restartWindow(device_.lateCallbacks());
+    ladder_.restartWindow();
 }
 
 void AudioCoordinator::pinBuffer(std::uint32_t frames)
@@ -600,8 +601,7 @@ void AudioCoordinator::pinBuffer(std::uint32_t frames)
         // tell the browser's memory it is no longer a pin (WASM-5).
         device_.reconfigurePeriod(device_.periodFrames(), false);
     }
-    if (!ladder_.pin(frames, device_.periodFrames(), device_.lateCallbacks(),
-                     device_.platform()))
+    if (!ladder_.pin(frames, device_.periodFrames(), device_.platform()))
         return;
     if (frames != 0) applyLadderRung(frames, "pinned in the Audio panel", true);
 }
@@ -636,7 +636,7 @@ void AudioCoordinator::tick()
             else if (!quiet)
                 pom2::log().warn("Audio", std::string(AudioDeviceWatch::describe(why)) +
                                  " and none could be opened; retrying in the background");
-            ladder_.forgetWindow();        // late callbacks of the old device
+            ladder_.restartWindow();        // late callbacks of the old device
             return;
         }
     }

@@ -1432,6 +1432,50 @@ template <class Fn> bool until(NetworkBackend& net, Fn done)
     return false;
 }
 
+// ── 14. Bug hunt 2026-11-17: IPv4-mapped destinations over IPv6 ─────────
+//
+// A dual-stack host never puts ::ffff:a.b.c.d on the wire, but a raw IPv6
+// stack (the Uthernet I) can. Both answers used to leave as IPv4 frames the
+// guest's IPv6 socket never saw.
+void testMappedOverIpv6()
+{
+    std::printf("[14] IPv4-mapped DNS and forward peers answer over IPv6\n");
+    // 1. The resolver named ::ffff:10.0.2.3 answers from that address.
+    {
+        Rig rig; Guest6 g{rig};
+        uint32_t wire = 0; const uint8_t quad[4] = {93, 184, 216, 34}; std::memcpy(&wire, quad, 4);
+        rig.names.answers["mapped.example"] = {W5100Resolver::Status::Resolved, wire};
+        g.udp(kDnsMapped6, 5301, 53, dnsQuery(0x4242, "mapped.example"));
+        const auto replies = g.datagrams();
+        CHECK(replies.size() == 1 && replies[0].source == kDnsMapped6 &&
+              replies[0].sourcePort == 53 && replies[0].destinationPort == 5301 &&
+              replies[0].payload.size() >= 12 && rd16(replies[0].payload.data()) == 0x4242 &&
+              (replies[0].payload[3] & 0x0F) == 0);
+        CHECK(rig.world.opened == 0);   // answered, not relayed
+    }
+    // 2. A UDP forward's guest port, sending over IPv6 to a mapped peer, goes
+    //    through the relay (answers come back through the alias), not out of
+    //    the forward's IPv4 socket.
+    {
+        std::vector<BuiltinNatOptions::PortForward> rules;
+        CHECK(parseNatForwards("udp:0.0.0.0:6503:6502", rules));
+        Rig rig(false, false, rules); Guest6 g{rig};
+        FakeSocket* forward = rig.world.listeners[{false, 6503}];
+        Ipv6 mapped{}; mapped[10] = mapped[11] = 0xff;
+        mapped[12] = 192; mapped[13] = 168; mapped[14] = 1; mapped[15] = 34;
+        g.udp(mapped, 6502, 7000, text("out"));
+        CHECK(forward && forward->datagramsOut.empty());
+        FakeSocket* relay = rig.world.last();
+        CHECK(relay && relay != forward && relay->datagramsOut.size() == 1);
+        if (!relay || relay == forward || relay->datagramsOut.empty()) return;
+        relay->datagramsIn.push_back({relay->datagramsOut[0].first, text("back")});
+        rig.pump(1);
+        const auto back = g.datagrams();
+        CHECK(back.size() == 1 && back[0].source == mapped && back[0].sourcePort == 7000 &&
+              back[0].destinationPort == 6502 && back[0].payload == text("back"));
+    }
+}
+
 void testRealSockets()
 {
     std::printf("[7] real sockets on 127.0.0.1\n");
@@ -1683,6 +1727,7 @@ int main()
     testTypedDns();
     testIpv6();
     testAudit20261111();
+    testMappedOverIpv6();
     testRealSockets();
     testTwoNatInstances();
     testRealIpv6();

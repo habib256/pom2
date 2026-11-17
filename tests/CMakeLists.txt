@@ -10451,6 +10451,7 @@ if(UNIX AND NOT APPLE)
         NAME native_file_dialog TIMEOUT 20
         SOURCES native_file_dialog_test.cpp ${CMAKE_SOURCE_DIR}/src/NativeFileDialog.cpp
         LINK_LIBRARIES pom2_core_test)
+    set_tests_properties(native_file_dialog PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 endif()
 

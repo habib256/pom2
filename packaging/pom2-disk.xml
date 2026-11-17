@@ -18,6 +18,7 @@
          images are still recognised when nothing else claims the glob. -->
     <glob pattern="*.po" weight="40"/>
     <glob pattern="*.nib"/>
+    <glob pattern="*.nb2"/>
     <glob pattern="*.woz"/>
     <glob pattern="*.d13"/>
     <glob pattern="*.hdv"/>

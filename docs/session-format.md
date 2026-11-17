@@ -199,7 +199,7 @@ All integers are little-endian; maximum file size is 32 MiB.
 | Machine identity | Nonzero u32 profile identity |
 | Payload size | u32, exactly file size minus 24 |
 | Controller configuration | u32 length + bytes (up to 64) |
-| Core snapshot | u32 length + existing ENV/CPU/MEM/MEX snapshot (up to 17 MiB) |
+| Core snapshot | u32 length + existing ENV/CPU/MEM/MEX snapshot, plus a 1-byte NMI section while an /NMI edge is pending (up to 17 MiB) |
 | Cassette (v7+) | u32 length + CTS state (magic `CTS` + byte 1) (up to 9 MiB); empty means no tape |
 | Eight slot records | u8 kind + length-prefixed identity (up to 16 KiB) + state (within the 32 MiB file limit; 1 MiB in v1) |
 | CRC32 | u32 IEEE reversed-polynomial CRC over all preceding bytes |

@@ -71,28 +71,25 @@ public:
     /// The Audio panel's pin. 0 = back to automatic. Returns false, and
     /// changes nothing, for a value that is not a rung of this platform.
     /// Back to automatic, the ladder starts from the current rung and counts
-    /// late callbacks afresh.
-    bool pin(std::uint32_t frames, std::uint32_t currentFrames,
-             std::uint64_t lateNow, Platform p)
+    /// late callbacks afresh, from the next poll.
+    bool pin(std::uint32_t frames, std::uint32_t currentFrames, Platform p)
     {
         if (frames != 0 && !Policy::isRung(frames, p)) return false;
         pinned_ = frames;
         if (frames == 0) {
             learned_ = std::max(learned_, currentFrames);
-            restartWindow(lateNow);
+            restartWindow();
         }
         return true;
     }
 
-    /// The device was opened again (a new rung, a re-route): its late
-    /// callbacks are not the old one's. `lateNow` is the counter now.
-    void restartWindow(std::uint64_t lateNow)
-    {
-        lateAtWindowStart_ = lateNow;
-        windowStartSec_    = -1.0;
-    }
-    /// Same, when the counter itself is not known yet (a re-open in flight).
-    void forgetWindow() { windowStartSec_ = -1.0; }
+    /// The device was opened again (a new rung, a re-route, an unpin): its
+    /// late callbacks are not the old one's. The next poll opens a new window
+    /// and takes the counter THEN as its baseline, so the callbacks between
+    /// the re-open and that poll (one UI frame) are not counted. There used
+    /// to be a variant that took the counter at the re-open; the poll
+    /// overwrote it, so it did exactly this (bug hunt 2026-11-17).
+    void restartWindow() { windowStartSec_ = -1.0; }
 
     /// Once per UI frame. `lateNow` is the device's running count of late
     /// callbacks, `nowSec` any monotonic clock. Climbs one rung when the
@@ -113,10 +110,16 @@ public:
         const std::uint32_t next =
             Policy::escalatedPeriodFrames(currentFrames, lateInWindow, p);
         if (next == currentFrames) return {};
-        learned_ = std::max(learned_, next);
         if (appliesAtNextLoad) climbDeferred_ = true;
         return {next, lateInWindow, nowSec - windowStartSec_};
     }
+
+    /// The device took `frames` (it re-opened there, or the browser stored
+    /// it for the next load): from now on the start rung of a launch. Not
+    /// done by `poll`, which only proposes — a rung that failed to open used
+    /// to be remembered all the same and tried again at every launch (bug
+    /// hunt 2026-11-17).
+    void reached(std::uint32_t frames) { learned_ = std::max(learned_, frames); }
 
     std::uint32_t pinned()  const { return pinned_; }
     std::uint32_t learned() const { return learned_; }

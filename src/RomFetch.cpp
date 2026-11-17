@@ -156,11 +156,11 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "ed5bdd4afa509134e85f1d020685af7ff50e279226eb869a17825b471cc1634c", 0u },
 
         // ── International character sets (the picker's locale rows) ───
-        { "roms/apple2e_char_fr.rom", "//e Français (4 KB)", 4096,
+        { "roms/apple2e_char_fr.rom", "//e French (4 KB)", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_fr.rom",
           nullptr, nullptr, 0u, nullptr,
           "52d8e46b487a617c288caaf12ab7ad6cb81030b6ab92419f9a2e19c43d765566", 0u },
-        { "roms/apple2e_char_frca.rom", "//e FR Canadien Enhanced", 4096,
+        { "roms/apple2e_char_frca.rom", "//e French Canadian Enhanced", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_frca.rom",
           nullptr, nullptr, 0u, nullptr,
           "56479cbec4767651c62a4d0f61e6ed103395216f2b86eddba74d85495dd71cc4", 0u },
@@ -172,18 +172,18 @@ const std::vector<RomFetchEntry>& catalogStorage()
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_uk_unenh.rom",
           nullptr, nullptr, 0u, nullptr,
           "f2199fbfb473e98a8c3fb7e7c3312faaf76b4b010b02c655b662e5f87dc997f3", 0u },
-        { "roms/apple2e_char_de.rom", "//e Deutsch (341-0161-A)", 4096,
+        { "roms/apple2e_char_de.rom", "//e German (341-0161-A)", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_de.rom",
           nullptr, nullptr, 0u, nullptr,
           "b92576b4fa994384501078ff99963b53cfa98eff4bb641eb61649d484a469315", 0u },
-        { "roms/apple2e_char_de_improved.rom", "//e Deutsch Improved", 4096,
+        { "roms/apple2e_char_de_improved.rom", "//e German Improved", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_de_improved.rom",
           nullptr, nullptr, 0u, nullptr,
           "0e32ab131e3932fc61c0a5f0f5509b4c37ab8db6239027f5955d47feba56d39f", 0u },
         // The FR-Canadian UNENHANCED row: the dump roms/ ships under that
         // name is byte for byte RetroBIOS's apple2e_char_fr.rom (same
         // SHA-256), so that object is the one that reproduces it.
-        { "roms/apple2e_char_frca_unenh.rom", "//e FR Canadien Unenhanced (341-0168-A)", 4096,
+        { "roms/apple2e_char_frca_unenh.rom", "//e French Canadian Unenhanced (341-0168-A)", 4096,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/apple2e_char_fr.rom",
           nullptr, nullptr, 0u, nullptr,
           "52d8e46b487a617c288caaf12ab7ad6cb81030b6ab92419f9a2e19c43d765566", 0u },
@@ -197,7 +197,7 @@ const std::vector<RomFetchEntry>& catalogStorage()
           "49716e2804b119810c22ab668ae37cebadf0cd53bc8911b5f17c4a62a3acb514", 0u },
         // The genuine 342-0274-A: ONE 8 KB part holding both the FR and the
         // US bank, which is why CharRomCatalog offers it as two rows.
-        { "roms/342-0274-a.e9", "//e Français 342-0274-A (8 KB, both banks)", 8192,
+        { "roms/342-0274-a.e9", "//e French 342-0274-A (8 KB, both banks)", 8192,
           POM2_RETROBIOS_RAW "bios/Apple/Apple%20II/342-0274-a.e9",
           nullptr, nullptr, 0u, nullptr,
           "d4d29771658372c6ab5d18ff3bdab6b3b2b02b8de30ed6b021efb8a415192432", 0u },

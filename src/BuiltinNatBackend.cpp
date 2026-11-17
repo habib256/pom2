@@ -400,7 +400,12 @@ private:
                 // both directions. Two LAN peers using the same fixed port
                 // therefore see that port, rather than an ephemeral one.
                 for (auto& f : forwards_) {
-                    if (!f.rule.tcp && f.rule.guestPort == datagram.sourcePort && !host.isIpv6) {
+                    // IPv4 on both sides only: a datagram that came in over
+                    // IPv6 (an alias, here) to an IPv4-mapped host would
+                    // get its answers back as IPv4 from the forward's
+                    // socket. The relay answers through the alias.
+                    if (!f.rule.tcp && f.rule.guestPort == datagram.sourcePort && !host.isIpv6 &&
+                        !peers6_.count(packet.destination)) {
                         f.socket->sendTo(host, datagram.payload.data, datagram.payload.size);
                         return;
                     }
@@ -475,7 +480,7 @@ private:
         const auto it = dnsGuests6_.find({port, rd16(reply.data())});
         if (it == dnsGuests6_.end()) return;
         auto udp = buildUdp(0, 0, 53, port, reply.data(), reply.size());
-        queue6(kDns6, it->second.source, kProtoUdp, std::move(udp));
+        queue6(it->second.server, it->second.source, kProtoUdp, std::move(udp));
         dnsGuests6_.erase(it);
     }
 
@@ -490,7 +495,12 @@ private:
             ip.payload.size < (ip.protocol == kProtoTcp ? 20u : 8u) ||
             checksum6(ip.source, ip.destination, ip.protocol, ip.payload)) return;
         if (ip.protocol == kProtoUdp && (!rd16(ip.payload.data + 6) || rd16(ip.payload.data + 4) != ip.payload.size)) return;
-        if (ip.protocol == kProtoUdp && ip.destination == kDns6 && rd16(ip.payload.data + 2) == 53) {
+        // The resolver by its IPv6 address, or the IPv4 one IPv4-mapped. The
+        // mapped form used to fall through to the IPv4 relay: the fence
+        // routed it to DNS, but the answer left as an IPv4 frame the guest's
+        // IPv6 socket never saw, keyed in the IPv4 proxy's dedupe.
+        if (ip.protocol == kProtoUdp && (ip.destination == kDns6 || ip.destination == kDnsMapped6) &&
+            rd16(ip.payload.data + 2) == 53) {
             const auto port = rd16(ip.payload.data);
             View question{ip.payload.data + 8, ip.payload.size - 8};
             if (question.size < 12) return;
@@ -504,7 +514,7 @@ private:
             const bool fresh = previous == dnsGuests6_.end();
             if (fresh && dnsGuests6_.size() >= kMaxDnsGuests6) return;
             const DnsGuest6 kept = fresh ? DnsGuest6{} : previous->second;
-            dnsGuests6_[key] = {ip.source, now() + kDnsGuest6Ms};
+            dnsGuests6_[key] = {ip.source, ip.destination, now() + kDnsGuest6Ms};
             if (!dns6_.query(port, question, now(), [this](uint16_t p, const Bytes& r) { emitDns6(p, r); })) {
                 if (fresh) dnsGuests6_.erase(key);
                 else       dnsGuests6_[key] = kept;
@@ -710,7 +720,7 @@ private:
     uint32_t nextAlias6_ = kAliasLast;                      ///< the first one taken is kAliasFirst
     uint64_t nextAliasSweepMs_ = 0;
     using DnsGuestKey = std::pair<uint16_t, uint16_t>;      ///< guest port, DNS id
-    struct DnsGuest6 { Ipv6 source{}; uint64_t expiresMs = 0; };
+    struct DnsGuest6 { Ipv6 source{}; Ipv6 server{}; uint64_t expiresMs = 0; };
     std::map<DnsGuestKey, DnsGuest6> dnsGuests6_;
     uint32_t nextIp6Id_ = 0;
     uint64_t nextRaMs_ = 0;

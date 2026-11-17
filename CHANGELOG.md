@@ -10,6 +10,78 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Bug hunt: the /NMI latch survives a snapshot, pickers add the extension
+
+Four reviewers over everything since the 2026-11-09 hunt
+(`docs/audits/bug-hunt-2026-11-17.md`).
+
+**The /NMI edge latch is machine state.** A snapshot left out `M6502::NMI`
+on the grounds that interrupt lines "self-correct within a frame". That holds
+for /IRQ, a level the cards re-assert; /NMI fires once on its falling edge.
+The E-Z Color's VDP holds /INT low until the guest reads its status, so a
+rewind or session capture taken between the edge and its service came back
+with no NMI pending and no edge left to come: an NMI-driven program froze
+until RESET. A restore also kept a LIVE pending NMI and took it in a timeline
+that never raised it. Now an optional 1-byte `NMI` section, written only
+while an edge is pending — the usual capture is byte-identical and older
+readers skip it — and applied after the section loop, since section order is
+the file's. Absent clears the latch.
+
+**Native pickers.** The zenity/kdialog lookup ran on every frame (a miss
+stats every PATH entry and the usual homes; a SmartPort card asks twice per
+row); it is cached once per process. A Save answer typed with no extension
+now gets the filter's first one, as AppKit already did (Windows:
+`lpstrDefExt`, so its overwrite prompt sees the final name). `.nb2` joins the
+three desktop association lists.
+
+**Audio ladder.** `restartWindow(lateNow)` stored a baseline the next poll
+overwrote; it is now `restartWindow()` with the behaviour it always had, and
+the test that claimed otherwise pins what really happens. A climb was also
+remembered for the next launch before the device had re-opened there, so a
+rung that failed to open was retried at every start; it is recorded only
+once the device took it.
+
+**NAT, IPv4-mapped over IPv6.** A guest IPv6 query to `::ffff:10.0.2.3:53`
+reached the resolver through the fence but got its answer as an IPv4 frame;
+it is now served by the IPv6 DNS path from the address it asked. A UDP
+forward's guest port sending over IPv6 to a mapped peer takes the relay
+instead of the forward's IPv4 socket. Neither crossed the fence; only a raw
+IPv6 stack on the Uthernet I puts a mapped address on the wire.
+
+## 2026-11-17 — Character sets and the Linux file picker speak English
+
+The character-set rows (the picker, the toolbar combo, ROM Status) carried
+French and German names — "Français", "FR Canadien", "Deutsch", "banque FR" —
+in an otherwise English UI. They are now "French", "French Canadian",
+"German", "FR bank"; nothing matched on those strings.
+
+The zenity / kdialog picker followed the desktop's language, so a fr_FR
+session showed "Annuler" / "Ouvrir" around POM2's English. The child now runs
+with `LANGUAGE=en_US:en`, which outranks `LC_ALL` / `LC_MESSAGES` / `LANG`
+for gettext (GTK) and KDE's translations while `LANG` keeps its UTF-8 codeset,
+so accented host file names still display. The environment is built before
+the fork: the child may not allocate.
+
+## 2026-11-17 — Two tests that could not see what they claimed
+
+`iic_external_smartport` case E, one of the "five boots", named `The New Print
+Shop 800K.po`, which is in no manifest, so it skipped silently on every runner
+(test audit of 2026-11-01, item 2). It now uses `CardCat 1.94.po`, which is in
+the manifest, and says so when that image is missing. Its first run failed,
+and the failure was the test's own: it read ProDOS's device table (`$BF31`)
+through the CPU's current paging. A2DeskTop, the internal boot disk, runs with
+RAMRD on, so that read came from aux memory and showed `devcnt=0` in five of
+the eight cases. Read from main RAM, every case lists its real units, and E
+finds S5D1 and S5D2.
+
+`native_file_dialog` installs a fake `zenity` on PATH. `findOnPath` searches
+the system directories before PATH (bug hunt #3), so on a desktop with a real
+zenity the test opened a real file chooser and timed out. It also left its
+helper directory group-writable under a 002 umask, which `findOnPath`
+refuses. Now the directory is 0700, and the test skips with its reason when a
+system zenity or kdialog shadows the fake. CI images have neither, so CI
+still exercises the protocol there.
+
 ## 2026-11-17 — DISPLAY-002: PAL beam-raced splits have frozen frames
 
 `display_golden_hash` pins four PAL frames painted as bands by mid-frame soft

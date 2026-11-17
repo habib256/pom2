@@ -29,9 +29,11 @@
 //
 //   "CPU"      17 bytes: PC(2) A X Y status SP cpuMode (6), cycle count(8),
 //              STP halt latch(1). Legacy 16-byte CPU sections are accepted.
-//              IRQ/NMI lines are NOT persisted — they are transient bus
-//              signals re-asserted by the cards on each MMIO access, so they
-//              self-correct within a frame of resuming.
+//              The IRQ line is NOT persisted — a level the cards re-assert,
+//              so it self-corrects within a frame of resuming.
+//   "NMI"      optional, 1 byte (=1): an /NMI edge taken and not yet
+//              serviced. Written only while one is pending; absent = none.
+//              /NMI is edge-triggered, so its level cannot bring it back.
 //   "MEM"      main 64 KB RAM (restored through writable[] — ROM preserved)
 //   "MEX"      (v2) aux RAM + Language-Card RAM + RamWorks banks + paging
 //              soft-switches (iieMemMode) + LC latch flags + DisplayState

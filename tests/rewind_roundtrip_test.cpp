@@ -357,7 +357,43 @@ int main()
         checkState(cpu, mem, 40, resumeAt);
     }
 
+    // ── (7) The /NMI edge latch is machine state (bug hunt 2026-11-17) ────
+    // /NMI is edge-triggered: a capture taken between the edge and its
+    // service must bring the pending NMI back (the E-Z Color's VDP holds
+    // /INT low until the handler reads it — lose the edge and no other comes),
+    // and a capture with none pending must CLEAR a live one, not replay it.
+    // Both on the rewind path (non-transactional) and a file load.
+    for (const bool transactional : {false, true}) {
+        auto capture = [&](std::vector<uint8_t>& blob) {
+            pom2::SnapshotWriter w(blob);
+            pom2::captureMachineState(w, cpu, mem, /*includeSlots=*/!transactional);
+            assert(w.finish());
+        };
+        auto restore = [&](const std::vector<uint8_t>& blob) {
+            pom2::SnapshotReader r(blob.data(), blob.size());
+            return pom2::restoreMachineState(r, cpu, mem, transactional).ok;
+        };
+        setState(cpu, mem, 50, 50'000);
+        cpu.setNmiPending(false);
+        std::vector<uint8_t> quiet;
+        capture(quiet);
+        cpu.setNMI();
+        std::vector<uint8_t> pending;
+        capture(pending);
+        assert(pending.size() == quiet.size() + 8 + 4 + 1 &&
+               "the NMI section is written only while an edge is pending");
+
+        cpu.setNmiPending(false);
+        assert(restore(pending));
+        assert(cpu.nmiPending() && "a pending /NMI edge was lost by the restore");
+        checkState(cpu, mem, 50, 50'000);
+
+        cpu.setNMI();
+        assert(restore(quiet));
+        assert(!cpu.nmiPending() && "the live NMI latch survived the restore");
+    }
+
     std::printf("Rewind ring buffer: OK (round-trip + eviction + seek + "
-                "abandoned-future drop + record re-enable)\n");
+                "abandoned-future drop + record re-enable + NMI latch)\n");
     return 0;
 }

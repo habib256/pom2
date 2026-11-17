@@ -106,7 +106,7 @@ const char* profileShortLabel(SystemProfile p) {
 }
 
 // Compact label shown inside the toolbar combo when collapsed. Full
-// names live in the dropdown rows (e.g. "//e/c — Français (342-0274-A)")
+// names live in the dropdown rows (e.g. "//e/c — French (342-0274-A)")
 // but those wouldn't fit in the toolbar's ~110 px width.
 const char* shortLocaleLabel(CharRomLocale l) {
     switch (l) {

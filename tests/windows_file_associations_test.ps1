@@ -17,7 +17,7 @@ try {
     $key = $classes.OpenSubKey('POM2.DiskImage\shell\open\command')
     Check ($key.GetValue('') -ceq ('"' + $exe + '" "%1"')) 'Command quoting failed'
     $key.Dispose()
-    foreach ($ext in '.dsk', '.do', '.po', '.nib', '.woz', '.d13', '.2mg', '.hdv', '.moof') {
+    foreach ($ext in '.dsk', '.do', '.po', '.nib', '.nb2', '.woz', '.d13', '.2mg', '.hdv', '.moof') {
         $key = $classes.OpenSubKey("$ext\OpenWithProgids")
         Check ($key.GetValueNames() -contains 'POM2.DiskImage') "Missing $ext"
         $key.Dispose()
