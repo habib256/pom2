@@ -25,8 +25,6 @@ an explicit request before scheduling.
 | [ARCH-007](#arch-007) | 🧊 | Frozen — triage 2026-10-28 (won't do) | Z80/SoftCard cleanup backlog |
 | [ARCH-012](#arch-012) | 🟢 | Confirmed open (post-1.0) | Inconsistent `pom2::` namespace |
 | [ARCH-013](#arch-013) | 🟢 | Confirmed open | Legacy M6502 style |
-| [ARCH-014](#arch-014) | 🟢 | Ready | No getter to assert every clock-bearing device was retuned |
-| [ARCH-015](#arch-015) | 🟢 | Ready | The window's slot hooks are not covered by the slot-config tests |
 
 <a id="arch-016"></a>
 
@@ -353,18 +351,40 @@ run for this change.
 
 ## ARCH-014 — No getter to assert every clock-bearing device was retuned
 
-**Priority:** 🟢 · **State:** Ready.
+**Priority:** ✅ · **State:** Done 2026-11-17; removed from the active index.
 
-**Acceptance criterion:** `device_standard_clock` enumerates every device `setVideoStandard` retunes — the speaker, the cassette and the floppy-sound device included — and fails when one is skipped.
+Read-only atomic getters expose the speaker reconstructor, cassette monitor
+and both floppy-sound clocks. `device_standard_clock` poisons each clock
+before NTSC→PAL→NTSC retunes at stock/x2/x4 rates, then verifies each target.
+Slot-zero and ordinary-slot witnesses assert paced/machine/crystal fan-out;
+existing Sony/Liron and Disk II FLUX checks remain in the same test. Removing
+any of the four audio retunes makes the test fail (four independent mutation
+controls). No clock behavior was changed.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md) G5-3, "Not done": the speaker, cassette and floppy-sound retunes have no getter to assert on. Recovered from the archive 2026-10-07; it had no home after the migration.
+Evidence and limitations: [core priorities](../audits/core-priorities-2026-11-17.md).
 
 <a id="arch-015"></a>
 
 ## ARCH-015 — The window's slot hooks are not covered by the slot-config tests
 
-**Priority:** 🟢 · **State:** Ready.
+**Priority:** ✅ · **State:** Done 2026-11-17; removed from the active index.
 
-**Acceptance criterion:** `MainWindow::plugSlotsFromSettings` (still GUI-side) is either reached by a headless test or its policy moved into `SlotConfigurationCoordinator`, where `slot_configuration_coordinator` already pins it.
+The construction policy now runs through
+`SlotConfigurationCoordinator::buildResolvedPlan`, used by the actual
+`MainWindow::plugSlotsFromSettings` composer. It dispatches the resolved plan,
+adds the profile-eligible Premium SoftCard, runs runtime overlays, restores
+media against the complete topology, then reads/fans out the clocks including
+slot zero. The StateAccess token proves the caller owns the machine lock;
+media restoration keeps the existing stopped-worker rebuild exception.
 
-**Evidence:** [original report](../archive/todo-2026-10-05.md) G5-6, "Not covered". The 2026-10-06 Videx-on-//e bug lived exactly in this seam (the picker refused, the plug path did not). Recovered from the archive 2026-10-07.
+`slot_configuration_build` uses the same policy with real Disk II/HDV cards:
+legacy primary-drive paths, drive 2, runtime overlays changing which HDV is
+primary, missing-path warnings, retained incompatible settings, auxiliary-card
+profile/enable policy and distinct paced/machine/crystal clocks. Mutation
+controls reject removal of restoration or overlays, omission of slot-zero
+clocks and removal of the auxiliary-card enable guard.
+
+This closes the policy seam allowed by the acceptance criterion, not every
+GUI or transport callback: per-card panel/host-transport wiring remains in
+MainWindow and its broader concurrency work remains ARCH-003/ARCH-009.
+Evidence: [core priorities](../audits/core-priorities-2026-11-17.md).

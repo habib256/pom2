@@ -11003,6 +11003,13 @@ survives a topology rebuild.
   after profile fixtures and the multi-instance policy) and `draft_` (staged UI
   edits, never applied implicitly). Owns `kDefaultCards[]` and `isMultiInstance`.
   SlotBus stays the sole authority for what is actually plugged.
+  `SlotConfigurationCoordinator_Build.cpp` owns `buildResolvedPlan`: dispatch
+  resolved cards → eligible Premium auxiliary card → runtime overlays → media
+  restoration against the finished topology → fresh paced/machine/crystal
+  clock fan-out (including slot zero). MainWindow supplies per-card UI and
+  transport wiring; the same composition policy runs headlessly in
+  `slot_configuration_build`. Media reads keep the stopped-worker rebuild
+  exception; the StateAccess argument proves ownership of the machine lock.
 * **`SlotRebuildCoordinator`** — the *sequencing* of a topology
   rebuild, as a `Phase` state machine (Stable / Prepared / WorkersStopped /
   Rebuilding) plus eight `Hooks`. Host network workers (FujiNet link, SSC

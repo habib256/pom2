@@ -10,6 +10,62 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — First core-priority batch: folder eject, audio clocks, slot composition
+
+STORAGE-014's new deterministic interleaving test reproduced a false conflict:
+a successful phase-2 folder decode did not publish its timestamp back to the
+mounted backing. The next guest write during eject was kept in a conflict
+copy while the main file stayed at the previous version. Eject now adopts
+successful as well as partially failed decode stamps, only on the original
+mount identity, in both single-bay and eject-all commands. Zero/one/three/four
+racing writes preserve the exact main file. The fourth-round final locked
+flush remains explicit and tested; eject-all's final flush is also exercised.
+
+ARCH-014 adds atomic clock getters and extends `device_standard_clock` across
+NTSC/PAL, stock/x2/x4 and auxiliary/ordinary slot fan-out. Four fault injections
+that remove individual audio retunes each fail the test; no audio behavior
+changed.
+
+ARCH-015 moves the actual MainWindow composition sequence into
+`SlotConfigurationCoordinator::buildResolvedPlan`: resolved cards, eligible
+auxiliary card, runtime overlays, media restore, then clock fan-out. The new
+headless integration test verifies real multi-card/drive media restoration,
+missing-path reporting and auxiliary profile policy. Four mutation controls
+reject missing restore/overlay/aux-clock/enable-guard behavior. Per-card GUI
+and transport wiring remain composition callbacks, not a claim of complete
+GUI concurrency coverage. Full local macOS ARM64 Release build and the
+494-test suite passed (493 passes, one optional-media skip). The subsequently
+added eject-all variant also reproduced the defect before its extra fix;
+a final incremental build and 18/18 focused regressions passed afterwards.
+[Evidence and exact scope](docs/audits/core-priorities-2026-11-17.md).
+
+## 2026-11-17 — Desktop disk associations and native browsing in the remaining panels
+
+Finder declares POM2 as an alternate disk handler rather than owner. The
+Windows ZIP includes `FileAssociations.ps1` for explicit per-user Open with
+registration/removal; extension defaults and other handlers are preserved.
+A release-workflow test exercises the registry operations under an isolated
+key, including paths with spaces and idempotent removal.
+
+SmartPort, Media bays, Disk II/HDV/Sony dialogs, cassette load/save, VSDrive,
+paste-from-file and the text-printer spool now offer native browsing beside
+their manual fields. ImageWriter single-sheet PNG and PDF exports ask for a
+destination. Cancel leaves paths untouched and writes nothing; unavailable
+backends retain manual input or the ImageWriter's generated destination.
+String fields preserve long UTF-8 paths; bounded fields reject an oversize
+selection rather than mount a truncated filename. `file_path_picker` drives
+the shared UI with selected/cancelled/unavailable backend results.
+The planning index now separates all 44 non-frozen domain/release entries
+from the 28 formally frozen entries, with concrete next actions and the
+completed work excluded from the active count.
+
+Local validation: full macOS ARM64 Release build; 491 registered tests passed,
+one optional-media skip (`arekkusu_disks`). Twenty network/GL tests initially
+blocked by the sandbox passed when rerun with local sockets/graphics permitted.
+The new chooser test also rejects an injected cancel-path overwrite. Repository
+text/architecture guards passed. Cross-platform interactive package/chooser
+checks and Windows execution of the registry script remain outstanding.
+
 ## 2026-11-16 — UI-003: `/screen.ppm` and `/status` are GET-only
 
 The last residue of bug hunt #16: every AI-control endpoint already refused

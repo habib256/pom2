@@ -15,19 +15,19 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [UI-002](#ui-002) | 🟡 | Partial: panels still use typed paths | Native picker integration and platform verification |
+| [UI-002](#ui-002) | 🟡 | Integrated: cross-platform GUI checks pending | Native picker integration and platform verification |
 | [UI-004](#ui-004) | 🧊 | Frozen — triage 2026-10-28 | Deeper guided tutorials |
 | [UI-006](#ui-006) | 🧊 | Frozen — triage 2026-10-28 | Airier default layout |
 | [UI-005](#ui-005) | 🧊 | Frozen | MicroM8-style 3D voxel view ("Voxel Cube") |
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
 | [UI-009](#ui-009) | 🟢 | Needs decision: cover art vs captured screen | Disk Library miniatures |
-| [UI-010](#ui-010) | 🟢 | Partial: Windows + macOS rank | OS file associations for disk images |
+| [UI-010](#ui-010) | 🟢 | Implemented: installed-package checks pending | OS file associations for disk images |
 
 <a id="ui-002"></a>
 
 ## UI-002 — Remaining native file picker integration and platform checks
 
-**Priority:** 🟡 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cassette, SmartPort, Disk/HDV/3.5 and printer panels still take typed paths; Windows unchecked.
+**Priority:** 🟡 · **State:** Integrated (2026-11-17); interactive cross-platform verification pending.
 
 **Acceptance criterion (after revalidation):** Use the native open/save dialog and verify cancellation, chosen paths and fallback behavior on supported hosts.
 
@@ -40,8 +40,26 @@ Desktop session open/save also uses the native chooser, with overwrite
 confirmation and a manual-path fallback when the backend is unavailable.
 Cancellation is distinguished from backend unavailability.
 
-Remaining: extend other standalone file/export panels and obtain interactive
-cancel/open/save evidence on every OS. Windows is not validated by a macOS build.
+**2026-11-17:** SmartPort, Disk II/HDV/Sony dialogs, Media panel bays,
+cassette load/save, VSDrive, paste-from-file and text-printer paths now offer
+native browsing through `FilePathPicker.h`. ImageWriter single-sheet PNG and
+PDF exports offer a save chooser; batch sheets retain their generated names.
+Cancelled or unavailable browsing preserves manual input. Fixed buffers reject
+oversize selections instead of truncating; string fields retain long UTF-8
+paths. The shared chooser interaction is exercised with fake backend results
+in `file_path_picker`.
+
+**Local validation 2026-11-17:** full macOS ARM64 Release build passed.
+The 492-test registered suite yielded 491 passes and one optional-media skip
+(`arekkusu_disks`), after rerunning the 20 network/GL cases blocked by the
+sandbox with local sockets/graphics permitted. `file_path_picker` passed; a
+fault injection that replaced the remembered path on cancellation failed its
+assertion. File-size, version, settings-key, documentation-reference, workflow,
+coordinator-lock and include guards passed. No native OS-dialog interaction or
+Windows execution is established by those fake-backend tests.
+
+Remaining: obtain interactive cancel/open/save evidence on every OS. Windows
+is not validated by a macOS build.
 
 UI-001 (inline-argument step-over) was corrected on 2026-10-17; see CHANGELOG
 and the expanded `debugger` regression suite.
@@ -123,7 +141,7 @@ preserving saved layouts. It is not a request to introduce docking.
 
 ## UI-009 — Disk Library miniatures
 
-**Priority:** 🟢 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cover art or captured screen. The prerequisite (search/sort, "All media") exists. User-requested order: this, then UI-010.
+**Priority:** 🟢 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cover art or captured screen. The prerequisite (search/sort, "All media") exists. The earlier thumbnail-first order was superseded on 2026-11-17 by the explicit request for UI-010 followed by UI-002; thumbnails are not scheduled.
 
 **Acceptance criterion:** Decide whether a thumbnail is user-supplied cover art
 or a captured guest screen, then display it without loading every disk or
@@ -133,7 +151,7 @@ blocking the library's scan. Missing art must leave a readable text row.
 
 ## UI-010 — OS file associations for disk images
 
-**Priority:** 🟢 · **State:** Partial ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): `.moof` declared; macOS uses `LSHandlerRank` Owner (should be Alternate for `.po`/`.dsk`); Windows has no association.
+**Priority:** 🟢 · **State:** Implemented (2026-11-17); installed-package platform verification pending.
 
 **Acceptance criterion:** Register supported image extensions in each desktop
 package, open a disk from the host file manager into the correct drive, and
@@ -148,8 +166,16 @@ the queue into the normal file-drop path. Linux installs `POM2.desktop`
 (`Exec=POM2 %f`) and `pom2-disk.xml`; `.po` has a lower MIME weight to avoid
 winning against gettext files. Linux/Windows positional disk arguments are
 handled by the CLI. This is implemented plumbing, not proof of an installed
-package's association behavior. Remaining: Windows registration, the macOS
-handler rank, and clean-host open/default-association checks.
+package's association behavior. **2026-11-17:** macOS uses `LSHandlerRank=Alternate`. The Windows ZIP ships
+`FileAssociations.ps1` to register/remove a per-user `POM2.DiskImage` ProgID
+and `OpenWithProgids` entries, with a quoted executable and file argument.
+Registration is explicit, needs no elevation, and does not change extension
+defaults or UserChoice. The release workflow runs an isolated-registry test of
+registration, quoting, repeated registration/removal and preservation of other
+handlers/defaults. Instructions live in the user guide.
+
+Remaining: clean-host open/default-association checks on macOS, Windows and
+Linux; no interactive Explorer validation is claimed from a macOS build.
 
 <a id="ui-011"></a>
 

@@ -58,13 +58,14 @@ python packaging/fujinet/stage.py --target windows --dest "dist/POM2-Windows" ||
 python packaging/fujinet/stage.py --target windows --dest "dist/POM2-Windows" --verify || goto :fail
 
 REM --- docs -----------------------------------------------------------------
+copy /y packaging\windows\FileAssociations.ps1 "%STAGE%\" >nul || goto :fail
 copy /y README.md    "%STAGE%\" >nul || goto :fail
 copy /y CHANGELOG.md "%STAGE%\" >nul || goto :fail
 copy /y LICENSE      "%STAGE%\" >nul || goto :fail
 
 REM The binary and the docs are this script's own concern, so they get their
 REM own check; the payload was already verified by stage_data.sh above.
-for %%F in (POM2.exe README.md CHANGELOG.md LICENSE) do (
+for %%F in (POM2.exe FileAssociations.ps1 README.md CHANGELOG.md LICENSE) do (
     if not exist "%STAGE%\%%F" (
         echo ERROR: staged package is missing %%F
         exit /b 1

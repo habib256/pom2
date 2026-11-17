@@ -159,6 +159,7 @@ public:
     /// but is also exactly the mistake `setVideoStandard` fans out to every
     /// other cycle-stamped audio consumer. Defaults to the NTSC nominal.
     void setCpuClock(double hz);
+    double cpuClockHz() const { return cpuClockHz_.load(std::memory_order_relaxed); }
 
     // ─── CPU-thread API ─────────────────────────────────────────────────
     /// Motor state changed. `withDisk` chooses the loaded vs empty

@@ -20,6 +20,7 @@
 // MainWindow.cpp verbatim; none touch the anonymous-namespace helpers that
 // keep the storage panels there. See the file-size ratchet.
 
+#include "FilePathPicker.h"
 #include "MainWindow.h"
 #include "DevicePanelCoordinator.h"
 #include "EmulationController.h"
@@ -240,6 +241,8 @@ void MainWindow::renderSscPanelWindow()
                                  pathIt->second[drive].size());
                 ImGui::SameLine();
                 ImGui::PushID(drive);
+                pom2::browseFilePath(false, "Choose VSDrive volume", "po,hdv,2mg", pathIt->second[drive]);
+                ImGui::SameLine();
                 ImGui::Checkbox("Read only", &readOnlyDrafts[slot][drive]);
                 ImGui::PopID();
             }
@@ -447,9 +450,9 @@ void MainWindow::renderPrinterPanelWindow()
                            (std::string("spool-") + stamp + ".txt")).string();
     }
 
+#ifdef __EMSCRIPTEN__
     char buf[512];
     std::snprintf(buf, sizeof(buf), "%s", printerSavePath.c_str());
-#ifdef __EMSCRIPTEN__
     // No persistent host filesystem in the browser build: a "Save as .txt"
     // would land in MEMFS and vanish on reload, with no download path. Grey
     // the controls out — the live spool preview below still works (PR#n
@@ -462,10 +465,9 @@ void MainWindow::renderPrinterPanelWindow()
     ImGui::EndDisabled();
     ImGui::TextDisabled("Saving to a file is unavailable in the browser build.");
 #else
-    ImGui::SetNextItemWidth(-110);
-    if (ImGui::InputText("##printerPath", buf, sizeof(buf))) {
-        printerSavePath = buf;
-    }
+    ImGui::SetNextItemWidth(pom2::nativeFileDialogAvailable() ? -210 : -110);
+    pom2::filePathInput("##printerPath", printerSavePath);
+    pom2::browseFilePath(true, "Save printer spool", "txt", printerSavePath);
     ImGui::SameLine();
     if (ImGui::Button("Save as .txt", ImVec2(100, 0))) {
         namespace fs = std::filesystem;

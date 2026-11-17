@@ -34,6 +34,7 @@
 // Mouse Card additionally requires both Apple ROMs to be present —
 // otherwise the entry is greyed out in the dropdown.
 
+#include "FilePathPicker.h"
 #include "MainWindow.h"
 #include "ProfileSwitch.h"
 
@@ -1031,6 +1032,9 @@ void MainWindow::renderMediaPanel()
                     }
                     ImGui::SetNextItemWidth(300);
                     ImGui::InputText("##path", buf, mBuf[s][b].size());
+                    ImGui::BeginDisabled(!typeAllows);
+                    pom2::browseFilePath(false, "Choose disk image", "po,hdv,2mg,woz,moof", mBuf[s][b]);
+                    ImGui::EndDisabled();
                     ImGui::SameLine();
                     ImGui::BeginDisabled(buf[0] == '\0' || !typeAllows);
                     if (ImGui::Button("Mount")) {
@@ -1183,6 +1187,7 @@ void MainWindow::renderMediaPanel()
                     }
                     ImGui::SetNextItemWidth(300);
                     ImGui::InputText("##d2path", buf, dBuf[s][drv].size());
+                    pom2::browseFilePath(false, "Choose disk image", "dsk,do,po,nib,nb2,woz,d13", dBuf[s][drv]);
                     ImGui::SameLine();
                     ImGui::BeginDisabled(buf[0] == '\0');
                     if (ImGui::Button("Insert")) {

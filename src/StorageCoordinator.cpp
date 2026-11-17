@@ -947,20 +947,19 @@ StorageCoordinator::MediaCommandResult StorageCoordinator::ejectMediaBay(
         const std::string folder = pending.synth ? pending.hostFolder : std::string();
         auto stamp = std::filesystem::file_time_type::min();
         std::string error;
-        if (!Block512Backing::commitWriteBack(std::move(pending), error, &stamp, &result.notice)) {
-            // Put the captured dirty set back so the still-mounted medium is
-            // dirty again and a retry re-captures it (pre-split behaviour: a
-            // failed save loses nothing). Re-resolved: the bus can be
-            // rebuilt while the commit runs unlocked.
-            auto state = controller.lockState();
-            auto& bus = state.memory().slotBus();
-            if (auto* media =
-                    dynamic_cast<MountableMediaCard*>(bus.peripheral(slot)))
-                media->restoreBayDirty(bay, captured);
+        const bool saved = Block512Backing::commitWriteBack(std::move(pending), error, &stamp, &result.notice);
+        // Both success and partial failure publish our decode's stamp. A
+        // second capture must not mistake our own first save for a host edit
+        // and divert the guest's next write into .pom2-conflicts (STORAGE-014).
+        // A replacement mount must inherit neither the stamp nor dirty set.
+        auto state = controller.lockState();
+        auto& bus = state.memory().slotBus();
+        auto* media = dynamic_cast<MountableMediaCard*>(bus.peripheral(slot));
+        if (media && sameMount(media->bayInfo(bay))) {
+            if (!saved) media->restoreBayDirty(bay, captured);
             adoptFolderStamp(bus.peripheral(slot), folder, stamp);
-            return commandError(error.empty()
-                ? "the image could not be saved" : error);
         }
+        if (!saved) return commandError(error.empty() ? "the image could not be saved" : error);
     }
     auto st = controller.lockState();
     auto* m = dynamic_cast<MountableMediaCard*>(st.memory().slotBus().peripheral(slot));
@@ -1718,16 +1717,20 @@ StorageCoordinator::EjectAllResult StorageCoordinator::ejectAllMedia(
         const std::string folder = entry.pending.synth ? entry.pending.hostFolder : "";
         auto stamp = std::filesystem::file_time_type::min();
         std::string error;
-        if (Block512Backing::commitWriteBack(std::move(entry.pending), error, &stamp))
-            continue;
-        entry.failed = true;
+        const bool saved = Block512Backing::commitWriteBack(std::move(entry.pending), error, &stamp);
         {
             auto state = controller.lockState();
             auto* card = state.memory().slotBus().peripheral(entry.slot);
-            if (auto* media = dynamic_cast<MountableMediaCard*>(card))
-                media->restoreBayDirty(entry.bay, captured);
-            adoptFolderStamp(card, folder, stamp);
+            auto* media = dynamic_cast<MountableMediaCard*>(card);
+            const auto now = media ? media->bayInfo(entry.bay) : MediaBayInfo{};
+            if (media && now.loaded && (entry.mountId != 0
+                    ? now.mountId == entry.mountId : now.path == entry.path)) {
+                if (!saved) media->restoreBayDirty(entry.bay, captured);
+                adoptFolderStamp(card, folder, stamp); // success also precedes a possible final flush
+            }
         }
+        if (saved) continue;
+        entry.failed = true;
         result.failures.push_back(
             entry.label + ": " +
             (error.empty() ? std::string("the image could not be saved")

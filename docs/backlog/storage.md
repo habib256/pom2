@@ -15,7 +15,6 @@ an explicit request before scheduling.
 
 | Task | Priority | State | Subject |
 |---|---|---|---|
-| [STORAGE-014](#storage-014) | 🟢 | Confirmed: mitigated residue | ProDOS host folder: guest writes racing four eject commits are decoded under the lock |
 | [STORAGE-002](#storage-002) | 🟡 | Partial: API gap; needs decision | Secondary-bay boot selection and control API |
 | [STORAGE-005](#storage-005) | 🧊 | Frozen — triage 2026-10-28 | SmartPort ProDOS multi-partition |
 | [STORAGE-010](#storage-010) | 🧊 | Frozen — deliberate limit | A `.nib` track is not normalised to one 200 ms revolution |
@@ -26,15 +25,27 @@ an explicit request before scheduling.
 
 ## STORAGE-014 — ProDOS host folder write-back
 
-**Priority:** 🟢 · **State:** Confirmed: mitigated residue ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); no test writes during phase 2.
-Items 1-6 were fixed on 2026-10-27 (CHANGELOG, "Open bugs, fixed against
-the hardware"). One residue:
+**Priority:** ✅ · **State:** Done 2026-11-17; removed from the active index.
 
-- An eject's phase 3 (`ejectBay` → `saveDirty`) decodes, inline and under
-  `stateMutex`, the guest writes that landed while phase 2 committed
-  unlocked. `ejectMediaBay` now repeats phases 1-2 up to four times while
-  the bay is still dirty, so phase 3 sees only what a guest writing through
-  four commits in a row leaves behind. No test drives that race yet.
+`storage_folder_eject_race` injects guest writes at the existing commit
+barrier after phase-1 capture, without adding a runtime test hook. It covers
+zero, one, three and four racing writes through the real coordinator, HDV
+card, block backing and ProDOS decoder, and verifies the exact host bytes,
+number of captures, final mounted/dirty state and absence of conflicts.
+
+The test reproduced a real defect: the first successful unlocked decode did
+not update the mounted backing's folder timestamp. The next pass treated
+POM2's own previous save as a host edit, kept the older main file and sent
+the later guest version to `.pom2-conflicts`. Success now adopts the decode's
+timestamp under the machine lock, in both single-bay and eject-all commands, as partial failure already did, only for
+the original mount identity. Failure restores dirty blocks only to that mount.
+
+**Retained limit:** after four captures, guest writes made during the fourth
+commit are flushed inline by the final locked eject. The deterministic fourth
+write is retained and tested. A five-byte, 72-block synthetic volume measured
+about 0.65 ms for that final eject on the local Mac; this is not a latency
+bound for a large host directory. The lock/I/O tradeoff remains explicit.
+See [the evidence](../audits/core-priorities-2026-11-17.md).
 
 By design, not a defect: a file the host deleted while mounted and the guest
 CHANGED is written back (the guest's data wins over a delete it never saw);

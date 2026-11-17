@@ -536,6 +536,10 @@ jobs:
       # 77 is a SKIP here as everywhere (Pom2PortableTests.cmake), and the
       # media are fetched above, so a skip means a fixture went missing:
       # fail on it, as the Linux job's check_ctest_skips.sh does.
+      - name: Verify Windows file associations in an isolated registry key
+        shell: powershell
+        run: ./tests/windows_file_associations_test.ps1
+
       - name: Run portable core tests
         shell: bash
         run: |

@@ -75,6 +75,8 @@ public:
     /// ~0.7 % deficit that starved the reconstructor and glitched continuous
     /// speaker music (e.g. H.E.R.O. on the //e-PAL profile).
     void setCpuClock(double hz);
+    /// Clock used by the audio reconstructor (stock time after an accelerator transition).
+    double cpuClockHz() const { return cpuClockHz_.load(std::memory_order_relaxed); }
     /// An accelerator changed the CPU clock to `hz` at CPU cycle `cycle`; the
     /// machine's stock clock is `stockHz`. Toggles are stamped in STOCK time
     /// from here on (see recordToggle) and the reconstruction runs at

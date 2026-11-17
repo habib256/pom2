@@ -17,6 +17,32 @@ says "POM2 is damaged" instead and has no **Open Anyway**; run
 and launch `POM2.exe`; if SmartScreen appears, choose **More info → Run anyway**.
 Release downloads include `SHA256SUMS.txt` for integrity checks.
 
+To open a disk from the desktop, choose **Open With → POM2** in Finder
+or your Linux file manager. macOS registers POM2 as an alternate handler;
+Linux packages install the disk-image MIME type and desktop entry. An AppImage
+may need desktop integration from your distribution before it appears there.
+
+On Windows, extract the ZIP to its permanent location, open PowerShell in that
+folder and run `powershell -NoProfile -ExecutionPolicy Bypass -File .\FileAssociations.ps1`.
+This adds POM2 to **Open with** for `.dsk`, `.do`, `.po`, `.nib`, `.woz`,
+`.d13`, `.2mg`, `.hdv` and `.moof` for your account. It needs no administrator
+rights and leaves existing defaults alone (including gettext `.po` files).
+Choose **Open with → POM2** in Explorer; use Windows Settings if you want it
+as the default. Before moving or deleting the package, run the same command
+with `-Remove`; register again after moving it. Opening an image mounts it in
+the matching drive and boots under the saved machine profile.
+
+File-path fields in the SmartPort, Disk II, HDV, Sony 3.5-inch, Media, cassette,
+VSDrive, paste-from-file and text-printer panels have a **Browse...** button
+when a native chooser is available. Choose the file, then use the panel's
+**Mount**, **Insert**, **Load**, **Save** or **Paste** action. Cancelling the
+chooser preserves the previous path. Manual entry remains available when the
+chooser is unavailable (Linux uses zenity or kdialog; the browser has no native
+chooser). ImageWriter's **Save sheet as PNG** and **Save PDF** ask for a
+destination directly; cancellation writes nothing. Without a native chooser,
+those exports use their existing generated filenames in the printout folder.
+
+
 If the selected machine has no system ROM, its screen shows **Firmware
 missing** with the active profile. On desktop, **Download missing ROMs** opens
 ROM Status and starts the existing downloader; that panel provides progress,
@@ -648,7 +674,8 @@ then access `/HOST/` from that system.
 
 Guest edits are held in memory until ejection or quit. Enable **Sync to host
 folder (on eject)** in the HDV panel to save them. The panel reports pending
-guest edits and the mounted text mode. If a host file changes during a mount,
+guest edits and the mounted text mode. Successful individual or bulk ejection
+also preserves guest edits made while the save was in progress. If a host file changes during a mount,
 the host version stays in place and the volume's version is saved in the hidden
 `.pom2-conflicts/` folder. Repeated distinct conflicts get numbered copies;
 review them manually. Conflict detection is conservative: a host file newer

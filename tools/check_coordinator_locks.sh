@@ -112,6 +112,9 @@ LOCK_FREE = (
     'beginLocked',
     'publishLocked',
     'abandonLocked',
+    # Same StateAccess proof as the Locked methods. Constructs/restores media
+    # only during a stopped-worker rebuild; it never takes stateMutex itself.
+    'buildResolvedPlan',
     'prepareAfterFlush',             # 1. mutates coordinator state + hooks
     'phase',                         # 1.
     'generation',                    # 1.

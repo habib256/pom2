@@ -28,6 +28,7 @@
 // is the LeChatMauve_ImGui pattern — read state under the lock, render from
 // the snapshot, act under the lock again.
 
+#include "FilePathPicker.h"
 #include "MainWindow.h"
 
 #include "Block512Backing.h"
@@ -1471,14 +1472,10 @@ void MainWindow::renderDiskFileDialog()
                            " Images are writable by default unless the file"
                            " or image container is write-protected.");
     if (popupPanel) {
-        char buf[512] = {0};
-        std::snprintf(buf, sizeof(buf), "%s", popupPanel->dialogPath.c_str());
-        if (ImGui::InputText("##DiskPath", buf, sizeof(buf),
-                             ImGuiInputTextFlags_EnterReturnsTrue))
-            popupPanel->dialogPath = buf;
-        else
-            popupPanel->dialogPath = buf;
+        pom2::filePathInput("##DiskPath", popupPanel->dialogPath);
     }
+
+    if (popupPanel) pom2::browseFilePath(false, "Choose Disk II image", "dsk,do,po,nib,nb2,woz,d13", popupPanel->dialogPath);
 
     // Quick list of disk images in disks_5.4/ (mirrors the cassette dialog).
     // Cached: a modal is re-rendered every frame, and this walked the folder
@@ -1538,13 +1535,9 @@ void MainWindow::renderHdvFileDialog()
 
     ImGui::TextUnformatted("ProDOS block-device image — .hdv (raw blocks)"
                            " or .2mg (with 2IMG header, ProDOS order)");
-    char buf[512] = {0};
-    std::snprintf(buf, sizeof(buf), "%s", hdvPanel->dialogPath.c_str());
-    if (ImGui::InputText("##HdvPath", buf, sizeof(buf),
-                         ImGuiInputTextFlags_EnterReturnsTrue))
-        hdvPanel->dialogPath = buf;
-    else
-        hdvPanel->dialogPath = buf;
+    pom2::filePathInput("##HdvPath", hdvPanel->dialogPath);
+
+    pom2::browseFilePath(false, "Choose hard disk image", "hdv,po,2mg", hdvPanel->dialogPath);
 
     {
         const auto& listing = mediaDirListing(
@@ -1826,13 +1819,9 @@ void MainWindow::renderDisk35FileDialog()
                     : "2 (external, SmartPort daisy-chain)");
     ImGui::TextUnformatted("800K Sony 3.5\" image — .po (raw ProDOS blocks,"
                            " 819 200 B) or .2mg (with 2IMG header).");
-    char buf[512] = {0};
-    std::snprintf(buf, sizeof(buf), "%s", disk35Panel->dialogPath.c_str());
-    if (ImGui::InputText("##Disk35Path", buf, sizeof(buf),
-                         ImGuiInputTextFlags_EnterReturnsTrue))
-        disk35Panel->dialogPath = buf;
-    else
-        disk35Panel->dialogPath = buf;
+    pom2::filePathInput("##Disk35Path", disk35Panel->dialogPath);
+
+    pom2::browseFilePath(false, "Choose 3.5-inch image", "po,2mg,woz,moof", disk35Panel->dialogPath);
 
     {
         const auto& listing = mediaDirListing(

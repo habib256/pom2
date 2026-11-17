@@ -373,6 +373,7 @@ serial_panel_boundary
 serial_port
 session_block_media
 session_file_picker
+file_path_picker
 session_iic
 session_machine
 session_snapshot
@@ -386,6 +387,7 @@ slot_bus_smoke
 slot_card_factory
 slot_config_smoke
 slot_configuration_coordinator
+slot_configuration_build
 slot_connectors
 slot_multi_card_smoke
 slot_peripheral_irq_smoke
@@ -442,6 +444,7 @@ ssi263_smoke
 ssi263_speech_timeline
 storage_coordinator
 storage_deferred_diversion
+storage_folder_eject_race
 storage_lock_budget
 storage_rebuild_persist
 storage_restore_missing_path
