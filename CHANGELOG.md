@@ -10,6 +10,23 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — DISPLAY-002: PAL beam-raced splits have frozen frames
+
+`display_golden_hash` pins four PAL frames painted as bands by mid-frame soft
+switches (TEXT/HGR on line edges, a mid-line TEXT|HGR split over 32 lines, a
+PAGE2 flip, DHGR/HGR through AN3), under the seven integer pipelines and the
+composite signal: 32 pins, 248 in all. Until now the split path had only
+`display_dirty_skip`, which compares two renders of the same split and cannot
+see both being wrong the same way.
+
+**Why the script names raster positions.** Each switch is given as (line,
+horizontal cycle) and its cycle is derived from the standard's own frame
+length, in the third frame. The same script on NTSC must therefore paint the
+same picture, and the test checks that on every pin — an oracle that does not
+depend on the recorded hash. Reading a PAL cycle count on a 262-line frame in
+the event recorder fails all 32, on the equality before the pin. No display
+code changed. What is left of DISPLAY-002 is the fallback-upload measurement.
+
 ## 2026-11-17 — First core-priority batch: folder eject, audio clocks, slot composition
 
 STORAGE-014's new deterministic interleaving test reproduced a false conflict:

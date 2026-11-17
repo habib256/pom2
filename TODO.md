@@ -30,7 +30,7 @@ Estimates and priority colours in old reports are historical.
 
 | Order | Task | Concrete next action / completion gate |
 |---|---|---|
-| 1 | [DISPLAY-002](docs/backlog/display.md#display-002) | Add PAL split frame goldens. Separately measure the alleged fallback upload before changing it; ALTCHAR/character-ROM goldens are already done. |
+| 1 | [DISPLAY-002](docs/backlog/display.md#display-002) | Measure the alleged OE-GPU fallback upload before changing it. PAL split goldens (2026-11-17) and ALTCHAR/character-ROM goldens are done. |
 | 2 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record isolated AY and speaker streams through one reference output mapping; compare relative gain/bass with the current 0.30 stereo setting. |
 | 3 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003), [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | Extend the existing replug/ImGui harness to another card panel and screenshot/`demodMutex` interaction; collect Linux TSan evidence. Do not create a second overlapping concurrency framework. |
 | 4 | [VALIDATION-005](docs/backlog/validation.md#validation-005) | Run A2 File Cmd 1.0 six times in the GUI on a copied image; reproduce and diagnose the DHGR failure or close the stale report. |

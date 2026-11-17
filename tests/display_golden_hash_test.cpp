@@ -36,6 +36,12 @@
 //     decodes — the latch sub-modes on a Féline and a Video-7, the Féline's
 //     AN3-off HGR mono vs the Video-7's F/B, the Eve's table IX-1 modes,
 //     TXT16 / TXTGREEN — plus the three mixed-mode boundary rows.
+//   + PAL beam-raced splits ("pal/split-*", DISPLAY-002): four frames painted
+//     as bands by soft switches thrown at named raster positions of a
+//     312-line frame — line-edge TEXT/HGR bands, a mid-line TEXT|HGR split
+//     over 32 lines, a PAGE2 flip, DHGR/HGR through AN3 — under every
+//     pipeline below and the signal. Each is also rendered on NTSC and must
+//     match: the script names raster positions, not cycles.
 //   modes   = the integer-deterministic colour pipelines:
 //              ColorNTSC, ColorCompMedium, ColorComp4Bit, ChatMauveRGB,
 //              MonoWhite, MonoGreen, MonoAmber.
@@ -67,6 +73,7 @@
 // prints that entry's scanline 1 as one hex RGB word per dot (560 or 280).
 
 #include "Apple2Display.h"
+#include "CpuClock.h"
 #include "LeChatMauveCard.h"
 #include "Memory.h"
 #include "Sha256.h"
@@ -433,6 +440,107 @@ const ModeEntry kModes[] = {
     { Apple2Display::HiResMode::MonoAmber,       "monoamber"},
 };
 
+// ── PAL beam-raced splits (DISPLAY-002) ───────────────────────────────────
+// A frame painted as bands: soft switches thrown at a named raster position
+// (line, horizontal cycle) of a 312-line frame. Until 2026-11-17 this path
+// had behavioural coverage only (display_dirty_skip compares two renders of
+// the same split; it cannot see both being wrong the same way).
+//
+// The script names RASTER positions, and the cycle each one falls on is
+// derived from the standard's own frame length. So the same script run on
+// NTSC must paint the same visible picture — main() checks that equality on
+// every pin — while the splits are thrown in the THIRD frame, where a
+// 262-line reading of a PAL cycle count lands 100 lines away.
+struct SplitStep {
+    int      line;     // 0..191 visible, counted from the frame start
+    int      hpos;     // 0..64; the 40-byte window opens at 25
+    uint16_t addr;
+    bool     write;    // $C00x needs a write, $C05x answers a read
+};
+
+void sSplitTextBase(Memory& m) {        // TEXT on, HIRES armed underneath
+    baseline(m); m.memRead(SET_HIRES); m.memRead(SET_TEXT);
+    fillMain(m, 0x0400, 0x0800, 1); fillMain(m, 0x2000, 0x4000, 4);
+}
+void sSplitTwoPages(Memory& m) {        // HGR page 1 shown, page 2 differs
+    baseline(m); m.memRead(SET_HIRES);
+    fillMain(m, 0x2000, 0x4000, 4); fillMain(m, 0x4000, 0x6000, 9);
+}
+
+std::vector<SplitStep> splitBands()     // HGR / TEXT / HGR, on line edges
+{
+    return { { 64, 0, SET_TEXT, false }, { 128, 0, CLR_TEXT, false } };
+}
+std::vector<SplitStep> splitMidline()   // 32 lines: text left, HGR right
+{
+    std::vector<SplitStep> v;
+    for (int line = 80; line < 112; ++line) {
+        v.push_back({ line, 45, CLR_TEXT, false });   // inside the window
+        v.push_back({ line, 64, SET_TEXT, false });   // line's last cycle
+    }
+    return v;
+}
+std::vector<SplitStep> splitPageFlip()  // page 1 above, page 2 below
+{
+    return { { 96, 0, 0xC055, false } };
+}
+std::vector<SplitStep> splitDhgrAn3()   // DHGR / HGR, then DHGR again mid-line
+{
+    return { { 72, 0, DHIRES_OFF, false }, { 150, 40, DHIRES_ON, false } };
+}
+
+struct SplitScene {
+    const char*            name;
+    void                 (*setup)(Memory&);
+    std::vector<SplitStep> (*steps)();
+};
+const SplitScene kSplitScenes[] = {
+    { "pal/split-bands",    sHgr,           splitBands    },
+    { "pal/split-midline",  sSplitTextBase, splitMidline  },
+    { "pal/split-pageflip", sSplitTwoPages, splitPageFlip },
+    { "pal/split-dhgr-an3", sDhgr,          splitDhgrAn3  },
+};
+
+// Renders one split scene; returns false when the frame reached the display
+// with no video event (the split path would then not have run at all).
+bool renderSplit(const SplitScene& sc, VideoStandard vs,
+                 Apple2Display::HiResMode mode, bool signal, uint64_t* hash)
+{
+    Memory mem;
+    mem.setIIEMode(true);
+    mem.setVideoStandard(vs);
+    sc.setup(mem);
+    const int frameCycles = 65 * pom2VideoTiming(vs).scanlinesPerFrame;
+    mem.advanceCycles(2 * frameCycles);          // the splits go in frame 2
+    int at = 0;
+    for (const SplitStep& st : sc.steps()) {
+        const int target = st.line * 65 + st.hpos;
+        mem.advanceCycles(target - at);
+        at = target;
+        if (st.write) mem.memWrite(st.addr, 0);
+        else          mem.memRead(st.addr);
+    }
+    // Events are published to the display at the frame boundary only.
+    mem.advanceCycles(frameCycles - at);
+    if (mem.takeVideoEvents().empty()) return false;
+
+    Apple2Display disp;
+    disp.setAuxMemory(mem.auxData());
+    LeChatMauveCard chat;
+    disp.setChatMauveCard(&chat);
+    disp.setHiResMode(mode);
+    disp.render(mem);
+    if (signal) {
+        if (!disp.signalProduced()) return false;
+        *hash = fnv1a(disp.signal(),
+                      static_cast<size_t>(disp.signalWidth()) * disp.signalHeight());
+    } else {
+        *hash = fnv1a(disp.pixels(),
+                      static_cast<size_t>(disp.width()) * disp.height() * sizeof(uint32_t));
+    }
+    return true;
+}
+
 // ── Golden table (host-independent integer paths) ─────────────────────────
 // Populated by POM2_GOLDEN_RECORD=1 — see file header.
 const std::map<std::string, uint64_t> kGolden = {
@@ -652,6 +760,39 @@ const std::map<std::string, uint64_t> kGolden = {
     { "cm/eve/text-txtgreen", 0x36f9b05ad1a6645cULL },
     { "cm/eve/text80-txtgreen", 0x8945e92b00312083ULL },
     { "cm/eve/hgrmixed-txtgreen", 0xcf82d6f3bdfbce43ULL },
+    // PAL beam-raced splits (DISPLAY-002, 2026-11-17).
+    { "pal/split-bands/ntsc", 0xd8bbbec4dde42e29ULL },
+    { "pal/split-bands/medium", 0x7336f35181301455ULL },
+    { "pal/split-bands/4bit", 0x47f4771fd770af3aULL },
+    { "pal/split-bands/chatmauve", 0xbd4ff91bc04b4bc3ULL },
+    { "pal/split-bands/monowhite", 0xd91418a5c6d4a75cULL },
+    { "pal/split-bands/monogreen", 0x524fa865f8503c5cULL },
+    { "pal/split-bands/monoamber", 0x5f4efe209850b7ccULL },
+    { "pal/split-bands/signal", 0x31f281b24c93b7dcULL },
+    { "pal/split-midline/ntsc", 0xf3010bd40ad7b437ULL },
+    { "pal/split-midline/medium", 0x9b155ed50e5a6b0eULL },
+    { "pal/split-midline/4bit", 0x65413036077800c0ULL },
+    { "pal/split-midline/chatmauve", 0xaf9146f394f5b543ULL },
+    { "pal/split-midline/monowhite", 0x7c55c3918af74383ULL },
+    { "pal/split-midline/monogreen", 0x2ff03380baea7183ULL },
+    { "pal/split-midline/monoamber", 0x45033b5ad470e683ULL },
+    { "pal/split-midline/signal", 0x41cb96521a5eff43ULL },
+    { "pal/split-pageflip/ntsc", 0x7ba2b0ba96d3cd32ULL },
+    { "pal/split-pageflip/medium", 0xe45ebeef058e3c0cULL },
+    { "pal/split-pageflip/4bit", 0x84e98da2f5ef385cULL },
+    { "pal/split-pageflip/chatmauve", 0xb12dcda85c1dc203ULL },
+    { "pal/split-pageflip/monowhite", 0x0e18b12e6d9e7183ULL },
+    { "pal/split-pageflip/monogreen", 0xef773fc0de544b03ULL },
+    { "pal/split-pageflip/monoamber", 0x72d189f383d7dfc3ULL },
+    { "pal/split-pageflip/signal", 0x16f380bdee990fc3ULL },
+    { "pal/split-dhgr-an3/ntsc", 0xbb4bc7c93fd72f5cULL },
+    { "pal/split-dhgr-an3/medium", 0x451a13ee20b10844ULL },
+    { "pal/split-dhgr-an3/4bit", 0xa53e14be3d45514bULL },
+    { "pal/split-dhgr-an3/chatmauve", 0xaee7c87b0b36cf83ULL },
+    { "pal/split-dhgr-an3/monowhite", 0x54d71392674d415cULL },
+    { "pal/split-dhgr-an3/monogreen", 0x28d9d1c0d9bd1d5cULL },
+    { "pal/split-dhgr-an3/monoamber", 0x9feb3ea37aa6744cULL },
+    { "pal/split-dhgr-an3/signal", 0x8a4a5aaf901061fcULL },
 };
 
 } // namespace
@@ -783,6 +924,36 @@ int main()
             }
         }
     }
+
+    // ── PAL beam-raced splits: every integer pipeline + the signal ────────
+    int splitFailures = 0;
+    for (const auto& sc : kSplitScenes) {
+        auto one = [&](Apple2Display::HiResMode m, bool signal, const char* tag) {
+            uint64_t pal = 0, ntsc = 0;
+            const std::string name = std::string(sc.name) + "/" + tag;
+            if (!renderSplit(sc, VideoStandard::PAL, m, signal, &pal) ||
+                !renderSplit(sc, VideoStandard::NTSC, m, signal, &ntsc)) {
+                std::fprintf(stderr, "NO SPLIT: %s reached the display with no "
+                             "video event\n", name.c_str());
+                ++splitFailures;
+                return;
+            }
+            // Same raster script, same visible picture: a mapping that reads
+            // a PAL cycle count on a 262-line frame breaks this before it
+            // breaks the pin.
+            if (pal != ntsc) {
+                std::fprintf(stderr, "PAL/NTSC DIFFER: %s pal 0x%016llx ntsc "
+                             "0x%016llx\n", name.c_str(),
+                             static_cast<unsigned long long>(pal),
+                             static_cast<unsigned long long>(ntsc));
+                ++splitFailures;
+            }
+            results.emplace_back(name, pal);
+        };
+        for (const auto& mo : kModes) one(mo.m, false, mo.tag);
+        one(Apple2Display::HiResMode::ColorCompositeOE, true, "signal");
+    }
+    if (splitFailures) return 1;
 
     if (record) {
         for (const auto& r : results)
