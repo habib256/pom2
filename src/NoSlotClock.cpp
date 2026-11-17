@@ -63,7 +63,10 @@ namespace {
 std::tm addSeconds(std::tm tm, int64_t seconds)
 {
     if (seconds == 0) return tm;
-    tm.tm_isdst = -1;
+    // `tm` came from localtime: its tm_isdst already says which of a
+    // repeated autumn hour it is. Forcing -1 let mktime pick summer time for
+    // the second one, so a set clock read 01:00 twice an hour apart and then
+    // jumped ([B] DS1216E: the chip counts elapsed time; bug hunt 2026-11-17).
     std::time_t t = std::mktime(&tm);
     if (t == static_cast<std::time_t>(-1)) return tm;
     t += static_cast<std::time_t>(seconds);
@@ -139,7 +142,7 @@ void NoSlotClock::endTransfer()
         const std::tm now = timeFn_();
         set.tm_year = (now.tm_year / 100) * 100 + fromBcd(byte(7));   // same century
         set.tm_isdst = -1;
-        std::tm host = now; host.tm_isdst = -1;
+        std::tm host = now;   // its tm_isdst as resolved (see addSeconds)
         const std::time_t a = std::mktime(&set), b = std::mktime(&host);
         if (a != static_cast<std::time_t>(-1) && b != static_cast<std::time_t>(-1))
             offsetSec_ = static_cast<int64_t>(a) - static_cast<int64_t>(b);

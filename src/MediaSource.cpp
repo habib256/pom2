@@ -162,7 +162,10 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
         return !sec && n > kMaxImageBytes;
     };
     ChildProcess p;
-    if (!p.start(curl, { "-fsL", "--proto", "=http,https", "--proto-redir", "=http,https",
+    // -g: `[` `]` `{` `}` are URL characters here, not curl's glob — a
+    // TOSEC-style `Game%20[cr].dsk` failed with "bad range" (exit 3), and
+    // `{a,b}` fetched two URLs, the second onto POM2's stdout (2026-11-17).
+    if (!p.start(curl, { "-fsLg", "--proto", "=http,https", "--proto-redir", "=http,https",
                          "--max-filesize", std::to_string(kMaxImageBytes),
                          "--retry", "2", "--max-time", "120", "-o", tmp.string(), url },
                  "", err))
@@ -291,13 +294,15 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
         const fs::path dest = mediaUrlCachePath(source, cacheDir);
         fs::path got;
         std::error_code ec;
-        // The copy keeps the archive extension the download sniffed.
-        const fs::path legacy = cacheDir / (legacyKey(source) + "-" + safeName(source, true));
+        // The copy keeps the archive extension the download sniffed. A copy
+        // an older POM2 cached under the 32-bit FNV key is NOT adopted: that
+        // key is the collision the SHA-256 name closed (2026-11-07), and the
+        // query string it ignores is free padding — a crafted URL fetched
+        // once would have been served as the genuine one for good (bug hunt
+        // 2026-11-17). It costs one download again.
         for (const char* ext : { "", ".zip", ".gz" }) {
-            fs::path c = dest, old = legacy;
+            fs::path c = dest;
             c += ext;
-            old += ext;
-            adoptLegacyCopy(old, c);
             if (!fs::is_regular_file(c, ec) || fs::file_size(c, ec) == 0) continue;
             // A page an older POM2 cached as a disk: drop it, fetch afresh.
             if (mediaBodyIsWebPage(head(c))) { fs::remove(c, ec); continue; }

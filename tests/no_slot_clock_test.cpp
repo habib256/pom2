@@ -41,6 +41,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <cstdlib>
 #include <ctime>
 #include <vector>
@@ -497,9 +498,56 @@ void testTwelveHourMode()
     std::printf("  hours register 12/24-hour mode bit honoured: OK\n");
 }
 
+#ifndef _WIN32
+// ── A set clock through the repeated autumn hour (bug hunt 2026-11-17) ───
+// The guest's offset was applied with tm_isdst forced to -1, so mktime read
+// both 02:30s of 2026-10-25 (CEST, then CET, an hour apart) as the same
+// instant: a clock set one day ahead read 02:30 twice, then jumped. The
+// chip counts elapsed time ([B] DS1216E). A POSIX TZ string: no tzdata.
+std::time_t g_dstNow = 0;
+std::tm dstHostTime()
+{
+    std::tm out{};
+    localtime_r(&g_dstNow, &out);
+    return out;
+}
+
+void testRepeatedAutumnHour()
+{
+    const char* oldTz = std::getenv("TZ");
+    const std::string saved = oldTz ? oldTz : "";
+    ::setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    ::tzset();
+    g_dstNow = 1792888200;                       // 2026-10-25 00:30 UTC = 02:30 CEST
+    pom2::NoSlotClock nsc(&dstHostTime);
+    walkMagicKey(nsc);
+    auto bcd = [](int v) { return static_cast<uint64_t>(((v / 10) << 4) | (v % 10)); };
+    const uint64_t reg = (bcd(0) << 8) | (bcd(30) << 16) | (bcd(2) << 24) | (bcd(2) << 32) |
+                         (bcd(26) << 40) | (bcd(10) << 48) | (bcd(26) << 56);  // 2026-10-26 02:30
+    for (int i = 0; i < 64; ++i)
+        (void)nsc.interceptRead(static_cast<uint16_t>(0xF800 | ((reg >> i) & 1)), 0xEA);
+    walkMagicKey(nsc);
+    const uint8_t first = static_cast<uint8_t>((readClockRegister(nsc) >> 24) & 0xFF);
+    g_dstNow += 3600;                            // 02:30 again, now CET
+    walkMagicKey(nsc);
+    const uint8_t second = static_cast<uint8_t>((readClockRegister(nsc) >> 24) & 0xFF);
+    if (oldTz) ::setenv("TZ", saved.c_str(), 1); else ::unsetenv("TZ");
+    ::tzset();
+    if (first != 0x02 || second != 0x03) {
+        std::fprintf(stderr, "repeated autumn hour: hours read $%02X then $%02X, want $02 then $03\n",
+                     first, second);
+        std::abort();
+    }
+    std::printf("  a set clock counts through the repeated autumn hour: OK\n");
+}
+#endif
+
 int main()
 {
     std::printf("NoSlotClock smoke test\n");
+#ifndef _WIN32
+    testRepeatedAutumnHour();
+#endif
     testSetTime();
     testTwelveHourMode();
     testPassThrough();

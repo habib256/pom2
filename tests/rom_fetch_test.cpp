@@ -736,6 +736,11 @@ int main()
                "curl refuses an oversized body before it lands on disk");
         expect(has("https://example.invalid/x.rom") && has("/tmp/x.part"),
                "the url and the output path are passed through");
+        // Bug hunt 2026-11-17: without -g, `[` `]` `{` `}` in a URL are curl's
+        // glob — a bracketed name failed with "bad range".
+        expect(args.size() > 0 && args[0].rfind("-", 0) == 0 &&
+               args[0].find('g') != std::string::npos,
+               "curl's URL globbing is off (-g)");
     }
 
     // Zip-bomb gate. The central directory states every member's uncompressed

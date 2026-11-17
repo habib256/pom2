@@ -20,6 +20,7 @@
 #include "PersistentFs.h"
 #include "ResourcePaths.h"
 
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -131,6 +132,20 @@ std::string unescapeValue(const std::string& s)
     return out;
 }
 
+// `C:\new\test` typed into state.cfg by hand — the file's header invites
+// edits — decoded `\n` and `\t` and came back as "C:" + newline + "ew" + tab
+// (bug hunt 2026-11-17). POM2's writer doubles every backslash, so a value
+// it wrote never starts with a drive letter and ONE backslash: that shape is
+// a hand-typed Windows path, taken literally. Everything else unescapes.
+// The one value this misreads is one POM2 itself wrote as a drive letter, a
+// colon and then a newline, tab, CR or boundary space — not a value any
+// setting holds.
+bool handTypedWindowsPath(const std::string& v)
+{
+    return v.size() >= 4 && std::isalpha(static_cast<unsigned char>(v[0])) &&
+           v[1] == ':' && v[2] == '\\' && v[3] != '\\';
+}
+
 // Index of the '=' that separates key from value: the first one NOT preceded
 // by an odd run of backslashes. A plain `find('=')` would split inside the
 // `\=` an escaped key writes, turning "a\=b=v" into key "a\" / value "b=v".
@@ -200,7 +215,8 @@ bool Settings::load()
         const size_t eq = findSeparator(line);
         if (eq == std::string::npos) continue;
         const std::string key   = unescapeValue(trim(line.substr(0, eq)));
-        const std::string value = unescapeValue(trim(line.substr(eq + 1)));
+        const std::string raw   = trim(line.substr(eq + 1));
+        const std::string value = handTypedWindowsPath(raw) ? raw : unescapeValue(raw);
         if (!key.empty()) store[key] = value;
     }
     pom2::log().info("Settings",

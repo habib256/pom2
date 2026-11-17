@@ -725,6 +725,15 @@ int main()
         assert(!parse({"POM2", "--ezcolor="}, help));
         assert(!parse({"POM2", "--ezcolor", "4"}, help) && "written with a space");
     }
+    {
+        // --slot N= with no key is refused; `empty` empties (bug hunt
+        // 2026-11-17: `--slot 3=$CARD` with CARD unset unplugged slot 3).
+        bool help = false;
+        using Card = std::pair<int, std::string>;
+        assert(!parse({"POM2", "--slot", "3="}, help));
+        auto emptied = parse({"POM2", "--slot", "3=empty"}, help);
+        assert(emptied && emptied->slotCards == std::vector<Card>{Card(3, "")});
+    }
     std::printf("parseCli --ezcolor[=N]: OK\n");
     testSpaceSeparatedValueRejected();
     std::printf("parseCli rejects \"--flag VALUE\" for =VALUE flags: OK\n");
