@@ -10,6 +10,29 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Bug hunt, round 3: the internal ROM shields $C800, a Z80 stops at its watch
+
+`docs/audits/bug-hunt-2026-11-17.md` § Round 3.
+
+**A slot card keeps its `$C800` claim under the //e's internal ROM.** With
+INTCXROM on, a `$CFFF` access released the card that owned the window, and a
+`$CFFF` write reached it; the //e asserts no I/O STROBE there, so neither
+should happen (MAME master changed the same rule on 2026-11-10, citing
+Sather p. 7-21). A driver that called //e ROM code touching `$CFFF` came
+back to a floating window.
+
+**The debugger stops a DMA card's Z80 at its watch.** The SoftCard / ALS ran
+out their whole budget after the hit; with a watch armed they now run in
+single-instruction slices.
+
+**Smaller ones.** The Applicard's undriven `$C0nX` reads float instead of
+`$FF`; four Z80 cards no longer keep their RAM through a cold boot; a
+FujiNet exchange starts its SLIP framer clean, so a stale frame's tail is
+never taken for the reply; four UI paths change the display pipeline under
+`demodMutex`, as `/screen` expects; the Abstraction Levels panel reads card
+flags under the lock; a refused Slot Config Apply leaves `ramworks_banks`
+absent when it was.
+
 ## 2026-11-17 — Bug hunt, round 2: hostile zips, RESET and the 6522, state a snapshot forgets
 
 `docs/audits/bug-hunt-2026-11-17.md` § Round 2.

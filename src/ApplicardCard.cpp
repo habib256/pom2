@@ -68,8 +68,12 @@ uint8_t ApplicardCard::deviceSelectRead(uint8_t low4)
     case 1: return toZ80_;
     case 2: return toZ80Full_ ? 0x80 : 0x00;
     case 3: return fromZ80Full_ ? 0x80 : 0x00;
-    case 5: case 6: case 7: control(low4); return 0xFF;
-    default: return 0xFF;
+    // Nothing drives the data bus on these: the strobes act and the rest
+    // float ([D] MAME a2applicard.cpp read_c0nx, master as fetched
+    // 2026-11-17: 5/6/7 break, 4 and 8-15 fall through, all to
+    // get_open_bus()). POM2 returned $FF (bug hunt 2026-11-17).
+    case 5: case 6: case 7: control(low4); return openBus();
+    default: return openBus();
     }
 }
 

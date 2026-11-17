@@ -1503,10 +1503,10 @@ void MainWindow::render()
             const auto curHi = display->getHiResMode();
             if (isMonoHiRes(curHi)) {
                 lastMonoHiResMode_ = curHi;
-                display->setHiResMode(lastColorHiResMode_);
+                display->setHiResModeSynced(lastColorHiResMode_);
             } else {
                 lastColorHiResMode_ = curHi;
-                display->setHiResMode(lastMonoHiResMode_);
+                display->setHiResModeSynced(lastMonoHiResMode_);
             }
         }
         if (tr.setCharRomRequested) {

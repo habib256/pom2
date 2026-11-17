@@ -88,6 +88,13 @@ public:
     /// $CnXX write = bus-ownership toggle.
     void slotRomWrite(uint8_t low8, uint8_t v) override;
     void onReset() override;
+    /// Power off and on: the card's DRAM does not keep the last session.
+    /// Left to the default (onReset), all of it survived a cold boot, so the
+    /// card's own firmware could take it for a warm start (bug hunt
+    /// 2026-11-17). [F] Real DRAM powers up in no known pattern; the state
+    /// of a freshly plugged card (all zero, the array's initialiser) stands
+    /// in for it; POM2 does not model the decay.
+    void onPowerCycle() override { ram_.fill(0); onReset(); }
 
     bool dmaActive() const override { return enabled_; }
     int  dmaRun(int cycles6502) override;

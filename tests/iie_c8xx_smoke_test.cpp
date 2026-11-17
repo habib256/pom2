@@ -34,10 +34,13 @@
 // a JMP indirect through a stale user-RAM vector, and BRKs in zero RAM.
 
 #include "Memory.h"
+#include "SlotPeripheral.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <string_view>
 
 namespace {
 
@@ -189,8 +192,57 @@ void testWriteToC3xxUnderIntcxromArmsIntC8Rom()
 
 }  // namespace
 
+// Bug hunt 2026-11-17: under the internal ROM the //e does not assert I/O
+// STROBE, so a slot card neither sees a $CFFF access nor loses its claim
+// ([D] MAME master c800_int_r / c800_w @ 4033598f20; [B] Sather UTAIIe
+// p. 7-21 as it cites). POM2 followed mame0287: the card got the write and
+// was released, and a driver returning from //e ROM code to its own $C800
+// page read the floating bus.
+struct ClaimingCard final : SlotPeripheral {
+    int writes = 0;
+    std::string_view name() const override { return "C800 claim test"; }
+    bool takesC800() const override { return true; }
+    uint8_t slotRomRead(uint8_t) override { return 0x00; }
+    uint8_t expansionRomRead(uint16_t) override { return 0x5C; }
+    void expansionRomWrite(uint16_t, uint8_t) override { ++writes; }
+};
+
+void testInternalRomShieldsTheCardFromCfff()
+{
+    for (const bool write : { false, true }) {
+        Memory mem;
+        mem.setIIEMode(true);
+        poison(mem);
+        auto c = std::make_unique<ClaimingCard>();
+        ClaimingCard* card = c.get();
+        mem.slotBus().plug(7, std::move(c));
+        (void)mem.memRead(0xC700);                // slot 7 claims $C800
+        assert(mem.memRead(0xC9AB) == 0x5C && "setup: the card owns the window");
+        mem.memWrite(0xC007, 0);                  // INTCXROM on
+        if (write) mem.memWrite(0xCFFF, 0x00); else (void)mem.memRead(0xCFFF);
+        mem.memWrite(0xC006, 0);                  // INTCXROM off
+        assert(mem.memRead(0xC9AB) == 0x5C &&
+               "a $CFFF access under INTCXROM released the slot card's claim");
+        assert(card->writes == 0 && "the card saw a write under the internal ROM");
+    }
+    // INTC8ROM alone (after a $C3xx access): the card does not see the
+    // write either, but the claim IS released (INTCXROM is off).
+    Memory mem;
+    mem.setIIEMode(true);
+    poison(mem);
+    auto c = std::make_unique<ClaimingCard>();
+    ClaimingCard* card = c.get();
+    mem.slotBus().plug(7, std::move(c));
+    (void)mem.memRead(0xC700);
+    (void)mem.memRead(0xC300);                    // INTC8ROM latches
+    mem.memWrite(0xCFFF, 0x00);
+    assert(card->writes == 0 && "INTC8ROM: the write reached the slot card");
+    assert(mem.memRead(0xC9AB) != 0x5C && "INTC8ROM: $CFFF still releases the claim");
+}
+
 int main()
 {
+    testInternalRomShieldsTheCardFromCfff();
     testWriteToC3xxUnderIntcxromArmsIntC8Rom();
     testInitiallyOffSoSlotBusOwns();
     testC3xxAutoEnablesIntC8Rom();

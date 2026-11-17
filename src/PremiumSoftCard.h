@@ -108,6 +108,13 @@ public:
     void onPlug() override   { if (mem_) mem_->setAuxSlotPort(this); }
     void onUnplug() override { if (mem_ && mem_->auxSlotPort() == this) mem_->setAuxSlotPort(nullptr); }
     void onReset() override;
+    /// Power off and on: the card's DRAM does not keep the last session.
+    /// Left to the default (onReset), its 1 KB at $0400 survived a cold boot, so the
+    /// card's own firmware could take it for a warm start (bug hunt
+    /// 2026-11-17). [F] Real DRAM powers up in no known pattern; the state
+    /// of a freshly plugged card (all zero, the array's initialiser) stands
+    /// in for it; POM2 does not model the decay.
+    void onPowerCycle() override { dram0400_.fill(0); onReset(); }
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
     // Menu pacing advances the whole machine; only hardware clocks divide Z80 work.

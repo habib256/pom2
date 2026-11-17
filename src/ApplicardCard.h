@@ -70,6 +70,13 @@ public:
     uint8_t deviceSelectRead(uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     void onReset() override { resetZ80(); }
+    /// Power off and on: the card's DRAM does not keep the last session.
+    /// Left to the default (onReset), all of it survived a cold boot, so the
+    /// card's own firmware could take it for a warm start (bug hunt
+    /// 2026-11-17). [F] Real DRAM powers up in no known pattern; the state
+    /// of a freshly plugged card (all zero, the array's initialiser) stands
+    /// in for it; POM2 does not model the decay.
+    void onPowerCycle() override { ram_.fill(0); onReset(); }
     void advanceCycles(int cycles) override;
     void setCpuClock(double hz) override { if (hz > 0.0) { cpuHz_ = hz; } }
     // Menu pacing advances the whole machine; only hardware clocks divide Z80 work.

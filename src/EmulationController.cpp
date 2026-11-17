@@ -1415,11 +1415,31 @@ int EmulationController::runCpuSlice(int chunk)
     if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
         debugResume();
     int dmaSpent = 0;
+    // A DMA card's processor runs a whole budget per `dmaRun`, and nothing in
+    // it looks at the debugger: a watch its Z80 hit was only seen when the
+    // call returned, up to 4096 6502 cycles — thousands of Z80 instructions —
+    // later, the watched byte rewritten meanwhile and the bus perhaps handed
+    // back (bug hunt 2026-11-17). With a watch armed, run it in the smallest
+    // slices it takes (`dmaRun(1)` runs at least one instruction) and stop at
+    // the first boundary after a hit, as the 6502 does. No watch: unchanged.
+    auto runDma = [&](SlotPeripheral* dma, int budget) -> int {
+        return debugger_->runAsBusMaster([&] {
+            if (!debugger_->watchArmed()) return dma->dmaRun(budget);
+            int used = 0;
+            while (used < budget && dma->dmaActive()) {
+                const int s = dma->dmaRun(1);
+                if (s <= 0) break;
+                used += s;
+                if (debugger_->stopRequested()) break;
+            }
+            return used;
+        });
+    };
     // DMA daisy chain (SoftCard Z80): while a card claims the bus the
     // 6502 stays parked and the card's processor burns the budget. The
     // claimant scan is 8 virtual calls per 4096-cycle chunk — noise.
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
-        dmaSpent = debugger_->runAsBusMaster([&] { return dma->dmaRun(chunk); });
+        dmaSpent = runDma(dma, chunk);
         // Its accesses go through Memory: a watch it hit stops here.
         if (debugger_->stopRequested()) { noteDebuggerStop(); return dmaSpent; }
         // A card that flips off mid-slice returns what it consumed; the
@@ -1473,7 +1493,7 @@ int EmulationController::runCpuSlice(int chunk)
     // remainder to the new claimant instead of burning a dead chunk.
     if (spent < chunk) {
         if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
-            const int z = debugger_->runAsBusMaster([&] { return dma->dmaRun(chunk - spent); });
+            const int z = runDma(dma, chunk - spent);
             if (debugger_->stopRequested()) noteDebuggerStop();
             return dmaSpent + spent + z;
         }

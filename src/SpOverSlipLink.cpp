@@ -623,6 +623,15 @@ SpOverSlipLink::transact(uint8_t command, uint8_t paramCount, uint8_t unit,
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(budgetMs);
 
+    // Every exchange starts the framer clean. A reply is returned as soon as
+    // it completes, and the rest of that read is not fed — so the framer was
+    // left inside the next frame, and a stale frame split across two reads
+    // came back as one whose first TAIL byte was taken for the sequence
+    // number (bug hunt 2026-11-17). Idle ignores everything up to a $C0, so
+    // a leftover tail is skipped up to its closer, which only opens an empty
+    // frame; nothing of ours can be in flight before our own request.
+    rx_.reset();
+
     if (!t->writeAll(txBuf_.data(), txBuf_.size())) {
         peerLostLocked();          // callMtx_ is ours right now
         return out;

@@ -740,11 +740,14 @@ void MainWindow::renderSlotConfigPanel()
                 changed[s] = true;
                 settings->setString(key, draft[s]);
             }
-            int  prevRamWorks    = 0;
+            // Captured, not read back as an int: a refused Apply on a fresh
+            // install wrote `ramworks_banks=1` where there had been no key —
+            // SettingRebuild.h's "absent stays absent" (bug hunt 2026-11-17).
+            pom2::Settings::Saved prevRamWorks;
             bool ramWorksChanged = false;
             if (ramWorksDraft_ >= 0 &&
                 ramWorksDraft_ != settings->getInt("ramworks_banks", 1)) {
-                prevRamWorks = settings->getInt("ramworks_banks", 1);
+                prevRamWorks = settings->capture("ramworks_banks");
                 settings->setInt("ramworks_banks", ramWorksDraft_);
                 ramWorksChanged = true;
             }
@@ -765,7 +768,7 @@ void MainWindow::renderSlotConfigPanel()
                 if (cmVariantChanged)
                     settings->restore("chatmauve_variant", prevCmVariant);
                 if (ramWorksChanged)
-                    settings->setInt("ramworks_banks", prevRamWorks);
+                    settings->restore("ramworks_banks", prevRamWorks);
                 tapeStatusMessage = "Slot changes not applied — settings could not be saved.";
                 tapeStatusUntil = lastFrameTime + 8.0;
                 pom2::log().warn("Slots", tapeStatusMessage);
@@ -780,7 +783,7 @@ void MainWindow::renderSlotConfigPanel()
                 if (cmVariantChanged)
                     settings->restore("chatmauve_variant", prevCmVariant);
                 if (ramWorksChanged)
-                    settings->setInt("ramworks_banks", prevRamWorks);
+                    settings->restore("ramworks_banks", prevRamWorks);
                 if (!settings->save())
                     pom2::log().error("Slots",
                         "Could not persist the previous slot mapping after a refused rebuild.");
@@ -1492,7 +1495,10 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
         const auto sw = Apple2Display::modeForProfileSwitch(
             display->getHiResMode(), builtinRgb && rgbAdapterLive,
             preBuiltinRgbModeSet_, preBuiltinRgbMode_);
-        if (sw.mode != display->getHiResMode()) display->setHiResMode(sw.mode);
+        // Runs with the state lock released (ProfileSwitch step 7a), and the
+        // AI server keeps the display across a switch: synced, so a /screen
+        // capture in flight is not cleared under it.
+        if (sw.mode != display->getHiResMode()) display->setHiResModeSynced(sw.mode);
         preBuiltinRgbModeSet_ = sw.hasRemembered;
         preBuiltinRgbMode_    = sw.remembered;
     };
