@@ -26,6 +26,7 @@
 //  5. the predicates
 
 #include "MediaSource.h"
+#include "ZipMember.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -126,6 +127,36 @@ int main()
 
     std::vector<uint8_t> disk(143360);
     for (std::size_t i = 0; i < disk.size(); ++i) disk[i] = uint8_t(i * 13 + (i >> 8));
+
+    // 0. Hostile zip offsets (bug hunt 2026-11-17). The bounds were `cd + 46
+    //    > n`, which wraps on wasm32 for a uint32 offset near 4 GiB and read
+    //    before the buffer (ASan, browser build). On 64-bit the old form held,
+    //    so this pins that every walk REFUSES them cleanly; the subtraction
+    //    form is what keeps a 32-bit size_t honest.
+    {
+        std::string err;
+        std::vector<std::string> names;
+        std::vector<uint8_t> out;
+        std::vector<uint8_t> eocdOnly(178, 0);
+        p32(eocdOnly, 0x06054B50); p16(eocdOnly, 0); p16(eocdOnly, 0);
+        p16(eocdOnly, 1); p16(eocdOnly, 1); p32(eocdOnly, 46); p32(eocdOnly, 0xFFFFFFF0u); p16(eocdOnly, 0);
+        CHECK(!pom2::listZipMembers(eocdOnly, names, err));
+        CHECK(!pom2::readZipMember(eocdOnly, "a", out, err, 1 << 20));
+        // A good central entry whose local-header offset is near 4 GiB.
+        std::vector<uint8_t> farLocal = zipStored({ { "a", { 1, 2, 3 } } });
+        const std::size_t cdAt = farLocal.size() - 22 - (46 + 1);
+        for (int k = 0; k < 4; ++k) farLocal[cdAt + 42 + k] = uint8_t(0xFFFFFFF0u >> (8 * k));
+        CHECK(pom2::listZipMembers(farLocal, names, err) && names.size() == 1);
+        CHECK(!pom2::readZipMember(farLocal, "a", out, err, 1 << 20));
+        // listZipEntries + readZipEntry read what readZipMember reads.
+        const std::vector<uint8_t> two = zipStored({ { "x", { 7 } }, { "y", { 8, 9 } } });
+        std::vector<pom2::ZipEntry> entries;
+        CHECK(pom2::listZipEntries(two, entries, err) && entries.size() == 2);
+        std::vector<uint8_t> viaEntry, viaName;
+        CHECK(entries.size() == 2 && pom2::readZipEntry(two, entries[1], viaEntry, err, 1 << 20) &&
+              pom2::readZipMember(two, "y", viaName, err, 1 << 20) &&
+              viaEntry == viaName && viaName == std::vector<uint8_t>({ 8, 9 }));
+    }
 
     // 1. .gz
     put(dir / "game.dsk.gz", gzipStored(disk, "game.dsk"));

@@ -10,6 +10,37 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Bug hunt, round 2: hostile zips, RESET and the 6522, state a snapshot forgets
+
+`docs/audits/bug-hunt-2026-11-17.md` § Round 2.
+
+**Zip parsing in the browser.** The central-directory bounds were written
+`offset + 46 > size`; the offsets are uint32 from the file, and on wasm32
+`0xFFFFFFF0 + 46` wraps, so a dropped `.zip` made the parser read before its
+buffer (ASan). Every bound is now a subtraction. Reading many members by
+name walked the directory again per member — 65 535 empty members dropped
+as a ROM froze the UI for a minute — so the ROM scan reads entries by
+offset (`listZipEntries` / `readZipEntry`).
+
+**A warm RESET no longer slips the 6522s.** RES keeps T1/T2 running; the
+card re-anchored its lazy sync on a "now" that between instructions still
+counts the last one, so a free-running timer fell 2-7 cycles behind the CPU
+for good — a beam-raced effect that runs through a Ctrl-RESET would show it.
+Mockingboard, Phasor and Echo+ TMS, on reset and on snapshot restore.
+
+**State a snapshot forgot.** A SmartPort card whose guest had selected a
+position with no drive came back selecting drive 1, where its next block
+write would land; the two flags now ride in a spare bit pair, so old blobs
+and sessions read as before. The Super Serial Card re-drives its IRQ line in
+the restore instead of one instruction later. Decided against: widening the
+6522 blob for PB7 / the port-A latch, which would refuse every saved session
+holding a Mockingboard or a Phasor.
+
+**Host tools.** `pom2_dos33 put` refuses non-ASCII names (the 7-bit catalog
+made "CAFé" a second, unreachable entry); `get` with no host name refuses a
+catalog name holding a path separator. `pom2_disk info` caps a WOZ track at
+the loader's 1 Mbit.
+
 ## 2026-11-17 — Bug hunt: the /NMI latch survives a snapshot, pickers add the extension
 
 Four reviewers over everything since the 2026-11-09 hunt

@@ -855,8 +855,13 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // (it pins the stamp down), but a snapshot taken LATER than the live
     // machine left the stamp in the past and the next lazy sync handed both
     // 6522s the whole gap in one `advance()` — a burst of phantom T1
-    // underflows. Re-anchor on the machine we actually landed on.
-    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    // underflows. Re-anchor on the machine we actually landed on — at the
+    // TRUE now: a restore runs between instructions, where getCycleCountNow()
+    // still counts the live machine's last one (bug hunt 2026-11-17; the
+    // same correction as resetCard and advanceCycles, and PorteParoleCard's
+    // boundaryCycle).
+    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
     busNow_ = lastSyncCycle_;
     // The restored IFR/IER need not match the IRQ line the card is driving;
     // nothing else re-evaluates it until the next VIA access.
@@ -876,6 +881,17 @@ void MockingboardCard::onPowerCycle()
 void MockingboardCard::resetCard(bool powerCycle)
 {
     std::lock_guard<std::mutex> lk(mtx);
+    // RESET between two instructions: Memory has already counted the last
+    // one, M6502 still carries its cycles, so getCycleCountNow() overshoots
+    // "now" by them — the correction advanceCycles applies. The 6522 keeps
+    // its counters and latches through RES ([B] W65C22 data sheet § 3.9,
+    // Via6522.h), so on a warm reset they are caught up to the TRUE now
+    // first, and the card re-anchors there. Re-anchoring on the overshoot
+    // left every free-running T1/T2 2-7 cycles behind the CPU for good
+    // (bug hunt 2026-11-17).
+    const uint64_t now = cpu_ ? cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
+    if (cpu_ && !powerCycle) syncToCpuCycleAt(now);
     via_[0]->reset(powerCycle);
     via_[1]->reset(powerCycle);
     ay_[0]->reset();
@@ -887,7 +903,7 @@ void MockingboardCard::resetCard(bool powerCycle)
     assertIrq(false);
     // Re-anchor the lazy-sync clock to "now" so a freshly reset card
     // doesn't run a giant catch-up on its first MMIO access.
-    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    lastSyncCycle_ = now;
     busNow_ = lastSyncCycle_;
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     ayWriteCount_[0]  = ayWriteCount_[1]  = 0;

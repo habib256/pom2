@@ -593,7 +593,11 @@ void PhasorCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     //     currently driving on the slot bus, and nothing else re-evaluates
     //     it until the next VIA access — which a guest waiting in its IRQ
     //     handler never makes.
-    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    // The TRUE now: a restore runs between instructions, where
+    // getCycleCountNow() still counts the live machine's last one (bug hunt
+    // 2026-11-17; the same correction as resetCard and advanceCycles).
+    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
     busNow_ = lastSyncCycle_;
     for (int i = 0; i < 4; ++i) ++ayResetCount_[i];
     updateIrq();
@@ -605,6 +609,17 @@ void PhasorCard::onPowerCycle() { resetCard(true); }
 void PhasorCard::resetCard(bool powerCycle)
 {
     std::lock_guard<std::mutex> lk(mtx_);
+    // RESET between two instructions: Memory has already counted the last
+    // one, M6502 still carries its cycles, so getCycleCountNow() overshoots
+    // "now" by them — the correction advanceCycles applies (same fix as MockingboardCard::resetCard). The 6522 keeps
+    // its counters and latches through RES ([B] W65C22 data sheet § 3.9,
+    // Via6522.h), so on a warm reset they are caught up to the TRUE now
+    // first, and the card re-anchors there. Re-anchoring on the overshoot
+    // left every free-running T1/T2 2-7 cycles behind the CPU for good
+    // (bug hunt 2026-11-17).
+    const uint64_t now = cpu_ ? cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
+    if (cpu_ && !powerCycle) syncToCpuCycleAt(now);
     invalidateAyTimeline();   // the CPU-side banks change out of band here
     ayResetHeld_[0] = ayResetHeld_[1] = ayResetHeld_[2] = ayResetHeld_[3] = false;
     for (auto& chip : ssi_) chip.reset(powerCycle);
@@ -613,7 +628,7 @@ void PhasorCard::resetCard(bool powerCycle)
     for (int i = 0; i < 4; ++i) ay_[i]->reset();
     mode_ = PH_Mockingboard;       // power-up default = MB compat
     assertIrq(false);
-    lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    lastSyncCycle_ = now;
     busNow_ = lastSyncCycle_;
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     for (int i = 0; i < 4; ++i) {

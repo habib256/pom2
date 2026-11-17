@@ -337,9 +337,19 @@ bool Dos33Disk::writeFile(const std::string& name, FileType type,
 {
     // Space-padded on disk: a trailing blank is padding, not the name.
     const std::string up = rtrim(upper(name));
+    // Printable ASCII only. The catalog keeps 7 bits per character (high bit
+    // set) and findEntry compares on those 7 bits, so a UTF-8 "CAFé" was
+    // stored as "CAFC)": a second put of the same name added a SECOND entry
+    // DOS never reaches, and get/rm by the typed name said "not found" (bug
+    // hunt 2026-11-17).
+    const bool printable = std::all_of(up.begin(), up.end(), [](char c) {
+        const auto u = static_cast<unsigned char>(c);
+        return u >= 0x20 && u < 0x7F;
+    });
     if (up.empty() || up.size() > 30 || !std::isalpha(static_cast<unsigned char>(up[0]))
-        || up.find(',') != std::string::npos) {
-        error = name + ": a DOS 3.3 name is 1-30 characters, starting with a letter, no comma";
+        || up.find(',') != std::string::npos || !printable) {
+        error = name + ": a DOS 3.3 name is 1-30 printable ASCII characters, "
+                       "starting with a letter, no comma";
         return false;
     }
     // The bytes the file will hold.

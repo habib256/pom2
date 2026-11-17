@@ -1319,6 +1319,27 @@ void testC800LatchFollowsTheManual()
                 "another card only at $CFFF\n");
 }
 
+// Bug hunt 2026-11-17: a restore drives the IRQ line at once. It used to wait
+// for the next advanceCycles — after an instruction, while M6502::step samples
+// the line before one — so the first instruction after a rewind saw the LIVE
+// card's IRQ and could take an interrupt its own timeline never raised.
+void testRestoreDrivesIrqLineAtOnce()
+{
+    SuperSerialCard ssc(2);
+    ssc.setIrqDipEnabled(true);
+    ssc.deviceSelectWrite(kCommandAddr, 0x0B);    // DTR on, no TX/RX IRQ
+    ssc.advanceCycles(1);
+    assert(!ssc.slotIrqAsserted());
+    std::vector<uint8_t> quiet;
+    ssc.appendSnapshotState(quiet);
+    ssc.deviceSelectWrite(kCommandAddr, 0x05);    // the live machine arms TX IRQ
+    ssc.advanceCycles(1);
+    assert(ssc.slotIrqAsserted() && "setup: TDRE with TX IRQ armed raises the line");
+    ssc.loadSnapshotState(quiet.data(), quiet.size());
+    assert(!ssc.slotIrqAsserted() && "the restored line waited for the next instruction");
+    std::printf("  ok: a restore drives the IRQ line at once\n");
+}
+
 int main()
 {
     testDtrAndCommandDecode();
@@ -1349,6 +1370,7 @@ int main()
     testPrinterTapSpool();
     testRomPrInEntriesInitAcia();
     testTxIrq();
+    testRestoreDrivesIrqLineAtOnce();
     testTelnetOptionNegotiation();
     testTelnetDuplicateNegotiation();
     testSnapshotStatusErrorsAreMasked();

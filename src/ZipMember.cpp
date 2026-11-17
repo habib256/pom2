@@ -84,6 +84,109 @@ std::uint32_t crc32Of(const std::vector<std::uint8_t>& bytes)
 
 }  // namespace
 
+namespace {
+
+// `len` bytes at `pos` lie inside a buffer of `n`. By subtraction: the
+// offsets come from the file as uint32, and on wasm32 (a 32-bit size_t)
+// `cd + 46 > n` wrapped for cd = 0xFFFFFFF0, passed, and the next read
+// indexed before the buffer (bug hunt 2026-11-17, ASan in the browser).
+bool fits(std::size_t pos, std::size_t len, std::size_t n)
+{
+    return pos <= n && n - pos >= len;
+}
+
+}  // namespace
+
+bool listZipEntries(const std::vector<std::uint8_t>& zip,
+                    std::vector<ZipEntry>& entries, std::string& err)
+{
+    entries.clear();
+    std::size_t eocd = 0;
+    if (!findEndOfCentralDir(zip, eocd, err)) return false;
+    const std::size_t n = zip.size();
+    const std::uint32_t count = zle16(zip, eocd + 10);
+    std::size_t cd = zle32(zip, eocd + 16);
+    entries.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (!fits(cd, 46, n) || zle32(zip, cd) != 0x02014B50u) {
+            err = "malformed zip central directory";
+            return false;
+        }
+        const std::uint32_t nameLen = zle16(zip, cd + 28);
+        if (!fits(cd + 46, nameLen, n)) { err = "malformed zip central directory"; return false; }
+        entries.push_back({ std::string(reinterpret_cast<const char*>(zip.data() + cd + 46), nameLen), cd });
+        cd += 46 + nameLen + zle16(zip, cd + 30) + zle16(zip, cd + 32);
+    }
+    return true;
+}
+
+bool readZipEntry(const std::vector<std::uint8_t>& zip, const ZipEntry& entry,
+                  std::vector<std::uint8_t>& out, std::string& err,
+                  std::size_t maxBytes, bool* unsupported)
+{
+    out.clear();
+    if (unsupported) *unsupported = false;
+    const std::size_t n = zip.size();
+    const std::string& member = entry.name;
+    const std::size_t cd = entry.centralOffset;
+    if (!fits(cd, 46, n) || zle32(zip, cd) != 0x02014B50u) {
+        err = "malformed zip central directory";
+        return false;
+    }
+    const std::uint32_t flags  = zle16(zip, cd + 8);
+    const std::uint32_t method = zle16(zip, cd + 10);
+    const std::uint32_t crc    = zle32(zip, cd + 16);
+    const std::uint32_t csize  = zle32(zip, cd + 20);
+    const std::uint32_t usize  = zle32(zip, cd + 24);
+    const std::size_t   local  = zle32(zip, cd + 42);
+    if ((flags & 1u) || (method != 0 && method != 8)) {
+        if (unsupported) *unsupported = true;
+        err = member + ": encrypted or compressed with method " +
+              std::to_string(method) + " — not readable in-process";
+        return false;
+    }
+    if (usize > maxBytes || usize > static_cast<std::uint32_t>(INT_MAX) ||
+        csize > static_cast<std::uint32_t>(INT_MAX)) {
+        err = member + " expands to " + std::to_string(usize) +
+              " bytes — refusing to unpack it";
+        return false;
+    }
+    if (!fits(local, 30, n) || zle32(zip, local) != 0x04034B50u) {
+        err = member + ": malformed local header";
+        return false;
+    }
+    const std::size_t extra = std::size_t(zle16(zip, local + 26)) + zle16(zip, local + 28);
+    if (!fits(local + 30, extra, n) || !fits(local + 30 + extra, csize, n)) {
+        err = member + ": truncated archive";
+        return false;
+    }
+    const std::uint8_t* src = zip.data() + local + 30 + extra;
+    if (method == 0) {
+        if (csize != usize) { err = member + ": stored sizes disagree"; return false; }
+        out.assign(src, src + csize);
+    } else {
+        out.resize(usize);
+        // One spare byte: a decoder that would overrun reports it as a
+        // length mismatch instead of a short read that looks complete.
+        out.push_back(0);
+        const int got = stbi_zlib_decode_noheader_buffer(
+            reinterpret_cast<char*>(out.data()), static_cast<int>(out.size()),
+            reinterpret_cast<const char*>(src), static_cast<int>(csize));
+        if (got != static_cast<int>(usize)) {
+            out.clear();
+            err = member + ": inflate failed";
+            return false;
+        }
+        out.resize(usize);
+    }
+    if (crc32Of(out) != crc) {
+        out.clear();
+        err = member + ": CRC-32 mismatch — damaged archive";
+        return false;
+    }
+    return true;
+}
+
 bool readZipMember(const std::vector<std::uint8_t>& zip,
                    const std::string& member,
                    std::vector<std::uint8_t>& out,
@@ -93,84 +196,10 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
 {
     out.clear();
     if (unsupported) *unsupported = false;
-    const std::size_t n = zip.size();
-    auto le16 = [&](std::size_t o) -> std::uint32_t {
-        return static_cast<std::uint32_t>(zip[o]) |
-               (static_cast<std::uint32_t>(zip[o + 1]) << 8);
-    };
-    auto le32 = [&](std::size_t o) -> std::uint32_t {
-        return le16(o) | (le16(o + 2) << 16);
-    };
-
-    std::size_t eocd = 0;
-    if (!findEndOfCentralDir(zip, eocd, err)) return false;
-
-    const std::uint32_t count = le16(eocd + 10);
-    std::size_t cd = le32(eocd + 16);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (cd + 46 > n || le32(cd) != 0x02014B50u) {
-            err = "malformed zip central directory";
-            return false;
-        }
-        const std::uint32_t nameLen = le16(cd + 28);
-        const std::size_t   next    = cd + 46 + nameLen + le16(cd + 30) + le16(cd + 32);
-        if (cd + 46 + nameLen > n) { err = "malformed zip central directory"; return false; }
-        const std::string name(reinterpret_cast<const char*>(zip.data() + cd + 46), nameLen);
-        if (name != member) { cd = next; continue; }
-
-        const std::uint32_t flags  = le16(cd + 8);
-        const std::uint32_t method = le16(cd + 10);
-        const std::uint32_t crc    = le32(cd + 16);
-        const std::uint32_t csize  = le32(cd + 20);
-        const std::uint32_t usize  = le32(cd + 24);
-        const std::size_t   local  = le32(cd + 42);
-        if ((flags & 1u) || (method != 0 && method != 8)) {
-            if (unsupported) *unsupported = true;
-            err = member + ": encrypted or compressed with method " +
-                  std::to_string(method) + " — not readable in-process";
-            return false;
-        }
-        if (usize > maxBytes || usize > static_cast<std::uint32_t>(INT_MAX) ||
-            csize > static_cast<std::uint32_t>(INT_MAX)) {
-            err = member + " expands to " + std::to_string(usize) +
-                  " bytes — refusing to unpack it";
-            return false;
-        }
-        if (local + 30 > n || le32(local) != 0x04034B50u) {
-            err = member + ": malformed local header";
-            return false;
-        }
-        const std::size_t data = local + 30 + le16(local + 26) + le16(local + 28);
-        if (data > n || csize > n - data) {
-            err = member + ": truncated archive";
-            return false;
-        }
-        const std::uint8_t* src = zip.data() + data;
-        if (method == 0) {
-            if (csize != usize) { err = member + ": stored sizes disagree"; return false; }
-            out.assign(src, src + csize);
-        } else {
-            out.resize(usize);
-            // One spare byte: a decoder that would overrun reports it as a
-            // length mismatch instead of a short read that looks complete.
-            out.push_back(0);
-            const int got = stbi_zlib_decode_noheader_buffer(
-                reinterpret_cast<char*>(out.data()), static_cast<int>(out.size()),
-                reinterpret_cast<const char*>(src), static_cast<int>(csize));
-            if (got != static_cast<int>(usize)) {
-                out.clear();
-                err = member + ": inflate failed";
-                return false;
-            }
-            out.resize(usize);
-        }
-        if (crc32Of(out) != crc) {
-            out.clear();
-            err = member + ": CRC-32 mismatch — damaged archive";
-            return false;
-        }
-        return true;
-    }
+    std::vector<ZipEntry> entries;
+    if (!listZipEntries(zip, entries, err)) return false;
+    for (const auto& e : entries)
+        if (e.name == member) return readZipEntry(zip, e, out, err, maxBytes, unsupported);
     err = member + " is not in the archive";
     return false;
 }
@@ -180,21 +209,10 @@ bool listZipMembers(const std::vector<std::uint8_t>& zip,
                     std::string& err)
 {
     names.clear();
-    std::size_t eocd = 0;
-    if (!findEndOfCentralDir(zip, eocd, err)) return false;
-    const std::size_t n = zip.size();
-    const std::uint32_t count = zle16(zip, eocd + 10);
-    std::size_t cd = zle32(zip, eocd + 16);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        if (cd + 46 > n || zle32(zip, cd) != 0x02014B50u) {
-            err = "malformed zip central directory";
-            return false;
-        }
-        const std::uint32_t nameLen = zle16(zip, cd + 28);
-        if (cd + 46 + nameLen > n) { err = "malformed zip central directory"; return false; }
-        names.emplace_back(reinterpret_cast<const char*>(zip.data() + cd + 46), nameLen);
-        cd += 46 + nameLen + zle16(zip, cd + 30) + zle16(zip, cd + 32);
-    }
+    std::vector<ZipEntry> entries;
+    if (!listZipEntries(zip, entries, err)) return false;
+    names.reserve(entries.size());
+    for (auto& e : entries) names.push_back(std::move(e.name));
     return true;
 }
 

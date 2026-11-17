@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <map>
 #include <set>
 
 namespace fs = std::filesystem;
@@ -78,32 +79,38 @@ void scanArchive(const std::vector<std::uint8_t>& zip, const std::string& name,
 {
     std::uintmax_t unpacked = 0;
     if (!zipUnpackedSizeWithinCap(zip, unpacked, err)) return;
-    std::vector<std::string> members;
-    if (!listZipMembers(zip, members, err)) return;
+    // Entries, not names: reading each by name walked the whole central
+    // directory again per member — 65 535 of them froze the UI ~70 s (bug
+    // hunt 2026-11-17). The first entry of a name wins, as by name.
+    std::vector<ZipEntry> entries;
+    if (!listZipEntries(zip, entries, err)) return;
+    std::map<std::string, const ZipEntry*> have;
+    for (const auto& z : entries) have.emplace(z.name, &z);
 
-    for (const auto& m : members) {
+    for (const auto& z : entries) {
+        const std::string& m = z.name;
         if (m.empty() || m.back() == '/') continue;
         std::vector<std::uint8_t> bytes;
         std::string memberErr;
         // A member too big, encrypted or damaged is simply not a ROM we know.
-        if (!readZipMember(zip, m, bytes, memberErr, kMaxRomImportFileBytes))
+        if (!readZipEntry(zip, z, bytes, memberErr, kMaxRomImportFileBytes))
             continue;
         for (const RomFetchEntry* e : identifyRom(bytes))
             found.push_back({ e, name + ":" + m, bytes });
     }
 
-    const std::set<std::string> have(members.begin(), members.end());
     for (const auto& e : romFetchCatalog()) {
         if (!e.zipMember || !e.zipConcat || !have.count(e.zipMember)) continue;
         std::vector<std::uint8_t> bytes;
         std::string memberErr;
-        bool ok = readZipMember(zip, e.zipMember, bytes, memberErr,
-                                kMaxRomImportFileBytes);
+        bool ok = readZipEntry(zip, *have.at(e.zipMember), bytes, memberErr,
+                               kMaxRomImportFileBytes);
         std::string source = name + ":" + e.zipMember;
         for (const char* const* m = e.zipConcat; ok && *m; ++m) {
             std::vector<std::uint8_t> more;
-            ok = have.count(*m) &&
-                 readZipMember(zip, *m, more, memberErr, kMaxRomImportFileBytes);
+            const auto part = have.find(*m);
+            ok = part != have.end() &&
+                 readZipEntry(zip, *part->second, more, memberErr, kMaxRomImportFileBytes);
             bytes.insert(bytes.end(), more.begin(), more.end());
             source += std::string("+") + *m;
         }

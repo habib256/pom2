@@ -1610,4 +1610,13 @@ void SuperSerialCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     bytesPerSecond_ = baudIndexToBytesPerSec(baudIndex_);
     sendBudget_     = 0.0;
     lastDrainTime_  = std::chrono::steady_clock::now();
+
+    // Drive the restored IRQ line NOW, not at the next advanceCycles: that
+    // runs after an instruction, and M6502::step samples the line before
+    // executing one — so the first instruction after a rewind or session
+    // load saw the LIVE card's IRQ, and could take an interrupt its own
+    // timeline never raised (bug hunt 2026-11-17). A restore runs between
+    // instructions with the state lock held, like the CPU thread's push.
+    irqLineDirty_.store(false, std::memory_order_release);
+    pushIrqLine();
 }
