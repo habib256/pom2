@@ -54,6 +54,7 @@
 #include "Version.h"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -295,7 +296,7 @@ int main(int argc, char** argv)
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
             a == "--until" || a == "--cycles" ||
             a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als" ||
-            a == "--softcard2") {
+            a == "--softcard2" || a == "--speed") {   // --speed: was "unknown arg" (2026-11-17)
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
         }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
@@ -377,8 +378,9 @@ int main(int argc, char** argv)
         }
         else if (a == "--cycles" && i+1 < argc) {
             char* end = nullptr;
+            errno = 0;   // strtoll saturates at LLONG_MAX: a run that never ends (2026-11-17)
             const long long v = std::strtoll(argv[++i], &end, 10);
-            if (end == argv[i] || *end != '\0' || v <= 0) {
+            if (end == argv[i] || *end != '\0' || v <= 0 || errno == ERANGE) {
                 std::fprintf(stderr, "--cycles expects a positive integer, got: %s\n", argv[i]);
                 return 1;
             }

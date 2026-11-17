@@ -754,7 +754,7 @@ std::vector<std::string> curlDownloadArgs(const std::string& url,
     // hop after it, and `--max-filesize` stops a mirror answering a 256-byte
     // PROM with a terabyte: the old 64 MB cap was applied when READING the
     // file back, i.e. after it had already landed on the user's disk.
-    return { "-fsSL",
+    return { "-fsSLg",          // -g: brackets are URL text, not a curl glob
              "--proto",       "=https",
              "--proto-redir", "=https",
              "--max-filesize", std::to_string(kMaxUnpackedZipBytes),

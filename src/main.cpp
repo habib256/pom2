@@ -968,7 +968,7 @@ int main(int argc, char* argv[])
                 m = Apple2Display::HiResMode::MonoAmber;    label = "mono-amber";  break;
             case pom2::CliDisplayMode::NoHint: break;
         }
-        mainWindow.displayRef().setHiResMode(m);
+        mainWindow.displayRef().setHiResModeSynced(m);   // --ai-control may already serve /screen
         pom2::log().info("CLI", std::string("--display ") + label);
     }
     if (plan->rgbCardInvertBit7.has_value()) {

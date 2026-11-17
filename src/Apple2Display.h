@@ -207,6 +207,19 @@ public:
     /// so an amber afterglow doesn't bleed into a freshly-selected green
     /// phosphor.
     void      setHiResMode(HiResMode m);
+    /// `setHiResMode` under `demodMutex`: what every UI entry point must
+    /// call once the AI server's /screen handler may be reading the signal
+    /// buffers on its own thread (it holds only demodMutex there). The bare
+    /// form clears them racing that reader — the toolbar's colour/mono
+    /// toggle, the Abstraction Levels composite row and the //c PAL
+    /// profile hook all still did (bug hunt 2026-11-17). Never call with
+    /// demodMutex held; stateMutex → demodMutex order: not under stateMutex
+    /// either unless the caller already follows it.
+    void      setHiResModeSynced(HiResMode m)
+    {
+        std::lock_guard<std::mutex> lk(demodMutex_);
+        setHiResMode(m);
+    }
     HiResMode getHiResMode() const { return hiResMode; }
 
     /// What a PROFILE SWITCH does to the render path, and what it has to

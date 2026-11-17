@@ -84,8 +84,7 @@ namespace {
 /// these paths, so the documented stateMutex → demodMutex order stands.
 void setDisplayPipeline(Apple2Display* display, Apple2Display::HiResMode m)
 {
-    std::lock_guard<std::mutex> demodLk(display->demodMutex());
-    display->setHiResMode(m);
+    display->setHiResModeSynced(m);
 }
 
 }  // namespace

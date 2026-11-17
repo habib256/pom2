@@ -448,6 +448,14 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
                 return std::nullopt;
             }
             std::string key = spec.substr(2);
+            // `empty` is the spelling that empties a slot; a bare `N=` is a
+            // missing key (`--slot 3=$CARD` with CARD unset), not a request
+            // to unplug the card — it matched the catalogue's own "" row and
+            // rebuilt the machine without it (bug hunt 2026-11-17).
+            if (key.empty()) {
+                pom2::log().error("CLI", "--slot " + spec + ": no card key (use N=empty to empty a slot)");
+                return std::nullopt;
+            }
             if (key == "empty") key.clear();
             plan.slotCards.emplace_back(spec[0] - '0', key);
         }

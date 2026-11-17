@@ -167,6 +167,28 @@ int main()
         if (bad) { fs::remove_all(home); return 1; }
     }
 
+    // ── A Windows path typed by hand (bug hunt 2026-11-17) ───────────────
+    // `\n` / `\t` are escapes, so `C:\new\test` came back as "C:" + newline
+    // + "ew" + tab. POM2's own writer doubles backslashes, so a value with a
+    // drive letter and ONE backslash is a hand edit, taken literally; what
+    // POM2 writes still round-trips, newlines included.
+    {
+        pom2::Settings w;
+        w.setString("own_path", "C:\\new\\x.dsk");
+        w.setString("own_nl",   "C:x\nfoo");                 // a real newline
+        assert(w.save());
+        {
+            std::ofstream f(w.getStorePath(), std::ios::app | std::ios::binary);
+            f << "hand_path=C:\\new\\test\\saves\\game.dsk\r\n";
+        }
+        pom2::Settings r;
+        assert(r.load());
+        assert(r.getString("hand_path", "") == "C:\\new\\test\\saves\\game.dsk" &&
+               "a hand-typed Windows path was unescaped");
+        assert(r.getString("own_path", "") == "C:\\new\\x.dsk");
+        assert(r.getString("own_nl", "") == "C:x\nfoo");
+    }
+
     // ── Partial parses are NOT values (round 11 #39) ─────────────────────
     // state.cfg's header invites hand-editing, and `std::stoi`/`std::stof`
     // stop at the first character they cannot use and report success on what

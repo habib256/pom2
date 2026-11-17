@@ -1693,11 +1693,12 @@ static void testWatchHitByTheBusMaster()
     struct WritingCard final : SlotPeripheral {
         Memory* mem = nullptr;
         bool active = true, release = false;
-        int runs = 0;
+        int runs = 0, executed = 0;   // a coprocessor's shape: an "instruction" a cycle, the watched write first
         std::string_view name() const override { return "DMA watch test"; }
         bool dmaActive() const override { return active; }
-        int dmaRun(int cycles) override
-        { ++runs; mem->memWrite(0x0040, 0x5A); active = !release; return release ? 1 : cycles; }
+        int dmaRun(int cycles) override { ++runs; active = !release; const int n = release ? 1 : cycles;
+          for (int i = 0; i < n; ++i, ++executed) mem->memWrite(executed ? uint16_t(0x2000 + (executed & 0xFF)) : 0x0040, 0x5A);
+          return n; }
     };
     for (const bool release : { false, true }) {
         EmulationController ctrl(AudioDevice::OutputMode::Offline);
@@ -1723,7 +1724,7 @@ static void testWatchHitByTheBusMaster()
         const auto hit = ctrl.debugger().lastHit();
         assert(hit.reason == pom2::Debugger::Reason::WatchWrite);
         assert(hit.addr == 0x0040 && hit.value == 0x5A && hit.busMaster);
-        assert(dma->runs == 1 && "the card ran on past its stop");
+        assert(dma->runs == 1 && dma->executed == 1 && "the bus master ran on past the instruction that hit");
     }
 }
 

@@ -361,6 +361,41 @@ void testStaleResponseDiscarded()
     link.stop();
 }
 
+// ── 3b. Bytes after a reply are not the start of the next one ────────────
+// Bug hunt 2026-11-17: a reply was returned as soon as it completed, the rest
+// of that read was dropped unfed, and the framer stayed INSIDE a frame. The
+// next exchange then decoded whatever came first — here a decoy with the
+// right sequence number and no leading $C0 — as its reply.
+void testLeftoverBytesAreNotAReply()
+{
+    SpOverSlipLink link;
+    const uint16_t port = startLink(link);
+
+    std::atomic<bool> injectDecoy{false};
+    FakePeer peer(port, [&](const std::vector<uint8_t>& req,
+                            std::vector<uint8_t>& wire) {
+        if (injectDecoy.load() && req[1] == kSpReadBlock) {
+            wire.push_back(req[0]);                  // the RIGHT sequence number
+            wire.push_back(0x00);                    // status OK
+            wire.insert(wire.end(), 512, 0xEE);      // no $C0 / $DB inside
+            wire.push_back(SlipFramer::kEnd);        // ...closed, never opened
+        }
+        standardHandler(req, wire);
+    });
+
+    assert(waitFor([&] { return link.deviceCount() == 2; }));
+    const auto first = link.readBlock(1, 0x000004);  // a reply completes here
+    assert(first.ok());
+    injectDecoy.store(true);
+    const auto r = link.readBlock(1, 0x000005);
+    assert(r.ok() && r.data.size() == 512);
+    assert(r.data[100] == static_cast<uint8_t>((0x05 * 7 + 100 * 3) & 0xFF) &&
+           "a decoy with no opening $C0 was taken for the reply");
+
+    peer.stop();
+    link.stop();
+}
+
 // ── 4. A silent peer times out, and the link keeps working ───────────────
 void testTimeoutAndRecovery()
 {
@@ -908,6 +943,7 @@ int main()
     testEnumeration();
     testReadWriteBlock();
     testStaleResponseDiscarded();
+    testLeftoverBytesAreNotAReply();
     testTimeoutAndRecovery();
     testRemoteFujiDirectoryCanOutlastLocalIoBudget();
     testMountedFujiImageCanReadSlowNetworkBlocks();

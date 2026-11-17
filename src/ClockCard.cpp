@@ -714,8 +714,14 @@ void ClockCard::buildRom()
              0x8E, 0x00, 0x02,                  // STX $0200
              0xA9, 0x8D,                        // LDA #CR
              0x8D, 0x11, 0x02,                  // STA $0211
+             // REGISTER_HOLD only latches on an STB edge (see writeControl):
+             // without the pulse the chip stayed in SHIFT, DATA_OUT kept the
+             // shift register's bit instead of the 1 Hz wave, and a Time
+             // Set's hold was never released (bug hunt 2026-11-17).
+             0xA9, kBitStb,                     // LDA #REGISTER_HOLD|STB
+             0x8D, dev, 0xC0,                   // STA $C0n0 — STB high
              0xA9, 0x00,                        // LDA #REGISTER_HOLD
-             0x8D, dev, 0xC0,                   // STA $C0n0 — IRQs off too
+             0x8D, dev, 0xC0,                   // STA $C0n0 — latched; IRQs off too
              0x68, 0xA8, 0x68, 0xAA,            // PLA TAY PLA TAX
              0x60 });                           // RTS
     romLayoutError_ = !a.finish();

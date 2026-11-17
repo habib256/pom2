@@ -1936,7 +1936,7 @@ inline uint8_t Memory::memReadSlowBody(uint16_t addr)
             (iicProfile_ && iicProfile_->forcesIntCxRom())) {
             if (addr == 0xCFFF) {
                 intC8Rom = false;
-                slots.deactivateExpansion();
+                if (!(iieMemMode & MF_INTCXROM)) slots.deactivateExpansion();   // see memWrite's $CFFF
             }
             // INTC8ROM latches on ANY $C3xx access while SLOTC3ROM=off —
             // INTCXROM state does not gate it (UTAIIe 5-28; MAME
@@ -2211,14 +2211,15 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         slots.deviceSelectWrite(addr, value);
         return;
     }
-    // Same $CFFF + INTCXROM deactivate handling as memRead. MAME's
-    // `c800_w` serves both banks (`m_c800bank[0..2]` all write through
-    // it): the owning card gets `write_c800(0x7ff)`, then the window is
-    // released — so the write reaches the owner even when INTCXROM absorbs
-    // the rest of $C100-$CFFF below.
+    // $CFFF: no I/O STROBE under the internal ROM — the card sees the write
+    // only with INTCXROM and INTC8ROM off, and keeps its claim under INTCXROM
+    // ([D] MAME master c800_int_r/c800_w @ 4033598f20, PR #16814; [B] Sather
+    // UTAIIe p. 7-21 as it cites, not read here; mame0287 until 2026-11-17).
     if (iieMode && addr == 0xCFFF) {
-        intC8Rom = false;   // same flip-flop reset as the read side
-        slots.expansionRomWrite(addr, value);
+        const bool cxrom = (iieMemMode & MF_INTCXROM) != 0, internal = cxrom || intC8Rom;
+        intC8Rom = false;   // same flip-flop reset as the read side; then card + release
+        if (!internal)   slots.expansionRomWrite(addr, value);
+        else if (!cxrom) slots.deactivateExpansion();
     }
     // Mirror the memRead INTCXROM override for //c: when internal ROM
     // is mapped at $C100-$CFFF, writes are absorbed (real silicon: ROM

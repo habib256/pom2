@@ -158,6 +158,24 @@ int main()
               viaEntry == viaName && viaName == std::vector<uint8_t>({ 8, 9 }));
     }
 
+    // 0b. A copy an older POM2 cached under the 32-bit FNV key is not
+    //     adopted (bug hunt 2026-11-17): that key collides, and the query it
+    //     ignores is free padding. Seeded under this URL's own legacy name;
+    //     the URL itself is unreachable (local port 9), so nothing leaves
+    //     the machine and the only way to "succeed" is to serve the seed.
+    {
+        const std::string url = "http://127.0.0.1:9/legacy.dsk";
+        uint32_t h = 2166136261u;
+        for (unsigned char c : url) h = (h ^ c) * 16777619u;
+        char key[9];
+        std::snprintf(key, sizeof key, "%08x", h);
+        fs::create_directories(cache);
+        put(cache / (std::string(key) + "-legacy.dsk"), disk);
+        const auto r = pom2::resolveMediaSource(url, cache);
+        CHECK(!r.ok && "a legacy FNV-keyed copy was served for a URL");
+        CHECK(!fs::exists(pom2::mediaUrlCachePath(url, cache)));
+    }
+
     // 1. .gz
     put(dir / "game.dsk.gz", gzipStored(disk, "game.dsk"));
     auto r = pom2::resolveMediaSource((dir / "game.dsk.gz").string(), cache);
@@ -286,17 +304,7 @@ int main()
         const std::string b = "http://example.test/disk.dsk?lgll5sars5";
         CHECK(fnv32(a) == fnv32(b));                       // the pair does collide
         CHECK(pom2::mediaUrlCachePath(a, cache) != pom2::mediaUrlCachePath(b, cache));
-        // A copy cached under the old key moves to the new one, with the
-        // guest's writes in it, and no download is tried.
-        const std::string url = "http://127.0.0.1:9/legacy.dsk";
-        char old[9];
-        std::snprintf(old, sizeof old, "%08x", fnv32(url));
-        fs::create_directories(cache, ec);
-        put(cache / (std::string(old) + "-legacy.dsk"), disk);
-        r = pom2::resolveMediaSource(url, cache);
-        CHECK(r.ok && r.fromCache && fs::path(r.localPath) == pom2::mediaUrlCachePath(url, cache));
-        CHECK(r.ok && get(r.localPath) == disk);
-        CHECK(!fs::exists(cache / (std::string(old) + "-legacy.dsk")));
+        // A URL copy cached under the old key is no longer adopted — see 0b.
     }
 
     // 5. Predicates.

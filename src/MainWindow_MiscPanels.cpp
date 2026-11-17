@@ -238,10 +238,17 @@ void MainWindow::renderAbstractionPanel()
     // (`pom2::slotPlanKeyLive`, pinned by abstraction_catalog).
     static_assert(SlotBus::kSlotCount == 8, "slotPlanKeyLive takes 8 slots");
     std::array<bool, SlotBus::kSlotCount> occupied{};
+    // Card flags read under the lock with the topology: `useBitLss` is
+    // rewritten under stateMutex by an AI-thread WOZ insert and by a
+    // snapshot restore, which these rows used to race every frame (bug hunt
+    // 2026-11-17). The pointers themselves are UI-thread-confined.
+    bool diskIIBitLss = false, smartPortLironRom = false;
     {
         auto st = controller->lockState();
         for (int s = 1; s < SlotBus::kSlotCount; ++s)
             occupied[static_cast<std::size_t>(s)] = st.memory().slotBus().isPlugged(s);
+        if (auto* d = primaryDiskII())        diskIIBitLss      = d->usingBitLss();
+        if (auto* sp = primarySmartPortCard()) smartPortLironRom = sp->isLironRomLoaded();
     }
     auto plugged = [&](const char* key) {
         return pom2::slotPlanKeyLive(slotCards, occupied, key);
@@ -273,7 +280,7 @@ void MainWindow::renderAbstractionPanel()
     // is the honest test — a mounted WOZ forces the bit-level path (POM2's
     // own sequencer when there is no roms/diskii_p6.rom).
     degradable("diskii", primaryDiskII() != nullptr,
-               primaryDiskII() && primaryDiskII()->usingBitLss(), pom2::AbsLevel::H1,
+               diskIIBitLss, pom2::AbsLevel::H1,
                "roms/diskii_p6.rom absent and no WOZ mounted — running the "
                "legacy 32-cycle nibble gate, which cannot decode "
                "bitstream-level copy protection.");
@@ -284,7 +291,7 @@ void MainWindow::renderAbstractionPanel()
     row("superdrive", plugged("superdrive") ? Live::Active : Live::NotPlugged);
     row("liron", plugged("liron") ? Live::Active : Live::NotPlugged);
     degradable("smartportcard", plugged("smartport35"),
-               primarySmartPortCard() && primarySmartPortCard()->isLironRomLoaded(),
+               smartPortLironRom,
                pom2::AbsLevel::H1,
                "roms/liron.rom absent — the slot page and the $C800 bank are "
                "POM2's synthetic firmware instead of the real Liron ROM.");
@@ -615,7 +622,7 @@ void MainWindow::renderAbstractionPanel()
             // No restart: the colour pipeline is a render-path choice, and
             // the machine never sees it. Persisted by the dtor's hi_res_mode
             // write, exactly like a View-menu pick.
-            display->setHiResMode(
+            display->setHiResModeSynced(
                 req.option == 0 ? Apple2Display::HiResMode::ColorCompositeOE
                                 : Apple2Display::HiResMode::ColorNTSC);
             lastColorHiResMode_ = display->getHiResMode();
