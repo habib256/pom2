@@ -14,6 +14,15 @@
 namespace fs = std::filesystem;
 int main()
 {
+    // A Save answer with no extension gets the filter's first one (bug hunt
+    // 2026-11-17); pure, so it runs even where the protocol below skips.
+    assert(pom2::withDefaultExtension("/tmp/page1", "png") == "/tmp/page1.png");
+    assert(pom2::withDefaultExtension("/tmp/tape", "aci,wav") == "/tmp/tape.aci");
+    assert(pom2::withDefaultExtension("/tmp/tape.wav", "aci,wav") == "/tmp/tape.wav");
+    assert(pom2::withDefaultExtension("/tmp/x.y/page", "pdf") == "/tmp/x.y/page.pdf");
+    assert(pom2::withDefaultExtension("/tmp/page1", "") == "/tmp/page1");
+    assert(pom2::withDefaultExtension("/tmp/dir/", "png") == "/tmp/dir/");
+    assert(pom2::withDefaultExtension("", "png").empty());
     const fs::path root = fs::temp_directory_path() /
         ("pom2-native-dialog-" + std::to_string(::getpid()));
     fs::create_directories(root);

@@ -218,6 +218,11 @@ public:
     uint8_t haltCode() const { return halted ? (waiting_ ? 2 : 1) : 0; }
     void setHaltCode(uint8_t c) { halted = c != 0; waiting_ = c == 2; }
     void setHalted(bool v)  { halted = v; if (!v) waiting_ = false; }
+    /// The /NMI edge latch: an edge taken, not yet serviced (`step()` takes
+    /// it at the next instruction boundary). A snapshot saves it — /NMI is
+    /// edge-triggered, so unlike /IRQ the line's level cannot bring it back.
+    bool nmiPending() const { return NMI != 0; }
+    void setNmiPending(bool p) { NMI = p ? 1 : 0; }
 
     /// Cycles accumulated inside the *current* opcode (reset to 1 at the
     /// fetch by executeOpcode and incremented as the instruction runs).

@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 function Set-Pom2FileAssociations($Classes, [string]$Executable, [bool]$Unregister) {
     $progId = 'POM2.DiskImage'
-    $extensions = '.dsk', '.do', '.po', '.nib', '.woz', '.d13', '.2mg', '.hdv', '.moof'
+    $extensions = '.dsk', '.do', '.po', '.nib', '.nb2', '.woz', '.d13', '.2mg', '.hdv', '.moof'
     if ($Unregister) {
         foreach ($extension in $extensions) {
             $key = $Classes.OpenSubKey("$extension\OpenWithProgids", $true)

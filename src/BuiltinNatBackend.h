@@ -77,6 +77,9 @@ inline constexpr uint32_t kGuestIp     = 0x0A00020F;   // 10.0.2.15
 inline constexpr uint32_t kLoopbackIp  = 0x7F000001;   // 127.0.0.1
 inline constexpr Ipv6 kGateway6 = {0xfd,0,0,2,0,0,0,0,0,0,0,0,0,0,0,2};
 inline constexpr Ipv6 kDns6 = {0xfd,0,0,2,0,0,0,0,0,0,0,0,0,0,0,3};
+/// ::ffff:10.0.2.3 — the IPv4 resolver named through IPv6. Served by the
+/// IPv6 DNS path, answering from this address (bug hunt 2026-11-17).
+inline constexpr Ipv6 kDnsMapped6 = {0,0,0,0,0,0,0,0,0,0,0xff,0xff,10,0,2,3};
 inline constexpr Ipv6 kRouter6 = {0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,2};
 
 /// What the fence decides for one destination.

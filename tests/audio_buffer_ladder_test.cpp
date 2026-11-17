@@ -37,11 +37,14 @@ void climbsOnLateCallbacks()
     CHECK(l.poll(0.0, 0, 256, Platform::Desktop, true, false).frames == 0);
     // Below the threshold inside the window: stay.
     CHECK(l.poll(1.0, kLate - 1, 256, Platform::Desktop, true, false).frames == 0);
-    // At the threshold: one rung up, and remembered.
+    // At the threshold: one rung up — proposed, not yet remembered: only a
+    // device that took it makes it the next launch's start.
     const auto c = l.poll(2.0, kLate, 256, Platform::Desktop, true, false);
     CHECK(c.frames == 512);
     CHECK(c.lateInWindow == kLate);
     CHECK(c.windowSec == 2.0);
+    CHECK(l.learned() == 0 && "a rung the device has not taken is not learned");
+    l.reached(c.frames);
     CHECK(l.learned() == 512);
 }
 
@@ -61,10 +64,13 @@ void restartedWindowForgetsTheOldDevice()
 {
     AudioBufferLadder l;
     l.poll(0.0, 10, 256, Platform::Desktop, true, false);
-    // A re-open at counter 12: what came before is the old device's.
-    l.restartWindow(12);
+    // A re-open: what came before is the old device's. The next poll opens
+    // the window and is its baseline, however many late callbacks the
+    // counter shows by then (12 + kLate here: none of them may count).
+    l.restartWindow();
     CHECK(l.poll(1.0, 12 + kLate, 256, Platform::Desktop, true, false).frames == 0);
-    CHECK(l.poll(2.0, 12 + kLate + kLate, 256, Platform::Desktop, true, false).frames == 512);
+    CHECK(l.poll(2.0, 12 + kLate + kLate - 1, 256, Platform::Desktop, true, false).frames == 0);
+    CHECK(l.poll(3.0, 12 + kLate + kLate, 256, Platform::Desktop, true, false).frames == 512);
 }
 
 void stopsAtTheTop()
@@ -80,7 +86,7 @@ void stopsAtTheTop()
 void noClimbWhilePinnedOrClosed()
 {
     AudioBufferLadder l;
-    CHECK(l.pin(512, 256, 0, Platform::Desktop));
+    CHECK(l.pin(512, 256, Platform::Desktop));
     l.poll(0.0, 0, 512, Platform::Desktop, true, false);
     CHECK(l.poll(1.0, 100, 512, Platform::Desktop, true, false).frames == 0);
 
@@ -96,6 +102,7 @@ void browserClimbsOncePerLoad()
     AudioBufferLadder l;
     l.poll(0.0, 0, 2048, Platform::Browser, true, true);
     CHECK(l.poll(1.0, kLate, 2048, Platform::Browser, true, true).frames == 4096);
+    l.reached(4096);
     l.poll(kWindow + 5.0, kLate, 2048, Platform::Browser, true, true);
     CHECK(l.poll(kWindow + 6.0, 10 * kLate, 2048, Platform::Browser, true, true).frames == 0);
     CHECK(l.learned() == 4096);
@@ -103,9 +110,11 @@ void browserClimbsOncePerLoad()
     AudioBufferLadder d;
     d.poll(0.0, 0, 256, Platform::Desktop, true, false);
     CHECK(d.poll(1.0, kLate, 256, Platform::Desktop, true, false).frames == 512);
-    d.restartWindow(kLate);
+    d.reached(512);
+    d.restartWindow();
     d.poll(2.0, kLate, 512, Platform::Desktop, true, false);
     CHECK(d.poll(3.0, 2 * kLate, 512, Platform::Desktop, true, false).frames == 1024);
+    d.reached(1024);
     CHECK(d.learned() == 1024);
 }
 
@@ -140,6 +149,7 @@ void persistRoundTrip()
     run1.poll(0.0, 0, 256, Platform::Desktop, true, false);
     const auto c = run1.poll(1.0, kLate, 256, Platform::Desktop, true, false);
     CHECK(c.frames == 512);
+    run1.reached(c.frames);
     AudioBufferLadder run2;
     const auto r = run2.restore(static_cast<int>(run1.pinned()),
                                 static_cast<int>(run1.learned()), 256,
@@ -150,12 +160,12 @@ void persistRoundTrip()
 void unpinKeepsTheCurrentRung()
 {
     AudioBufferLadder l;
-    CHECK(!l.pin(300, 256, 0, Platform::Desktop) && "not a rung");
+    CHECK(!l.pin(300, 256, Platform::Desktop) && "not a rung");
     CHECK(l.pinned() == 0);
-    CHECK(l.pin(1024, 256, 0, Platform::Desktop));
+    CHECK(l.pin(1024, 256, Platform::Desktop));
     // Back to automatic at 1024: that is the learned floor now, and the
     // window starts from the counter at the unpin (7).
-    CHECK(l.pin(0, 1024, 7, Platform::Desktop));
+    CHECK(l.pin(0, 1024, Platform::Desktop));
     CHECK(l.pinned() == 0 && l.learned() == 1024);
     l.poll(0.0, 7, 1024, Platform::Desktop, true, false);
     CHECK(l.poll(1.0, 7 + kLate, 1024, Platform::Desktop, true, false).frames == 2048);

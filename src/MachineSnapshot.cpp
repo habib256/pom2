@@ -46,9 +46,9 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
         w.writeSection("ENV", environment.data(), environment.size());
     }
     // CPU: PC(2) A X Y P SP cpuMode (6) + absolute cycle counter (8) +
-    // STP halt latch (1) = 17 B. IRQ/NMI lines are transient and
-    // self-correct within a frame, so they are not persisted (see
-    // SnapshotIO.h); `halted` is NOT transient — only RESET clears it.
+    // STP halt latch (1) = 17 B. The IRQ line is a level and self-corrects
+    // within a frame, so it is not persisted; the /NMI edge latch is, in
+    // its own section below (see SnapshotIO.h); `halted` is NOT transient — only RESET clears it.
     {
         SnapshotWriter::SectionHandle h = w.beginSection("CPU");
         w.writeU16(cpu.getProgramCounter());
@@ -61,6 +61,18 @@ void captureMachineState(SnapshotWriter& w, M6502& cpu, Memory& mem,
         w.writeU64(mem.getCycleCounter());
         w.writeU8 (cpu.haltCode());   // 2 = WAI waiting (older readers: halted)
         w.endSection(h);
+    }
+    // NMI: the /NMI edge latch, 1 byte, written ONLY while an edge is pending
+    // (bug hunt 2026-11-17). /IRQ is a level and the cards re-assert it, but
+    // /NMI fires once on its falling edge: a capture taken between the edge
+    // and its service (the E-Z Color's VDP holds /INT low until the guest
+    // reads its status) restored without it lost the NMI for good, and a
+    // restore that left the LIVE latch set took one its timeline never
+    // raised. Absent = no edge pending, so the usual capture is byte-identical
+    // to before and older readers skip the section.
+    if (cpu.nmiPending()) {
+        const uint8_t one = 1;
+        w.writeSection("NMI", &one, 1);
     }
     w.writeSection("MEM", mem.data(), 0x10000);
     // MEX (v2): aux RAM + Language-Card RAM + RamWorks banks + paging soft-
@@ -150,6 +162,7 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
     std::string name;
     uint32_t len = 0;
     bool appliedCore = false;   // CPU or MEM actually restored
+    bool nmiPending  = false;   // "NMI" section: absent = no edge pending
     while (r.nextSection(name, len)) {
         // Require the FULL 16-byte CPU section. The block below consumes 16
         // bytes unconditionally; a gate of `>= 9` let a crafted/truncated
@@ -208,6 +221,8 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             cpu.setStackPointer(sp);
             cpu.setHaltCode(halted);
             mem.setCycleCounter(cycles);
+        } else if (name == "NMI" && len == 1) {
+            nmiPending = r.readU8() != 0;
         } else if (name == "MEM" && len == 0x10000) {
             // Restore the main 64 KB through writable[] so the ROM mirror in
             // $C000-$FFFF isn't clobbered (LC RAM is restored via MEX).
@@ -272,6 +287,9 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         // user) believing a load happened.
         return { false, "snapshot contains no restorable CPU/MEM sections" };
     }
+    // The /NMI latch is the saved one, whatever the live CPU had pending:
+    // section order is the file's, so it is applied here, after the loop.
+    cpu.setNmiPending(nmiPending);
     // The clock has just moved, possibly backwards, so the beam-race event
     // log is stale by construction. MEX's own restore does this — but SECTION
     // ORDER COMES FROM THE FILE and is not constrained, so a file that puts
@@ -336,10 +354,13 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             if (len > kMaxMexBytes)
                 return { false, "snapshot MEX section too large" };
             haveMex = true;
+        } else if (name == "NMI") {
+            if (len != 1)
+                return { false, "snapshot NMI section has an invalid length" };
         }
 
         const bool keep = name == "CPU" || name == "MEM" ||
-                          name == "MEX";
+                          name == "MEX" || name == "NMI";
         if (!keep) {
             r.skipCurrentSection();
             continue;

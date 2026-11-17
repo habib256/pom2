@@ -10,6 +10,44 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-17 — Bug hunt: the /NMI latch survives a snapshot, pickers add the extension
+
+Four reviewers over everything since the 2026-11-09 hunt
+(`docs/audits/bug-hunt-2026-11-17.md`).
+
+**The /NMI edge latch is machine state.** A snapshot left out `M6502::NMI`
+on the grounds that interrupt lines "self-correct within a frame". That holds
+for /IRQ, a level the cards re-assert; /NMI fires once on its falling edge.
+The E-Z Color's VDP holds /INT low until the guest reads its status, so a
+rewind or session capture taken between the edge and its service came back
+with no NMI pending and no edge left to come: an NMI-driven program froze
+until RESET. A restore also kept a LIVE pending NMI and took it in a timeline
+that never raised it. Now an optional 1-byte `NMI` section, written only
+while an edge is pending — the usual capture is byte-identical and older
+readers skip it — and applied after the section loop, since section order is
+the file's. Absent clears the latch.
+
+**Native pickers.** The zenity/kdialog lookup ran on every frame (a miss
+stats every PATH entry and the usual homes; a SmartPort card asks twice per
+row); it is cached once per process. A Save answer typed with no extension
+now gets the filter's first one, as AppKit already did (Windows:
+`lpstrDefExt`, so its overwrite prompt sees the final name). `.nb2` joins the
+three desktop association lists.
+
+**Audio ladder.** `restartWindow(lateNow)` stored a baseline the next poll
+overwrote; it is now `restartWindow()` with the behaviour it always had, and
+the test that claimed otherwise pins what really happens. A climb was also
+remembered for the next launch before the device had re-opened there, so a
+rung that failed to open was retried at every start; it is recorded only
+once the device took it.
+
+**NAT, IPv4-mapped over IPv6.** A guest IPv6 query to `::ffff:10.0.2.3:53`
+reached the resolver through the fence but got its answer as an IPv4 frame;
+it is now served by the IPv6 DNS path from the address it asked. A UDP
+forward's guest port sending over IPv6 to a mapped peer takes the relay
+instead of the forward's IPv4 socket. Neither crossed the fence; only a raw
+IPv6 stack on the Uthernet I puts a mapped address on the wire.
+
 ## 2026-11-17 — Character sets and the Linux file picker speak English
 
 The character-set rows (the picker, the toolbar combo, ROM Status) carried

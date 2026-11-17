@@ -23,6 +23,14 @@ extern char** environ;
 #endif
 
 namespace pom2 {
+std::string withDefaultExtension(const std::string& path, const std::string& extCsv)
+{
+    const std::string first = extCsv.substr(0, extCsv.find(','));
+    if (path.empty() || first.empty() || first == "*") return path;
+    const auto p = std::filesystem::u8path(path);
+    if (p.has_extension() || !p.has_filename()) return path;
+    return path + "." + first;
+}
 #if defined(__APPLE__)
 // AppKit implementation is compiled as Objective-C++.
 #else
@@ -33,8 +41,16 @@ bool nativeFileDialogAvailable()
 #elif defined(__EMSCRIPTEN__)
     return false;
 #else
-    return !ChildProcess::findOnPath("zenity").empty() ||
-           !ChildProcess::findOnPath("kdialog").empty();
+    // Once per process. The panels ask on EVERY frame (a Browse button's
+    // width, a SmartPort card's 8-14 rows twice each), and a miss stats every
+    // system directory, every PATH entry and the usual extra homes: hundreds
+    // of stat calls per frame on the UI thread when zenity is absent, frame
+    // stalls with a PATH or $HOME on NFS (bug hunt 2026-11-17). A helper
+    // removed later is caught where it matters: nativeFileDialog looks it up
+    // again and answers Unavailable.
+    static const bool available = !ChildProcess::findOnPath("zenity").empty() ||
+                                  !ChildProcess::findOnPath("kdialog").empty();
+    return available;
 #endif
 }
 
@@ -75,6 +91,9 @@ FileDialogResult nativeFileDialog(bool save, const std::string& title,
     dialog.lpstrFilter = filter.c_str();
     dialog.lpstrFile = buffer.data();
     dialog.nMaxFile = static_cast<DWORD>(buffer.size());
+    // The chooser adds it itself, so the overwrite prompt sees the final name.
+    const auto defaultExt = std::filesystem::u8path(extCsv.substr(0, extCsv.find(','))).wstring();
+    if (save && !defaultExt.empty()) dialog.lpstrDefExt = defaultExt.c_str();
     dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST |
         (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
     const bool selected = save ? GetSaveFileNameW(&dialog) : GetOpenFileNameW(&dialog);
@@ -146,6 +165,10 @@ FileDialogResult nativeFileDialog(bool save, const std::string& title,
         return FileDialogResult::Unavailable;
     if (WEXITSTATUS(status) == 1) { path.clear(); return FileDialogResult::Cancelled; }
     if (!path.empty() && path.back() == '\n') path.pop_back();
+    // zenity and kdialog leave a typed "page1" as it is (bug hunt
+    // 2026-11-17: a PNG, a PDF and a tape saved with no extension). Their
+    // overwrite question was about the name without it.
+    if (save) path = withDefaultExtension(path, extCsv);
 #endif
     return path.empty() ? FileDialogResult::Cancelled : FileDialogResult::Selected;
 #endif
