@@ -50,6 +50,16 @@ void EchoPlusTMS5220Card::onReset() { resetCard(false); }
 void EchoPlusTMS5220Card::onPowerCycle() { resetCard(true); }
 void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
     std::lock_guard<std::mutex> lock(mtx_);
+    // RESET between two instructions: Memory has already counted the last
+    // one, M6502 still carries its cycles, so getCycleCountNow() overshoots
+    // "now" by them — the correction advanceCycles applies (same fix as
+    // MockingboardCard::resetCard). The 6522 keeps its counters through RES
+    // ([B] W65C22 data sheet § 3.9), so a warm reset catches it up to the
+    // TRUE now first and re-anchors there; the overshoot left a free-running
+    // T1/T2 2-7 cycles behind the CPU for good (bug hunt 2026-11-17).
+    const uint64_t now = cpu_ ? cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
+    if (cpu_ && !powerCycle) syncAt(now);
     // The TMS5220C has no RESET pin — only its software Reset command ($70)
     // and power-up reset it (MAME tms5220.cpp pinout; a2mockingboard.cpp's
     // reset_from_bus resets the VIA and the AYs only). Ctrl-Reset used to
@@ -62,8 +72,8 @@ void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
     }
     via_.reset(powerCycle);
     for (int i = 0; i < 2; ++i) { ay_[i].reset(); synth_[i] = {}; }
-    viaPhase_ = 0;
-    lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    if (powerCycle) viaPhase_ = 0;   // a warm reset keeps the clock's phase
+    lastCycle_ = now;
     assertIrq(false);
 }
 void EchoPlusTMS5220Card::onUnplug() { resetCard(true); }

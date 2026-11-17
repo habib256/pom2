@@ -180,7 +180,18 @@ uint64_t spMediaIdentity(const SmartPortUnit* u)
 void SmartPortCard::appendSnapshotState(std::vector<uint8_t>& out) const
 {
     out.push_back('S'); out.push_back('P'); out.push_back(kSnapVersion);
-    out.push_back(static_cast<uint8_t>(activeUnit_));
+    // Byte 3: the active unit (< kMaxUnits, so bits 6-7 are free) plus the
+    // "no drive at this chain position" selection (bit 7) and its error
+    // latch (bit 6). Without them a capture taken while the guest had
+    // selected an absent position came back selecting BAY 0: status $C0
+    // instead of $C1, and the next $C0n1-$C0n3 reached drive 1's volume —
+    // a streamed write the original timeline threw away committed onto it
+    // (bug hunt 2026-11-17). Older blobs have both bits clear, which is
+    // what they always restored to, so no version bump.
+    static_assert(kMaxUnits <= 0x40, "byte 3 keeps bits 6-7 for the absent flags");
+    out.push_back(static_cast<uint8_t>(activeUnit_ |
+                                       (activeAbsent_ ? 0x80 : 0) |
+                                       (absentError_ ? 0x40 : 0)));
     for (size_t u = 0; u < kMaxUnits; ++u) {
         out.push_back(static_cast<uint8_t>(selectedBlock_[u]));
         out.push_back(static_cast<uint8_t>(selectedBlock_[u] >> 8));
@@ -246,8 +257,9 @@ void SmartPortCard::loadSnapshotState(const uint8_t* data, std::size_t len)
             if (len - identOff < nUnits * 8) return;
         }
     }
-    activeUnit_ = std::min<size_t>(data[3], kMaxUnits - 1);
-    activeAbsent_ = absentError_ = false;
+    activeUnit_ = std::min<size_t>(data[3] & 0x3F, kMaxUnits - 1);
+    activeAbsent_ = (data[3] & 0x80) != 0;
+    absentError_  = activeAbsent_ && (data[3] & 0x40) != 0;
     chainStale_ = true;      // the restored machine's next access numbers it
     for (size_t u = nUnits; u < kMaxUnits; ++u) {
         selectedBlock_[u] = 0; streamOffset_[u] = 0;

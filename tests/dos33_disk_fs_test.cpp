@@ -133,6 +133,14 @@ void testVolume()
     CHECK(!d.writeFile("1ABC", FileType::Text, {}, 0, err));
     CHECK(!d.writeFile("A,B", FileType::Text, {}, 0, err));
     CHECK(!d.writeFile(std::string(31, 'A'), FileType::Text, {}, 0, err));
+    // Bug hunt 2026-11-17: a byte the 7-bit catalog cannot hold. "CAFé"
+    // was stored as "CAFC)" — a second put added a second entry DOS never
+    // reaches, and the typed name found neither. Refused, nothing changed.
+    const std::vector<uint8_t> clean = d.image();
+    const std::size_t entries = d.list().size();
+    CHECK(!d.writeFile("CAF\xC3\xA9", FileType::Text, { 'X' }, 0, err));
+    CHECK(!d.writeFile("TAB\tNAME", FileType::Text, { 'X' }, 0, err));
+    CHECK(d.image() == clean && d.list().size() == entries);
 }
 
 void testProdosOrder()

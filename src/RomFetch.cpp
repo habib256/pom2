@@ -800,7 +800,9 @@ bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
     const std::uint32_t count = le16(eocd + 10);
     std::size_t         cd    = le32(eocd + 16);
     for (std::uint32_t i = 0; i < count; ++i) {
-        if (cd + 46 > zip.size() ||
+        // By subtraction: on wasm32 `cd + 46` wraps for a hostile uint32
+        // offset and the read lands before the buffer (bug hunt 2026-11-17).
+        if (cd > zip.size() || zip.size() - cd < 46 ||
             !(zip[cd] == 0x50 && zip[cd+1] == 0x4B &&
               zip[cd+2] == 0x01 && zip[cd+3] == 0x02)) {
             err = "malformed zip central directory";

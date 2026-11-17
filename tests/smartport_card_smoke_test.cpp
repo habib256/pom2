@@ -586,6 +586,40 @@ bool testMountMidWriteDoesNotTouchNewDisk()
     return true;
 }
 
+// Bug hunt 2026-11-17: a guest that selected a chain position with no drive
+// and hit its error latch, captured there, came back selecting BAY 0 — status
+// $C0 instead of $C1, and the next $C0n1-$C0n3 reached drive 1's volume.
+bool testAbsentSelectionSurvivesSnapshot()
+{
+    pom2::SmartPortCard card(5);
+    card.setUnit(0, std::make_unique<pom2::SmartPort35Unit>());
+    card.setUnit(1, std::make_unique<pom2::SmartPort35Unit>());
+    writeReg(card, 0x0, 13);                 // past the chain: no drive
+    (void)readReg(card, 0x3);                // a data access latches the error
+    if (readReg(card, 0x4) != 0xC1) {
+        std::printf("FAIL: absent position status $%02X, expected $C1 (setup)\n",
+                    readReg(card, 0x4));
+        return false;
+    }
+    std::vector<uint8_t> blob;
+    card.appendSnapshotState(blob);
+    writeReg(card, 0x0, 0);                  // the live machine moves on: bay 0
+    card.loadSnapshotState(blob.data(), blob.size());
+    const uint8_t st = readReg(card, 0x4);
+    if (st != 0xC1) {
+        std::printf("FAIL: restored absent selection reads status $%02X, expected $C1\n", st);
+        return false;
+    }
+    std::vector<uint8_t> again;
+    card.appendSnapshotState(again);
+    if (again != blob) {
+        std::printf("FAIL: absent selection does not round-trip byte for byte\n");
+        return false;
+    }
+    std::printf("OK : absent selection survives a snapshot\n");
+    return true;
+}
+
 int main() {
     bool ok = true;
     ok &= testRomSignature();
@@ -599,5 +633,6 @@ int main() {
     ok &= testUnitAdoptsPreparedImage();
     ok &= testUnitAdoptSameFileKeepsGuestWrites();
     ok &= testMountMidWriteDoesNotTouchNewDisk();
+    ok &= testAbsentSelectionSurvivesSnapshot();
     return ok ? 0 : 1;
 }

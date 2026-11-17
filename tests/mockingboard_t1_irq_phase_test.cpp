@@ -208,6 +208,48 @@ static int checkIrqCase(const char* what, std::pair<uint16_t, uint8_t> r)
     return 0;
 }
 
+// ── Warm RESET keeps T1 in phase with the CPU (bug hunt 2026-11-17) ──────
+// The 6522 keeps its counters through RES ([B] W65C22 data sheet § 3.9). The
+// card re-anchored its lazy sync on getCycleCountNow(), which between two
+// instructions still counts the last one: a free-running T1 fell behind the
+// CPU by that instruction's length (3 here, a JMP) for good. Returns the
+// drift in cycles (0 = in phase).
+static long long warmResetT1Drift(bool resetMidway)
+{
+    Memory mem;
+    M6502  cpu(&mem);
+    auto cardp = std::make_unique<MockingboardCard>(4);
+    cardp->setCpu(&cpu);
+    MockingboardCard* card = cardp.get();
+    mem.slotBus().plug(4, std::move(cardp));
+    cpu.hardReset();
+    mem.slotBus().reset();
+    uint16_t p = 0x0300;
+    auto emit = [&](std::initializer_list<uint8_t> b) { for (auto x : b) mem.memWrite(p++, x); };
+    // T1 latch $4E1E, ACR = $40 (continuous), start with T1CH. No IER: no IRQ.
+    emit({0xA9,0x1E,0x8D,0x06,0xC4, 0xA9,0x4E,0x8D,0x07,0xC4,
+          0xA9,0x40,0x8D,0x0B,0xC4, 0xA9,0x4E,0x8D,0x05,0xC4});
+    const uint16_t loop = p;
+    emit({0x4C, static_cast<uint8_t>(loop & 0xFF), static_cast<uint8_t>(loop >> 8)});
+    cpu.setProgramCounter(0x0300);
+    while (cpu.getProgramCounter() != loop) cpu.run(1);
+    auto counter = [&] {
+        return static_cast<long long>(card->peekViaRegister(0, 4) |
+                                      (card->peekViaRegister(0, 5) << 8));
+    };
+    const long long period = 0x4E1E + 2;
+    const long long r0 = (counter() + 1) & 0xFFFF;
+    const uint64_t c0 = mem.getCycleCounter();
+    for (int i = 0; i < 4000; ++i) {
+        if (resetMidway && i == 1000) mem.slotBus().reset();   // Ctrl-RESET's card side
+        cpu.run(1);
+    }
+    const long long r1 = (counter() + 1) & 0xFFFF;
+    const long long elapsed = static_cast<long long>(mem.getCycleCounter() - c0);
+    const long long expected = ((r0 - elapsed) % period + period) % period;
+    return r1 - expected;
+}
+
 int main()
 {
     const auto bare = phaseProbe(nullptr);
@@ -236,6 +278,19 @@ int main()
             "attached-but-idle hook must not move the MMIO sync phase.\n",
             hooked.first, hooked.second, got);
         return 1;
+    }
+
+    {
+        const long long control = warmResetT1Drift(false);
+        const long long drift   = warmResetT1Drift(true);
+        if (control != 0 || drift != 0) {
+            std::fprintf(stderr,
+                "mockingboard_t1_irq_phase: free-running T1 drifted %lld cycle(s) "
+                "across a warm RESET (%lld without one). RES keeps the 6522's "
+                "counters; the card must re-anchor on the TRUE now.\n",
+                drift, control);
+            return 1;
+        }
     }
 
     // ── The interrupt-entry case ─────────────────────────────────────────

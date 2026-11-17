@@ -290,6 +290,16 @@ int main(int argc, char** argv)
         else dst = pom2::hostNameForType(info ? info->name : args[2],
                                          pom2::prodosTypeFromDos33(type),
                                          loadAddress);
+        // A DOS 3.3 name may hold '/' (and a disk may hold anything): the
+        // name chosen for the user must not become a path, or `get` of a
+        // catalog name like A/../../X wrote outside the current directory
+        // (bug hunt 2026-11-17). An explicit HOSTFILE is the user's path.
+        if (args.size() != 4 && dst.find_first_of("/\\") != std::string::npos) {
+            std::fprintf(stderr, "%s: the name holds a path separator; "
+                                 "give the host file name: get NAME HOSTFILE\n",
+                         args[2].c_str());
+            return 1;
+        }
         if (!writeHostFile(dst, out)) { std::fprintf(stderr, "%s: write failed\n", dst.c_str()); return 1; }
         if (args.size() == 3 && dst != args[2]) std::printf("%s\n", dst.c_str());
         return 0;

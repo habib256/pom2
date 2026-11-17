@@ -42,6 +42,24 @@ bool readZipMember(const std::vector<std::uint8_t>& zip,
                    std::size_t maxBytes,
                    bool* unsupported = nullptr);
 
+/// One central-directory entry: its name and where its record starts.
+struct ZipEntry {
+    std::string name;
+    std::size_t centralOffset = 0;
+};
+
+/// Every entry in `zip`'s central directory, in archive order. Read many
+/// members through these: `readZipMember` walks the directory from the start
+/// each time, so a loop over 65 535 names did it 65 535 times (bug hunt
+/// 2026-11-17: a hostile zip dropped as a ROM froze the UI for a minute).
+bool listZipEntries(const std::vector<std::uint8_t>& zip,
+                    std::vector<ZipEntry>& entries, std::string& err);
+
+/// `readZipMember` for an entry `listZipEntries` returned.
+bool readZipEntry(const std::vector<std::uint8_t>& zip, const ZipEntry& entry,
+                  std::vector<std::uint8_t>& out, std::string& err,
+                  std::size_t maxBytes, bool* unsupported = nullptr);
+
 /// Every member name in `zip`'s central directory, in archive order
 /// (directories included — they end in '/'). False with `err` set when the
 /// archive is malformed.

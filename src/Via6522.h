@@ -168,11 +168,16 @@ struct Via6522
     // Fixed 24-byte layout of the full register/timer state. Lazily-synced
     // counters are captured as-is (the next syncToCpuCycle re-advances them,
     // exactly as it would have on the live machine).
-    // NOT carried: `t1Pb7` and `latchA`. Both are re-derived within one T1
-    // period / one CA1 edge of a restore, and no POM2 card wires PB7 or a
-    // latched port A to anything, so widening the blob (and every card's
-    // versioned reader) would buy nothing. `loadSnapshot` leaves whatever
-    // the live object held; `reset()` puts them back to 1 / $FF.
+    // NOT carried: `t1Pb7` and `latchA`. No POM2 card wires PB7 or a
+    // latched port A to anything, but a GUEST can read both: ORB bit 7 with
+    // ACR.7 set, ORA with ACR.0 set. They are NOT re-derived after a restore
+    // — continuous T1 TOGGLES PB7 on every underflow, so a wrong phase stays
+    // wrong until a T1CH write or a one-shot underflow (bug hunt 2026-11-17;
+    // this comment used to say otherwise). Kept out because the session
+    // format replays MBS3 / PHS3 canonically: widening this layout refuses
+    // every saved session with a Mockingboard or a Phasor. Echo+ TMS, whose
+    // blob is its own, saves both. `loadSnapshot` leaves whatever the live
+    // object held; `reset()` puts them back to 1 / $FF.
     /// v1 layout (pre-2026-07-30): everything except `portAIn`.
     static constexpr std::size_t kSnapshotBytesV1 = 24;
     /// Current layout — v1 plus the port-A input pin latch.

@@ -255,6 +255,14 @@ bool process(std::vector<uint8_t>& f, Report& rep, std::string& error, bool appl
                     t.kept = false;
                     t.note = "its bit count does not fit its blocks";
                 }
+                // The loader's own ceiling (DiskImage.cpp kMaxTrackBits; a
+                // real 5.25" track holds ~50k bits). Uncapped, a crafted
+                // 131-Mbit track took ~2 s of analysis, 40 of them over a
+                // minute of `pom2_disk info` (bug hunt 2026-11-17).
+                else if (t.bitCount > (1u << 20)) {
+                    t.kept = false;
+                    t.note = "its bit count is beyond any real track (over 1 Mbit)";
+                }
             }
         } else {
             recordAt = l.trks + idx * kWoz1Entry;
