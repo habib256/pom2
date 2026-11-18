@@ -886,6 +886,7 @@ int main(int argc, char* argv[])
                                 sp = pom2::SystemProfile::AppleIIeUnenhancedPAL; break;
             case pom2::CliPreset::Default: break;
         }
+        mainWindow.setLaunchProfile(sp);
         mainWindow.applyProfile(sp);
     }
     // --slot N=KEY: after the profile, so the key lands in that profile's

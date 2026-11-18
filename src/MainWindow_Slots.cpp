@@ -450,7 +450,7 @@ void MainWindow::renderSlotConfigPanel()
                         {   4, "256 KB RamWorks" },
                         {   8, "512 KB RamWorks" },
                         {  16, "1 MB RamWorks" },
-                        {  48, "3 MB RamWorks" },
+                        {  48, "3 MB RamWorks (1 MB + 2 Meg expander)" },
                         { 128, "8 MB RamWorks III" },
                     };
                     // STAGED, like every other row in this window

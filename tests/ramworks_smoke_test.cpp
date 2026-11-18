@@ -239,7 +239,14 @@ void testFindBanksCountsTheInstalledBanks()
                 mem.memWrite(0xC073, static_cast<uint8_t>(y));
                 if (mem.memRead(0x0000) == y &&
                     mem.memRead(0x0001) == static_cast<uint8_t>(~y)) {
-                    assert(static_cast<uint32_t>(y) < banks);
+                    // Table 6-1: the 3 MB card is the 1 MB board ($00-$0F)
+                    // plus the 2 Meg expander at $10-$17, $30-$37, $50-$57,
+                    // $70-$77 — the manual's "48 valid banks".
+                    const bool expected = banks == 48
+                        ? (y < 0x18 || ((y & 0x18) == 0x10 && y >= 0x30))
+                        : static_cast<uint32_t>(y) < banks;
+                    assert(expected);
+                    assert(mem.ramWorksBankNumber(mem.ramWorksBank()) == y);
                     ++found;
                 }
             }

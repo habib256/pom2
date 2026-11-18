@@ -46,6 +46,7 @@
 
 #include "imgui.h"  // ImU32 / ImVec2 used in struct MemRegion + member types
 
+#include <optional>
 #include <array>
 #include <cstdint>
 #include <fstream>
@@ -147,6 +148,11 @@ public:
     /// the `--ii-plus` CLI flag to fall back to II+ mode for software
     /// (e.g. Copy II Plus 8.3) that boots cleanly under the legacy ROM.
     explicit MainWindow(bool forceIIPlus = false);
+    /// The machine the COMMAND LINE asked for (`--ii-plus`, `--preset`). It
+    /// is remembered because a ROM-less start cannot apply it: "Reload ROM"
+    /// after the download must come up on that machine, not on the saved or
+    /// default profile.
+    void setLaunchProfile(pom2::SystemProfile p) { launchProfile_ = p; }
     ~MainWindow();
 
     /// Apply a system profile via full cold-reset. Stops the CPU worker,
@@ -1679,6 +1685,7 @@ private:
     /// True while the constructor re-applies the saved profile: that switch
     /// must not persist (see MainWindow.cpp).
     bool restoringSavedProfile_ = false;
+    std::optional<pom2::SystemProfile> launchProfile_;   // setLaunchProfile
     bool restartEmulationTransaction();
     /// Abandon a rebuild that threw: coordinator back to Stable, AI endpoints
     /// published again, the reason logged and shown. The machine stays

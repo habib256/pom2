@@ -925,12 +925,17 @@ claim) and not the previous bank (AppleWin). [B] the RamWorks III User's
 Manual v1.4.1: each bank number belongs to one block of chips (Table 6-1),
 "the bank numbers are not necessarily linear", and AE's own FindBanks
 (p. 47: N / ~N at `$00/$01`, written from `$7F` down, read going up) is the
-contract — pinned in both write orders by `ramworks_smoke`. POM2 installs
-`$00..count-1`, which is the card's numbering for 256K / 512K / 1 MB; the
-"3 MB" tier is `$00-$2F` where the real card with its 2 Meg expander has
-`$00-$17, $30-$37, $50-$57, $70-$77` (the same 48 under FindBanks). [F]
-what an absent bank reads on the iron. The snapshot's bank byte carries the
-state in bit 7.
+contract — pinned in both write orders by `ramworks_smoke`. The installed
+banks carry Table 6-1's numbers (`Memory::ramWorksSlotForBank`):
+`$00..count-1` for 256K / 512K / 1 MB, and for the 3 MB tier — the 1 MB
+board with a 2 Meg expander — `$00-$17, $30-$37, $50-$57, $70-$77`, the
+manual's "48 valid banks" (`$00-$2F` until 2026-11-18; a snapshot of a 3 MB
+machine taken before that still loads, its upper 24 banks now answering to
+the card's numbers). The 8 MB tier is no AE configuration: all 128 numbers,
+as MAME [D]. `ramWorksBank()` and the debugger's `aux<n>` stay the backing
+index; `ramWorksBankNumber()` gives the `$C073` value. [F] what an absent
+bank reads on the iron. The snapshot's bank byte carries the absent state in
+bit 7.
 
 Storage = `ramWorksBacking_`, one 80 KB slot per bank
 (`kRamWorksBankStride = 0x10000 + 0x1000 + 0x1000 + 0x2000`).
@@ -10339,6 +10344,18 @@ each sheet joined to the next by a horizontal perforation. The panel draws
 the strips, holes and perforations AROUND the page texture
 (`ImageWriter_ImGui`, `ImDrawList`), never into it, so the page raster and
 the "Save sheet as PNG" export stay pure printable area.
+
+**And the panel shows it as one** *(2026-11-18)*: every sheet on the stack,
+then the one in the printer, joined top to bottom in one scrolling view —
+the right-hand scrollbar pulls the earlier pages back, where it used to move
+within a single sheet. Only sheets in view hold a texture
+(`ImageWriter_ImGui::sheetTexture`, trimmed to the visible ones plus a
+couple; a completed sheet's key carries `droppedPageCount()`, the live
+sheet's follows the raster revision). Follow scrolls to keep the print head
+in view and is dropped by the wheel or a click on the scrollbar; the arrows
+scroll a sheet to the top; with Follow off, the sheet the header names is
+the one the view is on. A stored page from the history still takes the
+canvas alone.
 
 **"Follow" tracks the last inked sheet, not the sheet in the mechanism.**
 After a form feed the sheet under the head is blank and the interesting
