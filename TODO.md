@@ -2,7 +2,7 @@
 
 Action queue reconciled **2026-11-18** (after the research of the same day:
 competing emulators, hardware references, developer tooling, distribution,
-community needs). Current release: **v1.2.1**. The index covers **49 active
+community needs). Current release: **v1.2.1**. The index covers **48 active
 domain entries**, **10 release items** and **30 frozen entries**; each task's
 acceptance criterion and evidence live in its domain entry, not here.
 
@@ -22,10 +22,9 @@ demoscene. One at a time, each closed by its own acceptance test.
 
 | Order | Task | What closes it |
 |---|---|---|
-| 1 | [STORAGE-016](docs/backlog/storage.md#storage-016) — fractional WOZ cells | **In progress.** Goldens unchanged at 32; Prisoner 2 patched to 33 passes `Y=$2A` and joins the protected corpus. |
-| 2 | [UI-015](docs/backlog/ui-debugger.md#ui-015) — MCP + debugger verbs | Claude Code drives `/mcp`: breakpoint, run-to, registers, wait for screen text — in a ctest. Read the current MCP revision first. |
-| 3 | [AUDIO-013](docs/backlog/audio.md#audio-013) — VGM/YM + WAV, then [UI-021](docs/backlog/ui-debugger.md#ui-021) video | A VGM round-trips the exact AY writes; captures are frame-identical to `pom2_corpus --frames`. |
-| 4 | [UI-018](docs/backlog/ui-debugger.md#ui-018) — DAP for VS Code | Needs UI-015. A cc65 program stops on a `.s` breakpoint and steps by source line, both banks. |
+| 1 | [UI-015](docs/backlog/ui-debugger.md#ui-015) — MCP + debugger verbs | Claude Code drives `/mcp`: breakpoint, run-to, registers, wait for screen text — in a ctest. Read the current MCP revision first. |
+| 2 | [AUDIO-013](docs/backlog/audio.md#audio-013) — VGM/YM + WAV, then [UI-021](docs/backlog/ui-debugger.md#ui-021) video | A VGM round-trips the exact AY writes; captures are frame-identical to `pom2_corpus --frames`. |
+| 3 | [UI-018](docs/backlog/ui-debugger.md#ui-018) — DAP for VS Code | Needs UI-015. A cc65 program stops on a `.s` breakpoint and steps by source line, both banks. |
 
 Next on the same track, any order: [UI-017](docs/backlog/ui-debugger.md#ui-017)
 trace file + callgrind, [ARCH-017](docs/backlog/architecture-tooling.md#arch-017)
@@ -119,7 +118,7 @@ Release obligations: rerun the candidate checklist for each real release.
 | Task | Missing evidence |
 |---|---|
 | [VALIDATION-001](docs/backlog/validation.md#validation-001) | Real //c head movement for PH1→PH3 gaps of 4…512 cycles during motor coast. |
-| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Gameplay-level protected checks against hardware (Captain, Prince, Bandits, Phantasie boot/entry exist). |
+| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Gameplay-level protected checks against hardware (Captain, Prince, Bandits, Phantasie, Prisoner 2 boot/entry exist). |
 | [VALIDATION-004](docs/backlog/validation.md#validation-004) | DOS 3.1/3.1.1 on a ][+ with 13-sector PROMs, or an independent setup. |
 | [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Real Language Card power-on bank with distinct bytes in both banks. |
 | [DISPLAY-001](docs/backlog/display.md#display-001) | Real VidHD SHR 320/640/fill and `$C022`/`$C034` captures (Total Replay 6.x's SHR art makes it more pressing). |

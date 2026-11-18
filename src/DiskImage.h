@@ -749,6 +749,19 @@ private:
     /// non-WOZ formats keep the default. Used by `expandTrackFlux` and
     /// `trackPeriod`.
     int lssCyclesPerCell() const;
+    /// The cell width in QUARTER LSS cycles — `optimal_bit_timing` itself,
+    /// since its unit (125 ns) is a quarter of the 500 ns LSS cycle. 32 for
+    /// every image but a WOZ2 that says otherwise; Prisoner 2's needs 33
+    /// (8.25 cycles), which `lssCyclesPerCell()` truncates to 8. The cell
+    /// grid below is built on this, so a non-multiple of 4 is honoured
+    /// while 32 gives the exact integers it always gave.
+    int cellQuarters() const { return optimalBitTiming >= 4 ? optimalBitTiming : 32; }
+    /// The cell an LSS cycle falls in: floor(lss × 4 / quarters).
+    int64_t cellAtLss(int64_t lss) const { return lss * 4 / cellQuarters(); }
+    /// The first LSS cycle of cell `cell` — ceil(cell × quarters / 4), the
+    /// exact inverse of cellAtLss (a floor here would hand cycle 8 of a
+    /// 33-quarter grid to cell 1 while cellAtLss puts it in cell 0).
+    int64_t cellStartLss(int64_t cell) const { return (cell * cellQuarters() + 3) / 4; }
 
     /// Aliasing function: maps an externally-supplied quarter-track index
     /// to the actual storage slot. Non-WOZ formats only carry whole-track

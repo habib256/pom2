@@ -43,3 +43,17 @@ title phantasie iie protected
   key SPACE
   run 15
   check menu
+
+# The AppleWin #1005 WOZ with INFO optimal_bit_timing 32 -> 33 and its CRC
+# recomputed (recipe in protected.md). Boots only since POM2 honours a
+# non-multiple-of-4 cell (STORAGE-016, 2026-11-18): the weak-bit check wants
+# $C9 at Y=$2A, and 32 gives $29.
+title prisoner2 iie protected
+  diskii 1 prisoner2a-t33.woz sha256=09ed6f060c18f88e95cab3990830b65b0128015c9f58ea0dcd570d050cf3cc6a
+  run 30
+  check title
+  run 30
+  check resignation-file
+  key RETURN
+  run 15
+  check resignation-code

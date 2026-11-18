@@ -524,7 +524,13 @@ src/ProDOSVolume.cpp                     2187
 # //c, plus the one line that keeps the 80/40 switch off a //c Plus. Comment
 # lines but for that one; the reports themselves are in DEV.md.
 #   src/Memory.cpp: 2297 -> 2311 (+14)
-src/Memory.cpp                           2311
+# 2026-11-18: ACCEPTED BY THE OWNER, recorded at the exact size. The
+# 2026-11-17/18 bug hunts and the 3 MB RamWorks bank numbering landed fixes
+# here (each with its graded comment) and left the Linux CI red on this
+# guard from 7fe85eec on, hiding the build behind it.
+#   src/Memory.cpp: 2311 -> 2371 (+60)  7fe85eec +21, 9548bc03 +32,
+#     6ff80e90 +7 (668aa0a4 +1 after 70d9819b -1).
+src/Memory.cpp                           2371
 # 2026-10-16: existing media transactions gain mount-identity checks,
 # lineage-aware failure recovery, drive-2 byte mounts, notch migration keys
 # and 3.5-inch latch sounds. These checks belong in their transaction phases.
@@ -557,7 +563,11 @@ src/StorageCoordinator.cpp               2456
 # same split, which keeps the two copies diffable.
 #   src/TMS9918.cpp: 2029 -> 2037 (+8)
 src/TMS9918.cpp                          2037
-src/hgrpaint/HgrPaintEditor.cpp          2656
+# 2026-11-18: ACCEPTED BY THE OWNER, same occasion as Memory.cpp above: the
+# paint editor that one alt-tab could kill (7fe85eec +20) and the deferred
+# items of both rounds (9548bc03 +97). Recorded at the exact size.
+#   src/hgrpaint/HgrPaintEditor.cpp: 2656 -> 2773 (+117)
+src/hgrpaint/HgrPaintEditor.cpp          2773
 # 2026-11-01 (parity campaign): src/Scc8530Device.cpp crossed the watch
 # threshold with the z80scc slice — WR5 no longer resets the transmitter,
 # WR1 mode 01 arms rxFirst, receiveAllowed/transmitAllowed/resumeTransmit,
@@ -582,3 +592,10 @@ src/Scc8530Device.cpp                    2080
 # would settle it.
 #   src/W5100Device.cpp: 2057 -> 2085 (+28)
 src/W5100Device.cpp                      2085
+# 2026-11-18: ACCEPTED BY THE OWNER — two test files crossed the 2000-line
+# watch threshold and get their first ceiling, at their exact size.
+# debugger_test.cpp's cases already spill into included headers
+# (debugger_banks_cases.h, debugger_cc65_cases.h); imagewriter_smoke_test.cpp
+# grew with the fanfold view (6ff80e90).
+tests/debugger_test.cpp                  2100
+tests/imagewriter_smoke_test.cpp         2015

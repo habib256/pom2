@@ -1,6 +1,6 @@
 # Real protected-disk corpus
 
-Four optional games, with commercial images kept outside the checkout and all
+Five optional games, with commercial images kept outside the checkout and all
 mounted media copied by the runner. The recorded checks are change detectors,
 not certification of a complete game or hardware accuracy.
 
@@ -17,12 +17,13 @@ WOZ 2.1 FLUX chunks. They do not themselves exercise FLUX tracks, prove every
 weak-bit case, or test Prince side B and later levels.
 
 | Phantasie | [AppleWin #1278 attachment](https://github.com/AppleWin/AppleWin/issues/1278) (`Phantasie-Boot.woz`) | enhanced //e, NTSC | Title at 15 s, SPACE, game menu at 30 s |
+| Prisoner 2 | [AppleWin #1005 attachment](https://github.com/AppleWin/AppleWin/issues/1005), bit timing patched to 33 | enhanced //e, NTSC | Title at 30 s, "RESIGNATION FILE" at 60 s, RETURN, the resignation code at 75 s |
 
 Phantasie is the boot disk a user attached to AppleWin #1278 (2024-02-16):
 it boots in MAME and does not in AppleWin. POM2 reaches its title and, after
 SPACE, the "START IN PELNOR / CONTINUE SAVED GAME" menu (2026-11-18).
 
-**Prisoner 2 is deliberately absent.** Its WOZ ([AppleWin
+**Prisoner 2** (added 2026-11-18, after STORAGE-016). Its WOZ ([AppleWin
 #1005](https://github.com/AppleWin/AppleWin/issues/1005), Applesauce v1.55)
 boots on the iron but fails in MAME, OpenEmulator, Virtual ][ and AppleWin:
 a weak-bits check that wants nibble `$C9` at exactly Y=`$2A`. Setting the
@@ -31,8 +32,11 @@ Virtual ][ and OpenEmulator. It does **not** in POM2, and the reason is known:
 `DiskImage::lssCyclesPerCell()` is `optimalBitTiming / 4` in whole LSS cycles,
 so 33 truncates to the same 8 cycles as 32 — the integer-cell limitation
 recorded above that function, whose fix is the 5.25" timeline re-basing pass.
-A title that only pins a black screen detects nothing, so it waits for that
-pass; it is the natural acceptance test for it.
+Since 2026-11-18 POM2 builds the cell grid in quarter LSS cycles, so the
+patched image runs at 8.25 cycles a cell: the check reads `Y=$2A`, the
+title, the "RESIGNATION FILE" screen and the resignation code follow. The
+corpus title uses the patched image (SHA-256 `09ed6f06…`; recipe below);
+the unpatched one still fails, as on every emulator.
 
 Measured in POM2 (2026-11-18, `pom2_headless --until`, image sha256
 `a43838dd…`): the re-sync routine `$57FE` returns on the `$EB` epilogue at
@@ -88,6 +92,15 @@ with urllib.request.urlopen(url, timeout=60) as response:
     data = response.read()
 with zipfile.ZipFile(io.BytesIO(data)) as z:
     (root / 'phantasie.woz').write_bytes(z.read('Phantasie-Boot.woz'))
+import struct, zlib
+url = 'https://github.com/AppleWin/AppleWin/files/7645198/Prisoner.2.-.Disk.1.Side.A.zip'
+with urllib.request.urlopen(url, timeout=60) as response:
+    data = response.read()
+with zipfile.ZipFile(io.BytesIO(data)) as z:
+    woz = bytearray(z.read('Prisoner 2 - Disk 1, Side A.woz'))
+woz[20 + 39] = 33                                  # INFO optimal_bit_timing 32 -> 33
+woz[8:12] = struct.pack('<I', zlib.crc32(bytes(woz[12:])) & 0xFFFFFFFF)
+(root / 'prisoner2a-t33.woz').write_bytes(bytes(woz))
 url = 'https://archive.org/download/wozaday_Bandits/' + urllib.parse.quote('Bandits (woz-a-day collection).zip')
 with urllib.request.urlopen(url, timeout=60) as response:
     data = response.read()

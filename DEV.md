@@ -5179,9 +5179,16 @@ no real FLUX image is in the corpus** — the test-media archive holds one WOZ
 INFO+39 (units of 125 ns) — bit-cell duration. Default 32 = 4 µs =
 standard cell @ 2 MHz LSS = 8 LSS cyc/cell. `loadWoz` reads when
 `info_version >= 2`, accepts [8, 64] (anything else keeps 32), stores in `optimalBitTiming`.
-`lssCyclesPerCell() = optimalBitTiming / 4`. `expandTrackFlux`
-emits each "1" cell at `i*cyc + cyc/2` (centre). Pinned:
-`woz_bit_timing_smoke` (obt 32/40/28 + WOZ1 fallback).
+The cell grid is built in QUARTER LSS cycles, the field's own unit
+(`cellQuarters()` = `optimalBitTiming`, 2026-11-18): cell `i` is centred at
+`(i·q + q/2)/4`, starts at `ceil(i·q/4)` (`cellStartLss`, the exact inverse of
+`cellAtLss` = `⌊4t/q⌋`), and a track lasts `(bits·q + 2)/4` cycles. For any
+multiple of 4 that is the old integer grid (32: `8i + 4`, `8·bits`), byte for
+byte; for 33 (Prisoner 2) it is 8.25 cycles a cell, which the earlier
+`optimalBitTiming / 4` truncated to 8. `lssCyclesPerCell()` stays as the
+nominal integer for the non-WOZ write framer. Pinned:
+`woz_bit_timing_smoke` (obt 32/40/28/33 + WOZ1 fallback, a write splice at
+33) and the protected corpus's `prisoner2`.
 
 ### Disks from a URL or an archive (`MediaSource`)
 

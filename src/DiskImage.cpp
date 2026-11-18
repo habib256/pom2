@@ -1218,12 +1218,11 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         // (`lssCyclesPerCell()`, honouring INFO+39 optimal_bit_timing)
         // so the bit-cell view stays aligned with bit-cell TRKS tracks
         // of the same image.
-        const int      cyc       = lssCyclesPerCell();
         if (totalTicks > static_cast<uint64_t>(INT32_MAX)) return false;
         const uint64_t periodLss = static_cast<uint64_t>(
             fluxPeriodToLss(static_cast<int64_t>(totalTicks)));
-        const size_t   cellCount =
-            static_cast<size_t>((periodLss + cyc - 1) / cyc);
+        const size_t   cellCount = periodLss
+            ? static_cast<size_t>(cellAtLss(int64_t(periodLss) - 1) + 1) : 0;
         if (cellCount == 0 || cellCount > kMaxTrackBits) return false;
         const size_t allocation = cellCount +
             static_cast<size_t>(trackSize) * 2 * sizeof(int);
@@ -1845,7 +1844,10 @@ uint8_t DiskImage::bitAt(int qt, int bitIdx) const
 // matching the standard 5.25" cell). WOZ2's optimal_bit_timing INFO
 // field overrides this on a per-image basis: `cyc = optimalBitTiming /
 // 4` (since optimal_bit_timing is in 125 ns units and 1 LSS cycle =
-// 500 ns). Non-WOZ formats and WOZ1 keep the 32→8 default.
+// 500 ns). Non-WOZ formats and WOZ1 keep the 32→8 default. The WOZ read,
+// period and splice paths do not use `cyc` itself but the quarter-cycle
+// grid (`cellQuarters`, DiskImage.h), so a value that is not a multiple of 4
+// is honoured: 33 is 8.25 cycles, not the 8 this integer truncates it to.
 //
 // ── The 500 ns is nominal, and a BIT track runs 2.2 % fast. KNOWN. ──────
 //
@@ -1906,10 +1908,11 @@ void DiskImage::expandTrackFlux(int qt) const
     if (!bitStreamValid[slot]) expandTrackBits(qt);
     const auto& bits = bitStream[slot];
     flux.reserve(bits.size() / 2);            // ~half the cells are 1
-    const int cyc    = lssCyclesPerCell();
-    const int centre = cyc / 2;
+    // Cell i is centred at (i + 1/2) cells, in quarter cycles then floored:
+    // i*8 + 4 for the standard 32, and a fractional grid for 33 (Prisoner 2).
+    const int64_t q = cellQuarters();
     for (int i = 0; i < static_cast<int>(bits.size()); ++i) {
-        if (bits[i]) flux.push_back(i * cyc + centre);
+        if (bits[i]) flux.push_back(static_cast<int>((i * q + q / 2) / 4));
     }
     fluxStreamValid[slot] = true;
 }
@@ -1922,7 +1925,9 @@ int DiskImage::trackPeriod(int qt) const
         const int fluxPeriod = fluxQtPeriodLss[qtSlot(qt)];
         if (fluxPeriod > 0) return fluxPeriod;
     }
-    return trackBitLength(qt) * lssCyclesPerCell();
+    // Rounded, so a 33-quarter track's revolution is bits × 8.25 cycles
+    // (exactly bits × 8 for the standard 32).
+    return static_cast<int>((int64_t(trackBitLength(qt)) * cellQuarters() + 2) / 4);
 }
 
 const std::vector<int>& DiskImage::fluxEvents(int qt) const
@@ -2266,15 +2271,14 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
         // else a write-back to a WOZ2 image whose optimal_bit_timing != 32
         // (cyc != 8) scatters transitions into the wrong cells and
         // corrupts the track. Previously hard-coded to 8.
-        const int cyc       = lssCyclesPerCell();
-        const int firstCell = static_cast<int>(startMod / cyc);
-        const int lastCell  = static_cast<int>((endMod + cyc - 1) / cyc);
+        const int firstCell = static_cast<int>(cellAtLss(startMod));
+        const int lastCell  = static_cast<int>(cellAtLss(endMod - 1) + 1);
         const int spanCells = lastCell - firstCell;
         std::vector<bool> newBits(spanCells, false);
         const int64_t origBase = startLssCycle - startMod;
         for (int i = 0; i < count; ++i) {
             const int64_t t = ((transitions[i] - origBase) % period + period) % period;
-            const int cell  = static_cast<int>(t / cyc) - firstCell;
+            const int cell  = static_cast<int>(cellAtLss(t)) - firstCell;
             if (cell >= 0 && cell < spanCells) newBits[cell] = true;
         }
 
@@ -2314,8 +2318,8 @@ void DiskImage::writeFlux(int qt, int64_t startLssCycle, int64_t endLssCycle,
             // (the adjacent chunk owns the rest of that cell) — clearing
             // here would erase the bit the previous chunk just spliced.
             const bool partial =
-                (c == 0 && (startMod % cyc) != 0) ||
-                (c == spanCells - 1 && (endMod % cyc) != 0);
+                (c == 0 && cellStartLss(firstCell) != startMod) ||
+                (c == spanCells - 1 && cellStartLss(lastCell) != endMod);
             if (partial && !newBits[c]) continue;
             const int dst = ((firstCell + c) % bitCount + bitCount) % bitCount;
             const uint8_t v = newBits[c] ? 1 : 0;
