@@ -8,6 +8,7 @@
 #include "SamCard.h"
 #include "PorteParoleCard.h"
 #include "FourPlayCard.h"
+#include "PassportMidiCard.h"
 #include "Via6522.h"
 #include <algorithm>
 namespace pom2 {
@@ -27,6 +28,7 @@ bool describeAdditionalSessionCard(SlotPeripheral* card, SessionArchive::Slot& r
     else if (dynamic_cast<FourPlayCard*>(card)) r.kind = Card::FourPlay;
     else if (dynamic_cast<EchoPlusTMS5220Card*>(card)) r.kind = Card::EchoTms;
     else if (dynamic_cast<PorteParoleCard*>(card)) r.kind = Card::PorteParole;
+    else if (dynamic_cast<PassportMidiCard*>(card)) r.kind = Card::PassportMidi;
     else return false;
     return true;
 }
@@ -44,6 +46,7 @@ std::unique_ptr<SlotPeripheral> makeAdditionalSessionCard(const SessionArchive::
     case Card::FourPlay: if (r.identity.empty()) return std::make_unique<FourPlayCard>(slot); break;
     case Card::EchoTms: if (r.identity.empty()) return std::make_unique<EchoPlusTMS5220Card>(slot); break;
     case Card::PorteParole: if (r.identity.empty()) return std::make_unique<PorteParoleCard>(slot); break;
+    case Card::PassportMidi: if (r.identity.empty()) return std::make_unique<PassportMidiCard>(slot); break;
     default: break;
     }
     error = "invalid session expansion card identity"; return {};

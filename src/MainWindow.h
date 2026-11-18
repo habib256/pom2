@@ -72,6 +72,7 @@ class EmulationController;
 namespace pom2 { class StateAccess; }
 namespace pom2 { class MouseCoordinator; }
 namespace pom2 { class PrinterCoordinator; }
+namespace pom2 { class MidiOutputCoordinator; struct MidiOutByte; }
 namespace pom2 { class AudioCoordinator; }
 namespace pom2 { class DevicePanelCoordinator; }
 namespace pom2 { class StorageCoordinator; }
@@ -463,6 +464,12 @@ private:
     /// drains exactly one by physical priority and hands an owned byte
     /// batch out after unlocking. Owns no card pointer.
     std::unique_ptr<pom2::PrinterCoordinator> printerCoordinator_;
+    // The Passport MIDI card's host side (MainWindow_Midi.cpp).
+    std::unique_ptr<pom2::MidiOutputCoordinator> midiOut_;
+    std::vector<pom2::MidiOutByte> midiBytes_;
+    std::vector<std::string> midiPorts_;
+    bool midiPortsListed_ = false;
+    std::string midiRecordStatus_;
     /// PostScript jobs for the LaserWriter head, rendered off the UI thread
     /// by an external interpreter (PostScriptRender.h). Owned here because
     /// the pump that feeds it lives here; it never touches `stateMutex`.
@@ -1541,6 +1548,9 @@ private:
     /// Stream new bytes from the plugged printer interface card into the
     /// host-side ImageWriter. Called once per frame from the render loop.
     void pumpImageWriter();
+    void pumpMidiOut();
+    void renderMidiSection();
+    std::string midiPortSetting();
     /// The LaserWriter's PostScript path: spool, render off-thread, adopt.
     void pumpPostScript(const std::vector<uint8_t>& fresh);
     void renderNoSlotClockPanelWindow();

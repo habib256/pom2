@@ -221,6 +221,11 @@ inline constexpr CardType kCardTypes[] = {
     // on an MEA8000: data / status at $C0n0, command at $C0n1, no ROM (the
     // driver is on its disks), slot 4 by default. PorteParoleCard.h.
     { "porteparole",  "Porte Parole (MEA8000 French speech, Ediciel)" },
+    // Passport MIDI Interface (Passport Designs; Yamaha and clones): an
+    // MC6840 timer + an MC6850 ACIA at $C0nX, no ROM. Slot 2 is what MIDI
+    // software expects (Ultima V, Master Tracks). Its bytes go to a host
+    // MIDI output and/or a .mid recording (Audio panel). MAME a2midi.cpp.
+    { "passportmidi", "Passport MIDI (6840 + 6850)" },
 };
 
 /// Human-readable label for a card key (falls back to the key itself).

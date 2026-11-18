@@ -33,3 +33,13 @@ title bandits-flux iie-u protected flux
   key SPACE
   run 20
   check game
+
+# Boots in MAME and POM2, not in AppleWin (AppleWin #1278, open since
+# 2024-02-16). The WOZ attached to that issue; source in protected.md.
+title phantasie iie protected
+  diskii 1 phantasie.woz sha256=a92b0823ffa06ff3f00022c1550f5daf3a807fa973c4ec03a9858a66a8b4d59f
+  run 15
+  check title
+  key SPACE
+  run 15
+  check menu

@@ -4,7 +4,7 @@ Orientation **always-loaded index** — keep terse, defer detail to other docs.
 
 - `README.md` — user walkthrough (build, profiles, ROM/disk placement, keys, CLI).
 - `DEV.md` — implementation deep-dives (MAME-parity ports, internals, gotchas, pinned tests).
-- `TODO.md` — planning index for the road to 1.0 and domain tasks in
+- `TODO.md` — the action queue (planning index) for the domain tasks in
   `docs/backlog/`. Scope decisions → `docs/decisions/project-scope.md`;
   parity and dated evidence → `docs/audits/`. Reproduce historical reports
   on current main before implementing them; archive completions in CHANGELOG.
@@ -334,6 +334,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Memory Expansion "Slinky" (1 MB RAM disk, real 341-0344A ROM) — catalog `slinky` | `SlinkyCard.h/.cpp` | [§ Slinky](DEV.md#memory-expansion-card--slinky-slinkycard) |
 | S.A.M. 8-bit DAC (speech) — catalog `sam` | `SamCard.h/.cpp`, `Dac8Audio.h/.cpp` | [§ S.A.M.](DEV.md#sam-8-bit-dac-samcard-dac8audio) |
 | Porte Parole (Ediciel / Matra & Hachette, French text-to-speech) — an MEA8000 at `$C0n0` data/status, `$C0n1` command, slot 4; MAME's synthesis corrected by the data sheet and Philips TP101 (clock-scaled frequencies, pitch x1.024, first frame fades IN) — catalog `porteparole` | `PorteParoleCard.h/.cpp`, `Mea8000.h/.cpp` | [§ Porte Parole](DEV.md#porte-parole-porteparolecard-mea8000) |
+| Passport MIDI Interface — an MC6840 timer + an MC6850 ACIA (timed, 320 µs a byte at 31 250 baud), no ROM, slot 2 — catalog `passportmidi`; its bytes, stamped in CPU cycles, go to a host MIDI port (CoreMIDI + Apple's DLS synth / WinMM / ALSA seq) on a scheduling thread and to a `.mid` timed from the cycles (Audio Mixer ▸ MIDI out, setting `midi_out_port`) | `PassportMidiCard.h/.cpp`, `Mc6840Ptm.*`, `Mc6850Acia.*`, `MidiMessageAssembler.*`, `MidiFileWriter.*`, `MidiOutputCoordinator.*`, `HostMidiPort*.cpp`, `MainWindow_Midi.cpp` | [§ Passport MIDI](DEV.md#passport-midi-passportmidicard-mc6840ptm-mc6850acia) |
 | Character-generator dump conventions (incl. Videx LOWER CASE CHIP) | `CharRomDump.h/.cpp` | [§ Character generators](DEV.md#character-generators-and-the-videx-lower-case-chip) |
 | Slot bus + wire-OR IRQ + edge-triggered /NMI (pin 29) | `SlotBus.h`, `SlotPeripheral.h` | [§ Slot bus](DEV.md#slot-bus--irq-aggregation) |
 | Hand-written slot ROMs — labels, bounded regions, resolved branches | `SlotRomAsm.h` | [§ Hand-written slot ROMs](DEV.md#hand-written-slot-roms-slotromasmh) |
@@ -386,7 +387,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Abstraction levels panel (LLE/HLE per subsystem, live + switchable) | `AbstractionCatalog.*` (static catalog), `AbstractionLevels_ImGui.*` | [§ Abstraction Levels](DEV.md#abstraction-levels-panel-lle--hle) |
 | Clickable Apple //e keyboard (photo + measured hotspots) | `Keyboard_ImGui.*`, `AppleIIeKeyboardLayout.*` (generated), `AppleKeyLatch.h`, `tools/gen_keyboard_layout.py` | [§ Keyboard panel](DEV.md#apple-e-keyboard-panel) |
 | Floppy Emu (BMOW SD/OLED) | `FloppyEmuDevice.*`, `FloppyEmu_ImGui.*` | [§ Floppy Emu](DEV.md#floppy-emu-bmow) |
-| Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling + interrupt load per frame, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `InterruptLoad.h`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
+| Bank-aware debugger (breakpoints/watches, step over/out, symbols, profiling + interrupt load per frame, source correspondence) | `Debugger.h/.cpp`, `Debugger_ImGui.*`, `InterruptLoad.h`, `DebugAddress.h`, `DebuggerSymbols.h`, `DebuggerSourceMap.h`, `Cc65DebugInfo.h` (cc65 `.dbg` → map + labels), `MemoryWatchSink.h`, `MemoryWatch.cpp` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
 | OS-call trace — ProDOS MLI, SmartPort, Apple Pascal BIOS, Monitor (COUT/GETLN), Applecorn's BBC MOS, CP/M-65 (6502) + CP/M BDOS (card Z80, `Z80Observer`) + the cards' own lines (Disk II head: `CardTraceSink`, `SlotBus::setCardTrace`); Debugger panel, `pom2_headless --trace-*`, probe `os_trace_probe` | `OsCallTrace.h/.cpp`, `OsCallTrace_Guest.cpp`, `CardTraceSink.h` | [§ OS-call trace](DEV.md#os-call-trace-oscalltracehcpp) |
 | Resumable sessions (v7, automatic profile/firmware/card reconstruction, detached media and program tapes) | `SessionArchive.*`, `SessionSnapshot.*`, `SessionMachine.*`, `SessionCards.*`, `SessionLoadQueue.*`, `SessionFiles.*`, `CassetteDevice_Session.cpp` | [Session contract](docs/session-format.md) |
 | Compatibility corpus — `pom2_corpus` boots `tests/corpus/corpus.manifest` through the SDK facade, hashes a frame per check against `corpus.expected` (firmware-fingerprinted; other dumps = skip), prints a pass rate; `--bless`, `--frames`, `--report`; ctest `corpus_ci` + `corpus_manifest` | `pom2_corpus.cpp`, `CorpusManifest.h/.cpp`, `tests/corpus/` | [README](tests/corpus/README.md) |
@@ -636,7 +637,7 @@ cannot `#include` the header:
   and no longer carries; copy it from the previous notes
 
 **Archive updates follow catalogue/manifest changes, not release tags**
-(`docs/backlog/release-1.0.md` § archive.org media, corrected 2026-11-01).
+(`docs/backlog/release.md` § archive.org media, corrected 2026-11-01).
 Add new ROM-catalogue entries to `pom2_firm/pom2_firm.zip`, and new
 `tools/test_media.sha256` entries to `pom2_media_202611/pom2_media.zip`.
 The strict CI fetch checks every manifest entry; unchanged archives need no

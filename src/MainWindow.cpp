@@ -67,6 +67,7 @@
 #include "SlotRebuildCoordinator.h"
 #include "StorageCoordinator.h"
 #include "PrinterCoordinator.h"
+#include "MidiOutputCoordinator.h"
 #include "CrtEffectStack.h"
 #include "CrtPresets.h"
 #include "Voxel3DRenderer.h"
@@ -151,6 +152,7 @@ MainWindow::MainWindow(bool forceIIPlus)
       mouseCoordinator_(std::make_unique<pom2::MouseCoordinator>(*controller)),
       networkCoordinator_(std::make_unique<pom2::NetworkCoordinator>()),
       printerCoordinator_(std::make_unique<pom2::PrinterCoordinator>()),
+      midiOut_(std::make_unique<pom2::MidiOutputCoordinator>()),
       audioCoordinator_(std::make_unique<pom2::AudioCoordinator>(
           controller->audio(), *controller)),
       devicePanelCoordinator_(std::make_unique<pom2::DevicePanelCoordinator>(
@@ -1461,6 +1463,7 @@ void MainWindow::render()
         // this a //c printing in kiosk mode parked every byte in the card
         // spool forever (unbounded growth, nothing on paper).
         pumpImageWriter();
+        pumpMidiOut();             // the Passport MIDI card's music, likewise
         return;
     }
 
@@ -1622,6 +1625,7 @@ void MainWindow::render()
     // without this a //c printing with the panel closed parked every byte in
     // the spool forever, nothing on paper.
     pumpImageWriter();
+    pumpMidiOut();   // the Passport MIDI card plays with the mixer shut too
 
     renderTapeFileDialogs();
     renderRomDownloadOffer();

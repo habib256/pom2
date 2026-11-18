@@ -9891,6 +9891,16 @@ pom2_add_headless_test(test_snesmax_card
     SOURCES snesmax_card_test.cpp
     LINK_LIBRARIES pom2_core_test)
 
+# ─── Passport MIDI: MC6840 + MC6850 + the host side (passport_midi_test.cpp)
+# The host MIDI port is the null backend here: the test records a .mid and
+# never opens a real output.
+pom2_add_headless_test(test_passport_midi
+    NAME passport_midi TIMEOUT 20 PORTABLE
+    SOURCES passport_midi_test.cpp
+            ${CMAKE_SOURCE_DIR}/src/MidiOutputCoordinator.cpp
+            ${CMAKE_SOURCE_DIR}/src/HostMidiPort_null.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_printer_coordinator
     NAME printer_coordinator TIMEOUT 20
     SOURCES printer_coordinator_test.cpp

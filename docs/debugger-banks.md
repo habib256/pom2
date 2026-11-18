@@ -216,9 +216,34 @@ and line numbers range from 1 to 1000000. Bank qualifiers are case-sensitive
 and numeric bank indices do not accept leading zeroes. A failed import keeps the last
 valid map. File reads happen outside the emulator state lock.
 
-This format is a correspondence table for assembler/linker tooling to emit;
-cc65 `.lbl` files provide symbols only. Native cc65 `.dbg` import, variable
-inspection, stack locals and expression evaluation are not implemented.
+### cc65 debug files
+
+The Map file field also takes a **cc65 `.dbg`** file — the one ld65 writes
+with `--dbgfile` (`cl65 -g … -Wl --dbgfile,game.dbg`, or `ca65 -g` then
+`ld65 --dbgfile game.dbg`). POM2 converts it to `.p2map` rows and loads those,
+so every rule above still applies; the file itself may be up to 16 MiB.
+Source paths are the ones ca65/cc65 recorded, resolved against the `.dbg`'s
+directory, so link from the directory you assembled in (or pass absolute
+paths). Only code assembled or compiled with `-g` has lines; the cc65
+runtime libraries normally do not.
+
+When several line records cover a byte, the C source line wins over the
+assembler line cc65 generated for it, which wins over a macro body line;
+macro-parameter expansions are ignored, and between two C lines the narrower
+one wins. Ranges are written for every bank (cc65's bank numbers come from
+the linker config and name nothing POM2 knows); a span that would run past
+`$FFFF` is skipped.
+
+The Symbols section takes the same `.dbg` and imports its **labels**:
+`start`, scoped labels the ca65 way (`draw::loop`), and cheap locals under
+their owner (`start@loop`). Equates are left out — `COUNT = 5` would label
+zero page — and a second label with a name already taken by another address
+is skipped and counted, rather than refusing the whole import.
+
+Variable inspection, stack locals and expression evaluation are not
+implemented. Format read from cc65's own writer (ld65 `dbgfile.c`,
+`lineinfo.c`, `span.c`, `segments.c`, `dbgsyms.c` at `eebf54af`) and pinned
+in the `debugger` test against real cc65 2.19 output.
 The disassembly and memory viewer resolve the current CPU RAM/ROM mapping
 without bus side effects. Soft-switch and //c+ MIG windows show the flat
 mirror; card windows use side-effect-free card peeks where available and

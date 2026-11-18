@@ -44,6 +44,7 @@
 #include "SlotBus.h"
 #include "SamCard.h"
 #include "PorteParoleCard.h"
+#include "PassportMidiCard.h"
 #include "SlinkyCard.h"
 #include "SmartPortCard.h"
 #include "SoftCardZ80.h"
@@ -142,6 +143,8 @@ std::string liveCardKey(const SlotPeripheral& peripheral)
     if (dynamic_cast<const pom2::SamCard*>(&peripheral)) return "sam";
     if (dynamic_cast<const pom2::PorteParoleCard*>(&peripheral))
         return "porteparole";
+    if (dynamic_cast<const pom2::PassportMidiCard*>(&peripheral))
+        return "passportmidi";
     return {};
 }
 
