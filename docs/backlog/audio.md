@@ -238,8 +238,8 @@ card. The historical early-out/lost-queue description is superseded.
 **Remaining acceptance:** run Ultima V with the card in slot 2 (its "Change
 Music Configuration" → Passport, slot 2) and hear / record its songs; the
 disks are not in the test-media archive yet. Then remove this entry. Also
-open: run the WinMM backend on Windows, and compile + run the ALSA backend
-on a Linux host with `libasound2-dev`.
+open: run the WinMM backend on Windows and the ALSA backend on a Linux host
+(both compile in CI since 2026-11-19; neither has been heard).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1433). Original dates and estimates are retained below.
 

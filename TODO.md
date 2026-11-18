@@ -38,7 +38,7 @@ expression conditions / access counters / code-data log,
 
 | Task | Concrete next action |
 |---|---|
-| [AUDIO-009](docs/backlog/audio.md#audio-009) | Passport MIDI is implemented: run Ultima V with the card in slot 2 and record a song; then the WinMM run and the first ALSA compile. |
+| [AUDIO-009](docs/backlog/audio.md#audio-009) | Passport MIDI is implemented: run Ultima V with the card in slot 2 and record a song; then run the WinMM and ALSA backends (both compile in CI). |
 | [WASM-004](docs/backlog/wasm.md#wasm-004) | Per-drive URL parameters + "copy link to this setup" (two-disk games, DIX). |
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | A2R 3.x import into the FLUX engine; ShrinkIt; multi-disk zips as a swap list. |
