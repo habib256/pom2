@@ -62,8 +62,7 @@ uint8_t* Memory::videoWriteTarget(const VideoWrite& w)
     // else), and bank 0 is not `aux` while another bank is selected — it is
     // the backing store's first slot, where the scanner reads it.
     if (!w.toAux) return mem.data();
-    return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
-        ? ramWorksBacking_.data() : aux.data();
+    return ramWorksAwayFromBank0() ? ramWorksBacking_.data() : aux.data();
 }
 
 void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
@@ -73,7 +72,7 @@ void Memory::noteVideoWrite(uint16_t addr, uint8_t value)
     auto push = [&](bool intoAux, uint8_t v) {
         // An aux write to a RamWorks bank other than 0 is not what the
         // scanner reads (videoAuxData), so it changes nothing on screen.
-        if (intoAux && ramWorksBanks_ > 1 && ramWorksBank_ != 0) return;
+        if (intoAux && ramWorksAwayFromBank0()) return;
         if (videoLog_.size() >= kVideoLogCap) {
             // Runaway (a stalled UI): drop the log, valid again from here.
             videoLog_.clear();

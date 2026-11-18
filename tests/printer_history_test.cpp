@@ -51,11 +51,13 @@
 
 #include "PrinterHistory.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -681,9 +683,104 @@ void testTwoInstancesShareTheHistory()
     std::printf("  ok: two instances keep each other's printouts\n");
 }
 
+// The same two windows, printing AT THE SAME MOMENT (bug hunt 2026-11-18).
+// Merge → pick the next pNNNNNN → write the index was three separate steps:
+// both instances read one index, took one number, and the later index write
+// dropped the earlier row — whose PNG was overwritten by the other page of
+// that name, or swept at the next launch.
+void testTwoInstancesPrintingAtOnce()
+{
+    const fs::path dir = scratch("two_at_once");
+    constexpr int kEach = 40;
+    std::string errA, errB;
+    PrinterHistory a, b;
+    assert(a.open(dir.string(), errA));
+    assert(b.open(dir.string(), errB));
+
+    // Each instance stays on its own thread, as each POM2 stays on its own
+    // render thread; only the directory is shared.
+    auto print = [](PrinterHistory& h, uint8_t seed, std::string& err) {
+        for (int i = 0; i < kEach; ++i) {
+            const bool ok = h.addPage(
+                makePage(24, 16 + (seed ? 1 : 0), static_cast<uint8_t>(seed + i)),
+                0, 0, 8.5, 11.0, err);
+            assert(ok);
+            (void)ok;
+        }
+        h.flushPending();
+    };
+    std::thread tb([&] { print(b, 100, errB); });
+    print(a, 0, errA);
+    tb.join();
+
+    // Every page of both, each under a name of its own, each still the
+    // raster its instance printed (A's are 16 rows high, B's 17).
+    PrinterHistory reopened;
+    std::string err;
+    assert(reopened.open(dir.string(), err));
+    assert(reopened.size() == 2 * kEach && "a page was lost to the race");
+    int tallA = 0, tallB = 0;
+    std::vector<std::string> names;
+    for (const auto& p : reopened.pages()) {
+        names.push_back(p.file);
+        std::vector<uint8_t> rgba;
+        int w = 0, h = 0;
+        assert(reopened.loadRgba(p, rgba, w, h, err));
+        assert(h == p.h && "the row describes another instance's PNG");
+        (h == 16 ? tallA : tallB) += 1;
+    }
+    std::sort(names.begin(), names.end());
+    assert(std::adjacent_find(names.begin(), names.end()) == names.end());
+    assert(tallA == kEach && tallB == kEach);
+    std::printf("  ok: two instances printing at once keep all %d pages\n",
+                2 * kEach);
+}
+
+// What one instance erases, the other must not write back: its copy of the
+// row came back into the index on its next print — a dead entry in both
+// windows until a restart. And a clear takes the other's pages too, files
+// included, instead of leaving them as orphans.
+void testEraseAndClearAcrossInstances()
+{
+    const fs::path dir = scratch("two_erase");
+    std::string err;
+    PrinterHistory a, b;
+    assert(a.open(dir.string(), err));
+    assert(b.open(dir.string(), err));
+    assert(a.addPage(makePage(16, 16, 1), 0, 0, 8.5, 11.0, err));
+    a.flushPending();
+    assert(b.addPage(makePage(16, 16, 2), 0, 0, 8.5, 11.0, err));
+    b.flushPending();
+    assert(b.size() == 2);                       // B holds A's row too
+
+    const std::string gone = a.pages()[0].file;  // A's own page
+    assert(a.erase(a.pages()[0], err));
+    assert(!fs::exists(dir / gone));
+
+    assert(b.addPage(makePage(16, 16, 3), 0, 0, 8.5, 11.0, err));
+    b.flushPending();
+    for (const auto& p : b.pages()) assert(p.file != gone);
+    assert(b.size() == 2);
+    {
+        PrinterHistory reopened;
+        assert(reopened.open(dir.string(), err));
+        assert(reopened.size() == 2 && "the erased row was written back");
+    }
+
+    // A has not looked at the index since B printed its last page.
+    assert(a.clear(err));
+    size_t pngs = 0;
+    for (const auto& e : fs::directory_iterator(dir))
+        if (e.path().extension() == ".png") ++pngs;
+    assert(pngs == 0 && "a clear left the other instance's PNGs behind");
+    std::printf("  ok: an erase and a clear hold across two instances\n");
+}
+
 int main()
 {
     testTwoInstancesShareTheHistory();
+    testTwoInstancesPrintingAtOnce();
+    testEraseAndClearAcrossInstances();
     testPersistsAcrossSessions();
     testTractorFormReopens();
     testPagesGroupIntoJobs();

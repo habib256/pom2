@@ -315,6 +315,19 @@ public:
     /// dropped (counted by `droppedPageCount()`) rather than growing
     /// without bound when a guest form-feeds in a loop.
     static constexpr size_t kMaxPages   = 32;
+    /// …and a ceiling in BYTES on the same stack, because the count alone
+    /// bounds nothing: the guest sets the form length (`ESC H`, up to 69")
+    /// and the host the width and density, so one sheet is anything from
+    /// ~0.6 MB to ~62 MB (10" x 69" at 300 dpi) and 32 of the latter were
+    /// ~2 GB from a dozen guest bytes (bug hunt 2026-11-18). Same rule as
+    /// the count: the OLDEST sheets go, counted by `droppedPageCount()`.
+    /// 256 MiB is sized from the two cases that must not change — it holds
+    /// 32 Letter sheets at 144 dpi four times over and still ~30 at 300 dpi
+    /// — and from the largest sheet there is: four of those fit, which is
+    /// the number of ejects one `tick()` may make, so the archiver's
+    /// per-frame pass still finds every sheet of a catch-up burst. The
+    /// newest sheet is kept whatever its size (a single one cannot pass it).
+    static constexpr size_t kMaxPageStackBytes = 256u << 20;
 
     explicit ImageWriter(int dpi = kDefaultDpi,
                          PaperSize paper = PaperSize::Letter);
@@ -608,6 +621,9 @@ public:
     size_t       completedPageCount() const { return pages_.size(); }
     const Page&  completedPage(size_t idx) const { return pages_[idx]; }
     size_t       droppedPageCount() const { return droppedPages_; }
+    /// Raster bytes held by the completed-sheet stack (the quantity
+    /// `kMaxPageStackBytes` bounds).
+    size_t       completedPageBytes() const;
 
     /// Expand an indexed page into top-down RGBA8 (4 bytes/pixel).
     static void pageToRgba(const Page& p, std::vector<uint8_t>& out);

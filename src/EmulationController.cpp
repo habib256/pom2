@@ -917,6 +917,10 @@ void EmulationController::hardReset()
     mem.slotBus().reset();
     if (spk)    spk->reset();
     if (iwmDev) iwmDev->reset();
+    // The Disk II keeps a shadow of the IWM's mode register; it goes with
+    // the chip's (cold boot clears it through onPowerCycle). Unconditional:
+    // a card's shadow does not depend on this controller owning an IWM.
+    mem.slotBus().iwmReset();
     if (hub)    hub->reset();
     if (tape)   tape->resetCpuSide();
     // A step-over / run-to-cursor transient is armed at an address in the

@@ -102,14 +102,17 @@ public:
     pom2::CpuSocketAccelerator* cpuSocketAccelerator() const { return accel_; }
     /// The 6502 clock multiplier the frame loop burns at. Sampled per chunk.
     /// A slot accelerator (TransWarp) DMA-halts the socket CPU and runs its
-    /// own, so while it is fast its speed is THE speed; the socket one (a
-    /// Zip, the //c+ CGGA) counts only when it is not. The two used to be
-    /// multiplied — 3.6 x 4 = ~14x with both fitted.
+    /// own, so its speed is THE speed for as long as it holds the bus —
+    /// fast or slow; the socket one (a Zip, the //c+ CGGA) counts only once
+    /// the card has let go (`timingAccel`). The two used to be multiplied —
+    /// 3.6 x 4 = ~14x with both fitted — and then, until 2026-11-18, the
+    /// Zip took over at ~3.9x inside every TransWarp slow-down window, which
+    /// is exactly when the card had asked for 1 MHz.
     double cpuSpeedMultiplier() const
     {
         const double m = slots.cpuSpeedMultiplier();
         if (m > 1.0) return m;
-        if (const auto* a = activeAccel()) return m * a->cpuSpeedMultiplier(cycleCounter);
+        if (const auto* a = timingAccel()) return m * a->cpuSpeedMultiplier(cycleCounter);
         return m;
     }
     /// Wire the host CPU. Also installs a SlotBus IRQ router so cards
@@ -994,16 +997,14 @@ public:
     /// Apple2Display re-reads it every render() (bug hunt 2026-09-29).
     const uint8_t* videoAuxData() const
     {
-        return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
-            ? ramWorksBacking_.data() : aux.data();
+        return ramWorksAwayFromBank0() ? ramWorksBacking_.data() : aux.data();
     }
     uint8_t*       auxDataMutable()          { return aux.data(); }
     /// Writable twin of videoAuxData(): the bank the screen shows, for a
     /// tool that edits the PICTURE (the DHGR paint host), not the CPU's view.
     uint8_t* videoAuxDataMutable()
     {
-        return (ramWorksBanks_ > 1 && ramWorksBank_ != 0)
-            ? ramWorksBacking_.data() : aux.data();
+        return ramWorksAwayFromBank0() ? ramWorksBacking_.data() : aux.data();
     }
     const uint8_t* internalIORomData() const { return internalIORom.data(); }
 
@@ -1018,6 +1019,9 @@ public:
     void setRamWorksBanks(uint32_t banks);
     uint32_t ramWorksBanks() const { return ramWorksBanks_; }
     uint8_t  ramWorksBank()  const { return ramWorksBank_; }
+    /// True while $C073 names a bank that is not installed (reads $FF,
+    /// writes kept nowhere); ramWorksBank() is then the last installed one.
+    bool     ramWorksBankAbsent() const { return ramWorksAbsent_; }
 
     // IIe memory mode flags. Bit positions are POM2's own (we don't need to
     // match AppleWin's MF_* layout), but they are a FILE FORMAT: the word is
@@ -1278,6 +1282,13 @@ private:
     std::vector<uint8_t> ramWorksBacking_;
     uint32_t ramWorksBanks_ = 1;   // 1 = stock 64 KB aux (no RamWorks)
     uint8_t  ramWorksBank_  = 0;   // current bank (MAME m_bank / 0x10000)
+    /// The register names a bank with no chips behind it: the visible aux
+    /// arrays are scratch then, `ramWorksBank_` stays the last INSTALLED
+    /// bank (the backing slot the scratch never reaches). ramWorksSwapToBank.
+    bool     ramWorksAbsent_ = false;
+    /// The aux arrays are not the video bank (bank 0): another bank, or none.
+    bool ramWorksAwayFromBank0() const
+    { return ramWorksBanks_ > 1 && (ramWorksBank_ != 0 || ramWorksAbsent_); }
     void ramWorksSwapToBank(uint8_t newBank);  // memcpy in/out
     std::vector<uint8_t> characterRom;
     bool charRomLowercase_ = false;   // see charRomHasLowercase()
@@ -1381,12 +1392,24 @@ private:
         return (accel_ && iieMode && (!iicProfile_ || iicProfile_->isIIcPlus()))
                    ? accel_ : nullptr;
     }
+    /// The socket accelerator as far as TIME goes — its multiplier and its
+    /// stock-cycle mapping — or nullptr while an accelerator card holds the
+    /// CPU (`SlotBus::acceleratorHoldsCpu`): the chip in the socket is
+    /// halted then, so neither its speed nor its slow-down windows describe
+    /// the cycles being burned. Its registers still decode (`activeAccel`).
+    /// Asked per chunk and per paddle / IWM access, never on the RAM path.
+    const pom2::CpuSocketAccelerator* timingAccel() const
+    {
+        return slots.acceleratorHoldsCpu() ? nullptr : activeAccel();
+    }
     uint64_t accelNow() const;
  public:
     /// Stock-clock cycles in the CPU span [from, to): the socket
     /// accelerator's answer, one for one without it.
     /// Stock cycles since the last $C070: the socket accelerator's exact
-    /// span, then a slot accelerator's (TransWarp) multiplier on top.
+    /// span, or — while an accelerator card holds the CPU — the plain span
+    /// divided by that card's multiplier. Never both: with a TransWarp and
+    /// a Zip fast together the span was divided twice (~14x).
     uint64_t stockSincePaddleStrobe(int idx) const
     {
         return stockSinceCycle(paddles_.latchCycle(idx));
@@ -1403,7 +1426,7 @@ private:
     }
     uint64_t stockCyclesBetween(uint64_t from, uint64_t to) const
     {
-        if (const auto* a = activeAccel()) return a->stockCyclesBetween(from, to);
+        if (const auto* a = timingAccel()) return a->stockCyclesBetween(from, to);
         return to > from ? to - from : 0;
     }
  private:

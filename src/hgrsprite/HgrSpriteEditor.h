@@ -79,6 +79,13 @@ private:
     // clearly next to the black-&-white shape canvas.
     std::vector<uint32_t> colorRgba_;     // kHiresWidth*kHiresHeight
     void* colorTex_ = nullptr;
+    // B&W shape canvas: horizontal runs of lit pixels (one rect each), and the
+    // textured fallback for a shape with more runs than a draw list can hold.
+    struct LitRun { int x0, x1, y; };     // [x0, x1) on row y
+    void litRuns(std::vector<LitRun>& out) const;
+    std::vector<LitRun>   canvasRuns_;
+    std::vector<uint32_t> shapeRgba_;
+    void* shapeTex_ = nullptr;
 
     // Sprite geometry (byte-aligned width).
     int wBytes_ = 2;                      // 1..kByteCols  (×7 px wide)
@@ -135,6 +142,7 @@ private:
     std::string browserDir;            // directory currently shown
     std::string browserExts;           // CSV extension filter of the pending action
     char browserSaveName[256] = {0};   // editable filename (save actions)
+    std::string browserOverwritePath;  // save awaiting "this file exists — overwrite?"
 
     // Built-in HGR sprite library (dev/lib/gen2/sprites via the host), lazily
     // fetched + cached; the browser lets you drop a ready-made sprite on the canvas.

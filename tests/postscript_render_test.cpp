@@ -411,6 +411,84 @@ void testHostileJobsAreBounded()
                 many.extraPages + 1);
 }
 
+// The interpreter's TIME is bounded, not just each job's (bug hunt
+// 2026-11-18): `{} loop` is seven bytes, every such job ran to the 20 s
+// timeout and the next one started at once — 16 queued were ~340 s of a
+// pegged core, and a guest that kept sending them kept the core for good.
+void testRenderBudgetArithmetic()
+{
+    using B = pom2::PsRenderBudget;
+    B b;
+    assert(b.grantMs() == pom2::kPsRenderTimeoutMs);   // full: a whole timeout
+    b.charge(B::kCapacityMs - 5000);
+    assert(b.grantMs() == 5000);                       // the job gets the rest
+    b.charge(5000);
+    assert(b.grantMs() == 0 && b.waitMs() > 0);        // spent: nothing starts
+    // Earned back at one part in kRefillDivisor of real time, and not before.
+    b.refill(static_cast<int64_t>(B::kMinGrantMs) * B::kRefillDivisor - 5);
+    assert(b.grantMs() == 0);
+    b.refill(5);
+    assert(b.grantMs() == B::kMinGrantMs && b.waitMs() == 0);
+    // Refilled a frame at a time, nothing is lost to rounding.
+    B frames;
+    frames.charge(B::kCapacityMs);
+    for (int i = 0; i < 1000; ++i) frames.refill(16);
+    assert(frames.availableMs() == 16000 / B::kRefillDivisor);
+    // …and it never holds more than its capacity, however long the idle.
+    frames.refill(int64_t{1} << 40);
+    assert(frames.availableMs() == B::kCapacityMs);
+    std::printf("  ok: the render budget grants, runs dry and refills\n");
+}
+
+void testEndlessJobsAreBoundedInTime()
+{
+    if (pom2::findPostScriptInterpreter().empty()) {
+        std::printf("  skip: no interpreter for the time-budget jobs\n");
+        return;
+    }
+    pom2::PostScriptSpooler sp;
+    sp.setScratchDir(pom2test::tempPath("pom2_ps_budget_scratch"));
+    sp.setPageGeometry(72, 1.0, 1.0);
+    sp.setRenderBudgetMs(2500);             // the real one is a minute
+
+    auto collect = [&sp](pom2::PsRenderResult& page, int ms) {
+        for (int i = 0; i < ms / 5; ++i) {
+            if (sp.takeResult(page)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    std::vector<uint8_t> loop = bytesOf("%!PS\n{} loop\n");
+    loop.push_back(pom2::kPsEndOfJob);
+
+    // Four endless jobs at once. The first is stopped when the budget it was
+    // granted runs out — 2.5 s, not the 20 s timeout — and the three waiting
+    // behind it go with it rather than each taking a turn.
+    const auto began = std::chrono::steady_clock::now();
+    for (int i = 0; i < 4; ++i) sp.feed(loop.data(), loop.size());
+    pom2::PsRenderResult first;
+    assert(collect(first, 15000) && "the endless job was never stopped");
+    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - began).count();
+    assert(!first.ok && first.timedOut);
+    assert(took < 10000 && "the job ran past the budget it was granted");
+    assert(sp.queuedJobs() == 0 && !sp.busy());
+    assert(sp.droppedJobs() == 3);
+
+    // The budget is spent: the next job is refused without an interpreter
+    // run, and says so ONCE — the jobs after it are dropped in silence.
+    sp.feed(loop.data(), loop.size());
+    pom2::PsRenderResult refused;
+    assert(collect(refused, 1000) && !refused.ok && !refused.timedOut);
+    assert(!sp.busy() && sp.droppedJobs() == 4);
+    sp.feed(loop.data(), loop.size());
+    pom2::PsRenderResult none;
+    assert(!collect(none, 200) && "a second refusal was reported");
+    assert(!sp.busy() && sp.droppedJobs() == 5);
+    std::printf("  ok: endless jobs stop at the time budget (%lld ms), "
+                "5 dropped\n", static_cast<long long>(took));
+}
+
 int main()
 {
     std::puts("PostScript delegation test");
@@ -427,6 +505,8 @@ int main()
     testAdoptRenderedPage();
     testPostScriptHeadFallsBackToText();
     testHostileJobsAreBounded();
+    testRenderBudgetArithmetic();
+    testEndlessJobsAreBoundedInTime();
     std::puts("postscript_render: OK");
     return 0;
 }

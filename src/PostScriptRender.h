@@ -42,7 +42,9 @@
 // header and then raw bytes, which is thirty lines to parse; asking for PNG
 // would mean carrying a PNG *decoder* to read back what POM2 only ever writes.
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -78,6 +80,10 @@ struct PsRenderResult {
     std::vector<PsRenderPage> more;
     /// `more.size()`, kept as a plain count for status text.
     int                  extraPages = 0;
+    /// The interpreter was stopped because it ran out of time — as opposed
+    /// to rejecting the job. The spooler treats the two differently: a job
+    /// that never finished takes the jobs waiting behind it with it.
+    bool                 timedOut = false;
 };
 
 /// A job to render: the bytes the guest sent, and the sheet to put them on.
@@ -128,7 +134,83 @@ bool renderPostScript(const std::string& interpreterPath,
                       const std::string& scratchDir,
                       const PsRenderRequest& req,
                       PsRenderResult& out,
-                      const std::atomic<bool>* cancel = nullptr);
+                      const std::atomic<bool>* cancel = nullptr,
+                      int timeoutMs = 0);
+
+/// The longest one job may hold the interpreter (`timeoutMs` = 0 above).
+constexpr int kPsRenderTimeoutMs = 20000;
+
+/// How much interpreter time the spooler may spend — the bound a per-job
+/// timeout cannot give.
+///
+/// The guest writes the program, and `{} loop` is seven bytes. Each such job
+/// is stopped at the timeout, but the NEXT one starts at once: 16 queued
+/// jobs were ~340 s of a pegged core from ~250 guest bytes, and a guest that
+/// keeps sending them kept a core busy for as long as it ran (bug hunt
+/// 2026-11-18). A cap on the queue only bounds a burst; what has to be
+/// bounded is the time, so that is what is counted.
+///
+/// A token bucket of interpreter wall time: `kCapacityMs` to spend at once,
+/// earned back at one part in `kRefillDivisor` of real time. EVERY render is
+/// charged, not just the ones that time out — a job that loops for 19 s and
+/// then says `showpage` burns the same core. A job is given
+/// min(timeout, what is left); under `kMinGrantMs` it is not started at all.
+///
+/// The numbers are policy, not measurement [F]. A real page renders in well
+/// under a second and reaches POM2 at the printer port's pace, so honest
+/// printing never comes near 60 s in hand or one second in five sustained;
+/// a hostile stream gets its first minute and then 20 % of one core.
+/// Settled by: a report of a legitimate job this refuses.
+struct PsRenderBudget {
+    static constexpr int kCapacityMs    = 60000;
+    static constexpr int kRefillDivisor = 5;
+    static constexpr int kMinGrantMs    = 2000;
+
+    /// Credit `wallMs` of elapsed real time.
+    void refill(int64_t wallMs)
+    {
+        if (wallMs <= 0) return;
+        // The remainder is carried: refilling every frame (16 ms) would
+        // otherwise earn 3 ms where 3.2 are due, or nothing at all under 5.
+        const int64_t earned = wallMs + carryMs_;
+        carryMs_   = earned % kRefillDivisor;
+        availableMs_ = std::min<int64_t>(capacityMs_,
+                                         availableMs_ + earned / kRefillDivisor);
+    }
+    /// Debit a render that took `renderMs`.
+    void charge(int64_t renderMs)
+    {
+        if (renderMs > 0)
+            availableMs_ = std::max<int64_t>(0, availableMs_ - renderMs);
+    }
+    /// The timeout the next job may have, or 0 when it may not start.
+    int grantMs() const
+    {
+        if (availableMs_ < std::min<int64_t>(kMinGrantMs, capacityMs_)) return 0;
+        return static_cast<int>(
+            std::min<int64_t>(kPsRenderTimeoutMs, availableMs_));
+    }
+    /// Milliseconds of real time until `grantMs()` answers again.
+    int64_t waitMs() const
+    {
+        const int64_t need = std::min<int64_t>(kMinGrantMs, capacityMs_);
+        return availableMs_ >= need
+                   ? 0 : (need - availableMs_) * kRefillDivisor - carryMs_;
+    }
+    int64_t availableMs() const { return availableMs_; }
+    /// Start again with `capacityMs` in hand (tests shrink it; 0 keeps).
+    void restart(int64_t capacityMs = 0)
+    {
+        if (capacityMs > 0) capacityMs_ = capacityMs;
+        availableMs_ = capacityMs_;
+        carryMs_     = 0;
+    }
+
+private:
+    int64_t capacityMs_  = kCapacityMs;
+    int64_t availableMs_ = kCapacityMs;
+    int64_t carryMs_     = 0;
+};
 
 /// Parse a binary PGM (`P5`) — or a concatenation of them, which is what a
 /// multi-page job comes back as: the first block fills `out`'s own fields and
@@ -187,8 +269,17 @@ public:
 
     /// Drop everything: the buffer, any finished page not yet collected. Does
     /// NOT abandon a running render — that would leak the child process — so
-    /// it waits for one to finish and discards the result.
+    /// it waits for one to finish and discards the result. The time budget
+    /// starts full again.
     void reset();
+
+    /// Jobs dropped unrendered since construction, for either reason: they
+    /// waited behind one that ran out of time, or the time budget was spent
+    /// (`PsRenderBudget`).
+    std::size_t droppedJobs() const;
+    /// Replace the time budget's capacity and start it full. For tests — the
+    /// real one takes a minute of interpreter time to exhaust.
+    void setRenderBudgetMs(int capacityMs);
 
 private:
     /// Move `pending_` into `queued_` as one complete job. Caller holds `mtx_`.
@@ -200,6 +291,8 @@ private:
     /// deadlocks — the worker takes it to publish).
     void startNextLocked(std::thread& retired);
     void joinWorker();
+    /// Credit the budget with the real time since the last call. `mtx_` held.
+    void refillBudgetLocked();
 
     mutable std::mutex   mtx_;
     std::string          scratchDir_;
@@ -216,6 +309,14 @@ private:
     bool                 busy_       = false;
     std::thread          worker_;
     std::atomic<bool>    cancel_{false};   // set by the destructor only
+
+    PsRenderBudget       budget_;
+    std::chrono::steady_clock::time_point budgetStamp_ =
+        std::chrono::steady_clock::now();
+    /// One warning per exhaustion, not one per refused job: the stream that
+    /// spends the budget is the one that would also fill the log.
+    bool                 budgetWarned_ = false;
+    std::size_t          droppedJobs_  = 0;
 
     /// A runaway job must not eat the heap. A page of PostScript is a few
     /// tens of KB; a megabyte is already a driver gone wrong.

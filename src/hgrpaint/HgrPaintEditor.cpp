@@ -214,8 +214,10 @@ void hgrpaint::HgrPaintEditor::releaseGL()
         if (importSrcTex)     host->destroyTexture(importSrcTex);
         if (onionTex)         host->destroyTexture(onionTex);
         if (flipTex)          host->destroyTexture(flipTex);
+        if (pasteTex)         host->destroyTexture(pasteTex);
     }
     texture = importPreviewTex = importSrcTex = onionTex = flipTex = nullptr;
+    pasteTex = nullptr;
 }
 
 void hgrpaint::HgrPaintEditor::renderShadow(uint32_t* out, bool mono)
@@ -1556,23 +1558,71 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
     if (pasting) {
         // ── Floating paste (HGR-06): clip follows the cursor; click commits ──
         if (hovered) { pasteX = lx; pasteY = ly; }
-        for (int cy = 0; cy < clip.h; ++cy)
-            for (int cx = 0; cx < clip.w; ++cx) {
-                ImU32 col;
-                if (clip.sixteen) {
-                    const int v = clip.idx[static_cast<size_t>(cy) * clip.w + cx];
-                    if (v == 0) continue;
-                    col = kGrPalette[v & 0x0F];
-                } else {
-                    const HgrColor c = clip.px[static_cast<size_t>(cy) * clip.w + cx];
-                    if (c == HgrColor::Black) continue;
-                    col = swatchColor(c);
-                }
-                const float px = origin.x + (pasteX + cx) * xs;
-                const float py = origin.y + (pasteY + cy) * scale;
-                dl->AddRectFilled(ImVec2(px, py), ImVec2(px + xs, py + scale),
-                                  (col & 0x00FFFFFF) | 0xC0000000);
+        // One rect per horizontal RUN of one colour, not per pixel: a draw
+        // list is addressed with 16-bit indices and the browser build's
+        // renderer (WebGL2) has no vertex offset, so 65536 vertices — 16384
+        // quads — is all one window gets, and a full-page clip is 53 760
+        // pixels. Runs alone do not bound it (a dithered picture changes
+        // colour every pixel or two), so past kPasteQuadBudget the preview
+        // is ONE textured quad instead; a host with no textures (headless)
+        // gets the runs that fit, under the outline that is always drawn.
+        // 0 = transparent (black).
+        auto clipColor = [this](int cx, int cy) -> ImU32 {
+            ImU32 col;
+            if (clip.sixteen) {
+                const int v = clip.idx[static_cast<size_t>(cy) * clip.w + cx];
+                if (v == 0) return 0;
+                col = kGrPalette[v & 0x0F];
+            } else {
+                const HgrColor c = clip.px[static_cast<size_t>(cy) * clip.w + cx];
+                if (c == HgrColor::Black) return 0;
+                col = swatchColor(c);
             }
+            return (col & 0x00FFFFFF) | 0xC0000000;
+        };
+        constexpr int kPasteQuadBudget = 12000;   // 48 000 of the 65 536 vertices
+        int runs = 0;
+        for (int cy = 0; cy < clip.h; ++cy) {
+            ImU32 prev = 0;
+            for (int cx = 0; cx < clip.w; ++cx) {
+                const ImU32 col = clipColor(cx, cy);
+                if (col != 0 && col != prev) ++runs;
+                prev = col;
+            }
+        }
+        bool drawn = false;
+        if (runs > kPasteQuadBudget && host && clip.w > 0 && clip.h > 0) {
+            pasteRgba.assign(static_cast<size_t>(clip.w) * clip.h, 0);
+            for (int cy = 0; cy < clip.h; ++cy)
+                for (int cx = 0; cx < clip.w; ++cx)
+                    pasteRgba[static_cast<size_t>(cy) * clip.w + cx] = clipColor(cx, cy);
+            pasteTex = host->uploadTexture(pasteTex, pasteRgba.data(),
+                                           clip.w, clip.h, /*linear=*/false);
+            if (pasteTex) {
+                dl->AddImage(host->textureToImTexture(pasteTex),
+                             ImVec2(origin.x + pasteX * xs, origin.y + pasteY * scale),
+                             ImVec2(origin.x + (pasteX + clip.w) * xs,
+                                    origin.y + (pasteY + clip.h) * scale));
+                drawn = true;
+            }
+        }
+        if (!drawn) {
+            int budget = kPasteQuadBudget;
+            for (int cy = 0; cy < clip.h && budget > 0; ++cy)
+                for (int cx = 0; cx < clip.w && budget > 0; ) {
+                    const ImU32 col = clipColor(cx, cy);
+                    int end = cx + 1;
+                    while (end < clip.w && clipColor(end, cy) == col) ++end;
+                    if (col != 0) {
+                        const float py = origin.y + (pasteY + cy) * scale;
+                        dl->AddRectFilled(ImVec2(origin.x + (pasteX + cx) * xs, py),
+                                          ImVec2(origin.x + (pasteX + end) * xs, py + scale),
+                                          col);
+                        --budget;
+                    }
+                    cx = end;
+                }
+        }
         dl->AddRect(ImVec2(origin.x + pasteX * xs, origin.y + pasteY * scale),
                     ImVec2(origin.x + (pasteX + clip.w) * xs, origin.y + (pasteY + clip.h) * scale),
                     IM_COL32(255, 255, 0, 230));
@@ -2146,6 +2196,19 @@ void hgrpaint::HgrPaintEditor::openFileBrowser(bool forSave, int saveKind, bool 
             std::filesystem::path pp(picked);
             std::string dir = pp.parent_path().string();
             if (!dir.empty()) browserDir = dir;
+            // The OS dialog asked "replace?" about the name the user TYPED. A
+            // raw page save retargets an untagged name to NAME#06xxxx, so the
+            // file about to be replaced is one nobody confirmed: typing `PIC`
+            // silently destroyed an existing `PIC#062000`. Ask about the real
+            // target, with the same question the ImGui browser asks.
+            if (forSave) {
+                const std::string target = resolvedSaveTarget(picked);
+                if (target != picked && std::filesystem::exists(target, ec)) {
+                    browserOverwritePath = picked;
+                    nativeOverwriteOpen = true;
+                    return;
+                }
+            }
             performFileAction(forSave, saveKind, importMode, picked);
             return;
         }
@@ -2202,24 +2265,29 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
         const bool ok = err.empty();
         if (ok) {
             bytes.resize(std::min(bytes.size(), static_cast<size_t>(pageBytes())));
-            host->beginBatch();
-            for (int off = 0; off < pageBytes(); ++off) {
+            // The load is ONE undoable stroke, like "Apply to page" of an
+            // import: a mistaken Load used to be final, because it bypassed
+            // the history and then had to clear it (the older ByteEdits'
+            // `old` values described the replaced picture). Recorded against
+            // the shadow, the earlier steps stay valid underneath it — the
+            // history is a chain again. Every byte is still POKED, changed or
+            // not: the shadow is one frame old, and a running program may
+            // have written the page since.
+            flushOpenStroke();
+            beginStroke(true);
+            const int limit = std::min(pageBytes(), static_cast<int>(shadow.size()));
+            for (int off = 0; off < limit; ++off) {
                 if ((grMode || dlgrMode) && hgrpaint::grIsScreenHole(off & 0x3FF))
                     continue;
                 const uint8_t value = static_cast<size_t>(off) < bytes.size()
                     ? bytes[static_cast<size_t>(off)] : 0;
-                hostPoke(addrOfShadowOff(off), value);
+                const uint8_t old = shadow[off];
+                shadow[off] = value;
+                if (old != value) emitShadowEdit(off, old);
+                else              hostPoke(addrOfShadowOff(off), value);
             }
-            host->endBatch();
+            commitStroke();
             std::snprintf(filePath, sizeof(filePath), "%s", fullPath.c_str());
-            // The page just became a different picture, so the recorded edits
-            // no longer describe it: every ByteEdit carries an `old` value
-            // from the REPLACED image, and one Ctrl+Z would have written those
-            // stale bytes over the file the user just loaded. The load itself
-            // is not undoable (it is not recorded as a stroke), so the honest
-            // state is an empty history.
-            undo.clear();
-            redo.clear();
         }
         if (ok) {
             char addr[8];
@@ -2309,6 +2377,35 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
 void hgrpaint::HgrPaintEditor::renderFileBrowser()
 {
     namespace fs = std::filesystem;
+    // Overwrite confirmation for a NATIVE save whose real target is not the
+    // name the OS dialog confirmed (see openFileBrowser). Opened here, not
+    // where the pick happened: OpenPopup and BeginPopupModal must share an ID
+    // stack, and the Save button lives in the top bar.
+    if (nativeOverwriteOpen) {
+        ImGui::OpenPopup("Overwrite?##nativeoverwrite");
+        nativeOverwriteOpen = false;
+    }
+    if (ImGui::BeginPopupModal("Overwrite?##nativeoverwrite", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("The picture is saved under its tagged name, which already exists:");
+        ImGui::TextDisabled("%s",
+            fs::path(resolvedSaveTarget(browserOverwritePath)).filename().string().c_str());
+        ImGui::TextUnformatted("Replace its contents?");
+        ImGui::Separator();
+        if (ImGui::Button("Overwrite", ImVec2(100, 0))) {
+            performFileAction(true, browserSaveKind, false, browserOverwritePath);
+            browserOverwritePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            browserOverwritePath.clear();
+            status = "Save cancelled";
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     if (browserOpen) { ImGui::OpenPopup("HGR File##browser"); browserOpen = false; }
 
     const ImVec2 vpCenter = ImGui::GetMainViewport()->GetCenter();

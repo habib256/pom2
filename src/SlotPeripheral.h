@@ -171,6 +171,12 @@ public:
     /// Loss and restoration of slot power. Most cards share their reset
     /// path; cards with chips disconnected from RESET distinguish it.
     virtual void onPowerCycle() { onReset(); }
+    /// The machine's IWM was just reset (EmulationController::hardReset,
+    /// right after IWMDevice::reset()). For a card that keeps a COPY of an
+    /// IWM register — the Disk II's mode shadow — so the copy cannot outlive
+    /// the chip's. Not part of onReset(): a soft reset leaves floppy state
+    /// alone on purpose, and does not reset the IWM either.
+    virtual void onIwmReset() {}
     /// The CPU/RAM just jumped in time (rewind, snapshot load). A card that
     /// queues cycle-stamped output and has no snapshot state drops it here.
     virtual void onTimeJump() {}
@@ -289,6 +295,19 @@ public:
     /// cycle is exact in aggregate. 1.0 = stock speed, and any value
     /// <= 0 is ignored. SlotBus takes the lowest slot that is not 1.0.
     virtual double cpuSpeedMultiplier() const { return 1.0; }
+
+    /// True while this card's own processor runs the machine IN PLACE of
+    /// the one in the 6502 socket — an accelerator card holding DMA, not a
+    /// coprocessor doing separate work (that is `dmaActive()`).
+    /// [D] MAME transwarp.cpp @ mame0287 — the card raises slot DMA at reset
+    /// and lowers it only on $C074 = 3 (`lower_slot_dma()`), so between the
+    /// two the socket CPU does not execute, whatever speed the card runs at.
+    /// Memory reads it to make a SOCKET accelerator (Zip Chip, FASTChip)
+    /// stand down: a halted chip accelerates nothing, and its slow-down
+    /// windows time nothing. A card that returns true here must also return
+    /// true from `snoopsBus()` — SlotBus asks its cached snooper, not all
+    /// eight slots, because the stock-time mapping is asked per IWM access.
+    virtual bool holdsHostCpu() const { return false; }
 
     /// Bus snooping — for cards that watch addresses OUTSIDE their own slot
     /// windows. On real hardware every card sees every cycle; POM2 only

@@ -1017,7 +1017,9 @@ private:
     /// The cards with a picture of their own (CardVideoSource.h): the one the
     /// Card Monitor panel shows, by "<slot>:<catalog key>", and that name on
     /// the last frame — the tab offers itself when it changes, not when a
-    /// rebuild re-creates the same card (MainWindow_CardMonitor.cpp).
+    /// rebuild re-creates the same card (MainWindow_CardMonitor.cpp). With
+    /// two monitor-capable cards the panel shows, each frame, whichever of
+    /// the pair is NOT on the Apple II Screen.
     pom2::CardVideoSource* cardPanelSource_ = nullptr;
     std::string  cardPanelKey_;
     std::string  cardScreenKey_;   // "<slot>:<key>" of the display's card source

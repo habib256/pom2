@@ -41,6 +41,7 @@
 
 #include "imgui.h"
 
+#include <optional>
 #include <string>
 
 #ifndef __EMSCRIPTEN__
@@ -132,11 +133,62 @@ void MainWindow::openRomSetup(bool download)
 
 void MainWindow::reloadMissingFirmware()
 {
-    std::string path;
-    for (const auto& candidate : pom2::profileConfig(activeProfile).romProbeOrder) {
-        path = pom2::findResource(candidate);
-        if (!path.empty()) break;
+    // "Loads", not "exists" — the real loader's staging step, no lock held.
+    const auto mainRomLoads = [](const std::string& candidate) {
+        Memory::AppleIIRomImage image;
+        std::string error;
+        return Memory::prepareAppleIIRom(candidate.c_str(), image, error);
+    };
+    const auto profileRomLoads = [&](pom2::SystemProfile p) {
+        return !pom2::findFirstResourceThat(
+            pom2::profileConfig(p).romProbeOrder, mainRomLoads).empty();
+    };
+
+    // No main ROM is loaded: the machine on screen is whatever a ROM-less
+    // start fell back to (a bare ][+), not the one this install will be at
+    // its next launch. Reloading that profile's main ROM alone — what this
+    // did — gave a ][+ with no character ROM and none of the ROM-gated cards,
+    // right after a download whose next launch is a //e Enhanced PAL with
+    // the full slot map (bug hunt 2026-11-18 round 2). So resolve the
+    // machine the way the constructor does — the saved `system_profile`
+    // when there is one and its firmware loads, else the default order
+    // (pom2::defaultProfileForRoms) — and run the full profile switch: ROM,
+    // character ROM, slots, video standard. A restore, not a choice, so
+    // nothing is persisted here (the normal exit does that).
+    if (!romLoaded_) {
+        std::optional<pom2::SystemProfile> target;
+        const std::string saved =
+            settings ? settings->getString("system_profile", "") : std::string();
+        if (!saved.empty()) {
+            const pom2::SystemProfile p = pom2::profileFromKey(saved);
+            if (profileRomLoads(p)) target = p;
+        }
+        // A profile other than the ROM-less fallback was put there on
+        // purpose (a session, a failed File ▸ Reload ROM): keep it if it can
+        // be loaded now.
+        if (!target && activeProfile != pom2::SystemProfile::AppleIIPlus &&
+            profileRomLoads(activeProfile))
+            target = activeProfile;
+        if (!target) target = pom2::defaultProfileForRoms(profileRomLoads);
+        if (target) {
+            restoringSavedProfile_ = true;
+            applyProfile(*target);
+            restoringSavedProfile_ = false;
+            // A refusal (a card that could not save its disk) is reported by
+            // applyProfile on the status line; say so here too, where the
+            // user is looking.
+            if (!romLoaded_) romStatus = "Reload refused — see the status line";
+            return;
+        }
+        // Nothing loads: fall through for the loader's own error text.
     }
+
+    // First candidate that loads; when none does, the first that exists (or
+    // the last path tried) so the message names a real file.
+    std::string path = pom2::findFirstResourceThat(
+        pom2::profileConfig(activeProfile).romProbeOrder, mainRomLoads);
+    if (path.empty())
+        path = pom2::findFirstResource(pom2::profileConfig(activeProfile).romProbeOrder);
     if (path.empty()) path = romPath;
     // Stage the bytes unlocked, then install the SAME bytes under the lock.
     // No second file open or filesystem probe can stall the CPU/UI here.

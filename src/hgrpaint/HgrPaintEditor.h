@@ -176,6 +176,10 @@ private:
     std::vector<uint8_t>  flipShadow;    // other page's bytes (refreshed per frame)
     std::vector<uint32_t> flipRgba;
     void* flipTex = nullptr;
+    // Floating-paste preview as one textured quad, used only when the clip
+    // has more colour runs than one draw list can hold as rects (renderCanvas).
+    std::vector<uint32_t> pasteRgba;
+    void* pasteTex = nullptr;
     bool wantFit = false;           // queued zoom-to-fit
     int  paletteMsbMode = 2;        // PaletteShift sub-mode: 0=clear,1=set,2=toggle
 
@@ -251,6 +255,9 @@ private:
     // Save target awaiting the "this file exists — overwrite?" confirmation
     // (empty = no confirmation pending).
     std::string browserOverwritePath;
+    // The same question for a NATIVE save whose real target (NAME#06xxxx) is
+    // not the name the OS dialog confirmed: open the popup next frame.
+    bool nativeOverwriteOpen = false;
     // Image-import (ii-pix-style) options + interactive preview dialog (decode the
     // source once, then live-reconvert as the sliders move).
     bool  importStretch = false;       // false = fit + letterbox (keep aspect)

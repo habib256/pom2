@@ -77,15 +77,21 @@ LironCard::LironCard(int slot)
         pom2::log().warn("Liron", lastError_);
         return;
     }
-    rom_.resize(kRomBytes);
+    // One byte over, so an OVERSIZED file is refused too — the head of a
+    // larger file is not the Liron's EPROM. Same gate as
+    // SmartPortCard::loadLironRom, which reads this very dump: the two used
+    // to disagree, and a padded liron.rom ran here while the SmartPort card
+    // ignored it (bug hunt 2026-11-18 round 2).
+    rom_.resize(kRomBytes + 1);
     f.read(reinterpret_cast<char*>(rom_.data()),
-           static_cast<std::streamsize>(kRomBytes));
+           static_cast<std::streamsize>(rom_.size()));
     if (static_cast<std::size_t>(f.gcount()) != kRomBytes) {
         lastError_ = path + " is not a 4 KB dump";
         pom2::log().warn("Liron", lastError_);
         rom_.clear();
         return;
     }
+    rom_.resize(kRomBytes);
     romLoaded_ = true;
     pom2::log().info("Liron",
         "Loaded real controller ROM (" + path + ") — slot " +

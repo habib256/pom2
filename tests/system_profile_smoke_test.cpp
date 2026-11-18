@@ -838,8 +838,37 @@ void testBootScanOrder()
     assert(pom2::bootScanOrder(SystemProfile::AppleIIcPlus)[0] == 5);
 }
 
+// The machine a launch with no saved profile comes up as. One function,
+// because the startup probe and "Reload ROM" after the first-launch download
+// must agree (they did not: bug hunt 2026-11-18 round 2).
+static void testDefaultProfileForRoms()
+{
+    using pom2::SystemProfile;
+    const auto with = [](std::initializer_list<SystemProfile> loadable, bool allowIIe = true) {
+        const std::vector<SystemProfile> have(loadable);
+        return pom2::defaultProfileForRoms([&](SystemProfile p) {
+            for (SystemProfile h : have) if (h == p) return true;
+            return false;
+        }, allowIIe);
+    };
+    assert(with({SystemProfile::AppleIIePAL, SystemProfile::AppleIIPlus,
+                 SystemProfile::AppleIIcPAL}) == SystemProfile::AppleIIePAL);
+    // No //e firmware that LOADS (absent, 0 bytes, truncated): the ][+.
+    assert(with({SystemProfile::AppleIIPlus, SystemProfile::AppleIIcPAL})
+           == SystemProfile::AppleIIPlus);
+    assert(with({SystemProfile::AppleIIcPAL}) == SystemProfile::AppleIIcPAL);
+    assert(!with({}));
+    // --ii-plus: the ][+ or nothing, never a //e-class machine.
+    assert(with({SystemProfile::AppleIIePAL, SystemProfile::AppleIIPlus}, false)
+           == SystemProfile::AppleIIPlus);
+    assert(!with({SystemProfile::AppleIIePAL, SystemProfile::AppleIIcPAL}, false));
+}
+
 int main()
 {
+    testDefaultProfileForRoms();
+    std::printf("  ok: default profile order (//e PAL -> ][+ -> //c PAL), by what loads\n");
+
     testFreshMemoryIsPoweredOn();
     std::printf("  ok: a fresh Memory holds the power-on pattern (main + aux)\n");
 

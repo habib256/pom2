@@ -163,6 +163,7 @@ void Memory::setRamWorksBanks(uint32_t banks)
     if (banks > kRamWorksMaxBanks) banks = kRamWorksMaxBanks;
     ramWorksBanks_ = banks;
     ramWorksBank_  = 0;
+    ramWorksAbsent_ = false;
     // Backing holds ONE slot per bank (including bank 0 — we snapshot
     // the visible buffers into it whenever leaving bank 0). When
     // banks == 1 the backing is empty — stock IIe path, no swap.

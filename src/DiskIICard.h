@@ -465,6 +465,12 @@ public:
     /// bits (bit 2 = no 1 s motor coast) into the next machine.
     /// [D] MAME iwm.cpp device_reset @ mame0287 (m_mode = 0).
     void    onPowerCycle() override { iwmMode = 0; onReset(); }
+    /// A hard reset zeroes the IWM's mode register (IWMDevice::reset, from
+    /// EmulationController::hardReset) and used to leave this copy of it:
+    /// bit 2 set by the previous program kept the 5.25" motor from coasting
+    /// under the next one. A soft reset resets neither.
+    /// [D] MAME iwm.cpp device_reset @ mame0287 (m_mode = 0).
+    void    onIwmReset() override { iwmMode = 0; }
 
     // Rewind/snapshot: serialize the mechanical + LSS runtime state (head
     // position, motor, phase magnets, data register, sequencer, timing) so a

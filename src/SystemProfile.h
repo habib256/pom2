@@ -38,6 +38,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -131,6 +132,21 @@ std::string_view profileKey(SystemProfile p);
 /// rather than being re-spelled at each `loadAppleIIRom` call site (bug hunt
 /// #10: Reload ROM used the //e slicing on a //c and rebooted into bank 1).
 bool profileUsesLowerRomHalf(SystemProfile p);
+
+/// The machine a launch with no `system_profile` key comes up as, given
+/// which profiles have a main ROM that actually LOADS (`romLoads`, asked at
+/// most once per profile): **//e Enhanced PAL**, then **][+** when no //e
+/// firmware loads, then **//c PAL** when only the //c firmware does
+/// (CLAUDE.md § System profiles). `nullopt` = no usable firmware at all.
+///
+/// One function because two paths must agree on it: the constructor's
+/// startup probe, and "Reload ROM" after the first-launch download — which
+/// used to reload the ][+ ROM of the machine a ROM-less start falls back to,
+/// while the next launch came up as a //e with the full slot map (bug hunt
+/// 2026-11-18 round 2). `allowIIe = false` is `--ii-plus`: the ][+ or
+/// nothing.
+std::optional<SystemProfile> defaultProfileForRoms(
+    const std::function<bool(SystemProfile)>& romLoads, bool allowIIe = true);
 
 /// The order in which the machine's firmware looks for a disk to boot,
 /// slot numbers 1-7. The Autostart ROM of the ][+ / //e scans $C7 down to

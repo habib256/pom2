@@ -35,6 +35,7 @@
 #define POM2_RESOURCE_PATHS_H
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,22 @@ std::string findResource(const std::string& rel);
 /// First of `candidates` (each tried via findResource) that resolves to
 /// an existing file; "" when none do. For probe-order lists.
 std::string findFirstResource(const std::vector<std::string>& candidates);
+
+/// First of `candidates` that resolves AND that `loads` accepts; "" when
+/// none does. `loads` gets the resolved path and does whatever the real
+/// loader does to the file (open, size check, read) — so it does file I/O
+/// and must be called with no machine lock held.
+///
+/// Why this exists beside findFirstResource: a probe order is a list of
+/// FALLBACKS, and "the first file that exists" is not "the first that
+/// loads". A 0-byte or half-copied `apple2e.rom` used to select the //e and
+/// then fail, with a valid `apple2p.rom` sitting next in the list; a bad
+/// `apple2c-32Kv0.rom` refused the //c while `apple2c-16K.rom` was fine
+/// (bug hunt 2026-11-18 round 2). A path that already failed is not tried
+/// twice (several candidates may resolve to the same file).
+std::string findFirstResourceThat(
+    const std::vector<std::string>& candidates,
+    const std::function<bool(const std::string& path)>& loads);
 
 } // namespace pom2
 

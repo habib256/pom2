@@ -65,7 +65,8 @@ const char* kApple2eUnenhChips[] = {
 // added the //c / //c+ firmware, the card ROMs and the European character
 // generators POM2 was missing, and published loose copies of the dumps this
 // file used to extract from a2cffa02 / a2grapplerplus / a2superdrive — so
-// the common path no longer needs `unzip` or `tar` on the host at all.
+// the common path no longer needs a zip at all (and no path needs `unzip`
+// or `tar` on the host: zips are read in-process, see unpackZipMember).
 // Those loose copies were dropped from RetroBIOS's `main` on 2026-10-20, so
 // every URL below goes through POM2_RETROBIOS_RAW, a pinned commit taken
 // just before that change (RomFetch.h says why and how to move it).
@@ -487,56 +488,22 @@ bool downloadUrl(const std::string& url, const fs::path& dest, std::string& err,
     return true;
 }
 
-fs::path extractedMemberPath(const fs::path& dir, const std::string& member)
-{
-    // unzip -j and tar both drop a member with slashes as its basename
-    // when we ask them to flatten; we only ever extract flat names, but
-    // keep the last component so a future nested member still resolves.
-    const auto pos = member.find_last_of("/\\");
-    const std::string base =
-        (pos == std::string::npos) ? member : member.substr(pos + 1);
-    return dir / base;
-}
-
-// `cancelled` is forwarded to the child, like the download is: without it the
-// Cancel button could not interrupt an unpack, and the panel sat unresponsive
-// for up to 30 s per member on a slow or wedged unzip.
-bool extractZipMember(const fs::path& zip, const std::string& member,
-                      const fs::path& destDir, std::string& err,
-                      const RomFetchCancel& cancelled = {})
-{
-    std::error_code ec;
-    fs::create_directories(destDir, ec);
-
-    const std::string unzip = ChildProcess::findOnPath("unzip");
-    if (!unzip.empty()) {
-        return runHostTool(unzip,
-                           { "-o", "-q", "-j", zip.string(), member, "-d",
-                             destDir.string() },
-                           {}, 30000, err, cancelled);
-    }
-
-    const std::string tar = ChildProcess::findOnPath("tar");
-    if (!tar.empty()) {
-        return runHostTool(tar,
-                           { "-xf", zip.string(), "-C", destDir.string(),
-                             member },
-                           {}, 30000, err, cancelled);
-    }
-
-    err = "neither unzip nor tar was found — cannot unpack a MAME romset";
-    return false;
-}
-
-/// One member's bytes. In-process first (stored/deflate — every archive
-/// RetroBIOS serves); a host tool only for what that cannot read. The
-/// in-process reader is not an optimisation: the host fallback was `tar`,
-/// and GNU tar does not read zip, so a Linux box without unzip failed every
-/// romset (bug hunt 2026-09-16).
+/// One member's bytes, read IN-PROCESS and only in-process (`ZipMember.h`:
+/// stored and deflate, CRC and size checked, capped at
+/// `kMaxUnpackedZipBytes` before a byte is inflated).
+///
+/// There used to be a host `unzip` / `tar` fallback for a member that
+/// reader flags as unsupported — encrypted, or a method other than stored /
+/// deflate. It is gone (bug hunt 2026-11-18 round 2): every archive POM2
+/// fetches (its own on archive.org, the MAME romsets at the pinned
+/// RetroBIOS commit) is stored or deflate, so the only thing that could
+/// reach it was an archive that is not one of ours — and then a host tool
+/// wrote its output with no size cap while it ran, and the `tar` branch
+/// could not succeed anyway (it did not flatten the member's path, and GNU
+/// tar does not read zip). Such a member is now a plain error; the SHA-256
+/// gate would have refused its bytes in any case.
 bool unpackZipMember(const fs::path& zip, const std::string& member,
-                     const fs::path& extractDir,
-                     std::vector<std::uint8_t>& bytes, std::string& err,
-                     const RomFetchCancel& cancelled)
+                     std::vector<std::uint8_t>& bytes, std::string& err)
 {
     std::vector<std::uint8_t> archive;
     if (!readAll(zip, archive, err)) return false;
@@ -544,9 +511,10 @@ bool unpackZipMember(const fs::path& zip, const std::string& member,
     if (readZipMember(archive, member, bytes, err, kMaxUnpackedZipBytes,
                       &unsupported))
         return true;
-    if (!unsupported) return false;
-    return extractZipMember(zip, member, extractDir, err, cancelled) &&
-           readAll(extractedMemberPath(extractDir, member), bytes, err);
+    if (unsupported)
+        err = member + ": unsupported compression method (POM2 reads stored "
+              "and deflate members only)";
+    return false;
 }
 #endif
 
@@ -1115,7 +1083,6 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         std::string err;
         std::string backup;
         const fs::path dest = destRoot / fs::path(e->destRel).filename();
-        const fs::path extractDir = scratch / ("x-" + std::to_string(done));
 
         bool ok = false;
         const char* from = "the POM2 archive";
@@ -1127,8 +1094,7 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
             // Same gates as a RetroBIOS download: a member that is absent, or
             // is not the dump the catalogue names, is fetched from RetroBIOS.
             std::vector<std::uint8_t> bytes;
-            ok = unpackZipMember(archiveZip, romArchiveMember(*e), extractDir,
-                                 bytes, err, cancelled) &&
+            ok = unpackZipMember(archiveZip, romArchiveMember(*e), bytes, err) &&
                  commitBytes(dest, *e, bytes, err, backup);
             if (!ok)
                 log().warn("ROM", std::string("POM2 archive: ") + e->destRel +
@@ -1150,13 +1116,11 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
                 const fs::path zipPath = fetchZip(e->url, err);
                 if (!zipPath.empty()) {
                     std::vector<std::uint8_t> bytes;
-                    ok = unpackZipMember(zipPath, e->zipMember, extractDir, bytes,
-                                         err, cancelled);
+                    ok = unpackZipMember(zipPath, e->zipMember, bytes, err);
                     if (ok && e->zipConcat) {
                         for (const char* const* m = e->zipConcat; *m; ++m) {
                             std::vector<std::uint8_t> more;
-                            if (!unpackZipMember(zipPath, *m, extractDir, more, err,
-                                                 cancelled)) {
+                            if (!unpackZipMember(zipPath, *m, more, err)) {
                                 ok = false;
                                 break;
                             }

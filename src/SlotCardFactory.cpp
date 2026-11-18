@@ -59,6 +59,25 @@ std::string productionResource(std::string_view resource)
     return findResource(std::string(resource));
 }
 
+// A card ROM is read BOUNDED: at most the size the card expects plus one
+// byte, so an oversized file is still seen as oversized (and refused by the
+// card's own size check) without its whole length being pulled in. The
+// factory runs under `stateMutex` on a slot rebuild, and four loaders used
+// to slurp the file to its end before looking at the size — a multi-gigabyte
+// file dropped in roms/ under a card's name froze the machine and the
+// window for the read (bug hunt 2026-11-18 round 2).
+std::vector<uint8_t> readUpTo(const std::string& path, std::size_t max)
+{
+    std::vector<uint8_t> b;
+    if (path.empty()) return b;
+    std::ifstream f(path, std::ios::binary);
+    b.resize(max + 1);   // one byte over: an oversized file is refused
+    f.read(reinterpret_cast<char*>(b.data()),
+           static_cast<std::streamsize>(b.size()));
+    b.resize(static_cast<std::size_t>(f.gcount()));
+    return b;
+}
+
 } // namespace
 
 SlotCardFactory::SlotCardFactory(ResourceLocator locator)
@@ -135,20 +154,27 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
             ? "roms/cffa20eec02.bin" : "roms/cffa20ee02.bin";
         const std::string fallback = request.cpuIsCmos
             ? "roms/cffa20ee02.bin" : "roms/cffa20eec02.bin";
-        std::string rom = locate_(preferred);
-        if (rom.empty()) rom = locate_(fallback);
+        // The other CPU's dump is a fallback for a preferred one that does
+        // not LOAD, not only for one that is absent: a truncated
+        // cffa20eec02.bin used to leave the slot empty beside a valid
+        // cffa20ee02.bin (bug hunt 2026-11-18 round 2). loadRom checks the
+        // size before it touches the card, so a refused file leaves nothing.
+        auto card = std::make_unique<CffaCard>(request.slot);
+        std::string rom;
+        bool anyFound = false;
+        for (const std::string& candidate : {preferred, fallback}) {
+            const std::string p = locate_(candidate);
+            if (p.empty()) continue;
+            anyFound = true;
+            if (card->loadRom(p)) { rom = p; break; }
+        }
         if (rom.empty()) {
             result.warningCategory = "CFFA";
-            result.warning = "Slot " + std::to_string(request.slot) +
-                " requested CFFA but no firmware ROM "
-                "(roms/cffa20ee02.bin) — leaving slot empty";
-            return result;
-        }
-        auto card = std::make_unique<CffaCard>(request.slot);
-        if (!card->loadRom(rom)) {
-            result.warningCategory = "CFFA";
-            result.warning = "CFFA firmware load failed in slot " +
-                             std::to_string(request.slot);
+            result.warning = anyFound
+                ? "CFFA firmware load failed in slot " + std::to_string(request.slot)
+                : "Slot " + std::to_string(request.slot) +
+                  " requested CFFA but no firmware ROM "
+                  "(roms/cffa20ee02.bin) — leaving slot empty";
             return result;
         }
         result.resourcePath = rom;
@@ -237,16 +263,6 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         // clone dump (MAME BIOS 0, 60 Hz CRTC table) is preferred, the 1 KB
         // Videx v2.4 (BIOS 1, 50 Hz table) is the fallback. The alternate
         // (inverse) set is optional: its absence is exactly ~normal.
-        const auto readUpTo = [](const std::string& path, std::size_t max) {
-            std::vector<uint8_t> b;
-            if (path.empty()) return b;
-            std::ifstream f(path, std::ios::binary);
-            b.resize(max + 1);   // one byte over: an oversized file is refused
-            f.read(reinterpret_cast<char*>(b.data()),
-                   static_cast<std::streamsize>(b.size()));
-            b.resize(static_cast<std::size_t>(f.gcount()));
-            return b;
-        };
         auto card = std::make_unique<VidexVideotermCard>(request.slot);
         std::string fwPath;
         for (const std::string_view candidate : {
@@ -290,15 +306,8 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         // CCS 7710: never refused — without CCS's PROMs it serves POM2's
         // own firmware page (Ccs7710Card.h).
         auto card = std::make_unique<Ccs7710Card>(request.slot);
-        auto read = [&](const char* rel) {
-            std::vector<uint8_t> b;
-            const std::string p = locate_(rel);
-            if (!p.empty()) {
-                std::ifstream f(p, std::ios::binary);
-                b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-            }
-            return b;
-        };
+        // 256 bytes each (Ccs7710Card::loadProms).
+        auto read = [&](const char* rel) { return readUpTo(locate_(rel), 256); };
         if (card->loadProms(read(Ccs7710Card::kPromHiPath), read(Ccs7710Card::kPromLoPath)))
             result.status = std::string("loaded: ") + Ccs7710Card::kPromHiPath + " + " + Ccs7710Card::kPromLoPath;
         else
@@ -311,13 +320,8 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         // DAN ][: never refused — without the card's EPROM it serves POM2's
         // own page (Dan2Card.h). Its SD images mount through the media bays.
         auto card = std::make_unique<Dan2Card>(request.slot);
-        std::vector<uint8_t> b;
-        const std::string p = locate_(Dan2Card::kEpromPath);
-        if (!p.empty()) {
-            std::ifstream f(p, std::ios::binary);
-            b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-        }
-        if (card->loadEprom(b))
+        // 512 bytes (Dan2Card::loadEprom).
+        if (card->loadEprom(readUpTo(locate_(Dan2Card::kEpromPath), 512)))
             result.status = std::string("loaded: ") + Dan2Card::kEpromPath;
         else
             result.status = "POM2's own firmware page";
@@ -329,11 +333,7 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         // PCPI Appli-Card. ROM-gated: the Z80 boots from its 2 KB ROM and has
         // nothing else to run (ApplicardCard.h).
         const std::string rom = locate_(ApplicardCard::kRomPath);
-        std::vector<uint8_t> bytes;
-        if (!rom.empty()) {
-            std::ifstream f(rom, std::ios::binary);
-            bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-        }
+        const std::vector<uint8_t> bytes = readUpTo(rom, ApplicardCard::kRomBytes);
         auto card = std::make_unique<ApplicardCard>();
         if (!card->loadRom(bytes)) {
             result.warningCategory = "Applicard";
@@ -352,13 +352,6 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         // Videx UltraTerm. ROM-gated like the Videoterm. A //e-class machine
         // takes the enhanced-//e set (MouseText glyphs) when it is present,
         // MAME's a2ultrme; everything else the original a2ulttrm.
-        const auto readFile = [](const std::string& path) {
-            std::vector<uint8_t> b;
-            if (path.empty()) return b;
-            std::ifstream f(path, std::ios::binary);
-            b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-            return b;
-        };
         auto card = std::make_unique<VidexUltratermCard>(request.slot);
         std::string fw, chars;
         const bool iie = profileConfig(request.profile).iieMode;
@@ -368,7 +361,8 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
         };
         for (std::size_t i = iie ? 0 : 1; i < 2; ++i) {
             const std::string f = locate_(sets[i].first), c = locate_(sets[i].second);
-            if (!f.empty() && !c.empty() && card->loadRoms(readFile(f), readFile(c))) {
+            if (!f.empty() && !c.empty() && card->loadRoms(readUpTo(f, VidexUltratermCard::kRomBytes),
+                               readUpTo(c, VidexUltratermCard::kCharBytes))) {
                 fw = f;
                 chars = c;
                 break;

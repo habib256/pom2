@@ -10,6 +10,44 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — The bug hunt's deferred items
+
+`docs/audits/bug-hunt-2026-11-18.md` § The deferred items of both rounds.
+
+**A ROM is the first file that loads, not the first that exists.** A 0-byte
+`apple2e.rom` used to hold the machine in //e mode with no firmware; startup,
+the profile switch and the CFFA now try the next candidate. "Reload ROM"
+after the first-launch download brings up the machine the next launch would.
+The ROM fetch no longer runs a host `unzip` / `tar` on a downloaded archive.
+
+**A TransWarp and a Zip Chip no longer take turns.** While the card holds
+the CPU the socket chip's speed stands down — it used to take over at ~3.9×
+exactly when the TransWarp asked for 1 MHz.
+
+**Printing is bounded in time and memory, and shareable.** Ghostscript runs
+on a wall-time budget (a looping job stream gets a minute, then a fifth of a
+core); the sheet stack has a 256 MiB budget beside its count; two POM2s on
+one print history lock around the index instead of overwriting each other's
+rows.
+
+**The paint editor asks before replacing, and a Load can be undone.** The
+sprite canvas draws runs, not one quad per pixel (WebGL's 16-bit indices).
+
+**Two cards with a picture**: the one asserting its video gets the screen,
+the Card Monitor shows the other. Hard reset clears the Disk II's IWM mode
+copy.
+
+**Step Out tells a dispatch from a return** by what the stack held when the
+step began — the level alone cannot (an inline-parameter return and a `PHA
+PHA RTS` jump after two pushed registers trace the same SP).
+
+**A RamWorks bank that is not installed is absent**, not an alias of an
+installed one: [B] the RamWorks III manual's bank table and Applied
+Engineering's own FindBanks routine. Reads `$FF`, keeps nothing.
+
+**The Printer panel no longer converts the whole spool under the machine
+lock every frame**: it keeps its copy and asks for what is new.
+
 ## 2026-11-18 — Bug hunt, round 2: a paint editor one alt-tab could kill, a slow FASTChip that ran fast, ROMs of any size
 
 `docs/audits/bug-hunt-2026-11-18.md` § Round 2.

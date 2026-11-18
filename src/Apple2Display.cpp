@@ -171,7 +171,7 @@ bool Apple2Display::staticTextFrameUnchanged(Memory& mem,
     // video RAM nor a soft switch — key on them or the repaint is skipped.
     {
         uint32_t fg = 0, bg = 0;
-        k.cardTextColours = (cardVideo_ && cardVideo_->textColours(fg, bg))
+        k.cardTextColours = cardTextColours(fg, bg)
             ? ((uint64_t{fg} << 32) | bg) : 0;
     }
     k.vram.resize(kLen * 2 + cromSize);
@@ -475,7 +475,7 @@ void Apple2Display::render(Memory& mem)
         Apple2Display* self;
         ~KeyPublisher() { self->commitTextFrameKey(); }
     } keyPublisher{this};
-    cardBorder_.store((cardVideo_ && !isMonochrome()) ? cardVideo_->borderColour() : 0,
+    cardBorder_.store(!isMonochrome() ? cardBorderNow() : 0,
                       std::memory_order_relaxed);
     // The video scanner reads RamWorks bank 0 whatever bank the CPU selected
     // (Memory::videoAuxData). The pointer moves with the bank, so it is

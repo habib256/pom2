@@ -323,9 +323,53 @@ public:
     void setCardVideoSource(pom2::CardVideoSource* c)
     {
         cardVideo_ = c;
+        // No source, no alternate — and a card is never both.
+        if (!c || c == cardVideoAlt_) cardVideoAlt_ = nullptr;
+        cardOnScreen_ = nullptr;
         framebufferMutated();
     }
     pom2::CardVideoSource* cardVideoSource() const { return cardVideo_; }
+    /// A SECOND card that can take the monitor by a rule of its own (an
+    /// UltraTerm beside a VidHD, a Videoterm beside an UltraTerm). The
+    /// display used to ask the source above alone, so the other card's
+    /// picture never reached the Apple II Screen however hard its own video
+    /// switch was on. Each frame the monitor goes to the card that is
+    /// ASSERTING its picture (cardVideoFor). Non-owning; cleared with the
+    /// source, and ignored without one.
+    void setCardVideoAlternate(pom2::CardVideoSource* c)
+    {
+        cardVideoAlt_ = (c && c != cardVideo_) ? c : nullptr;
+        framebufferMutated();
+    }
+    pom2::CardVideoSource* cardVideoAlternate() const { return cardVideoAlt_; }
+    /// The card the monitor listens to for a frame with these switches: the
+    /// alternate when its rule holds and the source's does not, the source
+    /// otherwise — so a tie, and a frame nobody asserts, keep the order
+    /// preferScreenSource chose. Null with no card.
+    pom2::CardVideoSource* cardVideoFor(bool textMode, bool an0) const
+    {
+        if (cardVideo_ && cardVideoAlt_ && !cardVideo_->ownsScreen(textMode, an0) &&
+            cardVideoAlt_->ownsScreen(textMode, an0))
+            return cardVideoAlt_;
+        return cardVideo_;
+    }
+    /// The card whose picture the last render() put on the monitor, null
+    /// when that frame was the Apple's. Written and read under stateMutex
+    /// (the Card Monitor panel shows the OTHER card of a pair).
+    const pom2::CardVideoSource* cardVideoOnScreen() const { return cardOnScreen_; }
+    /// The Apple's text colours / the border from the cards: the source's
+    /// answer, the alternate's when the source has none (a VidHD's $C022 /
+    /// $C034 beside an UltraTerm, whichever of the two holds the higher slot).
+    bool cardTextColours(uint32_t& fg, uint32_t& bg) const
+    {
+        return (cardVideo_ && cardVideo_->textColours(fg, bg)) ||
+               (cardVideoAlt_ && cardVideoAlt_->textColours(fg, bg));
+    }
+    uint32_t cardBorderNow() const
+    {
+        const uint32_t b = cardVideo_ ? cardVideo_->borderColour() : 0;
+        return (b || !cardVideoAlt_) ? b : cardVideoAlt_->borderColour();
+    }
     /// What reaches the monitor when a card has its own picture. `Auto` is
     /// the card's rule (the Videoterm's Soft Video Switch: TEXT + AN0);
     /// `Apple` and `Card` hold the monitor on one source, as a manual
@@ -339,7 +383,8 @@ public:
     bool cardOwnsMonitor(bool textMode, bool an0) const
     {
         if (!cardVideo_ || cardMonitor_ == CardMonitor::Apple) return false;
-        return cardMonitor_ == CardMonitor::Card || cardVideo_->ownsScreen(textMode, an0);
+        return cardMonitor_ == CardMonitor::Card ||
+               cardVideoFor(textMode, an0)->ownsScreen(textMode, an0);
     }
     /// The card's border colour (a VidHD's $C034) as of the last render(),
     /// 0xAABBGGRR, 0 = none. Latched under stateMutex by whichever render()
@@ -397,6 +442,8 @@ private:
     int  cardPictureW_ = 0;
     int  cardPictureH_ = 0;
     pom2::CardVideoSource* cardVideo_ = nullptr;   // non-owning, owned by SlotBus
+    pom2::CardVideoSource* cardVideoAlt_ = nullptr;   // the second taker, same ownership
+    const pom2::CardVideoSource* cardOnScreen_ = nullptr;   // cardVideoOnScreen()
     CardMonitor cardMonitor_ = CardMonitor::Auto;
     std::atomic<uint32_t> cardBorder_{0};                     // cardBorderColour()
     uint32_t monitorLitColor() const;   // the Apple text painters' lit colour
@@ -415,18 +462,23 @@ private:
     /// rule does not hold, after taking the card's buffer off the screen.
     bool renderCardPicture(Memory& mem, const Memory::DisplayState& state)
     {
+        // With two cards, the one asserting its picture THIS frame; under
+        // "Card video" with neither asserting, the source, as before.
+        const pom2::CardVideoSource* const src = cardVideoFor(state.textMode, state.an0);
         if (!cardOwnsMonitor(state.textMode, state.an0) ||
-            cardVideo_->pictureWidth() <= 0 || cardVideo_->pictureHeight() <= 0) {
+            src->pictureWidth() <= 0 || src->pictureHeight() <= 0) {
+            cardOnScreen_ = nullptr;
             if (useCardPicture_) { useCardPicture_ = false; framebufferMutated(); }
             return false;
         }
-        cardPictureW_ = cardVideo_->pictureWidth();
-        cardPictureH_ = cardVideo_->pictureHeight();
+        cardOnScreen_ = src;
+        cardPictureW_ = src->pictureWidth();
+        cardPictureH_ = src->pictureHeight();
         frameCard_.resize(static_cast<std::size_t>(cardPictureW_) *
                           static_cast<std::size_t>(cardPictureH_));
-        cardVideo_->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
-                             mem.videoNow(),
-                             pom2VideoTiming(mem.videoStandard()).cpuClockHz);
+        src->paintPicture(frameCard_.data(), monitorLitColor(), 0xFF000000u,
+                          mem.videoNow(),
+                          pom2VideoTiming(mem.videoStandard()).cpuClockHz);
         useCardPicture_ = true;
         framebufferMutated();
         signalProducedFlag    = false;

@@ -918,6 +918,20 @@ Verbatim port of MAME `bus/a2bus/a2eramworks3.cpp`. Tiers 1/4/8/16/
 `$C070-$C07F`) latch `bank = data & 0x7F`. Same accesses still
 pulse paddle one-shot mirror.
 
+**A bank number that is not installed selects nothing** *(2026-11-18)*: it
+reads `$FF`, and what is written under it is dropped at the next select —
+not an alias of an installed bank (the modulo POM2 used, on an uncited
+claim) and not the previous bank (AppleWin). [B] the RamWorks III User's
+Manual v1.4.1: each bank number belongs to one block of chips (Table 6-1),
+"the bank numbers are not necessarily linear", and AE's own FindBanks
+(p. 47: N / ~N at `$00/$01`, written from `$7F` down, read going up) is the
+contract — pinned in both write orders by `ramworks_smoke`. POM2 installs
+`$00..count-1`, which is the card's numbering for 256K / 512K / 1 MB; the
+"3 MB" tier is `$00-$2F` where the real card with its 2 Meg expander has
+`$00-$17, $30-$37, $50-$57, $70-$77` (the same 48 under FindBanks). [F]
+what an absent bank reads on the iron. The snapshot's bank byte carries the
+state in bit 7.
+
 Storage = `ramWorksBacking_`, one 80 KB slot per bank
 (`kRamWorksBankStride = 0x10000 + 0x1000 + 0x1000 + 0x2000`).
 The aux* arrays hold the bank the CPU selected; the scanner always sees
@@ -9845,6 +9859,14 @@ old writer's unwinding. A writer that dies disowns its queue on the way out
 Capped at 200 pages, deleting the PNGs as well as the rows — an emulator left
 running must not quietly fill a disk.
 
+**Two POM2s on one history** *(2026-11-18)*: merge, pick the page number,
+write the index and delete the evicted files are one step under a lock on
+`printouts/history/index.lock` (an empty file, never deleted; `flock` with a
+2 s bounded wait, then unlocked with one warning — a hung peer must not
+freeze the render thread). Never held across a PNG encode. Erase and clear
+merge first, so they act on the other instance's rows too. Pinned by
+`printer_history` (two instances, two threads, 80 pages).
+
 ### Printer sound (`PrinterSoundDevice`)
 
 **Three voices, in this order of precedence.** (1) The optional
@@ -12106,9 +12128,10 @@ resolves to the file it wrote, and reports a shadowing file in an earlier
 root instead of counting a success.
 HTTPS is the system `curl`. MAME zips are unpacked in-process
 (`ZipMember.h`: stored and deflated members, stb_image's inflater, CRC and
-size checked); `unzip` or `tar` only for a member that reader cannot handle
-— GNU tar does not read zip at all, which is why the host tools stopped
-being the first choice.
+size checked). No host `unzip` / `tar` since 2026-11-18: a member that
+reader cannot handle (another method, encrypted) is an error — every archive
+POM2 is served is stored or deflate, and the fallback let the downloaded
+archive choose to run a host tool whose output was not size-capped.
 Disabled under Emscripten (no helper processes).
 
 **2026-09-16 — the collection caught up.** RetroBIOS

@@ -31,7 +31,11 @@ bool Memory::validateSnapshotState(const uint8_t* data, size_t n,
     };
     if (!need(5)) return false;
     const uint32_t banks = u32();
-    const uint8_t bank = data[pos++];
+    // Bit 7 says "an uninstalled bank is selected" (MemorySnapshot.cpp), and
+    // means something only on a card with more than one bank.
+    const uint8_t bankByte = data[pos++];
+    if (banks <= 1 && (bankByte & 0x80)) return false;
+    const uint8_t bank = bankByte & 0x7F;
     const uint32_t count = banks == 0 ? 1 : banks; // legacy stock encoding
     if (savedRamWorksBanks) *savedRamWorksBanks = count;
     if (count > 128 || bank >= count) return false;

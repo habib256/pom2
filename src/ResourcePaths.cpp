@@ -259,4 +259,21 @@ std::string findFirstResource(const std::vector<std::string>& candidates)
     return {};
 }
 
+std::string findFirstResourceThat(
+    const std::vector<std::string>& candidates,
+    const std::function<bool(const std::string& path)>& loads)
+{
+    std::vector<std::string> refused;
+    for (const std::string& c : candidates) {
+        std::string r = findResource(c);
+        if (r.empty()) continue;
+        bool seen = false;
+        for (const std::string& f : refused) if (f == r) { seen = true; break; }
+        if (seen) continue;
+        if (loads && loads(r)) return r;
+        refused.push_back(std::move(r));
+    }
+    return {};
+}
+
 } // namespace pom2

@@ -305,6 +305,46 @@ int main()
         expect(!disp.showingCardPicture(), "back to the soft switch: the Apple");
         mem.memWrite(0xC051, 0);
         mem.memWrite(0xC059, 0);
+        // Two cards that can both take the monitor. The display asked the
+        // source alone, so the Videoterm's 80 columns never reached the
+        // screen beside a card in a later slot. The monitor now follows the
+        // card ASSERTING its picture; a tie keeps the source.
+        {
+            struct Switched : pom2::CardVideoSource {
+                bool on = false;
+                bool ownsScreen(bool, bool) const override { return on; }
+                int  pictureWidth()  const override { return 4; }
+                int  pictureHeight() const override { return 2; }
+                void paintPicture(uint32_t* d, uint32_t, uint32_t, uint64_t, double) const override
+                { for (int i = 0; i < 8; ++i) d[i] = 0xFF123456u; }
+            } later;
+            disp.setCardVideoSource(&later);       // the later slot: the source
+            disp.setCardVideoAlternate(card);      // the Videoterm: the other taker
+            disp.render(mem);                      // TEXT + AN0, `later` switched off
+            expect(disp.showingCardPicture() && disp.width() == 720 &&
+                   disp.cardVideoOnScreen() == card,
+                   "two takers: the one asserting its picture gets the screen");
+            later.on = true;
+            disp.render(mem);
+            expect(disp.width() == 4 && disp.cardVideoOnScreen() == &later,
+                   "both asserting: the source, as before");
+            mem.memWrite(0xC058, 0);               // AN0 off: only `later` asserts
+            disp.render(mem);
+            expect(disp.width() == 4 && disp.pixels()[0] == 0xFF123456u,
+                   "the source alone asserting");
+            later.on = false;
+            disp.render(mem);
+            expect(!disp.showingCardPicture() && disp.cardVideoOnScreen() == nullptr,
+                   "neither asserting: the Apple's picture");
+            disp.setCardMonitor(CM::Card);
+            disp.render(mem);
+            expect(disp.width() == 4, "card video only, neither asserting: the source");
+            disp.setCardMonitor(CM::Auto);
+            mem.memWrite(0xC059, 0);
+            disp.setCardVideoSource(card);         // back to the lone Videoterm
+            expect(disp.cardVideoAlternate() == nullptr,
+                   "a card made the source stopped being the alternate");
+        }
         // Unwiring the card returns the monitor to the Apple.
         disp.setCardVideoSource(nullptr);
         disp.render(mem);

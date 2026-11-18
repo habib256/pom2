@@ -271,31 +271,52 @@ MainWindow::MainWindow(bool forceIIPlus)
     // findResource resolves each candidate against the CWD, the build/-
     // relative roots (dev), and the executable-relative / FHS roots
     // (portable bundle, AppImage, /usr/bin). See ResourcePaths.h.
-    bool iiePresent = false;
-    if (!forceIIPlus) {
-        for (const char* p : iieRomCandidates) {
-            std::string r = pom2::findResource(p);
-            if (!r.empty()) { romPath = r; iiePresent = true; break; }
-        }
-    }
-    bool iiPlusPresent = false;
-    if (!iiePresent) {
-        for (const std::string& p : romCandidates) {
-            std::string r = pom2::findResource(p);
-            if (!r.empty()) { romPath = r; iiPlusPresent = true; break; }
-        }
-    }
+    //
+    // "Present" means it LOADS, not that a file of that name exists: a
+    // 0-byte or half-copied roms/apple2e.rom used to put the machine in //e
+    // mode, fail to load, and never reach the valid apple2p.rom beside it —
+    // the documented fallback (//e → ][+ → //c PAL) only worked for a file
+    // that was absent (bug hunt 2026-11-18 round 2). The check is the real
+    // loader's own staging step (open, size, read); the constructor holds no
+    // lock and the worker is not started, so the file I/O is free here.
+    const auto mainRomLoads = [](const std::string& path) {
+        Memory::AppleIIRomImage image;
+        std::string error;
+        if (Memory::prepareAppleIIRom(path.c_str(), image, error)) return true;
+        pom2::log().warn("ROM", "Skipping " + path + ": " + error);
+        return false;
+    };
+    const auto firstLoadable = [&](pom2::SystemProfile p) -> std::string {
+        if (p == pom2::SystemProfile::AppleIIePAL)
+            return pom2::findFirstResourceThat(
+                std::vector<std::string>(std::begin(iieRomCandidates),
+                                         std::end(iieRomCandidates)),
+                mainRomLoads);
+        if (p == pom2::SystemProfile::AppleIIPlus)
+            return pom2::findFirstResourceThat(romCandidates, mainRomLoads);
+        return pom2::findFirstResourceThat(
+            pom2::profileConfig(p).romProbeOrder, mainRomLoads);
+    };
     // A desktop package ships no firmware (bundle.manifest) — it is fetched
     // on request; the browser bundle keeps the //c and //e ROMs. With neither
     // a //e nor a ][+ ROM but the //c firmware present, the machine is the
     // //c PAL — the browser demo's — and the saved-profile catch-up below
-    // installs it, ROM and all.
-    bool iicOnly = false;
-    if (!iiePresent && !iiPlusPresent && !forceIIPlus) {
-        for (const auto& cand :
-             pom2::profileConfig(pom2::SystemProfile::AppleIIcPAL).romProbeOrder)
-            if (!pom2::findResource(cand).empty()) { iicOnly = true; break; }
-    }
+    // installs it, ROM and all. The order itself lives in
+    // pom2::defaultProfileForRoms, shared with "Reload ROM"
+    // (MainWindow::reloadMissingFirmware).
+    std::string probedRom;
+    const auto probed = pom2::defaultProfileForRoms(
+        [&](pom2::SystemProfile p) {
+            std::string r = firstLoadable(p);
+            if (r.empty()) return false;
+            probedRom = std::move(r);
+            return true;
+        },
+        !forceIIPlus);
+    const bool iiePresent    = probed == pom2::SystemProfile::AppleIIePAL;
+    const bool iiPlusPresent = probed == pom2::SystemProfile::AppleIIPlus;
+    const bool iicOnly       = probed == pom2::SystemProfile::AppleIIcPAL;
+    if (iiePresent || iiPlusPresent) romPath = probedRom;
     charRomPath.clear();
     // Restore user-selected character ROM locale (toolbar dropdown).
     // ProfileDefault keeps the legacy auto-probe; anything else maps

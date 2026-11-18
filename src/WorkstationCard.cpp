@@ -62,14 +62,19 @@ bool WorkstationCard::loadRom(const std::string& path)
     std::ifstream f(path, std::ios::binary);
     if (!f.good()) return false;
 
-    std::vector<uint8_t> image(kRomBytes, 0);
+    // One byte over, so an OVERSIZED file is refused as well as a short
+    // one: the first 64 KiB of a larger file is not the card's EPROM, and it
+    // would be handed to the card's own 65C02 to execute (bug hunt
+    // 2026-11-18 round 2).
+    std::vector<uint8_t> image(kRomBytes + 1, 0);
     f.read(reinterpret_cast<char*>(image.data()),
            static_cast<std::streamsize>(image.size()));
-    if (f.gcount() != static_cast<std::streamsize>(image.size())) {
+    if (f.gcount() != static_cast<std::streamsize>(kRomBytes)) {
         log().warn("Workstation",
                    "ROM " + path + " is not a 64 KiB dump — card not plugged");
         return false;
     }
+    image.resize(kRomBytes);
 
     rom_ = std::move(image);
     romLoaded_ = true;
