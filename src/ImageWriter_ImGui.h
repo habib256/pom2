@@ -120,6 +120,21 @@ private:
     bool  follow_   = true;      // snap to the newest sheet
     int   zoomMode_ = 0;         // 0 = fit width, else index into kZooms
     std::vector<uint8_t> rgba_;  // scratch, reused across uploads
+
+    /// The fanfold view: one texture per sheet in view (sheetTexture).
+    static constexpr int kNoSheetKey = -0x7FFFFFFF;
+    struct SheetTex {
+        unsigned id = 0;
+        int      w = 0, h = 0;
+        int      key = kNoSheetKey;
+        uint32_t rev = 0;
+        int      lastFrame = 0;
+    };
+    std::vector<SheetTex> sheetTex_;
+    /// The arrows asked for a sheet: bring it to the top of the view.
+    bool scrollToShown_ = false;
+    unsigned sheetTexture(const ImageWriter::Page& p, int key, uint32_t rev, int frame);
+    void     trimSheetTextures(int frame);
     std::string status_;
 
     void uploadPage(const ImageWriter::Page& p, int pageIdx, uint32_t rev);

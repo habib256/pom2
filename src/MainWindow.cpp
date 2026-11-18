@@ -304,6 +304,7 @@ MainWindow::MainWindow(bool forceIIPlus)
     // installs it, ROM and all. The order itself lives in
     // pom2::defaultProfileForRoms, shared with "Reload ROM"
     // (MainWindow::reloadMissingFirmware).
+    if (forceIIPlus) launchProfile_ = pom2::SystemProfile::AppleIIPlus;
     std::string probedRom;
     const auto probed = pom2::defaultProfileForRoms(
         [&](pom2::SystemProfile p) {

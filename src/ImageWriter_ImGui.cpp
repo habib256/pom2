@@ -104,6 +104,71 @@ void ImageWriter_ImGui::shutdown()
     texPage_ = -2;
     texRev_  = 0;
     texW_ = texH_ = 0;
+    for (auto& t : sheetTex_) {
+        if (t.id) { GLuint g = t.id; glDeleteTextures(1, &g); }
+    }
+    sheetTex_.clear();
+}
+
+// One texture per sheet IN VIEW. A completed sheet never changes (its key
+// carries droppedPageCount(), as cacheKey does); the sheet in the printer
+// (key -1) re-uploads when the raster revision moves.
+unsigned ImageWriter_ImGui::sheetTexture(const ImageWriter::Page& p, int key,
+                                         uint32_t rev, int frame)
+{
+    SheetTex* slot = nullptr;
+    for (auto& t : sheetTex_)
+        if (t.key == key) { slot = &t; break; }
+    const bool fresh = slot && slot->w == p.w && slot->h == p.h &&
+                       (key >= 0 || slot->rev == rev);
+    if (slot && fresh) { slot->lastFrame = frame; return slot->id; }
+    if (!slot) {
+        // Reuse the texture of a sheet that has left the view, else a new one.
+        for (auto& t : sheetTex_)
+            if (t.lastFrame < frame - 1 && (!slot || t.lastFrame < slot->lastFrame))
+                slot = &t;
+        if (!slot) { sheetTex_.emplace_back(); slot = &sheetTex_.back(); }
+    }
+    ImageWriter::pageToRgba(p, rgba_);
+    if (!slot->id) {
+        GLuint g = 0;
+        glGenTextures(1, &g);
+        glBindTexture(GL_TEXTURE_2D, g);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        slot->id = g;
+        slot->w = slot->h = 0;
+    }
+    glBindTexture(GL_TEXTURE_2D, slot->id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (p.w != slot->w || p.h != slot->h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, p.w, p.h, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
+        slot->w = p.w;
+        slot->h = p.h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.w, p.h,
+                        GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
+    }
+    slot->key = key;
+    slot->rev = rev;
+    slot->lastFrame = frame;
+    return slot->id;
+}
+
+// Keep the textures of the sheets in view plus a couple to scroll onto.
+void ImageWriter_ImGui::trimSheetTextures(int frame)
+{
+    constexpr std::size_t kKeep = 3;
+    while (sheetTex_.size() > kKeep) {
+        auto oldest = std::min_element(sheetTex_.begin(), sheetTex_.end(),
+            [](const SheetTex& a, const SheetTex& b) { return a.lastFrame < b.lastFrame; });
+        if (oldest->lastFrame >= frame) break;      // all of them are on screen
+        if (oldest->id) { GLuint g = oldest->id; glDeleteTextures(1, &g); }
+        sheetTex_.erase(oldest);
+    }
 }
 
 void ImageWriter_ImGui::uploadPage(const ImageWriter::Page& p,
@@ -306,16 +371,10 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
                    ? iw.completedPage(static_cast<size_t>(s.shown))
                    : iw.currentPage();
     };
-    // Texture-cache identity of the shown sheet (-1 = the one in progress).
-    // It includes droppedPageCount() because when the cap drops the oldest
-    // sheet every index renames a different page, and a bare index let the
-    // cached texture show the dropped sheet's pixels under the new sheet's
-    // label.
-    auto cacheKey = [&iw](const Selection& s) {
-        return (s.shown < static_cast<int>(s.nDone))
-                   ? static_cast<int>(iw.droppedPageCount()) + s.shown
-                   : -1;
-    };
+    // A completed sheet's texture key includes droppedPageCount(): when the
+    // cap drops the oldest sheet every index renames a different page, and a
+    // bare index let the cached texture show the dropped sheet's pixels under
+    // the new sheet's label (sheetTexture).
 
     Selection sel = resolve();
 
@@ -324,6 +383,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
     if (ImGui::Button(ICON_FA_ARROW_LEFT "##pgPrev")) {
         viewPage_ = sel.shown - 1;
         follow_   = false;
+        scrollToShown_ = true;
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -331,6 +391,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
     if (ImGui::Button(ICON_FA_ARROW_RIGHT "##pgNext")) {
         viewPage_ = (sel.shown + 1 >= sel.nTotal - 1) ? -1 : sel.shown + 1;
         follow_   = (sel.shown + 1 >= sel.nTotal - 1);
+        scrollToShown_ = true;
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -893,8 +954,12 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         historyFile_.clear();
     }
 
-    if (!showingHistory)
-        uploadPage(sheet(sel), cacheKey(sel), iw.revision());
+    // A request to re-upload (texPage_ = -2, set wherever the stack changed
+    // under the same indices) also empties the fanfold's texture cache.
+    if (texPage_ == -2) {
+        for (auto& t : sheetTex_) t.key = kNoSheetKey;
+        if (!showingHistory) texPage_ = -4;      // seen; no live key is -4
+    }
 
     ImGui::BeginChild("##iwPaper", ImVec2(0, 0), true,
                       ImGuiWindowFlags_HorizontalScrollbar);
@@ -904,29 +969,23 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
             "Slot Config, then from BASIC:   PR#1 : PRINT \"HELLO\" : PR#0");
         ImGui::Separator();
     }
-    if (tex_ && texW_ > 0) {
-        // An ImageWriter II is fed continuous fanfold stock, not cut sheets:
-        // 9.5" wide paper = the 8.5" printable body plus a 0.5" pin-feed
-        // strip each side, each strip perforated off along a vertical line
-        // of holes on 0.5" centres, and one sheet joined to the next by a
-        // horizontal perforation. Drawing only the printable raster made
-        // POM2's paper look like an inkjet A4 sheet. The strips are paper,
-        // not ink — they're decoration around the raster, so the page
-        // bitmap and the "Save sheet as PNG" export stay pure printable
-        // area. (Apple, *ImageWriter II Owner's Manual*, "Paper".)
-        const int   dpi      = iw.dpi();
+
+    // An ImageWriter II is fed continuous fanfold stock, not cut sheets:
+    // 9.5" wide paper = the 8.5" printable body plus a 0.5" pin-feed
+    // strip each side, each strip perforated off along a vertical line
+    // of holes on 0.5" centres, and one sheet joined to the next by a
+    // horizontal perforation. Drawing only the printable raster made
+    // POM2's paper look like an inkjet A4 sheet. The strips are paper,
+    // not ink — they're decoration around the raster, so the page
+    // bitmap and the "Save sheet as PNG" export stay pure printable
+    // area. (Apple, *ImageWriter II Owner's Manual*, "Paper".)
+    auto drawSheet = [](const ImVec2& p0, int w, int h, int dpi, float scale,
+                        unsigned texId) {
         const float stripPx  = 0.5f  * dpi;     // pin-feed strip
         const float holeR    = 0.078f * dpi;    // ⌀ ~4 mm
         const float holePitch= 0.5f  * dpi;     // holes on 1/2" centres
-        const float totalW   = texW_ + 2.0f * stripPx;
-
-        const float avail = ImGui::GetContentRegionAvail().x;
-        const float scale = (zoomMode_ == 0)
-                          ? std::max(0.05f, avail / totalW)
-                          : kZooms[zoomMode_ - 1];
-
-        const ImVec2 p0 = ImGui::GetCursorScreenPos();
-        const ImVec2 p1(p0.x + totalW * scale, p0.y + texH_ * scale);
+        const float totalW   = w + 2.0f * stripPx;
+        const ImVec2 p1(p0.x + totalW * scale, p0.y + h * scale);
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
         const ImU32 kPaper = IM_COL32(250, 249, 244, 255);
@@ -936,7 +995,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         dl->AddRectFilled(p0, p1, kPaper);
 
         // Sprocket holes down both strips.
-        for (float y = holePitch * 0.5f; y < texH_; y += holePitch) {
+        for (float y = holePitch * 0.5f; y < h; y += holePitch) {
             const float cy = p0.y + y * scale;
             for (int side = 0; side < 2; ++side) {
                 const float cx = p0.x + (side ? totalW - stripPx * 0.5f
@@ -948,7 +1007,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         // horizontal where this sheet joins the next.
         auto dottedV = [&](float x) {
             const float sx = p0.x + x * scale;
-            for (float y = 0; y < texH_; y += 0.06f * dpi)
+            for (float y = 0; y < h; y += 0.06f * dpi)
                 dl->AddLine(ImVec2(sx, p0.y + y * scale),
                             ImVec2(sx, p0.y + (y + 0.03f * dpi) * scale),
                             kPerf, 1.0f);
@@ -961,18 +1020,107 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
                             kPerf, 1.0f);
         };
         dottedV(stripPx);
-        dottedV(stripPx + texW_);
+        dottedV(stripPx + w);
         dottedH(0.0f);
-        dottedH(static_cast<float>(texH_));
+        dottedH(static_cast<float>(h));
 
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + stripPx * scale, p0.y));
-        ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex_)),
-                     ImVec2(texW_ * scale, texH_ * scale));
-        // Reserve the strips + the joins so the scroll region covers them.
-        ImGui::SetCursorScreenPos(p0);
-        ImGui::Dummy(ImVec2(totalW * scale, texH_ * scale));
+        if (texId)
+            dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(texId)),
+                         ImVec2(p0.x + stripPx * scale, p0.y),
+                         ImVec2(p0.x + (stripPx + w) * scale, p1.y));
+    };
+
+    if (showingHistory) {
+        // A stored page: one sheet, on its own.
+        if (tex_ && texW_ > 0) {
+            const int   dpi    = iw.dpi();
+            const float totalW = texW_ + 1.0f * dpi;
+            const float avail  = ImGui::GetContentRegionAvail().x;
+            const float scale  = (zoomMode_ == 0)
+                               ? std::max(0.05f, avail / totalW)
+                               : kZooms[zoomMode_ - 1];
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            drawSheet(p0, texW_, texH_, dpi, scale, tex_);
+            ImGui::Dummy(ImVec2(totalW * scale, texH_ * scale));
+        } else {
+            ImGui::TextDisabled("(no page)");
+        }
     } else {
-        ImGui::TextDisabled("(no page)");
+        // ── The fanfold: every sheet on the stack, then the one in the
+        // printer, joined top to bottom as the paper is. The scrollbar on
+        // the right pulls the earlier pages back into view — until
+        // 2026-11-18 the panel showed ONE sheet and the bar only moved
+        // within it. Only the sheets in view hold a texture (a 32-sheet
+        // stack at 288 dpi would be a gigabyte of them).
+        const int   dpi     = iw.dpi();
+        const float stripPx = 0.5f * dpi;
+        const ImageWriter::Page& live = iw.currentPage();
+        const float fitW  = std::max(1.0f, live.w + 2.0f * stripPx);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float viewH = ImGui::GetWindowHeight();
+        const float scale = (zoomMode_ == 0)
+                          ? std::max(0.05f, avail / fitW)
+                          : kZooms[zoomMode_ - 1];
+
+        // The user took the paper in hand: wheel, or the scrollbar itself.
+        const ImGuiIO& io = ImGui::GetIO();
+        const ImVec2 wPos = ImGui::GetWindowPos();
+        const ImVec2 wSize = ImGui::GetWindowSize();
+        const bool hovered = ImGui::IsWindowHovered(
+            ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        const bool onBar = io.MousePos.x >= wPos.x + wSize.x - ImGui::GetStyle().ScrollbarSize &&
+                           io.MousePos.x <  wPos.x + wSize.x &&
+                           io.MousePos.y >= wPos.y && io.MousePos.y < wPos.y + wSize.y;
+        const bool userScrolled =
+            (hovered && io.MouseWheel != 0.0f && !io.KeyCtrl) ||
+            (onBar && ImGui::IsMouseDown(ImGuiMouseButton_Left));
+        if (userScrolled) { follow_ = false; scrollToShown_ = false; }
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+        const int frame = ImGui::GetFrameCount();
+        std::vector<float> tops(static_cast<size_t>(sel.nTotal) + 1, 0.0f);
+        for (int i = 0; i < sel.nTotal; ++i) {
+            const bool done = i < static_cast<int>(sel.nDone);
+            const ImageWriter::Page& pg =
+                done ? iw.completedPage(static_cast<size_t>(i)) : live;
+            const float w = (pg.w + 2.0f * stripPx) * scale;
+            const float h = pg.h * scale;
+            tops[static_cast<size_t>(i)] = ImGui::GetCursorPosY();
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            if (pg.w > 0 && pg.h > 0 &&
+                ImGui::IsRectVisible(p0, ImVec2(p0.x + w, p0.y + h))) {
+                const int key = done
+                    ? static_cast<int>(iw.droppedPageCount()) + i : -1;
+                drawSheet(p0, pg.w, pg.h, dpi, scale,
+                          sheetTexture(pg, key, iw.revision(), frame));
+            }
+            ImGui::Dummy(ImVec2(w, h));
+        }
+        tops[static_cast<size_t>(sel.nTotal)] = ImGui::GetCursorPosY();
+        ImGui::PopStyleVar();
+        trimSheetTextures(frame);
+
+        if (follow_ || scrollToShown_) {
+            // Follow keeps the print head in view on the sheet in the
+            // printer (the paper climbs as it prints); a sheet picked with
+            // the arrows comes to the top.
+            const size_t f = static_cast<size_t>(sel.shown);
+            float target = tops[f];
+            if (follow_ && sel.shown == sel.nTotal - 1) {
+                const float head = static_cast<float>(iw.status().headY) * dpi * scale;
+                target = std::max(tops[f], tops[f] + head - viewH * 0.6f);
+            }
+            ImGui::SetScrollY(target);
+            scrollToShown_ = false;
+        } else {
+            // Not following: the sheet named above ("Sheet n / N", Save
+            // sheet) is the one the view is on.
+            const float probe = ImGui::GetScrollY() + viewH * 0.4f;
+            int on = sel.nTotal - 1;
+            for (int i = 0; i < sel.nTotal; ++i)
+                if (probe < tops[static_cast<size_t>(i) + 1]) { on = i; break; }
+            viewPage_ = (on >= sel.nTotal - 1) ? -1 : on;
+        }
     }
     ImGui::EndChild();
 

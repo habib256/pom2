@@ -1022,6 +1022,15 @@ public:
     /// True while $C073 names a bank that is not installed (reads $FF,
     /// writes kept nowhere); ramWorksBank() is then the last installed one.
     bool     ramWorksBankAbsent() const { return ramWorksAbsent_; }
+    /// The number a program writes to $C073 for the installed bank at
+    /// backing index `slot` (ramWorksBank() is that index): the same value,
+    /// except on the 3 MB card, whose expander banks are not contiguous.
+    uint8_t  ramWorksBankNumber(uint8_t slot) const
+    {
+        if (ramWorksBanks_ == 48 && slot >= 24)
+            return static_cast<uint8_t>(0x30 + ((slot - 24) / 8) * 0x20 + (slot - 24) % 8);
+        return slot;
+    }
 
     // IIe memory mode flags. Bit positions are POM2's own (we don't need to
     // match AppleWin's MF_* layout), but they are a FILE FORMAT: the word is
@@ -1290,6 +1299,19 @@ private:
     bool ramWorksAwayFromBank0() const
     { return ramWorksBanks_ > 1 && (ramWorksBank_ != 0 || ramWorksAbsent_); }
     void ramWorksSwapToBank(uint8_t newBank);  // memcpy in/out
+    /// The backing slot behind a bank NUMBER, or -1 when no chip answers to
+    /// it. Linear, except the 3 MB card (ramWorksSwapToBank has the table).
+    int  ramWorksSlotForBank(uint8_t bank) const
+    {
+        if (ramWorksBanks_ == 48) {
+            if (bank < 0x18) return bank;                       // $00-$17
+            const int block = bank >> 5;                        // $30 / $50 / $70
+            if (block >= 1 && (bank & 0x18) == 0x10)
+                return 24 + (block - 1) * 8 + (bank & 0x07);
+            return -1;
+        }
+        return bank < ramWorksBanks_ ? bank : -1;
+    }
     std::vector<uint8_t> characterRom;
     bool charRomLowercase_ = false;   // see charRomHasLowercase()
     // True when `characterRom` holds a full 8 KB two-set part whose active

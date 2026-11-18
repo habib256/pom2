@@ -888,10 +888,17 @@ void Memory::ramWorksSwapToBank(uint8_t newBank)
     //     the floating bus. A write followed by a read under the SAME select
     //     reads back (the scratch below) — on the card it would not. Settled
     //     by: reading an unpopulated bank on a real RamWorks III.
-    // POM2 installs banks $00..count-1, so 256K / 512K / 1 MB match Table
-    // 6-1; "3 MB" is $00-$2F where the card with its 2 Meg expander has
-    // $00-$17, $30-$37, $50-$57, $70-$77 (same 48 banks under FindBanks).
-    const bool nowAbsent = newBank >= ramWorksBanks_;
+    // The installed banks are numbered as Table 6-1 numbers them
+    // (ramWorksSlotForBank): $00..count-1 for 256K / 512K / 1 MB, and for
+    // the 3 MB card — the 1 MB board with a 2 Meg expander — $00-$17,
+    // $30-$37, $50-$57, $70-$77, the "48 valid banks" of ch. 7. POM2 had
+    // them at $00-$2F until 2026-11-18. The 8 MB tier is not an Applied
+    // Engineering configuration: all 128 numbers, as MAME has them [D].
+    // `ramWorksBank_` stays the BACKING index, 0..count-1 (snapshots, the
+    // debugger's aux<n>).
+    const int  slot = ramWorksSlotForBank(newBank);
+    const bool nowAbsent = slot < 0;
+    newBank = static_cast<uint8_t>(nowAbsent ? 0 : slot);
     if (!nowAbsent && !ramWorksAbsent_ && newBank == ramWorksBank_) return;
     if (nowAbsent && ramWorksAbsent_) return;   // one absent bank is as empty as another
 

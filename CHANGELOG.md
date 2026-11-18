@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — The ImageWriter's paper is one fanfold
+
+The ImageWriter panel showed one sheet at a time; the scrollbar on the right
+only moved within it. A pin-feed printer's paper is continuous: every sheet
+on the stack and the one in the printer are now drawn joined top to bottom,
+and the scrollbar pulls the earlier pages back into view. Follow keeps the
+print head in view (the paper climbs as it prints) and lets go as soon as
+the wheel or the scrollbar is used; the arrows bring a sheet to the top;
+"Sheet n / N" and Save sheet name the sheet the view is on. Only the sheets
+in view hold a texture — a 32-sheet stack at 288 dpi would be a gigabyte of
+them. A stored page from the history is still shown on its own.
+
+**The 3 MB RamWorks has the card's bank numbers** — `$00-$17, $30-$37,
+$50-$57, $70-$77` ([B] RamWorks III manual, Table 6-1), not `$00-$2F`. A
+snapshot of a 3 MB machine taken earlier loads, with its upper 24 banks at
+the new numbers.
+
+**"Reload ROM" keeps the command line's machine**: a ROM-less `--ii-plus` or
+`--preset` session that downloads its firmware comes up on that machine.
+
 ## 2026-11-18 — The bug hunt's deferred items
 
 `docs/audits/bug-hunt-2026-11-18.md` § The deferred items of both rounds.

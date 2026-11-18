@@ -157,8 +157,12 @@ void MainWindow::reloadMissingFirmware()
     // nothing is persisted here (the normal exit does that).
     if (!romLoaded_) {
         std::optional<pom2::SystemProfile> target;
-        const std::string saved =
-            settings ? settings->getString("system_profile", "") : std::string();
+        // The command line named the machine (`--ii-plus`, `--preset`): that
+        // one or none — a session asked to be a ][+ does not come up a //e
+        // because the download also brought the //e's firmware.
+        if (launchProfile_ && profileRomLoads(*launchProfile_)) target = launchProfile_;
+        const std::string saved = (launchProfile_ || !settings)
+            ? std::string() : settings->getString("system_profile", "");
         if (!saved.empty()) {
             const pom2::SystemProfile p = pom2::profileFromKey(saved);
             if (profileRomLoads(p)) target = p;
@@ -166,10 +170,12 @@ void MainWindow::reloadMissingFirmware()
         // A profile other than the ROM-less fallback was put there on
         // purpose (a session, a failed File ▸ Reload ROM): keep it if it can
         // be loaded now.
-        if (!target && activeProfile != pom2::SystemProfile::AppleIIPlus &&
+        if (!target && !launchProfile_ &&
+            activeProfile != pom2::SystemProfile::AppleIIPlus &&
             profileRomLoads(activeProfile))
             target = activeProfile;
-        if (!target) target = pom2::defaultProfileForRoms(profileRomLoads);
+        if (!target && !launchProfile_)
+            target = pom2::defaultProfileForRoms(profileRomLoads);
         if (target) {
             restoringSavedProfile_ = true;
             applyProfile(*target);
