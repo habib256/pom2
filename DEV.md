@@ -3806,10 +3806,12 @@ lines. Pinned by `passport_midi` (both chips' data-sheet numbers, a 6502
 sending a Note On through slot 2 with 320 µs between bytes, the OR'd IRQ,
 the assembler, the exact SMF bytes), `card_snapshot_contract`,
 `slot_configuration_coordinator` and the v7 session kind `PassportMidi`.
-The WinMM backend was syntax-checked with MinGW (`-Wall -Wextra -Wshadow
--Werror`) on 2026-11-18, not run; the ALSA one has not been compiled at all —
-it only builds where CMake finds ALSA, so a Linux CI job without
-`libasound2-dev` takes the null backend.
+Compiled, not run: the WinMM backend by the Windows CI job (MSVC) and the
+ALSA one by the Linux quick-compile job (GCC `-Werror`), which installs
+`libasound2-dev` and fails if `HostMidiPort_alsa.cpp` is absent from the
+build — CMake falls back to the null backend silently when it finds no ALSA,
+and that check is what keeps the fallback from passing for coverage
+(first green run 2026-11-19). Only the macOS backend has been heard.
 
 ## TransWarp (Applied Engineering)
 

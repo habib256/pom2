@@ -10,6 +10,15 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-19 — Both non-macOS MIDI backends compiled in CI
+
+The Linux quick-compile job (GCC, `-Werror`) now installs `libasound2-dev`
+and fails if `HostMidiPort_alsa.cpp` is missing from the build, so a runner
+without ALSA can no longer pass by silently taking the null backend. Its
+first run (CI run 44380073596, commit `ebef14e1`) compiled the ALSA backend
+cleanly, and the Windows job compiled the WinMM one under MSVC. Neither has
+been RUN against a synthesizer yet; the macOS backend is the only one heard.
+
 ## 2026-11-18 — A WOZ cell that is not a whole LSS cycle (STORAGE-016): Prisoner 2 boots
 
 `optimal_bit_timing` is in 125 ns units, a quarter of the LSS cycle, and
