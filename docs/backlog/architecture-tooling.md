@@ -20,11 +20,12 @@ an explicit request before scheduling.
 | [ARCH-009](#arch-009) | 🟠 | Partial: Uthernet panel only | Remaining ImGui panel concurrency coverage |
 | [ARCH-003](#arch-003) | 🟡 | Confirmed open | ThreadSanitizer: the GUI half is still open. |
 | [ARCH-008](#arch-008) | 🟡 | Partial: sprite seam landed; paint seam frozen | `hgrpaint/` has no headless harness |
-| [ARCH-010](#arch-010) | 🟡 | Confirmed open (post-1.0) | Scattered config |
+| [ARCH-010](#arch-010) | 🟡 | Confirmed open (not a release blocker) | Scattered config |
 | [ARCH-011](#arch-011) | 🟡 | Needs decision | `stateMutex` shared CPU+UI |
 | [ARCH-007](#arch-007) | 🧊 | Frozen — triage 2026-10-28 (won't do) | Z80/SoftCard cleanup backlog |
-| [ARCH-012](#arch-012) | 🟢 | Confirmed open (post-1.0) | Inconsistent `pom2::` namespace |
+| [ARCH-012](#arch-012) | 🟢 | Confirmed open (not a release blocker) | Inconsistent `pom2::` namespace |
 | [ARCH-013](#arch-013) | 🟢 | Confirmed open | Legacy M6502 style |
+| [ARCH-017](#arch-017) | 🟢 | Ready | Paravirtual test port: pom2_headless as a 6502 unit-test runner |
 
 <a id="arch-016"></a>
 
@@ -111,7 +112,7 @@ that the older architectural debt has been resolved.
 **Additional original evidence:**
 
 - 🟡 **Two ceilings were raised instead of splitting — the debt.** *(~1 d for
-  ImageWriter, less for Memory; post-1.0, ruling
+  ImageWriter, less for Memory; not a release blocker, ruling
   [R4](../decisions/project-scope.md#standing-rulings))* <a id="file-size-debt"></a>The file-size
   ratchet had been failing on `main` since **2026-08-29**, in 15 s, before the
   Linux job compiled anything — so it was also hiding that job's build and its
@@ -210,7 +211,7 @@ run for this change.
 **Additional original evidence:**
 
 - 🟡 **ThreadSanitizer — the GUI half** *(2026-08-02 bug-hunt follow-up)*.
-  Gated on [G5-10](release-1.0.md#g5), which is what makes
+  Gated on [G5-10](release.md#g5), which is what makes
   a GUI harness possible at all. The controller half is done and clean; the
   analysis is kept in
   [Open, and known to be open](../archive/todo-2026-10-05.md#open-and-known-to-be-open). That sweep's ASan+UBSan build (156 test binaries, ~24 000
@@ -268,7 +269,7 @@ run for this change.
 
 ## ARCH-010 — Scattered config
 
-**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); post-1.0.
+**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); not a release blocker.
 
 **Acceptance criterion (after revalidation):** Resolve env, CLI, settings and defaults through one documented precedence chain with equivalent behavior on each entry path.
 
@@ -276,7 +277,7 @@ run for this change.
 
 - 🟡 **Scattered config** — ruling [R3](../decisions/project-scope.md#standing-rulings): one `Config`
   (env → CLI → Settings → defaults), env vars listed in `--help`. *1 d.*
-  Post-1.0.
+  Not a release blocker.
 
 <a id="arch-011"></a>
 
@@ -324,7 +325,7 @@ run for this change.
 
 ## ARCH-012 — Inconsistent `pom2::` namespace
 
-**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): 375 of 484 `src/` files and 23 of 424 tests used `namespace pom2` then; 459 of 621 and 43 of 505 on 2026-11-13. Post-1.0.
+**Priority:** 🟢 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): 375 of 484 `src/` files and 23 of 424 tests used `namespace pom2` then; 459 of 621 and 43 of 505 on 2026-11-13. Not a release blocker.
 
 **Acceptance criterion (after revalidation):** Migrate the selected namespace scope without changing exported API or test behavior.
 
@@ -332,7 +333,7 @@ run for this change.
 
 - 🟢 **Inconsistent `pom2::` namespace** — 255/336 top-level files (was
   163/233 when this was written). Mechanical
-  migration, ruling [R3](../decisions/project-scope.md#standing-rulings). Post-1.0.
+  migration, ruling [R3](../decisions/project-scope.md#standing-rulings). Not a release blocker.
 
 <a id="arch-013"></a>
 
@@ -388,3 +389,19 @@ This closes the policy seam allowed by the acceptance criterion, not every
 GUI or transport callback: per-card panel/host-transport wiring remains in
 MainWindow and its broader concurrency work remains ARCH-003/ARCH-009.
 Evidence: [core priorities](../audits/core-priorities-2026-11-17.md).
+
+<a id="arch-017"></a>
+
+## ARCH-017 — Paravirtual test port: pom2_headless as a 6502 unit-test runner
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+A write-only port the guest uses to log, assert and exit with a status, so
+`pom2_headless` runs 6502 unit tests on a complete Apple II (sim65 has no
+I/O). AppleWin merged a "debugger breakpoint card" for the same purpose on
+2025-10-18 ([PR #1441](https://github.com/AppleWin/AppleWin/pull/1441)).
+Off by default: no guest can see it unless asked for.
+
+**Acceptance criterion:** a cc65 test program logs two lines and exits 3;
+`pom2_headless` prints the lines and returns 3; without the option the
+address is the floating bus as before.

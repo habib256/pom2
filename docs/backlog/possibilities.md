@@ -142,3 +142,17 @@ moved none of these addresses:
 Discovered maps are saved under `userConfigDir()`, **one set per game and per
 party** rather than NAC's single global set, so two games do not mix. The game
 and its version are told from RAM, not from the file name as NAC does.
+
+## Possibilities — reach (research of 2026-11-18)
+
+Ideas that need a scope ruling before they can be tasks.
+
+- **A libretro core.** The only Apple II core in RetroArch is AppleWin's (no
+  //c, no achievements); izapple2 shipped one in 2.5.0 (2026-10-06). A POM2
+  core would be the only //c, //c+ and PAL Apple II there, through the SDK
+  facade (`include/pom2/core.hpp`) that `pom2_corpus` already drives. Large,
+  and the scope ruling has no row for it.
+- **RetroAchievements** stays "not for now": RAppleWin is its only Apple II
+  emulator, and hardcore mode forbids rewind, state loads and `POST /mem`.
+- **librashader / slang shader presets**: possible behind the CRT pass, low
+  value against the OpenEmulator composite pipeline POM2 already has.

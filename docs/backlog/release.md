@@ -1,28 +1,27 @@
-# Backlog — Release 1.0
+# Backlog — Releases and distribution
 
 [Planning index](../../TODO.md) · [Scope decisions](../decisions/project-scope.md)
 
-Reorganised 2026-10-05. Past gate completions remain in the
+POM2 ships: v1.2.1 is the current release. The gates below are the bar
+**every** release candidate meets, and the checklist at the end is rerun for
+each tag — a box ticked for an earlier release is not sign-off for the next.
+Past gate completions remain in the
 [historical report](../archive/todo-2026-10-05.md#the-road-to-10).
-Old estimates and CI claims require revalidation. Release checks are rerun
-against the candidate build.
+Old estimates and CI claims require revalidation against the candidate build.
 Implementation status was reconciled with the working tree on 2026-10-19.
 Recorded CI results below are dated evidence, not a claim that the current
 candidate or local changes have passed those remote jobs.
 
-## What 1.0 means
+## What every release must meet
 
 1. README, Welcome and the card catalog describe the shipped build accurately.
 2. The core, supported and frozen scope is explicit, with deliberate limits recorded once.
 3. The release builds reproducibly from a clean checkout and its payload can be distributed under the recorded decisions.
 4. No known defect silently loses media, settings or snapshots; the named durability regressions pass.
 
-Fidelity refinements and new card ports remain post-1.0 by default.
-The Videx Videoterm already shipped on 2026-09-29; it is not a pending port.
-The original rationale and past gate completions remain in the
-[historical report](../archive/todo-2026-10-05.md#what-10-means).
-
-<a id="the-road-to-10"></a>
+Fidelity refinements and new card ports are scheduled on their own merits
+(scope ruling), never as release blockers. The original rationale remains in
+the [historical report](../archive/todo-2026-10-05.md#what-10-means).
 
 ## Remaining gates
 
@@ -237,8 +236,8 @@ omissions, fixed in the following change.
 at `070c0b8` ran `tools/wasm_persistence_smoke.mjs` in headless Chrome and
 passed: disk import/boot, text upload, //c Mockingboard, tab pause/resume,
 persistence and exact cross-profile //c/floppy/HDV checkpoint reload. This
-meets the acceptance criterion; the same job reruns on every push, so the
-1.0 candidate's own run is the remaining check (candidate checklist).
+meets the acceptance criterion; the same job reruns on every push, so each
+release candidate's own run is the remaining check (candidate checklist).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-473).
 
@@ -286,7 +285,7 @@ v0.9.8 release run 39665565853](https://github.com/habib256/pom2/actions/runs/39
 at `28700c3`: self-contained `POM2.exe` (no DLL), `--help` launch, payload
 verification, and the boot smoke (`pom2_headless.exe --version`, then 300
 frames of an Apple II with a screenshot). Both run on every push / tag, so
-the 1.0 candidate's own runs are the remaining check (candidate checklist,
+each release candidate's own runs are the remaining check (candidate checklist,
 § Platform truth and § Tag). Interactive use on a real Windows desktop is
 not covered by either.
 
@@ -300,7 +299,7 @@ builds and runs the portable core subset. The [Windows job in run
 39058911350](https://github.com/habib256/pom2/actions/runs/39058911350/job/117472621424)
 passed **11/11 tests, no skips**. This satisfies the core subset criterion;
 the release packaging job still builds the shipping binary with tests off,
-so the actual 1.0 package needs its candidate smoke check.
+so each release package needs its candidate smoke check.
 
 **Current subset 2026-10-19:** `tests/cmake/Pom2PortableTests.cmake` now
 registers twelve cases, adding `session_machine` to the eleven-case set.
@@ -383,9 +382,16 @@ notes open with the first-launch warning. v1.1.2 gets the "Apple could not verif
 
 - 🟢 **Notarization / signing.** Both macOS and Windows refuse the first launch;
   the warning at the top of each release's notes documents the workaround (it
-  left the README on 2026-11-02; keep it there until this is settled). Absent from this file entirely until now. A
-  1.0 where two of three desktop platforms show a security warning reads as
-  unfinished. *~1 d + $99/yr Apple, $200-400/yr Windows EV.*
+  left the README on 2026-11-02; keep it there until this is settled). A
+  release where two of three desktop platforms show a security warning reads
+  as unfinished. *~1 d + $99/yr Apple, $200-400/yr Windows EV.*
+- **Windows, recommended route (research of 2026-11-18):** SignPath
+  Foundation signs open-source projects for free
+  ([signpath.org](https://signpath.org/), listed by
+  [Microsoft Learn](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)).
+  OV level: the publisher shows as "SignPath Foundation" and SmartScreen
+  reputation still builds over time, but the "unknown publisher" dialog goes.
+  Needs the project's application and a CI signing step; no cost.
 
 <a id="release-012"></a>
 
@@ -427,6 +433,65 @@ belongs in `pom2_media.zip` and `tools/test_media.sha256`, or the corpus title
 `$FFFE` is `$FA40` with no errata applied (the `ROM:` log line about the
 vector no longer appears), and CI is green.
 
+<a id="release-013"></a>
+
+### RELEASE-013 — Package channels without notarisation: Homebrew tap, AUR, Scoop, winget
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+The official Homebrew cask repo disables casks that fail Gatekeeper since
+2026-09-01 ([discussion 6334](https://github.com/orgs/Homebrew/discussions/6334)),
+so a personal tap is the Homebrew route. An AUR `pom2-bin` and Scoop / winget
+manifests point at the existing release archives. macOS notarisation stays
+deferred (standing decision).
+
+**Acceptance criterion:** each manifest installs the current release on a
+clean machine of its platform; the release checklist updates their versions.
+
+<a id="release-014"></a>
+
+### RELEASE-014 — Total Replay offered for download
+
+**Priority:** 🟡 · **State:** Needs a scope decision (research of 2026-11-18).
+
+Total Replay 6.1 (2026-08-11): 519 games on a 32 MB HDV, MIT code, the
+games third-party. A one-click download into the media cache, SHA-256
+gated like the ROM offer, would give a new user a library at once.
+
+**Decision needed:** whether POM2 offers third-party disks at all, even by
+download from their own host. Until then, not scheduled.
+
+<a id="release-015"></a>
+
+### RELEASE-015 — Test-media archive update: deater's demos (pom2_media_202611)
+
+**Priority:** 🟠 · **State:** Waiting for the owner's upload (2026-11-18).
+
+Six corpus titles tagged `deater` (`tests/corpus/corpus.manifest`, blessed
+2026-11-18) skip until their disks are in the test-media archive. Each `.dsk`
+carries Apple's DOS 3.3, so it goes to `pom2_media_202611/pom2_media.zip`,
+never to the repository (deater's own code is GPL-2.0-only,
+`dos33fsprogs/LICENSE`). Source: www.deater.net/weave/vmwprod/<page>/.
+
+| Path in the archive | SHA-256 |
+|---|---|
+| `disks_5.4/demo/deater/hectic.dsk` | `61d29bf3dae3e6cfac25adc562d7bfedc65c13f53096e53fe58d7fb3cb9be95a` |
+| `disks_5.4/demo/deater/midline.dsk` | `5234ff1a04272d51079424d419cc15ced8f39f38f6bfd2e434c0f46f4c184353` |
+| `disks_5.4/demo/deater/monster_splash.dsk` | `8d4cf8224e35e38ce118e5ee34c013a9f3e3df5db360e4c57791127bb4bccaa8` |
+| `disks_5.4/demo/deater/second_d1.dsk` | `1bdb8f69247a586c034ccb78df179495110b0584a497ddea725b3349547fc0fe` |
+| `disks_5.4/demo/deater/second_d2.dsk` | `a041ce85a9723df8bd0ebf72c3eac472ddc09d56047d43420710cb93d40b2f8b` |
+| `disks_5.4/demo/deater/heartbeat.dsk` | `b20f1465eee13a9d846b569e01057a2f91a3f56db2e8509d9db490397c4da260` |
+| `disks_5.4/demo/deater/lemm.dsk` | `eb833930ef01bf2a61239b158f1a70e347f59db07f90c8010cca86d3c444dda2` |
+
+- [ ] Add the seven files to `pom2_media.zip` and upload it to the
+      `pom2_media_202611` item (the same maintenance as RELEASE-012's
+      repaired Service Disk, which can ride in the same upload).
+- [ ] In the SAME commit as the upload goes live, add the seven lines to
+      `tools/test_media.sha256`: the strict CI fetch checks every entry, so
+      listing them before the archive serves them turns every job red.
+- [ ] Tag `deater-hectic` (the `$C019` VBL edge) `ci` once the archive
+      serves it, so the edge MAME had 25 cycles late is guarded per push.
+
 ## Candidate release checklist
 
 Checks previously completed on a September build are not current candidate
@@ -447,14 +512,12 @@ the historical completions.
 
 ### Version
 
-- [x] CMakeLists.txt project(... VERSION 1.0.0 ...) *(2026-10-28)*
-- [x] docs/releases/v1.0.0.md written — the filename equals PROJECT_VERSION
-      (the publish job also accepts v1.0.md) *(2026-10-28)*
-- [x] All version locations listed in CLAUDE.md and vcpkg.json agree with the release;
-      tools/check_version_strings.sh passes, and now also checks README's
-      "What's new" link *(2026-10-28)*
-- [x] grep -c 'v0\.9' README.md == 0 — the last match was the bundled A2 File
-      Cmd XL v0.9.8, now v1.0 *(2026-10-28)*
+- [ ] CMakeLists.txt `project(... VERSION x.y.z ...)` bumped
+- [ ] docs/releases/v<x.y.z>.md (or v<x.y>.md) written, opening with the
+      first-launch warning copied from the previous notes
+- [ ] All version locations listed in CLAUDE.md and vcpkg.json agree with the
+      release; tools/check_version_strings.sh passes (it also checks README's
+      "What's new" link)
 
 ### archive.org media — NOT a per-release chore; CI says when
 
@@ -524,10 +587,10 @@ the arm's-length host, which is the whole point of using it.
 - [ ] Fresh profile + empty roms/ on each platform: Welcome opens, no crash
 - [ ] A roms/ holding only apple2p.rom resolves to a working ][+
 - [ ] Every internal README anchor resolves
-- [ ] The live demo serves the 1.0 build
+- [ ] The live demo serves the candidate build
 
 ### Tag
 
-- [ ] 7 packages + SHA256SUMS.txt attached; body is v1.0.md, not generated notes
+- [ ] 7 packages + SHA256SUMS.txt attached; body is the hand-written docs/releases notes, not generated ones
 - [ ] Download one package per platform and launch it
 

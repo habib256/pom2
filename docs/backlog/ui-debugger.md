@@ -22,6 +22,13 @@ an explicit request before scheduling.
 | [UI-008](#ui-008) | 🧊 | Frozen | On-screen touchscreen / virtual joystick |
 | [UI-009](#ui-009) | 🟢 | Needs decision: cover art vs captured screen | Disk Library miniatures |
 | [UI-010](#ui-010) | 🟢 | Implemented: installed-package checks pending | OS file associations for disk images |
+| [UI-015](#ui-015) | 🟠 | Ready — chosen next | MCP facade and debugger verbs on the AI control server |
+| [UI-016](#ui-016) | 🟢 | Ready | Debugger: expression conditions, range watches, access counters, code/data log |
+| [UI-017](#ui-017) | 🟢 | Ready | Trace log to a file and a callgrind export of the profiler |
+| [UI-018](#ui-018) | 🟢 | After UI-015 | Debug Adapter Protocol server (VS Code) |
+| [UI-019](#ui-019) | 🟡 | Needs design | Reverse debugging over the rewind ring |
+| [UI-020](#ui-020) | 🟢 | Ready | Speak the screen (accessibility) |
+| [UI-021](#ui-021) | 🟢 | Ready | Video capture (GIF/MP4) of the screen |
 
 <a id="ui-002"></a>
 
@@ -227,3 +234,111 @@ are excluded; global style and popups are unaffected. Desktop build and diff
 checks pass; visual mouse/keyboard/browser interaction was not exercised.
 See [CHANGELOG](../../CHANGELOG.md) and the
 [display guide](../USER-GUIDE.md#the-glow-of-the-screen).
+
+<a id="ui-015"></a>
+
+## UI-015 — MCP facade and debugger verbs on the AI control server
+
+**Priority:** 🟠 · **State:** Ready; chosen as the next large task on 2026-11-18 (research of 2026-11-18).
+
+The loopback HTTP server (`AiControlServer`) already does screen, keys,
+memory, disks and snapshots. Missing: (1) **debugger verbs** — breakpoints
+(bank-qualified), step / step over / run until / continue with a timeout,
+registers, symbol lookup (incl. the cc65 `.dbg` import), wait-for-screen-text;
+(2) an **MCP endpoint** (`POST /mcp`, Streamable HTTP) exposing them and the
+existing routes as tools, behind the same token and `Host` fence. Read the
+current spec revision before writing it (2026-07-28 at the time of writing:
+per-request metadata, the `initialize` handshake only for older revisions).
+Prior art: AppleWin [PR #1519](https://github.com/AppleWin/AppleWin/pull/1519)
+(2026-09, unmerged), apple2-mcp (Bobbin), vice-mcp, mesen-agent; microM8
+announced one on 2025-08-03.
+
+**Acceptance criterion:** Claude Code (`claude mcp add --transport http`)
+boots a disk, sets a bank-qualified breakpoint, runs to it, reads registers
+and memory and waits for a screen string, in a ctest that drives `/mcp` over
+loopback; the fence and token tests pass unchanged for `/mcp`.
+
+<a id="ui-016"></a>
+
+## UI-016 — Debugger: expression conditions, range watches, access counters, code/data log
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+What Mesen, Altirra and MAME offer and POM2's debugger does not: breakpoint
+conditions as **expressions** (registers, memory, symbols; today one
+register comparison per address), **range** watches, per-address **read /
+write / execute counters** shown as a bank-aware heat map (the existing
+Memory Map shows page occupation, not accesses), and a **code/data logger**
+that marks bytes executed vs read, exportable for a disassembler.
+
+**Acceptance criterion:** each feature pinned in `debugger` with a
+bank-switched case (the same address in main and aux counted apart), and no
+cost when off (`bus_fastpath` and `pom2_bench` unchanged within noise).
+
+<a id="ui-017"></a>
+
+## UI-017 — Trace log to a file and a callgrind export of the profiler
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+An instruction trace written to a file (format string, bank, registers,
+cycles), and the profiler's per-address cycles exported as a callgrind file
+for KCachegrind — what a2trace builds by post-processing MAME traces.
+
+**Acceptance criterion:** a trace of a known 6502 loop matches its expected
+lines byte for byte; KCachegrind (or `callgrind_annotate`) reads the export
+of a profiled run with the cc65 `.dbg` symbols.
+
+<a id="ui-018"></a>
+
+## UI-018 — Debug Adapter Protocol server (VS Code)
+
+**Priority:** 🟢 · **State:** Blocked on UI-015 (its debugger verbs).
+
+Source-level debugging in an IDE: a DAP server mapping breakpoints and
+stepping onto the debugger, with source lines from `.p2map` / cc65 `.dbg`
+(`Cc65DebugInfo.h`, 2026-11-18). No Apple II emulator offers one (research of 2026-11-18);
+VS64 does it for the C64 over VICE's binary monitor.
+
+**Acceptance criterion:** VS Code stops on a breakpoint set in a `.s` file
+of a cc65 program, steps by source line and shows registers, in both banks.
+
+<a id="ui-019"></a>
+
+## UI-019 — Reverse debugging over the rewind ring
+
+**Priority:** 🟡 · **State:** Needs design.
+
+Step back / run back to a breakpoint using the rewind ring. Today a rewind
+clears the debugger's measurements and the ring drops at every irreversible
+media write (CLAUDE.md, rewind rule), so the design must say what survives.
+
+**Acceptance criterion:** a written design first; then "step back" over a
+JSR returns to the identical register and memory state, pinned in `debugger`.
+
+<a id="ui-020"></a>
+
+## UI-020 — Speak the screen (accessibility)
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+Dear ImGui exposes nothing to screen readers (ocornut/imgui #8022, #7131).
+The realistic route: feed the existing screen-text decoder (Copy screen
+text, `GET /screen/text`) to the OS speech engine on the desktop and to a
+hidden `aria-live` region in the browser, speaking what changed.
+
+**Acceptance criterion:** with the option on, typing `CATALOG` on DOS 3.3
+speaks the new lines once, not the whole screen every frame; off by default.
+
+<a id="ui-021"></a>
+
+## UI-021 — Video capture (GIF/MP4) of the screen
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+POM2 has PNG screenshots only; MAME has `-aviwrite`/`-mngwrite`. Frames from
+the emulated video frame (not the host refresh), so a capture under x4 or a
+stall has the program's timing. Pairs with AUDIO-013's WAV.
+
+**Acceptance criterion:** a 5 s capture of a corpus title has 250 (PAL) or
+300 (NTSC) frames whose hashes match `pom2_corpus --frames` for the same run.

@@ -18,7 +18,7 @@ an explicit request before scheduling.
 | [VALIDATION-001](#validation-001) | 🟡 | Needs hardware oracle | Disk II opposing-magnet response on a real //c |
 | [VALIDATION-003](#validation-003) | 🟡 | Partial: automated boot/gameplay checks | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
-| [VALIDATION-005](#validation-005) | 🟢 | Unknown: GUI-only, retest on 1.0 | A2 File Cmd one-in-three GUI-only DHGR failure |
+| [VALIDATION-005](#validation-005) | 🟢 | Unknown: GUI-only, retest on the current release | A2 File Cmd one-in-three GUI-only DHGR failure |
 
 <a id="validation-006"></a>
 
