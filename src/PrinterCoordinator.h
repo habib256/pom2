@@ -135,6 +135,8 @@ private:
     /// one, and the BUSY value it last drove there.
     std::uintptr_t busyTarget_ = 0;
     bool           busyDriven_ = false;
+    std::uintptr_t grapplerTarget_ = 0;       // the same pair for a Grappler+
+    bool           grapplerDriven_ = false;
 };
 
 } // namespace pom2

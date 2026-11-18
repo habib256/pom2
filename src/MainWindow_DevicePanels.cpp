@@ -56,7 +56,9 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 
 // Ethernet (Uthernet I / II). Snapshot-under-lock → render → dispatch
@@ -1159,6 +1161,15 @@ void MainWindow::archiveNewPrinterPages()
     const uint64_t ejected = static_cast<uint64_t>(imageWriter->sheetsEjected());
     if (ejected <= printerArchivedSheets_) return;
 
+    // A store that refuses (directory unwritable, disk full) was retried on
+    // every frame: an index read, a directory scan and a log line 60 times a
+    // second, on the UI thread, until restart (bug hunt 2026-11-18). Once a
+    // second, and one warning per run of failures.
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point retryAt{};
+    static bool failing = false;
+    if (failing && Clock::now() < retryAt) return;
+
     // How many of those sheets are still reachable. The stack is capped, so a
     // burst of form feeds between two frames can push pages off it before we
     // ever see them — archive what is there and resynchronise rather than
@@ -1170,15 +1181,29 @@ void MainWindow::archiveNewPrinterPages()
     size_t accepted = 0;
 
     for (size_t i = have - take; i < have; ++i) {
+        // A sheet with nothing on it is not a printout. Archived, 200 form
+        // feeds from the guest (`ESC H 0144`, `ESC R 999 FF`: 12 bytes, under
+        // a second at Instant) evicted every real page of the durable
+        // history (bug hunt 2026-11-18). Blank = one value throughout,
+        // whichever the paper's encoding.
+        const auto& pix = imageWriter->completedPage(i).pix;
+        if (pix.empty() || std::all_of(pix.begin(), pix.end(),
+                                       [&](uint8_t b) { return b == pix.front(); })) {
+            ++accepted;
+            continue;
+        }
         std::string err;
         if (!printerHistory->addPage(imageWriter->completedPage(i),
                                      static_cast<int>(imageWriter->model()),
                                      static_cast<int>(imageWriter->ribbon()),
                                      imageWriter->paperWidthIn(),
                                      imageWriter->paperLengthIn(), err)) {
-            pom2::log().warn("PrinterHistory", err);
+            if (!failing) pom2::log().warn("PrinterHistory", err + " (retrying every second)");
+            failing = true;
+            retryAt = Clock::now() + std::chrono::seconds(1);
             break;
         }
+        failing = false;
         ++accepted;
     }
     if (take < missed) {

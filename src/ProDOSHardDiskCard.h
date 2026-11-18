@@ -196,6 +196,10 @@ public:
     uint8_t deviceSelectRead(uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override { out = rom[low8]; return true; }
+
 
     /// Snapshot/rewind: 'HDV2'-tagged blob carrying the selected block,
     /// the byte cursor within it and the selected drive ('HDV1', without

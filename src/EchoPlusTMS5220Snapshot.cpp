@@ -123,7 +123,11 @@ void EchoPlusTMS5220Card::loadSnapshotState(const uint8_t* data, size_t size) {
     viaPhase_ = viaPhase; speechPhase_ = speechPhase;
     samplePhase_ = rate_ == rate ? samplePhase : 0;
     lastSpeech_ = lastSpeech; lastWrite_ = lastWrite;
-    pcm_.clear(); lastCycle_ = cpu_ ? cpu_->getCycleCountNow() : 0;
+    pcm_.clear();
+    // The boundary, not getCycleCountNow(): that still counts the live
+    // machine's last instruction, and the VIA then ran 2-7 cycles late for
+    // good (the 2026-11-17 fix reached resetCard, not this path).
+    lastCycle_ = cpu_ ? boundaryNow() : 0;
     // The PSG DC blockers: their history from the 'DC' tail when present and
     // sane, a clean filter otherwise (a pre-2026-11-01 blob has no tail).
     bool dcRestored = false;

@@ -78,6 +78,7 @@ private:
 
     Sink sink_;
     int cmd_ = -1;                 // -1 = idle
+    bool strayReported_ = false;   // the "not a call" line, once per run of strays
     std::vector<uint8_t> z80_;     // parameters after the command byte
     std::vector<uint8_t> apple_;   // the reply so far
 };

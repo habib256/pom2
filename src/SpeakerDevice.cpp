@@ -119,6 +119,19 @@ void SpeakerDevice::setCpuClock(double hz)
     stampBaseStock_ = 0.0;
 }
 
+void SpeakerDevice::rebaseStamps(uint64_t cycle)
+{
+    // The mapping's base was only moved by a clock change. After an
+    // accelerator had run, a restore to a LOWER counter mapped every toggle
+    // below zero, clamped to stamp 0: the speaker played a garbled 1/16th of
+    // the tone until the counter climbed back — half an hour after ten
+    // minutes at 4x (bug hunt 2026-11-18).
+    std::lock_guard<std::mutex> lk(eventMutex);
+    stampBaseCycle_ = cycle;
+    stampBaseStock_ = static_cast<double>(cycle);
+    stampIdentity_  = stampRatio_ == 1.0;
+}
+
 void SpeakerDevice::setCpuClockAt(uint64_t cycle, double hz, double stockHz)
 {
     if (!(hz > 0.0) || !(stockHz > 0.0)) return;

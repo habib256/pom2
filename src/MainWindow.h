@@ -1020,6 +1020,7 @@ private:
     /// rebuild re-creates the same card (MainWindow_CardMonitor.cpp).
     pom2::CardVideoSource* cardPanelSource_ = nullptr;
     std::string  cardPanelKey_;
+    std::string  cardScreenKey_;   // "<slot>:<key>" of the display's card source
     std::string  lastCardMonitorKey_;
     std::vector<uint32_t> cardMonitorPixels_;
     int          kbImageW_     = 0;

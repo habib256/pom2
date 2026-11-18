@@ -61,7 +61,7 @@ public:
     void setCpuClock(double hz) override;
     void setStandardClock(double hz) override;
     void onReset() override {}
-    void onTimeJump() override { dac_.reset(); }
+    void onTimeJump() override;
 
     AudioSource* audioSource() override { return &dac_; }
     Dac8Audio&   dac() { return dac_; }

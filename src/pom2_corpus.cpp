@@ -576,9 +576,25 @@ int main(int argc, char** argv)
             }
         }
         if (recorded) {
-            std::ofstream out(opt.expected, std::ios::binary | std::ios::trunc);
-            out << pom2::corpus::formatExpectations(next);
-            if (!out) { std::fprintf(stderr, "cannot write %s\n", opt.expected.string().c_str()); return 2; }
+            // Through a sibling and a rename: truncating the baseline in
+            // place lost every title's lines to a full disk or a kill,
+            // those that had not run included (bug hunt 2026-11-18).
+            std::filesystem::path tmp = opt.expected;
+            tmp += ".tmp";
+            std::error_code mvEc;
+            {
+                std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                out << pom2::corpus::formatExpectations(next);
+                out.flush();
+                if (!out) mvEc = std::make_error_code(std::errc::io_error);
+            }
+            if (!mvEc) std::filesystem::rename(tmp, opt.expected, mvEc);
+            if (mvEc) {
+                std::error_code rmEc;
+                std::filesystem::remove(tmp, rmEc);
+                std::fprintf(stderr, "cannot write %s\n", opt.expected.string().c_str());
+                return 2;
+            }
         }
         std::printf("Blessed: %d check(s) recorded into %s\n", recorded, opt.expected.string().c_str());
         if (executionFailed) {

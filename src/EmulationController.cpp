@@ -1395,7 +1395,7 @@ void EmulationController::noteTimeJump()
     // slot, as the rewind capture loop is (SES-3).
     for (int s = 0; s < SlotBus::kSlotCount; ++s)
         if (SlotPeripheral* p = mem.slotBus().peripheral(s)) p->onTimeJump();
-    if (spk)  spk->reset();
+    if (spk)  { spk->reset(); spk->rebaseStamps(mem.getCycleCounter()); }
     if (tape) tape->resetForTimeJump();
     // The debugger's transients name addresses in the timeline we just left:
     // a resume amnesty would silently skip the first breakpoint at that pc,
@@ -1772,7 +1772,10 @@ void EmulationController::workerLoop()
                     // logic dropped events in a loop, and the synth got stuck
                     // on whatever level survived the drop).
                 }
-                stepsPending.fetch_sub(1);
+                // Never below zero: a Stop that cleared the queue while the
+                // step ran left -1, and the next Step press brought it to 0
+                // and executed nothing (bug hunt 2026-11-18).
+                if (stepsPending.fetch_sub(1) <= 0) stepsPending.store(0);
             }
             if (stepsPending.load() <= 0) {
                 // Retire ONLY the Step we were dispatched on. A plain store

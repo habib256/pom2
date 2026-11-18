@@ -335,8 +335,19 @@ PrinterCoordinator::BusyUpdate PrinterCoordinator::setGrapplerBusy(
     auto* card = findFirst<GrapplerCard>(bus);
     if (!card) return result;
     result.grapplerPlugged = true;
-    result.changed = card->printerBusy() != busy;
-    if (result.changed) card->setPrinterBusy(busy);
+    // Edges of this value only, as above: written by level, a BUSY set by
+    // hand (`--printer-port 1:busy=on`, POST /printer-port) lasted one frame
+    // on the one card that had no such guard (bug hunt 2026-11-18).
+    const auto grappler = reinterpret_cast<std::uintptr_t>(card);
+    if (grappler != grapplerTarget_) {
+        grapplerTarget_ = grappler;
+        grapplerDriven_ = false;       // a fresh card comes up not busy
+    }
+    result.changed = busy != grapplerDriven_;
+    if (result.changed) {
+        card->setPrinterBusy(busy);
+        grapplerDriven_ = busy;
+    }
     return result;
 }
 

@@ -202,6 +202,14 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
     pages_.clear();
     nextJob_ = nextFile_ = 1;
     lastPageEpoch_ = 0;
+    // The merge tells "a row we dropped" from "a foreign row still being
+    // written" by this mark. Left at 0 it took every row open() had just
+    // dropped for a foreign one: a PNG deleted by hand came back as a dead
+    // row on the first print of every launch (bug hunt 2026-11-18).
+    struct MarkMerge {
+        PrinterHistory& h;
+        ~MarkMerge() { h.nextFileAtLastMerge_ = h.nextFile_; }
+    } markMerge{ *this };
     const IndexState state = readIndex();
 
     // The sweep below deletes every PNG the index does not mention, and the
