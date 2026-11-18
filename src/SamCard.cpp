@@ -37,6 +37,16 @@ double SamCard::toStock(uint64_t cycle) const
     return s > 0.0 ? s : 0.0;
 }
 
+// As SpeakerDevice::rebaseStamps: the offset an accelerator left is anchored
+// on the counter the jump landed on, or a restore to a lower one stamped
+// every write 0 (bug hunt 2026-11-18).
+void SamCard::onTimeJump()
+{
+    dac_.reset();
+    const uint64_t* bus = busCycleCounter();
+    stockOffset_ = static_cast<double>(bus ? *bus : 0) * (1.0 - stockRatio_);
+}
+
 // Same split as SpeakerDevice::setCpuClockAt: the stock position of the
 // current cycle is kept, only the slope changes from here on.
 void SamCard::rebase(double cpuHz, double stockHz)

@@ -133,6 +133,13 @@ public:
     bool peekSlotRom(uint8_t low8, uint8_t& out) const override;
     void    onVideoSoftSwitchWrite(uint16_t addr, uint8_t value) override;
     void    onReset() override { newVideo_ = 0; }   // VidHD.cpp:57-61
+    // A power-off loses the latched colours too: a text theme ($C022/$C034)
+    // followed the next boot for good (bug hunt 2026-11-18).
+    void    onPowerCycle() override
+    {
+        screenColor_ = 0xF0;
+        newVideo_ = borderColor_ = shadow_ = 0;
+    }
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 

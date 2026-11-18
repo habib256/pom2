@@ -104,6 +104,16 @@ void VidexUltratermCard::onReset()
     crtc_.reset();
 }
 
+void VidexUltratermCard::onPowerCycle()
+{
+    // As the Videoterm: nothing here survives power-off (bug hunt
+    // 2026-11-18). Control 2, which RESET keeps, goes too.
+    vram_.fill(0);
+    ctrl2_ = 0;
+    crtc_ = {};
+    onReset();
+}
+
 int VidexUltratermCard::pictureWidth() const
 {
     return std::clamp(crtc_.horizDisplayed() * kCellWidth, 0, kMaxWidth);

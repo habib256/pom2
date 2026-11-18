@@ -92,6 +92,22 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead     (uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        // The byte a fetch would get, without dropping the ROM bank.
+        if (!romLoaded_) { out = stubRom_[low8]; return true; }
+        out = rom_[(!ackEffective() && (low8 & 0x80)) ? (low8 & 0xBF) : low8];
+        return true;
+    }
+    bool peekExpansionRom(uint16_t offset, uint8_t& out) const override
+    {
+        if (!romLoaded_) return false;
+        out = rom_[(offset & 0x7FF) | (romBankHigh_ ? 0x800u : 0x000u)];
+        return true;
+    }
+
     /// $CnXX writes are a bus conflict on the real card but still reset
     /// the ROM bank (MAME `write_cnxx`, grappler.cpp:586-591).
     void    slotRomWrite    (uint8_t low8, uint8_t v) override;

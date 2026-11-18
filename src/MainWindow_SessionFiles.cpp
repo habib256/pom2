@@ -17,6 +17,7 @@
 #include "SamCard.h"
 #include "PorteParoleCard.h"
 #include "PrinterSoundDevice.h"
+#include "Settings.h"
 #include "Apple2Display.h"
 #include "AudioCoordinator.h"
 #include <GLFW/glfw3.h>
@@ -173,7 +174,12 @@ bool MainWindow::reconstructSessionMachine(const pom2::SessionArchive& session, 
                 diskPanels.push_back(std::make_unique<pom2::DiskController_ImGui>());
                 if (!diskPanel) diskPanel = diskPanels.front().get();
             }
-            if (auto* rgb = dynamic_cast<LeChatMauveCard*>(card)) display->setChatMauveCard(rgb);
+            if (auto* rgb = dynamic_cast<LeChatMauveCard*>(card)) {
+                // A user setting, not machine state: the session builds the
+                // card without it (bug hunt 2026-11-18).
+                if (settings) rgb->setInvertBit7(settings->getBool("chatmauve_invert_bit7", false));
+                display->setChatMauveCard(rgb);
+            }
         }
         registerAudioSource(printerSound.get());
         slotConfigCoordinator_->draft() = live.keys;

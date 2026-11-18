@@ -97,6 +97,10 @@ public:
 
     /// Drop pending events + reset filter state. Called on hard reset.
     void reset();
+    /// The cycle counter jumped (snapshot load, rewind): the cycle→stock
+    /// mapping an accelerator left behind is re-anchored on `cycle`, slope
+    /// kept. Call after reset().
+    void rebaseStamps(uint64_t cycle);
 
     size_t   getQueuedEventCount() const;
 

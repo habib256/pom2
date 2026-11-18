@@ -29,6 +29,11 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace pom2 {
 
@@ -38,6 +43,7 @@ namespace {
 /// for one. Generous against a real page (a text page is well under a second
 /// on any machine POM2 runs on) and short against a hang.
 constexpr int kRenderTimeoutMs = 20000;
+constexpr long kMaxInterpreterKb = 512L * 1024;   // 512 MB
 constexpr int kPollMs          = 10;
 
 /// Refuse to render a page bigger than this. A guest can ask for any paper
@@ -168,9 +174,17 @@ std::string uniqueStem(const std::string& dir, const void* salt)
     // No Date/random needed: the address of the caller's request plus a
     // counter is unique within a process, and the files are removed before
     // this function's caller returns.
+    // …and the pid, because the scratch directory is per USER: two POM2s
+    // could draw the same heap address and counter, and one's Scrub then
+    // removed the other's files (bug hunt 2026-11-18).
     static unsigned long counter = 0;
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "pom2ps_%lx_%lu",
+#ifdef _WIN32
+    const unsigned long pid = static_cast<unsigned long>(::_getpid());
+#else
+    const unsigned long pid = static_cast<unsigned long>(::getpid());
+#endif
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "pom2ps_%lu_%lx_%lu", pid,
                   static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(salt)),
                   counter++);
     return (std::filesystem::path(dir) / buf).string();
@@ -262,7 +276,8 @@ bool parsePgm(const uint8_t* data, std::size_t n, PsRenderResult& out)
 bool renderPostScript(const std::string& interpreterPath,
                       const std::string& scratchDir,
                       const PsRenderRequest& req,
-                      PsRenderResult& out)
+                      PsRenderResult& out,
+                      const std::atomic<bool>* cancel)
 {
     out = {};
     if (interpreterPath.empty()) {
@@ -335,6 +350,10 @@ bool renderPostScript(const std::string& interpreterPath,
                               pageBytes ? kMaxRasterBytes / pageBytes : 1));
     const std::vector<std::string> args = {
         "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-dNOPROMPT",
+        // The guest writes the program: `{ 65535 string } loop` allocated
+        // without bound for the whole timeout. [B] Ghostscript Use.htm, -K:
+        // the interpreter's allocation limit, in KB.
+        "-K" + std::to_string(kMaxInterpreterKb),
         "-dFIXEDMEDIA", "-dFIXEDRESOLUTION",
         "-dLastPage=" + std::to_string(lastPage),
         "-sDEVICE=pgmraw",
@@ -353,6 +372,11 @@ bool renderPostScript(const std::string& interpreterPath,
 
     int waited = 0;
     while (gs.isRunning()) {
+        if (cancel && cancel->load(std::memory_order_relaxed)) {
+            gs.stop(200);
+            out.error = "cancelled";
+            return false;
+        }
         if (waited >= kRenderTimeoutMs) {
             gs.stop(200);
             out.error = "the interpreter did not finish in " +
@@ -412,6 +436,9 @@ bool renderPostScript(const std::string& interpreterPath,
 
 PostScriptSpooler::~PostScriptSpooler()
 {
+    // Quitting during a render froze the window for the rest of the 20 s
+    // timeout (bug hunt 2026-11-18): the worker is told to stop its child.
+    cancel_.store(true, std::memory_order_relaxed);
     joinWorker();
 }
 
@@ -559,7 +586,7 @@ void PostScriptSpooler::startNextLocked(std::thread& retired)
 #else
     worker_ = pom2::guardedThread("LaserWriter", [this, req, scratch, gsPath]() {
         PsRenderResult r;
-        (void)renderPostScript(gsPath, scratch, req, r);
+        (void)renderPostScript(gsPath, scratch, req, r, &cancel_);
         std::lock_guard<std::mutex> lk(mtx_);
         done_       = std::move(r);
         haveResult_ = true;

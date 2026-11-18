@@ -35,6 +35,7 @@ public:
     void onReset() override;
     void onPowerCycle() override;
     void onUnplug() override;
+    void onTimeJump() override;
     void setSampleRate(uint32_t hz);
     void setVolume(float value);
     float getVolume() const;
@@ -74,6 +75,7 @@ private:
     bool muted_ = false;
     void sync();
     void syncAt(uint64_t now);
+    uint64_t boundaryNow() const;   // "now" at the instruction boundary; cpu_ set
     void advance(uint64_t cycles);
     void applyPsgControl();
 };

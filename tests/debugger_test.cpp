@@ -1379,6 +1379,31 @@ void testStepOverReturnInterrupt()
     assert(cpu.getStackPointer() == 0xFF);
 }
 
+// A routine that leaves by RTI (bug hunt 2026-11-18): ProDOS 8's MLI pulls
+// the return address, pushes it back adjusted with a P byte and RTIs, so the
+// outer return of `JSR $BF00` is no RTS and Step Over ran away on every MLI
+// call.
+void testStepOverRoutineLeavingByRti()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    mem.memWrite(0x0800, 0x20); mem.memWrite(0x0801, 0x00); mem.memWrite(0x0802, 0x09);
+    mem.memWrite(0x0803, 0x4C); mem.memWrite(0x0804, 0x03); mem.memWrite(0x0805, 0x08);
+    // PLA TAX PLA PHA TXA CLC ADC #1 PHA PHP RTI
+    const uint8_t callee[] = {0x68, 0xAA, 0x68, 0x48, 0x8A, 0x18, 0x69, 0x01, 0x48, 0x08, 0x40};
+    for (std::size_t i = 0; i < sizeof callee; ++i)
+        mem.memWrite(static_cast<uint16_t>(0x0900 + i), callee[i]);
+    cpu.setProgramCounter(0x0800);
+    cpu.setStackPointer(0xFF);
+    dbg.setStepOver(cpu, mem);
+    cpu.setDebugHook(&dbg);
+    cpu.run(1000);
+    assert(dbg.stopRequested() && "Step Over ran away over a routine that leaves by RTI");
+    assert(cpu.getProgramCounter() == 0x0803);
+    assert(cpu.getStackPointer() == 0xFF);
+}
+
 // The interrupt taken AT the stepped JSR, before it runs (bug hunt
 // 2026-11-01): onInstruction saw the JSR, the step entered the handler
 // instead, and on the way back the JSR was counted as a NESTED call — its
@@ -1987,6 +2012,7 @@ int main()
     testStepEndsAtTheOuterReturn();
     testStepOverReturnInterrupt();
     testStepOverInterruptAtTheJsr();
+    testStepOverRoutineLeavingByRti();
     testStepOverRecursiveReturn();
     testConditionalBreakpointsAndSymbols();
     testProfilerHistoryAndStepOut();

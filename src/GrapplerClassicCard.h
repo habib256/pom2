@@ -65,6 +65,21 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead      (uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        if (!romLoaded_) return false;
+        out = rom_[(static_cast<std::size_t>(slot_ & 7) << 8) | low8];
+        return true;
+    }
+    bool peekExpansionRom(uint16_t offset, uint8_t& out) const override
+    {
+        if (!romLoaded_) return false;
+        out = rom_[offset & 0x7FF];
+        return true;
+    }
+
     uint8_t expansionRomRead (uint16_t offset) override;
     bool    takesC800() const override { return romLoaded_; }
     /// The enable latch lets go on ALL of $CFF0-$CFFF, and RESET does not

@@ -411,9 +411,13 @@ bool Debugger::onInstruction(uint16_t pc)
                     // the stepped JSR — nothing to track yet
                 } else if (op == 0x20 || op == 0x00) {   // JSR, BRK: a nested call
                     if (stepFrames_.size() < 256) stepFrames_.push_back(sp);
-                } else if ((op == 0x60 || (op == 0x40 && stepOutMode_)) && stepFrames_.empty()) {
+                } else if ((op == 0x60 || op == 0x40) && stepFrames_.empty()) {
                     // RTI pops P as well: Step Out of an IRQ/NMI/BRK handler
                     // returns to the interrupted pc (bug hunt 2026-11-07).
+                    // In Step Over too: ProDOS 8's MLI leaves a `JSR $BF00`
+                    // by PHA PHA PHA … RTI, so F8 on any MLI call never
+                    // stopped (bug hunt 2026-11-18). An interrupt's own RTI
+                    // cannot match: its entry opened a frame.
                     const int after = static_cast<int>(sp) + (op == 0x40 ? 3 : 2);
                     // An RTS used as a jump (push target-1, RTS) pops back to
                     // where the callee was, not to the caller: not a return.

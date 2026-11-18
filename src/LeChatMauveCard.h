@@ -213,6 +213,10 @@ public:
     /// sixteen switches unless LOCKRES is on. CPREG is not a switch and
     /// keeps its value.
     void onReset() override;
+    /// A power-off is not Ctrl-Reset: LOCKRES and the RVB Graph's K hold
+    /// state against the RESET key, not against the supply (bug hunt
+    /// 2026-11-18). [F] the registers' power-on values: as freshly plugged.
+    void onPowerCycle() override;
     /// The machine's clock jumped (a .pom2snap load by the CLI or the AI
     /// server restores CPU and memory only, never this card): every latch
     /// edge in the ring is then stamped in the FUTURE and would win each

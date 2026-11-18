@@ -122,10 +122,19 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead      (uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        out = rom_[std::size_t(slot_) * 0x100 + low8];
+        return true;
+    }
+
     uint8_t expansionRomRead (uint16_t offset) override;
     void    expansionRomWrite(uint16_t offset, uint8_t v) override;
     bool    takesC800() const override { return true; }
     void    onReset() override;
+    void    onPowerCycle() override;   // VRAM, control 2 and the 6845 file
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
 

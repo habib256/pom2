@@ -77,13 +77,25 @@ void SoftCard2Protocol::z80Sent(uint8_t b)
 {
     if (cmd_ < 0) {
         if (b > 16) {               // not a command: out of step, say so once
-            emit("SC2  " + hex2(b) + " (not a 6502 BIOS call)");
+            if (!strayReported_) emit("SC2  " + hex2(b) + " (not a 6502 BIOS call)");
+            strayReported_ = true;
             return;
         }
+        strayReported_ = false;
         cmd_ = b;
         z80_.clear();
         apple_.clear();
     } else {
+        // A command waiting on the 6502's reply has all its parameters: more
+        // bytes are a Z80 out of step, and they were kept — every one, for
+        // as long as the trace was on (bug hunt 2026-11-18).
+        if (int(z80_.size()) >= z80Count(cmd_) + (cmd_ == 6 ? 1 : 0)) {
+            emit("SC2  " + hex2(b) + " (out of step: call abandoned)");
+            cmd_ = -1;
+            z80_.clear();
+            apple_.clear();
+            return;
+        }
         z80_.push_back(b);
     }
     maybeFinish();

@@ -1021,6 +1021,20 @@ MainWindow::~MainWindow()
         pom2::log().error("Disk", "save-on-shutdown failed: " + shutdownFlushError);
     }
 
+    // What the printer still holds goes to the history before it dies with
+    // the window: at Draft speed the guest is done minutes before the head
+    // is, and a LIST with no form feed leaves its sheet on the platen —
+    // neither reached printouts/history on quit (bug hunt 2026-11-18). The
+    // LaserWriter's jobs are not waited for: that is an external interpreter.
+    if (imageWriter && printerHistory && printerHistory->isOpen()) {
+        pumpImageWriter();                       // the cards' last bytes
+        if (imageWriter->modelProfile().lineage != pom2::IwLineage::PostScript) {
+            imageWriter->flushPending();
+            if (!imageWriter->currentPageBlank()) imageWriter->formFeed();
+        }
+        archiveNewPrinterPages();
+    }
+
     // Detach every audio source BEFORE any member is destroyed.
     //
     // AudioDevice keeps raw pointers and dereferences them from the miniaudio

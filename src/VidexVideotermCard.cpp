@@ -114,6 +114,16 @@ void VidexVideotermCard::onReset()
     crtc_.reset();
 }
 
+void VidexVideotermCard::onPowerCycle()
+{
+    // A cold boot kept the last screen and R0-R17: with the monitor switch
+    // on the card, the picture from before power-off stayed up until the
+    // firmware ran (bug hunt 2026-11-18). [F] real power-on VRAM is noise.
+    vram_.fill(0);
+    crtc_ = {};
+    onReset();
+}
+
 uint64_t VidexVideotermCard::crtcFrameAt(uint64_t emuCycles, double cpuHz) const
 {
     // Fields, the blink's clock (Hd6845Crtc::fieldRateHz). The Videoterm's

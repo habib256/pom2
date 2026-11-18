@@ -60,10 +60,23 @@ void MainWindow::plugCardVideoSource(pom2::CardVideoSource* card, int slot, cons
                          std::to_string(slot) + " (" + key + ") shares the monitors "
                          "(the Apple II Screen goes to the card that can take it, the Card "
                          "Monitor to the other)");
-    display->setCardVideoSource(pom2::preferScreenSource(screen, card));
+    const std::string cardKey = std::to_string(slot) + ":" + key;
+    pom2::CardVideoSource* const onScreen = pom2::preferScreenSource(screen, card);
+    // The card that did NOT get the Apple II Screen, and its name.
+    pom2::CardVideoSource* const other = (onScreen == card) ? screen : card;
+    const std::string otherKey = (onScreen == card) ? cardScreenKey_ : cardKey;
+    display->setCardVideoSource(onScreen);
+    if (onScreen == card) cardScreenKey_ = cardKey;
     if (pom2::preferPanelSource(cardPanelSource_, card) == card) {
         cardPanelSource_ = card;
-        cardPanelKey_ = std::to_string(slot) + ":" + key;
+        cardPanelKey_ = cardKey;
+    }
+    // Two cards that can both take the monitor (UltraTerm + VidHD): both
+    // preferences picked the later slot, and the earlier card's picture was
+    // shown nowhere — against the line logged above (bug hunt 2026-11-18).
+    if (other && other != onScreen && cardPanelSource_ == onScreen) {
+        cardPanelSource_ = other;
+        cardPanelKey_ = otherKey;
     }
 }
 
@@ -72,6 +85,7 @@ void MainWindow::clearCardVideoSources()
     display->setCardVideoSource(nullptr);
     cardPanelSource_ = nullptr;
     cardPanelKey_.clear();
+    cardScreenKey_.clear();
 }
 
 // The E-Z Color's jumper JP2 (EzColorCard.h): where the VDP's /INT goes.

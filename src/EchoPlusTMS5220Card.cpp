@@ -77,9 +77,23 @@ void EchoPlusTMS5220Card::resetCard(bool powerCycle) {
     assertIrq(false);
 }
 void EchoPlusTMS5220Card::onUnplug() { resetCard(true); }
+// A snapshot whose counter is AHEAD and brings no blob for this card left
+// lastCycle_ in the past: the next access rendered the whole gap sample by
+// sample under the machine lock — 14 s of host time per ten emulated minutes
+// — and ran the 6522 through it (bug hunt 2026-11-18; MockingboardCard has
+// the same anchor). At the instruction boundary, as resetCard.
+void EchoPlusTMS5220Card::onTimeJump() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    pcm_.clear();
+    if (cpu_) lastCycle_ = boundaryNow();
+}
+uint64_t EchoPlusTMS5220Card::boundaryNow() const {
+    return cpu_->getCycleCountNow() -
+        static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles()));
+}
 void EchoPlusTMS5220Card::setCpu(M6502* cpu) {
     std::lock_guard<std::mutex> lock(mtx_);
-    cpu_ = cpu; lastCycle_ = cpu ? cpu->getCycleCountNow() : 0;
+    cpu_ = cpu; lastCycle_ = cpu ? boundaryNow() : 0;
 }
 void EchoPlusTMS5220Card::setCpuClock(double hz) {
     std::lock_guard<std::mutex> lock(mtx_);

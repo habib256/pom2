@@ -116,6 +116,19 @@ void LeChatMauveCard::onReset()
     }
 }
 
+void LeChatMauveCard::onPowerCycle()
+{
+    // LOCKRES / K = 8 survived a cold boot through onReset: the Eve kept
+    // depositing CPREG into aux text behind the next program, the RVB Graph
+    // kept its colour registers and its lock.
+    eveSwitches_ = 0;
+    cpreg_       = 0;
+    rvb_         = {};
+    ++rvbGeneration_;
+    onReset();
+    syncAuxShadow();
+}
+
 uint8_t LeChatMauveCard::deviceSelectRead(uint8_t /*low4*/)
 {
     // Nothing on this board DRIVES the data bus in $C0(8+n)X, and a read

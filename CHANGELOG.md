@@ -10,6 +10,36 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — Bug hunt: F8 over a ProDOS call, the speaker after a restore, a history blank pages could empty
+
+`docs/audits/bug-hunt-2026-11-18.md`. Round 4 of 2026-11-17 (curl globs, the
+No-Slot Clock's repeated autumn hour, hand-typed Windows paths) is recorded
+in that day's audit.
+
+**Step Over stops after a ProDOS MLI call.** The MLI leaves `JSR $BF00` by
+RTI, which the stepper only took for a return in Step Out: F8 was a Run. And
+nine cards' ROMs had no side-effect-free view, so the stepper read `$00`
+where the Grappler+'s or the Disk II's RTS is, and the disassembly showed
+BRKs.
+
+**The speaker survives a restore on an accelerated machine.** The
+cycle→stock-time mapping was re-based on a clock change only. A snapshot or
+rewind to a lower cycle counter stamped every toggle 0 — a garbled tone for
+as long as the counter took to climb back. The S.A.M. DAC had the same; the
+Echo+ (TMS5220) had no time-jump anchor at all and could render an hour of
+silence under the machine lock.
+
+**A power-off is not Ctrl-Reset.** The Chat Mauve's LOCKRES and K bit, the
+VidHD's text colours, the Videx cards' VRAM and 6845 file all survived a
+cold boot.
+
+**The print history.** Blank sheets are no longer archived (twelve guest
+bytes could evict all 200 real pages), a refusing store is retried once a
+second instead of once a frame, hand-deleted pages stay deleted, and what
+the printer still holds at quit is printed, ejected and archived. A BUSY set
+by hand on a Grappler+ holds. Ghostscript runs under an allocation limit and
+is cancelled at quit.
+
 ## 2026-11-17 — Bug hunt, round 3: the internal ROM shields $C800, a Z80 stops at its watch
 
 `docs/audits/bug-hunt-2026-11-17.md` § Round 3.

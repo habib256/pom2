@@ -435,6 +435,20 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        out = firmwareLoaded_ ? firmware_[0x700u + low8] : rom[low8];
+        return true;
+    }
+    bool peekExpansionRom(uint16_t offset, uint8_t& out) const override
+    {
+        if (!firmwareLoaded_) return false;
+        out = firmware_[offset & 0x7FFu];
+        return true;
+    }
+
     /// The EPROM's 2 KB, when loaded; $FF otherwise.
     uint8_t expansionRomRead(uint16_t offset) override;
     /// MAME `a2ssc.cpp:50` `take_c800() const override { return true; }` — the

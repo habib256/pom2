@@ -42,6 +42,7 @@
 // header and then raw bytes, which is thirty lines to parse; asking for PNG
 // would mean carrying a PNG *decoder* to read back what POM2 only ever writes.
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -126,7 +127,8 @@ constexpr uint8_t kPsEndOfJob = 0x04;   // Ctrl-D
 bool renderPostScript(const std::string& interpreterPath,
                       const std::string& scratchDir,
                       const PsRenderRequest& req,
-                      PsRenderResult& out);
+                      PsRenderResult& out,
+                      const std::atomic<bool>* cancel = nullptr);
 
 /// Parse a binary PGM (`P5`) — or a concatenation of them, which is what a
 /// multi-page job comes back as: the first block fills `out`'s own fields and
@@ -213,6 +215,7 @@ private:
     bool                 haveResult_ = false;
     bool                 busy_       = false;
     std::thread          worker_;
+    std::atomic<bool>    cancel_{false};   // set by the destructor only
 
     /// A runaway job must not eat the heap. A page of PostScript is a few
     /// tens of KB; a megabyte is already a driver gone wrong.

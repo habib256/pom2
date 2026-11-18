@@ -144,6 +144,14 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead(uint8_t low8) override;
+    // Side-effect-free view for the debugger (bug hunt 2026-11-18: without
+    // it the stepper read $00 here and F8 over a call into this ROM ran away).
+    bool peekSlotRom(uint8_t low8, uint8_t& out) const override
+    {
+        out = slotRom[static_cast<size_t>(low8) | romBank];
+        return true;
+    }
+
     void    advanceCycles(int cycles) override;
     void    onReset() override;
 
