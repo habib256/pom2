@@ -35,8 +35,23 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
+#include <cerrno>
 #include <limits>
+#include <optional>
 #include <sstream>
+#include <thread>
+
+// The store lock's two system calls. `AtomicFileReplace.h` has already pulled
+// in <windows.h> (NOMINMAX) or <fcntl.h>/<unistd.h>.
+#ifdef _WIN32
+#  include <fcntl.h>
+#  include <io.h>
+#  include <share.h>
+#  include <sys/stat.h>
+#elif !defined(__EMSCRIPTEN__)
+#  include <sys/file.h>
+#endif
 
 namespace pom2 {
 
@@ -139,6 +154,95 @@ bool validPageFile(const std::string& name)
                        [](unsigned char c) { return c >= '0' && c <= '9'; });
 }
 
+constexpr const char* kLockName = "index.lock";
+
+/// Mutual exclusion between the POM2 processes that share one history
+/// directory — it is per user, so two windows print into the same one.
+///
+/// Every change to the store is a READ-MODIFY-WRITE of the index: merge what
+/// is on disk, pick the next `pNNNNNN.png`, write the whole index back. Two
+/// instances interleaving those steps both read the same index, both took
+/// the same number, and the later index write dropped the earlier one's row
+/// — whose PNG the next launch's sweep then deleted, or which was simply
+/// overwritten by the other page of the same name (bug hunt 2026-11-18).
+/// Unique names alone (`O_EXCL`) would settle the first half and not the
+/// second, so the whole transaction is serialised instead.
+///
+/// An advisory lock on a file of its own, never on the index: the index is
+/// replaced by rename on every write, and a lock on the old inode protects
+/// nothing. The lock file is never deleted — removing a lock file is itself
+/// a race. Held for an index read and write, milliseconds; never across a
+/// PNG encode.
+///
+/// It is BOUNDED. This runs on the render thread, and the other holder may
+/// be a process that is stopped in a debugger or hung: after `kWaitMs` the
+/// caller goes ahead unlocked, which is exactly the behaviour before this
+/// existed, and says so once. On a filesystem that cannot lock at all the
+/// same thing happens at once.
+///
+/// NOT recursive: two of these in one process block each other like two
+/// processes do (which is what lets a test stand two instances side by
+/// side). No function that holds one may call another that takes one.
+class StoreLock
+{
+public:
+    explicit StoreLock(const std::string& dir)
+    {
+#ifndef __EMSCRIPTEN__      // one tab, one thread: nobody to exclude
+        if (dir.empty()) return;
+        const fs::path path = fs::path(dir) / kLockName;
+        constexpr int kWaitMs = 2000;
+        constexpr int kStepMs = 2;
+        for (int waited = 0; ; waited += kStepMs) {
+#  ifdef _WIN32
+            // A share-nothing open IS the lock: a second open fails with a
+            // sharing violation (EACCES) for as long as this one is open,
+            // and the system closes it if the process dies.
+            int fd = -1;
+            if (_wsopen_s(&fd, path.c_str(),
+                          _O_RDWR | _O_CREAT | _O_BINARY | _O_NOINHERIT,
+                          _SH_DENYRW, _S_IREAD | _S_IWRITE) == 0) {
+                fd_ = fd;
+                return;
+            }
+            const bool busy = (errno == EACCES);
+#  else
+            if (fd_ < 0)
+                fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+            if (fd_ >= 0 && ::flock(fd_, LOCK_EX | LOCK_NB) == 0) return;
+            const bool busy = fd_ >= 0 && (errno == EWOULDBLOCK || errno == EINTR);
+#  endif
+            if (!busy || waited >= kWaitMs) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(kStepMs));
+        }
+        release();
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true))
+            pom2::log().warn("PrinterHistory",
+                "cannot lock " + path.string() + " — continuing without; two "
+                "POM2s printing at the same moment may lose a history page");
+#else
+        (void)dir;
+#endif
+    }
+    ~StoreLock() { release(); }
+    StoreLock(const StoreLock&)            = delete;
+    StoreLock& operator=(const StoreLock&) = delete;
+
+private:
+    void release()
+    {
+        if (fd_ < 0) return;
+#ifdef _WIN32
+        _close(fd_);
+#elif !defined(__EMSCRIPTEN__)
+        ::close(fd_);               // closing the description drops the flock
+#endif
+        fd_ = -1;
+    }
+    int fd_ = -1;
+};
+
 } // namespace
 
 // ── Open / index ─────────────────────────────────────────────────────────
@@ -210,7 +314,26 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
         PrinterHistory& h;
         ~MarkMerge() { h.nextFileAtLastMerge_ = h.nextFile_; }
     } markMerge{ *this };
-    const IndexState state = readIndex();
+    // Read and sweep as one step against another instance's index writes.
+    const StoreLock lock(dir_);
+    // EVERY row, including those whose PNG is not on disk: another POM2
+    // commits its row first and lands the file ~100 ms later, from its writer
+    // thread, outside any lock. Read the usual way (missing rows dropped),
+    // that page was absent from `live` below, and a PNG that landed between
+    // this read and the sweep reaching it was deleted as an orphan — the
+    // other window's printout, while it was still showing it (bug hunt
+    // 2026-11-18). The dead rows are dropped just below instead.
+    const IndexState state = readIndex(/*keepMissing=*/true);
+    std::vector<std::string> live;
+    live.reserve(pages_.size());
+    for (const auto& p : pages_) live.push_back(p.file);
+    pages_.erase(std::remove_if(pages_.begin(), pages_.end(),
+                                [&](const HistoryPage& p) {
+                                    std::error_code pageEc;
+                                    return !fs::exists(fs::path(dir_) / p.file,
+                                                       pageEc);
+                                }),
+                 pages_.end());
 
     // The sweep below deletes every PNG the index does not mention, and the
     // index is the ONLY record of which those are. An index that did not
@@ -247,9 +370,6 @@ bool PrinterHistory::open(const std::string& dir, std::string& err)
 
     // Clean safe, unreferenced page files left by a prior locked-file delete
     // or a process killed between PNG creation and index repair.
-    std::vector<std::string> live;
-    live.reserve(pages_.size());
-    for (const auto& p : pages_) live.push_back(p.file);
     for (const auto& entry : fs::directory_iterator(dir_, ec)) {
         const std::string file = entry.path().filename().string();
         std::error_code typeEc;
@@ -362,6 +482,31 @@ void PrinterHistory::mergeForeignPages()
         try { return std::stoull(p.file.substr(1, p.file.size() - 5)); }
         catch (...) { return 0; }
     };
+    // A row WE hold that the index no longer names, and whose PNG is gone,
+    // was erased or evicted by the other instance (it deletes under the store
+    // lock, so by now the file is gone too). Keeping it wrote the row back on
+    // our next index write: a dead entry in both windows that only a restart
+    // cleared. A page of ours still waiting for its encode has no file yet
+    // either, and is not that case.
+    {
+        std::vector<std::string> waiting;
+        {
+            std::lock_guard<std::mutex> lk(qMtx_);
+            for (const auto& q : queue_) waiting.push_back(q.file);
+        }
+        auto has = [](const std::vector<std::string>& v, const std::string& f) {
+            return std::find(v.begin(), v.end(), f) != v.end();
+        };
+        pages_.erase(std::remove_if(pages_.begin(), pages_.end(),
+            [&](const HistoryPage& p) {
+                if (has(waiting, p.file)) return false;
+                if (std::any_of(disk.begin(), disk.end(),
+                        [&](const HistoryPage& d) { return d.file == p.file; }))
+                    return false;
+                std::error_code ec;
+                return !fs::exists(fs::path(dir_) / p.file, ec);
+            }), pages_.end());
+    }
     bool added = false;
     for (auto& d : disk) {
         const bool known = std::any_of(pages_.begin(), pages_.end(),
@@ -382,7 +527,16 @@ void PrinterHistory::mergeForeignPages()
         [&](const HistoryPage& a, const HistoryPage& b) {
             return number(a) > number(b);              // newest first
         });
-    while (pages_.size() > kMaxPages) pages_.pop_back();
+    // No trim here: a row dropped without its file is an orphan PNG until
+    // the next launch's sweep. The caller trims (trimToCap) and deletes.
+}
+
+void PrinterHistory::trimToCap(std::vector<std::string>& evicted)
+{
+    while (pages_.size() > kMaxPages) {
+        evicted.push_back(pages_.back().file);
+        pages_.pop_back();
+    }
 }
 
 bool PrinterHistory::writeIndex(std::string& err) const
@@ -654,6 +808,12 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
     }
 
     const auto previousPages = pages_;
+    // Merge → pick the number → write the index is ONE step against any
+    // other POM2 on this directory (StoreLock). Released before the sheet is
+    // queued: that push may wait on the encoder, and the lock is not to be
+    // held across an encode.
+    std::optional<StoreLock> lock;
+    lock.emplace(dir_);
     mergeForeignPages();
 
     char name[32];
@@ -689,10 +849,7 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
     pages_.insert(pages_.begin(), std::move(p));   // newest first
 
     std::vector<std::string> evicted;
-    while (pages_.size() > kMaxPages) {
-        evicted.push_back(pages_.back().file);
-        pages_.pop_back();
-    }
+    trimToCap(evicted);
 
     if (!writeIndex(err)) {
         pages_ = previousPages;
@@ -701,6 +858,13 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
         lastPageEpoch_ = previousLastPage;
         return false;
     }
+
+    // The committed index no longer references evicted pages. Deletion is
+    // best effort: a transient Windows file lock may leave an orphan, but can
+    // no longer leave a live row pointing at a missing file. Under the store
+    // lock, so another instance that finds the row gone finds the file gone.
+    for (const auto& file : evicted) removeOrQueue(file);
+    lock.reset();
 
     // Hand the sheet to the writer thread rather than encoding it here: this
     // runs on the ImGui render thread, once per ejected sheet, and a Letter
@@ -727,11 +891,6 @@ bool PrinterHistory::addPage(const ImageWriter::Page& page, int model,
     }
     if (needWriter) startWriter();
     qCv_.notify_all();
-
-    // The committed index no longer references evicted pages. Deletion is
-    // best effort: a transient Windows file lock may leave an orphan, but can
-    // no longer leave a live row pointing at a missing file.
-    for (const auto& file : evicted) removeOrQueue(file);
     return true;
 }
 
@@ -744,6 +903,11 @@ bool PrinterHistory::reconcileWriteFailures(std::string& err)
     }
     if (failed.empty()) return true;
 
+    // An index write like any other: merged first and under the store lock,
+    // or it publishes OUR list as the whole index and another instance's
+    // rows are gone from it.
+    const StoreLock lock(dir_);
+    if (!dir_.empty()) mergeForeignPages();
     pages_.erase(std::remove_if(pages_.begin(), pages_.end(),
                                 [&](const HistoryPage& p) {
                                     return std::find(failed.begin(), failed.end(),
@@ -751,8 +915,12 @@ bool PrinterHistory::reconcileWriteFailures(std::string& err)
                                 }),
                  pages_.end());
 
+    std::vector<std::string> evicted;
+    trimToCap(evicted);
     std::string indexErr;
     const bool indexOk = dir_.empty() || writeIndex(indexErr);
+    if (indexOk && !dir_.empty())
+        for (const auto& file : evicted) removeOrQueue(file);
     err = "discarded " + std::to_string(failed.size()) +
           " print-history page(s) whose PNG could not be written";
     if (!indexOk) err += "; " + indexErr;
@@ -880,15 +1048,19 @@ bool PrinterHistory::erase(const HistoryPage& p, std::string& err)
     flushPending();
     const std::string file = p.file;         // `p` may point into pages_
     const auto previousPages = pages_;
+    const StoreLock lock(dir_);              // after flushPending: not recursive
     mergeForeignPages();                     // see addPage()
     pages_.erase(std::remove_if(pages_.begin(), pages_.end(),
                                 [&](const HistoryPage& q) { return q.file == file; }),
                  pages_.end());
+    std::vector<std::string> evicted;
+    trimToCap(evicted);
     if (!writeIndex(err)) {
         pages_ = previousPages;
         return false;
     }
     removeOrQueue(file);
+    for (const auto& gone : evicted) removeOrQueue(gone);
     return true;
 }
 
@@ -896,12 +1068,18 @@ bool PrinterHistory::clear(std::string& err)
 {
     flushPending();                          // see erase()
     const auto previousPages = pages_;
+    const StoreLock lock(dir_);              // after flushPending: not recursive
+    // "Everything" includes what another instance printed since we last
+    // looked: unmerged, its rows left the index here and its PNGs stayed on
+    // disk as orphans until the next launch.
+    mergeForeignPages();
+    const auto doomed = pages_;
     pages_.clear();
     if (!writeIndex(err)) {
         pages_ = previousPages;
         return false;
     }
-    for (const auto& p : previousPages) removeOrQueue(p.file);
+    for (const auto& p : doomed) removeOrQueue(p.file);
     lastPageEpoch_ = 0;
     return true;
 }

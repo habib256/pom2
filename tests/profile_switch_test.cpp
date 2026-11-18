@@ -265,9 +265,16 @@ int main()
     controller.stop();
     controller.setMode(EmulationController::Mode::Stopped);
     {
-        const auto overrideRom = pom2::userDataDir() / "roms" / "apple2cp.rom";
-        fs::create_directories(overrideRom.parent_path());
-        { std::ofstream badRom(overrideRom, std::ios::binary); badRom.put(0); }
+        // EVERY name the //c+ probes, not just the first: the probe order is
+        // a list of fallbacks and a bad first candidate is skipped (below).
+        std::vector<fs::path> overrides;
+        for (const auto& cand :
+             pom2::profileConfig(pom2::SystemProfile::AppleIIcPlus).romProbeOrder) {
+            overrides.push_back(pom2::userDataDir() / cand);
+            fs::create_directories(overrides.back().parent_path());
+            std::ofstream badRom(overrides.back(), std::ios::binary);
+            badRom.put(0);
+        }
         const auto before = settings.getString("system_profile");
         const auto id = controller.machineId();
         const auto standard = controller.getVideoStandard();
@@ -287,6 +294,39 @@ int main()
                controller.memory().peekMainRam(0x0300) == 0x77 &&
                controller.memory().memRead(0xF800) == romByte,
                "a refused ROM preserves the paused machine, RAM, PC and firmware");
+        for (const auto& o : overrides) fs::remove(o);
+    }
+    // The probe order is a list of FALLBACKS: the first candidate that
+    // loads, not the first that exists. A bad apple2c-32Kv0.rom used to
+    // refuse the //c while a valid dump sat behind it (bug hunt 2026-11-18
+    // round 2).
+    {
+        const auto& order = pom2::profileConfig(pom2::SystemProfile::AppleIIc).romProbeOrder;
+        const auto overrideRom = pom2::userDataDir() / order.front();
+        fs::create_directories(overrideRom.parent_path());
+        { std::ofstream badRom(overrideRom, std::ios::binary); badRom.put(0); }
+        std::error_code eq;
+        expect(fs::equivalent(pom2::findFirstResource(order), overrideRom, eq),
+               "the bad override is the first //c candidate that exists");
+        const std::string next = pom2::findFirstResourceThat(order,
+            [](const std::string& path) {
+                Memory::AppleIIRomImage image;
+                std::string error;
+                return Memory::prepareAppleIIRom(path.c_str(), image, error);
+            });
+        Recorder rec;
+        const auto r = pom2::switchProfile(controller, storage, settings,
+            pom2::SystemProfile::AppleIIc, true, rec.hooks());
+        controller.stop();
+        if (next.empty()) {
+            std::printf("  (no second //c dump in this tree: fallback not exercised)\n");
+            expect(!r.applied, "no loadable //c candidate refuses the switch");
+        } else {
+            expect(r.applied && r.romLoaded && r.romPath == next &&
+                   !fs::equivalent(r.romPath, overrideRom, eq),
+                   "an unloadable first candidate falls back to the next that loads (" +
+                   r.romPath + ")");
+        }
         fs::remove(overrideRom);
     }
     // A profile switch can spend time flushing media. The validated ROM

@@ -56,6 +56,7 @@
 #include "MemoryWatchSink.h"
 #include "OsCallTrace.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <map>
@@ -308,6 +309,10 @@ private:
     uint16_t stepJsrPc_    = 0;       // ...and is the one at this PC and SP
     bool    stepOutMode_   = false;
     uint8_t stepStartSp_   = 0;
+    /// Step Out: the stack as it stood above the start level when the step
+    /// began (index = slot - $0100). See stepOutPopIsAReturn.
+    std::array<uint8_t, 256> stepStackAtStart_{};
+    bool stepOutPopIsAReturn(int after) const;
     /// Atomic, alone among this class's members, because Stop clears it from
     /// the UI thread while the CPU worker may be reading it in
     /// `onInstruction`. Everything else here is guarded by `stateMutex`

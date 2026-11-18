@@ -38,6 +38,7 @@
 #include <string_view>
 #include <memory>
 #include "SlotPeripheral.h"
+#include "TranswarpCard.h"
 #include "ZipChip.h"
 
 #include <cmath>
@@ -200,6 +201,36 @@ int main()
             m.slotBus().plug(3, std::make_unique<FastSlotStub>());
             expect(m.cpuSpeedMultiplier() == 3.6 && zipOnly > 3.0,
                    "a TransWarp and a Zip multiplied their speeds");
+            m.slotBus().plug(3, nullptr);
+        }
+        // A real TransWarp holds the socket CPU from reset to $C074 = 3 —
+        // SLOW included. The Zip used to take over at ~3.9x the moment the
+        // card dropped to 1 MHz, and with both fast the stock-time mapping
+        // (paddles, IWM) was divided by the two speeds.
+        {
+            auto tw = std::make_unique<pom2::TranswarpCard>(3);
+            tw->setMemory(&m);
+            pom2::TranswarpCard* card = tw.get();
+            m.slotBus().plug(3, std::move(tw));
+            expect(card->holdsHostCpu() && m.slotBus().acceleratorHoldsCpu(),
+                   "a TransWarp holds the CPU from its reset");
+            expect(m.cpuSpeedMultiplier() == pom2::TranswarpCard::kFullSpeed,
+                   "TransWarp + Zip, both fast: the card's 3.5x");
+            uint64_t latch = m.getCycleCounter();
+            m.advanceCycles(3500);
+            expect(m.stockSinceCycle(latch) == 1000,
+                   "both fast: stock time was divided by the Zip AND the TransWarp");
+            m.memWrite(0xC074, 1);                  // the card asks for 1 MHz
+            expect(card->holdsHostCpu() && m.cpuSpeedMultiplier() == 1.0,
+                   "a slow TransWarp handed the machine to the Zip's 3.9x");
+            latch = m.getCycleCounter();
+            m.advanceCycles(1000);
+            expect(m.stockSinceCycle(latch) == 1000,
+                   "a slow TransWarp: a cycle is a stock cycle, not the Zip's");
+            m.memWrite(0xC074, 3);                  // halt: the bus goes back
+            m.advanceCycles(static_cast<int>(0.06 * 1022727));
+            expect(!card->holdsHostCpu() && m.cpuSpeedMultiplier() > 3.0,
+                   "$C074 = 3 hands the machine back to the socket chip");
             m.slotBus().plug(3, nullptr);
         }
         // $C05E bit 7 disables the delays.

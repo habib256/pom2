@@ -137,6 +137,15 @@ public:
     /// replays from 0.
     size_t drainSpoolFrom(size_t from, std::vector<uint8_t>& out) const;
 
+    /// What a caller that keeps its own copy of the spool needs to bring it
+    /// up to date in one short visit: which spool this is (`epoch` changes
+    /// on a clear and differs between cards), the absolute index of the
+    /// oldest byte still held, the total, and — appended to `out` — only the
+    /// bytes from `from` on. A caller with another epoch passes from = 0.
+    struct SpoolWindow { std::uint64_t epoch = 0; size_t base = 0; size_t total = 0; };
+    SpoolWindow drainSpoolWindow(size_t from, std::vector<uint8_t>& out) const;
+    std::uint64_t spoolEpoch() const;
+
     /// Number of bytes written since the last clear.
     size_t bytesWritten() const;
     bool spoolTruncated() const;
@@ -155,6 +164,8 @@ private:
     std::deque<uint8_t> spool_;
     size_t spoolBase_ = 0;   // absolute index of spool_.front()
     size_t spoolTotal_ = 0;  // accepted bytes since clear
+    std::uint64_t spoolEpoch_ = nextSpoolEpoch();   // see drainSpoolWindow
+    static std::uint64_t nextSpoolEpoch();
 
     void buildRom();
 };

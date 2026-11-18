@@ -41,9 +41,9 @@
 // tell them apart — is replaced, after the old file is copied to
 // userDataDir()/roms-replaced/. If that copy fails, nothing is replaced.
 //
-// Host-side only. HTTPS goes through the system `curl` (and `unzip` /
-// `tar` for the five MAME zips left) so POM2 does not grow a TLS
-// dependency. The browser build has no helper processes: the fetch
+// Host-side only. HTTPS goes through the system `curl` so POM2 does not
+// grow a TLS dependency; the MAME zips left are read in-process
+// (`ZipMember.h`, stored and deflate — no host `unzip` / `tar`). The browser build has no helper processes: the fetch
 // returns a clear error and the panel greys the button.
 
 #ifndef POM2_ROM_FETCH_H
@@ -186,8 +186,8 @@ constexpr std::size_t kMaxUnpackedZipBytes = 64u * 1024u * 1024u;
 
 /// Sum the uncompressed sizes in a zip's central directory. Returns false
 /// (with `err` set) when the archive is malformed or would expand past
-/// `kMaxUnpackedZipBytes` — the zip-bomb gate, applied BEFORE `unzip` runs,
-/// because afterwards the disk is already full.
+/// `kMaxUnpackedZipBytes` — the zip-bomb gate, applied BEFORE anything is
+/// unpacked.
 bool zipUnpackedSizeWithinCap(const std::vector<std::uint8_t>& zip,
                               std::uintmax_t& totalOut,
                               std::string& err);

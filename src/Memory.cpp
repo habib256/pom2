@@ -28,6 +28,7 @@
 #include "NoSlotClock.h"
 #include "SpeakerDevice.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -831,6 +832,7 @@ void Memory::clearRam()
         if (ramWorksBanks_ > 1) {
             fill00FF(ramWorksBacking_, ramWorksBacking_.size());
             ramWorksBank_ = 0;
+            ramWorksAbsent_ = false;
         }
     }
 }
@@ -852,6 +854,7 @@ void Memory::setIIEMode(bool on)
     if (!on) {
         ramWorksBanks_ = 1;
         ramWorksBank_  = 0;
+        ramWorksAbsent_ = false;
         ramWorksBacking_.clear();
         ramWorksBacking_.shrink_to_fit();
     }
@@ -866,22 +869,51 @@ void Memory::setIIEMode(bool on)
 void Memory::ramWorksSwapToBank(uint8_t newBank)
 {
     if (ramWorksBanks_ <= 1 || auxPort_) return;   // aux slot taken: setAuxSlotPort
-    // Clamp to populated banks via modulo. MAME does not clamp (it
-    // allocates a fixed 8 MB array and reads garbage for unpopulated
-    // slots — UB-adjacent in C++); we wrap. On a real RamWorks III with
-    // fewer than 128 banks installed, the chip-select decoder aliases
-    // higher-bank writes to populated banks anyway.
-    newBank = static_cast<uint8_t>(newBank % ramWorksBanks_);
-    if (newBank == ramWorksBank_) return;
+    // A bank number with no chips behind it selects NOTHING: it is not an
+    // alias of an installed bank (POM2 wrapped modulo the count until
+    // 2026-11-18, on an uncited claim about the decoder).
+    // [B] RamWorks III and RamWorks basic User's Manual v1.4.1 (Applied
+    //     Engineering), ch. 6 Table 6-1: each bank number belongs to one
+    //     block of chips ($00-$03 block A … $0C-$0F block D, $10-$17 the
+    //     512K expander) and "the bank numbers are not necessarily linear"
+    //     (ch. 7 p. 47). Its own FindBanks routine (p. 47) writes N / ~N at
+    //     $00/$01 of every bank from $7F DOWN, then reads them back going up:
+    //     that only counts right if a bank that is not there answers neither
+    //     with another bank's bytes nor with what was just written to it
+    //     under another number.
+    // [D] AppleWin Memory.cpp MemSetPaging @ master 2026-11: ignores the
+    //     write (the previous bank stays selected). MAME a2eramworks3.cpp
+    //     always has all 8 MB. Three emulators, three answers.
+    // [F] What the absent bank READS: no chip drives the bus; $FF here, not
+    //     the floating bus. A write followed by a read under the SAME select
+    //     reads back (the scratch below) — on the card it would not. Settled
+    //     by: reading an unpopulated bank on a real RamWorks III.
+    // POM2 installs banks $00..count-1, so 256K / 512K / 1 MB match Table
+    // 6-1; "3 MB" is $00-$2F where the card with its 2 Meg expander has
+    // $00-$17, $30-$37, $50-$57, $70-$77 (same 48 banks under FindBanks).
+    const bool nowAbsent = newBank >= ramWorksBanks_;
+    if (!nowAbsent && !ramWorksAbsent_ && newBank == ramWorksBank_) return;
+    if (nowAbsent && ramWorksAbsent_) return;   // one absent bank is as empty as another
 
     const size_t stride = kRamWorksBankStride;
-    uint8_t* prev = ramWorksBacking_.data()
-                  + static_cast<size_t>(ramWorksBank_) * stride;
-    std::memcpy(prev,             aux.data(),         0x10000);
-    std::memcpy(prev + 0x10000,   auxLcBank1.data(),  0x1000);
-    std::memcpy(prev + 0x11000,   auxLcBank2.data(),  0x1000);
-    std::memcpy(prev + 0x12000,   auxLcHigh.data(),   0x2000);
-
+    if (!ramWorksAbsent_) {
+        // Leaving an installed bank: the visible arrays go back to its slot.
+        uint8_t* prev = ramWorksBacking_.data()
+                      + static_cast<size_t>(ramWorksBank_) * stride;
+        std::memcpy(prev,             aux.data(),         0x10000);
+        std::memcpy(prev + 0x10000,   auxLcBank1.data(),  0x1000);
+        std::memcpy(prev + 0x11000,   auxLcBank2.data(),  0x1000);
+        std::memcpy(prev + 0x12000,   auxLcHigh.data(),   0x2000);
+    }
+    ramWorksAbsent_ = nowAbsent;
+    if (nowAbsent) {
+        // Scratch: whatever is written here is dropped at the next select.
+        std::fill(aux.begin(),        aux.end(),        0xFF);
+        std::fill(auxLcBank1.begin(), auxLcBank1.end(), 0xFF);
+        std::fill(auxLcBank2.begin(), auxLcBank2.end(), 0xFF);
+        std::fill(auxLcHigh.begin(),  auxLcHigh.end(),  0xFF);
+        return;
+    }
     ramWorksBank_ = newBank;
 
     const uint8_t* curr = ramWorksBacking_.data()

@@ -234,7 +234,7 @@ int main()
                "an absent member is an error");
         expect(!pom2::readZipMember(zip, "odd.bin", got, zerr, 1 << 20, &unsupported)
                    && unsupported,
-               "an unknown method is flagged for the host tool");
+               "an unknown method is flagged unsupported (and refused: no host tool)");
         expect(!pom2::readZipMember(zip, "341-0011.d0", got, zerr, 1024),
                "the size cap applies before inflating");
         std::vector<std::uint8_t> damaged = zip;
@@ -435,9 +435,9 @@ int main()
                                   std::to_string(checked) + " probed dumps)");
     }
 
-    // Only FIFTEEN entries still need a host unzip/tar: RetroBIOS publishes a
-    // loose copy of everything else, so a machine without those tools can
-    // still complete almost all of its romset. Name them — an entry that
+    // Only FIFTEEN entries still come out of a zip (read in-process since
+    // the host unzip/tar fallback went, 2026-11-18): RetroBIOS publishes a
+    // loose copy of everything else. Name them — an entry that
     // quietly goes back to a zip costs every such machine that dump.
     {
         int zipped = 0;

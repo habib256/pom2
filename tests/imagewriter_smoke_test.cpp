@@ -1949,6 +1949,33 @@ void testCustomCharacters()
     std::printf("  custom characters (ESC - / ESC I … CTRL-D / ESC ' / ESC * / ESC $): OK\n");
 }
 
+// The completed-sheet stack is bounded in BYTES as well as in sheets (bug
+// hunt 2026-11-18). The count alone bounded nothing: the form length is the
+// guest's (`ESC H`) and one 10" x 69" sheet at 300 dpi is ~62 MB, so the 32
+// the count allowed were ~2 GB.
+static void testPageStackIsBoundedInBytes()
+{
+    ImageWriter iw(ImageWriter::kMaxDpi, ImageWriter::PaperSize::Letter);
+    iw.setPaperDimensions(ImageWriter::kMaxPaperWidthIn,
+                          ImageWriter::kMaxPaperLengthIn);
+    const size_t sheet = iw.currentPage().pix.size();
+    assert(sheet > (48u << 20));                 // the premise: a huge sheet
+    const size_t fit = ImageWriter::kMaxPageStackBytes / sheet;
+    assert(fit >= 1 && fit < ImageWriter::kMaxPages);
+
+    for (size_t i = 0; i < fit + 2; ++i) {
+        feed(iw, "Z\x0c");
+        assert(iw.completedPageBytes() <= ImageWriter::kMaxPageStackBytes);
+    }
+    // Oldest first, and counted — the rule the sheet cap already follows,
+    // which is what the archiver and the panel's cache key rely on.
+    assert(iw.completedPageCount() == fit);
+    assert(iw.droppedPageCount() == 2);
+    assert(iw.sheetsEjected() == fit + 2);
+    std::printf("  ok: the sheet stack holds %zu of %zu MB sheets, not %zu\n",
+                fit, sheet >> 20, ImageWriter::kMaxPages);
+}
+
 int main()
 {
     testEscPProportionalIsConsumed();
@@ -1982,6 +2009,7 @@ int main()
     testPrintShopColourPass();
     testEpsonBinaryParamsKeepBit7();
     testEpsonParamBytesCostNothing();
+    testPageStackIsBoundedInBytes();
     std::printf("PASS\n");
     return 0;
 }

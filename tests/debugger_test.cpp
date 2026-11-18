@@ -1404,6 +1404,77 @@ void testStepOverRoutineLeavingByRti()
     assert(cpu.getStackPointer() == 0xFF);
 }
 
+// Step Out begun at the ENTRY of an inline-parameter routine: it pops its
+// return address, pushes the adjusted one and leaves by RTS. That RTS pops
+// bytes the routine itself pushed, from a level the stack already reached —
+// exactly what an RTS used as a jump does after a pop, so a rule that
+// refuses the second ("above the highest level seen") loses this return and
+// the step runs on to the caller's caller. Pinned so the known hole on the
+// other side (Debugger.cpp, onInstruction) is not closed at this one's cost.
+void testStepOutOfAnInlineParameterRoutine()
+{
+    Memory mem;
+    M6502 cpu(&mem);
+    pom2::Debugger dbg;
+    // $0800: JSR $0900 ; .byte 0 ; $0804: JMP $0804
+    const uint8_t caller[] = {0x20, 0x00, 0x09, 0x00, 0x4C, 0x04, 0x08};
+    // PLA TAX PLA TAY TYA PHA TXA CLC ADC #1 PHA RTS
+    const uint8_t callee[] = {0x68, 0xAA, 0x68, 0xA8, 0x98, 0x48,
+                              0x8A, 0x18, 0x69, 0x01, 0x48, 0x60};
+    for (std::size_t i = 0; i < sizeof caller; ++i)
+        mem.memWrite(static_cast<uint16_t>(0x0800 + i), caller[i]);
+    for (std::size_t i = 0; i < sizeof callee; ++i)
+        mem.memWrite(static_cast<uint16_t>(0x0900 + i), callee[i]);
+    mem.memWrite(0x01FF, 0x08); mem.memWrite(0x01FE, 0x02);      // the JSR's push
+    cpu.setProgramCounter(0x0900);
+    cpu.setStackPointer(0xFD);
+    dbg.setStepOut(cpu, mem);
+    cpu.setDebugHook(&dbg);
+    cpu.run(1000);
+    assert(dbg.stopRequested() && dbg.lastHit().reason == pom2::Debugger::Reason::StepOut &&
+           "Step Out ran away over an inline-parameter return");
+    assert(cpu.getProgramCounter() == 0x0804);
+    assert(cpu.getStackPointer() == 0xFF);
+}
+
+// The other reading of the same SP trace: the step begins BELOW the entry
+// level (registers pushed), and the routine jumps through PHA PHA RTS. With
+// one byte pushed the popped address lies partly below the start, with two
+// it overwrites what were saved registers — neither is the return, and Step
+// Out used to stop at the dispatch target, still inside the routine (bug
+// hunt 2026-11-18, deferred then fixed by what the stack held at the start).
+void testStepOutThroughADispatchAfterPushes()
+{
+    for (const int pushes : { 1, 2 }) {
+        Memory mem;
+        M6502 cpu(&mem);
+        pom2::Debugger dbg;
+        // $0800: JSR $0900 ; $0803: JMP $0803
+        const uint8_t caller[] = {0x20, 0x00, 0x09, 0x4C, 0x03, 0x08};
+        // (stopped here, registers already pushed) PLA [PLA]
+        // LDA #$09 PHA LDA #$7F PHA RTS  → $0980: RTS (the real return)
+        std::vector<uint8_t> callee;
+        for (int i = 0; i < pushes; ++i) callee.push_back(0x68);
+        for (const uint8_t b : {0xA9, 0x09, 0x48, 0xA9, 0x7F, 0x48, 0x60}) callee.push_back(b);
+        for (std::size_t i = 0; i < sizeof caller; ++i)
+            mem.memWrite(static_cast<uint16_t>(0x0800 + i), caller[i]);
+        for (std::size_t i = 0; i < callee.size(); ++i)
+            mem.memWrite(static_cast<uint16_t>(0x0900 + i), callee[i]);
+        mem.memWrite(0x0980, 0x60);
+        mem.memWrite(0x01FF, 0x08); mem.memWrite(0x01FE, 0x02);      // the JSR's push
+        // The saved registers: values that do not follow a JSR.
+        mem.memWrite(0x01FD, 0x12); mem.memWrite(0x01FC, 0x34);
+        cpu.setProgramCounter(0x0900);
+        cpu.setStackPointer(static_cast<uint8_t>(0xFD - pushes));
+        dbg.setStepOut(cpu, mem);
+        cpu.setDebugHook(&dbg);
+        cpu.run(1000);
+        assert(dbg.stopRequested() && dbg.lastHit().reason == pom2::Debugger::Reason::StepOut);
+        assert(cpu.getProgramCounter() == 0x0803 && "Step Out stopped at the dispatch target");
+        assert(cpu.getStackPointer() == 0xFF);
+    }
+}
+
 // The interrupt taken AT the stepped JSR, before it runs (bug hunt
 // 2026-11-01): onInstruction saw the JSR, the step entered the handler
 // instead, and on the way back the JSR was counted as a NESTED call — its
@@ -1975,6 +2046,8 @@ int main()
 {
     testBreakpointAfterDmaRelease();
     testWatchHitByTheBusMaster();
+    testStepOutOfAnInlineParameterRoutine();
+    testStepOutThroughADispatchAfterPushes();
     testStepOutOfAnInterruptHandler();
     testStepOutIgnoresANestedHandlersRti();
     testExplicitStepsFeedTheOsCallTrace();

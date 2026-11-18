@@ -84,6 +84,28 @@ int main()
     assert(printers.clearPrinterPanelSpool(controller, 2));
     panel = printers.capturePrinterPanel(controller);
     assert(panel.spoolText.empty());
+    // The panel keeps its own copy and asks the card only for what is new
+    // (bug hunt 2026-11-18): bytes after a clear, a CR and a dropped NUL
+    // must come out as the card's own spoolText() would give them.
+    {
+        auto state = controller.lockState();
+        auto* card = dynamic_cast<PrinterCard*>(
+            state.memory().slotBus().peripheral(2));
+        for (const uint8_t b : { uint8_t('H' | 0x80), uint8_t(0x00), uint8_t('I'), uint8_t(0x8D) })
+            card->deviceSelectWrite(0, b);
+    }
+    panel = printers.capturePrinterPanel(controller);
+    assert(panel.spoolText == "HI\n" && panel.bytesWritten == 4 && !panel.spoolTruncated);
+    {
+        auto state = controller.lockState();
+        auto* card = dynamic_cast<PrinterCard*>(
+            state.memory().slotBus().peripheral(2));
+        card->deviceSelectWrite(0, '!');
+        assert(card->spoolText() == "HI\n!");
+    }
+    panel = printers.capturePrinterPanel(controller);
+    assert(panel.spoolText == "HI\n!" && panel.bytesWritten == 5);
+    (void)printers.drainImageWriter(controller);
 
     // Removing the primary source hands the cable to Grappler+ and adopts
     // its old byte. Only output written after the handover is delivered.

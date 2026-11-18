@@ -63,21 +63,32 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
     // CPU, slot map and snapshot identity. Use the real loader's size/read
     // checks on an isolated memory so this cannot mutate the running machine.
     const bool pickLowerHalf = profileUsesLowerRomHalf(p);
-    const std::string newRomPath = findFirstResource(cfg.romProbeOrder);
+    // The probe order is a list of fallbacks: take the first candidate that
+    // LOADS, not the first that exists. A bad `apple2c-32Kv0.rom` used to
+    // refuse the //c while `apple2c-16K.rom` sat valid behind it (bug hunt
+    // 2026-11-18 round 2). No lock is held here — this is file I/O.
     Memory::AppleIIRomImage romImage;
-    {
-        Memory probe;
-        probe.setIIEMode(cfg.iieMode);
-        std::string error;
-        if (newRomPath.empty() || !Memory::prepareAppleIIRom(newRomPath.c_str(), romImage, error) ||
-            !probe.loadAppleIIRom(romImage, pickLowerHalf)) {
-            result.error = newRomPath.empty()
-                ? "No ROM found for " + std::string(cfg.displayName)
-                : "Cannot load ROM for " + std::string(cfg.displayName) + ": " +
-                  (error.empty() ? probe.getLastError() : error);
-            log().warn("Profile", result.error);
-            return result;
-        }
+    std::string romError;      // why the LAST candidate tried was refused
+    bool anyCandidate = false;
+    const std::string newRomPath = findFirstResourceThat(cfg.romProbeOrder,
+        [&](const std::string& path) {
+            anyCandidate = true;
+            Memory probe;
+            probe.setIIEMode(cfg.iieMode);
+            std::string error;
+            if (Memory::prepareAppleIIRom(path.c_str(), romImage, error) &&
+                probe.loadAppleIIRom(romImage, pickLowerHalf))
+                return true;
+            romError = path + ": " + (error.empty() ? probe.getLastError() : error);
+            log().warn("Profile", "Skipping ROM " + romError);
+            return false;
+        });
+    if (newRomPath.empty()) {
+        result.error = !anyCandidate
+            ? "No ROM found for " + std::string(cfg.displayName)
+            : "Cannot load ROM for " + std::string(cfg.displayName) + ": " + romError;
+        log().warn("Profile", result.error);
+        return result;
     }
 
     // Stop the CPU worker FIRST, so the flush below sees a quiescent machine

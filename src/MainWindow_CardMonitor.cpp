@@ -78,6 +78,12 @@ void MainWindow::plugCardVideoSource(pom2::CardVideoSource* card, int slot, cons
         cardPanelSource_ = other;
         cardPanelKey_ = otherKey;
     }
+    // ...and the display hears both: the Apple II Screen follows whichever
+    // of the two is asserting its picture, frame by frame, instead of the
+    // later slot alone (Apple2Display::cardVideoFor). After the source —
+    // setCardVideoSource drops an alternate it is handed as the source.
+    if (other && other != onScreen && other->takesMonitor() && onScreen->takesMonitor())
+        display->setCardVideoAlternate(other);
 }
 
 void MainWindow::clearCardVideoSources()
@@ -176,7 +182,15 @@ void MainWindow::renderCardMonitorPanel()
     int w = 0, h = 0;
     {
         auto st = controller->lockState();
-        if (const pom2::CardVideoSource* card = cardPanelSource_) {
+        const pom2::CardVideoSource* card = cardPanelSource_;
+        // Two cards that can both take the monitor: the panel is the second
+        // monitor, so it shows the one the Apple II Screen is NOT showing
+        // this frame — the earlier slot's by default, the other when that
+        // card's own switch put it on the screen.
+        if (card && card == display->cardVideoOnScreen() && display->cardVideoAlternate())
+            card = (card == display->cardVideoAlternate()) ? display->cardVideoSource()
+                                                           : display->cardVideoAlternate();
+        if (card) {
             w = card->pictureWidth();
             h = card->pictureHeight();
             if (w > 0 && h > 0) {

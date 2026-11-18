@@ -29,6 +29,7 @@
 #include "SlotBus.h"
 #include "SuperSerialCard.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace pom2 {
@@ -71,16 +72,53 @@ PrinterCoordinator::PrinterPanelSnapshot
 PrinterCoordinator::capturePrinterPanel(EmulationController& controller) const
 {
     PrinterPanelSnapshot snapshot;
-    auto state = controller.lockState();
-    auto& bus = state.memory().slotBus();
-    const auto* card = findFirst<PrinterCard>(bus);
-    if (!card) return snapshot;
-
-    snapshot.plugged = true;
-    snapshot.slot = card->getSlot();
-    snapshot.bytesWritten = card->bytesWritten();
-    snapshot.spoolTruncated = card->spoolTruncated();
-    snapshot.spoolText = card->spoolText();
+    PanelCache& cache = panelCache_;
+    PrinterCard::SpoolWindow window;
+    std::vector<std::uint8_t> fresh;
+    std::uint64_t seenEpoch = 0;
+    {
+        // Under the lock: the bytes that arrived since the last call, and
+        // nothing else. An epoch is unique per card and per clear, so it is
+        // read first and a stale cache asks for everything.
+        auto state = controller.lockState();
+        auto& bus = state.memory().slotBus();
+        const auto* card = findFirst<PrinterCard>(bus);
+        if (!card) { cache = {}; return snapshot; }
+        snapshot.plugged = true;
+        snapshot.slot = card->getSlot();
+        seenEpoch = card->spoolEpoch();
+        const std::size_t from = seenEpoch == cache.epoch ? cache.base + cache.raw.size() : 0;
+        window = card->drainSpoolWindow(from, fresh);
+    }
+    // Unlocked: bring the copy up to date and convert only what is new.
+    const auto appendText = [&cache](const std::uint8_t* p, std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::uint8_t c = p[i] & 0x7F;        // as PrinterCard::spoolText
+            if (c == 0x0D) cache.text.push_back('\n');
+            else if (c != 0x00) cache.text.push_back(static_cast<char>(c));
+        }
+    };
+    if (window.epoch != cache.epoch) {
+        cache.epoch = window.epoch;
+        cache.base = window.base;
+        cache.raw.clear();
+        cache.text.clear();
+    }
+    cache.raw.insert(cache.raw.end(), fresh.begin(), fresh.end());
+    if (window.base > cache.base) {
+        // The card dropped its oldest bytes (spool full): so does the copy,
+        // and the text is rebuilt — dropped NULs make its offsets its own.
+        const std::size_t gone = std::min(window.base - cache.base, cache.raw.size());
+        cache.raw.erase(cache.raw.begin(), cache.raw.begin() + static_cast<std::ptrdiff_t>(gone));
+        cache.base = window.base;
+        cache.text.clear();
+        appendText(cache.raw.data(), cache.raw.size());
+    } else {
+        appendText(fresh.data(), fresh.size());
+    }
+    snapshot.bytesWritten = window.total;
+    snapshot.spoolTruncated = window.base != 0;
+    snapshot.spoolText = cache.text;
     return snapshot;
 }
 

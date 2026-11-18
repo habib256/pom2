@@ -348,7 +348,7 @@ void Apple2Display::textTintPass(const Memory::DisplayState& state, int scanY0, 
     // monochrome one (its lit dot is not white, so there is nothing to map).
     uint32_t fg = 0, bg = 0;
     if (cardVideo_ && !cardOwnsMonitor(state.textMode, state.an0) &&
-        !isMonochrome() && cardVideo_->textColours(fg, bg))
+        !isMonochrome() && cardTextColours(fg, bg))
         tintText(state, scanY0, scanY1, fg, bg, x0, x1);
 }
 

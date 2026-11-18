@@ -226,7 +226,47 @@ void Debugger::setStepOut(M6502& cpu, const Memory& memory)
     stepSkipFirst_ = false;
     stepOutMode_   = true;
     stepStartSp_   = cpu.getStackPointer();
+    for (int slot = stepStartSp_ + 1; slot <= 0xFF; ++slot)
+        stepStackAtStart_[static_cast<std::size_t>(slot)] =
+            memory.peekCpuView(static_cast<uint16_t>(0x0100 + slot));
     transientReason_ = Reason::StepOut;
+}
+
+// Is the address an outer RTS / RTI is about to pop the routine's RETURN, or
+// a target the routine pushed to jump through (PHA PHA RTS)? Both land above
+// the start level, and with the same SP trace: begun at the entry, an
+// inline-parameter routine does PLA PLA … PHA PHA RTS (start s, up to s+2,
+// down to s, RTS to s+2); begun after two register pushes, a dispatch does
+// exactly that too. The stack level cannot separate them (bug hunt
+// 2026-11-18). What the stack HELD when the step began can:
+//   - the address lies partly BELOW the start level: it did not exist when
+//     the step began, so it is not this routine's return. Always a jump.
+//     (Stopped after one PHA, then PLA … PHA PHA RTS — the audit's case.)
+//   - the two slots are unchanged: a plain return.
+//   - they were rewritten, and what they held followed a JSR: the routine
+//     moved its own return address (inline parameters, the ProDOS MLI).
+//   - they were rewritten over something that was NOT a return address
+//     (saved registers): a dispatch.
+// The last test is a judgement, not a proof: a return address pushed by hand
+// (PHA PHA JMP) or whose caller is banked out does not look like one, and a
+// routine entered that way that ALSO rewrites it is taken for a dispatch —
+// Step Out then stops one return later. Two rare things at once, against a
+// stop inside the routine every time a pushed register met a dispatch.
+bool Debugger::stepOutPopIsAReturn(int after) const
+{
+    if (!stepMemory_) return true;
+    const int hiSlot = after;                 // an RTS / RTI pops PCL then PCH
+    const int loSlot = hiSlot - 1;
+    if (hiSlot > 0xFF) return true;           // wrapped stack: no opinion
+    if (loSlot <= static_cast<int>(stepStartSp_)) return false;
+    const uint8_t lo0 = stepStackAtStart_[static_cast<std::size_t>(loSlot)];
+    const uint8_t hi0 = stepStackAtStart_[static_cast<std::size_t>(hiSlot)];
+    const uint8_t lo1 = stepMemory_->peekCpuView(static_cast<uint16_t>(0x0100 + loSlot));
+    const uint8_t hi1 = stepMemory_->peekCpuView(static_cast<uint16_t>(0x0100 + hiSlot));
+    if (lo0 == lo1 && hi0 == hi1) return true;
+    // A JSR pushes the address of its own last byte: the opcode is two back.
+    const uint16_t pushed = static_cast<uint16_t>(lo0 | (hi0 << 8));
+    return stepMemory_->peekCpuView(static_cast<uint16_t>(pushed - 2)) == 0x20;
 }
 
 void Debugger::setProfiling(bool enabled)
@@ -421,7 +461,12 @@ bool Debugger::onInstruction(uint16_t pc)
                     const int after = static_cast<int>(sp) + (op == 0x40 ? 3 : 2);
                     // An RTS used as a jump (push target-1, RTS) pops back to
                     // where the callee was, not to the caller: not a return.
-                    if (stepOutMode_ ? after > static_cast<int>(stepStartSp_)
+                    //
+                    // Step Out adds what the stack HELD when the step began
+                    // (stepOutPopIsAReturn): the level alone cannot tell a
+                    // dispatch from an inline-parameter return.
+                    if (stepOutMode_ ? (after > static_cast<int>(stepStartSp_) &&
+                                        stepOutPopIsAReturn(after))
                                      : static_cast<uint8_t>(after) == stepStack_) {
                         stepReturning_ = true;
                         stepStack_ = static_cast<uint8_t>(after);

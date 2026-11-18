@@ -21,6 +21,7 @@
 #include "NoSlotClock.h"
 #include "SpeakerDevice.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -72,7 +73,10 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
     putBytes(lcHigh.data(),  lcHigh.size());
 
     putU32(ramWorksBanks_);
-    putU8(ramWorksBank_);
+    // Bit 7: the register names a bank that is not installed (the visible
+    // arrays are scratch and are NOT the bank's contents). Bank numbers stop
+    // at $7F, so the bit was always 0 before 2026-11-18.
+    putU8(static_cast<uint8_t>(ramWorksBank_ | (ramWorksBanks_ > 1 && ramWorksAbsent_ ? 0x80 : 0)));
     if (ramWorksBanks_ <= 1) {
         // Stock aux — serialize the visible aux + aux-LC arrays directly.
         putBytes(aux.data(),        aux.size());
@@ -83,12 +87,14 @@ void Memory::appendSnapshotState(std::vector<uint8_t>& out)
         // RamWorks — flush the live visible bank back into the backing store
         // so the serialized backing is fully coherent (see ramWorksSwapToBank
         // for the per-bank layout), then dump the whole backing.
-        uint8_t* slot = ramWorksBacking_.data()
-                      + static_cast<size_t>(ramWorksBank_) * kRamWorksBankStride;
-        std::memcpy(slot,           aux.data(),        0x10000);
-        std::memcpy(slot + 0x10000, auxLcBank1.data(), 0x1000);
-        std::memcpy(slot + 0x11000, auxLcBank2.data(), 0x1000);
-        std::memcpy(slot + 0x12000, auxLcHigh.data(),  0x2000);
+        if (!ramWorksAbsent_) {
+            uint8_t* slot = ramWorksBacking_.data()
+                          + static_cast<size_t>(ramWorksBank_) * kRamWorksBankStride;
+            std::memcpy(slot,           aux.data(),        0x10000);
+            std::memcpy(slot + 0x10000, auxLcBank1.data(), 0x1000);
+            std::memcpy(slot + 0x11000, auxLcBank2.data(), 0x1000);
+            std::memcpy(slot + 0x12000, auxLcHigh.data(),  0x2000);
+        }
         putU32(static_cast<uint32_t>(ramWorksBacking_.size()));
         putBytes(ramWorksBacking_.data(), ramWorksBacking_.size());
     }
@@ -342,7 +348,10 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
 
     if (!need(5)) return false;
     const uint32_t savedBanks = getU32();
-    const uint8_t  savedBank  = getU8();
+    const uint8_t  savedBankByte = getU8();
+    const uint8_t  savedBank  = savedBankByte & 0x7F;
+    const bool     savedAbsent = (savedBankByte & 0x80) != 0;
+    ramWorksAbsent_ = false;
     // Tell the caller what aux geometry this blob was captured with. The
     // mismatch branch below keeps only the saved CURRENT bank — up to 8 MB
     // of guest RAM dropped without a word — and snapshotMachineId hashes the
@@ -379,6 +388,13 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
             std::memcpy(auxLcBank1.data(), slot + 0x10000, 0x1000);
             std::memcpy(auxLcBank2.data(), slot + 0x11000, 0x1000);
             std::memcpy(auxLcHigh.data(),  slot + 0x12000, 0x2000);
+            if (savedAbsent) {
+                ramWorksAbsent_ = true;
+                std::fill(aux.begin(),        aux.end(),        0xFF);
+                std::fill(auxLcBank1.begin(), auxLcBank1.end(), 0xFF);
+                std::fill(auxLcBank2.begin(), auxLcBank2.end(), 0xFF);
+                std::fill(auxLcHigh.begin(),  auxLcHigh.end(),  0xFF);
+            }
         } else if (static_cast<size_t>(savedBank) * kRamWorksBankStride
                        + kRamWorksBankStride <= backingSize) {
             // Bank-count mismatch — best effort: lift just the saved current

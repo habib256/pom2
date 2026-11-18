@@ -42,7 +42,7 @@ namespace {
 /// Ghostscript is slow on a pathological job and POM2 must not wait forever
 /// for one. Generous against a real page (a text page is well under a second
 /// on any machine POM2 runs on) and short against a hang.
-constexpr int kRenderTimeoutMs = 20000;
+constexpr int kRenderTimeoutMs = kPsRenderTimeoutMs;
 constexpr long kMaxInterpreterKb = 512L * 1024;   // 512 MB
 constexpr int kPollMs          = 10;
 
@@ -277,7 +277,8 @@ bool renderPostScript(const std::string& interpreterPath,
                       const std::string& scratchDir,
                       const PsRenderRequest& req,
                       PsRenderResult& out,
-                      const std::atomic<bool>* cancel)
+                      const std::atomic<bool>* cancel,
+                      int timeoutMs)
 {
     out = {};
     if (interpreterPath.empty()) {
@@ -370,6 +371,10 @@ bool renderPostScript(const std::string& interpreterPath,
         return false;
     }
 
+    // A caller may shorten the wait (the spooler's time budget) but not
+    // lengthen it.
+    const int limitMs = (timeoutMs > 0 && timeoutMs < kRenderTimeoutMs)
+                            ? timeoutMs : kRenderTimeoutMs;
     int waited = 0;
     while (gs.isRunning()) {
         if (cancel && cancel->load(std::memory_order_relaxed)) {
@@ -377,10 +382,11 @@ bool renderPostScript(const std::string& interpreterPath,
             out.error = "cancelled";
             return false;
         }
-        if (waited >= kRenderTimeoutMs) {
+        if (waited >= limitMs) {
             gs.stop(200);
+            out.timedOut = true;
             out.error = "the interpreter did not finish in " +
-                        std::to_string(kRenderTimeoutMs / 1000) + " s";
+                        std::to_string((limitMs + 500) / 1000) + " s";
             pom2::log().warn("LaserWriter", out.error);
             return false;
         }
@@ -537,6 +543,34 @@ void PostScriptSpooler::startNextLocked(std::thread& retired)
     // The previous job's worker has published and exited; hand its handle to
     // the caller, which joins it once the lock is dropped.
     retired = std::move(worker_);
+
+    // Looked up before the budget is consulted: with no interpreter nothing
+    // is spent, and every job must still get its "install Ghostscript".
+    const std::string gsPath = findPostScriptInterpreter();
+
+    // The time budget (PsRenderBudget). A spent one refuses the job AND the
+    // ones waiting behind it — they are the same stream and would only be
+    // refused one by one, a result and a log line each.
+    refillBudgetLocked();
+    const int grantMs = budget_.grantMs();
+    if (grantMs <= 0 && !gsPath.empty()) {
+        const std::size_t n = queued_.size();
+        droppedJobs_ += n;
+        queued_.clear();
+        if (budgetWarned_) return;      // already said so; stay quiet
+        budgetWarned_ = true;
+        PsRenderResult r;
+        r.ok = false;
+        r.error = "PostScript rendering is paused: the jobs sent so far used "
+                  "up the interpreter's time allowance; " + std::to_string(n) +
+                  " job(s) dropped, try again in " +
+                  std::to_string((budget_.waitMs() + 999) / 1000) + " s";
+        done_       = std::move(r);
+        haveResult_ = true;
+        return;
+    }
+    budgetWarned_ = false;
+
     inFlight_ = std::move(queued_.front());
     queued_.pop_front();
     busy_ = true;
@@ -556,7 +590,6 @@ void PostScriptSpooler::startNextLocked(std::thread& retired)
     // LaserWriter and printing one byte was enough. `ChildProcess` is already
     // stubbed under Emscripten, so the empty path is the honest answer there
     // and this branch needs no `#ifdef`.
-    const std::string gsPath = findPostScriptInterpreter();
     if (gsPath.empty()) {
         PsRenderResult r;
         r.ok = false;
@@ -584,10 +617,25 @@ void PostScriptSpooler::startNextLocked(std::thread& retired)
     busy_       = false;
     return;
 #else
-    worker_ = pom2::guardedThread("LaserWriter", [this, req, scratch, gsPath]() {
+    worker_ = pom2::guardedThread("LaserWriter",
+                                  [this, req, scratch, gsPath, grantMs]() {
         PsRenderResult r;
-        (void)renderPostScript(gsPath, scratch, req, r, &cancel_);
+        const auto began = std::chrono::steady_clock::now();
+        (void)renderPostScript(gsPath, scratch, req, r, &cancel_, grantMs);
+        const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - began).count();
         std::lock_guard<std::mutex> lk(mtx_);
+        budget_.charge(spent);
+        // A job that never finished takes the ones waiting behind it with
+        // it. They were queued while it ran, by the stream that sent it; the
+        // likeliest reading of a `{} loop` followed by fifteen more jobs is
+        // fifteen more of the same, each worth another timeout.
+        if (r.timedOut && !queued_.empty()) {
+            r.error += "; " + std::to_string(queued_.size()) +
+                       " waiting job(s) dropped";
+            droppedJobs_ += queued_.size();
+            queued_.clear();
+        }
         done_       = std::move(r);
         haveResult_ = true;
         busy_       = false;
@@ -640,6 +688,28 @@ std::size_t PostScriptSpooler::queuedJobs() const
     return queued_.size();
 }
 
+std::size_t PostScriptSpooler::droppedJobs() const
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    return droppedJobs_;
+}
+
+void PostScriptSpooler::setRenderBudgetMs(int capacityMs)
+{
+    std::lock_guard<std::mutex> lk(mtx_);
+    budget_.restart(capacityMs);
+    budgetStamp_  = std::chrono::steady_clock::now();
+    budgetWarned_ = false;
+}
+
+void PostScriptSpooler::refillBudgetLocked()
+{
+    const auto now = std::chrono::steady_clock::now();
+    budget_.refill(std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - budgetStamp_).count());
+    budgetStamp_ = now;
+}
+
 void PostScriptSpooler::reset()
 {
     // Wait for any render rather than abandoning it: the child process is
@@ -653,6 +723,9 @@ void PostScriptSpooler::reset()
     done_       = {};
     haveResult_ = false;
     busy_       = false;
+    budget_.restart();
+    budgetStamp_  = std::chrono::steady_clock::now();
+    budgetWarned_ = false;
 }
 
 } // namespace pom2

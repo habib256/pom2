@@ -263,6 +263,10 @@ public:
     /// path every $C0xx access takes — a null pointer test there is free,
     /// an eight-slot virtual scan would not be.
     SlotPeripheral* busSnooper() const { return busSnooper_; }
+    /// True while an accelerator CARD runs the machine in place of the
+    /// socket CPU (`SlotPeripheral::holdsHostCpu`). One pointer test on an
+    /// ordinary machine: it rides the snooper cache instead of scanning.
+    bool acceleratorHoldsCpu() const { return busSnooper_ && busSnooper_->holdsHostCpu(); }
 
     /// The card claiming `page` ($Cn00) of a //c-class machine's window
     /// from its INTERNAL EXPANSION CONNECTOR, or nullptr. See
@@ -324,6 +328,8 @@ public:
     /// the owner says its latch is reset by RESET (releasesC800OnReset —
     /// the Super Serial Card); for cards in general the rule is unsourced.
     void reset(bool powerCycle = false);
+    /// Tell every card the machine's IWM was reset (onIwmReset).
+    void iwmReset() { for (auto& s : slots) if (s) s->onIwmReset(); }
 
     /// Unplug every card. Each is given an `onUnplug()` callback first.
     /// `activeExpansionSlot` is also cleared. Used by MainWindow's

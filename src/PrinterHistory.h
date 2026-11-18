@@ -27,6 +27,10 @@
 //   <user-data>/printouts/history/index.txt    one line per page, tab-separated
 //   <user-data>/printouts/history/p000123.png  the page raster, 8-bit greyscale or
 //                                      RGB when the ribbon was colour
+//   <user-data>/printouts/history/index.lock   empty; held while an instance
+//                                      reads-modifies-writes the index, so two
+//                                      POM2s sharing the store take turns
+//                                      (StoreLock, PrinterHistory.cpp)
 //
 // ── Why the index is not JSON ─────────────────────────────────────────────
 //
@@ -171,7 +175,11 @@ private:
     IndexState readIndex(bool keepMissing = false);
     /// Adopt the rows another POM2 sharing this directory has added since
     /// we last read the index, and move the counters past its pages.
+    /// Also drops the rows of ours that IT has erased. Does not trim.
     void mergeForeignPages();
+    /// Drop the oldest rows past `kMaxPages`, naming their files so the
+    /// caller deletes them once the index that forgets them is committed.
+    void trimToCap(std::vector<std::string>& evicted);
     /// Largest N over the `pNNNNNN.png` files actually present in `dir_`.
     uint64_t highestPageFileNumber() const;
     /// Set `nextFile_`/`nextJob_` past every page file on disk. Used on the

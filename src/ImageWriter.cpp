@@ -614,7 +614,15 @@ void ImageWriter::newPage(bool save, bool resetx)
         std::fflush(trace_);
     }
     if (save) {
-        if (pages_.size() >= kMaxPages) {
+        // Two ceilings, one rule (oldest first, counted): the sheet count,
+        // and the bytes those sheets hold — see kMaxPageStackBytes for why
+        // the count alone bounded nothing. Room is made BEFORE the copy so
+        // the stack never stands above the budget, even for one statement.
+        size_t held = completedPageBytes();
+        while (!pages_.empty() &&
+               (pages_.size() >= kMaxPages ||
+                held + current_.pix.size() > kMaxPageStackBytes)) {
+            held -= pages_.front().pix.size();
             pages_.erase(pages_.begin());
             ++droppedPages_;
         }
@@ -628,6 +636,16 @@ void ImageWriter::newPage(bool save, bool resetx)
     curY_ = topMargin_;
     std::fill(current_.pix.begin(), current_.pix.end(), uint8_t{0});
     ++revision_;
+}
+
+size_t ImageWriter::completedPageBytes() const
+{
+    // Summed on demand rather than kept as a running total: at most
+    // kMaxPages terms, once per eject, and nothing to fall out of step when
+    // the stack is cleared or restored.
+    size_t bytes = 0;
+    for (const Page& p : pages_) bytes += p.pix.size();
+    return bytes;
 }
 
 void ImageWriter::formFeed()

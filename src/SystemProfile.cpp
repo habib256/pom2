@@ -452,6 +452,17 @@ std::string_view profileNameForMachineId(std::uint32_t id)
     return {};
 }
 
+std::optional<SystemProfile> defaultProfileForRoms(
+    const std::function<bool(SystemProfile)>& romLoads, bool allowIIe)
+{
+    if (!romLoads) return std::nullopt;
+    if (allowIIe && romLoads(SystemProfile::AppleIIePAL)) return SystemProfile::AppleIIePAL;
+    if (romLoads(SystemProfile::AppleIIPlus)) return SystemProfile::AppleIIPlus;
+    // `--ii-plus` asked for the ][+ precisely to stay off the //e-class path.
+    if (allowIIe && romLoads(SystemProfile::AppleIIcPAL)) return SystemProfile::AppleIIcPAL;
+    return std::nullopt;
+}
+
 bool profileUsesLowerRomHalf(SystemProfile p)
 {
     return p == SystemProfile::AppleIIc ||

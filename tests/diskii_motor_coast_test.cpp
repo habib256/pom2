@@ -218,6 +218,25 @@ int main()
             c->deviceSelectRead(0x9); c->advanceCycles(1'000);
             assert(c->isMotorOn() && "a motor-on after an immediate stop starts again");
         }
+        {   // That mode is a COPY of the IWM's register, and a hard reset
+            // zeroes the chip's (EmulationController::hardReset ->
+            // IWMDevice::reset, then SlotBus::iwmReset). The copy survived
+            // it: the next program's 5.25" motor did not coast. A soft
+            // reset resets neither, so onReset() alone must keep the bits.
+            auto c = fresh(true);
+            c->deviceSelectRead(0xD);
+            c->deviceSelectWrite(0xF, 0x0F);
+            c->deviceSelectRead(0xE);
+            c->deviceSelectRead(0xC);
+            assert(c->iwmModeRegister() == 0x0F);
+            c->onReset();
+            assert(c->iwmModeRegister() == 0x0F && "a soft reset leaves the IWM mode");
+            c->onIwmReset();
+            assert(c->iwmModeRegister() == 0x00 && "a hard reset left the IWM mode shadow");
+            c->deviceSelectRead(0x9); c->advanceCycles(50'000);
+            c->deviceSelectRead(0x8);
+            assert(c->isMotorOn() && "after a hard reset the motor coasts again");
+        }
         {   // The SAME write with the motor running is write DATA, not a
             // mode: the IWM takes a mode only while idle (MAME iwm.cpp:283
             // dispatch, `if(m_active) data_w(data); else mode_w(data);`,

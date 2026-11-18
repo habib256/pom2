@@ -75,7 +75,8 @@ HgrSpriteEditor::~HgrSpriteEditor() { releaseGL(); }
 void HgrSpriteEditor::releaseGL()
 {
     if (host && colorTex_) host->destroyTexture(colorTex_);
-    colorTex_ = nullptr;
+    if (host && shapeTex_) host->destroyTexture(shapeTex_);
+    colorTex_ = shapeTex_ = nullptr;
 }
 
 void HgrSpriteEditor::clampGeom()
@@ -767,12 +768,48 @@ void HgrSpriteEditor::renderFileBrowser()
         ImGui::SameLine();
         if (ImGui::Button("Save", ImVec2(70, 0)) && browserSaveName[0]) {
             const std::string full = (fs::path(browserDir) / browserSaveName).string();
-            if (performFileAction(browserAction, full))
+            // Ask before replacing somebody's file. The native dialog asks by
+            // itself; this browser is the only picker in the browser build and
+            // on a Linux box with no zenity/kdialog, and it wrote straight over
+            // an existing sprite, PNG or .asm. (No name is retargeted here,
+            // unlike the paint editor's NAME#06xxxx: what is typed is written.)
+            std::error_code ec;
+            if (fs::exists(full, ec)) {
+                browserOverwritePath = full;
+                ImGui::OpenPopup("Overwrite?##sproverwrite");
+            } else if (performFileAction(browserAction, full)) {
                 ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::SameLine();
     }
-    if (ImGui::Button("Cancel", ImVec2(70, 0))) ImGui::CloseCurrentPopup();
+    const bool cancel = ImGui::Button("Cancel", ImVec2(70, 0));
+
+    // Stacked on the browser modal, so a "Cancel" comes back to the file list
+    // with the name still typed in. Closing the BROWSER has to happen after
+    // this popup's EndPopup(): inside it, CloseCurrentPopup() closes only it.
+    bool closeBrowserAfterOverwrite = false;
+    if (ImGui::BeginPopupModal("Overwrite?##sproverwrite", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("This file already exists:");
+        ImGui::TextDisabled("%s",
+            fs::path(browserOverwritePath).filename().string().c_str());
+        ImGui::TextUnformatted("Replace its contents?");
+        ImGui::Separator();
+        if (ImGui::Button("Overwrite", ImVec2(100, 0))) {
+            const bool ok = performFileAction(browserAction, browserOverwritePath);
+            browserOverwritePath.clear();
+            ImGui::CloseCurrentPopup();
+            if (ok) closeBrowserAfterOverwrite = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            browserOverwritePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (closeBrowserAfterOverwrite || cancel) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
@@ -1117,6 +1154,22 @@ void HgrSpriteEditor::renderFilesAndLibrary()
         renderDevSprites();
 }
 
+// The lit pixels of the sprite region as horizontal runs [x0, x1) per row, in
+// row order — what the canvas draws (see renderCanvas for why).
+void HgrSpriteEditor::litRuns(std::vector<LitRun>& out) const
+{
+    out.clear();
+    const int W = wpx(), H = hRows_;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ) {
+            if (!hgrpaint::pixelOn(scratch.data(), x, y)) { ++x; continue; }
+            int end = x + 1;
+            while (end < W && hgrpaint::pixelOn(scratch.data(), end, y)) ++end;
+            out.push_back({x, end, y});
+            x = end;
+        }
+}
+
 void HgrSpriteEditor::renderCanvas()
 {
     const int W = wpx(), H = hRows_;
@@ -1130,13 +1183,42 @@ void HgrSpriteEditor::renderCanvas()
 
     // Pixels — strictly black & white (the shape). Colour is a whole-sprite
     // attribute shown in the colour view, not per pixel here.
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x) {
-            const bool on = hgrpaint::pixelOn(scratch.data(), x, y);
-            const ImVec2 a(p0.x + x * cell, p0.y + y * cell);
-            dl->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell),
-                              on ? IM_COL32(255,255,255,255) : IM_COL32(0,0,0,255));
+    //
+    // One black rect for the ground, then one white rect per horizontal RUN of
+    // lit pixels — not a quad per pixel. A draw list is addressed with 16-bit
+    // indices and the browser build's renderer (WebGL2) has no vertex offset,
+    // so one window gets 65536 vertices, 16384 quads; the largest sprite is
+    // 280 x 192 = 53 760 pixels. Runs alone do not bound it — a full-size
+    // checkerboard is 140 x 192 = 26 880 of them — so past kCanvasQuadBudget
+    // the shape is ONE textured quad (same pixels, nearest filtering). A host
+    // with no textures (headless) draws the runs that fit.
+    constexpr size_t kCanvasQuadBudget = 12000;   // 48 000 vertices; the grid, the
+                                                  // tools and the rest keep 17 000
+    dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), IM_COL32(0,0,0,255));
+    litRuns(canvasRuns_);
+    bool drawn = false;
+    if (canvasRuns_.size() > kCanvasQuadBudget && host) {
+        shapeRgba_.assign(static_cast<size_t>(W) * H, IM_COL32(0,0,0,255));
+        for (const LitRun& r : canvasRuns_)
+            std::fill(shapeRgba_.begin() + static_cast<size_t>(r.y) * W + r.x0,
+                      shapeRgba_.begin() + static_cast<size_t>(r.y) * W + r.x1,
+                      IM_COL32(255,255,255,255));
+        shapeTex_ = host->uploadTexture(shapeTex_, shapeRgba_.data(), W, H, false);
+        if (shapeTex_) {
+            dl->AddImage(host->textureToImTexture(shapeTex_), p0,
+                         ImVec2(p0.x + sz.x, p0.y + sz.y));
+            drawn = true;
         }
+    }
+    if (!drawn) {
+        const size_t n = std::min(canvasRuns_.size(), kCanvasQuadBudget);
+        for (size_t i = 0; i < n; ++i) {
+            const LitRun& r = canvasRuns_[i];
+            dl->AddRectFilled(ImVec2(p0.x + r.x0 * cell, p0.y + r.y * cell),
+                              ImVec2(p0.x + r.x1 * cell, p0.y + (r.y + 1) * cell),
+                              IM_COL32(255,255,255,255));
+        }
+    }
 
     // Grid: light every pixel, heavier on 7-pixel byte boundaries.
     if (showGrid_) {

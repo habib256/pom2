@@ -213,6 +213,65 @@ int main()
     assert(fallbackMouse.fallback);
     assert(!fallbackMouse.warning.empty());
 
+    // A fallback dump is for a preferred one that does not LOAD, not only for
+    // one that is absent: a truncated cffa20ee02.bin used to leave the slot
+    // empty beside a valid cffa20eec02.bin (bug hunt 2026-11-18 round 2).
+    {
+        const auto truncated = temp / "cffa20ee02-truncated.bin";
+        writeSizedFile(truncated, 1000);
+        pom2::SlotCardFactory twoCffa([&](std::string_view name) {
+            if (name == "roms/cffa20ee02.bin") return truncated.string();
+            if (name == "roms/cffa20eec02.bin") return cffaRom.string();
+            return std::string();
+        });
+        auto nmos = request("cffa", 7);
+        nmos.cpuIsCmos = false;          // prefers cffa20ee02.bin
+        const auto got = twoCffa.create(nmos);
+        assert(dynamic_cast<pom2::CffaCard*>(got.card.get()));
+        assert(got.resourcePath == cffaRom.string());
+
+        pom2::SlotCardFactory badCffa([&](std::string_view name) {
+            return name.find("cffa20") != std::string_view::npos
+                       ? truncated.string() : std::string();
+        });
+        const auto none = badCffa.create(nmos);
+        assert(!none && none.warningCategory == "CFFA");
+    }
+
+    // A card ROM that is LONGER than the part is refused like a short one —
+    // its head is not the firmware — and is read bounded, not to its end:
+    // the CCS 7710 / DAN ][ / Applicard / UltraTerm loaders used to slurp
+    // the whole file before looking at the size, and the Workstation Card
+    // took the first 64 KiB of anything (bug hunt 2026-11-18 round 2).
+    {
+        const auto applicardOk  = temp / "applicard-2048.bin";
+        const auto applicardBig = temp / "applicard-2049.bin";
+        const auto dan2Big      = temp / "dan2-513.bin";
+        const auto wsBig        = temp / "workstation-65537.bin";
+        writeSizedFile(applicardOk, 2048);
+        writeSizedFile(applicardBig, 2049);
+        writeSizedFile(dan2Big, 513);
+        writeSizedFile(wsBig, 0x10000 + 1);
+        std::string applicardPath = applicardBig.string();
+        pom2::SlotCardFactory sized([&](std::string_view name) {
+            if (name == "roms/applicard_v9.bin") return applicardPath;
+            if (name == "roms/dan2_eprom.bin") return dan2Big.string();
+            if (name.find("341-0358") != std::string_view::npos) return wsBig.string();
+            return std::string();
+        });
+        const auto bigApplicard = sized.create(request("applicard", 4));
+        assert(!bigApplicard && !bigApplicard.warning.empty());
+        applicardPath = applicardOk.string();
+        const auto okApplicard = sized.create(request("applicard", 4));
+        assert(okApplicard.card && okApplicard.resourcePath == applicardOk.string());
+
+        const auto dan2 = sized.create(request("dan2", 7));
+        assert(dan2.card && dan2.status.find("own firmware") != std::string::npos);
+
+        const auto ws = sized.create(request("workstation", 4));
+        assert(!ws && ws.warningCategory == "Workstation");
+    }
+
     std::error_code ec;
     std::filesystem::remove_all(temp, ec);
     assert(!ec);

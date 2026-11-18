@@ -31,6 +31,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -160,31 +161,93 @@ void testHighBitMaskedOff()
     mem.memWrite(0xC073, 0x83);
     assert(mem.ramWorksBank() == 3);
 
-    // 0xFF & 0x7F = 0x7F, then 0x7F % 8 = 7.
+    // 0xFF & 0x7F = $7F: not one of the eight banks installed. The register
+    // names nothing; the last installed bank is still the one on record.
     mem.memWrite(0xC073, 0xFF);
-    assert(mem.ramWorksBank() == 7);
+    assert(mem.ramWorksBankAbsent() && mem.ramWorksBank() == 3);
 }
 
-void testClampToConfiguredBankCount()
+// A bank number with no chips behind it is ABSENT — not an alias of an
+// installed one (POM2 wrapped modulo the count until 2026-11-18).
+// [B] RamWorks III User's Manual v1.4.1, Table 6-1 and ch. 7 p. 47.
+void testUninstalledBankIsAbsent()
 {
-    // POM2 clamps `(data & 0x7F)` modulo `ramWorksBanks()` so unpopulated
-    // bank writes alias into the populated range — a real RamWorks
-    // with fewer than 128 banks behaves similarly (chip-select aliasing).
-    // MAME itself doesn't clamp (it allocates 8 MB always); the docstring
-    // calls this out as the intentional divergence.
     Memory mem;
     mem.setIIEMode(true);
     mem.setRamWorksBanks(4);
 
-    // Plant sentinels in banks 0..3.
     for (uint8_t b = 0; b < 4; ++b) {
         selectBank(mem, b);
         plantSentinel(mem, static_cast<uint8_t>(0xA0 + b));
     }
-    // Write bank 7 (data & 0x7F = 7, % 4 = 3) — should land on bank 3.
     selectBank(mem, 7);
-    assert(mem.ramWorksBank() == 3);
-    assert(readSentinel(mem) == 0xA3);
+    assert(mem.ramWorksBankAbsent());
+    assert(readSentinel(mem) == 0xFF);            // nothing drives the bus
+    plantSentinel(mem, 0x5A);                     // written nowhere
+    selectBank(mem, 9);                           // another absent bank
+    selectBank(mem, 3);
+    assert(!mem.ramWorksBankAbsent() && mem.ramWorksBank() == 3);
+    for (uint8_t b = 0; b < 4; ++b) {
+        selectBank(mem, b);
+        assert(readSentinel(mem) == static_cast<uint8_t>(0xA0 + b));
+    }
+
+    // The scanner's bank 0 is not the scratch of an absent bank.
+    selectBank(mem, 0);
+    const uint8_t bank0Byte = mem.videoAuxData()[0x0400];
+    selectBank(mem, 0x40);
+    assert(mem.videoAuxData() != mem.auxDataMutable());
+    assert(mem.videoAuxData()[0x0400] == bank0Byte);
+
+    // A snapshot taken with an absent bank selected restores as one, and
+    // does not write the scratch into an installed bank.
+    plantSentinel(mem, 0x77);
+    std::vector<uint8_t> blob;
+    mem.appendSnapshotState(blob);
+    Memory other;
+    other.setIIEMode(true);
+    other.setRamWorksBanks(4);
+    assert(other.loadSnapshotState(blob.data(), blob.size()));
+    assert(other.ramWorksBankAbsent());
+    for (uint8_t b = 0; b < 4; ++b) {
+        selectBank(other, b);
+        assert(readSentinel(other) == static_cast<uint8_t>(0xA0 + b));
+    }
+}
+
+// Applied Engineering's own FindBanks (manual p. 47): N and ~N at $00/$01 of
+// every bank from $7F DOWN, read back going up. It must count exactly the
+// banks installed — and so must the same routine writing UPWARD, which the
+// modulo aliasing got wrong (each installed bank ended up holding the number
+// of its highest alias).
+void testFindBanksCountsTheInstalledBanks()
+{
+    for (const bool descending : { true, false }) {
+        for (const uint32_t banks : { 4u, 8u, 16u, 48u, 128u }) {
+            Memory mem;
+            mem.setIIEMode(true);
+            mem.setRamWorksBanks(banks);
+            mem.memWrite(0xC009, 0);                       // ALTZP: $00/$01 in aux
+            for (int k = 0; k < 128; ++k) {
+                const uint8_t y = static_cast<uint8_t>(descending ? 127 - k : k);
+                mem.memWrite(0xC073, y);
+                mem.memWrite(0x0000, y);
+                mem.memWrite(0x0001, static_cast<uint8_t>(~y));
+            }
+            uint32_t found = 0;
+            for (int y = 0; y < 128; ++y) {
+                mem.memWrite(0xC073, static_cast<uint8_t>(y));
+                if (mem.memRead(0x0000) == y &&
+                    mem.memRead(0x0001) == static_cast<uint8_t>(~y)) {
+                    assert(static_cast<uint32_t>(y) < banks);
+                    ++found;
+                }
+            }
+            assert(found == banks);
+            mem.memWrite(0xC073, 0);
+            mem.memWrite(0xC008, 0);
+        }
+    }
 }
 
 void testResetWipesAndBankZero()
@@ -367,7 +430,8 @@ int main()
     testBankIsolation();
     testPredicateMaskC0n1_3_5_7();
     testHighBitMaskedOff();
-    testClampToConfiguredBankCount();
+    testUninstalledBankIsAbsent();
+    testFindBanksCountsTheInstalledBanks();
     testResetWipesAndBankZero();
     testIIPlusNotAffected();
     testSetIIEModeFalseDropsBacking();

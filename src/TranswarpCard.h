@@ -216,6 +216,11 @@ public:
 
     // ─── What the rest of the machine asks the card ──────────────────────
     double cpuSpeedMultiplier() const override;
+    /// The card holds the bus from reset until $C074 = 3 — also while it
+    /// runs at 1 MHz ($C074 = 1, a slot or paddle window, DSW2 bit 7): slow
+    /// is the card's 65C02 on a slower clock, not the socket CPU released.
+    /// [D] MAME transwarp.cpp @ mame0287, as the header reads it.
+    bool holdsHostCpu() const override { return enabled_ && !halted_; }
 
     /// Bus snoop. Returns true when the card CONSUMED the access and the
     /// Apple must not also act on it — true only for a $C074 write, exactly

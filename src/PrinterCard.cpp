@@ -21,6 +21,7 @@
 #include "PascalPrinterRom.h"
 #include "SlotRomAsm.h"
 
+#include <atomic>
 #include <algorithm>
 #include <initializer_list>
 
@@ -104,6 +105,27 @@ size_t PrinterCard::drainSpoolFrom(size_t from, std::vector<uint8_t>& out) const
     return spoolTotal_;
 }
 
+std::uint64_t PrinterCard::nextSpoolEpoch()
+{
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+PrinterCard::SpoolWindow PrinterCard::drainSpoolWindow(size_t from, std::vector<uint8_t>& out) const
+{
+    std::lock_guard<std::mutex> lk(bufferMtx_);
+    const size_t absolute = (from > spoolTotal_) ? spoolBase_ : std::max(from, spoolBase_);
+    out.insert(out.end(), spool_.begin() + static_cast<std::ptrdiff_t>(absolute - spoolBase_),
+               spool_.end());
+    return { spoolEpoch_, spoolBase_, spoolTotal_ };
+}
+
+std::uint64_t PrinterCard::spoolEpoch() const
+{
+    std::lock_guard<std::mutex> lk(bufferMtx_);
+    return spoolEpoch_;
+}
+
 size_t PrinterCard::bytesWritten() const
 {
     std::lock_guard<std::mutex> lk(bufferMtx_);
@@ -122,6 +144,7 @@ void PrinterCard::clearSpool()
     spool_.clear();
     spoolBase_ = 0;
     spoolTotal_ = 0;
+    spoolEpoch_ = nextSpoolEpoch();
 }
 
 void PrinterCard::buildRom()

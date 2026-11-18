@@ -91,6 +91,9 @@ public:
         bool changed = false;
     };
 
+    /// UI thread only: it keeps the panel's copy of the spool between calls
+    /// (panelCache_), so the machine lock is held for the bytes that arrived
+    /// since the last frame and not for the whole spool.
     PrinterPanelSnapshot capturePrinterPanel(
         EmulationController& controller) const;
     bool clearPrinterPanelSpool(EmulationController& controller, int slot);
@@ -137,6 +140,20 @@ private:
     bool           busyDriven_ = false;
     std::uintptr_t grapplerTarget_ = 0;       // the same pair for a Grappler+
     bool           grapplerDriven_ = false;
+
+private:
+    /// The Printer panel's own copy of the synthetic card's spool: the raw
+    /// bytes still retained, and their text form. Rebuilding the text from
+    /// the card every frame converted up to 4 MiB under `stateMutex`, 60
+    /// times a second, for as long as the panel was open (bug hunt
+    /// 2026-11-18).
+    struct PanelCache {
+        std::uint64_t epoch = 0;
+        std::size_t base = 0;            // absolute index of raw.front()
+        std::vector<std::uint8_t> raw;
+        std::string text;
+    };
+    mutable PanelCache panelCache_;
 };
 
 } // namespace pom2

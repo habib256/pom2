@@ -74,10 +74,69 @@ struct HgrSpriteEditorTestAccess {
         assert(editor.scratch == second && "the drag's pixels left the history");
     }
 
+    // Bug hunt 2026-11-18 (deferred): the canvas drew one quad per pixel, and
+    // a draw list holds 16384 of them where the renderer has no vertex offset
+    // (the browser build). It draws one rect per run of lit pixels now; pin
+    // that the runs ARE the picture, and the worst case the budget is for.
+    static void testCanvasRuns()
+    {
+        using hgrpaint::HgrColor;
+        HgrSpriteEditor editor(nullptr);
+        editor.wBytes_ = 40;
+        editor.hRows_ = 192;
+        std::vector<HgrSpriteEditor::LitRun> runs;
+        editor.litRuns(runs);
+        assert(runs.empty());
+
+        // A solid row crosses every byte boundary as ONE run.
+        for (int x = 0; x < 280; ++x)
+            hgrpaint::plotPage(editor.scratch.data(), x, 5, HgrColor::White);
+        hgrpaint::plotPage(editor.scratch.data(), 3, 7, HgrColor::White);
+        hgrpaint::plotPage(editor.scratch.data(), 4, 7, HgrColor::White);
+        hgrpaint::plotPage(editor.scratch.data(), 279, 7, HgrColor::White);
+        editor.litRuns(runs);
+        assert(runs.size() == 3);
+        assert(runs[0].x0 == 0 && runs[0].x1 == 280 && runs[0].y == 5);
+        assert(runs[1].x0 == 3 && runs[1].x1 == 5 && runs[1].y == 7);
+        assert(runs[2].x0 == 279 && runs[2].x1 == 280 && runs[2].y == 7);
+
+        // Region only: a pixel outside W x H is not part of the sprite.
+        editor.wBytes_ = 1;
+        editor.hRows_ = 5;
+        editor.litRuns(runs);
+        assert(runs.empty());
+        // ... and a run is cut at the region's right edge.
+        editor.hRows_ = 6;
+        editor.litRuns(runs);
+        assert(runs.size() == 1 && runs[0].x0 == 0 && runs[0].x1 == 7);
+
+        // The worst case, a full-size checkerboard: 140 runs on each of 192
+        // rows. More than one draw list can take as quads, which is why
+        // renderCanvas switches to a single textured quad past its budget.
+        editor.wBytes_ = 40;
+        editor.hRows_ = 192;
+        for (int off = 0; off < static_cast<int>(editor.scratch.size()); ++off)
+            editor.scratch[static_cast<size_t>(off)] = 0;
+        for (int y = 0; y < 192; ++y)
+            for (int x = y & 1; x < 280; x += 2)
+                hgrpaint::plotPage(editor.scratch.data(), x, y, HgrColor::White);
+        editor.litRuns(runs);
+        assert(runs.size() == 140u * 192u);
+        // Every lit pixel is in exactly one run, and no dark one is.
+        size_t lit = 0;
+        for (const auto& r : runs) {
+            for (int x = r.x0; x < r.x1; ++x)
+                assert(hgrpaint::pixelOn(editor.scratch.data(), x, r.y));
+            lit += static_cast<size_t>(r.x1 - r.x0);
+        }
+        assert(lit == 140u * 192u);
+    }
+
     static void run()
     {
         testGrabbedPalette();
         testUndoMidDrag();
+        testCanvasRuns();
         HgrSpriteEditor editor(nullptr);
         using hgrpaint::HgrColor;
         // Preserve an existing pixel alongside the new stroke in the same byte.
