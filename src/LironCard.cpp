@@ -270,6 +270,13 @@ uint8_t LironCard::slotRomRead(uint8_t low8)
     return rom_[static_cast<std::size_t>(slot_) * 256 + low8];
 }
 
+bool LironCard::peekExpansionRom(uint16_t offset, uint8_t& out) const
+{
+    if (!romLoaded_ || offset >= kExpansionSize) return false;
+    out = rom_[kExpansionBase + offset];
+    return true;
+}
+
 uint8_t LironCard::expansionRomRead(uint16_t offset)
 {
     if (!romLoaded_ || offset >= kExpansionSize) return 0xFF;

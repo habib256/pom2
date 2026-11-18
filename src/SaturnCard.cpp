@@ -19,6 +19,7 @@
 
 #include "SaturnCard.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace {
@@ -45,6 +46,16 @@ void SaturnCard::onReset()
     bank2_ = true;
     block_ = 0;
     publish();
+}
+
+// [E] No Saturn manual page cited: the card carries no battery, and a cold
+// boot wipes the motherboard's language card it stands in for. Same fill as
+// SlinkyCard::onPowerCycle. The default onPowerCycle() = onReset() kept the
+// eight blocks across the power switch.
+void SaturnCard::onPowerCycle()
+{
+    std::fill(ram_.begin(), ram_.end(), 0);
+    onReset();
 }
 
 void SaturnCard::access(uint8_t low4, bool isWrite)

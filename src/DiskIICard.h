@@ -460,6 +460,11 @@ public:
         for (DiskImage& img : images) img.setFluxClockHz(motorClock_.busHz());
     }
     void    onReset() override;
+    /// Power-on also clears the IWM mode shadow: IWMDevice::reset() zeroes
+    /// its own on a cold boot, and this copy of the same register kept its
+    /// bits (bit 2 = no 1 s motor coast) into the next machine.
+    /// [D] MAME iwm.cpp device_reset @ mame0287 (m_mode = 0).
+    void    onPowerCycle() override { iwmMode = 0; onReset(); }
 
     // Rewind/snapshot: serialize the mechanical + LSS runtime state (head
     // position, motor, phase magnets, data register, sequencer, timing) so a

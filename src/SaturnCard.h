@@ -63,6 +63,9 @@ public:
     void onPlug() override;
     void onUnplug() override;
     void onReset() override;
+    /// RESET keeps the 128 KB; a power-off does not (unbatteried RAM, as the
+    /// motherboard's language card that Memory::clearRam wipes).
+    void onPowerCycle() override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;

@@ -142,6 +142,12 @@ void testBus()
     touch(mem, 0x3);
     CHECK(mem.memRead(0xD000) == 0x33);
 
+    // Power-off is not RESET: the 128 KB go (bug hunt 2026-11-18 round 2).
+    mem.slotBus().reset(true);
+    touch(mem, 0x3);
+    CHECK(mem.memRead(0xD000) == 0x00);
+    touch(mem, 0xA);
+
     // Unplug: INH free, the ROM is back whatever the card's last state.
     mem.slotBus().unplug(5);
     CHECK(mem.lcInhibitor() == nullptr);

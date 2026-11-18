@@ -131,6 +131,9 @@ public:
     }
 
     uint8_t expansionRomRead (uint16_t offset) override;
+    /// ROM, or the VRAM window the card maps at $CC00 — whichever the CPU
+    /// would read; neither branch has a side effect.
+    bool peekExpansionRom(uint16_t offset, uint8_t& out) const override;
     void    expansionRomWrite(uint16_t offset, uint8_t v) override;
     bool    takesC800() const override { return true; }
     void    onReset() override;

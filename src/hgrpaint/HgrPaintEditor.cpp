@@ -1684,6 +1684,17 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
             }
         }
 
+        // A drag whose release never arrives — the application lost focus
+        // mid-drag, and ImGui then clears the button without a release event —
+        // is closed here WITHOUT painting the shape. Left open, the stroke and
+        // its host batch nested every later edit: nothing reached guest
+        // memory or the undo stack again until a restart (bug hunt
+        // 2026-11-18 round 2). Same shape as the right-button erase above.
+        if (dragging && !ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            commitStroke();
+            dragging = false;
+        }
         if (dragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             const auto [ex, ey] = constrainEnd();
             if (tool == Tool::Line) paintLine(dragStartX, dragStartY, ex, ey, activeColor);
@@ -2176,6 +2187,15 @@ bool hgrpaint::HgrPaintEditor::performFileAction(bool forSave, int saveKind,
             if (bytes.empty()) err = "empty file";
             else if (dhgrMode && bytes.size() < static_cast<size_t>(pageBytes()))
                 err = "not a 16 KB DHGR (A2FC) dump: " + fullPath;
+            // A page of the wrong length is another kind of file: a short one
+            // zero-filled the rest of the picture, a long one (an A2FC in HGR
+            // mode, a PNG) was cut to its first bytes, and the undo history
+            // went either way. 8184 is the classic HGR save that stops short
+            // of the last screen hole.
+            else if (bytes.size() != static_cast<size_t>(pageBytes()) &&
+                     !(!dhgrMode && !grMode && !dlgrMode && bytes.size() == 8184))
+                err = "not a " + std::to_string(pageBytes()) +
+                      "-byte page for this mode: " + fullPath;
             else if (!host) err = "no emulator";
         }
 

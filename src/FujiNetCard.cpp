@@ -268,6 +268,17 @@ void FujiNetCard::buildRom()
     romLayoutError_ = !a.finish();
 }
 
+bool FujiNetCard::peekSlotRom(uint8_t low8, uint8_t& out) const
+{
+    if (low8 >= kErrText && low8 < kErrText + 8 && link_ && !link_->isConnected()) {
+        static constexpr char kNoPeer[8] = { ' ', 'R', 'E', 'E', 'P', ' ', 'O', 'N' };
+        out = static_cast<uint8_t>(kNoPeer[low8 - kErrText] | 0x80);
+        return true;
+    }
+    out = rom_[low8];
+    return true;
+}
+
 uint8_t FujiNetCard::slotRomRead(uint8_t low8)
 {
     // NETWORK-006: `PR#n` with no FujiNet peer attached used to print

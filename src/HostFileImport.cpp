@@ -20,11 +20,19 @@ namespace pom2 {
 bool looksLikeBasicListing(const std::vector<std::uint8_t>& data)
 {
     bool digitFirst = false, seenInk = false;
-    for (const std::uint8_t b : data) {
+    // A UTF-8 BOM is an editor's, not the program's (the tokenizer skips it).
+    std::size_t start = 0;
+    if (data.size() >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) start = 3;
+    for (std::size_t i = start; i < data.size(); ++i) {
+        const std::uint8_t b = data[i];
         const bool lineEnd = b == '\n' || b == '\r';
-        // A stored program is full of $00 terminators and token bytes >= $80;
-        // one of either and this is not something a person typed.
-        if (!lineEnd && b != '\t' && (b < 0x20 || b > 0x7E)) return false;
+        // A stored program is full of $00 line terminators (and its link
+        // pointers are control bytes): one of those and this is not something
+        // a person typed. A byte >= $80 no longer decides — an accented REM
+        // or a BOM made a listing land as raw text typed BAS, with no word;
+        // the tokenizer now sees it and names the byte it cannot store.
+        if (!lineEnd && b != '\t' && b < 0x20) return false;
+        if (b == 0x7F) return false;
         if (!seenInk && b != ' ' && b != '\t' && !lineEnd) {
             seenInk    = true;
             digitFirst = b >= '0' && b <= '9';

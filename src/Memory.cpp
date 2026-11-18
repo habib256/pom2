@@ -183,6 +183,20 @@ int Memory::loadAppleIIRom(const char* filename, bool pickLower16KFor32K)
     return loadAppleIIRom(image, pickLower16KFor32K);
 }
 
+namespace {
+// The sizes a motherboard ROM image comes in: whole 2 KB chips stacked up to
+// $FFFF (2-16 KB), the 20 KB ][+ pack and the 32 KB two-bank dumps. Anything
+// else is a truncated or foreign file: the old "fit it under $FFFF" branch
+// took a half-copied 20000-byte apple2e.rom at $B1E0 — ROM bytes in user RAM,
+// no $C100-$CFFF split, and a load reported as a success — and a 64 KB dump
+// over the whole address space (bug hunt 2026-11-18 round 2).
+bool plausibleMainRomSize(std::size_t n)
+{
+    if (n == 20 * 1024 || n == 32 * 1024) return true;
+    return n >= 0x800 && n <= 0x4000 && n % 0x800 == 0;
+}
+} // namespace
+
 bool Memory::prepareAppleIIRom(const char* filename, AppleIIRomImage& image, std::string& error)
 {
     image = {};
@@ -190,7 +204,7 @@ bool Memory::prepareAppleIIRom(const char* filename, AppleIIRomImage& image, std
     std::ifstream f(filename, std::ios::binary | std::ios::ate);
     if (!f) { error = std::string("Cannot open ROM: ") + filename; return false; }
     const auto length = f.tellg();
-    if (length < 0x800 || length > 0x10000) {
+    if (length < 0 || !plausibleMainRomSize(static_cast<std::size_t>(length))) {
         error = "Unexpected ROM size: " + std::to_string(static_cast<long long>(length));
         return false;
     }
@@ -259,7 +273,7 @@ int Memory::loadAppleIIRomImpl(const AppleIIRomImage& image, bool pickLower16KFo
     } else if (size == 32 * 1024) {
         loadAddr = 0xC000;
         iieFromUpper16K = !pickLower16KFor32K;
-    } else if (size >= 0x800 && size <= 0x10000) {
+    } else if (plausibleMainRomSize(size)) {
         // Best effort: fit at the high end so vectors land at $FFFA-$FFFF.
         loadAddr = static_cast<uint16_t>(0x10000 - size);
     } else {
@@ -775,6 +789,13 @@ void Memory::clearRam()
 {
     iicExpansionAwake_ = false;   // power-on: the 4c sleeps (MAME machine_reset;
                                   // reset_w, i.e. Ctrl-Reset, leaves it awake)
+    // Power-on also drops a No-Slot Clock transfer caught half-way: nothing
+    // else called its reset, so a cold boot in the middle of a 64-bit
+    // readout left the next driver's recognition key counted as DATA and
+    // committed as a time set. The offset the user set is kept.
+    // [E] The DS1216E through a power loss; AppleWin (CNoSlotClock::Reset)
+    //     resets it the same way [D].
+    if (noSlotClock_) noSlotClock_->onReset();
     // Power-on RAM: `00 FF 00 FF…`. A deterministic stand-in — NOT what a
     // real machine holds, because no single pattern is (DEV § Power-on RAM
     // pattern has the reports).

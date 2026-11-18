@@ -139,7 +139,13 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
             result.romPath   = newRomPath;
             result.romLoaded = true;
             result.romStatus = std::string(cfg.iieMode ? "IIe/IIc: " : "loaded: ") + newRomPath;
-            if (newRomPath.find("apple2.rom") != std::string::npos &&
+            // The generic ][ dump, and the ENHANCED //e firmware standing in
+            // for the Unenhanced one (the only //e dump a browser bundle has):
+            // SystemProfile.cpp promises that one is logged, and it was not.
+            const bool genericII  = newRomPath.find("apple2.rom") != std::string::npos;
+            const bool enhForUnenh = newRomPath.find("apple2e.rom") != std::string::npos &&
+                std::string(cfg.romProbeOrder.front()).find("apple2e.rom") == std::string::npos;
+            if ((genericII || enhForUnenh) &&
                 cfg.romProbeOrder.front() != newRomPath) {
                 log().warn("Profile",
                     std::string("Loaded generic fallback ") + newRomPath + " for " +

@@ -10,6 +10,33 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — Bug hunt, round 2: a paint editor one alt-tab could kill, a slow FASTChip that ran fast, ROMs of any size
+
+`docs/audits/bug-hunt-2026-11-18.md` § Round 2.
+
+**The paint editor survives losing focus mid-drag.** ImGui clears a held
+button on focus loss without a release event; the left-button path waited
+for the release, so the stroke and its host batch stayed open and every
+later edit nested inside them — nothing reached guest memory or undo until
+a restart. Load now requires a page of the right length instead of
+zero-filling or truncating.
+
+**A FASTChip set below 1 MHz stays slow.** Its slow-down windows returned
+"1 MHz", which at 0.40 MHz is a speed-up on every speaker click.
+
+**Power-on forgets what power-off loses**: the Saturn's 128 KB, a No-Slot
+Clock transfer caught half-way (the next key became a time set), the Disk
+II's copy of the IWM mode register.
+
+**A main ROM has a ROM's size.** Any file from 2 KB to 64 KB used to load
+"under `$FFFF`" and report success — a truncated //e ROM at `$B1E0`. The
+ROM download has a Cancel, and a failed romset is asked for once.
+
+**A listing with a BOM or an accent is tokenized or refused**, no longer
+stored as text typed BAS. Six more card ROM windows are visible to the
+debugger (Workstation, FujiNet, Apple Parallel, Liron / CFFA / UltraTerm
+`$C800`).
+
 ## 2026-11-18 — Bug hunt: F8 over a ProDOS call, the speaker after a restore, a history blank pages could empty
 
 `docs/audits/bug-hunt-2026-11-18.md`. Round 4 of 2026-11-17 (curl globs, the
