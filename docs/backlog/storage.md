@@ -20,7 +20,6 @@ an explicit request before scheduling.
 | [STORAGE-010](#storage-010) | 🧊 | Frozen — deliberate limit | A `.nib` track is not normalised to one 200 ms revolution |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
-| [STORAGE-016](#storage-016) | 🟠 | In progress | Fractional WOZ bit cells (optimal_bit_timing 33) |
 | [STORAGE-017](#storage-017) | 🟢 | Ready | A2R 3.x flux import, ShrinkIt archives, multi-disk archives |
 | [STORAGE-018](#storage-018) | 🧊 | Frozen — needs a re-bless | 5.25" timeline re-based on the true LSS clock (8.17 cycles a cell) |
 
@@ -214,25 +213,9 @@ and [CHANGELOG](../../CHANGELOG.md).
 
 <a id="storage-016"></a>
 
-## STORAGE-016 — Fractional WOZ bit cells (optimal_bit_timing 33)
+## STORAGE-016 — Fractional WOZ bit cells
 
-**Priority:** 🟠 · **State:** In progress (2026-11-18): patch prepared, lands after the current commit.
-
-`DiskImage::lssCyclesPerCell()` is `optimalBitTiming / 4` in whole LSS
-cycles, so an INFO value of 33 (8.25 cycles, a 4.125 µs cell) truncates to
-the 32 of every other image. Prisoner 2's WOZ ([AppleWin
-#1005](https://github.com/AppleWin/AppleWin/issues/1005)) needs it: its
-weak-bit check wants `$C9` at Y=`$2A` and POM2 measures `$29` — 513-526
-cycles where 526-539 are needed ([protected.md](../../tests/corpus/protected.md)).
-The fix builds the cell grid in quarter LSS cycles (the unit of the field):
-cell `i` centred at `(i·q + q/2)/4`, period `(bits·q + 2)/4`, writes at
-`⌊4t/q⌋`, which is the exact integer grid for q = 32.
-
-**Acceptance criterion:** every corpus and display golden unchanged
-(byte-identical for 32); the Prisoner 2 image patched to 33 passes its
-protection check (`Y=$2A` at `$57C3`) and reaches its title; a WOZ write
-splice at 33 reads back what was written. Then the title joins
-`protected.manifest` with the patched image's SHA-256 documented.
+Shipped 2026-11-18: see the CHANGELOG entry of that date. The anchor stays for incoming links.
 
 <a id="storage-017"></a>
 
@@ -265,7 +248,8 @@ The bit-cell platter turns 2.2 % fast: 8 LSS cycles of 488.9 ns per nominal
 real time. Fixing it moves the byte cadence every pinned disk test, the
 DIX/OLDSKOOL raster probes and the write-splice geometry are calibrated
 against, so it is a re-basing pass with a full corpus re-bless, not a
-constant swap. STORAGE-016 (fractional cells) is the smaller step it builds on.
+constant swap. STORAGE-016 (fractional cells, shipped 2026-11-18) is the
+smaller step it builds on.
 
 **Scheduling condition:** a title that fails because of the 2.2 %, shown to
 pass at 8.17; then re-bless the corpus with the reason recorded.

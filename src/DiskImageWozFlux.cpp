@@ -20,18 +20,17 @@ void DiskImage::projectFluxTrack(int slot) const
 {
     const int periodLss = static_cast<int>(
         fluxPeriodToLss(wozQtFluxPeriodTicks[slot]));
-    const int cyc = lssCyclesPerCell();
     auto& events = fluxStream[slot];
     auto& bits   = bitStream[slot];
     const auto& ticks = wozQtFluxTicks[slot];
     events.clear();
     events.reserve(ticks.size());
-    bits.assign(static_cast<size_t>((periodLss + cyc - 1) / cyc), 0);
+    bits.assign(periodLss > 0 ? static_cast<size_t>(cellAtLss(periodLss - 1) + 1) : 0, 0);
     for (int tick : ticks) {
         int cycle = static_cast<int>(fluxTicksToLss(tick));
         if (cycle >= periodLss) cycle = periodLss > 0 ? periodLss - 1 : 0;
         events.push_back(cycle);
-        const size_t cell = static_cast<size_t>(cycle / cyc);
+        const size_t cell = static_cast<size_t>(cellAtLss(cycle));
         if (cell < bits.size()) bits[cell] = 1;
     }
     fluxQtPeriodLss[slot] = periodLss;

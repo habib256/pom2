@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — A WOZ cell that is not a whole LSS cycle (STORAGE-016): Prisoner 2 boots
+
+`optimal_bit_timing` is in 125 ns units, a quarter of the LSS cycle, and
+`lssCyclesPerCell()` divided it by 4 as an integer: an image that says 33
+(a 4.125 µs cell, 8.25 cycles) ran as a 32. Prisoner 2's WOZ (AppleWin
+#1005) needs exactly that — its weak-bit check counts a 13-cycle loop to a
+`$C9` after a run of zero bits and wants `Y=$2A`; at 32 every emulator reads
+`$29` (measured here: the nibble lands 513-526 cycles in, 526-539 wanted),
+and the community fix is to set the field to 33.
+
+The read, period and splice paths now build the cell grid in quarter cycles:
+centre `(i·q + q/2)/4`, start `ceil(i·q/4)` (the exact inverse of
+`⌊4t/q⌋` — a floor there handed cycle 8 of a 33 grid to the wrong cell),
+period `(bits·q + 2)/4`. **For any multiple of 4 that is the old integer
+grid, byte for byte**: the unpatched Prisoner 2 stops on the same cycle as
+before, and the whole suite and corpus are unchanged. Patched to 33, it
+reads `Y=$2A`, boots to its title, "RESIGNATION FILE" and the resignation
+code — the protected corpus's `prisoner2`. Pinned by `woz_bit_timing_smoke`
+(fails on the reverted code: period 256 instead of 264). The 2.2 % fast
+platter (STORAGE-018) is a separate, still-frozen re-basing.
+
 ## 2026-11-18 — The Passport MIDI card (AUDIO-009)
 
 Unfrozen on explicit request, with the named software the scope ruling asks

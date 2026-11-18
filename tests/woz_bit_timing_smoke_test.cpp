@@ -175,6 +175,45 @@ bool checkTimingForObt(uint8_t obt) {
     return true;
 }
 
+// A value that is not a multiple of 4 (STORAGE-016). 33 quarter cycles =
+// 8.25 LSS cycles a cell: Prisoner 2's WOZ boots only with it (its weak-bit
+// check wants $C9 one 13-cycle loop later than 32 gives). Before 2026-11-18
+// lssCyclesPerCell() truncated 33/4 to 8 and the image ran as a 32.
+// Cell i is centred at (i*33 + 16)/4 and starts at ceil(i*33/4); the period
+// is (bits*33 + 2)/4. A write at a cell's centre must land in that cell.
+bool checkFractionalObt33() {
+    // Bits at cells 0, 1 and 4: 1100 1000 ...
+    const auto woz = buildWoz2WithBitTiming(33, { 0xC8, 0x00, 0x00, 0x00 }, 32);
+    const std::string path = writeTempFile(woz, "33");
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: load WOZ2 obt=33: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    const int period = img.trackPeriod(0);
+    if (period != 264) {                       // 32 × 8.25
+        std::printf("FAIL: obt=33 trackPeriod=%d expected 264\n", period);
+        return false;
+    }
+    const std::vector<int> want = { 4, 12, 37 };
+    if (img.fluxEvents(0) != want) {
+        std::printf("FAIL: obt=33 flux events are not (4, 12, 37)\n");
+        return false;
+    }
+    // Write one transition at cell 7's centre over cells 6-8.
+    const int64_t t = (7 * 33 + 16) / 4;       // 61
+    const int64_t start = (6 * 33 + 3) / 4;    // 50, the start of cell 6
+    const int64_t end   = (9 * 33 + 3) / 4;    // 75, the start of cell 9
+    img.writeFlux(0, start, end, 1, &t, 0);
+    const std::vector<int> after = { 4, 12, 37, 61 };
+    if (img.fluxEvents(0) != after) {
+        std::printf("FAIL: obt=33 write at cell 7 did not read back at 61\n");
+        return false;
+    }
+    std::printf("OK : obt=33 → period=264, events 4/12/37, write splice at cell 7 reads back\n");
+    return true;
+}
+
 // Sanity: WOZ1 (no INFO+39 field) must fall back to the 32-default.
 bool checkWoz1FallsBackTo32() {
     // Build a minimal WOZ1: same shape as woz_load_smoke_test::buildMinimalWoz1
@@ -397,6 +436,7 @@ int main() {
     allOk &= checkTimingForObt(32);      // explicit default
     allOk &= checkTimingForObt(40);      // 5 µs cells (slower master)
     allOk &= checkTimingForObt(28);      // 3.5 µs cells (faster master)
+    allOk &= checkFractionalObt33();     // 4.125 µs: not a whole LSS cycle count
     allOk &= checkFluxTrackPeriod(32);   // FLUX period = tick sum (default)
     allOk &= checkFluxTrackPeriod(40);   // FLUX period independent of obt
     allOk &= checkHostileFluxExpansionRejected();

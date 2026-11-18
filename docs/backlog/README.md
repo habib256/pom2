@@ -42,8 +42,8 @@ belongs in `docs/audits/` and the task links to it.
 
 **2026-11-18 batch** (CHANGELOG of that date): cc65 `.dbg` import into the
 debugger's Source and Symbols sections; deater's six NTSC //e productions as
-`deater` corpus titles (their media upload is RELEASE-015); Phantasie in the
-protected corpus; the `$C050` switching-read check from AppleWin #1386 pinned
+`deater` corpus titles (their media upload is RELEASE-015); Phantasie and Prisoner 2 (STORAGE-016,
+fractional WOZ cells) in the protected corpus; the `$C050` switching-read check from AppleWin #1386 pinned
 in `floating_bus_measured`; the `$C019` VBL edge checked against Hectic (no
 change needed); the Passport MIDI card (AUDIO-009, real-software run
 pending). **Looked at and rejected:** Tom Harte's `rockwell65c02` and
