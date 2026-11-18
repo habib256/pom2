@@ -64,11 +64,16 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # libasound2-dev: this is the leg that compiles HostMidiPort_alsa.cpp
+      # (the Passport MIDI card's Linux output, built only where CMake finds
+      # ALSA). Without it every Linux job took the null backend and the ALSA
+      # one was never compiled anywhere. The release packages do not take
+      # ALSA yet, so their runtime dependencies are unchanged.
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libasound2-dev
 
       - name: Fetch Dear ImGui (pinned)
         run: |
@@ -87,6 +92,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=OFF \
             -DPOM2_WERROR=ON
+          grep -q 'HostMidiPort_alsa' build-quick/CMakeFiles/pom2_imgui.dir/build.make
           cmake --build build-quick --parallel 4 --target pom2_imgui pom2_headless pom2_bench
 
   # The render path's two checks — the CRT glass resample and the barrel/mask
