@@ -332,6 +332,20 @@ uint8_t WorkstationCard::expansionRomRead(uint16_t offset)
     return rom_[kExpansionRomOffset + (offset & 0x07FF)];
 }
 
+bool WorkstationCard::peekSlotRom(uint8_t low8, uint8_t& out) const
+{
+    if (!romLoaded_) return false;
+    out = ram_[kSharedPage + low8];
+    return true;
+}
+
+bool WorkstationCard::peekExpansionRom(uint16_t offset, uint8_t& out) const
+{
+    if (!romLoaded_) return false;
+    out = rom_[kExpansionRomOffset + (offset & 0x07FF)];
+    return true;
+}
+
 // $C0n0-$C0nF. The semantics are the one part of this card that the dump
 // does NOT settle — see the header. Recording them is what a future session
 // needs; inventing a response would be worse than $FF.

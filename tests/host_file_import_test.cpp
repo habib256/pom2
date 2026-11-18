@@ -47,6 +47,16 @@ int main()
     ImportedFile f;
     std::string error;
 
+    // An editor's BOM does not make a listing "not a listing", and a byte the
+    // Apple II cannot store is an ERROR naming it — both used to land as raw
+    // text typed BAS, without a word (bug hunt 2026-11-18 round 2).
+    CHECK(looksLikeBasicListing(bytesOf("\xEF\xBB\xBF" + listing)));
+    CHECK(importHostFile("/tmp/x/BOM.bas", bytesOf("\xEF\xBB\xBF" + listing), f, error));
+    CHECK(f.type == 0xFC && f.data == program);
+    CHECK(!importHostFile("/tmp/x/ACCENT.bas", bytesOf("10 REM caf\xC3\xA9\n"), f, error));
+    CHECK(error.find("no Apple II representation") != std::string::npos);
+    f = {}; error.clear();
+
     // A typed listing under an Applesoft name becomes the program.
     CHECK(importHostFile("/tmp/x/HELLO.bas", bytesOf(listing), f, error));
     CHECK(f.name == "HELLO" && f.type == 0xFC && f.aux == 0x0801 && f.auxStated);

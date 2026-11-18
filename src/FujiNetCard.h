@@ -231,6 +231,8 @@ public:
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;
     uint8_t slotRomRead      (uint8_t low8) override;
+    /// The debugger's view of the page (the read has no side effect).
+    bool    peekSlotRom(uint8_t low8, uint8_t& out) const override;
     void    onReset() override;
 
     void appendSnapshotState(std::vector<uint8_t>& out) const override;

@@ -58,7 +58,12 @@ void FastChip::slowFor(int ms, uint64_t now)
 
 double FastChip::cpuSpeedMultiplier(uint64_t now) const
 {
-    return now < slowUntil_ ? 1.0 : multiplier();
+    // A slow-down window brings a FAST machine back to the Apple's own
+    // clock; it never speeds up one set below it (0.20-0.90 MHz), which a
+    // bare 1.0 here did on every speaker click and slot access.
+    // [F] The User's Guide gives no window behaviour below 1 MHz. Settled
+    //     by: timing a loop with sound on a real FASTChip at 0.4 MHz.
+    return now < slowUntil_ ? std::min(1.0, multiplier()) : multiplier();
 }
 
 uint64_t FastChip::stockCyclesBetween(uint64_t from, uint64_t to) const
@@ -66,7 +71,9 @@ uint64_t FastChip::stockCyclesBetween(uint64_t from, uint64_t to) const
     if (to <= from) return 0;
     const double m = multiplier();
     const uint64_t slowEnd = std::clamp(slowUntil_, from, to);
-    return (slowEnd - from) + static_cast<uint64_t>(static_cast<double>(to - slowEnd) / m);
+    const double slowM = std::min(1.0, m);   // see cpuSpeedMultiplier
+    return static_cast<uint64_t>(static_cast<double>(slowEnd - from) / slowM)
+         + static_cast<uint64_t>(static_cast<double>(to - slowEnd) / m);
 }
 
 void FastChip::onReset(uint64_t /*now*/)

@@ -112,6 +112,9 @@ public:
     bool    peekSlotRom(uint8_t low8, uint8_t& out) const override   // no side effect
     { out = rom_[static_cast<size_t>(low8) + static_cast<size_t>(slot_) * 0x100]; return true; }
     uint8_t expansionRomRead (uint16_t offset) override;    // read_c800
+    bool    peekExpansionRom(uint16_t offset, uint8_t& out) const override   // no side effect
+    { const size_t idx = 0x800 + static_cast<size_t>(offset);
+      out = idx < rom_.size() ? rom_[idx] : 0xFF; return true; }
     bool    takesC800() const override { return true; }     // MAME a2bus.h:145 take_c800
     /// The EEPROM is deselected by $CFFF **and by $CFEF**, and RESET does
     /// not re-enable or disable it.

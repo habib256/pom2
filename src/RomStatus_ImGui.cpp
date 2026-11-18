@@ -667,6 +667,17 @@ void RomStatus_ImGui::render(bool* open, const std::string& activeProfileName,
         if (ImGui::Button(ICON_FA_DOWNLOAD " Download missing ROMs"))
             startRetroBiosFetch();
         ImGui::EndDisabled();
+        if (busy) {
+            // The first-launch notice has always pointed here for Cancel, and
+            // there was none: a download on a dead network held Download,
+            // Import and Reload ROM disabled until the user quit.
+            ImGui::SameLine();
+            const bool stopping = fetchCancel_.load();
+            ImGui::BeginDisabled(stopping);
+            if (ImGui::Button(stopping ? "Cancelling..." : ICON_FA_XMARK " Cancel"))
+                fetchCancel_.store(true);
+            ImGui::EndDisabled();
+        }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);

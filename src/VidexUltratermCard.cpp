@@ -83,6 +83,13 @@ uint8_t VidexUltratermCard::slotRomRead(uint8_t low8)
     return rom_[std::size_t(slot_) * 0x100 + low8];
 }
 
+bool VidexUltratermCard::peekExpansionRom(uint16_t offset, uint8_t& out) const
+{
+    out = (offset < 0x400 || (ctrl1_ & kMemSel)) ? rom_[0x800u + (offset & 0x7FF)]
+                                                 : vram_[windowIndex(offset)];
+    return true;
+}
+
 uint8_t VidexUltratermCard::expansionRomRead(uint16_t offset)
 {
     if (offset < 0x400 || (ctrl1_ & kMemSel))

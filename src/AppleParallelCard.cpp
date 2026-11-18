@@ -95,6 +95,18 @@ uint8_t AppleParallelCard::slotRomRead(uint8_t low8)
     return promLoaded_ ? prom_[firmwareBase_ | off] : openBus();
 }
 
+bool AppleParallelCard::peekSlotRom(uint8_t low8, uint8_t& out) const
+{
+    if (!promLoaded_) return false;
+    uint8_t off = low8;
+    if (!(off & 0x40) || ((off & 0x80) && !ackLatch_))
+        off = static_cast<uint8_t>(off | 0x40);
+    else
+        off = static_cast<uint8_t>(off & 0xBF);
+    out = prom_[firmwareBase_ | off];
+    return true;
+}
+
 void AppleParallelCard::slotRomWrite(uint8_t /*low8*/, uint8_t /*v*/)
 {
     autostrobeDisable_ = false;                  // a2pic.cpp:305-311

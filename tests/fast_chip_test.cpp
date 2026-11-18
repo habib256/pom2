@@ -57,6 +57,20 @@ int main()
            pom2::FastChip::speedMHz(32) == 4.55 && pom2::FastChip::speedMHz(1) == 0.20,
            "the speed table (User's Guide p. 22)");
 
+    // Below 1 MHz a slow-down window must not speed the machine UP: it
+    // returned a bare 1.0, so at 0.40 MHz every speaker click ran 52 ms at
+    // full speed (bug hunt 2026-11-18 round 2).
+    {
+        pom2::FastChip slow;
+        slow.setPowerOnSpeed(3);                         // 0.40 MHz
+        slow.onReset(0);
+        expect(std::fabs(slow.cpuSpeedMultiplier(1000) - 0.4) < 1e-9, "0.40 MHz idle");
+        slow.ioRead(0x30, 1000, 0, 1000);                // speaker click
+        expect(slow.delayActive(1001), "the click opens a window");
+        expect(std::fabs(slow.cpuSpeedMultiplier(1001) - 0.4) < 1e-9, "a window never accelerates a slow chip");
+        expect(slow.stockCyclesBetween(1001, 2001) == 2500, "and its stock time is the slow clock's");
+    }
+
     EmulationController c;
     c.setCyclesPerFrame(POM2_TIMING_NTSC.cyclesPerFrame);
     c.setVideoStandard(VideoStandard::NTSC);

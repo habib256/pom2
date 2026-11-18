@@ -95,6 +95,9 @@ public:
     /// of a freshly plugged card (all zero, the array's initialiser) stands
     /// in for it; POM2 does not model the decay.
     void onPowerCycle() override { ram_.fill(0); onReset(); }
+    /// The 60 Hz deadline is an absolute cycle: after a jump to a LOWER
+    /// counter no tick came until it climbed back. clockTicks re-arms from 0.
+    void onTimeJump() override { nextTick_ = 0; }
 
     bool dmaActive() const override { return enabled_; }
     int  dmaRun(int cycles6502) override;

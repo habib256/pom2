@@ -758,6 +758,7 @@ std::vector<std::string> curlDownloadArgs(const std::string& url,
              "--proto",       "=https",
              "--proto-redir", "=https",
              "--max-filesize", std::to_string(kMaxUnpackedZipBytes),
+             "--connect-timeout", "15",   // a black-holed host fails fast
              "--retry", "2", "--max-time", "90",
              "-o", outPath, url };
 }
@@ -1046,6 +1047,9 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     fs::create_directories(scratch, ec);
 
     std::unordered_map<std::string, fs::path> zipCache;
+    // A romset that failed is not asked for again in this run: each of its
+    // members used to re-download it, every attempt up to the full timeout.
+    std::unordered_map<std::string, std::string> zipFailed;
     const int total = static_cast<int>(missing.size());
     int done = 0;
 
@@ -1062,14 +1066,22 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
     auto fetchZip = [&](const std::string& url, std::string& err) -> fs::path {
         auto it = zipCache.find(url);
         if (it != zipCache.end()) return it->second;
-        fs::path zipPath = scratch / ("pack-" + std::to_string(zipCache.size()) + ".zip");
-        if (!fetchUrl(url, zipPath, err)) return {};
+        if (auto bad = zipFailed.find(url); bad != zipFailed.end()) {
+            err = bad->second;
+            return {};
+        }
+        fs::path zipPath = scratch / ("pack-" + std::to_string(zipCache.size() + zipFailed.size()) + ".zip");
+        if (!fetchUrl(url, zipPath, err)) {
+            if (!(cancelled && cancelled())) zipFailed.emplace(url, err);
+            return {};
+        }
         std::vector<std::uint8_t> zipBytes;
         std::uintmax_t unpacked = 0;
         if (!readAll(zipPath, zipBytes, err) ||
             !zipUnpackedSizeWithinCap(zipBytes, unpacked, err)) {
             std::error_code rmEc;
             fs::remove(zipPath, rmEc);
+            zipFailed.emplace(url, err);
             return {};
         }
         zipCache.emplace(url, zipPath);
