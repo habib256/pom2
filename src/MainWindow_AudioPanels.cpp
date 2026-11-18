@@ -535,6 +535,8 @@ void MainWindow::renderAudioMixerWindow()
         }
     }
 
+    renderMidiSection();
+
     ImGui::Spacing();
     ImGui::TextDisabled("Master is post-mix; per-channel knobs are pre-mix.");
     ImGui::TextDisabled("Bars show last-buffer peak with ~100 ms release.");

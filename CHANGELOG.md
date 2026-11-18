@@ -10,6 +10,90 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-18 — The Passport MIDI card (AUDIO-009)
+
+Unfrozen on explicit request, with the named software the scope ruling asks
+for: Ultima V's music configuration offers "Passport" in slot 2. Catalog key
+`passportmidi`; DEV § Passport MIDI. Both chips are written from their
+Motorola data sheets rather than ported, and the test (`passport_midi`)
+checks their printed numbers — the MC6840's Figure 10, the MC6850's double
+buffer.
+
+**Why the ACIA is timed.** Every model POM2 had of a 6850 (the CCS 7710's)
+sends a byte the moment it is written, which is right for a terminal and
+wrong for MIDI: a driver that polls TDRE then got a byte through every 10
+cycles, and a stream that plays at 31 250 baud on the iron arrived at the
+host as one burst per frame. The card now holds TDRE low for the 320 µs of a
+frame, and stamps each byte with the cycle its stop bit ended.
+
+**Why not MAME's IRQ.** `a2midi.cpp`'s `ptm_irq_w` stores the timer's line
+into `m_acia_irq` — the ACIA handler copied — so a timer interrupt is lost on
+the ACIA's next transition. Both chips drive the one open-drain slot line;
+POM2 ORs them, and the test fails if that is reverted.
+
+**Why the .mid ignores the wall clock.** The recording is timed from the
+bytes' CPU cycles at the paced clock: x4, a breakpoint or a frozen window
+change nothing in the file, and two runs of a program give the same bytes.
+Only the live port is scheduled against real time.
+
+**The host port** is CoreMIDI + Apple's DLS synthesizer on macOS (sound with
+nothing installed; checked on this Mac), WinMM on Windows (the GS Wavetable
+Synth), the ALSA sequencer on Linux when CMake finds ALSA, nothing in the
+browser. The WinMM backend is MinGW-syntax-checked but not run; the ALSA
+one has never been compiled (it builds only where CMake finds ALSA). Not yet checked against Ultima V itself — its disks are not in the
+test-media archive; that is the next acceptance step.
+
+## 2026-11-18 — Deater's demos in the corpus; $C019 and $C050 checked against the iron
+
+Six NTSC //e productions by deater (Vince Weaver, 2023-2026) are corpus
+titles tagged `deater`: Hectic, Midline, Monster Splash, Second Reality (two
+disks), Heartbeat and Lemm. They were chosen because they are tuned on a
+real //e Platinum and AppleWin, and break elsewhere: **MAME before 0.288 put
+the `$C019` VBL edge 25 cycles late** (mamedev/mame `13184ea255`, "align VBL
+to the end of active video": it went from the start of line 192's display to
+the end of line 191's), and Hectic counts cycles from that edge. POM2 already
+had the edge at the end of active video; Hectic's mode-switch columns match
+deater's own capture within one cycle, so nothing in `Memory.cpp` moved. The
+`.dsk` files carry Apple's DOS 3.3: they go to the test-media archive, and
+until they are uploaded the titles skip.
+
+**The two real-//e checks of AppleWin #1386 pass, and one is now pinned.**
+Tom Harte's `LDX $C050 / LDY $C050` prints `A0 7F` on a real //e (AppleWin:
+`7F 7F`): the read that switches graphics on returns the byte the scanner
+fetched for text. `floating_bus_measured` asserts both reads. sosaria7's
+`swtest.do` (`LDA ($02,X)` on TXTCLR) draws its line from the 4th `0` as on
+the photographed //e; that one needs his disk and is not pinned.
+
+## 2026-11-18 — The debugger reads cc65 debug files
+
+The Source panel's `.p2map` had no producer: no assembler writes it, so the
+panel showed nothing for anyone who did not write a converter of their own.
+It now takes the `.dbg` ld65 writes with `--dbgfile` and the Symbols section
+takes the same file for labels (`Cc65DebugInfo.h`; `docs/debugger-banks.md`
+§ cc65 debug files). The research report of 2026-11-18 ranked it the best
+value in the tooling: Mesen, Altirra and a2trace read `.dbg`, and none of
+them knows the Apple's banks.
+
+**Why a C line beats the assembler line under it.** cc65 emits two line
+records for most bytes of a C program: the C statement (type 1) and the line
+of the `.s` it generated, a file that is usually deleted after the build.
+The panel shows one line per byte, and `DebuggerSourceMap` refuses
+overlapping ranges, so the conversion decides per byte — C, then assembler,
+then macro body. A `twice inx` macro call keeps its own line over the macro's
+body, which is what a reader stepping through the caller expects.
+
+**Why equates are not imported as labels.** ld65 marks `COUNT = 5` and
+`KBD = $C000` the same way (`type=equ`); importing them would label `$0005`
+as `COUNT` in every listing. Only `type=lab` symbols are taken.
+
+**The Harte `rockwell65c02` and `synertek65c02` sets were looked at and not
+added.** On the opcodes every 65C02 shares, they repeat what the
+`wdc65c02` gate already checks; where they differ — `$5C` (4 cycles, not
+WDC's 8), `$CB`/`$DB` as NOPs, no bit instructions on the Synertek — they
+describe chips no POM2 machine has. The Apple's own CPU is the NCR65C02
+(`M6502::setNcr65C02`), and neither set models it. Both are grade-D
+generated data, by the same generator as the WDC set.
+
 ## 2026-11-18 — The ImageWriter's paper is one fanfold
 
 The ImageWriter panel showed one sheet at a time; the scrollbar on the right

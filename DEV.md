@@ -3748,6 +3748,69 @@ WASM build, where a corrupt buffered-byte count previously aborted the module.
 the same standalone test runs in WASM CI and release builds without enabling
 exceptions globally.
 
+### Passport MIDI (`PassportMidiCard`, `Mc6840Ptm`, `Mc6850Acia`)
+
+Catalog key `passportmidi`, slot 2 by convention (Ultima V, Master Tracks,
+Passport's sequencers look there). No ROM: an MC6840 timer at `$C0n0-$C0n7`
+and an MC6850 ACIA at `$C0n8-$C0n9`, both from their Motorola data sheets
+([B], read 2026-11-18; the scans are in the 6800 catalogue at
+alshapton.github.io/MC6800Catalogue). The card map, the 500 kHz ACIA clock
+(31 250 × 16) and the 1 MHz timer clocks are MAME `a2midi.cpp` @ mame0287
+([D]); RESET reaches the PTM and not the ACIA, as there.
+
+| Taken from `a2midi.cpp` | Deliberately not |
+|---|---|
+| `$C0nX` decode, unused registers read 0 | `ptm_irq_w` writes `m_acia_irq` (a copy of `acia_irq_w`): a timer IRQ is dropped by the ACIA's next transition. POM2 ORs both open-drain lines. |
+| ACIA at 31 250 × 16 Hz | MAME's 6850 sends at once; POM2's transmitter is timed (below). |
+| PTM C1-C3 at the bus 1 MHz | The 6840's three-E-cycle sync of an external clock (a constant offset). |
+
+**MC6840** (`Mc6840Ptm`, E clock = the slot bus's phase 0 through
+`SlotBusClock`, so an accelerator does not change the tempo). A Time Out is
+the first clock after zero: N+1 clocks in 16-bit mode, (L+1)(M+1) in dual
+8-bit (the data sheet's Figure 10: L=4, M=3 -> 20); timer 3 has the ÷8
+prescaler. Flags clear on a timer reset, on Write Timer Latches, on a Counter
+Initialization, and on a counter read that FOLLOWS a status read which saw
+the flag (the RS-RT sequence). Time is skipped arithmetically, not tick by
+tick. [F] The gates and the O1-O3 outputs: where the card wires them is
+unknown without its schematic; the gates are taken as held low, so the two
+measurement modes (which count only after a gate fall) never time out.
+
+**MC6850** (`Mc6850Acia`): the data sheet's double buffer. A byte written
+with the shift register idle transfers at once ([F] the data sheet allows up
+to one bit time) and TDRE comes back; the next waits in the TDR until the
+frame ends — 10 bits × 32 µs = 320 µs at 8N1. Each character leaves as an
+8N1 receiver (a MIDI IN) assembles it: the 7-bit formats put the parity bit
+in bit 7, the 8-bit-with-parity formats put it on the receiver's stop bit,
+so a 0 there is a framing error and the byte is lost. CTS/DCD wired active
+([F]). Master reset drops the TDR and the shift register.
+
+**Host side.** The card keeps every byte that finishes leaving, stamped with
+its CPU cycle (`drainMidiOut`). `MainWindow::pumpMidiOut` drains it each
+frame under the lock and hands it to `MidiOutputCoordinator`:
+`MidiMessageAssembler` (MIDI 1.0: running status, real-time inside a
+message, SysEx, system common) turns bytes into messages; `MidiFileWriter`
+records them as a format-0 Standard MIDI File timed **from the cycles only**
+(960 ticks a second; a recording under x4 or a frozen window keeps the
+program's tempo); a sender thread plays them through `HostMidiPort` at
+`anchor + cycles / clock + 30 ms`, re-anchoring when a message is more than
+500 ms early or 150 ms late (fast-forward, pause). When the card disappears
+or the port changes, every channel gets CC 123 + CC 120. Backends: CoreMIDI
+destinations, a virtual source, and Apple's DLS synth AudioUnit on macOS;
+WinMM on Windows; the ALSA sequencer on Linux when CMake finds ALSA; none in
+the browser (the .mid still works). Setting `midi_out_port` (absent = the
+first output listed, `none` = silence); Audio Mixer > MIDI out.
+
+Not modelled: MIDI IN from the host (`receiveMidi` exists for tests), the
+SD MIDI ][+ clone's `$C0nC/$C0nD` alias (Apple2TS answers it), the drum-sync
+lines. Pinned by `passport_midi` (both chips' data-sheet numbers, a 6502
+sending a Note On through slot 2 with 320 µs between bytes, the OR'd IRQ,
+the assembler, the exact SMF bytes), `card_snapshot_contract`,
+`slot_configuration_coordinator` and the v7 session kind `PassportMidi`.
+The WinMM backend was syntax-checked with MinGW (`-Wall -Wextra -Wshadow
+-Werror`) on 2026-11-18, not run; the ALSA one has not been compiled at all —
+it only builds where CMake finds ALSA, so a Linux CI job without
+`libasound2-dev` takes the null backend.
+
 ## TransWarp (Applied Engineering)
 
 **Sampled per chunk** *(2026-09-09)*. Both frame loops
@@ -12731,7 +12794,12 @@ the underlying profile retains the other visited addresses as well. Disabling
 profiling/history pauses collection without clearing the retained results.
 A reset/rewind clears measurements, while user breakpoints/conditions survive.
 The Source panel imports bounded `.p2map` ranges and reads source outside
-`stateMutex`; native compiler debug-info and variable inspection remain separate work.
+`stateMutex`. A cc65 `.dbg` is converted first (`Cc65DebugInfo.h`, header-only
+like the two importers it feeds): per-byte ownership — C line over assembler
+line over macro body, narrower span on a tie — run-length encoded, because
+`DebuggerSourceMap` refuses overlapping ranges; labels go to `DebuggerSymbols`
+with ca65 scoping (`draw::loop`, `start@loop`), equates dropped, a name clash
+skipped instead of failing the import. Variable inspection remains separate work.
 
 `Debugger_Assembler.cpp` patches one numeric instruction through `memWrite`
 while stopped, entirely below `$C000`; it does not resolve debugger symbols

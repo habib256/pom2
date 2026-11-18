@@ -1,6 +1,6 @@
 # Real protected-disk corpus
 
-Three optional games, with commercial images kept outside the checkout and all
+Four optional games, with commercial images kept outside the checkout and all
 mounted media copied by the runner. The recorded checks are change detectors,
 not certification of a complete game or hardware accuracy.
 
@@ -15,6 +15,38 @@ Captain A is WOZ2 with half-track positions (49 populated TMAP entries);
 Prince A is WOZ1 with 35 whole tracks. These are **bit-cell captures**, not
 WOZ 2.1 FLUX chunks. They do not themselves exercise FLUX tracks, prove every
 weak-bit case, or test Prince side B and later levels.
+
+| Phantasie | [AppleWin #1278 attachment](https://github.com/AppleWin/AppleWin/issues/1278) (`Phantasie-Boot.woz`) | enhanced //e, NTSC | Title at 15 s, SPACE, game menu at 30 s |
+
+Phantasie is the boot disk a user attached to AppleWin #1278 (2024-02-16):
+it boots in MAME and does not in AppleWin. POM2 reaches its title and, after
+SPACE, the "START IN PELNOR / CONTINUE SAVED GAME" menu (2026-11-18).
+
+**Prisoner 2 is deliberately absent.** Its WOZ ([AppleWin
+#1005](https://github.com/AppleWin/AppleWin/issues/1005), Applesauce v1.55)
+boots on the iron but fails in MAME, OpenEmulator, Virtual ][ and AppleWin:
+a weak-bits check that wants nibble `$C9` at exactly Y=`$2A`. Setting the
+INFO chunk's optimal bit timing from 32 to 33 makes it boot in AppleWin,
+Virtual ][ and OpenEmulator. It does **not** in POM2, and the reason is known:
+`DiskImage::lssCyclesPerCell()` is `optimalBitTiming / 4` in whole LSS cycles,
+so 33 truncates to the same 8 cycles as 32 — the integer-cell limitation
+recorded above that function, whose fix is the 5.25" timeline re-basing pass.
+A title that only pins a black screen detects nothing, so it waits for that
+pass; it is the natural acceptance test for it.
+
+Measured in POM2 (2026-11-18, `pom2_headless --until`, image sha256
+`a43838dd…`): the re-sync routine `$57FE` returns on the `$EB` epilogue at
+cycle 23 660 194; the 13-cycle loop at `$57B9` (`LDA $C08C,X / INY / BEQ /
+CMP #$C9 / BNE`) sees `$C9` on its 41st read, `Y=$29` — the value AppleWin
+reported — so the nibble latches 513-526 cycles after the loop starts, and
+the check wants 526-539. POM2 and AppleWin count a bit cell as 4 CPU cycles;
+MAME counts it as 4 µs of real time (4.09 cycles) and fails as well, which
+puts POM2's arrival at 513-514 cycles: the protection needs the surface
+2.3-4.8 % SLOWER than this capture says. A cell of 33 × 125 ns (+3.1 %)
+lands in that window. Reading [E]: the duplicator wrote longer cells than
+the bit-level capture at 32 recorded, and the image, not the emulators, is
+what fails; a flux capture (A2R, or a WOZ FLUX chunk) would carry the time
+itself. The POM2 defect is only that an INFO value of 33 is not honoured.
 
 Bandits uses [the WOZ-a-day capture](https://archive.org/details/wozaday_Bandits):
 WOZ2 INFO v3, a 160-byte FLUX chunk at offset 831488, and 19 mapped
@@ -51,6 +83,11 @@ for prefix, item, archive in items:
             if len(names) != 1:
                 raise RuntimeError('Expected exactly one ' + suffix)
             (root / (prefix + '-' + side.lower() + '.woz')).write_bytes(z.read(names[0]))
+url = 'https://github.com/AppleWin/AppleWin/files/14305563/Phantasie-Boot.zip'
+with urllib.request.urlopen(url, timeout=60) as response:
+    data = response.read()
+with zipfile.ZipFile(io.BytesIO(data)) as z:
+    (root / 'phantasie.woz').write_bytes(z.read('Phantasie-Boot.woz'))
 url = 'https://archive.org/download/wozaday_Bandits/' + urllib.parse.quote('Bandits (woz-a-day collection).zip')
 with urllib.request.urlopen(url, timeout=60) as response:
     data = response.read()

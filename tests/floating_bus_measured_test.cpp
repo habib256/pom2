@@ -144,6 +144,39 @@ int main()
             0xF6,0x07,0x60,0x60,0x20,0x62 });
     }
 
+    // ── A mode switch's own read carries the OLD mode's byte ─────────────
+    // [A] Tom Harte's program in AppleWin #1386 (from CLK #1204, run on a
+    // real //e, 2025-02-21): text page = $A0 (HOME), HGR page 1 = $7F,
+    // HIRES on, then `LDX $C050` (TXTCLR) and `LDY $C050`. The iron prints
+    // `A0 7F`: the read that turns graphics on returns the byte the scanner
+    // fetched for TEXT, the next one a hi-res byte. AppleWin printed
+    // `7F 7F` (switch applied before the bus was sampled); POM2 matched
+    // the iron when checked on 2026-11-18. Both reads are asserted, so the
+    // reversed order fails here.
+    {
+        Memory mem;
+        mem.setIIEMode(true);
+        mem.resetSoftSwitches();
+        mem.setVideoStandard(VideoStandard::NTSC);
+        for (uint32_t a = 0x0400; a < 0x0800; ++a) mem.memWrite(static_cast<uint16_t>(a), 0xA0);
+        for (uint32_t a = 0x2000; a < 0x4000; ++a) mem.memWrite(static_cast<uint16_t>(a), 0x7F);
+        (void)mem.memRead(0xC051);              // TEXT
+        (void)mem.memRead(0xC057);              // HIRES
+        (void)mem.memRead(0xC054);              // page 1
+        (void)mem.memRead(0xC052);              // full screen
+        const uint64_t visible = 10 * 65 + 40;  // line 10, inside the displayed bytes
+        mem.setCycleCounter(visible);
+        const uint8_t first = mem.memRead(0xC050);
+        mem.setCycleCounter(visible + 4);
+        const uint8_t second = mem.memRead(0xC050);
+        if (first != 0xA0 || second != 0x7F) {
+            std::printf("FAIL: TXTCLR reads %02X %02X, the //e prints A0 7F\n", first, second);
+            ++failures;
+        } else {
+            std::printf("ok: TXTCLR's own read is the text byte, the next a hi-res byte (A0 7F)\n");
+        }
+    }
+
     if (failures) { std::printf("floating_bus_measured: %d FAILURE(S)\n", failures); return 1; }
     std::printf("floating_bus_measured: OK\n");
     return 0;

@@ -144,6 +144,78 @@ title digidream iie-pal demos
   run 30
   check running
 
+# ── deater (Vince Weaver, -=DEsIRE=-) — NTSC //e productions tuned on a real
+# //e Platinum and on AppleWin, an author habit the PAL French Touch corpus
+# does not cover. They sync on the //e's $C019 VBL edge and count cycles from
+# it: MAME before 0.288 put that edge 25 cycles late (mamedev/mame 13184ea255,
+# "align VBL to the end of active video") and Hectic drifts there; Apple2TS
+# #295 flickers it. Hectic's raster checked against deater's own capture
+# (2026-11-18, < 1 cycle). His code is GPL-2.0-only (dos33fsprogs/LICENSE),
+# but each .dsk carries Apple's DOS 3.3: test-media archive only, never the
+# repo. Several of his titles hard-code the Mockingboard in slot 4.
+# Sources: www.deater.net/weave/vmwprod/<page>/ (outline_2026, outline_2023,
+# monstersplash, second, lovebyte_2025, lemm). Not in the archive yet:
+# absent, each title is skipped.
+
+title deater-hectic iie demos deater
+  diskii 1 disks_5.4/demo/deater/hectic.dsk sha256=61d29bf3dae3e6cfac25adc562d7bfedc65c13f53096e53fe58d7fb3cb9be95a
+  run 8
+  key SPACE
+  run 6
+  check raster
+  run 6
+  check raster-later
+
+# 256 bytes, Outline 2023: VBLANK found inside a 7-cycle window.
+title deater-midline iie demos deater
+  diskii 1 disks_5.4/demo/deater/midline.dsk sha256=5234ff1a04272d51079424d419cc15ced8f39f38f6bfd2e434c0f46f4c184353
+  run 8
+  key SPACE
+  run 6
+  check lines
+  run 6
+  check lines-later
+
+# Demosplash 2025: //e 128K + Mockingboard, double hi-res.
+title deater-monster-splash iie demos deater
+  mockingboard 4
+  diskii 1 disks_5.4/demo/deater/monster_splash.dsk sha256=8d4cf8224e35e38ce118e5ee34c013a9f3e3df5db360e4c57791127bb4bccaa8
+  run 10
+  check loading
+  run 30
+  check dsr-logo
+
+# Demosplash 2023: two disks, qboot loaders with no DOS, aux RAM as a RAM disk.
+title deater-second-reality iie demos deater
+  mockingboard 4
+  diskii 1 disks_5.4/demo/deater/second_d1.dsk sha256=1bdb8f69247a586c034ccb78df179495110b0584a497ddea725b3349547fc0fe
+  diskii 2 disks_5.4/demo/deater/second_d2.dsk sha256=a041ce85a9723df8bd0ebf72c3eac472ddc09d56047d43420710cb93d40b2f8b
+  run 10
+  check bios
+  run 50
+  check presented
+
+# Lovebyte 2025, 256 bytes: the AY as a 4-bit DAC; Mockingboard in slot 4.
+title deater-heartbeat iie demos deater
+  mockingboard 4
+  diskii 1 disks_5.4/demo/deater/heartbeat.dsk sha256=b20f1465eee13a9d846b569e01057a2f91a3f56db2e8509d9db490397c4da260
+  run 8
+  key SPACE
+  run 6
+  check heart
+  run 6
+  check heart-later
+
+# A game: the level intro is the //e "impossible" graphics/text split.
+title deater-lemm iie games deater
+  mockingboard 4
+  diskii 1 disks_5.4/demo/deater/lemm.dsk sha256=eb833930ef01bf2a61239b158f1a70e347f59db07f90c8010cca86d3c444dda2
+  run 20
+  check level-intro
+  key RETURN
+  run 10
+  check level-1
+
 # ── Apple's "Confidential Service Disk No.1" — a dealer ROM/RAM test that
 # runs on the Integer-BASIC ][ (its menu is Integer BASIC). The image on the
 # asimov mirror (images/disk_utils/diagnostics/, sha256 9f98b1e4…) is BROKEN:

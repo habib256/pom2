@@ -40,6 +40,16 @@ belongs in `docs/audits/` and the task links to it.
 
 ## Already done — do not schedule again
 
+**2026-11-18 batch** (CHANGELOG of that date): cc65 `.dbg` import into the
+debugger's Source and Symbols sections; deater's six NTSC //e productions as
+`deater` corpus titles (their media upload is RELEASE-015); Phantasie in the
+protected corpus; the `$C050` switching-read check from AppleWin #1386 pinned
+in `floating_bus_measured`; the `$C019` VBL edge checked against Hectic (no
+change needed); the Passport MIDI card (AUDIO-009, real-software run
+pending). **Looked at and rejected:** Tom Harte's `rockwell65c02` and
+`synertek65c02` sets — redundant on the shared opcodes, and describing chips
+no POM2 machine has where they differ (the Apple's CPU is the NCR65C02).
+
 **2026-11-17 core batch:** STORAGE-014 now has deterministic phase-2 write
 coverage and fixes the reproduced false host conflict; ARCH-014 adds atomic
 clock inspection and mutation-checked fan-out tests; ARCH-015 moves the real

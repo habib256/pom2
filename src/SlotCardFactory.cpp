@@ -19,6 +19,7 @@
 #include "CffaCard.h"
 #include "ApplicardCard.h"
 #include "Ccs7710Card.h"
+#include "PassportMidiCard.h"
 #include "Dan2Card.h"
 #include "Cffa3000Card.h"
 #include "CpuClock.h"
@@ -385,6 +386,11 @@ SlotCardFactory::Result SlotCardFactory::create(const Request& request) const
 
     if (request.key == "snesmax") {
         result.card = std::make_unique<SnesMaxCard>(request.slot);
+        return result;
+    }
+    if (request.key == "passportmidi") {
+        result.card = std::make_unique<pom2::PassportMidiCard>(request.slot);
+        result.status = "no ROM needed";
         return result;
     }
     if (request.key == "vidhd") {

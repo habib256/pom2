@@ -286,6 +286,11 @@ set(SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/Mc6840Ptm.cpp
+    src/Mc6850Acia.cpp
+    src/PassportMidiCard.cpp
+    src/MidiMessageAssembler.cpp
+    src/MidiFileWriter.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp
@@ -388,6 +393,7 @@ set(SOURCES
     src/MainWindow_MemoryMaps.cpp
     src/MainWindow_Panels.cpp
     src/MainWindow_AudioPanels.cpp
+    src/MainWindow_Midi.cpp
     src/MainWindow_DevicePanels.cpp
     src/MainWindow_SettingsPanels.cpp
     src/MainWindow_CrtPanel.cpp
@@ -661,6 +667,11 @@ set(POM2_DEVICES_SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/Mc6840Ptm.cpp
+    src/Mc6850Acia.cpp
+    src/PassportMidiCard.cpp
+    src/MidiMessageAssembler.cpp
+    src/MidiFileWriter.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp
@@ -772,6 +783,7 @@ set(POM2_FRONTEND_SOURCES
     src/Debugger_Assembler.cpp
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
+    src/MainWindow_Midi.cpp
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
@@ -967,6 +979,8 @@ set(POM2_MEDIA_SOURCES
 )
 
 set(POM2_RUNTIME_HEADERS
+    src/HostMidiPort.h
+    src/Cc65DebugInfo.h
     src/SessionSnapshot.h
     src/SessionIIc.h
     src/SessionFiles.h
@@ -1010,6 +1024,11 @@ set(POM2_RUNTIME_HEADERS
 )
 
 set(POM2_RUNTIME_SOURCES
+    src/MidiOutputCoordinator.cpp
+    src/HostMidiPort_mac.cpp
+    src/HostMidiPort_win.cpp
+    src/HostMidiPort_alsa.cpp
+    src/HostMidiPort_null.cpp
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
@@ -1100,6 +1119,14 @@ set(HEADERS
     src/SoftCard2Protocol.h
     src/ApplicardCard.h
     src/Ccs7710Card.h
+    src/Mc6840Ptm.h
+    src/Mc6850Acia.h
+    src/PassportMidiCard.h
+    src/MidiMessageAssembler.h
+    src/MidiFileWriter.h
+    src/MidiOutputCoordinator.h
+    src/HostMidiPort.h
+    src/Cc65DebugInfo.h
     src/EzColorCard.h
     src/TMS9918.h
     src/Dan2Card.h
@@ -1323,6 +1350,26 @@ else()
         endif()
     endif()
 endif()
+# ─── Host MIDI output (the Passport MIDI card's sound) ─────────────────────
+# One backend per platform (HostMidiPort.h). Linux uses the ALSA sequencer
+# when the build finds ALSA, and otherwise has no port — the .mid recording
+# works everywhere. The machine side (card, chips, recorder) is in the
+# lists above; only the host side is app-only.
+set(POM2_HOST_MIDI_BACKEND src/HostMidiPort_null.cpp)
+set(POM2_HOST_MIDI_ALSA OFF)
+if(APPLE)
+    set(POM2_HOST_MIDI_BACKEND src/HostMidiPort_mac.cpp)
+elseif(WIN32)
+    set(POM2_HOST_MIDI_BACKEND src/HostMidiPort_win.cpp)
+elseif(UNIX AND NOT EMSCRIPTEN)
+    find_package(ALSA QUIET)
+    if(ALSA_FOUND)
+        set(POM2_HOST_MIDI_BACKEND src/HostMidiPort_alsa.cpp)
+        set(POM2_HOST_MIDI_ALSA ON)
+    endif()
+endif()
+list(APPEND SOURCES src/MidiOutputCoordinator.cpp ${POM2_HOST_MIDI_BACKEND})
+
 foreach(_pom2_src ${SOURCES})
     set_source_files_properties(${_pom2_src} PROPERTIES
         COMPILE_FLAGS "${POM2_WARN_FLAGS}")
@@ -1646,7 +1693,11 @@ else()
             "-framework CoreAudio"
             "-framework AudioToolbox" "-framework CoreFoundation"
             "-framework AudioUnit"
+            "-framework CoreMIDI"   # HostMidiPort_mac.cpp
         )
+    endif()
+    if(POM2_HOST_MIDI_ALSA)
+        target_link_libraries(${PROJECT_NAME} ALSA::ALSA)
     endif()
     if(WIN32)
         # ws2_32: the whole Winsock2 API. Since 2026-08-01 Windows is a full
@@ -1710,6 +1761,11 @@ set(POM2_CORE_SOURCES
     src/SoftCard2Protocol.cpp
     src/ApplicardCard.cpp
     src/Ccs7710Card.cpp
+    src/Mc6840Ptm.cpp
+    src/Mc6850Acia.cpp
+    src/PassportMidiCard.cpp
+    src/MidiMessageAssembler.cpp
+    src/MidiFileWriter.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp

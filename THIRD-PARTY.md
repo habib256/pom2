@@ -65,7 +65,7 @@ recorded in this tree.**
 Until the author states where they come from and under which terms, treat
 them as *all rights reserved* by their unknown photographers; a package
 maintainer who needs certainty should replace them with photographs of
-known origin. (Filed in [`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1).)
+known origin. (Filed in [`docs/backlog/release.md` § G1](docs/backlog/release.md#g1).)
 
 ## Retro monitor and drive illustrations
 
@@ -104,7 +104,7 @@ records the pristine images. User disk libraries remain excluded.
 POM2 ships firmware dumps so that a package boots as downloaded, the way
 established Apple II emulators do. That is a practice, not a licence: none of
 the rights holders below has granted permission, and a redistributor who needs
-one has to obtain it. The decision (2026-09-05, [`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1)) is to keep the
+one has to obtain it. The decision (2026-09-05, [`docs/backlog/release.md` § G1](docs/backlog/release.md#g1)) is to keep the
 dumps and say so plainly.
 
 | Dump | Rights holder | Notes |
@@ -131,7 +131,7 @@ Workstation.po`, Apple Présente //c) sits in the repository under
 `disks_5.4/` and `disks_3.5/`, which no package ships (`deny` list in
 `packaging/bundle.manifest`). Commercial titles were removed from the working
 tree on 2026-09-05; they remain in the git history, which
-[`docs/backlog/release-1.0.md` § G1](docs/backlog/release-1.0.md#g1)
+[`docs/backlog/release.md` § G1](docs/backlog/release.md#g1)
 records as an open decision.
 
 ## MAME TMS5220C synthesis core and coefficient ROM

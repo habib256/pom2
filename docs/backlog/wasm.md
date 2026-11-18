@@ -17,6 +17,8 @@ an explicit request before scheduling.
 |---|---|---|---|
 | [WASM-002](#wasm-002) | 🧊 | Frozen | Mobile touch input |
 | [WASM-003](#wasm-003) | 🧊 | Frozen | Audio worklet tuning |
+| [WASM-004](#wasm-004) | 🟢 | Ready | Shareable links: per-drive URL parameters and a copy-link button |
+| [WASM-005](#wasm-005) | 🟢 | Ready | Embed mode (?embed=1 + postMessage events) |
 
 <a id="wasm-001"></a>
 
@@ -45,7 +47,7 @@ supported media in sessions. See the
 The selector's native/WebAssembly builds, DOM/FS tests and Chrome smoke also
 passed locally, including same-name drive-2 import and both media in a
 session archive. The same smoke has since passed in CI (2026-10-23); see
-[RELEASE-005](release-1.0.md#release-005).
+[RELEASE-005](release.md#release-005).
 
 <a id="wasm-002"></a>
 
@@ -81,3 +83,30 @@ session archive. The same smoke has since passed in CI (2026-10-23); see
   The worklet remains the only way to take the callback off the main
   thread; it needs `-sAUDIO_WORKLET` + pthreads, hence cross-origin
   isolation, which GitHub Pages serves only through a service-worker shim.
+
+<a id="wasm-004"></a>
+
+## WASM-004 — Shareable links: per-drive URL parameters and a copy-link button
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+`?preset=`, `?disk=`, `?url=` mount one image. Missing: a second 5.25"
+drive, the 3.5" and HDV drives, and a "copy link to this setup" button —
+without them a two-disk game or a DIX setup cannot be shared. Apple2TS's
+`s6d1` / `s6d2` / `s7d1` scheme is the model.
+
+**Acceptance criterion:** a link with two 5.25" disks boots disk 1 with disk
+2 in drive 2; the button reproduces the current profile and mounted URLs.
+
+<a id="wasm-005"></a>
+
+## WASM-005 — Embed mode (?embed=1 + postMessage events)
+
+**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+
+Infinite Mac's `/embed` mode lets a page host the emulator and hear its
+events. POM2: `?embed=1` hides the chrome, and `postMessage` reports boot,
+pause and errors to the host page.
+
+**Acceptance criterion:** a test page embeds POM2 in an iframe and receives
+the boot event; nothing is posted unless `embed=1`.

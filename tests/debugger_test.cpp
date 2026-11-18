@@ -1723,6 +1723,7 @@ void testWatchpointResumeKeepsNextBreakpoint()
 }
 
 #include "debugger_banks_cases.h"
+#include "debugger_cc65_cases.h"
 
 static void testBreakpointAfterDmaRelease()
 {
@@ -2056,6 +2057,7 @@ int main()
     testBankBreakpointsAndWatches();
     testBankProfileAcrossSwitchingInstruction();
     testBankSourceMap();
+    testCc65DebugInfoImport();
     testBankRomAndExplicitStep();
     testWatchBankBeforeExpansionRelease();
     testBreakpointBookkeeping();

@@ -18,6 +18,7 @@
 
 #include "Debugger_ImGui.h"
 
+#include "Cc65DebugInfo.h"
 #include "Disassembler6502.h"
 #include "EmulationController.h"
 #include "M6502.h"
@@ -35,6 +36,11 @@
 namespace pom2 {
 
 namespace {
+
+/// A cc65 .dbg names every line and span of a program and its libraries, so
+/// it outgrows the 4 MiB a hand-written map is allowed; the CONVERTED map
+/// still goes through DebuggerSourceMap's own 4 MiB and 65536-range bounds.
+constexpr std::streamoff kCc65DebugFileLimit = 16 * 1024 * 1024;
 
 /// The 6502 status byte, spelled the way a 6502 programmer reads it: an
 /// upper-case letter for a set flag, a dash for a clear one. NV-BDIZC.
@@ -150,7 +156,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         if (nativeFileDialogAvailable()) {
             if (ImGui::Button("Browse##symbols")) {
                 std::string picked;
-                if (nativeFileDialog(false, "Load debugger symbols", "sym,lbl,txt", "", "", picked) == FileDialogResult::Selected) {
+                if (nativeFileDialog(false, "Load debugger symbols", "sym,lbl,txt,dbg", "", "", picked) == FileDialogResult::Selected) {
                     if (picked.size() < sizeof(symbolPath_))
                         std::snprintf(symbolPath_, sizeof(symbolPath_), "%s", picked.c_str());
                     else symbolStatus_ = "The selected path is too long.";
@@ -162,18 +168,26 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
             // File I/O stays outside stateMutex. Bound allocation before read.
             std::ifstream input(std::filesystem::u8path(symbolPath_), std::ios::binary | std::ios::ate);
             const auto size = input ? input.tellg() : std::streampos{-1};
-            if (size < 0 || size > 4 * 1024 * 1024) {
-                symbolStatus_ = "Cannot read symbol file (maximum 4 MiB).";
+            const bool cc65 = cc65dbg::isDebugFilePath(symbolPath_);
+            if (size < 0 || size > (cc65 ? kCc65DebugFileLimit : 4 * 1024 * 1024)) {
+                symbolStatus_ = cc65 ? "Cannot read cc65 debug file (maximum 16 MiB)."
+                                     : "Cannot read symbol file (maximum 4 MiB).";
             } else {
                 std::string text(static_cast<size_t>(size), '\0');
                 input.seekg(0);
                 if (!text.empty()) input.read(text.data(), static_cast<std::streamsize>(text.size()));
+                cc65dbg::Conversion converted;
                 if (!input) symbolStatus_ = "Symbol file read failed.";
-                else if (symbols_.load(text, symbolStatus_))
-                    symbolStatus_ = std::to_string(symbols_.size()) + " symbols loaded.";
+                else if (cc65 && !cc65dbg::toSymbols(text, converted, symbolStatus_)) {}
+                else if (symbols_.load(cc65 ? converted.text : text, symbolStatus_)) {
+                    symbolStatus_ = std::to_string(symbols_.size()) + " symbols loaded";
+                    if (cc65) symbolStatus_ += " from cc65 debug info (" +
+                        std::to_string(converted.skipped) + " skipped)";
+                    symbolStatus_ += ".";
+                }
             }
         }
-        ImGui::TextWrapped("AppleWin .sym, VICE/cc65 labels and NAME = $address. Bank-qualified symbols are supported (entry = aux1:$0800). Use labels in the breakpoint field.");
+        ImGui::TextWrapped("AppleWin .sym, VICE/cc65 labels, cc65 .dbg (labels) and NAME = $address. Bank-qualified symbols are supported (entry = aux1:$0800). Use labels in the breakpoint field.");
         ImGui::TextWrapped("%s", symbolStatus_.c_str());
     }
 
@@ -648,16 +662,17 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
     ImGui::SameLine();
     if (nativeFileDialogAvailable() && ImGui::Button("Browse##source")) {
         std::string picked;
-        if (nativeFileDialog(false,"Load source map","p2map,txt","","",picked)==FileDialogResult::Selected) {
+        if (nativeFileDialog(false,"Load source map","p2map,dbg,txt","","",picked)==FileDialogResult::Selected) {
             if (picked.size()<sizeof(sourceMapPath_))
                 std::snprintf(sourceMapPath_,sizeof(sourceMapPath_),"%s",picked.c_str());
             else sourceStatus_="The selected path is too long.";
         }
     }
-    auto readBounded = [](const std::filesystem::path& path, std::string& text) {
+    auto readBounded = [](const std::filesystem::path& path, std::string& text,
+                          std::streamoff limit=4*1024*1024) {
         std::ifstream file(path,std::ios::binary|std::ios::ate);
         const auto size=file ? file.tellg() : std::streampos{-1};
-        if (size<0 || size>4*1024*1024) return false;
+        if (size<0 || size>limit) return false;
         std::string value(static_cast<size_t>(size),'\0');
         file.seekg(0);
         if (!value.empty()) file.read(value.data(),static_cast<std::streamsize>(value.size()));
@@ -665,16 +680,25 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
         text=std::move(value); return true;
     };
     if (ImGui::Button("Load source map")) {
+        // A cc65 .dbg is converted to .p2map text and fed to the same
+        // importer (Cc65DebugInfo.h); its file paths are relative to the
+        // directory ld65 ran in, normally the .dbg's own.
         std::string text;
-        if (!readBounded(std::filesystem::u8path(sourceMapPath_),text))
-            sourceStatus_="Cannot read source map (maximum 4 MiB).";
-        else if (sourceMap_.load(text,sourceStatus_)) {
+        const bool cc65=cc65dbg::isDebugFilePath(sourceMapPath_);
+        cc65dbg::Conversion converted;
+        if (!readBounded(std::filesystem::u8path(sourceMapPath_),text,
+                         cc65 ? kCc65DebugFileLimit : 4*1024*1024))
+            sourceStatus_=cc65 ? "Cannot read cc65 debug file (maximum 16 MiB)."
+                               : "Cannot read source map (maximum 4 MiB).";
+        else if (cc65 && !cc65dbg::toSourceMap(text,converted,sourceStatus_)) {}
+        else if (sourceMap_.load(cc65 ? converted.text : text,sourceStatus_)) {
             sourceRoot_=std::filesystem::u8path(sourceMapPath_).parent_path().u8string();
-            sourceStatus_=std::to_string(sourceMap_.size())+" source ranges loaded.";
+            sourceStatus_=std::to_string(sourceMap_.size())+" source ranges loaded"+
+                (cc65 ? " from cc65 debug info." : ".");
             sourceFile_.clear(); sourceLoaded_=false;
         }
     }
-    ImGui::TextWrapped("Map rows: aux0:$0800-$0802 \"src/main.s\" 42. Paths are relative to the map. Ranges use inclusive hexadecimal addresses; lines start at 1.");
+    ImGui::TextWrapped("A .p2map, or a cc65 .dbg (ld65 --dbgfile, assembled with -g). Map rows: aux0:$0800-$0802 \"src/main.s\" 42. Paths are relative to the map. Ranges use inclusive hexadecimal addresses; lines start at 1.");
     ImGui::TextWrapped("%s",sourceStatus_.c_str());
     const DebugAddress location{followPc_ || !cursorValid_ ? snap.pc : cursorAddr_,
         followPc_ || !cursorValid_ ? snap.pcBank : cursorBank_};

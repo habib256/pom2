@@ -122,7 +122,7 @@ registry, theme, docking, palette · WASM build · Packaging.
 | 🧊 **PostScript by delegation** | Delegates to a host Ghostscript; document the dependency, no in-process renderer |
 | 🧊 **Remaining WASM browser extras** (touch input, worklet tuning) | These remain frozen. Desktop file drops onto the browser canvas already work through GLFW/Emscripten. Direct disk-image selection is implemented through File > Import disk and boot and empty-drive Insert actions. Text/session upload/download, IndexedDB automatic resume and PAL wall-time CPU pacing are implemented; RAF still follows the host display. See the [browser import contract](../USER-GUIDE.md#browser-disk-import). The public demo is linked from README; distribution decisions remain separate release gates. |
 | 🧊 **Apple ][ Original (1977) profile** | Rev-0 fidelity work remains frozen. Generic profile/session tests include it (`system_profile_smoke`, `session_machine`); the latter uses synthetic firmware and does not certify original-ROM or rev-0 hardware behavior. |
-| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color (Saturn and E-Z Color have since shipped on explicit request, 2026-10-31) | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
+| 🧊 **The whole `a2bus` port survey** + Saturn 128K LC + Passport MIDI + Apple II VGA + E-Z Color (Saturn and E-Z Color have since shipped on explicit request, 2026-10-31; Passport MIDI on 2026-11-18, named software Ultima V) | **This is the tail the ruling exists to say no to.** A card leaves *Parked* only when a named piece of software needs it |
 
 ## Standing rulings
 
@@ -158,7 +158,7 @@ Decisions, not work. Do not re-litigate without new evidence.
   pin timing and independent analog board calibration remain open.
 - **R3 · One `Config`** (env → CLI → Settings → defaults), consistent `pom2::`
   namespace (255/336 files today, up from 163/233). Hygiene for the second
-  contributor. Post-1.0.
+  contributor. Not a release blocker.
 - **R4 · The file-size debt is owed, not forgiven.** Two ceilings were raised on
   2026-08-31 to get a gate green that had been red since 08-29 — in 15 s, before
   the Linux job compiled anything, so it was also hiding that build. Both are
@@ -166,7 +166,7 @@ Decisions, not work. Do not re-litigate without new evidence.
   either gains. `src/ImageWriter.cpp` 2 501 wants splitting (the head, the paper
   tray, PDF export and the PostScript/screen-dump seams are separate concerns in
   one TU); `src/Memory.cpp` 2 442 is 40 lines, one of which is the foreign-bus
-  dispatch. *~1 d for ImageWriter, less for Memory.* Post-1.0.
+  dispatch. *~1 d for ImageWriter, less for Memory.* Not a release blocker.
   **2026-09-08:** six ceilings raised again, +225 lines in all, every one a
   confirmed-and-pinned bug fix from the ProDOS rounds and bug hunt #5 (the
   deltas are itemised in `tools/file_size_budget.txt`). `src/DiskImage.cpp`

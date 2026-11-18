@@ -14,7 +14,7 @@ other difference is explained below.
 
 | File | What differs | Verdict |
 |---|---|---|
-| `apple2p.rom` (20 KB) | `$B000-$CFFF` (+0x0 to +0x1800) and the `$F800` page (+0x4800). `$D000-$F7FF` are 341-0011 to 341-0015. | `$B000-$CFFF` is filler: a ][+ has no ROM there. The loader skips the first 4 KB and the I/O page, and `$C100-$CFFF` is slot space, answered by the slot bus. **The F8 page is the defect**: `$FFFE/$FFFF` = `$59 $FF` where 341-0020-00 has `$40 $FA`. Corrected in memory by `RomErrata.h`; the source fix is [RELEASE-012](../backlog/release-1.0.md#release-012). |
+| `apple2p.rom` (20 KB) | `$B000-$CFFF` (+0x0 to +0x1800) and the `$F800` page (+0x4800). `$D000-$F7FF` are 341-0011 to 341-0015. | `$B000-$CFFF` is filler: a ][+ has no ROM there. The loader skips the first 4 KB and the I/O page, and `$C100-$CFFF` is slot space, answered by the slot bus. **The F8 page is the defect**: `$FFFE/$FFFF` = `$59 $FF` where 341-0020-00 has `$40 $FA`. Corrected in memory by `RomErrata.h`; the source fix is [RELEASE-012](../backlog/release.md#release-012). |
 | `apple2c-32Kv0.rom` | Byte-identical to MAME's `3420033a.256` except bytes `0x000-0x0FF`. | Bank 0's `$C000-$C0FF`: soft switches, never read as ROM, and the loader ignores them. No effect. |
 | `apple2e.rom` (32 KB) | The upper 16 KB are `342-0304-a.e10` + `342-0303-a.e5`, the enhanced //e. The lower 16 KB: a second `342-0303-a.e5` and 8 KB MAME does not catalogue. | The loader takes the upper 16 KB of a 32 KB //e dump (`Memory::loadAppleIIRom`). No effect. |
 | `apple2e_char_ft_blockascii.rom` (8 KB) | The high bank is the US //e set; the low bank is not in MAME. | French Touch's block-ASCII font, a custom set by design (CLAUDE.md, Display). |

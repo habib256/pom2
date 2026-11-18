@@ -314,6 +314,7 @@ os_call_trace
 pal_timing
 panel_registry
 parallel_cards
+passport_midi
 paste_smoke
 phasor_card_smoke
 phasor_mode_scale_timeline

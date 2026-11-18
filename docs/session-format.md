@@ -51,7 +51,11 @@ dropping its cards and disks.
   its next CPU write supplies the DAC level. The Porte Parole (kind 20) saves
   its MEA8000 whole — frame buffer, interpolation origins, resonator history,
   noise/saw phase — so an utterance resumes mid-word; its host-rate audio
-  queue is not saved.
+  queue is not saved. The Passport MIDI card (kind 21) saves both chips: the
+  MC6840's latches, counters, control registers, flags and timer 3's
+  prescaler phase, and the MC6850's registers with the time left on the
+  character being shifted out. Bytes already sent are host output and are
+  not replayed.
 - The machine snapshot's Memory trailer ends with an optional beam-clock
   section (24 bytes: CPU anchor, video anchor, video cycles per CPU cycle as
   an IEEE double). Under an accelerator the beam no longer follows the CPU

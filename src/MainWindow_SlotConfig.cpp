@@ -951,7 +951,7 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
             }
         }
         else if (kind == "workstation") plugWorkstation(s);
-        else if (kind == "snesmax") {
+        else if (kind == "snesmax" || kind == "passportmidi") {
             auto made = slotCardFactory_->create({kind, s, cpuIsCmosForSlots, activeProfile});
             if (made) st.memory().slotBus().plug(s, std::move(made.card));
         }

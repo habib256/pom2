@@ -398,7 +398,8 @@ void MainWindow::renderAbstractionPanel()
     // their dump is missing — `plugged` sees the empty slot — so a plugged
     // one is always at its level.
     for (const char* id : {"slinky", "transwarp", "videoterm", "vidhd", "sam", "porteparole",
-                           "workstation", "grappler1", "pic", "4play", "snesmax"})
+                           "workstation", "grappler1", "pic", "4play", "snesmax",
+                           "passportmidi"})
         row(id, plugged(id) ? Live::Active : Live::NotPlugged);
     // The socket accelerators sit under the CPU, not in a slot.
     row("zipchip",  controller->zipChipInstalled()  ? Live::Active : Live::NotPlugged);

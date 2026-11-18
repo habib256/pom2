@@ -22,7 +22,9 @@ an explicit request before scheduling.
 | [AUDIO-006](#audio-006) | 🟢 | Confirmed (design); not measured | Mutex contention. |
 | [AUDIO-004](#audio-004) | 🧊 | Frozen | ayumi-grade resampling |
 | [AUDIO-008](#audio-008) | 🧊 | Frozen | 8-bit DAC (Marczewski) |
-| [AUDIO-009](#audio-009) | 🧊 | Frozen | Passport MIDI Music Card |
+| [AUDIO-009](#audio-009) | 🟢 | Implemented 2026-11-18; Ultima V run pending | Passport MIDI Music Card |
+| [AUDIO-013](#audio-013) | 🟠 | Ready — chosen | WAV capture and Mockingboard VGM/YM export |
+| [AUDIO-014](#audio-014) | 🧊 | Needs explicit request | AY-3-8913 voicing option |
 
 <a id="audio-011"></a>
 
@@ -230,9 +232,14 @@ card. The historical early-out/lost-queue description is superseded.
 
 ## AUDIO-004 — ayumi-grade resampling
 
-**Priority:** 🧊 · **State:** Frozen.
+**Priority:** 🟢 · **State:** Implemented 2026-11-18 on explicit request
+(card key `passportmidi`, CHANGELOG 2026-11-18, DEV § Passport MIDI).
 
-**Scheduling condition:** a named software requirement or an explicit request; define acceptance tests before implementation.
+**Remaining acceptance:** run Ultima V with the card in slot 2 (its "Change
+Music Configuration" → Passport, slot 2) and hear / record its songs; the
+disks are not in the test-media archive yet. Then remove this entry. Also
+open: run the WinMM backend on Windows, and compile + run the ALSA backend
+on a Linux host with `libasound2-dev`.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1433). Original dates and estimates are retained below.
 
@@ -273,3 +280,32 @@ card. The historical early-out/lost-queue description is superseded.
 
 - 🧊 **Passport MIDI Music Card** — 6840 + 6850, Master Tracks Pro /
   Performer. MAME refs `mc6840.cpp` + `acia6850.cpp`. *3 d.*
+
+<a id="audio-013"></a>
+
+## AUDIO-013 — WAV capture and Mockingboard VGM/YM export
+
+**Priority:** 🟠 · **State:** Ready; chosen on 2026-11-18 after UI-015 (research of 2026-11-18).
+
+No Apple II emulator exports Mockingboard music as VGM (research of 2026-11-18); the format
+supports two AY-3-8910s. POM2's AY writes are already cycle-stamped
+(`emuCycles`), so a register log is exact by construction. Also a plain WAV
+of the mixed output.
+
+**Acceptance criterion:** a VGM of a corpus title's music replays in an
+independent player with the same register writes at the same 44.1 kHz sample
+positions (round trip pinned by a test); the WAV is sample-identical between
+two runs.
+
+<a id="audio-014"></a>
+
+## AUDIO-014 — AY-3-8913 voicing option
+
+**Priority:** 🧊 · **State:** Proposal: Supported tier, needs an explicit request.
+
+French Touch's "Something is very wrong with the AY-3-8913" (2024) and
+deater's notes describe the 8913 sounding saturated with distorted bass
+envelopes. POM2 models the 8913's register read-back, not its sound.
+
+**Scheduling condition:** an explicit request, with a recording of a real
+8913 board as the oracle.

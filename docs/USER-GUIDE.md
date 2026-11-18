@@ -73,7 +73,7 @@ and the effects on rewind/debugger history.
 
 The debugger also supports bank-qualified breakpoints and watches, such as
 `aux1:$0800` or `lc2:$D000`, separate profiling/history for each code bank,
-and source-line correspondence through `.p2map` files. Unqualified addresses
+and source-line correspondence through `.p2map` files or a cc65 `.dbg`. Unqualified addresses
 continue to match every bank. See [Bank-aware debugger](debugger-banks.md)
 for run controls, bank names, symbol syntax and the source-map format.
 With the Debugger panel open, **Step** (F7) advances one instruction;

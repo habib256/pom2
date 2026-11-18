@@ -23,6 +23,8 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-007](#cards-007) | 🧊 | Frozen | Apple II VGA / Second Sight (VGA video card) |
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
+| [CARDS-017](#cards-017) | 🟢 | Ready | Hayes AT modem layer on the Super Serial Card |
+| [CARDS-018](#cards-018) | 🧊 | Frozen — needs media | Synetix SuperSprite |
 
 <a id="cards-016"></a>
 
@@ -256,3 +258,27 @@ map, reference, tests and remaining pin-timing/analog validation limits.
 `AlsCpmCard.h/.cpp`, pinned by `als_cpm_card`. Removed from the active task
 index on 2026-11-13; the register map, its sources and what is left moved to
 [DEV § ALS "The CP/M Card"](../../DEV.md#als-the-cpm-card-alscpmcard).
+
+<a id="cards-017"></a>
+
+## CARDS-017 — Hayes AT modem layer on the Super Serial Card
+
+**Priority:** 🟢 · **State:** Ready — named software: ProTERM (research of 2026-11-18).
+
+BBS use today goes through a WiModem232 / Zimodem-style modem: the
+terminal sends AT commands and `ATDT host:port` opens a telnet session.
+The SSC's telnet bridge exists; the AT command layer in front of it does not.
+
+**Acceptance criterion:** ProTERM dials `ATDT` a local test telnet server,
+exchanges text, and `+++` / `ATH` hangs up; loopback fence rules apply.
+
+<a id="cards-018"></a>
+
+## CARDS-018 — Synetix SuperSprite
+
+**Priority:** 🧊 · **State:** Frozen until its software is found (research of 2026-11-18).
+
+TMS9918A + AY-3-8912 + Echo II speech; POM2 already has all three kinds of
+chip. A2FPGA emulates it.
+
+**Scheduling condition:** downloadable StarSprite disks (not verified).

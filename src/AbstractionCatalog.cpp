@@ -233,6 +233,15 @@ const std::vector<AbsEntry>& abstractionCatalog()
       "No ROM to run (the driver is on the disk). The optional 2 KB memory "
       "socket and the chip's coefficient quantisation are not modelled.",
       "PorteParoleCard.h/.cpp, Mea8000.h/.cpp" },
+    { "passportmidi", "Audio", "Passport MIDI (MC6840 + MC6850)", AbsLevel::L1,
+      "Both chips from their Motorola data sheets: the 6840's three timers "
+      "(16-bit and dual 8-bit, ÷8 prescaler, the RS-RT flag rule) and the "
+      "6850's double-buffered transmitter, timed at 31 250 baud; MAME "
+      "a2midi's $C0nX map, with its IRQ copy-paste bug not carried over",
+      "The sound is the host's: a MIDI port or a .mid. Gates and timer "
+      "outputs are not wired (no schematic), so the two measurement modes "
+      "stay still; no MIDI IN yet.",
+      "PassportMidiCard.h/.cpp, Mc6840Ptm.*, Mc6850Acia.*, MidiOutputCoordinator.*" },
     { "floppysnd", "Audio", "Floppy mechanical sounds", AbsLevel::H2,
       "Host sample playback driven by emuCycles-stamped phase strobes",
       "There is nothing on the bus to model — it is literally acoustics.",
