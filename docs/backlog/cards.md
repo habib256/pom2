@@ -307,7 +307,7 @@ All in the Apple II Documentation Project,
 `mirrors.apple2.org.za/Apple II Documentation Project/Interface Cards/Video/Synetix SuperSprite/`
 (`Disk Images/`, `Manuals/`, `Photos/`). Third-party material: never tracked
 and never packaged. A ctest that boots one goes through
-`tools/test_media.sha256` + the archive.org item `pom2_media_202611`, which
+`tools/test_media.sha256` + the archive.org test-media item (`pom2_media_20261119`), which
 the user uploads.
 
 | File | SHA-256 |

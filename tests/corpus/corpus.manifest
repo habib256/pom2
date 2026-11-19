@@ -154,10 +154,10 @@ title digidream iie-pal demos
 # but each .dsk carries Apple's DOS 3.3: test-media archive only, never the
 # repo. Several of his titles hard-code the Mockingboard in slot 4.
 # Sources: www.deater.net/weave/vmwprod/<page>/ (outline_2026, outline_2023,
-# monstersplash, second, lovebyte_2025, lemm). Not in the archive yet:
-# absent, each title is skipped.
+# monstersplash, second, lovebyte_2025, lemm). In the test-media archive since
+# 2026-11-19 (pom2_media_20261119); Hectic runs in CI (`ci`).
 
-title deater-hectic iie demos deater
+title deater-hectic iie ci demos deater
   diskii 1 disks_5.4/demo/deater/hectic.dsk sha256=61d29bf3dae3e6cfac25adc562d7bfedc65c13f53096e53fe58d7fb3cb9be95a
   run 8
   key SPACE
@@ -224,8 +224,8 @@ title deater-lemm iie games deater
 # on any faithful machine. This is the repaired copy: that one sector put
 # back from 341-0003-00.f0 (MAME CRC 62230d38), 255 bytes changed, nothing
 # else. Its four ROM tests then pass on POM2's apple2o.rom, which is MAME's
-# 341-0001..0004 page for page. Not in the test-media archive yet: absent,
-# the title is skipped. Timeline after RETURN: E8 ~30 s, F0 ~40 s, F8 ~54 s,
+# 341-0001..0004 page for page. In the test-media archive since 2026-11-19.
+# Timeline after RETURN: E8 ~30 s, F0 ~40 s, F8 ~54 s,
 # back to the menu ~60 s.
 
 title service-disk-1 ii diagnostics

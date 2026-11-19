@@ -76,6 +76,6 @@ an instruction to implement another detector.
 The [2026-10-28 triage](../audits/backlog-triage-2026-10-28.md),
 [round-2 hunt](../audits/bug-hunt-2026-11-01-round2.md), and
 [November 9 consolidation](../audits/core-consolidation-2026-11-09.md)
-remain historical evidence. Missing media (notably the repaired Service Disk)
-are separate from missing implementation. Gates G2–G5 and RELEASE-003–007
+remain historical evidence. Missing media are separate from missing
+implementation (the repaired Service Disk is in the test media since 2026-11-19). Gates G2–G5 and RELEASE-003–007
 mostly call for a fresh candidate run, not new CI systems.

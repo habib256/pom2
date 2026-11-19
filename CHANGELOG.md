@@ -10,6 +10,20 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-19 — Test media: deater's demos and the repaired Service Disk (new item `pom2_media_20261119`)
+
+RELEASE-015. `pom2_media.zip` was rebuilt from the published one — its 91
+entries copied unchanged — plus deater's seven `.dsk` and the repaired
+Service Disk No.1, and checked against the new manifest by
+`fetch_test_media.py --strict` before it left the machine (99 entries). It
+went up as a NEW item, `pom2_media_20261119`, rather than over
+`pom2_media_202611`, so the URL in `fetch_test_media.py` moves in this same
+commit as the eight manifest lines — the order RELEASE-015 required, since
+the strict fetch fails every job on an entry the archive does not serve.
+`deater-hectic` joins the `ci` titles: the `$C019` VBL edge MAME had 25
+cycles late is now checked on every push. The old item is untouched, so it
+remains a fallback for anyone pinned to an older commit.
+
 ## 2026-11-19 — Developer tooling: a 6502 test runner, music capture, shareable links, traces, video, embed
 
 Six entries of the developer track, each with its own acceptance test.
