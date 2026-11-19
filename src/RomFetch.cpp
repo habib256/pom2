@@ -94,7 +94,12 @@ const std::vector<RomFetchEntry>& catalogStorage()
           // ships — so this entry finally has a digest to gate on instead
           // of downloading a DIFFERENT (12 KB) II+ image than the local
           // file it was comparing against (bug hunt #10).
-          "92c4bef609920842ea472d21b661a0d35dbda6cd90963b8b734a205e22d84108",
+          "a0598e897da1497d0da39e3296953ebc173de80490900734f12742195636d145",
+          // ↑ the CORRECTED dump since 2026-11-19 (RELEASE-012): $FFFE/$FFFF
+          // = $40 $FA, F8 page CRC 079589c4, as served by pom2_firm_202611.
+          // RetroBIOS still serves the $FF59 one (92c4bef6…): that fallback
+          // fails this gate until it is corrected there too, and a tree that
+          // holds the old file keeps working through RomErrata.h.
           // …and a tree that already holds the 12 KB six-chip image POM2
           // used to assemble from that zip still counts as complete: it is
           // a legitimate II+ firmware, so do not overwrite it.

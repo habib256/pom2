@@ -25,7 +25,7 @@ ALLOW=$(printf '%s\n' \
   $'videx_videoterm_boot\t*' \
   $'card_snapshot_contract\tVideoterm+ROM' \
   $'arekkusu_disks\t*' )
-# Since 2026-11-01 the test-media archive (pom2_media_20261119 today) carries every disk and
+# Since 2026-11-01 the test-media archive (pom2_media_20261119_1827 today) carries every disk and
 # ROM the suite opens — the SoftCard II's CP/M 2.28B, the Applicard's boot
 # disk and ROM, the UltraTerm's ROMs, the Premium SoftCard's CP/M 2.25 and
 # 2.26, the a2audit and mb-audit disks, Saturn's software disk — so

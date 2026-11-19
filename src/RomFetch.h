@@ -145,16 +145,17 @@ constexpr const char* kRetroBiosRawPrefix = POM2_RETROBIOS_RAW;
 
 /// The PRIMARY source since 2026-10-29: POM2's own archive on archive.org,
 /// one zip holding every catalogued dump as `roms/<the name POM2 probes>`
-/// (`romArchiveMember`). Item `pom2_firm` since 2026-11-01: the first item
-/// (`pom2_roms_202610`) went dark on 2026-10-31. Fetched once per run; each member passes the same
+/// (`romArchiveMember`). Item `pom2_firm_202611` since 2026-11-19 (the
+/// corrected ][+ dump, RELEASE-012); `pom2_firm` from 2026-11-01, after the
+/// first item (`pom2_roms_202610`) went dark on 2026-10-31. Fetched once per run; each member passes the same
 /// size / CRC32 / SHA-256 gate as a RetroBIOS download, so the archive does
 /// not have to be trusted — only to be right. Any entry it cannot supply
 /// (archive unreachable, member absent or not the expected dump) is fetched
 /// from RetroBIOS at the pinned commit, the SECONDARY source.
 constexpr const char* kPom2RomArchivePage =
-    "https://archive.org/details/pom2_firm";
+    "https://archive.org/details/pom2_firm_202611";
 constexpr const char* kPom2RomArchiveUrl =
-    "https://archive.org/download/pom2_firm/pom2_firm.zip";
+    "https://archive.org/download/pom2_firm_202611/pom2_firm.zip";
 
 const std::vector<RomFetchEntry>& romFetchCatalog();
 

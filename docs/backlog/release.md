@@ -397,7 +397,7 @@ notes open with the first-launch warning. v1.1.2 gets the "Apple could not verif
 
 ### RELEASE-012 — Fix the ][+ dump's IRQ vector at the source
 
-**Priority:** 🟡 · **State:** worked around in memory (2026-11-07); the source fix needs an upload.
+**Priority:** 🟡 · **State:** POM2's sources fixed 2026-11-19 (`pom2_firm_202611`, `pom2_media_20261119_1827`); the RetroBIOS report is deferred by the owner.
 
 `roms/apple2p.rom` (sha256 `92c4bef6…`, from RetroBIOS and `pom2_firm.zip`)
 carries `$FF59` at `$FFFE/$FFFF` where Apple's Autostart Monitor
@@ -411,18 +411,26 @@ current `Apple2_Plus.rom`, the 2005 comp.sys.apple2 thread) is in
 The file itself is still wrong, for every user and in every other emulator
 that takes it from the same places. To fix it at the source:
 
-- [ ] Rebuild `pom2_firm.zip` with a corrected `apple2p.rom`: the same 20 KB
-      layout, `$FFFE/$FFFF` = `$40 $FA`, its F8 page then CRC `079589c4`.
+- [x] `pom2_firm.zip` rebuilt with the corrected `apple2p.rom` (2 bytes:
+      `$FFFE/$FFFF` = `$40 $FA`; F8 page CRC `ecffd453` → `079589c4`; sha256
+      `a0598e89…`), the other 62 members unchanged; uploaded 2026-11-19 as the
+      new item `pom2_firm_202611`. The test media carry the same file (new
+      item `pom2_media_20261119_1827`).
 - [ ] Report it upstream to RetroBIOS (`bios/Apple/Apple II/apple2p.rom`),
       with the evidence above. No Claude attribution on that PR or issue.
-- [ ] Move the digests together, in ONE commit, once both sources serve the
-      new bytes: `src/RomFetch.cpp` (the `apple2p.rom` entry, and the
-      RetroBIOS pin if it moved) and `tools/test_media.sha256`. Moving them
-      while RetroBIOS still serves the old file breaks that fallback, because
-      every source is SHA-256-gated.
-- [ ] Keep `RomErrata.h`: users who already hold the old file keep it. The
-      errata is a no-op on the corrected dump, and `rom_errata` passes on
-      either.
+      **Deferred by the owner (2026-11-19).**
+- [x] Digests moved in ONE commit (2026-11-19): `src/RomFetch.cpp`,
+      `kPom2RomArchiveUrl` / `Page` (`RomFetch.h`), `tools/test_media.sha256`
+      and `fetch_test_media.py`'s URL. Measured first: with the corrected
+      ROM and the catalog moved, the whole suite passes; with the catalog
+      moved and the OLD file in the test tree, `rom_fetch`,
+      `rom_fetch_archive_down` and `rom_import` fail — hence both archives in
+      the same step. The emulation is unchanged (bench identity, corpus,
+      `rom_errata`). **Accepted cost:** RetroBIOS still serves the old dump,
+      so that fallback now fails the gate for this one entry; it is only
+      used when archive.org is unreachable.
+- [x] `RomErrata.h` kept: a tree with the old file keeps working (ROM Status
+      shows it red and "Download missing" replaces it, with a backup).
 
 The repaired copy of Apple's Service Disk No.1
 (`disks_5.4/diagnostics/apple-service-disk-1-fixed.do`, sha256 `b8dd1898…`)

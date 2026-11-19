@@ -114,8 +114,11 @@ void testBlankDisk()
 // documenting it a test failure.
 void checkEnvironmentDocumented()
 {
-    std::ifstream u("src/CliDispatcher.cpp");
-    if (!u) { std::printf("  (skipped: run from the source tree)\n"); return; }
+    // From the source tree the build names (POM2_TEST_SOURCE_DIR), whatever
+    // directory ctest runs in: a check that "skips" outside the tree is what
+    // check_ctest_skips rightly calls a hole.
+    std::ifstream u(std::string(POM2_TEST_SOURCE_DIR) + "/src/CliDispatcher.cpp");
+    assert(u && "POM2_TEST_SOURCE_DIR/src/CliDispatcher.cpp opens");
     const std::string usage((std::istreambuf_iterator<char>(u)), std::istreambuf_iterator<char>());
     const auto from = usage.find("void printUsage()");
     const auto env = usage.find("Environment (", from);
@@ -123,7 +126,9 @@ void checkEnvironmentDocumented()
     const std::string section = usage.substr(env, usage.find("\n}", env) - env);
     const std::regex getenvCall(R"(getenv\s*\(\s*"(POM2_[A-Z0-9_]+)\")");
     std::set<std::string> read;
-    for (const auto& entry : fs::recursive_directory_iterator("src")) {
+    const fs::path srcDir = fs::path(POM2_TEST_SOURCE_DIR) / "src";
+    assert(fs::is_directory(srcDir) && "POM2_TEST_SOURCE_DIR/src exists");
+    for (const auto& entry : fs::recursive_directory_iterator(srcDir)) {
         const auto ext = entry.path().extension().string();
         if (ext != ".cpp" && ext != ".h" && ext != ".mm") continue;
         std::ifstream f(entry.path());
