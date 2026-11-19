@@ -457,7 +457,10 @@ private:
     /// After a snapshot load or a reset the chips hold registers no write
     /// produced: record them as writes, at the current stamp, so the file
     /// sounds what the machine sounds. Caller holds `mtx`.
-    void ayCaptureResync();
+    /// `timeJump`: a snapshot / session load — a DISCONTINUITY, which may
+    /// land ahead as well as behind; the capture resumes at its last stamp
+    /// (no gap either way). A reset is not one: time ran up to it.
+    void ayCaptureResync(bool timeJump);
     /// The bus "now" at an instruction boundary, synced. Caller holds `mtx`.
     uint64_t syncedBusNow();
 

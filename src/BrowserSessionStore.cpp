@@ -15,6 +15,18 @@ BrowserSessionStore::BrowserSessionStore(std::string directory)
     sessionPaths_[1] = (std::filesystem::path(directory) / "browser-resume-next.pom2session").string();
     markerPath_ = (std::filesystem::path(directory) / "browser-resume.enabled").string();
 }
+void BrowserSessionStore::initializeWithoutRestore()
+{
+    if (initialized_) return;
+    initialized_ = true;
+    std::error_code ec;
+    if (!std::filesystem::exists(markerPath_, ec) || ec) return;
+    enabled_ = true;
+    suspended_ = true;
+    error_ = "this visit was opened from a link or embedded, so it is not saved; "
+             "your saved machine is kept for the next normal visit";
+}
+
 void BrowserSessionStore::initialize(EmulationController& ctrl)
 {
     if (initialized_) return;

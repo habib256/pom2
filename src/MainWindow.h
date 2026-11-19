@@ -234,6 +234,8 @@ public:
     void onFileDrop(int count, const char** paths, bool atPointer = false);
     void processDriveRackFileDrop();
     void restoreBrowserSession();
+    /// A link or an embed: the resume store read, nothing restored, checkpoints held.
+    void holdBrowserSession();
     void checkpointBrowserSession(bool running);
 
     // HDV helper — cold-boot through the slot-5 ProDOS block-device ROM.
@@ -255,7 +257,11 @@ public:
     /// `--mount sNdM:path` (WASM-004): the image into slot `slot`, drive
     /// `drive` (0-based), through the drive rack's mount — the same checks,
     /// no boot. UI thread only.
-    bool mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut);
+    /// `bootDisk`: the positional disk just booted — a mount that would
+    /// replace it is refused (its type may have routed it into the very
+    /// drive a link also names).
+    bool mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut,
+                        const std::string& bootDisk = {});
 #ifdef __EMSCRIPTEN__
     /// File ▸ Copy link to this setup: the profile and every mounted drive,
     /// handed to wasm/setup_link.js, which writes the link.

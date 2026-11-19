@@ -35,6 +35,13 @@ today. The ones that mattered:
 - **callgrind** filed all Monitor time under the program's last symbol; a
   label now only names its own memory region.
 
+**Round 2**, one reviewer over those fixes, nine more — among them a crash
+the rate-change fix introduced (the panel read the take its own pump had
+just ended), a one-disk link still replaced by the resume, a snapshot load
+from a later moment opening hours of silence in a capture, and silent trace
+write errors in headless. And one CI catch: `near` is an empty macro under
+the Windows headers, so a variable of that name compiled away on MSVC only.
+
 ## 2026-11-19 — The ][+ ROM corrected at the source: `pom2_firm_202611`, `pom2_media_20261119_1827`
 
 RELEASE-012. The `apple2p.rom` POM2 distributed had `$FF59` (the Monitor's

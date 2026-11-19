@@ -811,8 +811,10 @@ void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
                 ctrl.debugger().setInstructionTrace(nullptr);
                 ctrl.syncDebugHook();
             }
-            traceStatus_ = std::to_string(trace_->lines()) + " lines written";
-            trace_->close();
+            const auto lines = trace_->lines();
+            traceStatus_ = trace_->close()
+                ? std::to_string(lines) + " lines written"
+                : "the trace could not be written in full (disk full?)";
             trace_.reset();
         }
     }

@@ -96,11 +96,14 @@ void InstructionTrace::write(const std::string& text)
     if (maxLines_ && n >= maxLines_) stopped_.store(true, std::memory_order_relaxed);
 }
 
-void InstructionTrace::close()
+bool InstructionTrace::close()
 {
-    if (out_) std::fclose(out_);
+    bool ok = true;
+    if (out_) ok = std::fclose(out_) == 0;
     out_ = nullptr;
     havePending_ = false;
+    if (!ok) writeFailed_.store(true, std::memory_order_relaxed);
+    return ok && !writeFailed_.load(std::memory_order_relaxed);
 }
 
 std::string InstructionTrace::formatLine(const std::string& format, const Fields& f)

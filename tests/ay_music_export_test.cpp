@@ -23,6 +23,8 @@
 // positions. Then the YM5 frame view, the WAV writer and the capture ring.
 
 #include "AyMusicExport.h"
+#include "M6502.h"
+#include "Memory.h"
 #include "Mockingboard.h"
 #include "WavRecorder.h"
 
@@ -218,6 +220,24 @@ void testCaptureAcrossTimeJumps()
     for (std::size_t i = 1; i < v.events.size(); ++i) assert(v.events[i].sample >= v.events[i - 1].sample);
     assert(v.endSample >= v.events.back().sample);
     std::printf("  ok: a capture across a snapshot load and a reset stays in order and follows the chips\n");
+
+    // Round 2: a load that lands AHEAD of the capture's clock (the CPU ran
+    // two million cycles the card never synced, as a session from a longer
+    // run does) must not open a gap of that size in the file.
+    Memory mem;
+    M6502 cpu(&mem);
+    MockingboardCard card2(4);
+    card2.setCpu(&cpu);
+    card2.setCpuClock(1022727.0);
+    card2.setStandardClock(1022727.0);
+    std::vector<uint8_t> blob2;
+    card2.appendSnapshotState(blob2);
+    card2.startAyCapture(17030);
+    for (long ran = 0; ran < 2000000;) ran += cpu.run(4096);   // whatever RAM holds
+    card2.loadSnapshotState(blob2.data(), blob2.size());
+    const aym::Capture c2 = card2.stopAyCapture();
+    assert(c2.endCycle - c2.startCycle < 10000 && "a load ahead opens no gap");
+    std::printf("  ok: a snapshot load from a later moment opens no silence\n");
 }
 
 void testYm5()
