@@ -28,8 +28,11 @@ namespace pom2 {
 namespace {
 
 // $0000-$BFFF RAM, $C000-$CFFF I/O and slot ROM, $D000-$FFFF ROM / language
-// card. A label never names code in another region.
+// card. A label never names code in another region, nor code more than
+// kLabelReach above it: RAM holds the program AND, far above it, DOS and
+// its RWTS, which a lone `MAIN = $0800` swallowed (bug hunt round 2).
 int regionOf(uint16_t a) { return a < 0xC000 ? 0 : a < 0xD000 ? 1 : 2; }
+constexpr int kLabelReach = 0x1000;
 
 // The routine an address belongs to: the nearest label at or below it, in
 // the same memory region, among its own bank's labels and the bank-free
@@ -48,6 +51,7 @@ std::string routineOf(const DebuggerSymbols* symbols, uint16_t pc, DebugBank ban
             while (it != labels.begin()) {
                 --it;
                 if (regionOf(it->first.addr) != regionOf(pc)) break;   // below the region
+                if (pc - it->first.addr >= kLabelReach) break;        // out of reach
                 if (it->first.bank == want) {
                     if (static_cast<int>(it->first.addr) > bestAddr) {
                         bestAddr = it->first.addr;

@@ -152,9 +152,10 @@ void testCallgrind()
     assert(header["events"] == "Cycles Visits" && header["cmd"] == "test");
     assert(header["summary"] == "74 27" && header["totals"] == "74 27" && c == 74 && v == 27);
     assert((perFn["main:start"] == std::pair<uint64_t, uint64_t>{ 32, 11 }));   // $0800 + $0803
-    assert((perFn["main:sub"] == std::pair<uint64_t, uint64_t>{ 34, 12 }));     // $0900, and $2000 under it
+    assert((perFn["main:sub"] == std::pair<uint64_t, uint64_t>{ 20, 5 }));      // $0900
+    assert((perFn["main:page $20"] == std::pair<uint64_t, uint64_t>{ 14, 7 })); // $2000: out of sub's reach
     assert((perFn["aux0:auxfn"] == std::pair<uint64_t, uint64_t>{ 8, 4 }));     // the bank keeps them apart
-    assert(perFn.size() == 3);
+    assert(perFn.size() == 4);
 
     // A program's labels name RAM only: Monitor time stays its own page, it
     // is not filed under the program's last symbol (bug hunt 2026-11-19).
@@ -162,6 +163,9 @@ void testCallgrind()
         { { 0xFDED, 4, 40, pom2::DebugBank{ pom2::DebugBank::Rom, 0, 0 } } }, &syms, "");
     assert(rom.find("fn=page $FD\n") != std::string::npos);
     assert(rom.find("fn=sub") == std::string::npos);
+    // …nor DOS, far above the program in the same RAM (round 2).
+    const std::string dos = pom2::callgrindProfile({ { 0xB7B5, 3, 30, main } }, &syms, "");
+    assert(dos.find("fn=page $B7\n") != std::string::npos);
 
     // No symbols: the 256-byte page names the routine.
     const std::string bare = pom2::callgrindProfile({ { 0xC65C, 3, 9, main } }, nullptr, "");

@@ -1,6 +1,7 @@
 // POM2 — GPL-3.0-or-later
 #include "MainWindow.h"
 #include "DiskIICard.h"
+#include "DiskImage.h"
 #include "DriveRack_ImGui.h"
 #include "DriveRackMount.h"
 #include "EmulationController.h"
@@ -288,13 +289,15 @@ void MainWindow::processDriveRackFileDrop() {
 // `--mount sNdM:path` (WASM-004): a drive named by slot and drive, as the
 // browser's per-drive link parameters name it, filled through the rack's own
 // mount — the same refusals (occupied drive, wrong medium) and no boot.
-bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut)
+bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut,
+                                const std::string& bootDisk)
 {
     pom2::DrivePicture target;
     target.slot = slot;
     target.bay = drive;
     target.label = "S" + std::to_string(slot) + ",D" + std::to_string(drive + 1);
     bool occupied = false;
+    std::string occupant;
     {
         auto st = controller->lockState();
         SlotPeripheral* card = st.memory().slotBus().peripheral(slot);
@@ -305,6 +308,7 @@ bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, st
             }
             target.kind = pom2::DrivePictureKind::DiskII;
             occupied = disk->isDiskLoaded(drive);
+            if (occupied) occupant = disk->getDiskPath(drive);
         } else if (auto* media = dynamic_cast<pom2::MountableMediaCard*>(card)) {
             if (drive < 0 || drive >= media->bayCount()) {
                 errOut = target.label + ": the card in slot " + std::to_string(slot) + " has " +
@@ -316,6 +320,7 @@ bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, st
                         : info.typeKey == "hdv" ? pom2::DrivePictureKind::HardDisk
                                                 : pom2::DrivePictureKind::Generic;
             occupied = info.loaded;
+            occupant = info.path;
         } else {
             errOut = target.label + ": no drive in slot " + std::to_string(slot);
             return false;
@@ -332,11 +337,28 @@ bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, st
     // positional boot disk replaces its own: refusing it made a link or
     // `--mount s6d2:` fail silently whenever S6D2 had a remembered disk. The
     // storage layer flushes a dirty outgoing medium first.
+    if (!bootDisk.empty() && occupant == bootDisk) {
+        errOut = target.label + " holds the disk that was just booted";
+        return false;
+    }
     std::string local = path;
     if (pom2::needsMediaResolve(path)) {
         const auto got = pom2::resolveMediaSource(path, pom2::mediaCacheDir());
         if (!got.ok) { errOut = path + ": " + got.error; return false; }
         local = got.localPath;
+    }
+    // The same rule as an empty drive (mountEmptyDrive): a disk only goes
+    // into a drive made for it. An HDV bay adopts any 512-byte-block image,
+    // so without this a 140 KB .dsk replaced its hard disk (round 2).
+    const DiskSlotClass kind = classifyDiskForSlot(local);
+    const bool fits =
+        target.kind == pom2::DrivePictureKind::DiskII   ? kind == DiskSlotClass::Floppy525 :
+        target.kind == pom2::DrivePictureKind::Floppy35 ? kind == DiskSlotClass::Sony35 :
+        target.kind == pom2::DrivePictureKind::HardDisk ? kind == DiskSlotClass::Hdv :
+                                                          (kind == DiskSlotClass::Sony35 || kind == DiskSlotClass::Hdv);
+    if (!fits) {
+        errOut = target.label + " does not take " + std::filesystem::u8path(local).filename().u8string();
+        return false;
     }
     const auto result = target.kind == pom2::DrivePictureKind::DiskII
         ? storageCoordinator_->mountDiskII(*controller, transient, slot, drive, local, false)

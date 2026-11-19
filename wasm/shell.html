@@ -261,6 +261,10 @@
     const delDep = Module.removeRunDependency ||
                    (typeof removeRunDependency !== 'undefined' ? removeRunDependency : null);
     const plan = link.planDrives(window.location.search, 'bundled_disks/DIX-fix.po');
+    // A page that names drives is a link: main.cpp must not resume the
+    // visitor's saved machine over it, nor checkpoint over that machine.
+    if ((plan.boot && plan.boot.key) || plan.mounts.length || plan.rejected.length)
+      Module.pom2SkipResume = true;
     const entries = (plan.boot ? [Object.assign({ boot: true }, plan.boot)] : [])
                     .concat(plan.mounts);
     // Neither a URL nor a disk of this page (setup_link.js): said, not mounted.
@@ -268,7 +272,13 @@
       return r.key + ' ' + r.value + '\nnot an http(s) URL nor a disk of this page';
     });
     if (!entries.length) {
-      if (failures.length) pom2Error('Could not load:\n' + failures.join('\n'));
+      if (failures.length) {
+        const msg = 'Could not load:\n' + failures.join('\n');
+        pom2Error(msg);
+        setTimeout(function() {
+          if (errEl.textContent === msg) errEl.style.display = 'none';
+        }, 12000);
+      }
       return;
     }
     const lazy = Module.pom2LazyDisks || [];

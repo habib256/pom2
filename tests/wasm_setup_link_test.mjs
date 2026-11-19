@@ -46,6 +46,12 @@ p = link.planDrives('?s6d1=/persistent/pom2/x.dsk&s6d2=../../etc/p.dsk&s5d1=java
 assert.equal(p.boot, null);
 assert.deepEqual(p.mounts, []);
 assert.deepEqual(p.rejected.map(r => r.key), ['s6d1', 's6d2', 's5d1']);
+// …and so do ?url= / ?disk= (bug hunt round 2).
+p = link.planDrives('?url=/persistent/pom2/x.dsk', DEF);
+assert.equal(p.boot, null);
+assert.deepEqual(p.rejected, [{ key: 'url', value: '/persistent/pom2/x.dsk' }]);
+assert.equal(link.planDrives('?disk=../../etc/x.dsk', DEF).boot, null);
+assert.deepEqual(link.planDrives('?disk=bundled_disks/A.po', DEF).boot, { key: null, value: 'bundled_disks/A.po' });
 // Keys are case-insensitive, malformed ones ignored, a repeated one taken once.
 p = link.planDrives('?S6D1=a.dsk&s6d1=b.dsk&s8d1=c.dsk&s6d15=d.dsk&s6d=e.dsk', DEF);
 assert.deepEqual(p.boot, { key: 's6d1', value: 'a.dsk' });

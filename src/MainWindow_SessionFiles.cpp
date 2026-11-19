@@ -26,6 +26,12 @@
 #include "imgui.h"
 #include <cstdio>
 
+void MainWindow::holdBrowserSession()
+{
+#ifdef __EMSCRIPTEN__
+    browserSession_.initializeWithoutRestore();
+#endif
+}
 void MainWindow::restoreBrowserSession()
 {
 #ifdef __EMSCRIPTEN__

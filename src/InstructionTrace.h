@@ -77,7 +77,10 @@ public:
     /// the lock (nothing is written before both are done).
     bool openFile(const std::filesystem::path& path, std::string format, std::string& error);
     void attach(const M6502& cpu, const Memory& memory) { cpu_ = &cpu; memory_ = &memory; }
-    void close();
+    /// False when the file could not be completed: a write failed during
+    /// the run, or the final flush/close did (a disk that filled with the
+    /// last buffer). The lines() count is then not what reached the disk.
+    bool close();
     bool isOpen() const { return out_ != nullptr; }
     /// The trace stopped writing: it reached `maxLines`, or the disk said
     /// no (full, gone). It stays attached and costs nothing from then on;

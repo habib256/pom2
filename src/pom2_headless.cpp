@@ -867,6 +867,9 @@ int main(int argc, char** argv)
         // launch of a --load program (the ROM's boot is not the question).
         pom2::InstructionTrace trace;
         trace.setSymbols(symbols);
+        // The run is already bounded by --frames / --cycles: no line cap
+        // here, the user asked for the whole of it.
+        trace.setMaxLines(0);
         bool instrumented = false;
         auto instrument = [&]() -> bool {
             if (instrumented || (traceFile.empty() && profilePath.empty())) return true;
@@ -1031,9 +1034,15 @@ int main(int argc, char** argv)
                 controller.syncDebugHook();
             }
             if (trace.isOpen()) {
-                std::fprintf(stderr, "[POM2 headless] wrote %s (%llu lines)\n", traceFile.c_str(),
-                             static_cast<unsigned long long>(trace.lines()));
-                trace.close();
+                const unsigned long long lines = trace.lines();
+                const bool capped = trace.stopped() && trace.stopReason().find("cap") != std::string::npos;
+                if (!trace.close()) {
+                    std::fprintf(stderr, "ERROR: %s: the trace could not be written in full "
+                                 "(%s)\n", traceFile.c_str(), "disk full or the file went away");
+                    return 1;
+                }
+                std::fprintf(stderr, "[POM2 headless] wrote %s (%llu lines%s)\n", traceFile.c_str(),
+                             lines, capped ? ", stopped at its cap" : "");
             }
             if (!profilePath.empty()) {
                 const std::string text = pom2::callgrindProfile(profile, symbols.size() ? &symbols : nullptr,

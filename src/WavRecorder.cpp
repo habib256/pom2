@@ -108,17 +108,24 @@ bool WavFileWriter::close(std::string& error, const std::filesystem::path& publi
     // (bug hunt 2026-11-19). Copy it next to the target and publish that;
     // if even this fails, KEEP the take and say where it is.
     const std::string renameError = ec.message();
-    const std::filesystem::path near = tempSiblingPath(target_);
+    const std::filesystem::path besideTarget = tempSiblingPath(target_);
     std::error_code cec;
-    if (prepareTempPath(near, cec) &&
-        std::filesystem::copy_file(temp_, near, std::filesystem::copy_options::overwrite_existing, cec) &&
-        replaceFileAtomic(near, target_, cec)) {
+    if (prepareTempPath(besideTarget, cec) &&
+        std::filesystem::copy_file(temp_, besideTarget, std::filesystem::copy_options::overwrite_existing, cec) &&
+        replaceFileAtomic(besideTarget, target_, cec)) {
         std::filesystem::remove(temp_, cec);
         return true;
     }
-    std::filesystem::remove(near, cec);
+    std::filesystem::remove(besideTarget, cec);
+    // Kept under a real .wav name beside the temp (same volume, so this
+    // rename cannot fail the way the first did): a *.pom2tmp is swept at
+    // a later launch (main.cpp), which would delete the take after all.
+    std::filesystem::path keep = temp_.parent_path() / (target_.stem().u8string() + ".kept.wav");
+    for (int n = 2; std::filesystem::exists(keep, cec) && n < 1000; ++n)
+        keep = temp_.parent_path() / (target_.stem().u8string() + ".kept-" + std::to_string(n) + ".wav");
+    std::filesystem::rename(temp_, keep, cec);
     error = "cannot publish " + target_.u8string() + " (" + renameError +
-            "); the recording is kept as " + temp_.u8string();
+            "); the recording is kept as " + (cec ? temp_ : keep).u8string();
     return false;
 }
 

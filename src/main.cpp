@@ -1174,10 +1174,10 @@ int main(int argc, char* argv[])
         const char*         imguiIniPath;
         double              lastPersistSeconds;
         bool browserSessionInitialized = false;
-        /// A page that named its drives (?sNdM= → --mount) or embeds the
-        /// machine (?embed=1 → --kiosk) asked for THAT setup: the automatic
-        /// resume of the visitor's saved machine must not replace it (bug
-        /// hunt 2026-11-19, WASM-004/005).
+        /// A page that named its drives (?sNdM=) or embeds the machine
+        /// (?embed=1 → --kiosk) asked for THAT setup: the automatic resume
+        /// of the visitor's saved machine must not replace it, and its
+        /// checkpoints must not overwrite it (bug hunt 2026-11-19).
         bool skipBrowserResume = false;
 #endif
     } frameCtx{
@@ -1196,7 +1196,11 @@ int main(int argc, char* argv[])
     // never returns here (simulate_infinite_loop), so the pointer stays valid
     // for the life of the tab.
     gPersistTarget = &mainWindow;
-    frameCtx.skipBrowserResume = !plan->mounts.empty() || plan->kiosk;
+    // shell.html sets Module.pom2SkipResume when the page named any drive:
+    // a link of one disk (?s6d1= alone) reaches the CLI as a positional
+    // only, which the C++ cannot tell from the page's default disk.
+    frameCtx.skipBrowserResume = !plan->mounts.empty() || plan->kiosk ||
+        EM_ASM_INT({ return (typeof Module !== 'undefined' && Module.pom2SkipResume) ? 1 : 0; }) != 0;
     pom2_set_page_visible(EM_ASM_INT({ return document.hidden ? 0 : 1; }));
 #endif
     auto iterate = [](void* userdata) {
@@ -1262,7 +1266,7 @@ int main(int argc, char* argv[])
             for (const auto& m : c.mounts) {
                 std::string merr;
                 const std::string where = "s" + std::to_string(m.slot) + "d" + std::to_string(m.drive);
-                if (c.mainWindow->mountIntoDrive(m.slot, m.drive - 1, m.path, merr))
+                if (c.mainWindow->mountIntoDrive(m.slot, m.drive - 1, m.path, merr, c.bootDiskPath))
                     pom2::log().info("CLI", "--mount " + where + ": " + m.path);
                 else
                     pom2::log().warn("CLI", "--mount " + where + " failed: " + merr);
@@ -1297,7 +1301,10 @@ int main(int argc, char* argv[])
         }
 
 #ifdef __EMSCRIPTEN__
-        if (!c.browserSessionInitialized && c.skipBrowserResume) c.browserSessionInitialized = true;
+        if (!c.browserSessionInitialized && c.skipBrowserResume) {
+            c.mainWindow->holdBrowserSession();
+            c.browserSessionInitialized = true;
+        }
         if (!c.browserSessionInitialized && c.cliBootCountdown <= 0 && c.hostOpenGrace == 0) {
             auto& emu = c.mainWindow->emul();
             // Restore the intended mode first, then apply tab visibility.

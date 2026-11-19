@@ -129,8 +129,13 @@ void MainWindow::pumpRecording()
         controller->audio().setCaptureRing(nullptr);
         wavRing_->drainTo(*wavWriter_);
         std::string why;
-        recordStatus_ = wavWriter_->close(why)
-            ? "the audio device changed rate: the take ended here and was kept as pom2-recording.wav"
+        char stamp[48];
+        const std::time_t now = std::time(nullptr);
+        std::strftime(stamp, sizeof stamp, "pom2-%Y%m%d-%H%M%S.wav", std::localtime(&now));
+        const std::filesystem::path kept = scratchFile(stamp);
+        recordStatus_ = wavWriter_->close(why, kept)
+            ? deliver(kept.u8string(), "the audio device changed rate: the take ended here and was kept as " +
+                                       kept.u8string())
             : why;
         wavWriter_.reset();
         wavRing_.reset();
@@ -220,8 +225,11 @@ void MainWindow::renderRecordingSection()
                 recordStatus_ = why;
             }
         }
+    } else if (pumpRecording(), !wavWriter_) {
+        // The pump just ended the take (the device changed rate): its
+        // status is shown below; nothing left to draw (round 2: this read
+        // wavWriter_ after it had been reset).
     } else {
-        pumpRecording();
         ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "REC");
         ImGui::SameLine();
         const double secs = static_cast<double>(wavWriter_->framesWritten()) /

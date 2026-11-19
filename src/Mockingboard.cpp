@@ -863,7 +863,7 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() -
         static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
     busNow_ = lastSyncCycle_;
-    ayCaptureResync();   // the restored registers, as writes
+    ayCaptureResync(/*timeJump=*/true);    // the restored registers, as writes
     // The restored IFR/IER need not match the IRQ line the card is driving;
     // nothing else re-evaluates it until the next VIA access.
     updateIrq();
@@ -906,7 +906,7 @@ void MockingboardCard::resetCard(bool powerCycle)
     // doesn't run a giant catch-up on its first MMIO access.
     lastSyncCycle_ = now;
     busNow_ = lastSyncCycle_;
-    ayCaptureResync();   // the reset registers, as writes
+    ayCaptureResync(/*timeJump=*/false);   // the reset registers, as writes
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     ayWriteCount_[0]  = ayWriteCount_[1]  = 0;
     ayEnvWriteCount_[0] = ayEnvWriteCount_[1] = 0;
@@ -1305,9 +1305,14 @@ uint64_t MockingboardCard::ayCaptureStamp()
     return stamp;
 }
 
-void MockingboardCard::ayCaptureResync()
+void MockingboardCard::ayCaptureResync(bool timeJump)
 {
     if (!ayCapture_) return;
+    // A load from ANOTHER moment may be far ahead too (a session from a
+    // longer run): left to ayCaptureStamp, that became hours of silence in
+    // the VGM (bug hunt round 2). Re-anchor so the capture goes on from its
+    // last stamp; the arithmetic is modular, busNow_ + offset == last.
+    if (timeJump) ayCaptureOffset_ = ayCaptureLast_ - busNow_;
     const uint64_t stamp = ayCaptureStamp();
     for (int chip = 0; chip < 2; ++chip)
         for (uint8_t r = 0; r < 14; ++r)
