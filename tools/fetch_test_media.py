@@ -38,10 +38,11 @@ import urllib.request
 import zipfile
 import zlib
 
-# Item pom2_media_20261119 since 2026-11-19 (deater's demos and the repaired
-# Service Disk added); pom2_media_202611 before it, pom2_testmedia_20261029
-# before that (dark since 2026-10-31).
-DEFAULT_URL = ("https://archive.org/download/pom2_media_20261119/"
+# Item pom2_media_20261119_1827 since 2026-11-19 (the corrected ][+ dump,
+# RELEASE-012); pom2_media_20261119 just before it (deater's demos and the
+# repaired Service Disk), pom2_media_202611 before that, pom2_testmedia_20261029
+# first (dark since 2026-10-31).
+DEFAULT_URL = ("https://archive.org/download/pom2_media_20261119_1827/"
                "pom2_media.zip")
 
 

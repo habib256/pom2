@@ -73,7 +73,7 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 
 | Task | What is needed |
 |---|---|
-| [RELEASE-012](docs/backlog/release.md#release-012) | Corrected `apple2p.rom` in `pom2_firm.zip` + RetroBIOS report (the repaired Service Disk is in the test media since 2026-11-19). |
+| [RELEASE-012](docs/backlog/release.md#release-012) | POM2's own archives serve the corrected `apple2p.rom` since 2026-11-19; only the RetroBIOS report remains, deferred by the owner. |
 
 **Decisions:**
 

@@ -304,8 +304,15 @@ int main()
     expect(!cat.empty(), "catalog is not empty");
     // The primary source: an HTTPS archive.org download, and every entry's
     // member is "roms/" + the name POM2 probes — the layout of pom2_firm.zip.
-    expect(std::string(pom2::kPom2RomArchiveUrl).rfind("https://archive.org/download/pom2_firm/", 0) == 0,
-           "the POM2 archive is an HTTPS archive.org download");
+    // The item is dated (pom2_firm, pom2_firm_202611, …): a new upload is a
+    // new item, so the prefix is the name's stem and the file is fixed.
+    {
+        const std::string url = pom2::kPom2RomArchiveUrl;
+        const std::string tail = "/pom2_firm.zip";
+        expect(url.rfind("https://archive.org/download/pom2_firm", 0) == 0 &&
+               url.size() > tail.size() && url.compare(url.size() - tail.size(), tail.size(), tail) == 0,
+               "the POM2 archive is an HTTPS archive.org download of pom2_firm.zip");
+    }
     for (const auto& e : pom2::romFetchCatalog()) {
         const std::string m = pom2::romArchiveMember(e);
         expect(m == "roms/" + std::filesystem::path(e.destRel).filename().string(),

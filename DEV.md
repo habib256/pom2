@@ -12211,11 +12211,13 @@ on demand (open / Rescan) rather than per frame.
 
 **Download missing ROMs.** The button fetches the Apple II dumps POM2
 actually probes. **Primary source** *(2026-10-29)*: POM2's own archive,
-`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_firm/pom2_firm.zip>
-(item `pom2_firm` since 2026-11-01 — the first item, `pom2_roms_202610`, and
+`kPom2RomArchiveUrl` = <https://archive.org/download/pom2_firm_202611/pom2_firm.zip>
+(item `pom2_firm_202611` since 2026-11-19, with the corrected ][+ dump —
+RELEASE-012; `pom2_firm` from 2026-11-01 — the first item, `pom2_roms_202610`, and
 the test-media item `pom2_testmedia_20261029` both went dark on 2026-10-31;
 both were rebuilt from the tree, `tools/fetch_test_media.py` now reads
-`pom2_media_20261119`, the third test-media item, since 2026-11-19)
+`pom2_media_20261119_1827` since 2026-11-19, after `pom2_media_20261119`
+the same day)
 — one zip, downloaded once per run, each dump at `roms/<probed name>`
 (`romArchiveMember`). It is not trusted, only checked: every member passes
 the same size / CRC32 / SHA-256 gate as any download. **Fallback**, per

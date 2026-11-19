@@ -1,5 +1,5 @@
 # tools/test_media.sha256 — every file of the test-media archive (archive.org
-# item pom2_media_20261119, pom2_media.zip): sha256 + repo path.
+# item pom2_media_20261119_1827, pom2_media.zip): sha256 + repo path.
 # tools/fetch_test_media.py verifies each file against this list.
 634e91bae5938820da79183984c03aa06075cbd5701d480debcc4f6d70620001  roms/341-0057.bin
 ce785b913b9fcec6db0fab89b2d94f07fcd07664a822531dcbba3a5ca70ca3bf  roms/341-0358-A.bin
@@ -33,7 +33,7 @@ f2199fbfb473e98a8c3fb7e7c3312faaf76b4b010b02c655b662e5f87dc997f3  roms/apple2e_c
 ed5bdd4afa509134e85f1d020685af7ff50e279226eb869a17825b471cc1634c  roms/apple2e_char_us_unenh.rom
 1fb812584c6633fa16b77b20915986ed1178d1e6fc07a647f7ee8d4e6ab9d40b  roms/apple2e_unenh.rom
 68d9db6bb4c305d40c3fa89fa0f2d7b7f71516a9431e3138859f23bc5bddb2d1  roms/apple2o.rom
-92c4bef609920842ea472d21b661a0d35dbda6cd90963b8b734a205e22d84108  roms/apple2p.rom
+a0598e897da1497d0da39e3296953ebc173de80490900734f12742195636d145  roms/apple2p.rom
 ee9841257e923e1d6be9cd366d2d98d12db9647c9cb1cfe3ce5d631f588cdeca  roms/applicard_v9.bin
 e95c2632aa6e6e4c6d674fffed56275ad40faa7109a98f22a35ebd7b133f9f3b  roms/ccs7710_01h.u5
 4e11b7869fd598ec3df918a4642f62233560f21fd70b0746779e548ae3d3e2be  roms/ccs7710_01l.u6

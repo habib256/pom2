@@ -23,7 +23,7 @@
 // ROM, a user's own dump, a hack — is left alone.
 //
 // ─── The ][+ IRQ/BRK vector ($FFFE) ─────────────────────────────────────
-// roms/apple2p.rom (sha256 92c4bef6…, RetroBIOS / pom2_firm) is Apple's ][+
+// roms/apple2p.rom (sha256 92c4bef6…, RetroBIOS; pom2_firm until 2026-11-19) is Apple's ][+
 // set page for page except two bytes: its $FFFE/$FFFF read $59 $FF, where the
 // Autostart Monitor 341-0020-00 has $40 $FA.
 //   [B] Apple's own copy of that ROM: "Confidential Service Disk No.1",

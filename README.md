@@ -118,7 +118,7 @@ ROMs that run the disks POM2 ships.
 
 - **A ROM is missing or damaged:** **Help → ROM Status** says which one, and
   **Download missing ROMs** fetches it from POM2's
-  [ROM archive](https://archive.org/details/pom2_firm), with the
+  [ROM archive](https://archive.org/details/pom2_firm_202611), with the
   [RetroBIOS](https://github.com/Abdess/retrobios) collection as a fallback.
   POM2 checks every file's size and SHA-256 before installing it.
 - **You already have a dump,** under any name or as a MAME romset `.zip`: drop
@@ -216,7 +216,7 @@ cmake --build build --parallel 3
 
 The repository carries no copyrighted ROM or third-party disk image.
 `tools/fetch_test_media.py` downloads the ROMs and the disks the tests use from
-POM2's [test-media archive](https://archive.org/details/pom2_media_20261119),
+POM2's [test-media archive](https://archive.org/details/pom2_media_20261119_1827),
 checking every file against `tools/test_media.sha256`. Skip it and the first
 launch offers the ROM download instead.
 

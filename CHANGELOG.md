@@ -10,6 +10,25 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-19 — The ][+ ROM corrected at the source: `pom2_firm_202611`, `pom2_media_20261119_1827`
+
+RELEASE-012. The `apple2p.rom` POM2 distributed had `$FF59` (the Monitor's
+reset entry) as its IRQ/BRK vector where Apple's 341-0020-00 has `$FA40`;
+`RomErrata.h` has patched it in memory since 2026-11-07, but the file stayed
+wrong for every user. Both archives now carry the corrected dump (two bytes;
+F8 page CRC `079589c4`, MAME's and AppleWin's), as two new items, and the
+catalog, the archive URL, the test-media URL and the manifest moved in one
+commit. Measured before moving: the corrected ROM changes no emulated result
+(bench identity, corpus, `rom_errata`); only the three tests that check the
+tree against the catalog care, which is why the test media had to move with
+it. RetroBIOS still serves the old dump and is left alone for now (owner's
+call): its fallback fails the gate for this entry until it is fixed there.
+
+Also: `cli_kiosk`'s environment-variable check read `src/` from the current
+directory, printed "skipped" in CI (which runs elsewhere) and turned
+`check_ctest_skips` red on the 85e31e5b push; it now reads the tree the
+build names (`POM2_TEST_SOURCE_DIR`) and cannot skip.
+
 ## 2026-11-19 — Test media: deater's demos and the repaired Service Disk (new item `pom2_media_20261119`)
 
 RELEASE-015. `pom2_media.zip` was rebuilt from the published one — its 91
