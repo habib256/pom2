@@ -352,6 +352,7 @@ probe_output_paths
 prodos_decode_safety
 prodos_disk_fs
 prodos_dot_names
+prodos_image_file
 prodos_save_smoke
 prodos_synth_failed_flush
 prodos_volume_smoke

@@ -24,6 +24,29 @@ the strict fetch fails every job on an entry the archive does not serve.
 cycles late is now checked on every push. The old item is untouched, so it
 remains a fallback for anyone pinned to an older commit.
 
+## 2026-11-19 — pom2_prodos reads .2mg; env vars in --help; two entries closed by evidence
+
+- **`pom2_prodos` takes a `.2mg`.** It refused the A2 File Cmd image with a
+  bare "cannot read": the tool knew `.po`, `.hdv` and 140 KB `.dsk`/`.do`,
+  and a 2IMG's 64-byte header put the volume directory where it looked for
+  nothing. `ProDOSImageFile` now recognises the magic whatever the extension,
+  takes ProDOS- and DOS-order payloads, keeps the header and the chunks
+  after the data byte for byte on a rewrite, refuses a nibble 2IMG and
+  honours the lock bit. Checked on a copy of the 32 MB A2FC image: `put`,
+  `ls`, `get` round-trip, header identical. Pinned by `prodos_image_file`.
+- **ARCH-010 step 1:** `--help` names all 25 `POM2_*` variables the sources
+  read, and `cli_kiosk` fails on one it does not (mutation-checked). Writing
+  it corrected a claim: `POM2_AI_CONTROL_TOKEN` WINS over the
+  `ai_control_token` setting, it is not a fallback for it.
+- **DISPLAY-002, measured:** under OE-GPU the fallback framebuffer is
+  uploaded every frame and unused on full-graphics frames (1492 of 3000 on
+  DIX), 84-118 µs a frame on an M1 — kept, a tenth of a millisecond.
+- **VALIDATION-005, not reproduced:** six GUI runs opening `DHGR.RAW` in
+  A2FC 1.0 all showed the sixteen-colour card. The measurement scripts ran
+  POM2 under an isolated `HOME`: the first attempt, run against the real
+  one, had rewritten the profile and the SmartPort unit in `state.cfg`
+  (restored from the copy taken before it).
+
 ## 2026-11-19 — Developer tooling: a 6502 test runner, music capture, shareable links, traces, video, embed
 
 Six entries of the developer track, each with its own acceptance test.

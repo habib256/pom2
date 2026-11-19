@@ -965,6 +965,7 @@ set(POM2_MEDIA_SOURCES
     src/AppleSingle.cpp
     src/DiskBuilder.cpp
     src/ProDOSDiskFs.cpp
+    src/ProDOSImageFile.cpp
     src/HostFileImport.cpp
     src/IntegerBasicListing.cpp
     src/DiskImage_Session.cpp
@@ -2380,6 +2381,7 @@ if(NOT EMSCRIPTEN)
 add_executable(pom2_prodos
     src/pom2_prodos.cpp
     src/ProDOSDiskFs.cpp
+    src/ProDOSImageFile.cpp
     src/ApplesoftListing.cpp
     src/ApplesoftTokenizer.cpp
     src/AppleSingle.cpp

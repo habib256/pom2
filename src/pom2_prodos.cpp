@@ -24,8 +24,9 @@
 // listing is tokenized. `get` names what it writes the same way, so a `put`
 // of it restores the type and the aux.
 //
-// The image is `.po` / `.hdv` (ProDOS block order, any size) or a 140 KB
-// `.dsk` / `.do` (DOS sector order — converted on the way in and back). It
+// The image is `.po` / `.hdv` (ProDOS block order, any size), a 140 KB
+// `.dsk` / `.do` (DOS sector order — converted on the way in and back), or a
+// `.2mg` whose 2IMG header is kept byte for byte (ProDOSImageFile.h). It
 // is committed through the same durable temp + rename as every POM2
 // write-back; a write-protected image (host read-only bit, the notch —
 // MediaNotch.h) is refused. Do not edit an image a running POM2 has mounted:
@@ -38,6 +39,7 @@
 #include "IntegerBasicListing.h"
 #include "MediaNotch.h"
 #include "ProDOSDiskFs.h"
+#include "ProDOSImageFile.h"
 
 #include <cctype>
 #include <cstdint>
@@ -63,7 +65,8 @@ void usage()
         "Usage: pom2_prodos [-t TYPE] [-a AUX] [--raw] [--no-tokenize] [--data-fork-only] IMAGE COMMAND [ARGS]\n"
         "\n"
         "IMAGE is a ProDOS volume: .po / .hdv (block order, any size) or a 140 KB\n"
-        ".dsk / .do (DOS sector order).\n"
+        ".dsk / .do (DOS sector order), or a .2mg (2IMG, ProDOS or DOS order; its\n"
+        "header and chunks are kept, its lock bit honoured).\n"
         "\n"
         "  ls [DIR]                   catalog of the volume, or of a directory\n"
         "  get PATH [HOSTFILE]        extract (a TXT file's line ends converted)\n"
@@ -221,14 +224,18 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "%s: cannot read\n", imagePath.c_str());
         return 1;
     }
-    // A 140 KB .dsk / .do holds the same blocks in DOS sector order.
-    const std::string ext = lowerExtension(imagePath);
-    const bool dosOrdered = (ext == ".dsk" || ext == ".do") && bytes.size() == kDiskette140Bytes;
-    if (dosOrdered) bytes = dosOrderToBlockOrder(bytes);
+    // A 140 KB .dsk / .do holds the same blocks in DOS sector order; a 2IMG
+    // wraps them in a header (ProDOSImageFile.h).
+    pom2::prodosfs::ImageFile layout;
+    std::vector<uint8_t> blocks;
+    std::string error;
+    if (!pom2::prodosfs::readImageFile(bytes, lowerExtension(imagePath), layout, blocks, error)) {
+        std::fprintf(stderr, "%s: %s\n", imagePath.c_str(), error.c_str());
+        return 1;
+    }
 
     ProDOSDisk disk;
-    std::string error;
-    if (!disk.open(std::move(bytes), error)) {
+    if (!disk.open(std::move(blocks), error)) {
         std::fprintf(stderr, "%s: %s\n", imagePath.c_str(), error.c_str());
         return 1;
     }
@@ -252,14 +259,21 @@ int main(int argc, char** argv)
     // Say the destination cannot take a write BEFORE doing the work
     // (pom2_dos33 has the reasoning); `commit` asks again.
     auto writable = [&]() -> bool {
+        if (layout.locked) {
+            std::fprintf(stderr, "%s: write-protected (2IMG lock)\n", imagePath.c_str());
+            return false;
+        }
         if (!pom2::mediaFileIsReadOnly(imagePath)) return true;
         std::fprintf(stderr, "%s: write-protected\n", imagePath.c_str());
         return false;
     };
     auto commit = [&]() -> int {
         if (!writable()) return 1;
-        const std::vector<uint8_t> out =
-            dosOrdered ? blockOrderToDosOrder(disk.image()) : disk.image();
+        const std::vector<uint8_t> out = pom2::prodosfs::writeImageFile(layout, disk.image());
+        if (out.empty()) {
+            std::fprintf(stderr, "%s: the volume changed size; not written\n", imagePath.c_str());
+            return 1;
+        }
         const std::filesystem::path target(imagePath);
         const std::filesystem::path tmp = pom2::tempSiblingPath(target);
         std::error_code ec;

@@ -1864,6 +1864,19 @@ target_link_libraries(test_prodos_disk_fs PRIVATE Threads::Threads)
 add_test(NAME prodos_disk_fs COMMAND test_prodos_disk_fs)
 set_tests_properties(prodos_disk_fs PROPERTIES TIMEOUT 60)
 
+# ─── pom2_prodos on a .2mg (ProDOSImageFile.h) ────────────────────────────
+# A file written inside a 2IMG lands in its payload while the header and the
+# comment chunk come back byte for byte; DOS-order 2IMG both ways; nibble,
+# damaged and cut ones refused; the lock bit; Sweet-16's zero length.
+add_executable(test_prodos_image_file
+    prodos_image_file_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSImageFile.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+)
+target_include_directories(test_prodos_image_file PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME prodos_image_file COMMAND test_prodos_image_file)
+set_tests_properties(prodos_image_file PROPERTIES TIMEOUT 30)
+
 # ─── A failed host-folder write-back must not freeze what it wrote ────────
 # decodeVolumeToFolder stops at the first I/O error, so a failed pass leaves
 # part of the tree rewritten — and if the volume's mount stamp does not cover

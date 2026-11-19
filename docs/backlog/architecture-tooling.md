@@ -269,7 +269,7 @@ run for this change.
 
 ## ARCH-010 — Scattered config
 
-**Priority:** 🟡 · **State:** Confirmed open ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)); not a release blocker.
+**Priority:** 🟡 · **State:** Step 1 done 2026-11-19 (variables in `--help`); step 2, one precedence chain, open.
 
 **Acceptance criterion (after revalidation):** Resolve env, CLI, settings and defaults through one documented precedence chain with equivalent behavior on each entry path.
 
@@ -278,6 +278,17 @@ run for this change.
 - 🟡 **Scattered config** — ruling [R3](../decisions/project-scope.md#standing-rulings): one `Config`
   (env → CLI → Settings → defaults), env vars listed in `--help`. *1 d.*
   Not a release blocker.
+
+**Step 1 done 2026-11-19:** `POM2 --help` ends with an Environment section
+naming all 25 `POM2_*` variables the sources read — the user-facing ones
+described (`POM2_AI_CONTROL_TOKEN`, which wins over `ai_control_token`;
+`POM2_MEDIA_WRITE_DEFAULT`; `POM2_AUTO_BOOT_HDV`; `POM2_AUTO_QUIT`;
+`POM2_IWM_AUTHORITATIVE`; the trace files), the diagnostic switches listed.
+`cli_kiosk` scans every `getenv("POM2_…")` under `src/` and fails on one the
+help does not name (mutation-checked). **Step 2 remains:** the precedence
+is not one rule today — the token's variable beats its setting, while most
+settings have no variable at all — so a single documented chain is still to
+be designed, not described.
 
 <a id="arch-011"></a>
 

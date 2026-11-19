@@ -3,8 +3,9 @@
 Action queue reconciled **2026-11-18** (after the research of the same day:
 competing emulators, hardware references, developer tooling, distribution,
 community needs); ARCH-017, AUDIO-013, WASM-004, UI-017, UI-021 and
-WASM-005 closed 2026-11-19. Current release: **v1.2.1**. The index covers
-**42 active domain entries**, **10 release items** and **30 frozen entries**; each task's
+WASM-005 closed 2026-11-19, then DISPLAY-002 (measured) and VALIDATION-005
+(not reproduced). Current release: **v1.2.1**. The index covers **40 active
+domain entries**, **10 release items** and **30 frozen entries**; each task's
 acceptance criterion and evidence live in its domain entry, not here.
 
 The [scope ruling](docs/decisions/project-scope.md#the-scope-ruling) still
@@ -47,13 +48,11 @@ correctness before cleanup):
 
 | Order | Task | Concrete next action / completion gate |
 |---|---|---|
-| 1 | [DISPLAY-002](docs/backlog/display.md#display-002) | Measure the alleged OE-GPU fallback upload before changing it. |
-| 2 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record isolated AY and speaker streams through one output mapping; compare with the 0.30 stereo setting. |
-| 3 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003), [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | Extend the existing replug/ImGui harness to another card panel and screenshot/`demodMutex`; collect Linux TSan evidence. No second concurrency framework. |
-| 4 | [VALIDATION-005](docs/backlog/validation.md#validation-005) | Run A2 File Cmd 1.0 six times in the GUI on a copied image; diagnose the DHGR failure or close the stale report. |
-| 5 | [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Typed references for ctest names/card keys before extending the documentation guard. |
-| 6 | [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | Document env vars in `--help` first; config-precedence unification is a separate step. |
-| 7 | [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Split the remaining Apple2Display responsibility and lower slack ceilings (`Memory.cpp` and `HgrPaintEditor.cpp` are over theirs today). |
+| 1 | [AUDIO-003](docs/backlog/audio.md#audio-003) | Re-record isolated AY and speaker streams through one output mapping; compare with the 0.30 stereo setting. |
+| 2 | [ARCH-003](docs/backlog/architecture-tooling.md#arch-003), [ARCH-009](docs/backlog/architecture-tooling.md#arch-009) | Extend the existing replug/ImGui harness to another card panel and screenshot/`demodMutex`; collect Linux TSan evidence. No second concurrency framework. |
+| 3 | [ARCH-016](docs/backlog/architecture-tooling.md#arch-016) | Typed references for ctest names/card keys before extending the documentation guard. |
+| 4 | [ARCH-010](docs/backlog/architecture-tooling.md#arch-010) | Env vars are in `--help` (2026-11-19); next: design one precedence chain. |
+| 5 | [ARCH-004](docs/backlog/architecture-tooling.md#arch-004) | Split the remaining Apple2Display responsibility and lower slack ceilings (`Memory.cpp` and `HgrPaintEditor.cpp` are over theirs today). |
 
 The non-stock `--speed` clock-domain residue (SSI263, hybrid speech/PCM,
 serial timing — [2026-11-09 follow-up](docs/audits/core-bug-hunt-2026-11-09.md))
