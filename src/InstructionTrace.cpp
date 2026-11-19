@@ -49,19 +49,51 @@ InstructionTrace::~InstructionTrace() { close(); }
 bool InstructionTrace::open(const std::filesystem::path& path, std::string format,
                             const M6502& cpu, const Memory& memory, std::string& error)
 {
+    if (!openFile(path, std::move(format), error)) return false;
+    attach(cpu, memory);
+    return true;
+}
+
+bool InstructionTrace::openFile(const std::filesystem::path& path, std::string format,
+                                std::string& error)
+{
     close();
+    cpu_ = nullptr;
+    memory_ = nullptr;
 #if defined(_WIN32)
     out_ = _wfopen(path.c_str(), L"wb");
 #else
     out_ = std::fopen(path.c_str(), "wb");
 #endif
     if (!out_) { error = "cannot create " + path.u8string(); return false; }
+    // One write(2) per MB, not per line: `after` runs on the CPU worker
+    // under the machine lock, once per instruction.
+    std::setvbuf(out_, nullptr, _IOFBF, 1 << 20);
+    stopped_.store(false, std::memory_order_relaxed);
+    writeFailed_.store(false, std::memory_order_relaxed);
     format_ = format.empty() ? std::string(kDefaultFormat) : std::move(format);
-    cpu_ = &cpu;
-    memory_ = &memory;
     havePending_ = false;
     lines_.store(0, std::memory_order_relaxed);
     return true;
+}
+
+std::string InstructionTrace::stopReason() const
+{
+    if (writeFailed_.load(std::memory_order_relaxed)) return "the file could not be written (disk full?)";
+    if (stopped_.load(std::memory_order_relaxed)) return "it reached its line cap";
+    return {};
+}
+
+void InstructionTrace::write(const std::string& text)
+{
+    if (stopped_.load(std::memory_order_relaxed)) return;
+    if (std::fwrite(text.data(), 1, text.size(), out_) != text.size() || std::ferror(out_)) {
+        writeFailed_.store(true, std::memory_order_relaxed);
+        stopped_.store(true, std::memory_order_relaxed);
+        return;
+    }
+    const uint64_t n = lines_.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (maxLines_ && n >= maxLines_) stopped_.store(true, std::memory_order_relaxed);
 }
 
 void InstructionTrace::close()
@@ -129,7 +161,7 @@ std::string InstructionTrace::formatLine(const std::string& format, const Fields
 
 void InstructionTrace::before(uint16_t pc, DebugBank bank)
 {
-    if (!out_ || !cpu_ || !memory_) return;
+    if (!out_ || !cpu_ || !memory_ || stopped()) return;
     Fields& f = pending_;
     f.pc = pc;
     f.bank = bank;
@@ -157,23 +189,19 @@ void InstructionTrace::after(const M6502&, int cycles)
 {
     if (!out_ || !havePending_) return;
     pending_.cycles = cycles;
-    const std::string line = formatLine(format_, pending_);
-    std::fwrite(line.data(), 1, line.size(), out_);
-    std::fputc('\n', out_);
-    lines_.fetch_add(1, std::memory_order_relaxed);
+    write(formatLine(format_, pending_) + '\n');
     havePending_ = false;
 }
 
 void InstructionTrace::interrupted(const M6502& cpu, int cycles)
 {
-    if (!out_) return;
+    if (!out_ || stopped()) return;
     // The instruction announced by before() did not run: the CPU took the
     // interrupt instead, and the next line is the handler's first.
     char b[64];
     std::snprintf(b, sizeof b, "---- interrupt -> $%04X (%d cycles)\n",
                   cpu.getProgramCounter(), cycles);
-    std::fputs(b, out_);
-    lines_.fetch_add(1, std::memory_order_relaxed);
+    write(b);
     havePending_ = false;
 }
 

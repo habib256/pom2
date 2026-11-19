@@ -72,8 +72,23 @@ public:
     /// `cpu` and `memory` are the machine's own; they outlive the trace.
     bool open(const std::filesystem::path& path, std::string format,
               const M6502& cpu, const Memory& memory, std::string& error);
+    /// The same in two steps, for a caller that must not do file I/O under
+    /// `stateMutex`: create the file first, then attach to the machine under
+    /// the lock (nothing is written before both are done).
+    bool openFile(const std::filesystem::path& path, std::string format, std::string& error);
+    void attach(const M6502& cpu, const Memory& memory) { cpu_ = &cpu; memory_ = &memory; }
     void close();
     bool isOpen() const { return out_ != nullptr; }
+    /// The trace stopped writing: it reached `maxLines`, or the disk said
+    /// no (full, gone). It stays attached and costs nothing from then on;
+    /// what it wrote is closed cleanly. Readable from another thread.
+    bool stopped() const { return stopped_.load(std::memory_order_relaxed); }
+    std::string stopReason() const;
+    /// Lines before the trace stops by itself. ~50 bytes a line: the default
+    /// 20 000 000 is about 1 GB, a few emulated seconds — the cap a forgotten
+    /// trace needs (the CPU writes it under the machine lock, and a disk turbo
+    /// runs ~60x). 0 = no cap.
+    void setMaxLines(uint64_t lines) { maxLines_ = lines; }
     /// Safe from another thread (the panel shows it while the CPU writes).
     uint64_t lines() const { return lines_.load(std::memory_order_relaxed); }
     const std::string& format() const { return format_; }
@@ -99,6 +114,10 @@ private:
     Fields pending_;
     bool havePending_ = false;
     std::atomic<uint64_t> lines_{0};
+    uint64_t maxLines_ = 20000000;
+    std::atomic<bool> stopped_{false};
+    std::atomic<bool> writeFailed_{false};
+    void write(const std::string& text);
 };
 
 } // namespace pom2

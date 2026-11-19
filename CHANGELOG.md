@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-19 — Bug hunt before v1.2.2: sixteen findings in the day's own code, fixed
+
+`docs/audits/bug-hunt-2026-11-19.md`. Two reviewers over everything added
+today. The ones that mattered:
+
+- **`--wav` under `--pal` / `--speed`** took its clock before the first
+  frame, from the NTSC budget: a PAL WAV was 19 % too long, a x2 one twice.
+- **A link or `--mount` lost a drive** the startup restore had filled (it
+  refused instead of replacing), and a link naming a drive 2 as the boot put
+  it in drive 1 — the boot is the positional, which always lands there. Only
+  a drive 1 boots now; values that are neither URLs nor bundle paths are
+  refused; a link or an embed is no longer replaced by the automatic resume.
+- **In the browser, recordings and exports were unreachable** (written to
+  IndexedDB, never downloaded); they are downloads now.
+- **A WAV saved to another volume was deleted** when the rename failed; it
+  is copied there instead, or kept and named.
+- **Trace to file did file I/O under `stateMutex`** — the file opened under
+  the lock, a write per instruction with no cap and errors ignored; it now
+  opens before the lock, writes through a 1 MB buffer, stops at 20 M lines
+  or on a write error.
+- **An AY capture went back in time** across a rewind, a snapshot load or a
+  reset; its stamps are monotonic and the restored registers are recorded.
+- **callgrind** filed all Monitor time under the program's last symbol; a
+  label now only names its own memory region.
+
 ## 2026-11-19 — The ][+ ROM corrected at the source: `pom2_firm_202611`, `pom2_media_20261119_1827`
 
 RELEASE-012. The `apple2p.rom` POM2 distributed had `$FF59` (the Monitor's
@@ -89,8 +114,9 @@ Six entries of the developer track, each with its own acceptance test.
   link to this setup; the drives reach the machine as the new
   `--mount sNdM:<path>`. A first version persisted the mount into
   `state.cfg` (`disk_path_slot6_drive2`) through the drive rack's storage
-  call; a CLI or link mount now writes into a read-only scratch store, as the
-  positional boot disk never persisted either. Checked in Chrome by
+  call; the mount itself now writes into a read-only scratch store (the
+  drive is still remembered at quit, as every mounted disk — the positional
+  one included — always was; corrected by the bug hunt below). Checked in Chrome by
   `tools/wasm_links_smoke.mjs` (now in the CI WASM job): the copied link is
   byte for byte the one the page was opened with — which is why the smoke
   empties the address bar before pressing the button, or it would wait

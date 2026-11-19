@@ -27,8 +27,15 @@ namespace pom2 {
 
 namespace {
 
-// The routine an address belongs to: the nearest label at or below it,
-// among its own bank's labels and the bank-free ones (its own bank on a tie).
+// $0000-$BFFF RAM, $C000-$CFFF I/O and slot ROM, $D000-$FFFF ROM / language
+// card. A label never names code in another region.
+int regionOf(uint16_t a) { return a < 0xC000 ? 0 : a < 0xD000 ? 1 : 2; }
+
+// The routine an address belongs to: the nearest label at or below it, in
+// the same memory region, among its own bank's labels and the bank-free
+// ones (its own bank on a tie). Without the region a program's last symbol
+// swallowed every Monitor and Applesoft address above it (bug hunt
+// 2026-11-19); with no label in reach the page names it.
 std::string routineOf(const DebuggerSymbols* symbols, uint16_t pc, DebugBank bank)
 {
     if (symbols) {
@@ -40,6 +47,7 @@ std::string routineOf(const DebuggerSymbols* symbols, uint16_t pc, DebugBank ban
             auto it = labels.upper_bound(DebugAddress{ pc, DebugBank{ DebugBank::Ignored, 255, 255 } });
             while (it != labels.begin()) {
                 --it;
+                if (regionOf(it->first.addr) != regionOf(pc)) break;   // below the region
                 if (it->first.bank == want) {
                     if (static_cast<int>(it->first.addr) > bestAddr) {
                         bestAddr = it->first.addr;

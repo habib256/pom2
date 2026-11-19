@@ -28,6 +28,7 @@
 #include "MainWindow.h"
 
 #include "AtomicFileReplace.h"
+#include "BrowserFiles.h"
 #include "AyMusicExport.h"
 #include "CpuClock.h"
 #include "EmulationController.h"
@@ -45,9 +46,42 @@
 
 namespace {
 
-// 8 s of stereo at 44.1 kHz: the UI drains every frame, so this only
-// fills when the window stalls for that long.
-constexpr std::size_t kRingFrames = 8 * 44100;
+// 30 s of stereo at 44.1 kHz (10 MB): the UI drains every frame, but a
+// native file dialog blocks the UI thread while the machine and the audio
+// keep running, and an 8 s ring lost frames behind one left open (bug hunt
+// 2026-11-19). The panel drains it before it opens a dialog of its own.
+constexpr std::size_t kRingFrames = 30 * 44100;
+
+// Where a file is written before it is handed over. On the desktop the
+// user data folder (the dialog picks the real place); in the browser /tmp,
+// in memory — not /persistent, which IDBFS would copy into IndexedDB on the
+// next heartbeat — and the file then goes to the visitor as a download.
+std::filesystem::path scratchFile(const std::string& name)
+{
+#ifdef __EMSCRIPTEN__
+    return std::filesystem::path("/tmp") / name;
+#else
+    return pom2::userDataDir() / name;
+#endif
+}
+
+// The browser has no save dialog and its files live in memory: hand the
+// file to the visitor as a download, then let it go. The desktop wrote it
+// where the user asked: nothing to do. Returns the status to show.
+std::string deliver(const std::string& path, const std::string& saved)
+{
+#ifdef __EMSCRIPTEN__
+    std::string err;
+    const std::string name = std::filesystem::u8path(path).filename().u8string();
+    const bool ok = pom2::downloadBrowserFile(path, name, err);
+    std::error_code ec;
+    std::filesystem::remove(std::filesystem::u8path(path), ec);
+    return ok ? "downloaded " + name : "download failed: " + err;
+#else
+    (void)path;
+    return saved;
+#endif
+}
 
 MockingboardCard* findMockingboard(Memory& mem, int wantSlot)
 {
@@ -60,13 +94,18 @@ MockingboardCard* findMockingboard(Memory& mem, int wantSlot)
 }
 
 // The MIDI recorder's dialog, for another extension: a picked path, the
-// user data folder when there is no dialog, empty when cancelled.
+// user data folder when there is no dialog (in the browser, a scratch file
+// `deliver` downloads), empty when cancelled.
 std::string askSavePath(const char* title, const char* ext)
 {
     char stamp[40];
     const std::time_t now = std::time(nullptr);
     std::strftime(stamp, sizeof stamp, "pom2-%Y%m%d-%H%M%S.", std::localtime(&now));
     const std::string name = std::string(stamp) + ext;
+#ifdef __EMSCRIPTEN__
+    (void)title;
+    return scratchFile(name).u8string();
+#endif
     std::string path;
     const auto r = pom2::nativeFileDialogAvailable()
         ? pom2::nativeFileDialog(true, title, ext, "", name, path)
@@ -80,7 +119,22 @@ std::string askSavePath(const char* title, const char* ext)
 
 void MainWindow::pumpRecording()
 {
-    if (wavRing_ && wavWriter_) wavRing_->drainTo(*wavWriter_);
+    if (!wavRing_ || !wavWriter_) return;
+    wavRing_->drainTo(*wavWriter_);
+    // The output device was re-opened at another rate (AudioDeviceWatch):
+    // the mix now runs at it, and a WAV has ONE rate in its header. End the
+    // take where it is, under its provisional name, rather than letting the
+    // rest play at the wrong speed and pitch (bug hunt 2026-11-19).
+    if (controller && controller->audio().getActualSampleRate() != wavWriter_->sampleRate()) {
+        controller->audio().setCaptureRing(nullptr);
+        wavRing_->drainTo(*wavWriter_);
+        std::string why;
+        recordStatus_ = wavWriter_->close(why)
+            ? "the audio device changed rate: the take ended here and was kept as pom2-recording.wav"
+            : why;
+        wavWriter_.reset();
+        wavRing_.reset();
+    }
 }
 
 void MainWindow::renderRecordingSection()
@@ -132,6 +186,7 @@ void MainWindow::renderRecordingSection()
             }
             ayCaptureSlot_ = 0;
             if (!drop) {
+                pumpRecording();   // a WAV take in progress, before a dialog blocks this thread
                 const std::string path = askSavePath(vgm ? "Save VGM" : "Save YM", vgm ? "vgm" : "ym");
                 if (!path.empty()) {
                     const std::vector<uint8_t> bytes = vgm ? pom2::aymusic::encodeVgm(cap)
@@ -139,7 +194,8 @@ void MainWindow::renderRecordingSection()
                     std::error_code ec;
                     recordStatus_ = pom2::writeFileAtomic(std::filesystem::u8path(path), bytes.data(),
                                                           bytes.size(), ec)
-                        ? "saved " + path + " (" + std::to_string(cap.writes.size()) + " AY writes)"
+                        ? deliver(path, "saved " + path + " (" + std::to_string(cap.writes.size()) +
+                                        " AY writes)")
                         : "cannot write " + path + ": " + ec.message();
                 }
             }
@@ -152,7 +208,7 @@ void MainWindow::renderRecordingSection()
             // Opened under a provisional name in the user data folder; the
             // real one is asked for when the take ends.
             auto writer = std::make_unique<pom2::WavFileWriter>();
-            const auto provisional = pom2::userDataDir() / "pom2-recording.wav";
+            const auto provisional = scratchFile("pom2-recording.wav");
             std::string why;
             if (writer->open(provisional, controller->audio().getActualSampleRate(),
                              AudioDevice::kChannels, why)) {
@@ -187,7 +243,7 @@ void MainWindow::renderRecordingSection()
                 std::string why;
                 if (path.empty()) wavWriter_->discard();
                 else recordStatus_ = wavWriter_->close(why, std::filesystem::u8path(path))
-                                         ? "saved " + path : why;
+                                         ? deliver(path, "saved " + path) : why;
             } else {
                 wavWriter_->discard();
             }

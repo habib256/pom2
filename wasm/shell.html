@@ -263,14 +263,20 @@
     const plan = link.planDrives(window.location.search, 'bundled_disks/DIX-fix.po');
     const entries = (plan.boot ? [Object.assign({ boot: true }, plan.boot)] : [])
                     .concat(plan.mounts);
-    if (!entries.length) return;
+    // Neither a URL nor a disk of this page (setup_link.js): said, not mounted.
+    const failures = plan.rejected.map(function(r) {
+      return r.key + ' ' + r.value + '\nnot an http(s) URL nor a disk of this page';
+    });
+    if (!entries.length) {
+      if (failures.length) pom2Error('Could not load:\n' + failures.join('\n'));
+      return;
+    }
     const lazy = Module.pom2LazyDisks || [];
     const remote = entries.some(function(e) { return link.isRemote(e.value); });
     if (addDep) addDep('pom2-drives');
     if (remote) setStatus('Loading POM2: downloading the disk image…');
     else if (entries.some(function(e) { return lazy.includes(e.value); }))
       setStatus('Loading POM2: downloading A2FileCmd…');
-    const failures = [];
     Promise.all(entries.map(function(e) {
       let job;
       if (link.isRemote(e.value)) {

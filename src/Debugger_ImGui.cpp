@@ -18,6 +18,7 @@
 
 #include "Debugger_ImGui.h"
 
+#include "BrowserFiles.h"
 #include "Cc65DebugInfo.h"
 #include "Disassembler6502.h"
 #include "EmulationController.h"
@@ -751,22 +752,36 @@ namespace pom2 {
 void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
 {
     auto pick = [](const char* title, const char* ext, const char* name) {
+#ifdef __EMSCRIPTEN__
+        // No save dialog in the browser: a scratch file in memory (not the
+        // IndexedDB-backed /persistent), handed over as a download.
+        (void)title; (void)ext;
+        return (std::filesystem::path("/tmp") / name).u8string();
+#else
         std::string path;
         const auto r = nativeFileDialogAvailable()
             ? nativeFileDialog(true, title, ext, "", name, path) : FileDialogResult::Unavailable;
         if (r == FileDialogResult::Cancelled) return std::string();
         if (r == FileDialogResult::Unavailable) path = (userDataDir() / name).u8string();
         return path;
+#endif
     };
+#ifndef __EMSCRIPTEN__
+    // Not in the browser: ~50 MB an emulated second, in the page's memory,
+    // with nowhere to stream it (bug hunt 2026-11-19).
     if (!trace_ || !trace_->isOpen()) {
         if (ImGui::Button("Trace to file...")) {
             const std::string path = pick("Save instruction trace", "txt", "pom2-trace.txt");
             if (!path.empty()) {
                 auto t = std::make_unique<InstructionTrace>();
                 t->setSymbols(symbols_);
-                auto st = ctrl.lockState();
                 std::string why;
-                if (t->open(std::filesystem::u8path(path), "", st.cpu(), st.memory(), why)) {
+                // The file is created BEFORE the machine lock is taken: no
+                // file I/O under stateMutex (CLAUDE.md); the trace is then
+                // attached to the machine under the lock.
+                if (t->openFile(std::filesystem::u8path(path), "", why)) {
+                    auto st = ctrl.lockState();
+                    t->attach(st.cpu(), st.memory());
                     trace_ = std::move(t);
                     ctrl.debugger().setInstructionTrace(trace_.get());
                     ctrl.syncDebugHook();
@@ -784,6 +799,11 @@ void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
         ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "TRACE");
         ImGui::SameLine();
         ImGui::Text("%llu lines", static_cast<unsigned long long>(trace_->lines()));
+        if (trace_->stopped()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "(stopped: %s)",
+                               trace_->stopReason().c_str());
+        }
         ImGui::SameLine();
         if (ImGui::Button("Stop trace")) {
             {
@@ -797,6 +817,7 @@ void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
         }
     }
     ImGui::SameLine();
+#endif
     if (ImGui::Button("Export callgrind...")) {
         std::vector<Debugger::ProfileEntry> profile;
         {
@@ -813,6 +834,14 @@ void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
                 traceStatus_ = writeFileAtomic(std::filesystem::u8path(path), text.data(), text.size(), ec)
                     ? "profile saved to " + path + " (open it in KCachegrind)"
                     : "cannot write " + path + ": " + ec.message();
+#ifdef __EMSCRIPTEN__
+                if (!ec) {
+                    std::string err;
+                    traceStatus_ = downloadBrowserFile(path, "callgrind.out.pom2", err)
+                        ? "profile downloaded (callgrind.out.pom2)" : "download failed: " + err;
+                    std::filesystem::remove(std::filesystem::u8path(path), ec);
+                }
+#endif
             }
         }
     }

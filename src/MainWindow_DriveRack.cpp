@@ -5,6 +5,7 @@
 #include "DriveRackMount.h"
 #include "EmulationController.h"
 #include "IconsFontAwesome6.h"
+#include "MediaSource.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
 #include "Settings.h"
@@ -293,11 +294,17 @@ bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, st
     target.slot = slot;
     target.bay = drive;
     target.label = "S" + std::to_string(slot) + ",D" + std::to_string(drive + 1);
+    bool occupied = false;
     {
         auto st = controller->lockState();
         SlotPeripheral* card = st.memory().slotBus().peripheral(slot);
-        if (dynamic_cast<DiskIICard*>(card)) {
+        if (auto* disk = dynamic_cast<DiskIICard*>(card)) {
+            if (drive < 0 || drive >= DiskIICard::kDriveCount) {
+                errOut = target.label + ": a Disk II has drives 1 and 2";
+                return false;
+            }
             target.kind = pom2::DrivePictureKind::DiskII;
+            occupied = disk->isDiskLoaded(drive);
         } else if (auto* media = dynamic_cast<pom2::MountableMediaCard*>(card)) {
             if (drive < 0 || drive >= media->bayCount()) {
                 errOut = target.label + ": the card in slot " + std::to_string(slot) + " has " +
@@ -308,18 +315,34 @@ bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, st
             target.kind = info.typeKey == "35"  ? pom2::DrivePictureKind::Floppy35
                         : info.typeKey == "hdv" ? pom2::DrivePictureKind::HardDisk
                                                 : pom2::DrivePictureKind::Generic;
+            occupied = info.loaded;
         } else {
             errOut = target.label + ": no drive in slot " + std::to_string(slot);
             return false;
         }
     }
-    // Like the positional boot disk, a command-line mount is for this run:
-    // it must not become the drive's remembered disk in state.cfg (a shared
-    // link would otherwise rewrite the visitor's own setup). The storage
-    // layer records into a read-only scratch store instead.
+    // The mount itself records nothing: the storage layer writes into a
+    // read-only scratch store. (Like every mounted disk, the drive's path is
+    // still remembered at quit, as the positional disk's always was.)
     pom2::Settings transient;
     transient.setReadOnly(true);
-    return pom2::mountEmptyDrive(*controller, transient, *storageCoordinator_, target, path, errOut);
+    if (!occupied)
+        return pom2::mountEmptyDrive(*controller, transient, *storageCoordinator_, target, path, errOut);
+    // A drive the startup restore already filled is REPLACED, as the
+    // positional boot disk replaces its own: refusing it made a link or
+    // `--mount s6d2:` fail silently whenever S6D2 had a remembered disk. The
+    // storage layer flushes a dirty outgoing medium first.
+    std::string local = path;
+    if (pom2::needsMediaResolve(path)) {
+        const auto got = pom2::resolveMediaSource(path, pom2::mediaCacheDir());
+        if (!got.ok) { errOut = path + ": " + got.error; return false; }
+        local = got.localPath;
+    }
+    const auto result = target.kind == pom2::DrivePictureKind::DiskII
+        ? storageCoordinator_->mountDiskII(*controller, transient, slot, drive, local, false)
+        : storageCoordinator_->mountMediaBay(*controller, transient, slot, drive, local);
+    errOut = result.error;
+    return result.ok;
 }
 
 #ifdef __EMSCRIPTEN__

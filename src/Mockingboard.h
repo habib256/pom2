@@ -447,6 +447,17 @@ private:
     /// The capture in progress, or null. Guarded by `mtx`; filled by
     /// `queueAyEvent`, the one place every AY event passes.
     std::unique_ptr<pom2::aymusic::Capture> ayCapture_;
+    /// A capture's stamps must only go forward, but a rewind or a snapshot
+    /// load moves `busNow_` back (bug hunt 2026-11-19): the offset absorbs
+    /// each jump, so the file plays on from where it was. Guarded by `mtx`.
+    uint64_t ayCaptureOffset_ = 0;
+    uint64_t ayCaptureLast_   = 0;
+    /// The stamp a capture writes "now" at, never behind its last one.
+    uint64_t ayCaptureStamp();
+    /// After a snapshot load or a reset the chips hold registers no write
+    /// produced: record them as writes, at the current stamp, so the file
+    /// sounds what the machine sounds. Caller holds `mtx`.
+    void ayCaptureResync();
     /// The bus "now" at an instruction boundary, synced. Caller holds `mtx`.
     uint64_t syncedBusNow();
 

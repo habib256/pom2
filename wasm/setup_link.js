@@ -10,11 +10,19 @@
 // SmartPort chain). A value is an http(s) URL (the host must send CORS
 // headers, as for ?url=) or a path inside the page's own bundle.
 //
-// Which disk BOOTS: ?boot=sNdM when given; otherwise the drive 1 in the
-// highest slot, as the Autostart ROM scans slot 7 down to slot 1. The boot
-// disk is the CLI positional (routed by its type, then booted); every other
-// drive is `--mount sNdM:<path>`, mounted after the boot without booting.
-// ?url= / ?disk= / ?nodisk= keep their meaning and take the boot.
+// Which disk BOOTS: a DRIVE 1 only — the boot disk is the CLI positional,
+// which always lands in drive 1 of the slot its type routes to, so naming
+// drive 2 as the boot would put it in drive 1 and refuse the real drive 1
+// (bug hunt 2026-11-19). ?boot=sNdM picks among the drive-1 keys; otherwise
+// the highest slot's, as the Autostart ROM scans slot 7 down to slot 1. A
+// link with no drive-1 key boots nothing from its keys: they are mounted,
+// as a disk in drive 2 is on the machine. ?url= / ?disk= take the boot when
+// no drive-1 key does (?nodisk= keeps its meaning). Every other drive is
+// `--mount sNdM:<path>`, mounted after the boot without booting.
+//
+// A value that is neither an http(s) URL nor a path inside the bundle is
+// refused (`rejected`): a link must not mount a visitor's stored image
+// (/persistent/…) or reach outside the bundle (..).
 //
 // Pure functions first, so tests/wasm_setup_link_test.mjs can run them under
 // node; `fetchDiskUrl` needs the browser (fetch) and Emscripten's FS.
@@ -37,31 +45,34 @@ var pom2SetupLink = (function () {
   // contains one.
   function presetOf(qs) { return (qs.get('preset') || 'iic-pal').replace(/ /g, '+'); }
 
-  // search → { preset, boot: {key, value} | null, mounts: [{key, value}] }.
+  // search → { preset, boot: {key, value} | null, mounts: [{key, value}],
+  //            rejected: [{key, value}] }.
   // `key` is null for the legacy ?url= / ?disk= / default boot disk.
   function planDrives(search, defaultDisk) {
     const qs = new URLSearchParams(search);
-    const drives = [];
+    const drives = [], rejected = [], seen = new Set();
     for (const [k, v] of qs) {
       const key = k.toLowerCase();
       const m = DRIVE_KEY.exec(key);
-      if (!m || !v || drives.some(d => d.key === key)) continue;   // first one wins
+      if (!m || !v || seen.has(key)) continue;   // first one wins
+      seen.add(key);
+      if (!isRemote(v) && !isBundledPath(v)) { rejected.push({ key, value: v }); continue; }
       drives.push({ key, slot: Number(m[1]), drive: Number(m[2]), value: v });
     }
+    const firsts = drives.filter(d => d.drive === 1);
     let boot = null;
     const legacy = qs.get('url') || (qs.get('nodisk') === '1' ? null : qs.get('disk'));
-    if (legacy) {
-      boot = { key: null, value: legacy };
-    } else if (drives.length) {
+    if (firsts.length) {
       const want = (qs.get('boot') || '').toLowerCase();
-      boot = drives.find(d => d.key === want) ||
-             drives.filter(d => d.drive === 1).sort((a, b) => b.slot - a.slot)[0] ||
-             drives[0];
-    } else if (qs.get('nodisk') !== '1' && defaultDisk) {
+      boot = firsts.find(d => d.key === want) || firsts.sort((a, b) => b.slot - a.slot)[0];
+    } else if (legacy) {
+      boot = { key: null, value: legacy };
+    } else if (!drives.length && !rejected.length && qs.get('nodisk') !== '1' && defaultDisk) {
       boot = { key: null, value: defaultDisk };
     }
     const mounts = drives.filter(d => d !== boot).map(d => ({ key: d.key, value: d.value }));
-    return { preset: presetOf(qs), boot: boot ? { key: boot.key, value: boot.value } : null, mounts };
+    return { preset: presetOf(qs), boot: boot ? { key: boot.key, value: boot.value } : null,
+             mounts, rejected };
   }
 
   // A mounted MEMFS path → the value a link carries, or null when the disk

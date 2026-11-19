@@ -156,6 +156,13 @@ void testCallgrind()
     assert((perFn["aux0:auxfn"] == std::pair<uint64_t, uint64_t>{ 8, 4 }));     // the bank keeps them apart
     assert(perFn.size() == 3);
 
+    // A program's labels name RAM only: Monitor time stays its own page, it
+    // is not filed under the program's last symbol (bug hunt 2026-11-19).
+    const std::string rom = pom2::callgrindProfile(
+        { { 0xFDED, 4, 40, pom2::DebugBank{ pom2::DebugBank::Rom, 0, 0 } } }, &syms, "");
+    assert(rom.find("fn=page $FD\n") != std::string::npos);
+    assert(rom.find("fn=sub") == std::string::npos);
+
     // No symbols: the 256-byte page names the routine.
     const std::string bare = pom2::callgrindProfile({ { 0xC65C, 3, 9, main } }, nullptr, "");
     assert(bare.find("fn=page $C6\n0xC65C 9 3\n") != std::string::npos);

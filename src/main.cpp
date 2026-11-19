@@ -1174,6 +1174,11 @@ int main(int argc, char* argv[])
         const char*         imguiIniPath;
         double              lastPersistSeconds;
         bool browserSessionInitialized = false;
+        /// A page that named its drives (?sNdM= → --mount) or embeds the
+        /// machine (?embed=1 → --kiosk) asked for THAT setup: the automatic
+        /// resume of the visitor's saved machine must not replace it (bug
+        /// hunt 2026-11-19, WASM-004/005).
+        bool skipBrowserResume = false;
 #endif
     } frameCtx{
         window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath,
@@ -1191,6 +1196,7 @@ int main(int argc, char* argv[])
     // never returns here (simulate_infinite_loop), so the pointer stays valid
     // for the life of the tab.
     gPersistTarget = &mainWindow;
+    frameCtx.skipBrowserResume = !plan->mounts.empty() || plan->kiosk;
     pom2_set_page_visible(EM_ASM_INT({ return document.hidden ? 0 : 1; }));
 #endif
     auto iterate = [](void* userdata) {
@@ -1291,6 +1297,7 @@ int main(int argc, char* argv[])
         }
 
 #ifdef __EMSCRIPTEN__
+        if (!c.browserSessionInitialized && c.skipBrowserResume) c.browserSessionInitialized = true;
         if (!c.browserSessionInitialized && c.cliBootCountdown <= 0 && c.hostOpenGrace == 0) {
             auto& emu = c.mainWindow->emul();
             // Restore the intended mode first, then apply tab visibility.

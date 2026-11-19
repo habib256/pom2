@@ -11,7 +11,8 @@ if [ "$status" -ne "$want_status" ]; then
     echo "expect_run: exit status $status, wanted $want_status" >&2
     exit 1
 fi
-if [ "$out" != "$(printf "$want_out")" ]; then
+# %b, not the expected text as the format: a % in it must stay a %.
+if [ "$out" != "$(printf '%b' "$want_out")" ]; then
     echo "expect_run: stdout differs from the expected lines" >&2
     exit 1
 fi

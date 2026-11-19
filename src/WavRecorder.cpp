@@ -35,7 +35,10 @@ void buildHeader(uint8_t h[44], uint32_t rate, int channels, uint64_t frames)
 {
     const uint32_t blockAlign = static_cast<uint32_t>(channels) * 2;
     const uint64_t data64 = frames * blockAlign;
-    const uint32_t data = data64 > 0xFFFFFFFFu - 36 ? 0xFFFFFFFFu - 36 : static_cast<uint32_t>(data64);
+    // Past 4 GB the RIFF sizes cannot say it: clamp to the largest WHOLE
+    // number of frames that fits, so a reader never splits a sample.
+    const uint64_t cap = (0xFFFFFFFFull - 36) / blockAlign * blockAlign;
+    const uint32_t data = static_cast<uint32_t>(data64 > cap ? cap : data64);
     std::copy_n("RIFF", 4, h);       le32(h + 4, 36 + data);
     std::copy_n("WAVE", 4, h + 8);
     std::copy_n("fmt ", 4, h + 12);  le32(h + 16, 16);
@@ -98,12 +101,25 @@ bool WavFileWriter::close(std::string& error, const std::filesystem::path& publi
     file_ = nullptr;
     std::error_code ec;
     if (!ok) { error = "write failed: " + temp_.u8string(); std::filesystem::remove(temp_, ec); return false; }
-    if (!replaceFileAtomic(temp_, target_, ec)) {
-        error = "cannot publish " + target_.u8string() + ": " + ec.message();
-        std::filesystem::remove(temp_, ec);
-        return false;
+    if (replaceFileAtomic(temp_, target_, ec)) return true;
+    // The take streams beside the PROVISIONAL name; the one asked for at the
+    // end may be on another volume (an external disk, a tmpfs), where a
+    // rename fails (EXDEV) — and deleting the temp then lost the whole take
+    // (bug hunt 2026-11-19). Copy it next to the target and publish that;
+    // if even this fails, KEEP the take and say where it is.
+    const std::string renameError = ec.message();
+    const std::filesystem::path near = tempSiblingPath(target_);
+    std::error_code cec;
+    if (prepareTempPath(near, cec) &&
+        std::filesystem::copy_file(temp_, near, std::filesystem::copy_options::overwrite_existing, cec) &&
+        replaceFileAtomic(near, target_, cec)) {
+        std::filesystem::remove(temp_, cec);
+        return true;
     }
-    return true;
+    std::filesystem::remove(near, cec);
+    error = "cannot publish " + target_.u8string() + " (" + renameError +
+            "); the recording is kept as " + temp_.u8string();
+    return false;
 }
 
 void WavFileWriter::discard()

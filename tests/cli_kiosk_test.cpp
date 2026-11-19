@@ -162,6 +162,7 @@ void testMountFlag()
     auto win = parse({"POM2", "--mount", "s6d1:C:\\disks\\a.dsk"}, help);
     assert(win.has_value() && win->mounts[0].path == "C:\\disks\\a.dsk");
     for (const char* bad : { "s6d2", "s6d2:", "s8d1:a.dsk", "s0d1:a.dsk", "s6d0:a.dsk",
+                             "s6d+1:a.dsk", "s6d 1:a.dsk", "s6d01:a.dsk",
                              "s6d15:a.dsk", "x6d1:a.dsk", "s6x1:a.dsk", "s6d1x:a.dsk", "a.dsk" }) {
         auto r = parse({"POM2", "--mount", bad}, help);
         assert(!r.has_value() && "a malformed --mount is refused, not guessed");
