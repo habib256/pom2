@@ -51,6 +51,7 @@
 #ifndef POM2_DEBUGGER_H
 #define POM2_DEBUGGER_H
 
+#include "InstructionTraceSink.h"
 #include "InterruptLoad.h"
 #include "M6502.h"
 #include "MemoryWatchSink.h"
@@ -150,6 +151,12 @@ public:
     };
     void setProfiling(bool enabled);
     void setHistoryEnabled(bool enabled);
+    /// UI-017: every instruction to a tracer (InstructionTrace.h), or null.
+    /// Arms the debugger like profiling does; the caller holds `stateMutex`
+    /// and re-syncs the hook (EmulationController::syncDebugHook). The sink
+    /// must outlive its attachment.
+    void setInstructionTrace(InstructionTraceSink* sink) { trace_ = sink; }
+    InstructionTraceSink* instructionTrace() const { return trace_; }
     bool profiling() const { return profiling_; }
     bool historyEnabled() const { return historyEnabled_; }
     void clearMeasurements();
@@ -175,6 +182,7 @@ public:
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
         return breakpointCount() || watchpointCount() || profiling_ || historyEnabled_ ||
+               trace_ != nullptr ||
                osCalls_.any6502() ||
                transientArmed_.load(std::memory_order_relaxed);
     }
@@ -274,6 +282,7 @@ private:
     /// Video frame the instruction that just retired STARTED in.
     uint64_t frameOfRetired(int cycles) const;
     const Memory* memory_ = nullptr;
+    InstructionTraceSink* trace_ = nullptr;
     DebugBank curBank_{}, resumeBank_{};
     DebugBank resolveBank(uint16_t addr, bool write = false) const;
     std::map<DebugAddress, bool> bankBreakpoints_;

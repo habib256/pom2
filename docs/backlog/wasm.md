@@ -88,7 +88,7 @@ session archive. The same smoke has since passed in CI (2026-10-23); see
 
 ## WASM-004 — Shareable links: per-drive URL parameters and a copy-link button
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19; removed from the active index.
 
 `?preset=`, `?disk=`, `?url=` mount one image. Missing: a second 5.25"
 drive, the 3.5" and HDV drives, and a "copy link to this setup" button —
@@ -98,11 +98,24 @@ without them a two-disk game or a DIX setup cannot be shared. Apple2TS's
 **Acceptance criterion:** a link with two 5.25" disks boots disk 1 with disk
 2 in drive 2; the button reproduces the current profile and mounted URLs.
 
+**Done 2026-11-19:** `?sNdM=` per drive (Apple2TS's keys, a URL or a
+bundled path), `?boot=sNdM`, default boot = drive 1 of the highest slot;
+the others reach the machine as the new CLI flag `--mount sNdM:<path>`
+(also on the desktop, not persisted to `state.cfg`). File ▸ Copy link to
+this setup (browser) writes the profile and every linkable drive to the
+clipboard and the address bar; a disk imported from the computer cannot be
+linked and is counted. Planner and link builder in `wasm/setup_link.js`,
+pinned under node by `wasm_setup_link`; `--mount` parsing by `cli_kiosk`;
+the desktop two-disk boot checked through `/status`. In Chrome,
+`tools/wasm_links_smoke.mjs` (CI WASM job) opens a two-disk link, sees disk
+1 boot and disk 2 mounted in drive 2, presses Copy link
+(`pom2_copy_setup_link`) and gets back the very link it opened.
+
 <a id="wasm-005"></a>
 
 ## WASM-005 — Embed mode (?embed=1 + postMessage events)
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19; removed from the active index.
 
 Infinite Mac's `/embed` mode lets a page host the emulator and hear its
 events. POM2: `?embed=1` hides the chrome, and `postMessage` reports boot,
@@ -110,3 +123,14 @@ pause and errors to the host page.
 
 **Acceptance criterion:** a test page embeds POM2 in an iframe and receives
 the boot event; nothing is posted unless `embed=1`.
+
+**Done 2026-11-19:** `?embed=1` passes `--kiosk` (in the browser: the
+chrome-free render in the page's canvas, no fullscreen request; settings
+untouched) and hides the page's own link; `window.parent.postMessage({source:
+'pom2', event, detail})` reports `boot` (first frame, `{preset}`), `pause` /
+`running` (polled from `pom2_browser_running`) and `error` (abort, rejected
+promise, lost WebGL, a disk that could not load). Nothing is posted without
+`embed=1` or outside a frame. Pinned in Chrome by `tools/wasm_links_smoke.mjs`:
+a host page framing `?embed=1` receives `boot`; one framing the page without
+it receives nothing. **Not exercised by a test:** `pause` / `running`.
+

@@ -306,6 +306,7 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     // The resumed instruction has executed: its amnesty is spent (DBG-1).
     if (resumeSkipArmed_ && pc == resumeSkip_) resumeSkipArmed_ = false;
     osCalls_.retire6502();                 // ...and so is its trace offer
+    if (trace_) trace_->after(cpu, cycles);
     if (cycles <= 0) return;
     if (profiling_) {
         interruptLoad_.stepped(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
@@ -328,6 +329,7 @@ void Debugger::onInterruptEntered(const M6502& cpu, uint16_t, int cycles)
 {
     // The interrupted instruction is offered again after the RTI.
     osCalls_.interrupted6502();
+    if (trace_) trace_->interrupted(cpu, cycles);
     // A step follows the handler as a nested frame, closed when SP climbs
     // back to the interrupted level: its RTI is not the call's return.
     if (stepCpu_ && transientArmed_.load(std::memory_order_relaxed) && stepFrames_.size() < 256)
@@ -406,6 +408,9 @@ void Debugger::beginStep(uint16_t pc, bool explicitStep)
     }
     curPc_ = pc;
     curBank_ = resolveBank(pc);
+    // Both entries reach here — the run loop's onInstruction and F7's
+    // explicit step — so a tracer sees every instruction going IN.
+    if (trace_) trace_->before(pc, curBank_);
 }
 
 bool Debugger::onInstruction(uint16_t pc)

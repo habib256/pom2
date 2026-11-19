@@ -68,6 +68,7 @@
 #include "StorageCoordinator.h"
 #include "PrinterCoordinator.h"
 #include "MidiOutputCoordinator.h"
+#include "WavRecorder.h"
 #include "CrtEffectStack.h"
 #include "CrtPresets.h"
 #include "Voxel3DRenderer.h"
@@ -1036,6 +1037,9 @@ MainWindow::~MainWindow()
     // destruction order, but doing it here keeps the dependency obvious.
     aiServer->stop();
     controller->stop();
+    // A WAV take in progress: the audio thread must stop pushing into the
+    // ring before the ring dies. The take itself is dropped (no name chosen).
+    if (wavRing_) controller->audio().setCaptureRing(nullptr);
 
     // Flush every mounted medium while all cards are still alive.  The old
     // teardown only covered Disk II and 3.5-inch drives, so dirty HDV/CFFA
@@ -1464,6 +1468,7 @@ void MainWindow::render()
         // spool forever (unbounded growth, nothing on paper).
         pumpImageWriter();
         pumpMidiOut();             // the Passport MIDI card's music, likewise
+        pumpRecording();           // a WAV take keeps reaching its file
         return;
     }
 
@@ -1626,6 +1631,7 @@ void MainWindow::render()
     // the spool forever, nothing on paper.
     pumpImageWriter();
     pumpMidiOut();   // the Passport MIDI card plays with the mixer shut too
+    pumpRecording(); // and a WAV take keeps reaching its file
 
     renderTapeFileDialogs();
     renderRomDownloadOffer();

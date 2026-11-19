@@ -10,6 +10,51 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-19 — Developer tooling: a 6502 test runner, music capture, shareable links, traces, video, embed
+
+Six entries of the developer track, each with its own acceptance test.
+
+- **ARCH-017 — `pom2_headless` runs 6502 unit tests.** `--test-port N`
+  plugs a write-only paravirtual port (log / exit / assert at `$C0n0-2`,
+  reads = the floating bus); `--load [addr:]file` + `--run` start a program
+  once the ROM waits at KEYIN `$FD1B`. Why there and not at reset: a disk's
+  boot sector lands at `$0800` and Applesoft's cold start writes the
+  program area, both over where cc65 puts a program (`$0803`). The launch's breakpoint parks the machine
+  (`noteDebuggerStop`), so the tool must set Running again after the jump:
+  without it the run sat still to the end of its budget.
+- **AUDIO-013 — VGM, YM and WAV.** The capture taps `queueAyEvent`, where
+  every AY write already carries its bus-cycle stamp, so the VGM is exact.
+  Its clock is the BUS clock (`busNow_` never runs at an accelerator's
+  rate): a test that set only `setStandardClock` saw fewer bus ticks than
+  CPU cycles until it set the CPU clock too, as `setVideoStandard` does.
+  The WAV ring's push is inline so the ~24 link lines that carry
+  `AudioDevice.cpp` needed no new source.
+- **WASM-004 — per-drive links.** `?s6d1=…&s6d2=…`, `?boot=`, File ▸ Copy
+  link to this setup; the drives reach the machine as the new
+  `--mount sNdM:<path>`. A first version persisted the mount into
+  `state.cfg` (`disk_path_slot6_drive2`) through the drive rack's storage
+  call; a CLI or link mount now writes into a read-only scratch store, as the
+  positional boot disk never persisted either. Checked in Chrome by
+  `tools/wasm_links_smoke.mjs` (now in the CI WASM job): the copied link is
+  byte for byte the one the page was opened with — which is why the smoke
+  empties the address bar before pressing the button, or it would wait
+  forever for a change that never comes.
+- **UI-017 — trace to a file, profile to callgrind.** The Debugger sees only
+  an interface, so `Debugger.cpp`'s ~15 link lines did not change. The
+  trace hooks `beginStep`, not `onInstruction`: F7's explicit step bypasses
+  the latter and would have written lines with no instruction behind them.
+  `callgrindProfile` names routines from the nearest label, so a cc65 `.dbg`
+  gives `_main` / `_add`.
+- **UI-021 — `pom2_corpus --video`.** One PNG per FINISHED video frame
+  (the new `Core::lastVideoFrameStart()`, polled between 4096-cycle slices,
+  shorter than any frame), an MP4 through ffmpeg when present. A title whose
+  check is not the last frame recorded fails, so the acceptance is checked on
+  every recording. DIX's menu: 2803 frames for 56 s at 50.08 fps.
+- **WASM-005 — `?embed=1`.** The browser's `--kiosk` no longer asks GLFW for
+  a monitor (a fullscreen request a page may only make on a click): it is the
+  chrome-free render in the page's canvas. `postMessage` reports boot,
+  pause/running and errors to the parent, and nothing without `embed=1`.
+
 ## 2026-11-19 — Both non-macOS MIDI backends compiled in CI
 
 The Linux quick-compile job (GCC, `-Werror`) now installs `libasound2-dev`

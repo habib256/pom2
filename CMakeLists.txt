@@ -291,6 +291,10 @@ set(SOURCES
     src/PassportMidiCard.cpp
     src/MidiMessageAssembler.cpp
     src/MidiFileWriter.cpp
+    src/AyMusicExport.cpp
+    src/InstructionTrace.cpp
+    src/ProfileExport.cpp
+    src/WavRecorder.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp
@@ -394,6 +398,7 @@ set(SOURCES
     src/MainWindow_Panels.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_Midi.cpp
+    src/MainWindow_Recording.cpp
     src/MainWindow_DevicePanels.cpp
     src/MainWindow_SettingsPanels.cpp
     src/MainWindow_CrtPanel.cpp
@@ -650,6 +655,7 @@ set(POM2_DEVICES_SOURCES
     src/PrinterCard.cpp
     src/ProDOSHardDiskCard.cpp
     src/FourPlayCard.cpp
+    src/TestPortCard.cpp
     src/SnesMaxCard.cpp
     src/TranswarpCard.cpp
     src/SlinkyCard.cpp
@@ -672,6 +678,8 @@ set(POM2_DEVICES_SOURCES
     src/PassportMidiCard.cpp
     src/MidiMessageAssembler.cpp
     src/MidiFileWriter.cpp
+    src/AyMusicExport.cpp
+    src/WavRecorder.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp
@@ -784,6 +792,7 @@ set(POM2_FRONTEND_SOURCES
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_Midi.cpp
+    src/MainWindow_Recording.cpp
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
@@ -994,6 +1003,7 @@ set(POM2_RUNTIME_HEADERS
     src/InterruptLoad.h
     src/OsCallTrace.h
     src/DebuggerSymbols.h
+    src/InstructionTraceSink.h
     src/DebuggerSourceMap.h
     # MediaMount.h is pure contract — one <string> include and forward
     # declarations — but its implementation reaches DiskIICard and
@@ -1024,6 +1034,8 @@ set(POM2_RUNTIME_HEADERS
 )
 
 set(POM2_RUNTIME_SOURCES
+    src/InstructionTrace.cpp
+    src/ProfileExport.cpp
     src/MidiOutputCoordinator.cpp
     src/HostMidiPort_mac.cpp
     src/HostMidiPort_win.cpp
@@ -1537,6 +1549,7 @@ if(EMSCRIPTEN)
         "-lidbfs.js"
         "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS','ccall','cwrap']"
         "SHELL:--pre-js ${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/setup_link.js"
         "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
         "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html"
     )
@@ -1615,6 +1628,7 @@ if(EMSCRIPTEN)
     target_link_options(${PROJECT_NAME} PRIVATE ${POM2_WASM_LINK})
     set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/wasm/setup_link.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html")
     # Match shell.html's <canvas id="canvas"> ID convention.
@@ -1766,6 +1780,10 @@ set(POM2_CORE_SOURCES
     src/PassportMidiCard.cpp
     src/MidiMessageAssembler.cpp
     src/MidiFileWriter.cpp
+    src/AyMusicExport.cpp
+    src/InstructionTrace.cpp
+    src/ProfileExport.cpp
+    src/WavRecorder.cpp
     src/EzColorCard.cpp
     src/TMS9918.cpp
     src/Dan2Card.cpp
@@ -2258,6 +2276,14 @@ add_executable(pom2_headless
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
     src/SystemProfile.cpp
+    # --test-port: the paravirtual test port (ARCH-017)
+    src/TestPortCard.cpp
+    src/AyMusicExport.cpp
+    src/InstructionTrace.cpp
+    src/Disassembler6502.cpp
+    src/ProfileExport.cpp
+    src/WavRecorder.cpp
+    src/AppleSingle.cpp
     src/Z80.cpp
 )
 # Native DNS wire queries (NatHostSockets): host resolver on Unix, system DNS

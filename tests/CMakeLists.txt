@@ -460,6 +460,24 @@ add_test(NAME fourplay_card COMMAND test_fourplay)
 set_tests_properties(fourplay_card PROPERTIES TIMEOUT 10)
 
 
+# ─── Paravirtual test port (ARCH-017) ─────────────────────────────────────
+# Its three write registers, the line rules, a spent port after EXIT, and
+# reads that are the floating bus an empty slot answers.
+
+add_executable(test_testport
+    testport_card_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/TestPortCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_testport PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_testport PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+add_test(NAME testport_card COMMAND test_testport)
+set_tests_properties(testport_card PROPERTIES TIMEOUT 10)
+
+
 # ─── Applied Engineering TransWarp accelerator ────────────────────────────
 # Drives the card through a real Memory + SlotBus, because the snoop hooks
 # live in those two files: the $C074 write the card takes OFF the bus, the
@@ -6533,6 +6551,69 @@ set_tests_properties(key_chord_policy PROPERTIES TIMEOUT 15)
 # 6522 timer 1 IRQ generation in both continuous and one-shot modes
 # (incl. T1CL-read clearing IFR.T1 and dropping the slot IRQ line), and
 # end-to-end AY tone synthesis producing a non-silent waveform.
+# ─── Mockingboard music out: VGM / YM5 / WAV (AUDIO-013) ──────────────────
+# A real card driven through its 6522s, captured, encoded, and read back by a
+# VGM reader written in the test from the specification: the same writes at
+# the same 44.1 kHz samples. Then YM5's frame view, the WAV writer and the
+# lock-free capture ring the audio thread pushes into.
+
+add_executable(test_ay_music_export
+    ay_music_export_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/AyMusicExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/WavRecorder.cpp
+    ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263Formant.cpp
+    ${CMAKE_SOURCE_DIR}/src/Ssi263PhonemeData.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/M6502_Undoc.cpp
+    ${CMAKE_SOURCE_DIR}/src/Memory.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryGamePort.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryCpuView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshotValidation.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemorySnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/CharRomDump.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryWatch.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
+    ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/SlotBus.cpp
+    ${CMAKE_SOURCE_DIR}/src/CassetteDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/AudioDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
+)
+target_include_directories(test_ay_music_export PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_ay_music_export PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_ay_music_export PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_ay_music_export PRIVATE winmm)
+endif()
+add_test(NAME ay_music_export COMMAND test_ay_music_export)
+set_tests_properties(ay_music_export PROPERTIES TIMEOUT 30)
+
+
 add_executable(test_mockingboard
     mockingboard_smoke_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
@@ -9447,6 +9528,57 @@ set_tests_properties(thread_guard PROPERTIES TIMEOUT 30)
 # graph is linked in: what they pin is the RUN-CONTROL side of a reset — a
 # step-over transient must not outlive Stop / F12 / a profile switch, and
 # bootFromSlot must reset the cassette CPU side the way coldBoot does.
+# ─── UI-017: instruction trace to a file + callgrind export ───────────────
+# A known 6502 loop traced byte for byte, every format token, and the
+# callgrind file read back by an independent reader (totals, routines by the
+# nearest label, banks kept apart).
+
+add_executable(test_instruction_trace
+    instruction_trace_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/InstructionTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProfileExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/OsCallTrace_Guest.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Socket.cpp
+    ${CMAKE_SOURCE_DIR}/src/ZipChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/FastChip.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSVolume.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileTag.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSHostNameMap.cpp
+    ${CMAKE_SOURCE_DIR}/src/BlockWriteBackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/src/IIcExternalSmartPort.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortBusDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/RewindBuffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/MachineSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/FloppySoundDevice.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_instruction_trace PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR})     # miniaudio.h location for FloppySoundDevice
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_instruction_trace PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_instruction_trace PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_instruction_trace PRIVATE winmm)
+endif()
+add_test(NAME instruction_trace COMMAND test_instruction_trace)
+set_tests_properties(instruction_trace PROPERTIES TIMEOUT 30)
+
+
 add_executable(test_debugger
     debugger_test.cpp
     ${CMAKE_SOURCE_DIR}/src/Debugger.cpp
@@ -9612,6 +9744,53 @@ if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom")
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(headless_cycle_budget PROPERTIES TIMEOUT 120
                          PASS_REGULAR_EXPRESSION "CYCLES=50000[0-9]")
+endif()
+
+# --test-port + --load (ARCH-017): pom2_headless as a 6502 unit-test runner.
+# hello.as is cc65's own apple2 output (an AppleSingle that names $0803), built
+# from hello.c and tracked so the test needs no cc65: two lines on stdout and
+# exit status 3, both demanded exactly. assert.bin is a raw ca65 binary at an
+# address given on the command line: one assertion passes, the second fails,
+# and the run ends with status 2 and the failure's own message. The --frames
+# budget is the third test: a program that never exits is status 4.
+if(UNIX AND EXISTS "${CMAKE_SOURCE_DIR}/roms/apple2.rom")
+    add_test(NAME headless_test_port_exit
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/testport/expect_run.sh 3
+                     "HELLO FROM THE 6502\\n2 + 3 = 5"
+                     $<TARGET_FILE:pom2_headless> --test-port 7
+                     --load tests/testport/hello.as
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_test_port_exit PROPERTIES TIMEOUT 120)
+    add_test(NAME headless_test_port_assert
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/testport/expect_run.sh 2
+                     "RAW AT $0300\\nASSERT #2 FAILED: X != 1"
+                     $<TARGET_FILE:pom2_headless> --test-port 7
+                     --load 0x0300:tests/testport/assert.bin
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_test_port_assert PROPERTIES TIMEOUT 120)
+    # spin.bin never writes EXIT: the run ends on the budget — exit 4,
+    # nothing on stdout.
+    add_test(NAME headless_test_port_budget
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/testport/expect_run.sh 4 ""
+                     $<TARGET_FILE:pom2_headless> --test-port 7 --frames 120
+                     --load 0x0300:tests/testport/spin.bin
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_test_port_budget PROPERTIES TIMEOUT 120)
+    # AUDIO-013 end to end: tune.bin plays three notes on a Mockingboard and
+    # exits through the port; --vgm/--ym/--wav twice give identical files.
+    add_test(NAME headless_audio_capture_repeatable
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/testport/capture_twice.sh
+                     $<TARGET_FILE:pom2_headless> ${CMAKE_BINARY_DIR}/audio_capture
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_audio_capture_repeatable PROPERTIES TIMEOUT 120)
+    # UI-017: hello.as traced and profiled from its launch, with the cc65
+    # .dbg's symbols. The trace's first line is the program's first
+    # instruction, byte for byte; the callgrind file names _main and _add.
+    add_test(NAME headless_trace_profile
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/testport/trace_profile.sh
+                     $<TARGET_FILE:pom2_headless> ${CMAKE_BINARY_DIR}/trace_profile
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(headless_trace_profile PROPERTIES TIMEOUT 120)
 endif()
 
 # --softcard + --type + --text-dump: boot the tracked SoftCard CP/M master,
@@ -10374,6 +10553,14 @@ if(TARGET pom2_corpus)
              COMMAND pom2_corpus --tag ci
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(corpus_ci PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+    # UI-021: DIX's menu recorded frame by frame in emulated time (PAL,
+    # 1015625/20280 = 50.08 fps); the checks must be the frames the video
+    # holds at that moment. 77 = the title could not run here.
+    add_test(NAME corpus_video
+             COMMAND ${CMAKE_SOURCE_DIR}/tests/corpus/video_check.sh
+                     $<TARGET_FILE:pom2_corpus> ${CMAKE_BINARY_DIR}/corpus_video dix-menu 50.0801
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(corpus_video PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
     add_test(NAME corpus_bless
              COMMAND ${CMAKE_COMMAND} -DCORPUS=$<TARGET_FILE:pom2_corpus>
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}/corpus_bless_work
@@ -11904,6 +12091,17 @@ pom2_add_headless_test(test_iwm_access_stamp
 set_tests_properties(iwm_access_stamp PROPERTIES SKIP_RETURN_CODE 77
                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# ─── WASM-004: per-drive link parameters (wasm/setup_link.js) ─────────────
+# The browser's drive planner and copy-link builder, run under node with no
+# browser and no Emscripten build. Registered only where node is installed.
+find_program(POM2_NODE_EXECUTABLE node)
+if(POM2_NODE_EXECUTABLE)
+    add_test(NAME wasm_setup_link
+             COMMAND ${POM2_NODE_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/wasm_setup_link_test.mjs
+                     ${CMAKE_SOURCE_DIR}/wasm/setup_link.js)
+    set_tests_properties(wasm_setup_link PROPERTIES TIMEOUT 30)
+endif()
+
 # ═══ The directory-wide sweeps — LAST, and kept last ══════════════════════
 # A directory-wide sweep is only directory-wide if nothing is added after it.
 # Twice now (2026-09-07, 2026-09-09 — bug hunt #16 found fourteen entries
@@ -11969,3 +12167,4 @@ foreach(_pom2_t IN LISTS _pom2_all_tests)
     math(EXPR _pom2_to "${_pom2_to} * ${POM2_TEST_TIMEOUT_SCALE}")
     set_tests_properties(${_pom2_t} PROPERTIES TIMEOUT ${_pom2_to})
 endforeach()
+

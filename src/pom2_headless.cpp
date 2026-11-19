@@ -38,6 +38,13 @@
 // both modes; `--screen-text` prints Apple text rows after a capture run.
 
 #include "AlsCpmCard.h"
+#include "AppleSingle.h"
+#include "AtomicFileReplace.h"
+#include "AyMusicExport.h"
+#include "Cc65DebugInfo.h"
+#include "DebuggerSymbols.h"
+#include "InstructionTrace.h"
+#include "ProfileExport.h"
 #include "SoftCardIICard.h"
 #include "Apple2Display.h"
 #include "TextScreenCapture.h"
@@ -46,12 +53,15 @@
 #include "EmulationController.h"
 #include "MediaSource.h"
 #include "Memory.h"
+#include "Mockingboard.h"
 #include "ResourcePaths.h"
 #include "SoftCardZ80.h"
 #include "SuperSerialCard.h"
 #include "SuperSerialTcpTransport.h"
 #include "SuperSerialTransport.h"
+#include "TestPortCard.h"
 #include "Version.h"
+#include "WavRecorder.h"
 
 #include <atomic>
 #include <cerrno>
@@ -165,6 +175,38 @@ void usage(const char* prog)
         "  done, or --until reached) · 1 usage or set-up error · 3 the screen\n"
         "  is one flat colour (only without --until/--cycles) · 4 the budget ran\n"
         "  out before --until · 5 the CPU halted (KIL / STP) before the end.\n"
+        "  --test-port <slot>    Plug the paravirtual test port (ARCH-017) in that\n"
+        "                        slot: $C0n0 log a character (CR/LF ends the line,\n"
+        "                        printed on stdout), $C0n1 exit with that status,\n"
+        "                        $C0n2 assert (0 = failed: exit 2). Reads are the\n"
+        "                        floating bus. Header: tools/testport/pom2_testport.h\n"
+        "  --load [addr:]<file>  Load a program into RAM ($0000-$BFFF) once the ROM\n"
+        "                        waits for its first key ($FD1B KEYIN), then run it.\n"
+        "                        An AppleSingle (cc65's apple2 output) carries its\n"
+        "                        own address; a raw binary needs addr. Repeatable.\n"
+        "  --run <addr>          Where the loaded program starts. Default: the\n"
+        "                        first --load's address.\n"
+        "  With --test-port, the exit status is the program's: what it wrote to\n"
+        "  $C0n1, or 2 for a failed assertion; 4 if it never exited in the budget\n"
+        "  (--frames / --cycles; a minute by default).\n"
+        "  --mockingboard <slot> Plug a Mockingboard A/C in that slot.\n"
+        "  --vgm <path>          Record the Mockingboard's AY writes, both chips, as\n"
+        "                        VGM 1.71 (exact: each write at its 44.1 kHz sample).\n"
+        "  --ym <path>           The same, first AY only, as YM5 (one frame a step).\n"
+        "  --wav <path>          Record the mixed audio (speaker + Mockingboard) as\n"
+        "                        16-bit 44.1 kHz stereo, timed by emulated cycles:\n"
+        "                        two runs give the same file.\n"
+        "  --trace-file <path>   Write every executed instruction to <path>, one line\n"
+        "                        each: PC, physical bank, bytes, disassembly, the\n"
+        "                        registers going in, cycles (UI-017).\n"
+        "  --trace-format <fmt>  The line, with %%PC %%BANK %%BYTES %%DIS %%A %%X %%Y %%P\n"
+        "                        %%SP %%FLAGS %%CYC %%TOTAL %%LABEL %%%% (InstructionTrace.h).\n"
+        "  --profile <path>      Profile the run and write a callgrind file for\n"
+        "                        KCachegrind / callgrind_annotate: cycles and visits\n"
+        "                        per address, grouped by bank and routine.\n"
+        "  --symbols <file>      Labels for --profile and %%LABEL: a symbol file\n"
+        "                        (name = $0800) or a cc65 .dbg.\n"
+        "  With --load, tracing and profiling start when the program does.\n"
         "  --trace-mli           Print every ProDOS MLI call and its result\n"
         "                        to stderr (puts the CPU on its debugged loop).\n"
         "  --trace-bdos          Print every CP/M BDOS call a card Z80 makes.\n"
@@ -263,6 +305,14 @@ int main(int argc, char** argv)
     int  softcardSlot = 0;   // 0 = none
     int  alsSlot      = 0;   // 0 = none
     int  sc2Slot      = 0;   // 0 = none
+    int  testPortSlot = 0;   // --test-port: 0 = none
+    // --load: files to put in RAM at the launch point, and --run's address.
+    struct LoadSpec { long addr; std::string path; std::vector<uint8_t> bytes; };
+    std::vector<LoadSpec> loads;
+    long runAddr = -1;
+    int  mockingboardSlot = 0;          // --mockingboard: 0 = none
+    std::string vgmPath, ymPath, wavPath;
+    std::string traceFile, traceFormat, profilePath, symbolsPath;   // UI-017
     // --type: text to type at an emulated second, in the order given.
     struct TypedKeys { int atSecond; std::string text; bool sent; };
     std::vector<TypedKeys> typed;
@@ -290,13 +340,29 @@ int main(int argc, char** argv)
         out = static_cast<int>(v);
         return true;
     };
+    // An address, the way one is written: $C600, 0xC600 or decimal.
+    auto parseAddr = [](std::string text, long& out) -> bool {
+        int base = 10;
+        if (!text.empty() && text[0] == '$') { text.erase(0, 1); base = 16; }
+        else if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+            text.erase(0, 2); base = 16;
+        }
+        char* end = nullptr;
+        const long v = std::strtol(text.c_str(), &end, base);
+        if (text.empty() || *end != '\0' || v < 0 || v > 0xFFFF) return false;
+        out = v;
+        return true;
+    };
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--rom" || a == "--prom" || a == "--disk" || a == "--port" ||
             a == "--paste-after" || a == "--setup" || a == "--frames" ||
             a == "--until" || a == "--cycles" ||
             a == "--screenshot" || a == "--softcard" || a == "--type" || a == "--als" ||
-            a == "--softcard2" || a == "--speed") {   // --speed: was "unknown arg" (2026-11-17)
+            a == "--softcard2" || a == "--speed" || a == "--test-port" ||
+            a == "--load" || a == "--run" || a == "--mockingboard" ||
+            a == "--vgm" || a == "--ym" || a == "--wav" || a == "--trace-file" ||
+            a == "--trace-format" || a == "--profile" || a == "--symbols") {   // --speed: was "unknown arg" (2026-11-17)
             if (i + 1 >= argc) { needsValue(a); usage(argv[0]); return 1; }
         }
         if      (a == "--rom"   && i+1 < argc) romArg   = argv[++i];
@@ -360,21 +426,45 @@ int main(int argc, char** argv)
             if (!parseInt("--frames", argv[++i], 0, 100000000, frames)) return 1;
         }
         else if (a == "--until" && i+1 < argc) {
-            // An address, the way one is written: $C600, 0xC600 or decimal.
-            std::string text = argv[++i];
-            int base = 10;
-            if (!text.empty() && text[0] == '$') { text.erase(0, 1); base = 16; }
-            else if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-                text.erase(0, 2); base = 16;
-            }
-            char* end = nullptr;
-            const long v = std::strtol(text.c_str(), &end, base);
-            if (text.empty() || *end != '\0' || v < 0 || v > 0xFFFF) {
+            if (!parseAddr(argv[++i], untilAddr)) {
                 std::fprintf(stderr, "--until expects an address in $0000..$FFFF, got: %s\n",
                              argv[i]);
                 return 1;
             }
-            untilAddr = v;
+        }
+        else if (a == "--test-port" && i+1 < argc) {
+            if (!parseInt("--test-port", argv[++i], 1, 7, testPortSlot)) return 1;
+        }
+        else if (a == "--load" && i+1 < argc) {
+            // [addr:]path. A path may itself hold a colon (C:\ on Windows), so
+            // the prefix only counts when it parses as an address.
+            const std::string v = argv[++i];
+            LoadSpec spec{ -1, v, {} };
+            const auto colon = v.find(':');
+            long addr = -1;
+            if (colon != std::string::npos && colon > 0
+                && parseAddr(v.substr(0, colon), addr)) {
+                spec.addr = addr;
+                spec.path = v.substr(colon + 1);
+            }
+            loads.push_back(std::move(spec));
+        }
+        else if (a == "--mockingboard" && i+1 < argc) {
+            if (!parseInt("--mockingboard", argv[++i], 1, 7, mockingboardSlot)) return 1;
+        }
+        else if (a == "--vgm" && i+1 < argc) vgmPath = argv[++i];
+        else if (a == "--ym"  && i+1 < argc) ymPath  = argv[++i];
+        else if (a == "--wav" && i+1 < argc) wavPath = argv[++i];
+        else if (a == "--trace-file" && i+1 < argc) traceFile = argv[++i];
+        else if (a == "--trace-format" && i+1 < argc) traceFormat = argv[++i];
+        else if (a == "--profile" && i+1 < argc) profilePath = argv[++i];
+        else if (a == "--symbols" && i+1 < argc) symbolsPath = argv[++i];
+        else if (a == "--run" && i+1 < argc) {
+            if (!parseAddr(argv[++i], runAddr)) {
+                std::fprintf(stderr, "--run expects an address in $0000..$FFFF, got: %s\n",
+                             argv[i]);
+                return 1;
+            }
         }
         else if (a == "--cycles" && i+1 < argc) {
             char* end = nullptr;
@@ -414,12 +504,79 @@ int main(int argc, char** argv)
     if (z80Slot && !setupGiven) doSetup = false;
     // A stop address, a cycle budget and a register dump are all questions
     // about a run that ENDS, so each of them selects capture mode.
-    const bool scripted    = untilAddr >= 0 || cycleBudget > 0;
+    // A loaded program and the test port are runs that end too.
+    const bool launches    = !loads.empty() || runAddr >= 0;
+    const bool scripted    = untilAddr >= 0 || cycleBudget > 0 || launches ||
+                             testPortSlot != 0;
+    const bool recording   = !vgmPath.empty() || !ymPath.empty() || !wavPath.empty() ||
+                             !traceFile.empty() || !profilePath.empty();
+    // --symbols: read now, so a bad file is a usage error.
+    pom2::DebuggerSymbols symbols;
+    if (!symbolsPath.empty()) {
+        std::ifstream f(symbolsPath, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::string why;
+        pom2::cc65dbg::Conversion converted;
+        const bool cc65 = pom2::cc65dbg::isDebugFilePath(symbolsPath);
+        if (!f.good() && text.empty()) why = "cannot read the file";
+        else if (cc65 && !pom2::cc65dbg::toSymbols(text, converted, why)) {}
+        else (void)symbols.load(cc65 ? converted.text : text, why);
+        if (!why.empty()) { std::fprintf(stderr, "--symbols %s: %s\n", symbolsPath.c_str(), why.c_str()); return 1; }
+        std::fprintf(stderr, "[POM2 headless] %zu symbols from %s\n", symbols.size(), symbolsPath.c_str());
+    }
     const bool captureMode = frames > 0 || !shotPath.empty() || textDump ||
-                             scripted || registers;
-    // ~5 s, past the boot beep — or a minute when a stop address is the
-    // point and no limit was given: a disk boot takes longer than a banner.
-    if (captureMode && frames <= 0) frames = (untilAddr >= 0) ? 3600 : 300;
+                             scripted || registers || recording;
+    if ((!vgmPath.empty() || !ymPath.empty()) && !mockingboardSlot) {
+        std::fprintf(stderr, "--vgm / --ym record a Mockingboard: add --mockingboard <slot>\n");
+        return 1;
+    }
+    // ~5 s, past the boot beep — or a minute when a stop address or a test
+    // program is the point and no limit was given: a disk boot takes longer
+    // than a banner.
+    if (captureMode && frames <= 0)
+        frames = (untilAddr >= 0 || launches || testPortSlot) ? 3600 : 300;
+
+    // --load: read every file now, so a bad one is a usage error before the
+    // machine exists. An AppleSingle says where it goes (its ProDOS aux type,
+    // which is what cc65's apple2 target writes); anything else needs addr.
+    for (auto& l : loads) {
+        std::ifstream f(l.path, std::ios::binary);
+        if (!f) { std::fprintf(stderr, "--load: cannot open %s\n", l.path.c_str()); return 1; }
+        std::vector<uint8_t> bytes(0x10001);
+        f.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        bytes.resize(static_cast<std::size_t>(f.gcount()));
+        if (pom2::applesingle::looksLikeAppleSingle(bytes.data(), bytes.size())) {
+            pom2::applesingle::File as;
+            std::string why;
+            if (!pom2::applesingle::decode(bytes, as, why)) {
+                std::fprintf(stderr, "--load %s: %s\n", l.path.c_str(), why.c_str());
+                return 1;
+            }
+            if (l.addr < 0) {
+                if (!as.hasProdosInfo) {
+                    std::fprintf(stderr, "--load %s: an AppleSingle with no ProDOS "
+                                 "file info carries no address; write addr:%s\n",
+                                 l.path.c_str(), l.path.c_str());
+                    return 1;
+                }
+                l.addr = static_cast<long>(as.auxType & 0xFFFF);
+            }
+            bytes = std::move(as.data);
+        }
+        if (l.addr < 0) {
+            std::fprintf(stderr, "--load %s: a raw binary needs an address "
+                         "(--load addr:%s)\n", l.path.c_str(), l.path.c_str());
+            return 1;
+        }
+        // RAM only: $C000-$CFFF is the I/O page and the ROM sits above it.
+        if (bytes.empty() || l.addr + static_cast<long>(bytes.size()) > 0xC000) {
+            std::fprintf(stderr, "--load %s: %zu bytes at $%04lX do not fit in "
+                         "$0000-$BFFF\n", l.path.c_str(), bytes.size(), l.addr);
+            return 1;
+        }
+        l.bytes = std::move(bytes);
+    }
+    if (runAddr < 0 && !loads.empty()) runAddr = loads.front().addr;
 
     const std::string romPath = !romArg.empty() ? romArg : iie
         ? findAsset("roms/apple2e.rom", { "../roms/apple2e.rom", "../../roms/apple2e.rom" })
@@ -466,7 +623,10 @@ int main(int argc, char** argv)
 
     // II/II+ mode is enough for DOS 3.3, so that stays the default; --rom changes
     // the file, not the machine's memory mode. --iie changes the mode.
-    EmulationController controller;
+    // --wav mixes OFFLINE: no host device, the sample count follows the
+    // emulated cycles, so the file does not depend on the host's timing.
+    EmulationController controller(wavPath.empty() ? AudioDevice::OutputMode::Host
+                                                   : AudioDevice::OutputMode::Offline);
     // Everything from here to `controller.start()` below runs before the
     // CPU worker exists, so the raw accessor is correct: there is no second
     // thread to race. The one access inside the run loop takes lockState().
@@ -570,7 +730,9 @@ int main(int argc, char** argv)
 
     // ThunderClock+-compatible RTC in slot 4 — uPD1990AC bit-bang chip
     // emulation; ProDOS auto-detects and links its driver to it.
-    if (z80Slot != ClockCard::kDefaultSlot)
+    // A card asked for by name takes the slot: the clock is the default only.
+    if (z80Slot != ClockCard::kDefaultSlot && mockingboardSlot != ClockCard::kDefaultSlot
+        && testPortSlot != ClockCard::kDefaultSlot)
         controller.memory().slotBus().plug(ClockCard::kDefaultSlot,
             std::make_unique<ClockCard>(ClockCard::kDefaultSlot));
 
@@ -592,6 +754,46 @@ int main(int argc, char** argv)
     // by the slot bus's advanceCycles.
     if (sc2Slot)
         controller.memory().slotBus().plug(sc2Slot, std::make_unique<SoftCardIICard>());
+
+    MockingboardCard* mockingboard = nullptr;
+    if (mockingboardSlot) {
+        if (const SlotPeripheral* there = controller.memory().slotBus().peripheral(mockingboardSlot)) {
+            std::fprintf(stderr, "--mockingboard: slot %d holds the %s\n", mockingboardSlot,
+                         std::string(there->name()).c_str());
+            return 1;
+        }
+        auto mb = std::make_unique<MockingboardCard>(mockingboardSlot);
+        mb->setCpu(&controller.cpu());
+        mb->setSampleRate(controller.audio().getActualSampleRate());
+        mockingboard = mb.get();
+        controller.memory().slotBus().plug(mockingboardSlot, std::move(mb));
+    }
+    // An offline device takes no source by itself (EmulationController):
+    // the speaker and the Mockingboard are what the WAV hears.
+    if (!wavPath.empty()) {
+        controller.audio().addSource(&controller.speaker());
+        if (mockingboard) controller.audio().addSource(mockingboard->audioSource());
+    }
+
+    // --test-port: last, into a slot nothing else took.
+    pom2::TestPortCard* testPort = nullptr;
+    if (testPortSlot) {
+        if (const SlotPeripheral* there = controller.memory().slotBus().peripheral(testPortSlot)) {
+            std::fprintf(stderr, "--test-port: slot %d holds the %s\n", testPortSlot,
+                         std::string(there->name()).c_str());
+            return 1;
+        }
+        auto tp = std::make_unique<pom2::TestPortCard>(testPortSlot);
+        // stdout, a line at a time, flushed: the program's own words, kept
+        // apart from this tool's [POM2 headless] chatter on stderr.
+        tp->setLineSink([](const std::string& line) {
+            std::fwrite(line.data(), 1, line.size(), stdout);
+            std::fputc('\n', stdout);
+            std::fflush(stdout);
+        });
+        testPort = tp.get();
+        controller.memory().slotBus().plug(testPortSlot, std::move(tp));
+    }
 
     // Hard reset loads the motherboard reset vector; reset the slot bus
     // as well so DiskIICard can re-arm its trace flags. Autostart firmware
@@ -651,6 +853,63 @@ int main(int argc, char** argv)
             controller.debugger().addBreakpoint(static_cast<uint16_t>(untilAddr));
             controller.syncDebugHook();
         }
+        // --load / --run: the program goes in once the ROM has finished its
+        // cold start and waits for a key — [C] every Apple II Monitor reads
+        // the keyboard through KSW, which a cold start points at KEYIN $FD1B.
+        // Not at reset: the ROM's cold start (and a disk's boot sector at
+        // $0800) would overwrite a program loaded before it, and the program
+        // finds the machine a user would — screen, vectors, DOS if booted.
+        // --trace-file / --profile: armed at the start of the run, or at the
+        // launch of a --load program (the ROM's boot is not the question).
+        pom2::InstructionTrace trace;
+        trace.setSymbols(symbols);
+        bool instrumented = false;
+        auto instrument = [&]() -> bool {
+            if (instrumented || (traceFile.empty() && profilePath.empty())) return true;
+            auto st = controller.lockState();
+            if (!traceFile.empty()) {
+                std::string why;
+                if (!trace.open(std::filesystem::u8path(traceFile), traceFormat, st.cpu(),
+                                st.memory(), why)) {
+                    std::fprintf(stderr, "--trace-file: %s\n", why.c_str());
+                    return false;
+                }
+                controller.debugger().setInstructionTrace(&trace);
+            }
+            if (!profilePath.empty()) {
+                controller.debugger().clearMeasurements();
+                controller.debugger().setProfiling(true);
+            }
+            controller.syncDebugHook();
+            instrumented = true;
+            return true;
+        };
+        constexpr uint16_t kLaunchAt = 0xFD1B;
+        bool launchPending = runAddr >= 0;
+        if (launchPending) {
+            auto st = controller.lockState();
+            controller.debugger().addBreakpoint(kLaunchAt);
+            controller.syncDebugHook();
+        }
+        auto launch = [&] {
+            {
+                auto st = controller.lockState();
+                if (untilAddr != kLaunchAt) controller.debugger().removeBreakpoint(kLaunchAt);
+                controller.debugger().clearHit();
+                controller.syncDebugHook();
+                for (const auto& l : loads)
+                    for (std::size_t k = 0; k < l.bytes.size(); ++k)
+                        st.memory().writeRamUnchecked(static_cast<uint16_t>(l.addr + static_cast<long>(k)),
+                                                      l.bytes[k]);
+                st.cpu().setProgramCounter(static_cast<uint16_t>(runAddr));
+                std::fprintf(stderr, "[POM2 headless] launched $%04lX after %llu cycles\n", runAddr,
+                             static_cast<unsigned long long>(st.memory().getCycleCounter()));
+                launchPending = false;
+            }
+            (void)instrument();   // takes the lock itself
+            // The breakpoint parked the machine (noteDebuggerStop); resume it.
+            controller.setMode(EmulationController::Mode::Running);
+        };
         if (cycleBudget > 0)
             std::fprintf(stderr, "[POM2 headless] capture: running %lld cycles\n", cycleBudget);
         else
@@ -668,6 +927,37 @@ int main(int argc, char** argv)
             controller.setCyclesPerFrame(controller.getCyclesPerFrame() * speedMul);
         const uint64_t startCycles = controller.memory().getCycleCounter();
         const int      frameCycles = controller.getCyclesPerFrame();
+        if (!launchPending && !instrument()) return 1;
+
+        if (mockingboard && (!vgmPath.empty() || !ymPath.empty())) {
+            auto st = controller.lockState();
+            mockingboard->startAyCapture(pom2VideoTiming(controller.getVideoStandard()).cyclesPerFrame);
+        }
+        pom2::WavFileWriter wav;
+        if (!wavPath.empty()) {
+            std::string why;
+            if (!wav.open(std::filesystem::u8path(wavPath), controller.audio().getActualSampleRate(),
+                          AudioDevice::kChannels, why)) {
+                std::fprintf(stderr, "--wav: %s\n", why.c_str());
+                return 1;
+            }
+        }
+        // Samples owed = the emulated time run so far at the device rate,
+        // mixed after every frame: the cycles decide, not the host clock.
+        const double wavClock = controller.emulatedCpuClockHz();
+        uint64_t wavMixed = 0;
+        std::vector<float> wavBuf;
+        auto mixWavTo = [&](uint64_t cyclesRun) {
+            if (!wav.isOpen() || wavClock <= 0.0) return;
+            const uint64_t due = static_cast<uint64_t>(
+                static_cast<double>(cyclesRun) * wav.sampleRate() / wavClock);
+            if (due <= wavMixed) return;
+            const int n = static_cast<int>(due - wavMixed);
+            wavBuf.assign(static_cast<std::size_t>(n) * AudioDevice::kChannels, 0.0f);
+            controller.audio().mixSources(wavBuf.data(), n);
+            wav.write(wavBuf.data(), static_cast<std::size_t>(n));
+            wavMixed = due;
+        };
         bool reached = false, halted = false;
         for (int i = 0;; ++i) {
             if (cycleBudget > 0) {
@@ -682,7 +972,16 @@ int main(int argc, char** argv)
                 break;
             }
             controller.tickFrame();
+            mixWavTo(controller.memory().getCycleCounter() - startCycles);
             typeDue(controller.memory().getCycleCounter());
+            // The test port ended the run: the program's verdict is final,
+            // whatever it does next.
+            if (testPort && testPort->finished()) break;
+            if (launchPending && controller.debugger().lastHit().valid()
+                && controller.debugger().lastHit().pc == kLaunchAt) {
+                launch();
+                continue;
+            }
             if (untilAddr >= 0 && controller.debugger().lastHit().valid()) {
                 reached = true;
                 break;
@@ -701,8 +1000,79 @@ int main(int argc, char** argv)
                         cpu.getProgramCounter(), cpu.getAccumulator(), cpu.getXRegister(),
                         cpu.getYRegister(), cpu.getStackPointer(), cpu.getStatusRegister(),
                         ran);
+        if (instrumented) {
+            std::vector<pom2::Debugger::ProfileEntry> profile;
+            {
+                auto st = controller.lockState();
+                controller.debugger().setInstructionTrace(nullptr);
+                if (!profilePath.empty()) {
+                    profile = controller.debugger().profile(SIZE_MAX);
+                    controller.debugger().setProfiling(false);
+                }
+                controller.syncDebugHook();
+            }
+            if (trace.isOpen()) {
+                std::fprintf(stderr, "[POM2 headless] wrote %s (%llu lines)\n", traceFile.c_str(),
+                             static_cast<unsigned long long>(trace.lines()));
+                trace.close();
+            }
+            if (!profilePath.empty()) {
+                const std::string text = pom2::callgrindProfile(profile, symbols.size() ? &symbols : nullptr,
+                                                                "pom2_headless");
+                std::error_code ec;
+                if (!pom2::writeFileAtomic(std::filesystem::u8path(profilePath), text.data(),
+                                           text.size(), ec)) {
+                    std::fprintf(stderr, "ERROR: cannot write %s: %s\n", profilePath.c_str(),
+                                 ec.message().c_str());
+                    return 1;
+                }
+                std::fprintf(stderr, "[POM2 headless] wrote %s (%zu addresses)\n",
+                             profilePath.c_str(), profile.size());
+            }
+        }
+        if (mockingboard && (!vgmPath.empty() || !ymPath.empty())) {
+            pom2::aymusic::Capture cap;
+            {
+                auto st = controller.lockState();
+                cap = mockingboard->stopAyCapture();
+            }
+            const auto save = [](const std::string& path, const std::vector<uint8_t>& bytes,
+                                 const char* what, std::size_t writes) {
+                std::error_code ec;
+                if (!pom2::writeFileAtomic(std::filesystem::u8path(path), bytes.data(),
+                                           bytes.size(), ec)) {
+                    std::fprintf(stderr, "ERROR: cannot write %s: %s\n", path.c_str(),
+                                 ec.message().c_str());
+                    return false;
+                }
+                std::fprintf(stderr, "[POM2 headless] wrote %s (%s, %zu AY writes)\n",
+                             path.c_str(), what, writes);
+                return true;
+            };
+            if (!vgmPath.empty() && !save(vgmPath, pom2::aymusic::encodeVgm(cap), "VGM", cap.writes.size()))
+                return 1;
+            if (!ymPath.empty() && !save(ymPath, pom2::aymusic::encodeYm5(cap, 0), "YM5", cap.writes.size()))
+                return 1;
+        }
+        if (wav.isOpen()) {
+            std::string why;
+            const uint64_t got = wav.framesWritten();
+            if (!wav.close(why)) { std::fprintf(stderr, "ERROR: --wav: %s\n", why.c_str()); return 1; }
+            std::fprintf(stderr, "[POM2 headless] wrote %s (%llu frames)\n", wavPath.c_str(),
+                         static_cast<unsigned long long>(got));
+        }
+
         int scriptedExit = 0;
-        if (halted) {
+        if (testPort && testPort->finished()) {
+            std::fprintf(stderr, "[POM2 headless] test port: exit %d after %llu cycles "
+                         "(%d assertion(s) passed)\n", testPort->exitStatus(), ran,
+                         testPort->assertionsPassed());
+            scriptedExit = testPort->exitStatus();
+        } else if (launchPending) {
+            std::fprintf(stderr, "ERROR: the ROM never waited for a key at $%04X in %llu "
+                         "cycles, so the program was not launched\n", kLaunchAt, ran);
+            scriptedExit = 4;
+        } else if (halted) {
             std::fprintf(stderr, "ERROR: the CPU halted at $%04X after %llu cycles\n",
                          cpu.getProgramCounter(), ran);
             scriptedExit = 5;
@@ -714,6 +1084,10 @@ int main(int argc, char** argv)
         } else if (untilAddr >= 0) {
             std::fprintf(stderr, "[POM2 headless] reached $%04lX after %llu cycles\n",
                          untilAddr, ran);
+        } else if (testPort) {
+            std::fprintf(stderr, "ERROR: the program did not exit through the test port "
+                         "in %llu cycles (PC=$%04X)\n", ran, cpu.getProgramCounter());
+            scriptedExit = 4;
         }
 
         Apple2Display display;

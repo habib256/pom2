@@ -73,6 +73,7 @@ namespace pom2 { class StateAccess; }
 namespace pom2 { class MouseCoordinator; }
 namespace pom2 { class PrinterCoordinator; }
 namespace pom2 { class MidiOutputCoordinator; struct MidiOutByte; }
+namespace pom2 { class AudioCaptureRing; class WavFileWriter; }
 namespace pom2 { class AudioCoordinator; }
 namespace pom2 { class DevicePanelCoordinator; }
 namespace pom2 { class StorageCoordinator; }
@@ -251,6 +252,15 @@ public:
     /// Explicit //c+ Sony mount used by --35-disk1/2; never the external
     /// SmartPort chain. UI thread only, with normal duplicate/write guards.
     bool mountOnboard35(int drive, const std::string& path, std::string& errOut);
+    /// `--mount sNdM:path` (WASM-004): the image into slot `slot`, drive
+    /// `drive` (0-based), through the drive rack's mount — the same checks,
+    /// no boot. UI thread only.
+    bool mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut);
+#ifdef __EMSCRIPTEN__
+    /// File ▸ Copy link to this setup: the profile and every mounted drive,
+    /// handed to wasm/setup_link.js, which writes the link.
+    void copyBrowserSetupLink();
+#endif
 
     /// Put a diskette that has NEVER BEEN FORMATTED into the primary Disk
     /// II's `drive` (0 = drive 1, 1 = drive 2) — no address fields, the
@@ -470,6 +480,13 @@ private:
     std::vector<std::string> midiPorts_;
     bool midiPortsListed_ = false;
     std::string midiRecordStatus_;
+    // AUDIO-013 (MainWindow_Recording.cpp): the Mockingboard whose AY
+    // writes are being recorded (by slot, never by pointer — a profile
+    // switch can replace the card), and the mixed-bus WAV take.
+    int ayCaptureSlot_ = 0;
+    std::unique_ptr<pom2::AudioCaptureRing> wavRing_;
+    std::unique_ptr<pom2::WavFileWriter> wavWriter_;
+    std::string recordStatus_;
     /// PostScript jobs for the LaserWriter head, rendered off the UI thread
     /// by an external interpreter (PostScriptRender.h). Owned here because
     /// the pump that feeds it lives here; it never touches `stateMutex`.
@@ -1551,6 +1568,9 @@ private:
     void pumpMidiOut();
     void renderMidiSection();
     std::string midiPortSetting();
+    // Music and audio capture (MainWindow_Recording.cpp, AUDIO-013).
+    void pumpRecording();
+    void renderRecordingSection();
     /// The LaserWriter's PostScript path: spool, render off-thread, adopt.
     void pumpPostScript(const std::vector<uint8_t>& fresh);
     void renderNoSlotClockPanelWindow();

@@ -46,6 +46,7 @@ audio_source_teardown
 audio_stereo
 ay_event_ring
 ay_mame_parity
+ay_music_export
 ay_noise_reset_state
 beam_race_composite
 bench_identity
@@ -84,6 +85,7 @@ controller_mode_races
 corpus_bless
 corpus_ci
 corpus_manifest
+corpus_video
 cpm_disk_fs
 cpu_cycle_count
 cpu_nmos_index_dummy_read
@@ -192,6 +194,7 @@ hdv_register_contract
 hdv_status_driver
 hdv_two_drives
 hdv_writeback_smoke
+headless_audio_capture_repeatable
 headless_boot_capture
 headless_cpu_apple2e
 headless_cpu_apple2e_unenh
@@ -200,6 +203,10 @@ headless_cpu_apple2p
 headless_cycle_budget
 headless_iie_capture
 headless_softcard_capture
+headless_test_port_assert
+headless_test_port_budget
+headless_test_port_exit
+headless_trace_profile
 headless_until_address
 headless_until_budget
 headless_until_budget_exit
@@ -248,6 +255,7 @@ imagewriter_pdf
 imagewriter_residue
 imagewriter_smoke
 input_io_smoke
+instruction_trace
 integer_basic_listing
 interrupt_load
 irq_aggregator_smoke
@@ -452,6 +460,7 @@ storage_restore_missing_path
 superdrive_prodos_boot
 system_profile_smoke
 test_property_sweep
+testport_card
 text_oecpu_crisp
 text_screen_capture
 thread_guard

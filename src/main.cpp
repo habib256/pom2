@@ -267,6 +267,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pom2_set_page_visible(int visible)
     }
 }
 
+/// File ▸ Copy link to this setup, callable from the page — what the
+/// browser smoke (tools/wasm_setup_link_smoke.mjs) presses (WASM-004).
+extern "C" EMSCRIPTEN_KEEPALIVE void pom2_copy_setup_link()
+{
+    if (gPersistTarget) gPersistTarget->copyBrowserSetupLink();
+}
+
 /// Read-only status for the browser smoke test and page diagnostics.
 extern "C" EMSCRIPTEN_KEEPALIVE int pom2_browser_running()
 {
@@ -388,7 +395,14 @@ int main(int argc, char* argv[])
         850;
 #endif
     GLFWwindow* window = nullptr;
+#ifdef __EMSCRIPTEN__
+    // In the browser `--kiosk` is the embed mode (WASM-005, ?embed=1): the
+    // chrome-free render path in the page's own canvas. A monitor here would
+    // be a requestFullscreen, which a page may only make on a user gesture.
+    if (false) {
+#else
     if (plan->kiosk) {
+#endif
         // Exclusive full-screen on the primary monitor at its current
         // video mode (no resolution change beyond what the mode dictates).
         // Copying the mode's bit depths + refresh into the hints is the
@@ -1120,7 +1134,7 @@ int main(int argc, char* argv[])
     // the SlotBus mutation in insertAndBootImage() doesn't race the worker.
     // Works in both GUI and --kiosk mode (bare `POM2 disk` boots in GUI).
     int cliBootCountdown = (plan->bootDiskPath.empty() && plan->prodosFolderPath.empty() &&
-                            plan->blankDiskPath.empty()) ? -1 : 30;
+                            plan->blankDiskPath.empty() && plan->mounts.empty()) ? -1 : 30;
 
     // Loop iteration packaged as a function so the native path can stay a
     // plain `while`, and the WASM path can hand it to
@@ -1137,6 +1151,9 @@ int main(int argc, char* argv[])
         /// point of the flag.
         std::string         blankDiskPath;
         int                 blankDiskDrive;
+        /// `--mount sNdM:path`: after the boot disk and the blank one, so a
+        /// two-disk link comes up booted on disk 1 with disk 2 waiting.
+        std::vector<pom2::CliPlan::Mount> mounts;
         int                 cliBootCountdown;
         std::atomic<bool>*  autoBootRequested;
         std::atomic<bool>*  autoQuitRequested;
@@ -1160,7 +1177,7 @@ int main(int argc, char* argv[])
 #endif
     } frameCtx{
         window, &mainWindow, plan->bootDiskPath, plan->prodosFolderPath,
-        plan->blankDiskPath, plan->blankDiskDrive, cliBootCountdown,
+        plan->blankDiskPath, plan->blankDiskDrive, plan->mounts, cliBootCountdown,
         &autoBootRequested, &autoQuitRequested, &bootDiskSettled, 30
 #ifdef __EMSCRIPTEN__
         , false
@@ -1235,6 +1252,14 @@ int main(int argc, char* argv[])
                 } else {
                     pom2::log().warn("CLI", "--blank-disk failed: " + berr);
                 }
+            }
+            for (const auto& m : c.mounts) {
+                std::string merr;
+                const std::string where = "s" + std::to_string(m.slot) + "d" + std::to_string(m.drive);
+                if (c.mainWindow->mountIntoDrive(m.slot, m.drive - 1, m.path, merr))
+                    pom2::log().info("CLI", "--mount " + where + ": " + m.path);
+                else
+                    pom2::log().warn("CLI", "--mount " + where + " failed: " + merr);
             }
             // Release the Phase-C deferred actions — success or failure,
             // the machine's boot state is now settled (see bootDiskSettled).

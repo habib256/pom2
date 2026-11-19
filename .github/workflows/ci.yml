@@ -841,6 +841,9 @@ jobs:
       - name: Boot in Chrome and verify settings survive reload
         run: node --experimental-websocket tools/wasm_persistence_smoke.mjs
 
+      - name: Per-drive links, Copy link and embed messages in Chrome
+        run: node --experimental-websocket tools/wasm_links_smoke.mjs
+
       - name: Upload the WASM bundle
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
