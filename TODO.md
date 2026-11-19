@@ -4,7 +4,7 @@ Action queue reconciled **2026-11-18** (after the research of the same day:
 competing emulators, hardware references, developer tooling, distribution,
 community needs); ARCH-017, AUDIO-013, WASM-004, UI-017, UI-021 and
 WASM-005 closed 2026-11-19, then DISPLAY-002 (measured) and VALIDATION-005
-(not reproduced). Current release: **v1.2.1**. The index covers **40 active
+(not reproduced). Current release: **v1.2.2**. The index covers **40 active
 domain entries**, **10 release items** and **30 frozen entries**; each task's
 acceptance criterion and evidence live in its domain entry, not here.
 
