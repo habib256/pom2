@@ -216,7 +216,7 @@ cmake --build build --parallel 3
 
 The repository carries no copyrighted ROM or third-party disk image.
 `tools/fetch_test_media.py` downloads the ROMs and the disks the tests use from
-POM2's [test-media archive](https://archive.org/details/pom2_media_202611),
+POM2's [test-media archive](https://archive.org/details/pom2_media_20261119),
 checking every file against `tools/test_media.sha256`. Skip it and the first
 launch offers the ROM download instead.
 

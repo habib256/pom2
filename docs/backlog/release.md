@@ -424,10 +424,10 @@ that takes it from the same places. To fix it at the source:
       errata is a no-op on the corrected dump, and `rom_errata` passes on
       either.
 
-Related upload, same item: the repaired copy of Apple's Service Disk No.1
+The repaired copy of Apple's Service Disk No.1
 (`disks_5.4/diagnostics/apple-service-disk-1-fixed.do`, sha256 `b8dd1898…`)
-belongs in `pom2_media.zip` and `tools/test_media.sha256`, or the corpus title
-`service-disk-1` keeps skipping.
+is in `pom2_media.zip` and `tools/test_media.sha256` since 2026-11-19
+(RELEASE-015's upload), so the corpus title `service-disk-1` runs.
 
 **Acceptance criterion:** a fresh clone fetches an `apple2p.rom` whose
 `$FFFE` is `$FA40` with no errata applied (the `ROM:` log line about the
@@ -463,13 +463,13 @@ download from their own host. Until then, not scheduled.
 
 <a id="release-015"></a>
 
-### RELEASE-015 — Test-media archive update: deater's demos (pom2_media_202611)
+### RELEASE-015 — Test-media archive update: deater's demos (pom2_media_20261119)
 
-**Priority:** 🟠 · **State:** Waiting for the owner's upload (2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19 — uploaded as the new item `pom2_media_20261119`; removed from the active index.
 
 Six corpus titles tagged `deater` (`tests/corpus/corpus.manifest`, blessed
 2026-11-18) skip until their disks are in the test-media archive. Each `.dsk`
-carries Apple's DOS 3.3, so it goes to `pom2_media_202611/pom2_media.zip`,
+carries Apple's DOS 3.3, so it goes to `pom2_media.zip` on archive.org,
 never to the repository (deater's own code is GPL-2.0-only,
 `dos33fsprogs/LICENSE`). Source: www.deater.net/weave/vmwprod/<page>/.
 
@@ -483,14 +483,15 @@ never to the repository (deater's own code is GPL-2.0-only,
 | `disks_5.4/demo/deater/heartbeat.dsk` | `b20f1465eee13a9d846b569e01057a2f91a3f56db2e8509d9db490397c4da260` |
 | `disks_5.4/demo/deater/lemm.dsk` | `eb833930ef01bf2a61239b158f1a70e347f59db07f90c8010cca86d3c444dda2` |
 
-- [ ] Add the seven files to `pom2_media.zip` and upload it to the
-      `pom2_media_202611` item (the same maintenance as RELEASE-012's
-      repaired Service Disk, which can ride in the same upload).
-- [ ] In the SAME commit as the upload goes live, add the seven lines to
-      `tools/test_media.sha256`: the strict CI fetch checks every entry, so
-      listing them before the archive serves them turns every job red.
-- [ ] Tag `deater-hectic` (the `$C019` VBL edge) `ci` once the archive
-      serves it, so the edge MAME had 25 cycles late is guarded per push.
+- [x] The seven files and RELEASE-012's repaired Service Disk added to
+      `pom2_media.zip` (the 91 earlier entries copied unchanged, 99 in all,
+      every one checked by `fetch_test_media.py --strict` before the upload),
+      uploaded 2026-11-19 as the NEW item `pom2_media_20261119` (zip SHA-256
+      `0361e95f2c57b2bbc5788ac0d6c885c1701c482c7693d8c1d17d9a06fa856aa2`);
+      `pom2_media_202611` stays as it was.
+- [x] In the same commit: the eight lines in `tools/test_media.sha256` and
+      `fetch_test_media.py`'s URL moved to the new item.
+- [x] `deater-hectic` (the `$C019` VBL edge) tagged `ci`.
 
 ## Candidate release checklist
 

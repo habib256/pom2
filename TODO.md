@@ -74,8 +74,7 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 
 | Task | What is needed |
 |---|---|
-| [RELEASE-015](docs/backlog/release.md#release-015) | **Update `pom2_media_202611`** with deater's seven `.dsk` (paths and SHA-256 in the entry), then add them to `tools/test_media.sha256` in the same commit; tag `deater-hectic` `ci`. |
-| [RELEASE-012](docs/backlog/release.md#release-012) | Corrected `apple2p.rom` in `pom2_firm.zip` + RetroBIOS report; the repaired Service Disk rides in the RELEASE-015 upload. |
+| [RELEASE-012](docs/backlog/release.md#release-012) | Corrected `apple2p.rom` in `pom2_firm.zip` + RetroBIOS report (the repaired Service Disk is in the test media since 2026-11-19). |
 
 **Decisions:**
 

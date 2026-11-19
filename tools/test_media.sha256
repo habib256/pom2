@@ -1,5 +1,5 @@
 # tools/test_media.sha256 — every file of the test-media archive (archive.org
-# item pom2_media_202611, pom2_media.zip): sha256 + repo path.
+# item pom2_media_20261119, pom2_media.zip): sha256 + repo path.
 # tools/fetch_test_media.py verifies each file against this list.
 634e91bae5938820da79183984c03aa06075cbd5701d480debcc4f6d70620001  roms/341-0057.bin
 ce785b913b9fcec6db0fab89b2d94f07fcd07664a822531dcbba3a5ca70ca3bf  roms/341-0358-A.bin
@@ -92,3 +92,11 @@ b3a10d02a117eff3d1a76e7a1018582862e6cd804742959f0f0e579d9aaf8afc  disks_5.4/dsk/
 1b69b557b7e952cfcd3dbb64b68b93a8ac84de3d0f9333cfbe272aa3dac2bba5  disks_5.4/dsk/premium_softcard_cpm226.po
 4400de2e8f3c0fe4580a7c854d573b461280261964d9ea55f9f2c71fa7791755  disks_5.4/dsk/saturn128k_software.dsk
 d437cd3b8dc381cdbab0f1973e94379aea3e960957e179a102cbb47e6451e2d1  disks_5.4/dsk/softcard2_cpm228b.dsk
+61d29bf3dae3e6cfac25adc562d7bfedc65c13f53096e53fe58d7fb3cb9be95a  disks_5.4/demo/deater/hectic.dsk
+5234ff1a04272d51079424d419cc15ced8f39f38f6bfd2e434c0f46f4c184353  disks_5.4/demo/deater/midline.dsk
+8d4cf8224e35e38ce118e5ee34c013a9f3e3df5db360e4c57791127bb4bccaa8  disks_5.4/demo/deater/monster_splash.dsk
+1bdb8f69247a586c034ccb78df179495110b0584a497ddea725b3349547fc0fe  disks_5.4/demo/deater/second_d1.dsk
+a041ce85a9723df8bd0ebf72c3eac472ddc09d56047d43420710cb93d40b2f8b  disks_5.4/demo/deater/second_d2.dsk
+b20f1465eee13a9d846b569e01057a2f91a3f56db2e8509d9db490397c4da260  disks_5.4/demo/deater/heartbeat.dsk
+eb833930ef01bf2a61239b158f1a70e347f59db07f90c8010cca86d3c444dda2  disks_5.4/demo/deater/lemm.dsk
+b8dd1898a444943c29c7f75ce9f1ddd5794660c8bc9b81f14d412bad10ff44aa  disks_5.4/diagnostics/apple-service-disk-1-fixed.do
