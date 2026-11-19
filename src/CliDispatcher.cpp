@@ -216,7 +216,27 @@ void printUsage()
         "  --session-load <path>      Rebuild machine and restore its session\n"
         "\n"
         "  -h, --help                 Show this and exit\n"
-        "  -v, --version              Print the version and exit\n");
+        "  -v, --version              Print the version and exit\n"
+        "\n"
+        "Environment (every POM2_* variable the sources read is listed here, and\n"
+        "cli_kiosk checks that it stays so):\n"
+        "  POM2_AI_CONTROL_TOKEN      Token --ai-control requires; wins over the\n"
+        "                             ai_control_token setting\n"
+        "  POM2_MEDIA_WRITE_DEFAULT   protected (or 0/no/false): every disk image\n"
+        "                             mounts write-protected; ctest sets it\n"
+        "  POM2_AUTO_BOOT_HDV=<s>     Boot the HDV in drive 1 <s> seconds after start\n"
+        "  POM2_AUTO_QUIT=<s>         Close cleanly <s> seconds after start\n"
+        "  POM2_IWM_AUTHORITATIVE=0   //c+: the IWM in full shadow mode (diagnostic)\n"
+        "  POM2_TRACE_PRINTER=1|<path>  Printer trace from launch\n"
+        "  POM2_TRACE_PC=<path>       Every executed PC to <path> (POM2_TRACE_PC_MAX\n"
+        "                             caps it, 3 000 000 by default)\n"
+        "  POM2_DEBUG_DISK_STREAM=<path>  The Disk II's delivered bytes to <path>\n"
+        "  Diagnostic switches (set = on), output on the log: POM2_TRACE_HANG,\n"
+        "  POM2_TRACE_BANK, POM2_TRACE_ILLEGAL, POM2_TRACE_IIE_REBOOT, POM2_TRACE_LSS,\n"
+        "  POM2_TRACE_WRITEFLUX, POM2_TRACE_IWM_SENSE, POM2_TRACE_SMARTPORT_BUS,\n"
+        "  POM2_TRACE_HDV, POM2_TRACE_CFFA, POM2_TRACE_FUJINET, POM2_SP_TRACE,\n"
+        "  POM2_MOUSE_TRACE, POM2_DEBUG_DISK, POM2_DEBUG_DISK_READS,\n"
+        "  POM2_DUMP_SLOT_ROM.\n");
 }
 
 } // namespace

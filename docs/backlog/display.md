@@ -127,7 +127,7 @@ on 2026-10-19 (`normaliseCharRom` handles the marked dump).
 
 ## DISPLAY-002 — Golden coverage gaps
 
-**Priority:** 🟢 · **State:** Partial. ALTCHAR/character-ROM golden gaps closed
+**Priority:** ✅ · **State:** Done 2026-11-19 (measured; no change); removed from the active index.
 2026-11-07; PAL split goldens closed 2026-11-17; only the fallback-upload
 measurement remains.
 
@@ -157,8 +157,17 @@ inverse lowercase and main/aux cell order. The ROM is **not tracked**:
 `fetch-test-media` action. Missing or corrupt ROMs fail explicitly with the
 fixture-fetch command, including in record mode.
 
-**Remaining:** OE-GPU's purported unused ~430 KB fallback upload is still a
-measurement question, not a confirmed performance defect.
+**Measured 2026-11-19 — confirmed, not worth a change.** Temporary counters
+in `drawScreenImage` (not committed), POM2 under Composite (OpenEmulator)
+GPU on an Apple M1, an isolated `HOME`: `uploadScreenTexture()` runs every
+frame. On DIX (3000 frames) the upload went unused on 1492 — the
+full-graphics frames the shader presents; on an Applesoft text screen (2400
+frames) it was used on every one (sharp text, mixed bands and the
+shader-unavailable fallback present `screenTexture`). Its CPU-side cost:
+84-118 µs a frame for 215-400 KB, about 0.5 % of a 20 ms PAL frame (the
+GPU-side transfer was not timed). Skipping it would need the OE decision
+moved ahead of the upload and a re-upload on every fallback, for a tenth
+of a millisecond: kept as is. Reopen only on a profile where it shows.
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md#source-1079);
 [triage 2026-10-28](../audits/backlog-triage-2026-10-28.md). Earlier waves

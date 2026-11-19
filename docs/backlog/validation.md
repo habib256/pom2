@@ -151,9 +151,20 @@ Later gameplay and hardware comparison remain outside these checks.
 
 ## VALIDATION-005 — A2 File Cmd: one-in-three GUI-only DHGR failure
 
-**Priority:** 🟢 · **State:** Unknown ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): six GUI runs on a copy of the A2 File Cmd 1.0 image; close as stale if it does not reproduce.
+**Priority:** ✅ · **State:** Closed 2026-11-19 — not reproduced on A2 File Cmd 1.0 (six runs); removed from the active index.
 
 **Acceptance criterion:** Reproduce or refute `DHGR.RAW: not an image` followed by a corrupt HGR in the GUI with A2 File Cmd 1.0, on a copy of `hdv/A2FILECMD-PRODOS-XL-65C02-enhanced-1.0.2mg` (the 0.9.5 image is no longer in the tree).
 
 **Evidence:** [original report](../archive/todo-2026-10-05.md), "Retour A2FC 2026-09-09": seen in the GUI only, once in three, on 0.6.8; never headless, card or not; same bytes in RAM. Points after `Apple2Display::render` or at GUI timing. Recovered 2026-10-07.
+
+**Closed 2026-11-19 — not reproduced.** The GUI (`build/POM2 --preset iie`,
+an isolated `HOME`, fresh-install settings: Composite OpenEmulator GPU) was
+driven six times through the AI control server on a fresh copy of the 1.0
+image: `DEMO/PICTURES/CARDS/DHGR.RAW` opened by RETURN, the load (~12 s)
+waited for, the screen taken with `/screen.ppm`. All six: no `not an image`,
+the sixteen-colour double hi-res card, the same frame hash
+(`9c58f47f4b1e74c2`). **Limit:** `/screen.ppm` is POM2's CPU render, not the
+GPU-presented window — the stage the 2026-09-09 report pointed at — so a
+presentation-only fault would not show in this test; the report itself was
+against A2FC 0.6.8. Reopen on a new sighting with the window captured.
 

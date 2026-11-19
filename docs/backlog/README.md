@@ -45,7 +45,9 @@ and `pom2_headless --load` (ARCH-017); Mockingboard VGM/YM and mixed-bus WAV
 capture (AUDIO-013); per-drive link parameters, `--mount sNdM:path` and the
 browser's Copy link (WASM-004); instruction trace to a
 file and the callgrind export (UI-017); `pom2_corpus --video` (UI-021);
-`?embed=1` with `postMessage` events (WASM-005).
+`?embed=1` with `postMessage` events (WASM-005); DISPLAY-002's OE-GPU
+upload measured (0.1 ms a frame, kept); VALIDATION-005 not reproduced on
+A2FC 1.0.
 
 **2026-11-18 batch** (CHANGELOG of that date): cc65 `.dbg` import into the
 debugger's Source and Symbols sections; deater's six NTSC //e productions as

@@ -34,6 +34,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -105,6 +106,38 @@ void testBlankDisk()
     // Not given at all: nothing happens (the frame loop keys off the path).
     auto none = parse({"POM2"}, help);
     assert(none.has_value() && none->blankDiskPath.empty());
+}
+
+// ARCH-010 step 1: every POM2_* variable a source reads with getenv is named
+// in printUsage's Environment section. A variable nobody can discover is a
+// setting that does not exist for the user; this makes adding one without
+// documenting it a test failure.
+void checkEnvironmentDocumented()
+{
+    std::ifstream u("src/CliDispatcher.cpp");
+    if (!u) { std::printf("  (skipped: run from the source tree)\n"); return; }
+    const std::string usage((std::istreambuf_iterator<char>(u)), std::istreambuf_iterator<char>());
+    const auto from = usage.find("void printUsage()");
+    const auto env = usage.find("Environment (", from);
+    assert(from != std::string::npos && env != std::string::npos);
+    const std::string section = usage.substr(env, usage.find("\n}", env) - env);
+    const std::regex getenvCall(R"(getenv\s*\(\s*"(POM2_[A-Z0-9_]+)\")");
+    std::set<std::string> read;
+    for (const auto& entry : fs::recursive_directory_iterator("src")) {
+        const auto ext = entry.path().extension().string();
+        if (ext != ".cpp" && ext != ".h" && ext != ".mm") continue;
+        std::ifstream f(entry.path());
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        for (std::sregex_iterator it(text.begin(), text.end(), getenvCall), end; it != end; ++it)
+            read.insert((*it)[1].str());
+    }
+    assert(read.size() >= 20 && "the scan found the variables");
+    for (const std::string& v : read) {
+        if (section.find(v) == std::string::npos)
+            std::fprintf(stderr, "  %s is read by the sources but not in --help's Environment\n", v.c_str());
+        assert(section.find(v) != std::string::npos);
+    }
+    std::printf("  %zu POM2_* variables, all in --help\n", read.size());
 }
 
 // `--mount sNdM:<path>` (WASM-004): the browser's per-drive link parameters
@@ -704,7 +737,9 @@ int main()
     std::printf("usage text and parser agree (POM2 and pom2_headless): OK\n");
     testPositionalDisk();
     std::printf("parseCli positional disk: OK\n");
-    testMountFlag();
+    checkEnvironmentDocumented();
+    std::printf("environment variables documented: OK\n");
+        testMountFlag();
     std::printf("parseCli --mount sNdM:path: OK\n");
     testKioskFlagWithDisk();
     std::printf("parseCli --kiosk + disk: OK\n");

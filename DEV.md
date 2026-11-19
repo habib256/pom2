@@ -4262,6 +4262,7 @@ then drives three of them — `pom2_disk`, `pom2_dos33`, `pom2_prodos` (not `pom
 |---|---|---|
 | `DiskBuilder.*` | a formatted empty DOS 3.3 disk; the "not a startup disk" boot sector; the direct-boot disk; DOS ↔ ProDOS sector order | `disk_builder`, `disk_builder_boot` |
 | `ProDOSDiskFs.*` | a ProDOS volume edited in place: format, list, read, write, remove, mkdir | `prodos_disk_fs` |
+| `ProDOSImageFile.*` | the FILE around the volume: `.po`/`.hdv` blocks, 140 KB `.dsk`/`.do` DOS order, `.2mg` by its magic (ProDOS or DOS order; header and chunks kept byte for byte; the lock bit refuses writes; nibble 2IMG refused) | `prodos_image_file` |
 | `ApplesoftTokenizer.*` | a text listing → the program as Applesoft stores it | `applesoft_tokenizer` |
 | `AppleSingle.*` | the wrapper cc65, CiderPress and Cadius use to carry a type; a wrapper with a resource fork is refused on `put` unless `--data-fork-only` says to drop it | `apple_single`, `host_file_import` |
 | `HostFileImport.*` | what a host file becomes on an Apple volume (one decision for every `put`) | `host_file_import` |
