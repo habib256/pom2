@@ -62,9 +62,13 @@ var pom2SetupLink = (function () {
     const firsts = drives.filter(d => d.drive === 1);
     let boot = null;
     let legacy = qs.get('url') || (qs.get('nodisk') === '1' ? null : qs.get('disk'));
-    // The legacy keys obey the same rule as the drive keys (round 2).
-    if (legacy && !isRemote(legacy) && !isBundledPath(legacy)) {
-      rejected.push({ key: qs.get('url') ? 'url' : 'disk', value: legacy });
+    // ?url= must be what its name says (round 2): a path given there used to
+    // pass as a local file. ?disk= keeps its long-standing meaning — a path
+    // in the page's own filesystem, the bundle or a stored image (the
+    // persistence smoke boots /persistent/… through it); the worst a link
+    // can do with it is boot a disk the visitor already holds.
+    if (qs.get('url') && !isRemote(legacy)) {
+      rejected.push({ key: 'url', value: legacy });
       legacy = null;
     }
     if (firsts.length) {
