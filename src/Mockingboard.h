@@ -87,6 +87,7 @@
 #define POM2_MOCKINGBOARD_H
 
 #include "Ay3_8910.h"
+#include "AyMusicExport.h"
 #include "AyEventRing.h"
 #include "AudioSource.h"
 #include "SlotBusClock.h"
@@ -215,6 +216,18 @@ public:
     // state), including the Sound II SSI263 registers/timer/PCM cursor.
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
+
+    // ─── Music capture (AUDIO-013) ───────────────────────────────────────
+    /// Start recording every AY register store and /RESET with its bus-cycle
+    /// stamp — the stamp the audio thread replays, so the capture is exact.
+    /// The chips' registers at this moment become the capture's initial
+    /// state. `cyclesPerFrame` (the video frame) is kept for a YM export.
+    /// Restarting drops a capture in progress. Caller holds `stateMutex`.
+    void startAyCapture(int cyclesPerFrame);
+    /// Stop and hand the capture back, its end stamped at the current cycle.
+    /// A card that was not recording returns an empty capture.
+    pom2::aymusic::Capture stopAyCapture();
+    bool ayCaptureActive() const;
 
     // ─── Test hooks ──────────────────────────────────────────────────────
     /// Direct read of an AY register (peeks the latched register bank).
@@ -430,6 +443,12 @@ private:
     /// can leave it low for many writes; only the falling edge is an
     /// event.
     bool     ayResetHeld_[2] = { false, false };
+
+    /// The capture in progress, or null. Guarded by `mtx`; filled by
+    /// `queueAyEvent`, the one place every AY event passes.
+    std::unique_ptr<pom2::aymusic::Capture> ayCapture_;
+    /// The bus "now" at an instruction boundary, synced. Caller holds `mtx`.
+    uint64_t syncedBusNow();
 
     /// Queue one cycle-stamped AY event (register store or `kRegAyReset`)
     /// for the audio thread. Caller must hold `mtx`.

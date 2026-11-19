@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "AudioDevice.h"
+#include "WavRecorder.h"
 
 #include "AudioMix.h"
 #include "AudioBufferPolicy.h"
@@ -103,6 +104,13 @@ void AudioDevice::mixSources(float* output, int frameCount)
     p.suspended  = suspended_.load(std::memory_order_relaxed);
     p.sampleRate = actualSampleRate;
     pom2::mixSourcesInto(output, frameCount, sources, p, mix_);
+    if (captureRing_) captureRing_->push(output, frameCount);
+}
+
+void AudioDevice::setCaptureRing(pom2::AudioCaptureRing* ring)
+{
+    std::lock_guard<std::mutex> lock(sourcesMutex);
+    captureRing_ = ring;
 }
 
 void AudioDevice::setMasterVolume(float v)

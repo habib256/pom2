@@ -40,9 +40,11 @@
 #include "Debugger.h"
 #include "DebuggerSymbols.h"
 #include "DebuggerSourceMap.h"
+#include "InstructionTrace.h"
 #include "Opcode6502.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -123,6 +125,11 @@ private:
     std::vector<std::string> sourceLines_;
     bool sourceLoaded_ = false;
     std::string symbolStatus_;
+    /// UI-017: the instruction trace this panel attached (null = none) and
+    /// what the last trace / callgrind export said.
+    std::unique_ptr<InstructionTrace> trace_;
+    std::string traceStatus_;
+    void drawTraceAndExport(EmulationController& ctrl);
     char assemblyAddress_[8] = {"0300"};
     char assemblySource_[128] = {"LDA #$00"};
     std::string assemblyStatus_;

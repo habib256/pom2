@@ -285,7 +285,7 @@ open: run the WinMM backend on Windows and the ALSA backend on a Linux host
 
 ## AUDIO-013 — WAV capture and Mockingboard VGM/YM export
 
-**Priority:** 🟠 · **State:** Ready; chosen on 2026-11-18 after UI-015 (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19; removed from the active index.
 
 No Apple II emulator exports Mockingboard music as VGM (research of 2026-11-18); the format
 supports two AY-3-8910s. POM2's AY writes are already cycle-stamped
@@ -296,6 +296,20 @@ of the mixed output.
 independent player with the same register writes at the same 44.1 kHz sample
 positions (round trip pinned by a test); the WAV is sample-identical between
 two runs.
+
+**Done 2026-11-19:** `MockingboardCard::startAyCapture` records every AY
+store and /RESET at the bus-cycle stamp the audio thread already replays;
+`AyMusicExport` writes VGM 1.71 (both chips, dual-chip clock bit) or YM5
+(first chip, one frame a step). The mixed bus goes to a WAV through a
+lock-free ring (`WavRecorder.h`, `AudioDevice::setCaptureRing`). GUI: Audio
+Mixer ▸ Recording. Headless: `--mockingboard`, `--vgm`, `--ym`, `--wav`
+(mixed offline from emulated cycles). Pinned by `ay_music_export` (a real
+card driven through its 6522s, read back by a VGM reader written from the
+spec: same writes, same 44.1 kHz samples) and
+`headless_audio_capture_repeatable` (two runs, identical VGM/YM/WAV).
+**Limits:** not yet played in an independent player (no VGM player on the
+dev machine); a corpus title's music not yet captured; the Phasor's four
+AYs are not recorded (VGM holds two).
 
 <a id="audio-014"></a>
 

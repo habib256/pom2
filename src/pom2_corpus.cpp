@@ -48,6 +48,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -95,6 +96,10 @@ void usage()
         "                    comparing (only the titles that ran are replaced)\n"
         "  --report FILE.md  write the result as a Markdown table (docs/audits/)\n"
         "  --frames DIR      write every checked frame as DIR/<title>__<check>.png\n"
+        "  --video DIR       write EVERY video frame of each title, in emulated time,\n"
+        "                    as DIR/<title>/NNNNN.png with frames.txt (index, hash);\n"
+        "                    each check must equal the last frame written. With\n"
+        "                    ffmpeg on the PATH, also DIR/<title>.mp4\n"
         "  --list            print the titles and exit\n"
         "\n"
         "Exit 0: nothing failed. 1: a frame changed, is unrecorded, or a setup\n"
@@ -180,6 +185,8 @@ struct TitleResult {
     bool completed = false; // every script step ran, independent of frame matches
     double seconds = 0;   // emulated
     double wall = 0;      // host seconds
+    int videoFrames = 0;  // --video: frames written
+    std::string videoMp4; // --video: the MP4, when ffmpeg made one
 };
 
 const char* outcomeName(Outcome o)
@@ -203,6 +210,7 @@ struct Options {
     bool list = false;
     fs::path report;
     fs::path frames;
+    fs::path video;   // UI-021: every video frame of each title
 };
 
 fs::path scratchDir()
@@ -360,6 +368,34 @@ TitleResult runTitle(const Title& t, const Options& opt,
         return fail("boot slot " + std::to_string(t.bootSlot) + ": " + core.lastError());
     }
 
+    // --video: one PNG per finished video frame. Run slices (4096 cycles)
+    // are shorter than a frame, so polling the frame's start after each one
+    // sees every frame once — the emulated frame, not the host's refresh.
+    const fs::path videoDir = opt.video.empty() ? fs::path() : opt.video / t.id;
+    std::ofstream videoIndex;
+    std::uint64_t videoStart = core.lastVideoFrameStart();
+    int videoFrames = 0;
+    std::string videoLastHash;
+    if (!videoDir.empty()) {
+        std::error_code ec;
+        fs::remove_all(videoDir, ec);
+        fs::create_directories(videoDir, ec);
+        videoIndex.open(videoDir / "frames.txt");
+        if (!videoIndex) return fail("--video: cannot write " + (videoDir / "frames.txt").string());
+    }
+    auto captureVideo = [&] {
+        if (videoDir.empty() || core.lastVideoFrameStart() == videoStart) return;
+        videoStart = core.lastVideoFrameStart();
+        const pom2::FramebufferView f = core.renderFrame();
+        if (!f.pixels) return;
+        videoLastHash = pom2::corpus::hashHex(pom2::corpus::frameHash(f.pixels, f.width, f.height));
+        char name[16];
+        std::snprintf(name, sizeof name, "%05d.png", videoFrames);
+        stbi_write_png((videoDir / name).string().c_str(), f.width, f.height, 4, f.pixels, f.width * 4);
+        videoIndex << videoFrames << ' ' << videoLastHash << '\n';
+        ++videoFrames;
+    };
+
     long long cycles = 0;
     bool anyChanged = false, anyUnrecorded = false;
     for (const Step& s : t.steps) {
@@ -367,8 +403,10 @@ TitleResult runTitle(const Title& t, const Options& opt,
         case Step::Kind::Run: {
             const long long end = cycles + static_cast<long long>(s.seconds * clockHz);
             // 4096-cycle slices: the chunk the application's worker runs.
-            while (cycles < end)
+            while (cycles < end) {
                 cycles += core.run(static_cast<int>(std::min<long long>(4096, end - cycles)));
+                captureVideo();
+            }
             break;
         }
         case Step::Kind::Swap: {
@@ -390,6 +428,11 @@ TitleResult runTitle(const Title& t, const Options& opt,
             CheckResult c;
             c.name = s.text;
             c.hash = pom2::corpus::hashHex(pom2::corpus::frameHash(f.pixels, f.width, f.height));
+            // UI-021's acceptance, checked on every run that records: the
+            // check is the frame the video holds at that moment.
+            if (!videoDir.empty() && videoFrames > 0 && c.hash != videoLastHash)
+                return fail("--video: check " + s.text + " is " + c.hash +
+                            ", the last video frame is " + videoLastHash);
             const auto it = expected.find({t.id, s.text});
             if (it == expected.end()) {
                 c.state = CheckResult::State::Unrecorded;
@@ -413,6 +456,27 @@ TitleResult runTitle(const Title& t, const Options& opt,
     }
     r.completed = true;
     r.seconds = static_cast<double>(cycles) / clockHz;
+    if (!videoDir.empty()) {
+        videoIndex.close();
+        r.videoFrames = videoFrames;
+        // An MP4 beside the frames when ffmpeg is there: nearest-neighbour to
+        // 560x384 (a 280-wide frame doubles, the 80-column 560 keeps its
+        // pixels), at the standard's exact frame rate.
+        const auto& vt = pom2VideoTiming(cfg.videoStandard);
+        const std::string rate = std::to_string(static_cast<long long>(vt.cpuClockHz)) + "/" +
+                                 std::to_string(vt.cyclesPerFrame);
+        const std::string mp4 = (opt.video / (t.id + ".mp4")).string();
+        const std::string cmd = "ffmpeg -loglevel error -y -framerate " + rate + " -i \"" +
+            (videoDir / "%05d.png").string() + "\" -vf scale=560:384:flags=neighbor "
+            "-pix_fmt yuv420p \"" + mp4 + "\"";
+#if defined(_WIN32)
+        const char* probe = "ffmpeg -version > NUL 2>&1";
+#else
+        const char* probe = "ffmpeg -version > /dev/null 2>&1";
+#endif
+        if (videoFrames > 0 && std::system(probe) == 0)
+            r.videoMp4 = std::system(cmd.c_str()) == 0 ? mp4 : std::string();
+    }
     if (core.cpuState().halted) r.reason = "CPU halted (KIL/STP) at the end";
     r.outcome = anyChanged ? Outcome::Fail : anyUnrecorded ? Outcome::New : Outcome::Pass;
     r.wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
@@ -461,6 +525,7 @@ int main(int argc, char** argv)
         else if (a == "--bless") opt.bless = true;
         else if (a == "--report") opt.report = value();
         else if (a == "--frames") opt.frames = value();
+        else if (a == "--video") opt.video = value();
         else if (a == "--list") opt.list = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
@@ -530,6 +595,10 @@ int main(int argc, char** argv)
             char timing[800];   // GCC sizes %f for DBL_MAX
             std::snprintf(timing, sizeof timing, "  %.0f s emulated in %.1f s", r.seconds, r.wall);
             line += "  " + checkSummary(r) + timing;
+            if (!opt.video.empty())
+                line += "  — " + std::to_string(r.videoFrames) + " video frames in " +
+                        std::to_string(r.seconds) + " s" +
+                        (r.videoMp4.empty() ? std::string() : " (" + r.videoMp4 + ")");
         }
         if (!r.reason.empty()) line += "  — " + r.reason;
         std::printf("%s\n", line.c_str());

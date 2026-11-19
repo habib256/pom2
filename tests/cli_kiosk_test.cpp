@@ -107,6 +107,31 @@ void testBlankDisk()
     assert(none.has_value() && none->blankDiskPath.empty());
 }
 
+// `--mount sNdM:<path>` (WASM-004): the browser's per-drive link parameters
+// reach the machine through this flag, in Apple2TS's drive naming.
+void testMountFlag()
+{
+    bool help = false;
+    auto p = parse({"POM2", "boot.dsk", "--mount", "s6d2:side2.dsk",
+                    "--mount", "S5D1:/abs/game.po", "--mount", "s5d14:u14.po"}, help);
+    assert(p.has_value() && !help);
+    assert(p->bootDiskPath == "boot.dsk");
+    assert(p->mounts.size() == 3);
+    assert(p->mounts[0].slot == 6 && p->mounts[0].drive == 2 && p->mounts[0].path == "side2.dsk");
+    assert(p->mounts[1].slot == 5 && p->mounts[1].drive == 1 && p->mounts[1].path == "/abs/game.po");
+    assert(p->mounts[2].drive == 14);
+    // A path may hold a colon of its own: only the first one separates.
+    auto win = parse({"POM2", "--mount", "s6d1:C:\\disks\\a.dsk"}, help);
+    assert(win.has_value() && win->mounts[0].path == "C:\\disks\\a.dsk");
+    for (const char* bad : { "s6d2", "s6d2:", "s8d1:a.dsk", "s0d1:a.dsk", "s6d0:a.dsk",
+                             "s6d15:a.dsk", "x6d1:a.dsk", "s6x1:a.dsk", "s6d1x:a.dsk", "a.dsk" }) {
+        auto r = parse({"POM2", "--mount", bad}, help);
+        assert(!r.has_value() && "a malformed --mount is refused, not guessed");
+    }
+    auto none = parse({"POM2"}, help);
+    assert(none.has_value() && none->mounts.empty());
+}
+
 void testFujiNetSlotExplicitness()
 {
     bool help = false;
@@ -679,6 +704,8 @@ int main()
     std::printf("usage text and parser agree (POM2 and pom2_headless): OK\n");
     testPositionalDisk();
     std::printf("parseCli positional disk: OK\n");
+    testMountFlag();
+    std::printf("parseCli --mount sNdM:path: OK\n");
     testKioskFlagWithDisk();
     std::printf("parseCli --kiosk + disk: OK\n");
     testKioskFlagOnly();

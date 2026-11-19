@@ -214,6 +214,13 @@ struct CliPlan {
     /// 0 = drive 1, 1 = drive 2 (the default).
     int                             blankDiskDrive = 1;
 
+    /// `--mount sNdM:<path>` (repeatable, WASM-004): put an image in slot N,
+    /// drive M — Apple2TS's drive naming, the browser's per-drive link
+    /// parameters — AFTER the positional disk booted, without booting it.
+    /// Drive 1-2 on a Disk II, 1-14 on a SmartPort chain.
+    struct Mount { int slot = 0; int drive = 0; std::string path; };
+    std::vector<Mount>              mounts;
+
     /// `--rgb-card-invert-bit7` — Le Chat Mauve / Video-7 RGB-card
     /// Dragon-Wars-compat toggle. XORs bit 7 of every Chat Mauve HGR /
     /// DHGR-Mixed source byte at decode time, restoring the intended

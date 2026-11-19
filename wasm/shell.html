@@ -78,14 +78,49 @@
     if (!progressEl || !total) return;
     progressEl.style.width = Math.min(100, (100 * num / total)) + '%';
   }
+  // Embed mode (WASM-005): ?embed=1 runs the machine without POM2's menus
+  // and panels (the CLI's --kiosk: the Apple II screen and nothing else,
+  // settings untouched) and tells the hosting page what happens, through
+  // window.parent.postMessage({source: 'pom2', event, detail}):
+  //   boot     the first frame is on screen      detail: {preset}
+  //   pause    the machine stopped (menu, tab hidden, breakpoint)
+  //   running  it runs again
+  //   error    a load or runtime failure         detail: {message}
+  // Nothing is posted without embed=1, or when the page is not in a frame.
+  // The messages carry no visitor data, so they go to any parent ('*').
+  const _embedQs = new URLSearchParams(window.location.search);
+  const _embed = _embedQs.get('embed') === '1';
+  function pom2Post(event, detail) {
+    if (!_embed || window.parent === window) return;
+    try { window.parent.postMessage({ source: 'pom2', event: event, detail: detail || null }, '*'); }
+    catch (e) { /* a detached parent */ }
+  }
+  function pom2Error(message) {
+    errEl.style.display = 'block';
+    errEl.textContent = message;
+    pom2Post('error', { message: message });
+  }
+  if (_embed) document.getElementById('repoLink').classList.add('hidden');
   window.pom2FirstFrameReady = function() {
+    pom2Post('boot', { preset: (_embedQs.get('preset') || 'iic-pal').replace(/ /g, '+') });
+    if (_embed) {
+      // Running ⇄ stopped, as the machine reports it: polled, so nothing in
+      // the emulator has to know a host page exists.
+      let running = null;
+      setInterval(function() {
+        if (!Module._pom2_browser_running) return;
+        const now = Module._pom2_browser_running() !== 0;
+        if (running !== null && now !== running) pom2Post(now ? 'running' : 'pause');
+        running = now;
+      }, 250);
+    }
     document.getElementById('bootSplash').classList.add('hidden');
     setProgress(1, 1);
     setStatus("POM2 ready.");
     setTimeout(() => {
       document.getElementById('status').classList.add('hidden');
     }, 250);
-    setTimeout(() => {
+    if (!_embed) setTimeout(() => {
       document.getElementById('repoLink').classList.add('hidden');
     }, 10000);
   };
@@ -108,84 +143,24 @@
   // must send CORS headers — raw.githubusercontent.com does), so a game
   // repository can link "play in the browser" without POM2 shipping its disk:
   //   ?preset=ii%2B&url=https://raw.githubusercontent.com/habib256/pom2games/main/dist/SNAKE.dsk
-  // It wins over ?disk= and ?nodisk=. The download starts now, alongside
-  // POM2.data; preRun below holds main() until it lands in MEMFS.
+  // It wins over ?disk= and ?nodisk=, and preRun below holds main() until it
+  // lands in MEMFS.
+  // Per-drive parameters (WASM-004, wasm/setup_link.js): ?s6d1= ?s6d2=
+  // ?s5d1= ?s7d1= … — a URL or a bundled path each, Apple2TS's keys — and
+  // ?boot=sNdM to choose which one boots (default: drive 1 of the highest
+  // slot, the Autostart ROM's scan order). The others are mounted after the
+  // boot with `--mount sNdM:<path>`. File ▸ Copy link to this setup writes
+  // such a link for the running machine.
+  //   ?preset=iie-pal&s6d1=https://…/side1.dsk&s6d2=https://…/side2.dsk
+  // The preset is read here; the drives are planned and downloaded in preRun
+  // below, once wasm/setup_link.js (a --pre-js) has defined the planner.
   const _qs = new URLSearchParams(window.location.search);
   // A '+' typed unencoded (?preset=ii+, iic+) decodes to a space, and the
   // CLI rejects "ii " — main() returned before the first frame and the page
   // sat on its loading message. No preset name contains a space.
   const _preset = (_qs.get('preset') || 'iic-pal').replace(/ /g, '+');
-  const _url    = _qs.get('url');
-  const _disk   = (_url || _qs.get('nodisk') === '1') ? null
-                 : (_qs.get('disk') || 'bundled_disks/DIX-fix.po');
   const _args = ['--preset', _preset];
-  if (_disk) _args.push(_disk);
-
-  // Same bounds and extensions as File > Import disk (browser_files.js): the
-  // CLI routes the positional by its extension, so the name must keep it.
-  const _urlDiskLimit = 64 * 1024 * 1024;
-  const _urlDiskExt = /\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image)$/i;
-  const _urlDisk = _url ? (async function() {
-    let target;
-    try { target = new URL(_url, window.location.href); }
-    catch (e) { throw new Error('not a valid URL'); }
-    if (target.protocol !== 'https:' && target.protocol !== 'http:')
-      throw new Error('only http(s) URLs are accepted');
-    const name = decodeURIComponent(target.pathname.split('/').pop() || '');
-    if (!_urlDiskExt.test(name))
-      throw new Error('the file name must end in .dsk, .do, .d13, .po, .nib, ' +
-                      '.woz, .moof, .2mg, .hdv or .image');
-    // preRun holds main() on this download, so a server that stalls must
-    // not hold the page on the splash forever: abort after 60 s and boot
-    // without the disk. And a body with no (or a false) Content-Length is
-    // counted as it streams, so a huge one is cut at the limit instead of
-    // being buffered whole first.
-    const abort = new AbortController();
-    const deadline = setTimeout(function() { abort.abort(); }, 60000);
-    try {
-      let response;
-      try {
-        response = await fetch(target.href, { mode: 'cors', credentials: 'omit',
-                                              signal: abort.signal });
-      } catch (e) {
-        if (abort.signal.aborted) throw new Error('download timed out after 60 s');
-        throw new Error('download failed (network error, or the server does ' +
-                        'not allow cross-origin requests)');
-      }
-      if (!response.ok) throw new Error('download failed: HTTP ' + response.status);
-      const declared = Number(response.headers.get('Content-Length') || 0);
-      if (declared > _urlDiskLimit) throw new Error('image exceeds 64 MiB');
-      const reader = response.body.getReader();
-      const chunks = [];
-      let total = 0;
-      for (;;) {
-        let r;
-        try { r = await reader.read(); }
-        catch (e) {
-          throw new Error(abort.signal.aborted ? 'download timed out after 60 s'
-                                               : 'download interrupted');
-        }
-        if (r.done) break;
-        total += r.value.length;
-        if (total > _urlDiskLimit) {
-          abort.abort();
-          throw new Error('image exceeds 64 MiB');
-        }
-        chunks.push(r.value);
-      }
-      if (total === 0) throw new Error('the server returned an empty file');
-      const bytes = new Uint8Array(total);
-      let at = 0;
-      for (const c of chunks) { bytes.set(c, at); at += c.length; }
-      return { name: name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-128), bytes };
-    } finally {
-      clearTimeout(deadline);
-    }
-  })() : null;
-  // Keep a rejection from reaching the page-wide unhandledrejection handler
-  // before preRun looks at it: a bad link is reported and the machine boots
-  // without a disk, it is not a load failure.
-  if (_urlDisk) _urlDisk.catch(function() {});
+  if (_embed) _args.push('--kiosk');
 
   var Module = {
     // The app reads assets from MEMFS itself. Do not let Emscripten's
@@ -205,8 +180,7 @@
       // restore event nobody listens to. Letting the default through makes the
       // loss final, which is exactly what the message below tells the user.
       c.addEventListener('webglcontextlost', () => {
-        errEl.style.display = 'block';
-        errEl.textContent = 'WebGL context lost. Reload the page.';
+        pom2Error('WebGL context lost. Reload the page.');
       }, false);
       return c;
     })(),
@@ -233,14 +207,12 @@
       }
     },
     onAbort: function(reason) {
-      errEl.style.display = 'block';
-      errEl.textContent = "POM2 failed while loading or initializing:\n" + reason;
+      pom2Error("POM2 failed while loading or initializing:\n" + reason);
     },
   };
   window.addEventListener('unhandledrejection', event => {
-    errEl.style.display = 'block';
-    errEl.textContent = "POM2 failed while loading or initializing:\n" +
-      (event.reason && (event.reason.stack || event.reason.message || event.reason));
+    pom2Error("POM2 failed while loading or initializing:\n" +
+      (event.reason && (event.reason.stack || event.reason.message || event.reason)));
   });
   // Persistent settings: mount IndexedDB at /persistent, where the emulator
   // keeps state.cfg and imgui.ini (pom2::userConfigDir()).
@@ -276,52 +248,62 @@
   });
 
   Module.preRun = (Module.preRun || []);
-  // ?url=: hold main() until the image is in MEMFS, then hand it over as the
-  // positional disk. Module.arguments is the very array callMain() reads, so
-  // pushing into it here (before the dependency is released) is enough.
-  if (_urlDisk) Module.preRun.push(function() {
+  // The drives: hold main() until every image is in MEMFS, then hand them
+  // over — the boot disk as the positional, the others as `--mount`.
+  // Module.arguments is the very array callMain() reads, so pushing into it
+  // here (before the dependency is released) is enough. A disk that cannot
+  // be had is reported and the machine starts without it.
+  Module.preRun.push(function() {
+    const link   = Module.pom2SetupLink;
     const fs     = Module.FS || (typeof FS !== 'undefined' ? FS : null);
     const addDep = Module.addRunDependency ||
                    (typeof addRunDependency !== 'undefined' ? addRunDependency : null);
     const delDep = Module.removeRunDependency ||
                    (typeof removeRunDependency !== 'undefined' ? removeRunDependency : null);
-    if (addDep) addDep('pom2-url-disk');
-    setStatus('Loading POM2: downloading the disk image…');
-    _urlDisk.then(function(disk) {
-      fs.mkdirTree('/uploads/url');
-      const path = '/uploads/url/' + disk.name;
-      // canOwn: MEMFS keeps this buffer instead of copying it, and the
-      // resolved promise (a page-lifetime const) lets go of it, so the image
-      // is not held twice in the JS heap for the whole session.
-      fs.writeFile(path, disk.bytes, { canOwn: true });
-      disk.bytes = null;
-      _args.push(path);
-    }).catch(function(e) {
-      const msg = 'Could not load the disk image from\n' + _url +
-                  '\n' + e.message + '\nStarting without a disk.';
-      errEl.style.display = 'block';
-      errEl.textContent = msg;
-      // Only hide OUR message: an abort or a lost GL context reported in
-      // the meantime writes this same box and must stay up.
-      setTimeout(function() {
-        if (errEl.textContent === msg) errEl.style.display = 'none';
-      }, 12000);
+    const plan = link.planDrives(window.location.search, 'bundled_disks/DIX-fix.po');
+    const entries = (plan.boot ? [Object.assign({ boot: true }, plan.boot)] : [])
+                    .concat(plan.mounts);
+    if (!entries.length) return;
+    const lazy = Module.pom2LazyDisks || [];
+    const remote = entries.some(function(e) { return link.isRemote(e.value); });
+    if (addDep) addDep('pom2-drives');
+    if (remote) setStatus('Loading POM2: downloading the disk image…');
+    else if (entries.some(function(e) { return lazy.includes(e.value); }))
+      setStatus('Loading POM2: downloading A2FileCmd…');
+    const failures = [];
+    Promise.all(entries.map(function(e) {
+      let job;
+      if (link.isRemote(e.value)) {
+        // One folder per drive: two drives may hold files of the same name.
+        job = link.fetchDiskUrl(e.value, '/uploads/url/' + (e.key || 'boot'), fs)
+          .then(function(path) { Module.pom2UrlByPath[path] = e.value; return path; });
+      } else if (lazy.includes(e.value)) {
+        job = Module.pom2FetchBundledDisk(e.value);
+      } else {
+        job = Promise.resolve(e.value);
+      }
+      return job.then(function(path) { e.path = path; },
+                      function(err) { failures.push((e.key || 'disk') + ' ' + e.value +
+                                                    '\n' + err.message); });
+    })).then(function() {
+      for (const e of entries) {
+        if (!e.path) continue;
+        if (e.boot) _args.push(e.path);
+        else _args.push('--mount', e.key + ':' + e.path);
+      }
+      if (failures.length) {
+        const msg = 'Could not load:\n' + failures.join('\n') +
+                    '\nStarting without ' + (failures.length > 1 ? 'them.' : 'it.');
+        pom2Error(msg);
+        // Only hide OUR message: an abort or a lost GL context reported in
+        // the meantime writes this same box and must stay up.
+        setTimeout(function() {
+          if (errEl.textContent === msg) errEl.style.display = 'none';
+        }, 12000);
+      }
     }).finally(function() {
-      if (delDep) delDep('pom2-url-disk');
+      if (delDep) delDep('pom2-drives');
     });
-  });
-  Module.preRun.push(function() {
-    if (!_disk || !(Module.pom2LazyDisks || []).includes(_disk)) return;
-    const addDep = Module.addRunDependency || addRunDependency;
-    const delDep = Module.removeRunDependency || removeRunDependency;
-    addDep('pom2-bundled-disk');
-    setStatus('Loading POM2: downloading A2FileCmd…');
-    Module.pom2FetchBundledDisk(_disk).catch(function(error) {
-      const index = _args.indexOf(_disk);
-      if (index >= 0) _args.splice(index, 1);
-      errEl.style.display = 'block';
-      errEl.textContent = 'Disk download failed: ' + error.message + '\nStarting without a disk.';
-    }).finally(function() { delDep('pom2-bundled-disk'); });
   });
   Module.preRun.push(function() {
     // Reach the runtime through `Module` rather than the bare globals: the

@@ -2,8 +2,9 @@
 
 Action queue reconciled **2026-11-18** (after the research of the same day:
 competing emulators, hardware references, developer tooling, distribution,
-community needs). Current release: **v1.2.1**. The index covers **48 active
-domain entries**, **10 release items** and **30 frozen entries**; each task's
+community needs); ARCH-017, AUDIO-013, WASM-004, UI-017, UI-021 and
+WASM-005 closed 2026-11-19. Current release: **v1.2.1**. The index covers
+**42 active domain entries**, **10 release items** and **30 frozen entries**; each task's
 acceptance criterion and evidence live in its domain entry, not here.
 
 The [scope ruling](docs/decisions/project-scope.md#the-scope-ruling) still
@@ -23,12 +24,9 @@ demoscene. One at a time, each closed by its own acceptance test.
 | Order | Task | What closes it |
 |---|---|---|
 | 1 | [UI-015](docs/backlog/ui-debugger.md#ui-015) — MCP + debugger verbs | Claude Code drives `/mcp`: breakpoint, run-to, registers, wait for screen text — in a ctest. Read the current MCP revision first. |
-| 2 | [AUDIO-013](docs/backlog/audio.md#audio-013) — VGM/YM + WAV, then [UI-021](docs/backlog/ui-debugger.md#ui-021) video | A VGM round-trips the exact AY writes; captures are frame-identical to `pom2_corpus --frames`. |
-| 3 | [UI-018](docs/backlog/ui-debugger.md#ui-018) — DAP for VS Code | Needs UI-015. A cc65 program stops on a `.s` breakpoint and steps by source line, both banks. |
+| 2 | [UI-018](docs/backlog/ui-debugger.md#ui-018) — DAP for VS Code | Needs UI-015. A cc65 program stops on a `.s` breakpoint and steps by source line, both banks. |
 
-Next on the same track, any order: [UI-017](docs/backlog/ui-debugger.md#ui-017)
-trace file + callgrind, [ARCH-017](docs/backlog/architecture-tooling.md#arch-017)
-paravirtual test port, [UI-016](docs/backlog/ui-debugger.md#ui-016)
+Next on the same track, any order: [UI-016](docs/backlog/ui-debugger.md#ui-016)
 expression conditions / access counters / code-data log,
 [UI-019](docs/backlog/ui-debugger.md#ui-019) reverse debugging (design first).
 
@@ -39,10 +37,8 @@ expression conditions / access counters / code-data log,
 | Task | Concrete next action |
 |---|---|
 | [AUDIO-009](docs/backlog/audio.md#audio-009) | Passport MIDI is implemented: run Ultima V with the card in slot 2 and record a song; then run the WinMM and ALSA backends (both compile in CI). |
-| [WASM-004](docs/backlog/wasm.md#wasm-004) | Per-drive URL parameters + "copy link to this setup" (two-disk games, DIX). |
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | A2R 3.x import into the FLUX engine; ShrinkIt; multi-disk zips as a swap list. |
-| [WASM-005](docs/backlog/wasm.md#wasm-005) | `?embed=1` + `postMessage` events. |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
 

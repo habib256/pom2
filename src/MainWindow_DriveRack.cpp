@@ -7,12 +7,16 @@
 #include "IconsFontAwesome6.h"
 #include "Memory.h"
 #include "MountableMediaCard.h"
+#include "Settings.h"
 #include "StorageCoordinator.h"
 #include "SystemProfile.h"
 #include <algorithm>
 #include <cfloat>
 #include <filesystem>
 #include <utility>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 // Every drive of the machine, in the rack's order, as plain values. The Drives
 // window and the File menu both list from here, so the two can never show a
@@ -279,3 +283,90 @@ void MainWindow::processDriveRackFileDrop() {
     for (const auto& path : paths) raw.push_back(path.c_str());
     onFileDrop(static_cast<int>(raw.size()), raw.data());
 }
+
+// `--mount sNdM:path` (WASM-004): a drive named by slot and drive, as the
+// browser's per-drive link parameters name it, filled through the rack's own
+// mount — the same refusals (occupied drive, wrong medium) and no boot.
+bool MainWindow::mountIntoDrive(int slot, int drive, const std::string& path, std::string& errOut)
+{
+    pom2::DrivePicture target;
+    target.slot = slot;
+    target.bay = drive;
+    target.label = "S" + std::to_string(slot) + ",D" + std::to_string(drive + 1);
+    {
+        auto st = controller->lockState();
+        SlotPeripheral* card = st.memory().slotBus().peripheral(slot);
+        if (dynamic_cast<DiskIICard*>(card)) {
+            target.kind = pom2::DrivePictureKind::DiskII;
+        } else if (auto* media = dynamic_cast<pom2::MountableMediaCard*>(card)) {
+            if (drive < 0 || drive >= media->bayCount()) {
+                errOut = target.label + ": the card in slot " + std::to_string(slot) + " has " +
+                         std::to_string(media->bayCount()) + " drive(s)";
+                return false;
+            }
+            const auto info = media->bayInfo(drive);
+            target.kind = info.typeKey == "35"  ? pom2::DrivePictureKind::Floppy35
+                        : info.typeKey == "hdv" ? pom2::DrivePictureKind::HardDisk
+                                                : pom2::DrivePictureKind::Generic;
+        } else {
+            errOut = target.label + ": no drive in slot " + std::to_string(slot);
+            return false;
+        }
+    }
+    // Like the positional boot disk, a command-line mount is for this run:
+    // it must not become the drive's remembered disk in state.cfg (a shared
+    // link would otherwise rewrite the visitor's own setup). The storage
+    // layer records into a read-only scratch store instead.
+    pom2::Settings transient;
+    transient.setReadOnly(true);
+    return pom2::mountEmptyDrive(*controller, transient, *storageCoordinator_, target, path, errOut);
+}
+
+#ifdef __EMSCRIPTEN__
+void MainWindow::copyBrowserSetupLink()
+{
+    // [{"key":"s6d1","path":"/…"}] — MEMFS paths are POM2's own (bundle
+    // paths, /uploads/…), but a quote or a backslash is escaped all the same.
+    auto quote = [](const std::string& v) {
+        std::string o = "\"";
+        for (char c : v) {
+            if (c == '"' || c == '\\') o.push_back('\\');
+            if (static_cast<unsigned char>(c) >= 0x20) o.push_back(c);
+        }
+        return o + "\"";
+    };
+    std::string json = "[";
+    {
+        auto st = controller->lockState();
+        auto& bus = st.memory().slotBus();
+        for (int s = 7; s >= 1; --s) {
+            SlotPeripheral* card = bus.peripheral(s);
+            std::vector<std::pair<int, std::string>> held;
+            if (auto* disk = dynamic_cast<DiskIICard*>(card)) {
+                for (int d = 0; d < DiskIICard::kDriveCount; ++d)
+                    if (disk->isDiskLoaded(d)) held.emplace_back(d, disk->getDiskPath(d));
+            } else if (auto* media = dynamic_cast<pom2::MountableMediaCard*>(card)) {
+                for (int b = 0; b < media->bayCount() && b < 14; ++b) {
+                    const auto info = media->bayInfo(b);
+                    if (!info.path.empty()) held.emplace_back(b, info.path);
+                }
+            }
+            for (const auto& [d, p] : held) {
+                if (json.size() > 1) json += ",";
+                json += "{\"key\":" + quote("s" + std::to_string(s) + "d" + std::to_string(d + 1)) +
+                        ",\"path\":" + quote(p) + "}";
+            }
+        }
+    }
+    json += "]";
+    const std::string preset(pom2::profileConfig(activeProfile).key);
+    const int skipped = EM_ASM_INT({
+        return Module.pom2CopySetupLink ? Module.pom2CopySetupLink(UTF8ToString($0), UTF8ToString($1)) : -1;
+    }, preset.c_str(), json.c_str());
+    tapeStatusMessage = skipped < 0 ? std::string("Could not build the link")
+        : skipped == 0 ? std::string("Link to this setup copied (also in the address bar)")
+        : "Link copied; " + std::to_string(skipped) +
+          " disk(s) imported from this computer cannot be linked";
+    tapeStatusUntil = lastFrameTime + 6.0;
+}
+#endif

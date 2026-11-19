@@ -1593,6 +1593,11 @@ FramebufferView Core::renderFrame()
     };
 }
 
+std::uint64_t Core::lastVideoFrameStart() const
+{
+    return impl_->memory.videoPublishedFrameStart();
+}
+
 void Core::setAudioSampleRate(std::uint32_t sampleRate)
 {
     if (sampleRate == 0) return;

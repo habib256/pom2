@@ -394,7 +394,7 @@ Evidence: [core priorities](../audits/core-priorities-2026-11-17.md).
 
 ## ARCH-017 — Paravirtual test port: pom2_headless as a 6502 unit-test runner
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19; removed from the active index.
 
 A write-only port the guest uses to log, assert and exit with a status, so
 `pom2_headless` runs 6502 unit tests on a complete Apple II (sim65 has no
@@ -405,3 +405,15 @@ Off by default: no guest can see it unless asked for.
 **Acceptance criterion:** a cc65 test program logs two lines and exits 3;
 `pom2_headless` prints the lines and returns 3; without the option the
 address is the floating bus as before.
+
+**Done 2026-11-19:** `TestPortCard` (`--test-port <slot>` in
+`pom2_headless`): `$C0n0` logs a character (CR/LF ends the line, printed on
+stdout), `$C0n1` exits with that status, `$C0n2` asserts (0 = failed, exit
+2); every read is the floating bus. `--load [addr:]file` (an AppleSingle
+carries its address — cc65's apple2 output) and `--run` start the program
+once the ROM waits at KEYIN `$FD1B`, so a disk boot or Applesoft's cold
+start cannot overwrite it. Headers: `tools/testport/pom2_testport.h` (cc65)
+and `.inc` (ca65). Pinned by `testport_card` and the headless tests
+`headless_test_port_exit` (cc65 program: two lines, exit 3),
+`_assert` (exit 2 with the failure's message) and `_budget` (exit 4).
+

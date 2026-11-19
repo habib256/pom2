@@ -388,6 +388,12 @@ void MainWindow::renderMenuBar()
         renderBrowserSessionMenu();
 #ifdef __EMSCRIPTEN__
         if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
+        if (ImGui::MenuItem("Copy link to this setup")) copyBrowserSetupLink();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A link that opens this machine with these disks: the profile,\n"
+                              "and one parameter per drive (?s6d1=, ?s6d2=, ?s5d1=, …).\n"
+                              "Disks from a URL or the bundle go in it; a disk imported\n"
+                              "from your computer cannot.");
 #else
         if (ImGui::MenuItem("Insert disk and boot...")) {
             driveRackPickerProfile_ = activeProfile;

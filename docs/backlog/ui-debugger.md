@@ -279,7 +279,7 @@ cost when off (`bus_fastpath` and `pom2_bench` unchanged within noise).
 
 ## UI-017 — Trace log to a file and a callgrind export of the profiler
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19; removed from the active index.
 
 An instruction trace written to a file (format string, bank, registers,
 cycles), and the profiler's per-address cycles exported as a callgrind file
@@ -288,6 +288,19 @@ for KCachegrind — what a2trace builds by post-processing MAME traces.
 **Acceptance criterion:** a trace of a known 6502 loop matches its expected
 lines byte for byte; KCachegrind (or `callgrind_annotate`) reads the export
 of a profiled run with the cc65 `.dbg` symbols.
+
+**Done 2026-11-19:** `InstructionTrace` (behind the header-only
+`InstructionTraceSink`, so no other binary's link line changed): one line
+per instruction, registers read going IN, format tokens `%PC %BANK %BYTES
+%DIS %A %X %Y %P %SP %FLAGS %CYC %TOTAL %LABEL`. `callgrindProfile`
+(`ProfileExport.h`): Cycles and Visits per address, `ob=` the physical
+bank, `fn=` the nearest symbol (cc65 `.dbg` or symbol file) else the page.
+Debugger panel ▸ Profiler: Trace to file / Export callgrind; headless
+`--trace-file`, `--trace-format`, `--profile`, `--symbols`. Pinned by
+`instruction_trace` (a known loop byte for byte; callgrind read back) and
+`headless_trace_profile` (the cc65 program with its `.dbg`: `fn=_main`,
+`fn=_add`). **Limit:** not opened in KCachegrind / `callgrind_annotate`
+(neither on the dev machine); flat costs only, no call graph.
 
 <a id="ui-018"></a>
 
@@ -334,7 +347,7 @@ speaks the new lines once, not the whole screen every frame; off by default.
 
 ## UI-021 — Video capture (GIF/MP4) of the screen
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** ✅ · **State:** Done 2026-11-19 (in `pom2_corpus`); removed from the active index.
 
 POM2 has PNG screenshots only; MAME has `-aviwrite`/`-mngwrite`. Frames from
 the emulated video frame (not the host refresh), so a capture under x4 or a
@@ -342,3 +355,15 @@ stall has the program's timing. Pairs with AUDIO-013's WAV.
 
 **Acceptance criterion:** a 5 s capture of a corpus title has 250 (PAL) or
 300 (NTSC) frames whose hashes match `pom2_corpus --frames` for the same run.
+
+**Done 2026-11-19:** `pom2_corpus --video DIR` writes every video frame of
+each title as `DIR/<title>/NNNNN.png` + `frames.txt` (index, hash), and an
+MP4 at the standard's exact rate when `ffmpeg` is on the PATH (560x384,
+nearest-neighbour). Frames come from the emulated beam: the new SDK call
+`Core::lastVideoFrameStart()` changes once per finished frame, polled after
+each 4096-cycle slice. The acceptance is enforced on every recording run:
+a check whose hash differs from the last frame written fails the title.
+Pinned by `corpus_video` (DIX's menu: 2803 frames for 56 s at 50.08 fps,
+both checks equal to their frames). **Not done:** a recorder in the GUI
+(the screen as the user sees it, with the CRT pass), and GIF.
+

@@ -1275,7 +1275,50 @@ void MockingboardCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
     if (ayEvents_.size() >= kMaxAyEvents) invalidateAyTimeline();
     ayEvents_.push_back(AyRegEvent{ busNow_,
                                     static_cast<uint8_t>(chip), reg, val });
+    // AUDIO-013: kRegAyReset and aymusic::kResetReg are the same $FF.
+    if (ayCapture_)
+        ayCapture_->writes.push_back(pom2::aymusic::Write{
+            busNow_, static_cast<uint8_t>(chip), reg, val });
     latestAyEventCycle_.store(busNow_, std::memory_order_relaxed);
+}
+
+uint64_t MockingboardCard::syncedBusNow()
+{
+    // Between instructions getCycleCountNow() still counts the last one's
+    // cycles — the same correction resetCard applies.
+    if (cpu_)
+        syncToCpuCycleAt(cpu_->getCycleCountNow() -
+            static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())));
+    return busNow_;
+}
+
+void MockingboardCard::startAyCapture(int cyclesPerFrame)
+{
+    std::lock_guard<std::mutex> lk(mtx);
+    auto cap = std::make_unique<pom2::aymusic::Capture>();
+    cap->busHz          = busClock_.busHz();
+    cap->cyclesPerFrame = cyclesPerFrame;
+    cap->chips          = 2;
+    cap->startCycle     = syncedBusNow();
+    for (int chip = 0; chip < 2; ++chip)
+        for (int r = 0; r < 16; ++r) cap->initial[chip][r] = ay_[chip]->regs[r];
+    ayCapture_ = std::move(cap);
+}
+
+pom2::aymusic::Capture MockingboardCard::stopAyCapture()
+{
+    std::lock_guard<std::mutex> lk(mtx);
+    if (!ayCapture_) return {};
+    pom2::aymusic::Capture out = std::move(*ayCapture_);
+    ayCapture_.reset();
+    out.endCycle = std::max(syncedBusNow(), out.startCycle);
+    return out;
+}
+
+bool MockingboardCard::ayCaptureActive() const
+{
+    std::lock_guard<std::mutex> lk(mtx);
+    return ayCapture_ != nullptr;
 }
 
 // Declare the cycle-stamped event stream discontinuous. Caller holds mtx.

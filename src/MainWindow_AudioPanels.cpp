@@ -536,6 +536,7 @@ void MainWindow::renderAudioMixerWindow()
     }
 
     renderMidiSection();
+    renderRecordingSection();
 
     ImGui::Spacing();
     ImGui::TextDisabled("Master is post-mix; per-channel knobs are pre-mix.");

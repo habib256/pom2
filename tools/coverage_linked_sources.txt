@@ -22,6 +22,7 @@ src/Apple2Display_ChatMauve.cpp
 src/AppleWinNtsc.cpp
 src/AtaBlockDevice.cpp
 src/AudioDevice.cpp
+src/AyMusicExport.cpp
 src/Block512Backing.cpp
 src/CassetteDevice.cpp
 src/CffaCard.cpp
@@ -53,6 +54,7 @@ src/GrapplerCard.cpp
 src/Hd6845Crtc.cpp
 src/HostFileTag.cpp
 src/IIcExternalSmartPort.cpp
+src/InstructionTrace.cpp
 src/IntegerBasicListing.cpp
 src/IWMDevice.cpp
 src/ImageWriter.cpp
@@ -91,6 +93,7 @@ src/PrinterSoundDevice.cpp
 src/ProDOSHardDiskCard.cpp
 src/ProDOSHostNameMap.cpp
 src/ProDOSVolume.cpp
+src/ProfileExport.cpp
 src/ProfileSwitch.cpp
 src/ResourcePaths.cpp
 src/RewindBuffer.cpp
@@ -124,6 +127,7 @@ src/StorageCoordinator_Persist.cpp
 src/SuperSerialCard.cpp
 src/SuperSerialTcpTransport.cpp
 src/SystemProfile.cpp
+src/TestPortCard.cpp
 src/TextScreenCapture.cpp
 src/TnfsClient.cpp
 src/TnfsMedia.cpp
@@ -135,6 +139,7 @@ src/VidexVideotermCard.cpp
 src/W5100Device.cpp
 src/W5100HostSockets.cpp
 src/W5100NameResolver.cpp
+src/WavRecorder.cpp
 src/WorkstationCard.cpp
 src/Z80.cpp
 src/ZipMember.cpp

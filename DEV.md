@@ -3120,6 +3120,32 @@ destroying the card. Persisted per instance as
 restore falls back to. Pinned: `mockingboard_smoke`,
 `mockingboard_sync_smoke`.
 
+### Music and audio capture: VGM / YM / WAV (`AyMusicExport`, `WavRecorder`)
+
+AUDIO-013. **The VGM is exact by construction**: `MockingboardCard::queueAyEvent`
+is the one place every AY store and /RESET passes, already stamped with
+`busNow_` for the audio thread; `startAyCapture` copies the two register
+banks as the initial state and appends each event to a capture under the
+card's `mtx`. `busNow_` counts BUS ticks (the stock clock, never an
+accelerator — `SlotBusClock.h`), so the capture's clock is
+`busClock_.busHz()` and a write lands on sample
+`floor((cycle - start) * 44100 / busHz)`. VGM 1.71 ([B] vgmrips
+specification): `$A0 aa dd`, bit 7 of `aa` = the second chip, bit 30 of the
+`$74` clock = dual chip; a /RESET becomes fourteen zero stores. YM5 is one
+chip at one frame a step (R13 = `$FF` when unwritten, registers masked to
+their bits so YM5's effect flags stay off) — lossy by design; VGM is the
+exact one. **The Phasor is not recorded**: four AYs, VGM holds two.
+
+The WAV is the bus the speakers get: `AudioDevice::mixSources` pushes its
+post-master, post-clamp buffer into an `AudioCaptureRing` (SPSC, allocated
+once, drops and counts when full — never blocks the realtime thread; inline,
+so binaries linking `AudioDevice.cpp` need no new source). The GUI drains it
+once a frame outside `stateMutex`; `WavFileWriter` streams to a temp sibling
+and publishes on close. In `pom2_headless --wav` the device is
+**Offline** and the tool mixes after each frame exactly the samples the
+emulated cycles owe, so two runs give the same file
+(`headless_audio_capture_repeatable`, with `tests/testport/tune.bin`).
+
 ### SSI263 + Echo+ (Street Electronics)
 
 `pom2::Ssi263` (`Ssi263.h/.cpp`) — Silicon Systems Inc. SSI263A
@@ -4328,6 +4354,18 @@ debugger, `--cycles N` cuts the last frame slice to the budget, `--registers`
 prints one line. Exit 4 = the budget ran out before the address; 5 = KIL/STP.
 The flat-screen check (exit 3) applies only to an unscripted run: a program
 stopped at an address need not have drawn anything.
+
+**The paravirtual test port** (ARCH-017, `TestPortCard`): `--test-port N`
+plugs a write-only card — `$C0n0` a log character (CR/LF ends the line,
+stdout), `$C0n1` exit status, `$C0n2` assert (0 = fail, exit 2) — whose
+reads are the floating bus, so a machine without it reads what it always
+did. `--load [addr:]file` (an AppleSingle names its own address: cc65's
+apple2 output) waits for the ROM to reach KEYIN `$FD1B` — after Applesoft's
+cold start and any disk boot, either of which would overwrite a program
+loaded at reset — writes RAM below `$C000`, and jumps to `--run` or the
+first load. With the port the exit status is the program's; 4 if it never
+exited. A card named by `--test-port`/`--mockingboard` takes slot 4 from
+the default clock. cc65/ca65 headers in `tools/testport/`.
 
 ### Read / write matrix by format
 
@@ -12992,6 +13030,40 @@ CPU cycles that frame ran. Nothing on the fast loop. Pinned by
 `interrupt_load`: one IRQ per frame into a handler of exactly 5N + 14 cycles,
 every completed frame must report exactly that.
 
+### Video capture (`pom2_corpus --video`, UI-021)
+
+`Core::lastVideoFrameStart()` (= `Memory::videoPublishedFrameStart()`)
+changes once per finished frame; `pom2_corpus` polls it after each
+4096-cycle `run()` slice (shorter than a frame, so no frame is skipped or
+doubled) and renders that frame with `renderFrame()` — the frame the beam
+finished, in emulated time. Each frame: `DIR/<title>/NNNNN.png` and a line
+`index hash` in `frames.txt`, the same 64-bit hash as a corpus check. At
+each `check` step the check's hash must equal the last frame recorded, or
+the title fails. With `ffmpeg` on the PATH, `DIR/<title>.mp4` at the exact
+rate (`cpuClockHz/cyclesPerFrame`), scaled nearest-neighbour to 560x384 so
+280- and 560-wide frames share one size. Pinned by `corpus_video`.
+
+### Instruction trace and callgrind export (`InstructionTrace`, `ProfileExport`)
+
+UI-017. The Debugger knows only `InstructionTraceSink` (header-only): every
+binary that compiles `Debugger.cpp` keeps its link line. `beginStep` — the
+one place both the run loop's `onInstruction` and F7's explicit step pass —
+calls `before(pc, bank)`, which reads the bytes through `peekCpuView` and
+the registers going IN; `onStepCompleted` calls `after(cycles)`, which
+writes the line; an interrupt taken instead writes `---- interrupt ->
+$XXXX`. A breakpoint-stopped instruction is announced and never written.
+Tokens: `%PC %BANK %BYTES %DIS %A %X %Y %P %SP %FLAGS %CYC %TOTAL %LABEL %%`
+(`%BYTES` 8 wide, `%DIS` 16 wide, longest token matched first). An attached
+trace arms the debugger like profiling (the debugged loop, ~50 bytes per
+instruction on disk).
+
+`callgrindProfile` ([B] Valgrind callgrind format): `positions: instr`,
+`events: Cycles Visits`, `ob=`/`fl=` the physical bank, `fn=` the nearest
+label at or below the address among its bank's and the bank-free labels
+(`DebuggerSymbols::labels`, so a cc65 `.dbg` names C functions), else
+`page $XX`. Flat costs only. Pinned by `instruction_trace` and
+`headless_trace_profile`.
+
 ### OS-call trace (`OsCallTrace.h/.cpp`)
 
 Every ProDOS MLI call the 6502 makes and every CP/M BDOS call a card Z80
@@ -13391,6 +13463,37 @@ Emscripten now that Windows is a full host-socket target):
 |---|---|---|
 | Super Serial Card TCP listener (`SuperSerialTcpTransport.cpp:54`, `:117`, `:150-236`) | the TCP transport's `start` (`SuperSerialTransport.h:43-50` — `start`/`stop`/`isListening`/`port`) returns false + logs and `stop` only clears the flag, so `startListening` (`SuperSerialCard.h:220`) returns false | ACIA still emulated — software inside the Apple II can still PR#2 / read $C0A9; just no host network bridge |
 | AiControlServer HTTP listener (`AiControlServer.cpp:359+`) | `start()` returns false; `stop()` no-op | None — entire feature is a host-side control plane |
+
+### Per-drive link parameters (`wasm/setup_link.js`, `--mount`)
+
+WASM-004. `?sNdM=` (Apple2TS's keys, slot 1-7, drive 1-14) per drive, a
+URL or a bundled path; `?boot=sNdM` picks the boot disk, else drive 1 of
+the highest slot (the Autostart scan). `?url=`/`?disk=`/`?nodisk=` keep
+their meaning and take the boot. The planner is a `--pre-js`, so shell.html
+plans and downloads in a `preRun` (one folder per drive under
+`/uploads/url/`); the boot disk becomes the positional and every other
+drive `--mount sNdM:<path>`, which `main.cpp` applies after the boot and
+the blank disk through `MainWindow::mountIntoDrive` → the drive rack's
+`mountEmptyDrive`, with a **read-only scratch `Settings`**: a command-line
+mount, like the positional, is never the drive's remembered disk.
+File ▸ Copy link to this setup hands the profile key and every mounted
+drive to `Module.pom2CopySetupLink`, which maps MEMFS paths back
+(`pom2UrlByPath` for downloads, the bundle path for bundled disks), writes
+the clipboard and `history.replaceState`, and counts what an imported disk
+kept out. Pure parts pinned under node by `wasm_setup_link`.
+
+### Embed mode (`?embed=1`, WASM-005)
+
+`?embed=1` adds `--kiosk`; under Emscripten `main.cpp` skips the kiosk's
+monitor branch (a fullscreen request needs a user gesture), so kiosk is the
+chrome-free render in the page canvas, settings read-only. shell.html posts
+`{source: 'pom2', event, detail}` to `window.parent` with target `'*'` (no
+visitor data in them): `boot` from `pom2FirstFrameReady` (`{preset}`),
+`pause`/`running` from a 250 ms poll of `pom2_browser_running`, `error` from
+every error path (abort, unhandled rejection, lost WebGL, a drive that could
+not load). Nothing is posted without `embed=1` or when the page is the top
+window. `tools/wasm_links_smoke.mjs` checks `boot` and the silence of a
+plain frame; `pause`/`running` are not tested.
 
 ### Browser persistence (IDBFS)
 

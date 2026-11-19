@@ -51,6 +51,8 @@
 
 struct ma_device;
 
+namespace pom2 { class AudioCaptureRing; }
+
 class AudioDevice
 {
 public:
@@ -141,6 +143,12 @@ public:
     /// STEREO and must hold `frameCount * kChannels` floats.
     void mixSources(float* output, int frameCount);
 
+    /// AUDIO-013: hand every mixed buffer — post-master, post-clamp, what the
+    /// speakers get — to a capture ring as well (WavRecorder.h). Null stops.
+    /// Takes the sources lock, so once this returns no push is in flight and
+    /// the previous ring may be destroyed.
+    void setCaptureRing(pom2::AudioCaptureRing* ring);
+
     // ── Device buffer (AudioBufferPolicy.h) ────────────────────────────
     using Platform = pom2::AudioBufferPolicy::Platform;
     /// What this build runs on, as the policy sees it: decided once at
@@ -214,6 +222,7 @@ private:
     static Platform detectPlatform();
 
     std::vector<AudioSource*> sources;
+    pom2::AudioCaptureRing* captureRing_ = nullptr;   // guarded by sourcesMutex
     mutable std::mutex sourcesMutex;
     /// Scratch + ramp + meters for the shared mix law (`AudioMix.h`).
     pom2::MixBusState mix_;

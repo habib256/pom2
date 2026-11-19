@@ -501,6 +501,11 @@ public:
     /// is technical evidence and does not stand for what the application
     /// shows (docs/SDK.md § Rendering).
     FramebufferView renderFrame();
+    /// Machine cycle at which the last FINISHED video frame began. It changes
+    /// once per video frame (17030 cycles NTSC, 20280 PAL), so a recorder
+    /// that polls it between run() slices shorter than a frame renders every
+    /// frame exactly once, in emulated time whatever the host does (UI-021).
+    std::uint64_t lastVideoFrameStart() const;
 
     /// Configure the host PCM rate before running code that drives cassette
     /// audio. Pull methods also apply their sampleRate argument, but cassette

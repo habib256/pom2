@@ -57,6 +57,9 @@ public:
     }
 
     std::size_t size() const { return names_.size(); }
+    /// Every label by address, for an exporter that names whole routines
+    /// (ProfileExport.h: the nearest label at or below a PC).
+    const std::map<DebugAddress, std::string>& labels() const { return labels_; }
 
     /// AppleWin: "0800 NAME"; VICE/cc65: "al 000800 .NAME";
     /// assembler assignments: "NAME = $0800" or "NAME EQU $0800".

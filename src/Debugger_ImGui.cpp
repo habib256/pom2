@@ -24,6 +24,9 @@
 #include "M6502.h"
 #include "Memory.h"
 #include "NativeFileDialog.h"
+#include "AtomicFileReplace.h"
+#include "ProfileExport.h"
+#include "ResourcePaths.h"
 
 #include "imgui.h"
 
@@ -211,6 +214,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
             ctrl.debugger().clearMeasurements();
         }
         ImGui::TextWrapped("Cycles include IRQ/NMI entry steps. History shows registers after each step. Reset and rewind clear measurements.");
+        drawTraceAndExport(ctrl);
         // Interrupt load per video frame (InterruptLoad.h): how much of each
         // frame the IRQ/NMI handlers took, e.g. a Mockingboard player.
         if (snap.profiling || !snap.interruptLoad.empty()) {
@@ -739,3 +743,80 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
 }
 
 }  // namespace pom2
+
+namespace pom2 {
+
+// UI-017: every instruction to a file, and the profiler as a callgrind file.
+// Both ask for the name; without a dialog they land in the user data folder.
+void Debugger_ImGui::drawTraceAndExport(EmulationController& ctrl)
+{
+    auto pick = [](const char* title, const char* ext, const char* name) {
+        std::string path;
+        const auto r = nativeFileDialogAvailable()
+            ? nativeFileDialog(true, title, ext, "", name, path) : FileDialogResult::Unavailable;
+        if (r == FileDialogResult::Cancelled) return std::string();
+        if (r == FileDialogResult::Unavailable) path = (userDataDir() / name).u8string();
+        return path;
+    };
+    if (!trace_ || !trace_->isOpen()) {
+        if (ImGui::Button("Trace to file...")) {
+            const std::string path = pick("Save instruction trace", "txt", "pom2-trace.txt");
+            if (!path.empty()) {
+                auto t = std::make_unique<InstructionTrace>();
+                t->setSymbols(symbols_);
+                auto st = ctrl.lockState();
+                std::string why;
+                if (t->open(std::filesystem::u8path(path), "", st.cpu(), st.memory(), why)) {
+                    trace_ = std::move(t);
+                    ctrl.debugger().setInstructionTrace(trace_.get());
+                    ctrl.syncDebugHook();
+                    traceStatus_ = "tracing to " + path;
+                } else {
+                    traceStatus_ = why;
+                }
+            }
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Every executed instruction, one line each: PC, physical bank,\n"
+                              "bytes, disassembly, the registers going in, cycles.\n"
+                              "Large: about 50 bytes per instruction, 50 MB per emulated second.");
+    } else {
+        ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "TRACE");
+        ImGui::SameLine();
+        ImGui::Text("%llu lines", static_cast<unsigned long long>(trace_->lines()));
+        ImGui::SameLine();
+        if (ImGui::Button("Stop trace")) {
+            {
+                auto st = ctrl.lockState();
+                ctrl.debugger().setInstructionTrace(nullptr);
+                ctrl.syncDebugHook();
+            }
+            traceStatus_ = std::to_string(trace_->lines()) + " lines written";
+            trace_->close();
+            trace_.reset();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export callgrind...")) {
+        std::vector<Debugger::ProfileEntry> profile;
+        {
+            auto st = ctrl.lockState();
+            profile = ctrl.debugger().profile(SIZE_MAX);
+        }
+        if (profile.empty()) {
+            traceStatus_ = "nothing profiled yet: tick \"Profile CPU steps\" and run";
+        } else {
+            const std::string path = pick("Export profile (callgrind)", "callgrind", "callgrind.out.pom2");
+            if (!path.empty()) {
+                const std::string text = callgrindProfile(profile, symbols_.size() ? &symbols_ : nullptr, "POM2");
+                std::error_code ec;
+                traceStatus_ = writeFileAtomic(std::filesystem::u8path(path), text.data(), text.size(), ec)
+                    ? "profile saved to " + path + " (open it in KCachegrind)"
+                    : "cannot write " + path + ": " + ec.message();
+            }
+        }
+    }
+    if (!traceStatus_.empty()) ImGui::TextWrapped("%s", traceStatus_.c_str());
+}
+
+} // namespace pom2

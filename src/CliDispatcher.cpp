@@ -187,6 +187,9 @@ void printUsage()
         "  --35-disk2 <path>          Mount 400/800K GCR image in //c+ external drive 1\n"
         "  --35-disk3 <path>          Mount 400/800K GCR image in //c+ external drive 2\n"
         "                              Require the //c+ profile; mount without booting.\n"
+        "  --mount sNdM:<path>        Put an image in slot N, drive M (s6d2 = Disk II\n"
+        "                              drive 2; s5d1 = the first SmartPort unit) after\n"
+        "                              the disk-image above booted. Repeatable.\n"
         "  --blank-disk [<drive>:]<path>\n"
         "                              Insert an UNFORMATTED 5.25\" diskette (no address\n"
         "                              fields) in Disk II drive 1 or 2 (default 2).\n"
@@ -255,6 +258,7 @@ void absolutizeCliPaths(CliPlan& plan)
     anchor(plan.disk35External, false);
     anchor(plan.disk35ExternalSecond, false);
     anchor(plan.blankDiskPath, true);
+    for (CliPlan::Mount& m : plan.mounts) anchor(m.path, false);
     for (CliAction& a : plan.deferredActions) {
         switch (a.kind) {
         case CliAction::Kind::Load:
@@ -551,6 +555,27 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         else if (a == "--35-disk3") {
             const char* v = needArg(i, "--35-disk3"); if (!v) return std::nullopt;
             plan.disk35ExternalSecond = v;
+        }
+        else if (a == "--mount") {
+            const char* v = needArg(i, "--mount"); if (!v) return std::nullopt;
+            const std::string spec(v);
+            const auto colon = spec.find(':');
+            CliPlan::Mount m;
+            int n = 0;
+            const std::string key = colon == std::string::npos ? spec : spec.substr(0, colon);
+            const bool shaped = key.size() >= 4 && (key[0] == 's' || key[0] == 'S') &&
+                                key[1] >= '1' && key[1] <= '7' &&
+                                (key[2] == 'd' || key[2] == 'D') &&
+                                std::sscanf(key.c_str() + 3, "%d%n", &m.drive, &n) == 1 &&
+                                static_cast<std::size_t>(3 + n) == key.size() &&
+                                m.drive >= 1 && m.drive <= 14;
+            if (!shaped || colon == std::string::npos || colon + 1 >= spec.size()) {
+                pom2::log().error("CLI", "--mount expects sNdM:<path> (slot 1-7, drive 1-14), got: " + spec);
+                return std::nullopt;
+            }
+            m.slot = key[1] - '0';
+            m.path = spec.substr(colon + 1);
+            plan.mounts.push_back(std::move(m));
         }
         else if (a == "--blank-disk") {
             const char* v = needArg(i, "--blank-disk"); if (!v) return std::nullopt;
