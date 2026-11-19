@@ -24,7 +24,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-008](#cards-008) | 🧊 | Frozen | UDC (Apple 1991) |
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-017](#cards-017) | 🟢 | Ready | Hayes AT modem layer on the Super Serial Card |
-| [CARDS-018](#cards-018) | 🧊 | Frozen — needs media | Synetix SuperSprite |
+| [CARDS-018](#cards-018) | 🧊 | Frozen — media found, low value | Synetix SuperSprite |
 
 <a id="cards-016"></a>
 
@@ -276,9 +276,140 @@ exchanges text, and `+++` / `ATH` hangs up; loopback fence rules apply.
 
 ## CARDS-018 — Synetix SuperSprite
 
-**Priority:** 🧊 · **State:** Frozen until its software is found (research of 2026-11-18).
+**Priority:** 🧊 · **State:** Frozen — software and manual found
+(research of 2026-11-19), not scheduled: the value is judged too low for
+the cost of the display work.
 
-TMS9918A + AY-3-8912 + Echo II speech; POM2 already has all three kinds of
-chip. A2FPGA emulates it.
+TMS9918A + AY-3-8912 + TMS5220 (Echo ][ circuit) on one slot-7 card. POM2
+already has all three kinds of chip: POM1's VDP (`TMS9918.*`, the E-Z
+Color's), the AY (`Ay3_8910.h` + `AyPsgSynth.h`) and the TMS5220C
+(`Tms5220.*`, the Echo+'s).
 
-**Scheduling condition:** downloadable StarSprite disks (not verified).
+**Why it stays frozen (decision of 2026-11-19).** The media condition of
+2026-11-18 is met, but the software is small: StarSprite I-III are authoring
+tools (Ampersprite) and demos, and no commercial game is known to need the
+card. Neither DIX nor `docs/test_corpus.md` uses it. The card itself is
+cheap (about a day: register map, IRQ, AY + filters, speech). What makes it a
+SuperSprite is the **overlay** of the VDP on the Apple's picture. That means
+work in `Apple2Display` on the fresh-install display path (scope criterion 2):
+a raster wider than 560, the VDP locked to the Apple's frame, and coexistence
+with the GPU composite shader. Several days, with regression risk on core.
+
+**Scheduling condition:** an explicit request with a use. For example, a
+pom2games title that wants sprites + sound + speech on one card. A
+"no-overlay" variant (VDP picture on the Card Monitor, as the E-Z Color) was
+considered: it avoids the display risk but leaves every mixed-video demo
+incomplete.
+
+### Sources found (2026-11-19)
+
+All in the Apple II Documentation Project,
+`mirrors.apple2.org.za/Apple II Documentation Project/Interface Cards/Video/Synetix SuperSprite/`
+(`Disk Images/`, `Manuals/`, `Photos/`). Third-party material: never tracked
+and never packaged. A ctest that boots one goes through
+`tools/test_media.sha256` + the archive.org item `pom2_media_202611`, which
+the user uploads.
+
+| File | SHA-256 |
+|---|---|
+| `Manuals/Synetix SuperSprite Owners manual.pdf` (1983, 266 p., OCR text layer; also contains the StarSprite I and Echo ][ manuals; **no schematic**) | `f864160120b4671ab5939a5507225ad70751fd27402b3ddd7ec90c537460677d` |
+| `Disk Images/StarSprite Demonstration.DSK` (DOS 3.3; DANCER, ALIENS, ARCADE, LOGO SPEECH, STATUS REGISTER USE…) | `60b84de2e59042283aed923374d1650ff9a9a3edaeec293448f34ab533c261e5` |
+| `Disk Images/StarSprite I - Side A.DSK` | `f7616e7ece92f647c80f3fa022daee2e0601ace91acb0668424e7e80622a939b` |
+| `Disk Images/StarSprite I - Side B.DSK` | `d71058d4cb81bcb40068c594ef07d9487c660decc22959dedfacb84fbd4b4171` |
+| `Disk Images/Avant-garde creations - StarSprite III side A.dsk` | `e23d551f6dae2a0b6e949508c076f1898bcc3fbfa7340eac483ac6c5b20adb4f` |
+| `Disk Images/Avant-garde creations - StarSprite III side B.dsk` | `03fc571257923e8429544056cf5095b1fa373f824b9d29d722acad30ae2454b7` |
+
+All five disks catalog cleanly with `pom2_dos33 IMAGE ls`. **Not found:**
+the Synetix "Natural Speech / Checkout Test" disk (its menu tests the
+overlay, VRAM, the IRQ, the sound and the speech, so it would be the best
+acceptance test) and StarSprite II.
+
+Other implementations, both grade D:
+- MAME `src/devices/bus/a2bus/ssprite.cpp` @ mame0289 (R. Belmont, Golden
+  Child). Its register map is taken from the manual; it shows the VDP on a
+  separate screen and models no video switch, no overlay and no filter.
+- A2FPGA `hdl/supersprite/supersprite.sv` @ `71464b2c` (Ed Anuff). Its author
+  says it was tested with all the original Synetix software. It implements
+  the overlay but has no TMS5220 and no filters.
+
+### What the manual settles
+
+- **[B] Register map** (§ 7.2, Table 1, slot 7):
+
+  | Address | Function |
+  |---|---|
+  | `$C0F0` | VDP VRAM read/write |
+  | `$C0F1` | VDP register write (status read) |
+  | `$C0F2` | TMS5220 data write / status read |
+  | `$C0F3` | Video switch: APPLE VIDEO IN OFF |
+  | `$C0F4` | Video switch: APPLE VIDEO IN ON |
+  | `$C0F5` | Video switch: APPLE ONLY OUT |
+  | `$C0F6` | Video switch: MIX VDP/EXTERNAL VIDEO |
+  | `$C0F7` | VDP "write only / frame reset" |
+  | `$C0F8-$C0FB` | Unused |
+  | `$C0FC`, `$C0FD` | AY data write |
+  | `$C0FE`, `$C0FF` | AY register write or data read |
+
+  The OCR splits the `$C0FE`/`$C0FF` cell across two lines. MAME and A2FPGA
+  both read it as "either address, write = register select, read = data".
+  The manual's procedure (§ 7.5) writes the register number to `$C0FF` and
+  the data to `$C0FD`.
+- **[B] Slot 7 only** (§ 7.1). The card needs the Apple's composite sync
+  (pin 19) and 3.579 MHz colour reference (pin 35), which only slot 7 carries.
+  So the VDP is **locked to the Apple's video**: there is a "color lock"
+  adjustment, a "horizontal alignment" pot, and a trouble-shooting entry
+  "horizontal drift: SuperSprite is not locked to Apple video". The card
+  cannot work on a PAL machine; this is POM2's inference from the NTSC colour
+  reference, the manual does not say so.
+- **[B] Line timing.** The VDP crystal is 3 × the colour subcarrier
+  (10.738635 MHz, pixel clock /2) and the Apple's 14M clock is 4 ×. So one
+  VDP line (342 pixel clocks) = 342 × 8/3 = **912 14M ticks** = one Apple
+  line (65 CPU cycles including the long cycle; Sather). The lock is exact
+  by construction. POM1's `TMS9918` counts a frame as 17067 nominal cycles;
+  locked, it must take the Apple's 17030.
+- **[B] IRQ** (§ 7.3). The VDP `/INT` goes to the bus IRQ (pin 30), 60 Hz, at
+  the end of each frame; the handler restores A from `$45`. This is the
+  wiring MAME has.
+- **[B] Video switch use** (StarSprite I, "Initializing the SuperSprite", p. 48-49):
+  - VDP only = `$C0F3` + `$C0F6`;
+  - mixed = `$C0F4` + `$C0F6`;
+  - Apple only = `$C0F4` + `$C0F5`, "without VDP blanking filter, which
+    improves the display";
+  - `POKE 49399,0` (`$C0F7`) "resets the VDP and centers Apple video".
+- **[B] AY clock** 1.023 MHz (§ 7.5: "Tone Period = 1,022,727 / 16 ×
+  pitch").
+- **[B] 16 analogue filters on the AY output** (§ 7.5, Table 2). Neither
+  MAME nor A2FPGA models them. Add 64 to R7 (port A as output), then write
+  the filter number to R14 (port A). Bits 0-1 choose the type (0 high-pass,
+  1 low-pass, 2 band-pass, 3 none); bits 2-3 choose the corner (400 / 800 /
+  1600 / 3200 Hz). With R7 bit 6 clear the default is filter 15 (no filter),
+  consistent with port-A pull-ups. **[F]** The filter order and Q are
+  unknown; a scope or a recording of the card would settle them.
+
+### Open: what is transparent
+
+- **[B] Manual (StarSprite I, "Colors and Color Tables", p. 33-34):** "any color except
+  transparent (0) … will prevent Apple video from showing through". It also
+  says `&RED` disables the 9918's external video and "there is no provision
+  on SuperSprite for external video feed".
+- **[D] A2FPGA:** the card keys on the VDP's **black level**, so colour 1
+  (black) lets the Apple through as well, and the 9918A's external-video mode
+  is not used.
+- **POM2's reading (to verify):** the 9918A has no transparency output pin,
+  and a transparent pixel over a transparent backdrop leaves the chip as
+  black. An off-chip key on the composite signal therefore cannot tell
+  colour 0 from colour 1. This would make A2FPGA right and the manual's
+  sentence a description of the intended use. **To check:** the luminance of
+  colours 0 and 1 in the colour table of the TMS9918A/9928A/9929A data manual
+  (the bibliography's), then a frame of a demo that draws colour 1 over
+  Apple graphics.
+
+### Geometry the overlay would need
+
+- **[B] Pixel widths.** A VDP pixel is 8/3 of a 14M tick, so 256 VDP pixels
+  = 682.7 half-dots, against the Apple's 560. The VDP picture is about 22 %
+  wider than the Apple's.
+- **[F] Alignment.** The Apple picture sits inside the VDP picture where the
+  horizontal-alignment pot puts it; `$C0F7` "centers" it. The vertical
+  alignment of the two 192-line rasters is also unstated. A photo of a mixed
+  screen on a real card would settle both.
