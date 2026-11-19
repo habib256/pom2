@@ -181,6 +181,45 @@ void testVgmRoundTrip()
     assert(card.stopAyCapture().writes.empty());
 }
 
+// Bug hunt 2026-11-19: a capture going across a snapshot load (time moves
+// BACK: the restored blob re-anchors the bus clock) and a card reset. The
+// stamps must keep going forward, and the registers the restore and the
+// reset put in the chips must appear in the file as writes.
+void testCaptureAcrossTimeJumps()
+{
+    MockingboardCard card(4);
+    card.setCpuClock(1022727.0);
+    card.setStandardClock(1022727.0);
+    setupVias(card);
+    ayWrite(card, 0, 8, 0x0A);
+    std::vector<uint8_t> blob;
+    card.appendSnapshotState(blob);          // R8 = $0A in the blob
+    card.advanceCycles(50000);
+    card.startAyCapture(17030);
+    ayWrite(card, 0, 8, 0x05);
+    card.advanceCycles(30000);
+    card.loadSnapshotState(blob.data(), blob.size());   // back in time, R8 = $0A again
+    card.advanceCycles(10000);
+    ayWrite(card, 0, 0, 0x42);
+    card.advanceCycles(10000);
+    card.onReset();                          // every register to 0
+    card.advanceCycles(10000);
+    const aym::Capture cap = card.stopAyCapture();
+    uint64_t last = 0;
+    for (const auto& w : cap.writes) { assert(w.cycle >= last && "stamps never go back"); last = w.cycle; }
+    assert(cap.endCycle >= last);
+    const Vgm v = readVgm(aym::encodeVgm(cap));
+    // The order the machine went through for R8 of chip 0: the initial $05
+    // write's predecessor in the header ($0A), the write $05, the restore
+    // $0A, the reset 0.
+    std::vector<int> r8;
+    for (const Event& e : v.events) if (e.chip == 0 && e.reg == 8) r8.push_back(e.val);
+    assert((r8 == std::vector<int>{ 0x0A, 0x05, 0x0A, 0x00 }));
+    for (std::size_t i = 1; i < v.events.size(); ++i) assert(v.events[i].sample >= v.events[i - 1].sample);
+    assert(v.endSample >= v.events.back().sample);
+    std::printf("  ok: a capture across a snapshot load and a reset stays in order and follows the chips\n");
+}
+
 void testYm5()
 {
     aym::Capture c;
@@ -270,6 +309,7 @@ int main()
 {
     std::printf("ay_music_export:\n");
     testVgmRoundTrip();
+    testCaptureAcrossTimeJumps();
     testYm5();
     testWav();
     testRing();

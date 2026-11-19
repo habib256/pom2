@@ -466,9 +466,22 @@ TitleResult runTitle(const Title& t, const Options& opt,
         const std::string rate = std::to_string(static_cast<long long>(vt.cpuClockHz)) + "/" +
                                  std::to_string(vt.cyclesPerFrame);
         const std::string mp4 = (opt.video / (t.id + ".mp4")).string();
-        const std::string cmd = "ffmpeg -loglevel error -y -framerate " + rate + " -i \"" +
-            (videoDir / "%05d.png").string() + "\" -vf scale=560:384:flags=neighbor "
-            "-pix_fmt yuv420p \"" + mp4 + "\"";
+        // Each path quoted for the shell that std::system runs: POSIX single
+        // quotes (a ' closes, escapes, reopens) — a --video directory holding
+        // " $ or ` broke or expanded the command (bug hunt 2026-11-19);
+        // Windows double quotes (a Windows path cannot hold a ").
+        auto quote = [](const std::string& p) {
+#if defined(_WIN32)
+            return "\"" + p + "\"";
+#else
+            std::string q = "'";
+            for (char c : p) q += (c == '\'') ? std::string("'\\''") : std::string(1, c);
+            return q + "'";
+#endif
+        };
+        const std::string cmd = "ffmpeg -loglevel error -y -framerate " + rate + " -i " +
+            quote((videoDir / "%05d.png").string()) + " -vf scale=560:384:flags=neighbor "
+            "-pix_fmt yuv420p " + quote(mp4);
 #if defined(_WIN32)
         const char* probe = "ffmpeg -version > NUL 2>&1";
 #else

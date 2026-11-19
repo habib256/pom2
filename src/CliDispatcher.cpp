@@ -583,7 +583,11 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
             CliPlan::Mount m;
             int n = 0;
             const std::string key = colon == std::string::npos ? spec : spec.substr(0, colon);
-            const bool shaped = key.size() >= 4 && (key[0] == 's' || key[0] == 'S') &&
+            // Digits only after the d: sscanf alone took "s6d+1" and "s6d 1".
+            const bool digits = key.size() >= 4 && key.size() <= 5 &&
+                                key.find_first_not_of("0123456789", 3) == std::string::npos &&
+                                key[3] != '0';
+            const bool shaped = digits && (key[0] == 's' || key[0] == 'S') &&
                                 key[1] >= '1' && key[1] <= '7' &&
                                 (key[2] == 'd' || key[2] == 'D') &&
                                 std::sscanf(key.c_str() + 3, "%d%n", &m.drive, &n) == 1 &&

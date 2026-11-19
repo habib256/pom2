@@ -11,8 +11,9 @@ mkdir -p "$out"
 for n in 1 2; do
     rm -f "$out/t$n.vgm" "$out/t$n.ym" "$out/t$n.wav"
     "$bin" --mockingboard 4 --test-port 7 --load 0x0300:tests/testport/tune.bin \
-        --vgm "$out/t$n.vgm" --ym "$out/t$n.ym" --wav "$out/t$n.wav" 2> "$out/log$n" \
-        || { cat "$out/log$n"; echo "capture_twice: run $n exited $?" >&2; exit 1; }
+        --vgm "$out/t$n.vgm" --ym "$out/t$n.ym" --wav "$out/t$n.wav" 2> "$out/log$n"
+    status=$?
+    [ "$status" -eq 0 ] || { cat "$out/log$n"; echo "capture_twice: run $n exited $status" >&2; exit 1; }
     grep -q "(VGM, 10 AY writes)" "$out/log$n" \
         || { cat "$out/log$n"; echo "capture_twice: run $n did not capture 10 AY writes" >&2; exit 1; }
 done

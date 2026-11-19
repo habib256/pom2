@@ -13476,9 +13476,16 @@ their meaning and take the boot. The planner is a `--pre-js`, so shell.html
 plans and downloads in a `preRun` (one folder per drive under
 `/uploads/url/`); the boot disk becomes the positional and every other
 drive `--mount sNdM:<path>`, which `main.cpp` applies after the boot and
-the blank disk through `MainWindow::mountIntoDrive` → the drive rack's
-`mountEmptyDrive`, with a **read-only scratch `Settings`**: a command-line
-mount, like the positional, is never the drive's remembered disk.
+the blank disk through `MainWindow::mountIntoDrive`: the drive rack's
+`mountEmptyDrive` for an empty drive, the storage layer's replacing mount
+(`mountDiskII` / `mountMediaBay`, which flushes a dirty occupant) for one the
+startup restore already filled — refusing it made a link silently lose that
+drive. Both with a **read-only scratch `Settings`**, so the mount itself
+writes nothing; like every mounted disk (the positional included), the
+drive is still remembered at quit by `persistRebuildSettings`. Only a
+drive-1 key can boot (the positional lands in drive 1); a value that is
+neither an http(s) URL nor a bundle path is refused; a page with drive keys
+or `?embed=1` skips the automatic browser resume (`skipBrowserResume`).
 File ▸ Copy link to this setup hands the profile key and every mounted
 drive to `Module.pom2CopySetupLink`, which maps MEMFS paths back
 (`pom2UrlByPath` for downloads, the bundle path for bundled disks), writes

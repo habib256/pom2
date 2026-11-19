@@ -11,7 +11,7 @@ const DEF = 'bundled_disks/DIX-fix.po';
 
 // No parameter: the page's default disk boots.
 assert.deepEqual(link.planDrives('', DEF),
-                 { preset: 'iic-pal', boot: { key: null, value: DEF }, mounts: [] });
+                 { preset: 'iic-pal', boot: { key: null, value: DEF }, mounts: [], rejected: [] });
 assert.deepEqual(link.planDrives('?nodisk=1', DEF).boot, null);
 
 // Two 5.25" disks: drive 1 boots, drive 2 is mounted beside it.
@@ -26,12 +26,26 @@ assert.equal(p.boot.key, 's7d1');
 assert.deepEqual(p.mounts.map(m => m.key), ['s6d1', 's5d1']);
 p = link.planDrives('?s6d1=a.dsk&s5d1=b.po&boot=S5D1', DEF);
 assert.equal(p.boot.key, 's5d1');
-// Only a drive 2: it boots rather than nothing.
-assert.equal(link.planDrives('?s6d2=x.dsk', DEF).boot.key, 's6d2');
-// The legacy ?url= takes the boot; the drives are mounted.
+// Only a drive 1 boots (the positional lands in drive 1): a drive 2 alone is
+// mounted, no default disk is booted over it; ?boot= naming a drive 2 is
+// ignored rather than putting that disk in drive 1 (bug hunt 2026-11-19).
+p = link.planDrives('?s6d2=x.dsk', DEF);
+assert.equal(p.boot, null);
+assert.deepEqual(p.mounts, [{ key: 's6d2', value: 'x.dsk' }]);
+p = link.planDrives('?s6d1=a.dsk&s6d2=b.dsk&boot=s6d2', DEF);
+assert.equal(p.boot.key, 's6d1');
+assert.deepEqual(p.mounts, [{ key: 's6d2', value: 'b.dsk' }]);
+// The legacy ?url= takes the boot when no drive 1 does; the drives are mounted.
 p = link.planDrives('?url=https://h/g.dsk&s6d2=https://h/d.dsk', DEF);
 assert.deepEqual(p.boot, { key: null, value: 'https://h/g.dsk' });
 assert.deepEqual(p.mounts, [{ key: 's6d2', value: 'https://h/d.dsk' }]);
+// …and a drive 1 key wins over it (both would land in drive 1).
+assert.equal(link.planDrives('?url=https://h/g.dsk&s6d1=https://h/a.dsk', DEF).boot.key, 's6d1');
+// Neither a URL nor a bundle path: refused, never handed to the machine.
+p = link.planDrives('?s6d1=/persistent/pom2/x.dsk&s6d2=../../etc/p.dsk&s5d1=javascript:alert(1)', DEF);
+assert.equal(p.boot, null);
+assert.deepEqual(p.mounts, []);
+assert.deepEqual(p.rejected.map(r => r.key), ['s6d1', 's6d2', 's5d1']);
 // Keys are case-insensitive, malformed ones ignored, a repeated one taken once.
 p = link.planDrives('?S6D1=a.dsk&s6d1=b.dsk&s8d1=c.dsk&s6d15=d.dsk&s6d=e.dsk', DEF);
 assert.deepEqual(p.boot, { key: 's6d1', value: 'a.dsk' });

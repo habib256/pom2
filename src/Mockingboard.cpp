@@ -863,6 +863,7 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     lastSyncCycle_ = cpu_ ? cpu_->getCycleCountNow() -
         static_cast<uint64_t>(std::max(0, cpu_->getCurrentInstructionCycles())) : 0;
     busNow_ = lastSyncCycle_;
+    ayCaptureResync();   // the restored registers, as writes
     // The restored IFR/IER need not match the IRQ line the card is driving;
     // nothing else re-evaluates it until the next VIA access.
     updateIrq();
@@ -905,6 +906,7 @@ void MockingboardCard::resetCard(bool powerCycle)
     // doesn't run a giant catch-up on its first MMIO access.
     lastSyncCycle_ = now;
     busNow_ = lastSyncCycle_;
+    ayCaptureResync();   // the reset registers, as writes
     viaWriteCount_[0] = viaWriteCount_[1] = 0;
     ayWriteCount_[0]  = ayWriteCount_[1]  = 0;
     ayEnvWriteCount_[0] = ayEnvWriteCount_[1] = 0;
@@ -1278,7 +1280,7 @@ void MockingboardCard::queueAyEvent(int chip, uint8_t reg, uint8_t val)
     // AUDIO-013: kRegAyReset and aymusic::kResetReg are the same $FF.
     if (ayCapture_)
         ayCapture_->writes.push_back(pom2::aymusic::Write{
-            busNow_, static_cast<uint8_t>(chip), reg, val });
+            ayCaptureStamp(), static_cast<uint8_t>(chip), reg, val });
     latestAyEventCycle_.store(busNow_, std::memory_order_relaxed);
 }
 
@@ -1292,6 +1294,27 @@ uint64_t MockingboardCard::syncedBusNow()
     return busNow_;
 }
 
+uint64_t MockingboardCard::ayCaptureStamp()
+{
+    uint64_t stamp = busNow_ + ayCaptureOffset_;
+    if (stamp < ayCaptureLast_) {                  // time went back: absorb it
+        ayCaptureOffset_ += ayCaptureLast_ - stamp;
+        stamp = ayCaptureLast_;
+    }
+    ayCaptureLast_ = stamp;
+    return stamp;
+}
+
+void MockingboardCard::ayCaptureResync()
+{
+    if (!ayCapture_) return;
+    const uint64_t stamp = ayCaptureStamp();
+    for (int chip = 0; chip < 2; ++chip)
+        for (uint8_t r = 0; r < 14; ++r)
+            ayCapture_->writes.push_back(pom2::aymusic::Write{
+                stamp, static_cast<uint8_t>(chip), r, ay_[chip]->regs[r] });
+}
+
 void MockingboardCard::startAyCapture(int cyclesPerFrame)
 {
     std::lock_guard<std::mutex> lk(mtx);
@@ -1300,6 +1323,8 @@ void MockingboardCard::startAyCapture(int cyclesPerFrame)
     cap->cyclesPerFrame = cyclesPerFrame;
     cap->chips          = 2;
     cap->startCycle     = syncedBusNow();
+    ayCaptureOffset_    = 0;
+    ayCaptureLast_      = cap->startCycle;
     for (int chip = 0; chip < 2; ++chip)
         for (int r = 0; r < 16; ++r) cap->initial[chip][r] = ay_[chip]->regs[r];
     ayCapture_ = std::move(cap);
@@ -1309,9 +1334,11 @@ pom2::aymusic::Capture MockingboardCard::stopAyCapture()
 {
     std::lock_guard<std::mutex> lk(mtx);
     if (!ayCapture_) return {};
+    syncedBusNow();
+    const uint64_t end = ayCaptureStamp();
     pom2::aymusic::Capture out = std::move(*ayCapture_);
     ayCapture_.reset();
-    out.endCycle = std::max(syncedBusNow(), out.startCycle);
+    out.endCycle = std::max(end, out.startCycle);
     return out;
 }
 

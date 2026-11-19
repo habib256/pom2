@@ -846,7 +846,11 @@ int main(int argc, char** argv)
     // the run is deterministic and takes as long as the host needs rather than
     // N/60 seconds: 300 frames land in well under a second on any runner.
     if (captureMode) {
-        if (untilAddr >= 0) {
+        // With --load / --run, --until is a question about the PROGRAM: it is
+        // armed when the program starts (launch() below), or the ROM's own
+        // boot — COUT at $FDED, say — stopped the run before it began and
+        // blamed the launch (bug hunt 2026-11-19).
+        if (untilAddr >= 0 && runAddr < 0) {
             // The run-control debugger is what stops a machine at an address;
             // arming it puts the CPU on its debugged loop for this run.
             auto st = controller.lockState();
@@ -886,6 +890,7 @@ int main(int argc, char** argv)
         };
         constexpr uint16_t kLaunchAt = 0xFD1B;
         bool launchPending = runAddr >= 0;
+        bool instrumentFailed = false;
         if (launchPending) {
             auto st = controller.lockState();
             controller.debugger().addBreakpoint(kLaunchAt);
@@ -902,11 +907,18 @@ int main(int argc, char** argv)
                         st.memory().writeRamUnchecked(static_cast<uint16_t>(l.addr + static_cast<long>(k)),
                                                       l.bytes[k]);
                 st.cpu().setProgramCounter(static_cast<uint16_t>(runAddr));
+                if (untilAddr >= 0) {
+                    controller.debugger().addBreakpoint(static_cast<uint16_t>(untilAddr));
+                    controller.syncDebugHook();
+                }
                 std::fprintf(stderr, "[POM2 headless] launched $%04lX after %llu cycles\n", runAddr,
                              static_cast<unsigned long long>(st.memory().getCycleCounter()));
                 launchPending = false;
             }
-            (void)instrument();   // takes the lock itself
+            // A trace file that cannot be created ends the run as a usage
+            // error, as it does without --load — it used to be ignored and
+            // took --profile down with it (bug hunt 2026-11-19).
+            if (!instrument()) instrumentFailed = true;   // takes the lock itself
             // The breakpoint parked the machine (noteDebuggerStop); resume it.
             controller.setMode(EmulationController::Mode::Running);
         };
@@ -944,7 +956,12 @@ int main(int argc, char** argv)
         }
         // Samples owed = the emulated time run so far at the device rate,
         // mixed after every frame: the cycles decide, not the host clock.
-        const double wavClock = controller.emulatedCpuClockHz();
+        // The clock the speaker is GIVEN once the run starts (the standard's,
+        // times the speed menu) — not emulatedCpuClockHz() here, which before
+        // the first frame still derives from the NTSC frame budget: under
+        // --pal or --speed the WAV came out too long and slow (bug hunt
+        // 2026-11-19).
+        const double wavClock = pom2VideoTiming(controller.getVideoStandard()).cpuClockHz * speedMul;
         uint64_t wavMixed = 0;
         std::vector<float> wavBuf;
         auto mixWavTo = [&](uint64_t cyclesRun) {
@@ -980,6 +997,7 @@ int main(int argc, char** argv)
             if (launchPending && controller.debugger().lastHit().valid()
                 && controller.debugger().lastHit().pc == kLaunchAt) {
                 launch();
+                if (instrumentFailed) break;
                 continue;
             }
             if (untilAddr >= 0 && controller.debugger().lastHit().valid()) {
@@ -991,6 +1009,7 @@ int main(int argc, char** argv)
             if (controller.cpu().haltCode() == 1) { halted = true; break; }
         }
         controller.setCyclesPerFrame(frameCycles);
+        if (instrumentFailed) return 1;
 
         const M6502& cpu = controller.cpu();
         const unsigned long long ran = static_cast<unsigned long long>(

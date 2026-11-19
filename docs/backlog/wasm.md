@@ -101,7 +101,8 @@ without them a two-disk game or a DIX setup cannot be shared. Apple2TS's
 **Done 2026-11-19:** `?sNdM=` per drive (Apple2TS's keys, a URL or a
 bundled path), `?boot=sNdM`, default boot = drive 1 of the highest slot;
 the others reach the machine as the new CLI flag `--mount sNdM:<path>`
-(also on the desktop, not persisted to `state.cfg`). File ▸ Copy link to
+(also on the desktop; the mount writes nothing, the drive is remembered at
+quit like any mounted disk, and a restored disk in the drive is replaced). File ▸ Copy link to
 this setup (browser) writes the profile and every linkable drive to the
 clipboard and the address bar; a disk imported from the computer cannot be
 linked and is counted. Planner and link builder in `wasm/setup_link.js`,
