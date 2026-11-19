@@ -10,6 +10,8 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.2 marker** — 2026-11-19. Release notes: [v1.2.2](docs/releases/v1.2.2.md).
+
 ## 2026-11-19 — Bug hunt before v1.2.2: sixteen findings in the day's own code, fixed
 
 `docs/audits/bug-hunt-2026-11-19.md`. Two reviewers over everything added
