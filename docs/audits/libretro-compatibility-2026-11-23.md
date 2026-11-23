@@ -104,11 +104,13 @@ options. The benchmark now selects its profile through the new options
 `pom2_display=composite`), the same machine as before: an Enhanced //e with no
 card in slots 3, 4, 5 or 7, matching the AppleWin profile.
 
-**POM2 original 12/12, POM2 accelerated 12/12.** The two protected WOZ
-scenarios ran in a second pass, on fixtures fetched by the recipe above
-(their SHA-256s checked by the benchmark) and deleted afterwards. AppleWin
-was not rebuilt; its figures in the table above are from the same AppleWin
-commit and the same scenarios.
+**POM2 original 12/12, POM2 accelerated 12/12, AppleWin 11/12**, all three
+in one run: AppleWin rebuilt from `6e6df2cb7503af105422a01cfa08a0ebc48486a3`
+as above, the protected fixtures fetched by the recipe above (their SHA-256s
+checked by the benchmark) and deleted afterwards. AppleWin again showed no
+BASIC prompt within 720 frames. Over the 11 common scenarios the medians are
+21.68 s original, 11.82 s accelerated and 17.03 s AppleWin (P90 34.17 s,
+25.24 s, 34.87 s), the figures of the table above.
 
 Every final frame count is identical to the table above in both POM2 modes
 (for example Dirtbike 1,692 / 844, ChromaBreak 1,302 / 710, A2FILECMD
