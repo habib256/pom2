@@ -10,6 +10,20 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — The bundled games follow pom2games
+
+`DIRTBIKE.dsk`, `MICRO-SOKOBAN.dsk` and `CHROMABREAK.po` (packaging/disks and
+disks_5.4) are the builds of pom2games `e6ea537` / `fb3614c` / `468ea7f`:
+Dirt Bike boots straight through DOS RWTS sectors and fixes its race timing,
+controls and score saves; Micro-Sokoban its resume and tutorial; ChromaBreak
+its gameplay and records. What pinned the old builds moved with them: the
+SHA-256s (`packaging/disks/SHA256SUMS.txt`, `corpus.manifest`), the three
+corpus frames (re-blessed after looking at them), and `diskii_speed_x2/x4`,
+which waited for `$8234` in Dirt Bike's old demo loop and now waits for
+`$65C4` in its attract loop (found from an instruction trace: first run at
+~30 M cycles, then every few frames). The benchmark's three scenarios pass
+unchanged; Dirt Bike reaches its title in 304 frames instead of 504.
+
 ## 2026-11-23 — Libretro: a real power-on, a wide corpus, ARM and Android
 
 The core boots a Disk II the way the machine does: power on, and the //e

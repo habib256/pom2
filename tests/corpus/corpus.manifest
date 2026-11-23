@@ -111,17 +111,17 @@ title dix-oldskool-iic iic-pal ci dix
 # ── The author's own GPL software, tracked in the tree.
 
 title dirtbike iie-pal games
-  diskii 1 disks_5.4/DIRTBIKE.dsk sha256=75acf488632d50d00de5d1cb62f1c078013357dcfd10f575c13c380e9520c58a
+  diskii 1 disks_5.4/DIRTBIKE.dsk sha256=4a48615e12868c80ba784699e7fcfc377cf4707864330efc0386daabf3b73b6d
   run 60
   check title
 
 title micro-sokoban iie-pal games
-  diskii 1 disks_5.4/MICRO-SOKOBAN.dsk sha256=db611bc0a5112b36ada3ddcf6581b2186453dffdeb5a721b0949952ae2e7dcf4
+  diskii 1 disks_5.4/MICRO-SOKOBAN.dsk sha256=fd2eea762a36490983a7fc4d3401342bd6a05f2f1089f2f6f15dc4ea6de28686
   run 20
   check title
 
 title chromabreak iie-pal games
-  diskii 1 disks_5.4/CHROMABREAK.po sha256=cabba4d7cd7efc00f2b5e7fc9b040431ec8a66c93daa099a01035c05b215c54f
+  diskii 1 disks_5.4/CHROMABREAK.po sha256=ee1429e614039134d1cf2a5cec50341c443dee6f221a4d3aac0767d38f75f9d4
   run 20
   check title
 

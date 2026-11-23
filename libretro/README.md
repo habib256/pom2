@@ -275,9 +275,9 @@ type it. Y switches case and symbols, X deletes, Select types a space and
 Start enters Return and closes the keyboard. The **Analog paddle dead zone**
 and **Analog paddle sensitivity** core options take effect during play.
 
-The computer keyboard also works. In Dirtbike, J/L lean, A applies throttle
-and Space brakes. If RetroArch intercepts letter keys as hotkeys, turn on
-**Game Focus** (Scroll Lock by default).
+The computer keyboard also works. In Dirtbike, J/L lean, A applies full
+throttle, Z half throttle and Space brakes. If RetroArch intercepts letter
+keys as hotkeys, turn on **Game Focus** (Scroll Lock by default).
 
 The module uses the MIT-licensed
 [libretro API header at ae22debd](https://github.com/libretro/libretro-common/blob/ae22debd425c33fe355ac2e51d9a140d7e8b3fa6/include/libretro.h).
