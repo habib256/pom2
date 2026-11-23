@@ -225,7 +225,10 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
     reader.pos += 6;
     std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb, mouse,
                          clock, accel, sony, hdv;
-    if (!reader.blob(machine, 2u << 20) || !reader.blob(speaker, 256u << 10) ||
+    // The machine section carries every RamWorks bank: 128 of them, 80 KiB
+    // each with its language card, on top of the base 2 MiB budget.
+    constexpr size_t kMaxMachineBytes = (2u << 20) + 128u * 0x14000u;
+    if (!reader.blob(machine, kMaxMachineBytes) || !reader.blob(speaker, 256u << 10) ||
         !reader.blob(keyboard, 8u << 10) || !reader.blob(video, 4u << 20) ||
         !reader.blob(diskIdentity, 4096) ||
         !reader.blob(disk, 36u << 20) || !reader.blob(diskTiming, 64) ||

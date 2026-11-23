@@ -21,6 +21,11 @@ picture on 44, AppleWin on 35 of the 38 it can load, and the two images that
 fail fail the same way on both. The Apple ][ of 1977 keeps the shortcut: its
 ROM does not boot on its own.
 
+A RamWorks III (256 KiB to 8 MiB, //e) is a core option and an SDK call
+(`setRamWorksBanks`). An 8 MiB machine saved its state but refused to load
+it: the SDK capped a state's machine section at 2 MiB, and 128 banks with
+their language cards are 10 MiB.
+
 Two more fixes from running the packages:
 
 - **A restored state brings its own clock date.** The emulated No-Slot Clock

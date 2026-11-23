@@ -250,6 +250,15 @@ public:
     Core(const Core&) = delete;
     Core& operator=(const Core&) = delete;
 
+    /// Applied Engineering RamWorks III in a //e's auxiliary slot: `banks`
+    /// of 64 KiB, the guest selecting one at $C073 (MAME a2eramworks3.cpp's
+    /// model). 1 is the stock 64 KiB card; 4, 8, 16, 48 and 128 are the card's
+    /// 256 KiB, 512 KiB, 1, 3 and 8 MiB. Call before loadRom(): it clears
+    /// auxiliary memory. Snapshots carry every bank. False on a ][, ][+ or
+    /// //c, or for a count outside 1-128.
+    bool setRamWorksBanks(int banks);
+    int ramWorksBanks() const;
+
     /// Load an Apple II system ROM: common sizes are 12/16/20/32 KiB.
     /// A 20 KiB dump skips its 4 KiB prefix; other accepted sizes in
     /// 2..64 KiB use the loader's best-effort top-of-memory placement.

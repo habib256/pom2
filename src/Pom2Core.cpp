@@ -928,6 +928,22 @@ bool Core::noSlotClockAttached() const
     return impl_->noSlotClock != nullptr;
 }
 
+bool Core::setRamWorksBanks(int banks)
+{
+    if (!impl_->iieMemory || impl_->iicClass() || banks < 1 || banks > 128) {
+        impl_->error = "RamWorks III needs a //e and 1 to 128 banks";
+        return false;
+    }
+    impl_->memory.setRamWorksBanks(static_cast<std::uint32_t>(banks));
+    impl_->error.clear();
+    return true;
+}
+
+int Core::ramWorksBanks() const
+{
+    return static_cast<int>(impl_->memory.ramWorksBanks());
+}
+
 bool Core::driveSoundsAttached() const
 {
     return impl_->driveSound525 != nullptr;
@@ -1702,6 +1718,7 @@ SdkInfo Core::sdkInfo()
         "provenance",
         "ram.banks",
         "ram.regions",
+        "ramworks",
         "render.cpu-composite",
         "render.modes",
         "render.rgb-monitor",

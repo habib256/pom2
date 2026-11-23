@@ -1149,6 +1149,13 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     }
 
     auto target = std::make_unique<pom2::Core>(machine.config);
+    // RamWorks III: before the ROM, as the card is in the slot at power-on.
+    const auto ramworks = option("pom2_ramworks");
+    const int banks = ramworks == "256k" ? 4 : ramworks == "512k" ? 8 : ramworks == "1m" ? 16
+                    : ramworks == "3m" ? 48 : ramworks == "8m" ? 128 : 1;
+    const bool ramWorksFits = banks > 1 && pom2::libretro::hasSlots(machine.kind)
+        && machine.kind != pom2::libretro::MachineKind::IIPlus && machine.kind != pom2::libretro::MachineKind::II;
+    if (ramWorksFits && !target->setRamWorksBanks(banks)) reportError("RamWorks: " + target->lastError());
     if (!target->loadRom(machine.rom.string(), machine.lowerBank)) {
         reportError("Cannot load the " + machine.name + " firmware at " + machine.rom.string() + ": "
                     + target->lastError());
@@ -1160,6 +1167,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
         return false;
     }
     std::string summary = machine.name;
+    if (ramWorksFits) summary += " · RamWorks " + std::string(ramworks);
     if (!installCards(*target, state, summary)) return false;
     if (machine.kind == pom2::libretro::MachineKind::IIcPlus) state.slotUsed[6] = true;
     target->setAudioSampleRate(kSampleRate);
@@ -1213,7 +1221,10 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     constexpr std::size_t minimumDiskBudget = 1u << 20;
     constexpr std::size_t maxEmbeddedDisk = 16u << 20;
     const bool pal = machine.config.timing == pom2::VideoTiming::PAL;
-    const std::size_t machineBudget = pal ? (1536u << 10) : (1u << 20);
+    // Every RamWorks bank rides in the state: 80 KiB each (aux + its LC).
+    const std::size_t ramWorksBytes =
+        static_cast<std::size_t>(std::max(0, target->ramWorksBanks() - 1)) * 80u * 1024u;
+    const std::size_t machineBudget = (pal ? (1536u << 10) : (1u << 20)) + ramWorksBytes;
     std::vector<std::size_t> sizes;
     for (const auto& image : disks.images) {
         std::error_code sizeError;

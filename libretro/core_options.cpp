@@ -101,6 +101,14 @@ const std::vector<Option>& options()
          "maintenue au reset démarre un //c Plus à 1 MHz.",
          {{"auto", "Automatic", "Automatique"}, {"none", "None (1 MHz)", "Aucun (1 MHz)"},
           {"zip", "Zip Chip (4 MHz)", "Zip Chip (4 MHz)"}, {"fastchip", "FASTChip (16.6 MHz)", "FASTChip (16,6 MHz)"}}},
+        {"pom2_ramworks", "system", "Auxiliary memory (restart)", "Mémoire auxiliaire (redémarrage)",
+         "A RamWorks III in the //e's auxiliary slot: AppleWorks, ProDOS RAM disks and some demos use the "
+         "extra banks. Save states grow with it.",
+         "Une RamWorks III dans le slot auxiliaire du //e : AppleWorks, les RAM disks ProDOS et certaines "
+         "démos utilisent les banques en plus. Les sauvegardes d'état grossissent avec elle.",
+         {{"64k", "64 KiB (standard)", "64 Kio (standard)"}, {"256k", "RamWorks 256 KiB", "RamWorks 256 Kio"},
+          {"512k", "RamWorks 512 KiB", "RamWorks 512 Kio"}, {"1m", "RamWorks 1 MiB", "RamWorks 1 Mio"},
+          {"3m", "RamWorks 3 MiB", "RamWorks 3 Mio"}, {"8m", "RamWorks 8 MiB", "RamWorks 8 Mio"}}},
         {"pom2_clock", "system", "No-Slot Clock (restart)", "Horloge No-Slot Clock (redémarrage)",
          "A DS1216E clock under the ROM gives ProDOS and many programs the date. Emulated time starts at "
          "the host's date when the content loads and follows the machine, so save states and netplay "

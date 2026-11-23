@@ -566,6 +566,14 @@ restore is supported for sector-based disks. A restore can move a working
 copy's in-memory state before or after guest writes. A subsequent explicit
 write-back commits the restored timeline through the normal atomic disk path.
 
+## RamWorks
+
+`setRamWorksBanks(banks)` puts an Applied Engineering RamWorks III in a //e's
+auxiliary slot, before `loadRom` (it clears auxiliary memory): 1 bank is the
+stock 64 KiB card, 4 to 128 the card's 256 KiB to 8 MiB. The guest selects a
+bank at `$C073`. Snapshots carry every bank, which makes an 8 MiB state about
+10 MiB; `ramRegion(Aux)` is the bank selected now.
+
 ## Accelerators and the clock
 
 `setAccelerator(model)` seats a Zip Chip (4 MHz) or a FASTChip (up to
@@ -617,6 +625,7 @@ checkout. A capability name is added with its API and never reused:
 | `mockingboard` | `attachMockingboard` |
 | `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
 | `noslotclock` | `attachNoSlotClock` |
+| `ramworks` | `setRamWorksBanks`, `ramWorksBanks` |
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |
 | `ram.regions` | `ramRegion` |

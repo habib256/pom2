@@ -98,6 +98,7 @@ Options marked *(restart)* take effect at the next **Load Content** or
 | | Processor *(restart)* | The machine's own, NMOS 6502, 65C02 (][, ][+ and //e) |
 | | Accelerator *(restart)* | Automatic (the //c Plus at 4 MHz), None, Zip Chip, FASTChip |
 | | No-Slot Clock *(restart)* | Emulated time, Host clock, Absent |
+| | Auxiliary memory *(restart)* | 64 KiB, RamWorks 256 KiB, 512 KiB, 1, 3 or 8 MiB (//e) |
 | | DIX preset *(restart)* | Automatic, Always, Never |
 | Video | Display | Automatic, three composite colour tables, OpenEmulator composite signal, AppleWin NTSC monitor, TV or idealized, monochrome white, green or amber, RGB |
 | | Le Chat Mauve RGB card *(restart)* | Automatic (DIX), Absent, Installed |

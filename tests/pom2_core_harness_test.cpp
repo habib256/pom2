@@ -302,7 +302,7 @@ void testIdentity()
             != info.capabilities.end();
     };
     for (const char* name : { "accelerator", "harddisk", "ram.banks", "ram.regions", "keyboard.state", "provenance",
-                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "noslotclock", "smartport35" })
+                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "noslotclock", "ramworks", "smartport35" })
         assert(has(name));
     // Declared by its absence: the SDK has no CRT profile (docs/SDK.md § Rendering).
     assert(!has("render.crt"));
@@ -666,6 +666,44 @@ void testIIcPlusSnapshot()
     std::printf("  ok: //c Plus snapshot, %zu KiB\n", state.size() >> 10);
 }
 
+// setRamWorksBanks: the guest's bank select at $C073 reaches the extra banks
+// and a snapshot carries them; a ][+ has no auxiliary slot.
+void testRamWorks()
+{
+    pom2::CoreConfig config;
+    config.machine = pom2::Machine::AppleIIeEnhanced;
+    pom2::Core core(config);
+    assert(core.setRamWorksBanks(4) && core.ramWorksBanks() == 4);
+    assert(core.loadRom(gSource + "/roms/apple2e.rom"));
+    const auto aux2000 = [&] { return ram(core, pom2::RamBank::Aux, 0x2000); };
+    // Bank 2: RAMWRT on, $5A at $2000, RAMWRT off, back to bank 0.
+    runGuest(core, {0xA9, 0x02, 0x8D, 0x73, 0xC0, 0x8D, 0x05, 0xC0, 0xA9, 0x5A, 0x8D, 0x00, 0x20,
+                    0x8D, 0x04, 0xC0, 0xA9, 0x00, 0x8D, 0x73, 0xC0});
+    assert(aux2000() != 0x5A && "bank 0 kept its byte");
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    assert(state.size() > 4u * 64u * 1024u && "the state holds every bank");
+    runGuest(core, {0xA9, 0x02, 0x8D, 0x73, 0xC0});
+    assert(aux2000() == 0x5A && "the guest's write is in bank 2");
+    put(core, pom2::RamBank::Aux, 0x2000, 0x00);   // spoil bank 2
+    assert(core.loadState(state.data(), state.size()));
+    assert(aux2000() != 0x5A && "the state had bank 0 selected");
+    runGuest(core, {0xA9, 0x02, 0x8D, 0x73, 0xC0});
+    assert(aux2000() == 0x5A && "the state restored bank 2");
+
+    // The card's largest size, 8 MiB, round-trips too.
+    pom2::Core big(config);
+    assert(big.setRamWorksBanks(128) && big.loadRom(gSource + "/roms/apple2e.rom"));
+    std::vector<std::uint8_t> bigState;
+    assert(big.saveState(bigState) && big.loadState(bigState.data(), bigState.size()));
+
+    pom2::CoreConfig plus;
+    plus.machine = pom2::Machine::AppleIIPlus;
+    pom2::Core iiPlus(plus);
+    assert(!iiPlus.setRamWorksBanks(4));
+    std::printf("  ok: RamWorks III banks in snapshots\n");
+}
+
 int main()
 {
     gSource = POM2_TEST_SOURCE_DIR;
@@ -681,5 +719,6 @@ int main()
     testAccelerator();
     testSpeechSnapshot();
     testIIcPlusSnapshot();
+    testRamWorks();
     return 0;
 }
