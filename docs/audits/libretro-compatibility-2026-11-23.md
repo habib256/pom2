@@ -210,9 +210,15 @@ PAL changes no outcome. The //c's two extra failures:
   disks only, so a 13-sector DOS 3.2 disk does not boot on one, as on the
   real machine.
 - A2osX 0.95 stays black (3.5-inch, through the //c's rear port, which boots
-  Apple II DeskTop, AppleShare and CardCat). Over three runs each it boots
-  with the Mockingboard 4c off and the clock on, and stays black with the 4c
-  on, or with both off. A reading, not verified on a //c: the 4c sleeps until
-  a program writes into `$C400-$C4FF` and then answers that page over the
-  //c's mouse firmware (MAME `c400_w`); a slot probe that writes there wakes
-  it and loses the mouse. Settled by: A2osX on a //c with a Mockingboard 4c.
+  Apple II DeskTop, AppleShare and CardCat) with the Mockingboard 4c on, the
+  core's default. Traced in the SDK and against A2osX's source: its Z80
+  probe (`KERNEL.S.INIT3`, `INIT3.CPUZ80`) writes `$E4` to `$C400`; any write
+  into that page wakes the 4c for good, which then answers it over the //c's
+  mouse firmware (the card's own manual, quoted in
+  [mb-audit issue #8](https://github.com/tomcw/mb-audit/issues/8), and MAME
+  `c400_w` @ 4033598f); A2osX reads `$C4FB`, finds no mouse signature, and
+  falls back to polling `$C019` (`KERNEL.S.CORE`, `CORE.GetSig`), which on a
+  //c is the VBL interrupt flag (Apple IIc Technical Note #9): 3,194 reads,
+  all `$00`, so its clock never ticks and its shell never starts. A2osX is
+  alive throughout (its scheduler runs). This is the real machine's
+  behaviour, kept: on a //c with a 4c, A2osX needs the card off.
