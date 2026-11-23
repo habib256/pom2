@@ -61,11 +61,14 @@ DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
     return {std::move(path), std::move(name)};
 }
 
+// Namespace scope, not locals: MSVC will not let the lambda below read a
+// local constexpr without capturing it.
+constexpr std::uint64_t k35Small = 400 * 1024, k35Large = 800 * 1024, k525 = 140 * 1024;
+
 } // namespace
 
 MediaKind DiskEntry::kind() const
 {
-    constexpr std::uint64_t k35Small = 400 * 1024, k35Large = 800 * 1024, k525 = 140 * 1024;
     const auto bySize = [](std::uint64_t bytes) {
         if (bytes == k35Small || bytes == k35Large) return MediaKind::SmartPort;
         return bytes > k35Large ? MediaKind::HardDisk : MediaKind::DiskII;
