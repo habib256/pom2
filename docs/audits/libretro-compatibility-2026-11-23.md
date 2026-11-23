@@ -132,7 +132,22 @@ Apple ][+ BASIC prompt. Its first HDV session mounted the image read-only:
 private disk copies were capped at 16 MiB, now 33 MiB (the largest ProDOS
 volume and a 2IMG header), after which the copy was made and writable.
 
-Not measured here: a real RetroAchievements set. The memory map follows
-rcheevos' Apple II regions (`rc_consoleinfo.c` at `f4abfca`, main RAM at
-`0x00000`, auxiliary RAM at `0x10000`) and the physical layout AppleWin
-exposes, but no achievement was unlocked in this run.
+### Achievements through rcheevos
+
+A harness built on rcheevos at `f4abfca` (its `rc_libretro` memory mapping,
+the code RetroArch runs, and its `rc_runtime`) loaded the module with no
+content and mapped its memory for `RC_CONSOLE_APPLE_II`: 128 KiB, main RAM at
+`0x00000` and auxiliary RAM at `0x10000`. Three conditions in
+RetroAchievements syntax were active from the BASIC prompt: none triggered
+before the guest acted; `0xH0300=42` triggered on `POKE 768,42`,
+`0xH10400=160` when `PR#3` cleared the 80-column screen in auxiliary RAM, and
+`0xH0300=42_0xH10400=160` on the two together.
+
+The same harness on the AppleWin module maps the same 128 KiB, but its BASIC
+shows no prompt under this frontend (as in the benchmark), so nothing was
+typed. After both booted Dirtbike for 1,500 frames, the RAM read through
+`rc_libretro` matched at 82 % of `$0800-$1FFF` and 93 % of `$6000-$95FF`
+(game state differs; an offset map would match almost nothing). The language
+card and auxiliary RAM, which Dirtbike leaves alone, hold each emulator's
+power-on pattern. No published achievement set was run: that needs a
+RetroAchievements account.
