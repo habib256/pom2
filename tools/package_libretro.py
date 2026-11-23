@@ -15,9 +15,10 @@ def main():
     parser.add_argument("output", type=Path, help="destination ZIP, named for its platform")
     args = parser.parse_args()
     module = args.module
-    if module.name not in ("pom2_libretro.dll", "pom2_libretro.so", "pom2_libretro.dylib"):
+    if module.name not in ("pom2_libretro.dll", "pom2_libretro.so", "pom2_libretro.dylib",
+                           "pom2_libretro_android.so"):
         parser.error("expected a POM2 libretro module")
-    files = {f"cores/{module.name}": module, "info/pom2_libretro.info": module.with_suffix(".info"),
+    files = {f"cores/{module.name}": module, "info/pom2_libretro.info": module.parent / "pom2_libretro.info",
              "doc/pom2/README.md": ROOT / "libretro/README.md", "doc/pom2/LICENSE": ROOT / "LICENSE",
              "doc/pom2/compatibility.md": ROOT / "docs/audits/libretro-compatibility-2026-11-23.md",
              "doc/pom2/libretro.h": ROOT / "src/third_party/libretro/libretro.h"}

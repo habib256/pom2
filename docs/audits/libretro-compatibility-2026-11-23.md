@@ -151,3 +151,41 @@ typed. After both booted Dirtbike for 1,500 frames, the RAM read through
 card and auxiliary RAM, which Dirtbike leaves alone, hold each emulator's
 power-on pattern. No published achievement set was run: that needs a
 RetroAchievements account.
+
+## A real power-on, and the wide corpus
+
+The core now boots a Disk II by powering the machine on and letting the //e
+ROM's reset and slot scan find the drive, as the hardware and AppleWin do,
+instead of the SDK's `bootDisk()` shortcut to `$C600`. The shortcut skips the
+reset's set-up, and two titles drew nothing after it (below). The ROM's
+start costs about one sample (8 frames): most Disk II scenarios end 8 frames
+later (Dirtbike 1,692 → 1,700 original; Captain Goodnight 2,052 → 2,060 and
+1,516 → 1,524; Prisoner II 4,522 → 4,530 and 3,458 → 3,466), Dirtbike
+accelerated (844) and Hectic original (612) do not move, and Monster Splash
+and Heartbeat accelerated end 16 frames later (1,120 and 346).
+**POM2 12/12 in both modes, AppleWin 11/12**, one run, the
+protected fixtures fetched and deleted as above. Medians over the 11 common
+scenarios: **21.81 s original, 11.96 s accelerated, 17.03 s AppleWin** (P90
+34.30 s, 25.38 s, 34.87 s).
+
+`tools/libretro_corpus.py` boots every local disk image in each core for 30
+emulated seconds and records what the guest shows: an error message read from
+the 40-column text page (I/O ERROR, UNABLE TO LOAD, ...), a black picture, or
+a picture. A coarse witness, applied the same way to both cores, over the 46
+images under `disks_5.4`, `disks_3.5` and `hdv` (test media and local
+images), POM2 and AppleWin in the benchmark's //e NTSC profile with a
+Mockingboard in slot 4:
+
+| | Picture | Black | Error | Not loaded |
+|---|---:|---:|---:|---:|
+| POM2 | **44** | 1 | 1 | 0 |
+| AppleWin | 35 | 1 | 1 | 9 |
+
+AppleWin's nine: the 13-sector `DOS32STD.d13` it rejects, and the six
+3.5-inch and two hard disk images its profile has no card for. The black
+image (`second_d1.dsk`, Second Reality's first disk) and the error
+(`prodos-drivers-a2stuff-v1.8.po`, "UNABLE TO" on a //e with no clock card)
+are the same on both cores. Every 5.25-inch image AppleWin boots, POM2 boots.
+Before the power-on change POM2 showed black on DIGIDREAM (`DD.dsk`) and
+`fastloader.woz`, which AppleWin drew: that difference is what found the
+`bootDisk()` problem.

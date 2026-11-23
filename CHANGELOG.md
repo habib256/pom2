@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Libretro: a real power-on, a wide corpus, ARM and Android
+
+The core boots a Disk II the way the machine does: power on, and the //e
+ROM's reset and slot scan find the drive. It used the SDK's `bootDisk()`,
+which jumps to `$C600` after a cold boot without the reset routine, and
+DIGIDREAM and the fastloader WOZ drew nothing after it. A new wide corpus
+(`tools/libretro_corpus.py`, 46 images) found the pair: POM2 now shows a
+picture on 44, AppleWin on 35 of the 38 it can load, and the two images that
+fail fail the same way on both. The Apple ][ of 1977 keeps the shortcut: its
+ROM does not boot on its own.
+
+Two more fixes from running the packages:
+
+- **A restored state brings its own clock date.** The emulated No-Slot Clock
+  starts at the date the content loads; the SDK refused a state with another
+  start, so every RetroArch session after the first refused its own
+  automatic state (CI caught it on all three platforms). The start is now
+  restored like the RAM.
+- **Android and Linux ARM64 builds.** Bionic has no libresolv, so the host
+  DNS helper of the built-in NAT answers nothing there (the libretro core runs
+  no network card); the Android module is named `pom2_libretro_android.so`
+  and, like the Linux one, exports only the 25 `retro_*` functions. CI builds
+  it with the NDK; the Linux ARM64 package runs the same tests and RetroArch
+  check as x64 on a native runner.
+
 ## 2026-11-23 — Libretro: two drives, 4 MHz, a ProDOS clock, states on //c+ and speech
 
 The libretro core gains a second 5.25-inch drive (the playlist's next disk,

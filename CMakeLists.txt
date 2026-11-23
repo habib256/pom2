@@ -2031,12 +2031,22 @@ if(WIN32)
 endif()
 # Native DNS wire queries (NatHostSockets): host resolver on Unix, system DNS
 # server configuration on Windows. Keep the SDK's link interface self-contained.
+# GCC 8 and earlier keep std::filesystem in a separate library, libstdc++fs;
+# GCC 9.1 moved it into libstdc++ (libretro's Linux image is GCC 9).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.1)
+    target_link_libraries(pom2_core PUBLIC stdc++fs)
+endif()
+# Android's Bionic has no libresolv: NatHostSockets answers no host DNS there.
 if(WIN32)
     set(POM2_NATIVE_DNS_LIB iphlpapi)
+elseif(ANDROID)
+    set(POM2_NATIVE_DNS_LIB "")
 else()
     set(POM2_NATIVE_DNS_LIB resolv)
 endif()
-target_link_libraries(pom2_core PUBLIC ${POM2_NATIVE_DNS_LIB})
+if(POM2_NATIVE_DNS_LIB)
+    target_link_libraries(pom2_core PUBLIC ${POM2_NATIVE_DNS_LIB})
+endif()
 if(POM2_SLIRP_TARGET)
     target_link_libraries(pom2_core PUBLIC ${POM2_SLIRP_TARGET})
     # POM2_HAVE_SLIRP was defined on the GUI target only, so pom2_core linked

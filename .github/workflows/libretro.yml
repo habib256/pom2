@@ -39,6 +39,11 @@ jobs:
           - platform: linux-x64
             runner: ubuntu-24.04
             module: build/pom2_libretro.so
+          # Raspberry Pi and other ARM boards: a native runner, so the same
+          # CTest commands and RetroArch check run on the ARM build.
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            module: build/pom2_libretro.so
           - platform: macos-arm64
             runner: macos-15
             module: build/pom2_libretro.dylib
@@ -224,10 +229,64 @@ jobs:
           path: dist/libretro-results/
           if-no-files-found: ignore
 
+  # Android cannot run RetroArch on a runner: cross-compile with the NDK,
+  # prove the module exports exactly the libretro API, and package it.
+  android:
+    name: Libretro android-arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Cross-compile the core with the Android NDK
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 \
+            -DCMAKE_BUILD_TYPE=Release -DPOM2_LIBRETRO_ONLY=ON \
+            -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+          cmake --build build --target pom2_libretro --parallel 4
+
+      - name: Strip and check the exported libretro API
+        run: |
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          module=build/pom2_libretro_android.so
+          "$bin/llvm-strip" --strip-unneeded "$module"
+          "$bin/llvm-readelf" -h "$module" | grep -q 'AArch64'
+          exported=$("$bin/llvm-nm" -D --defined-only "$module" | awk '$2 == "T" {print $3}')
+          if echo "$exported" | grep -v '^retro_'; then
+            echo "::error::the Android module exports more than the libretro API"; exit 1
+          fi
+          test "$(echo "$exported" | wc -l)" -eq 25
+
+      - name: Package the Android core
+        run: |
+          mkdir -p dist/libretro
+          python tools/package_libretro.py build/pom2_libretro_android.so \
+            dist/libretro/pom2-libretro-android-arm64.zip
+          (cd dist/libretro && cmake -E sha256sum pom2-libretro-android-arm64.zip > pom2-libretro-android-arm64.zip.sha256)
+
+      - name: Upload the Android package
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pom2-libretro-android-arm64
+          path: dist/libretro/
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
     name: Publish Libretro release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/libretro-v')
-    needs: native
+    needs: [native, android]
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -243,7 +302,7 @@ jobs:
         run: |
           mkdir release
           results=()
-          for platform in linux-x64 macos-arm64 windows-x64; do
+          for platform in linux-x64 linux-arm64 macos-arm64 windows-x64; do
             artifact="pom2-libretro-$platform"
             (cd "artifacts/$artifact" && sha256sum --check "$artifact.zip.sha256")
             cp "artifacts/$artifact/$artifact.zip" release/
@@ -252,11 +311,14 @@ jobs:
             test -s "$result/retroarch-smoke.log"
             results+=("$result")
           done
+          # Android is built and checked, not run: no RetroArch on a runner.
+          (cd artifacts/pom2-libretro-android-arm64 && sha256sum --check pom2-libretro-android-arm64.zip.sha256)
+          cp artifacts/pom2-libretro-android-arm64/pom2-libretro-android-arm64.zip release/
           python3 -m zipfile -c release/pom2-libretro-verification.zip "${results[@]}"
           (cd release && sha256sum ./*.zip > SHA256SUMS)
 
           cat > release-notes.md <<'EOF'
-          Native POM2 Libretro core packages tested with RetroArch on Linux x64, macOS arm64, and Windows x64.
+          Native POM2 Libretro core packages tested with RetroArch on Linux x64, Linux arm64, macOS arm64, and Windows x64, plus an Android arm64 core built with the NDK (not run in CI).
 
           Install the core and its info file in the directories listed by RetroArch under Settings → Directory. Supply your Apple //e firmware in `system/pom2/`. Each ZIP includes the user guide and compatibility report. The verification ZIP contains native test results, RetroArch logs and screenshots of a resumed Dirtbike session for all three platforms.
           EOF

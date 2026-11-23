@@ -280,7 +280,9 @@ python3 tests/libretro_profiles.py build-libretro/pom2_libretro.dylib roms dix p
 ```
 
 The [native package workflow](../.github/workflows/libretro.yml) builds
-Linux x64, macOS arm64 and Windows x64. Each runner checks the extracted
+Linux x64, Linux arm64 (Raspberry Pi and other ARM boards), macOS arm64,
+Windows x64 and Android arm64 (`pom2_libretro_android.so`, built with the NDK
+and not run in CI). Each runner checks the extracted
 module, starts Dirtbike in RetroArch, closes the process during boot and
 verifies that the next launch resumes from the saved state. Core releases
 use the `libretro-v*` tag series and include checksums and verification

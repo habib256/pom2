@@ -376,9 +376,14 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
 
     if (bool(state.noSlotClock) != !clock.empty())
         return fail("SDK snapshot No-Slot Clock configuration differs");
+    // The clock's start date is the machine's, like its RAM: a state saved
+    // in another session brings its own (a frontend that restarts the core
+    // resumes from yesterday's state).
+    int64_t clockStart = -1;
     if (state.noSlotClock) {
         byteio::Reader clockReader(clock.data(), clock.size());
-        if (static_cast<int64_t>(clockReader.u64()) != state.clockStartEpoch ||
+        clockStart = static_cast<int64_t>(clockReader.u64());
+        if (clockStart < -1 ||
             !state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, /*commit=*/false))
             return fail("Invalid SDK No-Slot Clock state");
     }
@@ -482,7 +487,10 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         card->loadSnapshotState(board.registers.data(), board.registers.size());
         card->loadSdkAudio(board.timeline.data(), board.timeline.size(), true);
     }
-    if (state.noSlotClock) state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, true);
+    if (state.noSlotClock) {
+        state.clockStartEpoch = clockStart;
+        state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, true);
+    }
     if (!accel.empty()) {
         if (state.acceleratorModel == Accelerator::ZipChip)
             state.zipChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);

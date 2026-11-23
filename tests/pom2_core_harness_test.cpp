@@ -510,9 +510,13 @@ void testNoSlotClock()
     std::tm restored = readNoSlotClock(core);
     assert(std::mktime(&restored) == std::mktime(&atSave) && "a restore reads the snapshot's date");
 
+    // A machine started at another date (the next session) takes the
+    // state's: the date is the machine's, like its RAM.
     pom2::Core other = makeIIe();
     assert(other.attachNoSlotClock(start + 3600));
-    assert(!other.loadState(state.data(), state.size()) && "another start date is another machine");
+    assert(other.loadState(state.data(), state.size()));
+    std::tm adopted = readNoSlotClock(other);
+    assert(std::mktime(&adopted) == std::mktime(&atSave) && "the restored machine reads the state's date");
     pom2::Core none = makeIIe();
     assert(!none.loadState(state.data(), state.size()) && "a clock is part of the configuration");
     std::printf("  ok: No-Slot Clock in emulated time\n");

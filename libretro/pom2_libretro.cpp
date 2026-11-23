@@ -1079,7 +1079,13 @@ bool bootMedia(pom2::Core& target, const MountedDisk& mounted)
 {
     switch (mounted.kind) {
     case MediaKind::DiskII:
-        return target.bootDisk();
+        // A real power-on: the ROM's reset routine, then its slot scan finds
+        // the Disk II. Jumping straight to $C600 (bootDisk) skips the reset's
+        // set-up, and DIGIDREAM and the fastloader WOZ stay black after it.
+        // The 1977 ][ has no autostart ROM: its owner typed 6 Ctrl-P.
+        if (machine.kind == pom2::libretro::MachineKind::II) return target.bootDisk();
+        target.coldBoot();
+        return true;
     case MediaKind::SmartPort:
         // A //e lets its ROM scan the slots and enter the SmartPort boot ROM,
         // as the DIX master expects; a //c boots its 3.5" port from $C500.

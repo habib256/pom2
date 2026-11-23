@@ -639,6 +639,13 @@ std::vector<uint32_t> typeMarker(Core& core, unsigned key, char character)
 
 void waitForBootMarker(Core& core, const std::vector<uint32_t>& expected)
 {
+    // The core powers the machine on and lets the ROM boot the disk. The
+    // synthetic ROM has no slot scan: '!' is its boot command (JMP $C600).
+    run(core, 2);
+    if (cell(0) != expected) {
+        frontend.keyboard(true, RETROK_EXCLAIM, '!', 0);
+        frontend.keyboard(false, RETROK_EXCLAIM, '!', 0);
+    }
     for (unsigned attempt = 0; attempt < 16; ++attempt) {
         run(core, 15);
         if (cell(0) == expected) return;

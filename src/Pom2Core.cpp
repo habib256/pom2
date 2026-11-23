@@ -898,22 +898,24 @@ bool Core::attachNoSlotClock(std::int64_t startEpoch)
         return false;
     }
     auto* impl = impl_.get();
-    pom2::NoSlotClock::TimeFn source;   // empty: the host clock
-    if (startEpoch >= 0) {
-        source = [impl]() {
+    // The start lives in the machine, not in the callable: a restore sets it
+    // from the snapshot, and a start < 0 is the host's clock.
+    pom2::NoSlotClock::TimeFn source = [impl]() {
+        std::time_t when = std::time(nullptr);
+        if (impl->clockStartEpoch >= 0) {
             // Beam time: an accelerator speeds the CPU, not the clock chip.
             const auto elapsed = static_cast<std::int64_t>(
                 static_cast<double>(impl->memory.videoNow()) / impl->cpuClockHz);
-            const std::time_t when = static_cast<std::time_t>(impl->clockStartEpoch + elapsed);
-            std::tm tm{};
+            when = static_cast<std::time_t>(impl->clockStartEpoch + elapsed);
+        }
+        std::tm tm{};
 #if defined(_WIN32)
-            localtime_s(&tm, &when);
+        localtime_s(&tm, &when);
 #else
-            localtime_r(&when, &tm);
+        localtime_r(&when, &tm);
 #endif
-            return tm;
-        };
-    }
+        return tm;
+    };
     impl_->clockStartEpoch = startEpoch;
     impl_->noSlotClock = std::make_unique<pom2::NoSlotClock>(std::move(source));
     impl_->memory.setNoSlotClock(impl_->noSlotClock.get());

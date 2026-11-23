@@ -32,8 +32,12 @@ if(APPLE)
     file(GENERATE OUTPUT "${retro_exports}" CONTENT "_retro_*\n")
     target_link_options(pom2_libretro PRIVATE "LINKER:-exported_symbols_list,${retro_exports}")
     set_property(TARGET pom2_libretro APPEND PROPERTY LINK_DEPENDS "${retro_exports}")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
     target_link_options(pom2_libretro PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
+# RetroArch on Android looks cores up as <name>_libretro_android.so.
+if(ANDROID)
+    set_target_properties(pom2_libretro PROPERTIES OUTPUT_NAME pom2_libretro_android)
 endif()
 
 file(GENERATE

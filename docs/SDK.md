@@ -580,7 +580,8 @@ application's frame loop does. Without an accelerator it is `run`.
 `attachNoSlotClock(startEpoch)` puts a DS1216E under the ROM. With a start
 time it runs from beam time, not the host's clock: a replayed or restored
 machine reads the same date, which a netplay or a rewind needs. The start is
-part of the snapshot, so a state does not load into a machine with another.
+part of the snapshot like the RAM: a restore takes the state's, so a state
+saved in an earlier session resumes on its own date.
 
 ## Delivery
 

@@ -245,7 +245,12 @@ Bytes queryHostDns(const Bytes& query)
 {
     if (query.size() < 12 || query.size() > 512) return {};
     Bytes answer(65535);
-#ifndef _WIN32
+#if defined(__ANDROID__)
+    // Bionic publishes no res_ninit/res_nsend: no host DNS for the guest
+    // there (the NAT answers "no data", as for a failed lookup). Only the
+    // Android libretro build reaches this, and it runs no network card.
+    return {};
+#elif !defined(_WIN32)
     // Per-worker state: resolver retries and TCP fallback never run under
     // the emulator lock. The system's resolver selects the DNS servers.
     struct __res_state state{};
