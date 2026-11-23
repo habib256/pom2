@@ -10,6 +10,44 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Every Apple II in RetroArch, with a full set of core options
+
+The [libretro core](libretro/README.md) now runs the ][, ][+, //e, //e
+Enhanced, //c and //c Plus, in NTSC or PAL. Twenty-five core options in five
+categories, in English and French, choose the machine, processor, display,
+cards, volumes, joystick behaviour, mouse and disk policy. Automatic picks the
+machine a WOZ 2 disk names, then the first one whose ROMs are present, so a
+player with only a //c or ][+ dump is no longer refused. `.hdv` and large
+ProDOS images boot as hard disks, on a //c through its rear port. A
+Mockingboard A/C is in slot 4 by default. The eleven CPU renderers the
+application has (three composite tables, OpenEmulator's composite signal,
+AppleWin's monitor, TV and idealized NTSC, three monochrome monitors and
+Le Chat Mauve RGB) are a Display option. The RetroPad can type arrows,
+I J K M or W A S D with key repeat, and a second pad drives paddles 2 and 3.
+The core publishes a memory map in RetroAchievements' Apple II layout,
+declares achievement support, and takes cheats in the same address space.
+The Disk II and //c+ drives can sound, from MAME's floppy samples, which the
+release ZIP now carries (the SDK's new `attachDriveSounds`). The core's log
+lines reach RetroArch's log instead of stderr. A private disk copy may now be
+33 MiB, so a 32 MiB hard disk saves like a floppy; at 16 MiB it mounted
+read-only, which a RetroArch session showed. The package check accepts the
+package's own `system/pom2` folder; it stopped on it before.
+
+Two points to keep:
+
+- **The //c is given its built-in Disk II at load, and a Reset once
+  powered up.** Without the card the //c ROM boots a slot full of floating
+  bus and paints garbage. With it and no disk, the ROM waits forever, as
+  the real machine does until Ctrl-Reset. The core runs two emulated
+  seconds, the time the //c Plus needs to mark itself powered up, then resets.
+  Half a second was too early on the //c Plus and restarted the cold boot.
+- **The memory map follows rcheevos, and so does POM2's own layout.**
+  `lcPhysical`/`auxPhysical` already keep the `$D000` bank 1 at `$C000`,
+  AppleWin's arrangement, which rcheevos' `0x10000`-sized main region assumes.
+  The SDK's new `ramRegion()` hands those cells out in place; `setDisplayMode()`
+  exposes the renderers. Both are pinned by `pom2_core_harness`, the core
+  features by `pom2_libretro_abi`.
+
 ## 2026-11-23 — Apple //e Enhanced in RetroArch
 
 The optional [POM2 libretro core](libretro/README.md) boots Applesoft BASIC

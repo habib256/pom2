@@ -383,6 +383,13 @@ I/O space and ROM are not RAM and are not offered. `writeRam` is a debugger's
 write. It lands in the cell as a CPU store never could, and neither a card nor the
 beam-time video log sees a bus cycle for it; a later `renderFrame` does show it.
 
+`ramRegion(bank)` returns the same cells in place, a pointer and a size, for a
+host that maps them rather than copies them: a libretro memory map, an achievement
+runtime, a cheat engine. The pointer stays valid for the life of the `Core`, a move
+included. `Main` is the 48 KiB below `$C000`, the language card banks are 4, 4 and
+8 KiB, and the aux banks are empty without //e memory. A store through the pointer
+is `writeRam`'s debugger write.
+
 `keyboardState()` returns the latched character, the strobe and the count of paste
 bytes queued behind it, and acknowledges nothing: reading it clears no strobe and
 promotes no byte. **A key was taken once `strobe` and `queued` are both clear**,
@@ -487,32 +494,50 @@ Sound II; the desktop card catalogue is not the facade's attachment API.
 WAV and other suffixes select ACI. It does not append a suffix as the desktop
 CLI does. Supply `.aci` or `.wav` explicitly when saving through the SDK.
 
+`attachDriveSounds(folder)` adds the drives' mechanical sounds, from MAME's
+floppy samples (POM2's `roms/floppy_samples/`): the 5.25" set for the Disk II,
+attached now or later, and the `35_` set for the //c+'s 3.5" drives. They are
+timed in emulated cycles and mixed centred by `pullAudio`;
+`setDriveSoundVolume` scales them. They are host sound and a snapshot does not
+carry them, so a host that replays frames (rewind, run-ahead) hears steps again.
+
 ## Rendering
 
-`renderFrame()` paints with `Apple2Display` in its default mode, `ColorNTSC`: POM2's
-port of MAME's composite colour table, on the CPU, into a 280- or 560-wide
+`renderFrame()` paints with `Apple2Display` on the CPU, into a 280- or 560-wide
 framebuffer. It shares with the application the class, the memory it reads, FLASH
-derived from the emulated frame, and the text and hi-res painters of that mode.
+derived from the emulated frame, and every CPU painter. At construction it runs
+`ColorNTSC`, POM2's port of MAME's composite colour table; `setDisplayMode(mode)`
+selects any other CPU renderer the application has, and `displayMode()` reads it back.
 
-It is **not** what the application shows by default. The application's default
-display is `ColorCompositeOE`: the bitstream demodulated by POM2's OpenEmulator-style
-GLSL shader, then the CRT glass pass (scanlines, mask, vignette, phosphor gamma,
-`CrtEffectStack`). The SDK software renderer supports the composite table
-and the Le Chat Mauve monitor with an installed card.
+| `DisplayMode` | Application mode | Width |
+|---|---|---|
+| `Composite` (default) | `ColorNTSC`, MAME's composite table | 280 or 560 |
+| `CompositeMedium`, `CompositeSharp` | `ColorCompMedium`, `ColorComp4Bit` | 280 or 560 |
+| `CompositeOpenEmulator` | `ColorCompositeOECpu`, the OpenEmulator demodulation on the CPU (PAL line alternation on PAL timing) | 560 |
+| `AppleWinMonitor`, `AppleWinTv`, `AppleWinIdealized` | `ColorAppleWin` and its three sub-modes | 560 |
+| `MonoWhite`, `MonoGreen`, `MonoAmber` | the monochrome monitors (amber with persistence) | 560 |
+| `Rgb` | `ChatMauveRGB`; refused, mode unchanged, without `attachRgbCard()` | 560 |
+
+`setRgbMonitor(true)` is `setDisplayMode(Rgb)`; `setRgbMonitor(false)` returns to
+`Composite`.
+
+What the SDK does not have is the application's **default** look: the bitstream
+demodulated by POM2's OpenEmulator-style GLSL shader, then the CRT glass pass
+(scanlines, mask, vignette, phosphor gamma, `CrtEffectStack`). Both need a GL
+context.
 
 | Picture | Application | `renderFrame()` |
 |---|---|---|
-| MAME composite table (`ColorNTSC`) | selectable | **this** |
-| OpenEmulator composite (GPU, or `ColorCompositeOECpu`) | default | no |
+| MAME composite tables | selectable | `Composite`, `CompositeMedium`, `CompositeSharp` |
+| OpenEmulator composite | default on the GPU | `CompositeOpenEmulator`, on the CPU |
 | CRT glass pass | default | no |
-| AppleWin NTSC, monochrome phosphors | selectable | no |
-| Le Chat Mauve RGB | selectable with the card installed | `setRgbMonitor(true)` |
+| AppleWin NTSC, monochrome phosphors | selectable | the matching `DisplayMode` |
+| Le Chat Mauve RGB | selectable with the card installed | `Rgb` |
 
-The capabilities say the same: `render.cpu-composite` is present and there is no
-`render.crt`. Use a frame as technical evidence (this mode changed, these two frames
-match, this region holds what the guest drew). It does not stand for the look a
-player gets on the default display, and a judgement of an image belongs in the
-application or a tool built to show that pipeline.
+The capabilities say the same: `render.cpu-composite` and `render.modes` are present
+and there is no `render.crt`. A frame is technical evidence (this mode changed, these
+two frames match, this region holds what the guest drew), and in the composite modes
+it is close to what a player sees, but the CRT pass is not in it.
 
 ## In-memory snapshots
 
@@ -556,6 +581,7 @@ checkout. A capability name is added with its API and never reused:
 |---|---|
 | `cassette` | `loadCassette` and the transport |
 | `disk2` | `attachDiskII`, `insertDisk`, `bootDisk` |
+| `drive.sounds` | `attachDriveSounds`, `setDriveSoundVolume` |
 | `ezcolor` | `attachEzColor` and its calls |
 | `harddisk` | `attachHardDisk` and its calls |
 | `keyboard.state` | `keyboardState` |
@@ -564,7 +590,9 @@ checkout. A capability name is added with its API and never reused:
 | `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |
+| `ram.regions` | `ramRegion` |
 | `render.cpu-composite` | `renderFrame`, as § Rendering describes |
+| `render.modes` | `setDisplayMode`, `displayMode` |
 | `render.rgb-monitor` | `setRgbMonitor` with a Le Chat Mauve card |
 | `rgbcard` | `attachRgbCard` and its calls |
 | `smartport35` | `attachSmartPort` and its calls |

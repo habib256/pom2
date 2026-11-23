@@ -63,6 +63,37 @@ enum class RgbDhgrMode : std::uint8_t {
     Mixed,
 };
 
+/// The picture renderFrame() paints: each of the application's CPU renderers.
+/// Composite is POM2's composite colour table (the default); the next two are
+/// its other tables (medium runs, and a sharp nibble-per-colour one).
+/// CompositeOpenEmulator runs OpenEmulator's composite demodulation on the CPU
+/// (the GPU shader's twin, 560 wide). The three AppleWin modes are its
+/// IIR-filtered NTSC decode as a monitor, a TV, and POM2's saturated variant.
+/// The Mono modes are a monochrome monitor (amber with long persistence). Rgb
+/// is the RGB card's monitor and needs attachRgbCard(). New modes are added at
+/// the end.
+enum class DisplayMode : std::uint8_t {
+    Composite,
+    CompositeMedium,
+    CompositeSharp,
+    CompositeOpenEmulator,
+    AppleWinMonitor,
+    AppleWinTv,
+    AppleWinIdealized,
+    MonoWhite,
+    MonoGreen,
+    MonoAmber,
+    Rgb,
+};
+
+/// A physical RAM bank's cells in place: `data` stays valid, at the same
+/// address, for the life of the Core (moves included: it points into the
+/// machine, not into the facade). Empty when the machine has no such bank.
+struct RamRegion {
+    std::uint8_t* data = nullptr;
+    std::size_t   size = 0;
+};
+
 /// A named machine, or Custom to take `cpu` and `iieMemory` as given.
 /// AppleIIPlus = NMOS, II+ memory; AppleIIe = NMOS, //e memory;
 /// AppleIIeEnhanced = 65C02, //e memory; AppleIIc = 65C02, //e memory, the
@@ -374,6 +405,19 @@ public:
     bool mockingboardAttached() const;
     void setMockingboardVolume(float volume);
 
+    /// The drives' mechanical sounds — motor, head steps, the track-0 rattle,
+    /// the door — from MAME's floppy sample set in `sampleDirectory` (POM2
+    /// ships it as roms/floppy_samples/, BSD-licensed). The 5.25" set plays for
+    /// the Disk II, the "35_" set for the //c+'s 3.5" drives. pullAudio()
+    /// mixes them in, centred. Their timing is emulated time, so fast loading
+    /// collapses a seek into one click as the application does. Host-side
+    /// sound: a snapshot does not carry it. False when the 5.25" samples are
+    /// missing.
+    bool attachDriveSounds(std::string_view sampleDirectory);
+    bool driveSoundsAttached() const;
+    /// Drive sound gain in [0, 2]. Values outside the range are clamped.
+    void setDriveSoundVolume(float volume);
+
     /// Install an Apple Mouse card in an empty slot (4 by convention: the
     /// slot Apple sold it for, and the one software that skips the scan
     /// calls). A Machine::AppleIIc has its mouse built in and refuses this.
@@ -466,6 +510,12 @@ public:
     /// could, and a card or the video scanner sees no bus cycle for it.
     bool readRam(RamBank bank, std::uint16_t address, std::uint8_t* out, std::size_t length);
     bool writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* data, std::size_t length);
+    /// The cells readRam() reaches, in place, for a host that maps them
+    /// (a libretro memory map, a cheat engine, an achievement runtime).
+    /// Main is $0000-$BFFF (48 KiB); LanguageCard1/2 4 KiB each;
+    /// LanguageCardHigh 8 KiB; Aux 48 KiB and its language card only with
+    /// //e memory. A write through `data` is writeRam()'s debugger write.
+    RamRegion ramRegion(RamBank bank);
     KeyboardState keyboardState() const;
 
     /// The version, commit and capabilities of this archive.
@@ -526,6 +576,11 @@ public:
     /// is technical evidence and does not stand for what the application
     /// shows (docs/SDK.md § Rendering).
     FramebufferView renderFrame();
+    /// Select the renderer renderFrame() runs. False, with the mode left as
+    /// it was, for Rgb without an RGB card. Composite at construction. The
+    /// OpenEmulator mode demodulates with PAL line alternation on PAL timing.
+    bool setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const;
     /// Machine cycle at which the last FINISHED video frame began. It changes
     /// once per video frame (17030 cycles NTSC, 20280 PAL), so a recorder
     /// that polls it between run() slices shorter than a frame renders every

@@ -52,8 +52,9 @@ DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
     if (suffix == ".m3u")
         throw std::runtime_error(location + ": nested playlists are unsupported: " + path.u8string());
     if (suffix != ".dsk" && suffix != ".do" && suffix != ".po"
-            && suffix != ".nib" && suffix != ".woz" && suffix != ".2mg" && suffix != ".2img")
-        throw std::runtime_error(location + ": unsupported Disk II image: " + path.u8string());
+            && suffix != ".nib" && suffix != ".woz" && suffix != ".2mg" && suffix != ".2img"
+            && suffix != ".hdv" && suffix != ".d13")
+        throw std::runtime_error(location + ": unsupported disk image: " + path.u8string());
 
     openFile(path, location);
     std::string name = label.empty() ? path.stem().u8string() : std::string(label);
@@ -62,22 +63,28 @@ DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
 
 } // namespace
 
-bool DiskEntry::smartPort() const
+MediaKind DiskEntry::kind() const
 {
+    constexpr std::uint64_t k35Small = 400 * 1024, k35Large = 800 * 1024, k525 = 140 * 1024;
+    const auto bySize = [](std::uint64_t bytes) {
+        if (bytes == k35Small || bytes == k35Large) return MediaKind::SmartPort;
+        return bytes > k35Large ? MediaKind::HardDisk : MediaKind::DiskII;
+    };
     const auto suffix = extension(path);
+    if (suffix == ".hdv") return MediaKind::HardDisk;
     if (suffix == ".2mg" || suffix == ".2img") {
         std::array<std::uint8_t, 32> header{};
         std::ifstream image(path, std::ios::binary);
         if (!image.read(reinterpret_cast<char*>(header.data()), header.size())
                 || std::string_view(reinterpret_cast<const char*>(header.data()), 4) != "2IMG")
-            return false;
-        const auto payload = twoImgDataLength(header.data());
-        return payload == 400 * 1024 || payload == 800 * 1024;
+            return MediaKind::DiskII;
+        const std::uint64_t payload = twoImgDataLength(header.data());
+        return payload == k525 ? MediaKind::DiskII : bySize(payload);
     }
-    if (suffix != ".po") return false;
+    if (suffix != ".po") return MediaKind::DiskII;
     std::error_code error;
     const auto bytes = std::filesystem::file_size(path, error);
-    return !error && (bytes == 400 * 1024 || bytes == 800 * 1024);
+    return error ? MediaKind::DiskII : bySize(bytes);
 }
 
 DiskEntry loadDiskImage(const std::filesystem::path& path)

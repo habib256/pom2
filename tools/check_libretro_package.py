@@ -67,8 +67,11 @@ def main():
         module, = (profile / "cores").glob("pom2_libretro.*")
         if not (profile / "info/pom2_libretro.info").is_file():
             raise RuntimeError("missing core info")
+        # The package ships system/pom2/floppy_samples: the folder may exist.
+        if not (profile / "system/pom2/floppy_samples/525_step_1_1.wav").is_file():
+            raise RuntimeError("missing the floppy drive samples")
         for folder in ("system/pom2", "saves", "states", "config", "playlists", "logs", "screenshots"):
-            (profile / folder).mkdir(parents=True)
+            (profile / folder).mkdir(parents=True, exist_ok=True)
         for rom in ("apple2e.rom", "apple2e_char.rom"):
             shutil.copyfile(args.roms / rom, profile / "system/pom2" / rom)
         options = profile / "core-options.cfg"

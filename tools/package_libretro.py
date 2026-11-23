@@ -21,6 +21,11 @@ def main():
              "doc/pom2/README.md": ROOT / "libretro/README.md", "doc/pom2/LICENSE": ROOT / "LICENSE",
              "doc/pom2/compatibility.md": ROOT / "docs/audits/libretro-compatibility-2026-11-23.md",
              "doc/pom2/libretro.h": ROOT / "src/third_party/libretro/libretro.h"}
+    # MAME's floppy samples (BSD) for the "Disk drive sounds" option: the
+    # only firmware-folder files a package may carry, as no ROM may ship.
+    for sample in sorted((ROOT / "roms/floppy_samples").iterdir()):
+        if sample.suffix in (".wav", ".txt"):
+            files[f"system/pom2/floppy_samples/{sample.name}"] = sample
     args.output.parent.mkdir(exist_ok=True, parents=True)
     checksums = []
     with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED) as archive:

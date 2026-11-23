@@ -88,9 +88,22 @@ public:
         const std::string safeTag = sanitizeLogText(tag ? tag : "");
         const std::string safeMsg = sanitizeLogText(msg);
         std::lock_guard<std::mutex> lk(mtx);
+        if (sink_) {
+            sink_(sinkUser_, level, safeTag.c_str(), safeMsg.c_str());
+            return;
+        }
         std::fprintf(stderr, "[%s] %s: %s\n",
                      names[static_cast<int>(level)], safeTag.c_str(),
                      safeMsg.c_str());
+    }
+    /// Send every line to `sink` instead of stderr (a host with its own log,
+    /// such as a libretro frontend); null restores stderr. The sink runs
+    /// under the logger's lock and must not log itself.
+    using Sink = void (*)(void* user, LogLevel level, const char* tag, const char* message);
+    void setSink(Sink sink, void* user) {
+        std::lock_guard<std::mutex> lk(mtx);
+        sink_ = sink;
+        sinkUser_ = user;
     }
     void debug(const char* tag, const std::string& m) { log(LogLevel::Debug, tag, m); }
     void info (const char* tag, const std::string& m) { log(LogLevel::Info,  tag, m); }
@@ -98,6 +111,8 @@ public:
     void error(const char* tag, const std::string& m) { log(LogLevel::Error, tag, m); }
 private:
     std::mutex mtx;
+    Sink sink_ = nullptr;
+    void* sinkUser_ = nullptr;
 };
 
 /// IMMORTAL on purpose: `*new Logger` is never destroyed, so `log()` stays

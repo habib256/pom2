@@ -55,7 +55,10 @@ def firmware_info(roms, applewin):
 
 def default_options(core):
     if core.startswith("pom2"):
-        return {"pom2_machine_profile": "ntsc",
+        # The AppleWin profile below has no card in slots 3-5 and 7: match it.
+        return {"pom2_machine": "iie-enhanced", "pom2_video_standard": "ntsc",
+                "pom2_dix_preset": "disabled", "pom2_mockingboard": "disabled",
+                "pom2_display": "composite",
                 "pom2_fast_disk_loading": "enabled" if core == "pom2-fast" else "disabled"}
     return {"applewin_machine": "Apple //e (enhanced)", "applewin_video_refresh_rate": "60Hz",
             "applewin_video_style": "280 x 192", "applewin_video_mode": "Color (RGB Card/Monitor)",

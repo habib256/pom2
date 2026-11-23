@@ -11,9 +11,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -127,6 +129,10 @@ struct Core {
     ABI_FUNCTION(retro_serialize_size);
     ABI_FUNCTION(retro_serialize);
     ABI_FUNCTION(retro_unserialize);
+    ABI_FUNCTION(retro_cheat_reset);
+    ABI_FUNCTION(retro_cheat_set);
+    ABI_FUNCTION(retro_get_memory_data);
+    ABI_FUNCTION(retro_get_memory_size);
 };
 #undef ABI_FUNCTION
 
@@ -162,6 +168,18 @@ struct Frontend {
     unsigned width = 0;
     unsigned height = 0;
     std::vector<uint32_t> pixels;
+    // Core options: the version offered, what a v2 core registered, the
+    // values the "user" chose, and whether they changed since the last poll.
+    unsigned optionsVersion = 0;
+    unsigned language = RETRO_LANGUAGE_ENGLISH;
+    const retro_core_options_v2* optionsUs = nullptr;
+    const retro_core_options_v2* optionsLocal = nullptr;
+    std::map<std::string, std::string> options;
+    bool optionsUpdated = false;
+    std::vector<retro_memory_descriptor> memoryMap;
+    bool achievements = false;
+    unsigned pad = 0;          // RetroPad 1 buttons, as a bit mask
+    unsigned pad2 = 0;         // RetroPad 2
 };
 Frontend frontend;
 
@@ -240,10 +258,41 @@ bool environment(unsigned command, void* data)
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         auto& variable = *static_cast<retro_variable*>(data);
-        if (std::strcmp(variable.key, fastDiskOption) != 0 || !frontend.fastDiskValue) return false;
-        variable.value = frontend.fastDiskValue;
+        if (std::strcmp(variable.key, fastDiskOption) == 0 && frontend.fastDiskValue) {
+            variable.value = frontend.fastDiskValue;
+            return true;
+        }
+        const auto chosen = frontend.options.find(variable.key);
+        if (chosen == frontend.options.end()) return false;
+        variable.value = chosen->second.c_str();
         return true;
     }
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        *static_cast<bool*>(data) = std::exchange(frontend.optionsUpdated, false);
+        return true;
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        *static_cast<unsigned*>(data) = frontend.optionsVersion;
+        return true;
+    case RETRO_ENVIRONMENT_GET_LANGUAGE:
+        *static_cast<unsigned*>(data) = frontend.language;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        if (frontend.optionsVersion < 2) return false;
+        const auto* intl = static_cast<const retro_core_options_v2_intl*>(data);
+        frontend.optionsUs = intl->us;
+        frontend.optionsLocal = intl->local;
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        return frontend.optionsVersion >= 2;
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+        const auto* map = static_cast<const retro_memory_map*>(data);
+        frontend.memoryMap.assign(map->descriptors, map->descriptors + map->num_descriptors);
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
+        frontend.achievements = *static_cast<const bool*>(data);
+        return true;
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         return true;
@@ -289,7 +338,9 @@ void inputPoll() { ++frontend.polls; }
 
 int16_t inputState(unsigned port, unsigned device, unsigned, unsigned id)
 {
+    if (port == 1 && device == RETRO_DEVICE_JOYPAD && id < 16) return (frontend.pad2 >> id) & 1;
     if (port == 0 && device == RETRO_DEVICE_JOYPAD) {
+        if (id < 16 && ((frontend.pad >> id) & 1)) return 1;
         if (id == RETRO_DEVICE_ID_JOYPAD_B) return frontend.button;
         if (id == RETRO_DEVICE_ID_JOYPAD_START) return frontend.start;
         if (id == RETRO_DEVICE_ID_JOYPAD_R3) return frontend.nextDisk;
@@ -982,6 +1033,146 @@ std::string visibleText(const Bytes& characters)
     return result;
 }
 
+const retro_core_option_v2_definition* findDefinition(const retro_core_options_v2* options, const char* key)
+{
+    for (auto* definition = options->definitions; definition->key; ++definition)
+        if (std::strcmp(definition->key, key) == 0) return definition;
+    return nullptr;
+}
+
+void testCoreOptionsV2(Core& core)
+{
+    // A v2 frontend gets categories and every option filed under one, the
+    // first value its default; a French frontend gets the translation too.
+    frontend.optionsVersion = 2;
+    frontend.language = RETRO_LANGUAGE_FRENCH;
+    core.retro_set_environment(environment);
+    require(frontend.optionsUs && frontend.optionsLocal, "core options v2 were not registered with a translation");
+    unsigned categories = 0, definitions = 0;
+    for (auto* category = frontend.optionsUs->categories; category->key; ++category) ++categories;
+    for (auto* definition = frontend.optionsUs->definitions; definition->key; ++definition, ++definitions) {
+        require(definition->category_key && definition->values[0].value && definition->default_value &&
+                std::strcmp(definition->default_value, definition->values[0].value) == 0,
+                "a v2 option lacks a category or does not default to its first value");
+    }
+    require(categories >= 5 && definitions >= 20, "the core registered fewer option categories or options than expected");
+    for (const char* key : {"pom2_machine", "pom2_display", "pom2_mockingboard", "pom2_cpu", fastDiskOption}) {
+        const auto* english = findDefinition(frontend.optionsUs, key);
+        const auto* french = findDefinition(frontend.optionsLocal, key);
+        require(english && french, "an expected core option is missing");
+        if (std::strcmp(key, fastDiskOption) != 0)
+            require(std::strcmp(english->desc, french->desc) != 0, "an option was not translated into French");
+    }
+    require(frontend.achievements, "the core did not declare achievement support");
+    frontend.optionsVersion = 0;
+    frontend.language = RETRO_LANGUAGE_ENGLISH;
+    frontend.optionsUs = frontend.optionsLocal = nullptr;
+    core.retro_set_environment(environment);
+}
+
+void testFeatures(Core& core, const fs::path& firmware)
+{
+    testCoreOptionsV2(core);
+
+    // A machine whose firmware is absent names the file it needs.
+    frontend.messages.clear();
+    frontend.options["pom2_machine"] = "iiplus";
+    require(!core.retro_load_game(nullptr) && frontend.messages.find("apple2p.rom") != std::string::npos,
+            "a missing ][+ firmware was not named");
+    frontend.options.erase("pom2_machine");
+
+    frontend.options["pom2_display"] = "mono-green";
+    require(core.retro_load_game(nullptr), "could not load with a monochrome display");
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    run(core, 4);
+    unsigned green = 0, other = 0;
+    for (auto pixel : frontend.pixels) {
+        const unsigned r = (pixel >> 16) & 0xff, g = (pixel >> 8) & 0xff, b = pixel & 0xff;
+        if (!r && !g && !b) continue;
+        ++(g > r && g > b ? green : other);
+    }
+    require(green > 0 && other == 0, "the green monitor painted a pixel that is not green");
+    frontend.options["pom2_display"] = "composite";
+    frontend.optionsUpdated = true;
+    run(core, 2);
+    const auto seeded = cell(0);   // the firmware's 'A' at $0400
+
+    // The memory map: RetroAchievements' Apple II layout, main RAM then aux.
+    require(frontend.memoryMap.size() == 8, "a //e must map main, aux and both language cards");
+    const auto descriptor = [](uint64_t start) -> const retro_memory_descriptor& {
+        for (const auto& d : frontend.memoryMap) if (d.start == start) return d;
+        throw std::runtime_error("the memory map lacks an expected region");
+    };
+    require(descriptor(0x00000).len == 0xC000 && descriptor(0x0C000).len == 0x1000 &&
+            descriptor(0x0D000).len == 0x1000 && descriptor(0x0E000).len == 0x2000 &&
+            descriptor(0x10000).len == 0xC000 && descriptor(0x1E000).len == 0x2000,
+            "the memory map regions have the wrong sizes");
+    auto* main = static_cast<uint8_t*>(core.retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    require(main == descriptor(0).ptr && core.retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM) == 0xC000,
+            "system RAM is not the map's main region");
+    main[0x400] = 0xC5;
+    run(core, 2);
+    require(cell(0) != seeded, "a write through the memory map did not reach the screen");
+
+    // Cheats share the map's addresses: main, compare, aux and language card.
+    core.retro_cheat_set(0, true, "$0400:C1");
+    run(core, 2);
+    require(cell(0) == seeded && main[0x400] == 0xC1, "a RAM cheat did not apply");
+    core.retro_cheat_reset();
+    main[0x400] = 0xC5;
+    run(core, 2);
+    require(main[0x400] == 0xC5, "a reset cheat kept applying");
+    core.retro_cheat_set(1, true, "0400?C1:C2");
+    run(core, 2);
+    require(main[0x400] == 0xC5, "a compare cheat applied to a cell that did not match");
+    core.retro_cheat_set(2, true, "10400:AA+0D000:12;1C000=34");
+    core.retro_cheat_set(3, true, "not a cheat");
+    run(core, 1);
+    require(static_cast<uint8_t*>(descriptor(0x10000).ptr)[0x400] == 0xAA &&
+            static_cast<uint8_t*>(descriptor(0x0D000).ptr)[0] == 0x12 &&
+            static_cast<uint8_t*>(descriptor(0x1C000).ptr)[0] == 0x34,
+            "a multi-code cheat missed aux RAM or a language-card bank");
+    core.retro_cheat_reset();
+
+    // The RetroPad as a keyboard: arrows, then I J K M, with repeat.
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0));
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+    run(core, 2);
+    require(main[0x400] == 0x95, "the arrow-key RetroPad did not type Right");
+    main[0x400] = 0;
+    run(core, 40);
+    require(main[0x400] == 0x95, "a held RetroPad direction did not repeat");
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_B;
+    run(core, 2);
+    require(main[0x400] == 0xA0 && main[0x401] == 0xC2, "keyboard B must type Space, not press button 0");
+    frontend.pad = 0;
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_UP;
+    run(core, 2);
+    require(main[0x400] == 0xC9, "the I J K M RetroPad did not type I");
+    frontend.pad = 0;
+    run(core, 1);
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+
+    // Joystick buttons swap; the keyboard folds to uppercase.
+    frontend.options["pom2_swap_buttons"] = "enabled";
+    frontend.options["pom2_uppercase"] = "enabled";
+    frontend.optionsUpdated = true;
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
+    run(core, 2);
+    require(main[0x401] == 0xC3, "with swapped buttons A did not press button 0");
+    frontend.pad = 0;
+    frontend.keyboard(true, RETROK_b, 'b', 0);
+    frontend.keyboard(false, RETROK_b, 'b', 0);
+    run(core, 2);
+    require(main[0x400] == 0xC2, "the uppercase option let a lowercase key through");
+    const auto state = saveState(core);
+    require(core.retro_unserialize(state.data(), state.size()), "a state with the new header did not restore");
+    core.retro_unload_game();
+    for (const char* key : {"pom2_display", "pom2_swap_buttons", "pom2_uppercase"}) frontend.options.erase(key);
+    (void)firmware;
+}
+
 void connectFrontend(Core& core)
 {
     core.retro_set_environment(environment);
@@ -1212,6 +1403,7 @@ int main(int argc, char* argv[])
         require(frontend.supportNoGame, "module did not advertise no-content boot");
         if (argc == 3) {
             testFixture(core, firmware);
+            testFeatures(core, firmware);
             testDiskControl(core, work);
         } else if (persistence) {
             testPersistentDisks(core, work, firmware, argv[4], argv[5], argv[1]);

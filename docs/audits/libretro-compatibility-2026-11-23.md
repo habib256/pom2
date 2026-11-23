@@ -94,3 +94,43 @@ For a control comparison, both POM2 profiles produced ChromaBreak paddle centers
 | Enhanced //e system ROM | `aab38a03ca8deabbb2f868733148c2efd6f655a59cd9c5d058ef3e0b7aa86a1a` |
 | Enhanced //e character ROM | `52c3b87900ac939f6525402cab1ccfd8f8259290fc6df54da48fb4c98ae3ed0f` |
 | Disk II boot PROM | `de1e3e035878bab43d0af8fe38f5839c527e9548647036598ee6fe7ec74d2a7d` |
+
+## After the options rework
+
+Rerun the same day on the core that adds the machine, display and card
+options. The benchmark now selects its profile through the new options
+(`pom2_machine=iie-enhanced`, `pom2_video_standard=ntsc`,
+`pom2_dix_preset=disabled`, `pom2_mockingboard=disabled`,
+`pom2_display=composite`), the same machine as before: an Enhanced //e with no
+card in slots 3, 4, 5 or 7, matching the AppleWin profile.
+
+**POM2 original 12/12, POM2 accelerated 12/12.** The two protected WOZ
+scenarios ran in a second pass, on fixtures fetched by the recipe above
+(their SHA-256s checked by the benchmark) and deleted afterwards. AppleWin
+was not rebuilt; its figures in the table above are from the same AppleWin
+commit and the same scenarios.
+
+Every final frame count is identical to the table above in both POM2 modes
+(for example Dirtbike 1,692 / 844, ChromaBreak 1,302 / 710, A2FILECMD
+1,908 / 716, Monster Splash 1,408 / 1,104): the rework changed no timing.
+Captain Goodnight's disk turn reached the helicopter at 2,052 / 1,516 and
+Prisoner II's resignation code at 4,522 / 3,458, as before. Over the ten
+unprotected scenarios the medians are 13.24 s original and 8.49 s
+accelerated (P90 28.17 s and 14.05 s).
+
+The release package was then checked in the official RetroArch 1.22.2 for
+macOS (`RetroArch_Metal.dmg`, SHA-256 `81b79121…fdb434`, mounted read-only)
+with `tools/check_libretro_package.py`: fresh install, cold boot, automatic
+save, process restart and resumed Dirtbike title, PASS. RetroArch saved all
+25 core options to `POM2.opt` and acknowledged achievement support. Separate
+RetroArch sessions showed the DIX menu on the RGB monitor (PAL, Mockingboard
+slot 2), Dirtbike on the green monitor with drive sounds, Apple II DeskTop
+booted from a 32 MiB HDV on a //c with the AppleWin TV display, and the
+Apple ][+ BASIC prompt. Its first HDV session mounted the image read-only:
+private disk copies were capped at 16 MiB, now 33 MiB (the largest ProDOS
+volume and a 2IMG header), after which the copy was made and writable.
+
+Not measured here: a real RetroAchievements set. The memory map follows
+rcheevos' Apple II regions (`rc_consoleinfo.c` at `f4abfca`, main RAM at
+`0x00000`, auxiliary RAM at `0x10000`) and the physical layout AppleWin
+exposes, but no achievement was unlocked in this run.

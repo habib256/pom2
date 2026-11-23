@@ -644,6 +644,9 @@ public:
 
     // Direct access for the display / debugger / snapshot.
     const uint8_t* data() const { return mem.data(); }
+    /// Main RAM in place, $0000-$BFFF valid (the SDK's ramRegion). A store
+    /// through it is writeRamUnchecked's: no bus cycle, no card sees it.
+    uint8_t* mainRamData() { return mem.data(); }
 
     /// Side-effect-free view of what the CPU would FETCH at `addr`, i.e. the
     /// flat mirror resolved through the live paging state:

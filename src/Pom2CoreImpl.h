@@ -31,6 +31,7 @@
 #include "SpeakerDevice.h"
 
 class DiskIICard;
+class FloppySoundDevice;
 class EzColorCard;
 class IIcMouse;
 class LeChatMauveCard;
@@ -73,6 +74,10 @@ public:
     // The plain //c's rear connector, once a hard disk hangs off it. Declared
     // before `memory` for the same reason: its profile holds a pointer to it.
     std::unique_ptr<pom2::IIcExternalSmartPort> iicRearPort;
+    // attachDriveSounds: owned here, fed by the drives, mixed by pullAudio.
+    // Declared before `memory` too: the drives that hold them are its cards.
+    std::unique_ptr<FloppySoundDevice> driveSound525;
+    std::unique_ptr<FloppySoundDevice> driveSound35;
     Memory memory;
     M6502  cpu;
     Apple2Display display;

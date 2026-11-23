@@ -7,7 +7,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(pom2_core CONFIG REQUIRED)
 endif()
 
-add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp)
+add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
+    core_options.cpp machine_profile.cpp cheats.cpp)
 target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)

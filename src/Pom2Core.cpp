@@ -22,6 +22,7 @@
 #include "CpuClock.h"
 #include "DiskIICard.h"
 #include "EzColorCard.h"
+#include "FloppySoundDevice.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
@@ -279,6 +280,7 @@ bool Core::attachDiskII(std::string_view bootRom,
     if (impl_->diskII && impl_->diskII->getSlot() != slot)
         impl_->memory.slotBus().unplug(impl_->diskII->getSlot());
     impl_->diskII = card.get();
+    if (impl_->driveSound525) impl_->diskII->setFloppySound(impl_->driveSound525.get());
     impl_->memory.slotBus().plug(slot, std::move(card));
     impl_->error.clear();
     return true;
@@ -813,6 +815,49 @@ bool Core::attachRgbCard(int slot, RgbCardModel model)
     impl_->display.setChatMauveCard(impl_->rgbCard);
     impl_->error.clear();
     return true;
+}
+
+bool Core::attachDriveSounds(std::string_view sampleDirectory)
+{
+    auto sound525 = std::make_unique<FloppySoundDevice>();
+    if (!sound525->loadSamples(std::string(sampleDirectory), FloppySoundDevice::FormFactor::FF525)) {
+        impl_->error = "No floppy drive samples in " + std::string(sampleDirectory);
+        return false;
+    }
+    std::unique_ptr<FloppySoundDevice> sound35;
+    if (impl_->plus) {
+        sound35 = std::make_unique<FloppySoundDevice>();
+        if (!sound35->loadSamples(std::string(sampleDirectory), FloppySoundDevice::FormFactor::FF35))
+            sound35.reset();
+    }
+    for (auto* drive : {sound525.get(), sound35.get()}) {
+        if (!drive) continue;
+        drive->setCpuClock(impl_->cpuClockHz);
+        drive->setSampleRate(impl_->audioSampleRate);
+    }
+    // The //c family's Sony drives spin faster than the Shugart the samples
+    // were recorded on: the application raises their pitch the same way.
+    if (impl_->iicClass()) sound525->setMotorPitch(1.4f);
+    // Retire the old devices only after the drives point at the new ones.
+    if (impl_->diskII) impl_->diskII->setFloppySound(sound525.get());
+    if (impl_->plus)
+        for (auto& drive : impl_->plus->drive35) drive.setFloppySound(sound35.get());
+    impl_->driveSound525 = std::move(sound525);
+    impl_->driveSound35 = std::move(sound35);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::driveSoundsAttached() const
+{
+    return impl_->driveSound525 != nullptr;
+}
+
+void Core::setDriveSoundVolume(float volume)
+{
+    const float gain = std::clamp(volume, 0.0f, 2.0f);
+    for (auto* drive : {impl_->driveSound525.get(), impl_->driveSound35.get()})
+        if (drive) drive->setVolume(gain);
 }
 
 bool Core::rgbCardAttached() const
@@ -1444,6 +1489,24 @@ bool Core::writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* dat
     return true;
 }
 
+RamRegion Core::ramRegion(RamBank bank)
+{
+    auto& memory = impl_->memory;
+    const bool aux = impl_->iieMemory;
+    switch (bank) {
+    case RamBank::Main:             return {memory.mainRamData(), 0xC000};
+    case RamBank::LanguageCard1:    return {&memory.lcPhysical(0xC000), 0x1000};
+    case RamBank::LanguageCard2:    return {&memory.lcPhysical(0xD000), 0x1000};
+    case RamBank::LanguageCardHigh: return {&memory.lcPhysical(0xE000), 0x2000};
+    case RamBank::Aux:              return aux ? RamRegion{&memory.auxPhysical(0x0000), 0xC000} : RamRegion{};
+    case RamBank::AuxLanguageCard1: return aux ? RamRegion{&memory.auxPhysical(0xC000), 0x1000} : RamRegion{};
+    case RamBank::AuxLanguageCard2: return aux ? RamRegion{&memory.auxPhysical(0xD000), 0x1000} : RamRegion{};
+    case RamBank::AuxLanguageCardHigh:
+        return aux ? RamRegion{&memory.auxPhysical(0xE000), 0x2000} : RamRegion{};
+    }
+    return {};
+}
+
 KeyboardState Core::keyboardState() const
 {
     KeyboardState state;
@@ -1463,6 +1526,7 @@ SdkInfo Core::sdkInfo()
     info.capabilities = {
         "cassette",
         "disk2",
+        "drive.sounds",
         "ezcolor",
         "harddisk",
         "keyboard.state",
@@ -1472,7 +1536,9 @@ SdkInfo Core::sdkInfo()
         "mouse",
         "provenance",
         "ram.banks",
+        "ram.regions",
         "render.cpu-composite",
+        "render.modes",
         "render.rgb-monitor",
         "rgbcard",
         "smartport35",
@@ -1549,6 +1615,59 @@ FramebufferView Core::renderFrame()
     };
 }
 
+namespace {
+struct DisplayModeMap {
+    DisplayMode mode;
+    Apple2Display::HiResMode hiRes;
+    Apple2Display::AppleWinSubMode sub;
+};
+using HR = Apple2Display::HiResMode;
+using AW = Apple2Display::AppleWinSubMode;
+constexpr DisplayModeMap kDisplayModes[] = {
+    {DisplayMode::Composite,             HR::ColorNTSC,           AW::Tv},
+    {DisplayMode::CompositeMedium,       HR::ColorCompMedium,     AW::Tv},
+    {DisplayMode::CompositeSharp,        HR::ColorComp4Bit,       AW::Tv},
+    {DisplayMode::CompositeOpenEmulator, HR::ColorCompositeOECpu, AW::Tv},
+    {DisplayMode::AppleWinMonitor,       HR::ColorAppleWin,       AW::Monitor},
+    {DisplayMode::AppleWinTv,            HR::ColorAppleWin,       AW::Tv},
+    {DisplayMode::AppleWinIdealized,     HR::ColorAppleWin,       AW::Idealized},
+    {DisplayMode::MonoWhite,             HR::MonoWhite,           AW::Tv},
+    {DisplayMode::MonoGreen,             HR::MonoGreen,           AW::Tv},
+    {DisplayMode::MonoAmber,             HR::MonoAmber,           AW::Tv},
+    {DisplayMode::Rgb,                   HR::ChatMauveRGB,        AW::Tv},
+};
+} // namespace
+
+bool Core::setDisplayMode(DisplayMode mode)
+{
+    for (const auto& entry : kDisplayModes) {
+        if (entry.mode != mode) continue;
+        if (mode == DisplayMode::Rgb && !impl_->rgbCard) {
+            impl_->error = "The RGB monitor needs an RGB card";
+            return false;
+        }
+        auto params = impl_->display.getOeDemodParams();
+        params.palMode = impl_->videoStandard == ::VideoStandard::PAL;
+        impl_->display.setOeDemodParams(params);
+        impl_->display.setAppleWinSubMode(entry.sub);
+        impl_->display.setHiResMode(entry.hiRes);
+        impl_->error.clear();
+        return true;
+    }
+    impl_->error = "Unknown display mode";
+    return false;
+}
+
+DisplayMode Core::displayMode() const
+{
+    const auto hiRes = impl_->display.getHiResMode();
+    const auto sub = impl_->display.getAppleWinSubMode();
+    for (const auto& entry : kDisplayModes)
+        if (entry.hiRes == hiRes && (hiRes != HR::ColorAppleWin || entry.sub == sub))
+            return entry.mode;
+    return DisplayMode::Composite;
+}
+
 std::uint64_t Core::lastVideoFrameStart() const
 {
     return impl_->memory.videoPublishedFrameStart();
@@ -1562,6 +1681,8 @@ void Core::setAudioSampleRate(std::uint32_t sampleRate)
     impl_->cassette.setAudioOutputSampleRate(sampleRate);
     for (MockingboardCard* card : impl_->mockingboards)
         if (card) card->setSampleRate(sampleRate);
+    for (auto* drive : {impl_->driveSound525.get(), impl_->driveSound35.get()})
+        if (drive) drive->setSampleRate(sampleRate);
     // …and every OTHER card the mixer walks. `pullAudio` sums each plugged
     // card's audioSource(), so anything rendering at a rate it was not told
     // about drifts against the producer: its cycles-per-sample is computed
@@ -1619,6 +1740,8 @@ std::size_t Core::pullAudio(float* interleavedStereo,
     impl_->mixList.clear();
     impl_->mixList.push_back(&impl_->speaker);
     impl_->mixList.push_back(&impl_->cassette);
+    if (impl_->driveSound525) impl_->mixList.push_back(impl_->driveSound525.get());
+    if (impl_->driveSound35) impl_->mixList.push_back(impl_->driveSound35.get());
     for (int slot = 1; slot <= 7; ++slot) {
         if (SlotPeripheral* card = impl_->memory.slotBus().peripheral(slot)) {
             if (AudioSource* source = card->audioSource())

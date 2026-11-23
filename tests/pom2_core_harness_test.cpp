@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -299,8 +300,8 @@ void testIdentity()
         return std::find(info.capabilities.begin(), info.capabilities.end(), name)
             != info.capabilities.end();
     };
-    for (const char* name : { "harddisk", "ram.banks", "keyboard.state", "provenance",
-                              "render.cpu-composite", "disk2", "smartport35" })
+    for (const char* name : { "harddisk", "ram.banks", "ram.regions", "keyboard.state", "provenance",
+                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "smartport35" })
         assert(has(name));
     // Declared by its absence: the SDK has no CRT profile (docs/SDK.md § Rendering).
     assert(!has("render.crt"));
@@ -334,6 +335,115 @@ void testIdentity()
 
 } // namespace
 
+// ramRegion is readRam's cells in place: the same bytes both ways, a stable
+// pointer across a move of the Core, and no aux bank without //e memory.
+void testRamRegions()
+{
+    using pom2::RamBank;
+    pom2::Core core = makeIIe();
+    const struct { RamBank bank; std::uint16_t first; std::size_t size; } kRegions[] = {
+        {RamBank::Main, 0x0000, 0xC000}, {RamBank::Aux, 0x0000, 0xC000},
+        {RamBank::LanguageCard1, 0xD000, 0x1000}, {RamBank::LanguageCard2, 0xD000, 0x1000},
+        {RamBank::LanguageCardHigh, 0xE000, 0x2000}, {RamBank::AuxLanguageCard1, 0xD000, 0x1000},
+        {RamBank::AuxLanguageCard2, 0xD000, 0x1000}, {RamBank::AuxLanguageCardHigh, 0xE000, 0x2000},
+    };
+    std::uint8_t tag = 0x11;
+    for (const auto& r : kRegions) {
+        const pom2::RamRegion region = core.ramRegion(r.bank);
+        assert(region.data && region.size == r.size);
+        region.data[0] = tag;
+        region.data[r.size - 1] = static_cast<std::uint8_t>(tag + 1);
+        assert(ram(core, r.bank, r.first) == tag);
+        assert(ram(core, r.bank, static_cast<std::uint16_t>(r.first + r.size - 1)) == tag + 1);
+        put(core, r.bank, static_cast<std::uint16_t>(r.first + 1), static_cast<std::uint8_t>(tag + 2));
+        assert(region.data[1] == tag + 2);
+        tag = static_cast<std::uint8_t>(tag + 0x10);
+    }
+    std::uint8_t* main = core.ramRegion(RamBank::Main).data;
+    pom2::Core moved = std::move(core);
+    assert(moved.ramRegion(RamBank::Main).data == main);
+
+    pom2::CoreConfig plus;
+    plus.machine = pom2::Machine::AppleIIPlus;
+    pom2::Core iiPlus(plus);
+    assert(iiPlus.ramRegion(RamBank::Main).size == 0xC000);
+    assert(iiPlus.ramRegion(RamBank::LanguageCardHigh).size == 0x2000);
+    assert(!iiPlus.ramRegion(RamBank::Aux).data && iiPlus.ramRegion(RamBank::Aux).size == 0);
+    std::printf("  ok: RAM regions in place\n");
+}
+
+// Every display mode paints; Rgb needs its card and leaves the mode alone
+// without one; the monochrome monitors paint nothing but their phosphor.
+void testDisplayModes()
+{
+    using pom2::DisplayMode;
+    pom2::Core core = makeIIe();
+    assert(core.loadCharacterRom(gSource + "/roms/apple2e_char.rom"));
+    core.coldBoot();
+    core.run(1022727);   // the ROM's banner and prompt
+    assert(core.displayMode() == DisplayMode::Composite);
+    assert(!core.setDisplayMode(DisplayMode::Rgb) && core.displayMode() == DisplayMode::Composite);
+    const DisplayMode kModes[] = {
+        DisplayMode::Composite, DisplayMode::CompositeMedium, DisplayMode::CompositeSharp,
+        DisplayMode::CompositeOpenEmulator, DisplayMode::AppleWinMonitor, DisplayMode::AppleWinTv,
+        DisplayMode::AppleWinIdealized, DisplayMode::MonoWhite, DisplayMode::MonoGreen,
+        DisplayMode::MonoAmber,
+    };
+    for (DisplayMode mode : kModes) {
+        assert(core.setDisplayMode(mode) && core.displayMode() == mode);
+        const pom2::FramebufferView frame = core.renderFrame();
+        assert(frame.pixels && (frame.width == 280 || frame.width == 560) && frame.height == 192);
+        std::size_t lit = 0;
+        for (int i = 0; i < frame.width * frame.height; ++i) {
+            const std::uint32_t p = frame.pixels[i];
+            const unsigned r = p & 0xff, g = (p >> 8) & 0xff, b = (p >> 16) & 0xff;
+            if (r + g + b < 96) continue;
+            ++lit;
+            if (mode == DisplayMode::MonoGreen) assert(g > r && g > b);
+            if (mode == DisplayMode::MonoAmber) assert(r > b);
+        }
+        assert(lit > 0 && "the banner must show in every mode");
+    }
+    assert(core.attachRgbCard(7));
+    assert(core.setDisplayMode(DisplayMode::Rgb) && core.displayMode() == DisplayMode::Rgb);
+    assert(core.renderFrame().pixels);
+    std::printf("  ok: display modes\n");
+}
+
+// attachDriveSounds: a missing sample folder is refused; with the samples, the
+// same boot sounds different from a machine without them, and only because of
+// the drive (the two run identical guests).
+void testDriveSounds()
+{
+    const std::string disk = gSource + "/packaging/disks/DIRTBIKE.dsk";
+    const auto boot = [&](bool sounds) {
+        pom2::Core core = makeIIe();
+        assert(core.loadCharacterRom(gSource + "/roms/apple2e_char.rom"));
+        if (sounds) {
+            assert(!core.attachDriveSounds(gSource + "/no/such/folder") && !core.driveSoundsAttached());
+            assert(core.attachDriveSounds(gSource + "/roms/floppy_samples") && core.driveSoundsAttached());
+            core.setDriveSoundVolume(1.0f);
+        }
+        assert(core.attachDiskII({}));
+        assert(core.insertDisk(0, disk));
+        assert(core.bootDisk());
+        std::vector<float> audio;
+        std::vector<float> chunk(2 * 735);
+        for (int frame = 0; frame < 60; ++frame) {
+            core.run(17030);
+            assert(core.pullAudio(chunk.data(), 735) == 735);
+            audio.insert(audio.end(), chunk.begin(), chunk.end());
+        }
+        return audio;
+    };
+    const auto quiet = boot(false);
+    const auto loud = boot(true);
+    double difference = 0;
+    for (std::size_t i = 0; i < quiet.size(); ++i) difference += std::abs(loud[i] - quiet[i]);
+    assert(difference > 1.0 && "the drive's motor and steps must reach the mix");
+    std::printf("  ok: drive sounds\n");
+}
+
 int main()
 {
     gSource = POM2_TEST_SOURCE_DIR;
@@ -342,5 +452,8 @@ int main()
     testRangesAreRefusedWhole();
     testKeyboardState();
     testIdentity();
+    testRamRegions();
+    testDisplayModes();
+    testDriveSounds();
     return 0;
 }
