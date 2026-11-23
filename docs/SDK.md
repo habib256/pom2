@@ -501,7 +501,10 @@ floppy samples (POM2's `roms/floppy_samples/`): the 5.25" set for the Disk II,
 attached now or later, and the `35_` set for the //c+'s 3.5" drives. They are
 timed in emulated cycles and mixed centred by `pullAudio`;
 `setDriveSoundVolume` scales them. They are host sound and a snapshot does not
-carry them, so a host that replays frames (rewind, run-ahead) hears steps again.
+carry them. A host that replays frames turns them off with
+`setDriveSoundEventsEnabled(false)` for the frames whose audio it discards,
+so each step is heard once, and calls `resyncDriveSounds()` after a restore
+to drop what is playing and take the restored motor's state.
 
 ## Rendering
 

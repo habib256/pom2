@@ -417,10 +417,12 @@ void testDisplayModes()
 void testDriveSounds()
 {
     const std::string disk = gSource + "/packaging/disks/DIRTBIKE.dsk";
-    const auto boot = [&](bool sounds) {
+    // events: 1 sounds on, 0 sounds attached but their events off, -1 none;
+    // resyncAt: the frame a restore would resync them (events back on).
+    const auto boot = [&](int events, int resyncAt = -1) {
         pom2::Core core = makeIIe();
         assert(core.loadCharacterRom(gSource + "/roms/apple2e_char.rom"));
-        if (sounds) {
+        if (events >= 0) {
             assert(!core.attachDriveSounds(gSource + "/no/such/folder") && !core.driveSoundsAttached());
             assert(core.attachDriveSounds(gSource + "/roms/floppy_samples") && core.driveSoundsAttached());
             core.setDriveSoundVolume(1.0f);
@@ -428,20 +430,35 @@ void testDriveSounds()
         assert(core.attachDiskII({}));
         assert(core.insertDisk(0, disk));
         assert(core.bootDisk());
+        core.setDriveSoundEventsEnabled(events == 1);
         std::vector<float> audio;
         std::vector<float> chunk(2 * 735);
         for (int frame = 0; frame < 60; ++frame) {
+            if (frame == resyncAt) {
+                core.setDriveSoundEventsEnabled(true);
+                core.resyncDriveSounds();
+            }
             core.run(17030);
             assert(core.pullAudio(chunk.data(), 735) == 735);
             audio.insert(audio.end(), chunk.begin(), chunk.end());
         }
         return audio;
     };
-    const auto quiet = boot(false);
-    const auto loud = boot(true);
-    double difference = 0;
-    for (std::size_t i = 0; i < quiet.size(); ++i) difference += std::abs(loud[i] - quiet[i]);
-    assert(difference > 1.0 && "the drive's motor and steps must reach the mix");
+    const auto distance = [](const std::vector<float>& a, const std::vector<float>& b, std::size_t from) {
+        double d = 0;
+        for (std::size_t i = from; i < a.size(); ++i) d += std::abs(a[i] - b[i]);
+        return d;
+    };
+    const auto quiet = boot(-1);
+    const auto loud = boot(1);
+    assert(distance(loud, quiet, 0) > 1.0 && "the drive's motor and steps must reach the mix");
+    // Events off (a run-ahead frame): the drive is silent.
+    const auto muted = boot(0);
+    assert(distance(muted, quiet, 0) < 1e-3 && "with events off the drive makes no sound");
+    // A restore mid-boot resyncs: the motor turning is heard from then on.
+    const auto resynced = boot(0, 30);
+    assert(distance(resynced, quiet, 0) < 1e-3 + distance(resynced, quiet, 30 * 2 * 735) &&
+           distance(resynced, quiet, 30 * 2 * 735) > 1.0 && "a resync picks up the turning motor");
     std::printf("  ok: drive sounds\n");
 }
 

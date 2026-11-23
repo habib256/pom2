@@ -8,12 +8,14 @@
 #include "CpuClock.h"
 #include "Logger.h"
 #include "MediaAutosave.h"
+#include "archive_content.hpp"
 #include "cheats.hpp"
 #include "core_options.hpp"
 #include "disk_playlist.hpp"
 #include "disk_storage.hpp"
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
+#include "program_file.hpp"
 #include "pom2/core.hpp"
 
 #include <algorithm>
@@ -932,7 +934,17 @@ bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
     }
     if (!game->path || !*game->path) return false;
     try {
-        disks.images[index] = pom2::libretro::loadDiskImage(std::filesystem::u8path(game->path));
+        auto path = std::filesystem::u8path(game->path);
+        if (pom2::libretro::isArchive(path)) {
+            // An archive's first disk, from the same cache as content.
+            const auto cache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "archives";
+            path = pom2::libretro::unpackArchive(path, cache);
+            if (pom2::libretro::isProgramFile(path))
+                throw std::runtime_error(path.filename().u8string() + " is a program, not a disk");
+            disks.images[index] = pom2::libretro::loadDiskList(path).front();
+            return true;
+        }
+        disks.images[index] = pom2::libretro::loadDiskImage(path);
         return true;
     } catch (const std::exception& error) {
         reportError(error.what());
@@ -1117,6 +1129,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     }
 
     DiskState state;
+    std::optional<pom2::libretro::ProgramImage> program;
     state.firmware = std::filesystem::u8path(systemDirectory) / "pom2";
     state.appleDiskFirmware = option("pom2_disk2_firmware") != "pom2";
     state.slotUsed[3] = true;   // the //e's 80 columns are internal; keep the slot clear
@@ -1129,7 +1142,16 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             return false;
         }
         state.content = std::filesystem::absolute(std::filesystem::u8path(game->path));
-        state.images = pom2::libretro::loadDiskList(state.content);
+        // An archive unpacks beside the private disk copies, so its disks
+        // keep them from one session to the next.
+        if (pom2::libretro::isArchive(state.content)) {
+            const auto cache = (state.saves.empty() ? state.firmware : state.saves / "pom2") / "archives";
+            state.content = pom2::libretro::unpackArchive(state.content, cache);
+        }
+        if (pom2::libretro::isProgramFile(state.content))
+            program = pom2::libretro::loadProgram(state.content);
+        else
+            state.images = pom2::libretro::loadDiskList(state.content);
     }
 
     pom2::libretro::MachineRequest request;
@@ -1175,7 +1197,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     applyRuntimeOptions();   // the write-protect setting is needed before the first mount
 
     state.drives[1].ejected = true;   // drive 2 starts empty
-    if (game) {
+    if (game && !program) {
         unsigned first = 0;
         std::error_code pathError;
         if (requestedDisk && requestedDisk->index < state.images.size()
@@ -1212,6 +1234,28 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             target->coldBoot();
             target->runVideo(static_cast<int>(machineTiming.cpuClockHz * 2));
             target->softReset();
+        }
+        if (program) {
+            // At the BASIC prompt: the program in RAM, as LOAD or BLOAD would
+            // leave it, then typed in to start it.
+            target->runVideo(static_cast<int>(machineTiming.cpuClockHz * 2));
+            if (!target->writeRam(pom2::RamBank::Main, program->address, program->bytes.data(),
+                                  program->bytes.size())) {
+                reportError("Cannot load the program: " + target->lastError());
+                return false;
+            }
+            if (program->applesoft) {
+                // TXTTAB, then VARTAB, ARYTAB, STREND and PRGEND at the end.
+                const auto end = static_cast<std::uint16_t>(program->address + program->bytes.size());
+                const std::uint8_t lo = end & 0xff, hi = end >> 8;
+                const std::uint8_t start[2] = {0x01, 0x08};
+                const std::uint8_t pointers[6] = {lo, hi, lo, hi, lo, hi};
+                const std::uint8_t prgend[2] = {lo, hi};
+                target->writeRam(pom2::RamBank::Main, 0x67, start, 2);
+                target->writeRam(pom2::RamBank::Main, 0x69, pointers, 6);
+                target->writeRam(pom2::RamBank::Main, 0xAF, prgend, 2);
+            }
+            target->pasteText(program->command);
         }
     }
 
@@ -1429,6 +1473,12 @@ bool restoreRetroState(const void* data, std::size_t size)
     repeatKey = keyRepeated;
     repeatFrames = repeatCount;
     showDiskRead((flags & 16) != 0);
+    // A state the player loaded (or a rewind step) moves the drives; the
+    // run-ahead's own restores replay a timeline the sounds already played.
+    int context = RETRO_SAVESTATE_CONTEXT_NORMAL;
+    if (!environment(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &context) ||
+        context == RETRO_SAVESTATE_CONTEXT_NORMAL)
+        core->resyncDriveSounds();
     return true;
 }
 
@@ -1487,7 +1537,7 @@ unsigned retro_api_version() { return RETRO_API_VERSION; }
 void retro_get_system_info(retro_system_info* info)
 {
     static const std::string version = pom2::Core::sdkInfo().version;
-    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u", true, true};
+    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u|zip|gz|bin|bas", true, true};
 }
 
 void retro_get_system_av_info(retro_system_av_info* info)
@@ -1528,6 +1578,13 @@ void retro_run()
         applyRuntimeOptions();
     applyInput();
     applyCheats();
+    if (core->driveSoundsAttached()) {
+        // Run-ahead runs frames whose audio it discards: their head steps
+        // and motor starts are heard on the frame it presents instead.
+        int enabled = 3;
+        const bool known = environment(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &enabled);
+        core->setDriveSoundEventsEnabled(!known || (enabled & RETRO_AV_ENABLE_AUDIO) != 0);
+    }
     auto frames = runFrame();
     // "Recently" in CPU cycles: an accelerated frame runs more of them.
     const auto frameCpuCycles = static_cast<std::uint64_t>(machineTiming.cyclesPerFrame * core->cpuSpeedMultiplier());

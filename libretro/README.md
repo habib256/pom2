@@ -81,8 +81,20 @@ use **Load Content** and select an image. The type and size choose the drive:
 | `.hdv`, or a larger `.po` or `.2mg` | ProDOS hard disk, slot 7 |
 
 On a //c the 3.5-inch and hard disks hang off the rear disk port and boot
-through the //c's own firmware. Unpack `.zip` archives first: the core
-opens disk images and playlists directly.
+through the //c's own firmware.
+
+A `.zip` or `.gz` opens as its contents. A zip with one disk loads that
+disk; with several, a playlist of them in name order, ready for Disc Control;
+with its own `.m3u`, that playlist. The core unpacks it once into
+`pom2/archives` in the save directory, so its disks keep their private copies
+from one session to the next.
+
+A program loads without a disk, at the BASIC prompt:
+
+| File | Loaded | Started with |
+|---|---|---|
+| `.bas` | an Applesoft listing in text, tokenized to `$0801` | `RUN` |
+| `.bin` | at the address its name gives (`GAME#062000.bin`, CiderPress's convention), its AppleSingle or DOS 3.3 header gives, or `$0803` | `CALL` to that address |
 
 ## Core options
 
@@ -125,8 +137,9 @@ Options marked *(restart)* take effect at the next **Load Content** or
 
 Disk drive sounds play MAME's recordings of the motor, the head and the
 door. The release ZIP carries them in `system/pom2/floppy_samples`: copy
-that folder next to the ROMs. They are not part of save states, so turn them
-off when you use run-ahead.
+that folder next to the ROMs. With run-ahead each head step is heard once, on
+the frame RetroArch shows, and loading a state picks up the motor where the
+state left it.
 
 Every configuration has save states, the //c Plus, the speech Mockingboard
 and hard disks included. A hard disk's state holds only the blocks the game

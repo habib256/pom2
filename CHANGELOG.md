@@ -21,6 +21,13 @@ picture on 44, AppleWin on 35 of the 38 it can load, and the two images that
 fail fail the same way on both. The Apple ][ of 1977 keeps the shortcut: its
 ROM does not boot on its own.
 
+Content beyond disk images: a `.zip` or `.gz` opens as its contents (several
+disks become a playlist, unpacked once beside the private copies so they
+persist), an Applesoft `.bas` listing is tokenized and RUN, and a `.bin` is
+loaded at the address its CiderPress name, AppleSingle or DOS 3.3 header gives
+and CALLed. Drive sounds now follow run-ahead (events of frames whose audio
+RetroArch discards are dropped) and a loaded state (they resync to its motor).
+
 A RamWorks III (256 KiB to 8 MiB, //e) is a core option and an SDK call
 (`setRamWorksBanks`). An 8 MiB machine saved its state but refused to load
 it: the SDK capped a state's machine section at 2 MiB, and 128 banks with

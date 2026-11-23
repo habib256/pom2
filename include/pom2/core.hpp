@@ -454,6 +454,13 @@ public:
     bool noSlotClockAttached() const;
     /// Drive sound gain in [0, 2]. Values outside the range are clamped.
     void setDriveSoundVolume(float volume);
+    /// While false, the drives' movements make no sound: a host that runs
+    /// frames whose audio it discards (run-ahead) calls it so that every
+    /// motor start and head step is heard once, on the frame it presents.
+    void setDriveSoundEventsEnabled(bool enabled);
+    /// After a restore: drop what the drive sounds are playing and take the
+    /// restored drive's state (its motor turning or not) from now on.
+    void resyncDriveSounds();
 
     /// Install an Apple Mouse card in an empty slot (4 by convention: the
     /// slot Apple sold it for, and the one software that skips the scan

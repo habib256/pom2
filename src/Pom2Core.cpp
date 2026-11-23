@@ -949,6 +949,24 @@ bool Core::driveSoundsAttached() const
     return impl_->driveSound525 != nullptr;
 }
 
+void Core::setDriveSoundEventsEnabled(bool enabled)
+{
+    auto* sound525 = enabled ? impl_->driveSound525.get() : nullptr;
+    auto* sound35 = enabled ? impl_->driveSound35.get() : nullptr;
+    if (impl_->diskII) impl_->diskII->setFloppySound(sound525);
+    if (impl_->plus)
+        for (auto& drive : impl_->plus->drive35) drive.setFloppySound(sound35);
+}
+
+void Core::resyncDriveSounds()
+{
+    if (!impl_->driveSound525) return;
+    impl_->driveSound525->reset();
+    if (impl_->diskII && impl_->diskII->isMotorOn())
+        impl_->driveSound525->motor(true, impl_->diskII->isDiskLoaded(impl_->diskII->getActiveDrive()));
+    if (impl_->driveSound35) impl_->driveSound35->reset();
+}
+
 void Core::setDriveSoundVolume(float volume)
 {
     const float gain = std::clamp(volume, 0.0f, 2.0f);

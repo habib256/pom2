@@ -128,20 +128,20 @@ jobs:
           python tools/package_libretro.py "$MODULE_PATH" "$package" | tee dist/libretro-results/package.log
           (cd dist/libretro && cmake -E sha256sum "$PACKAGE_FILE" > "$PACKAGE_FILE.sha256")
 
-          # The six CTest commands resolve the configured target file. Replacing
+          # The seven CTest commands resolve the configured target file. Replacing
           # it with the extracted ZIP member makes every command test the package.
           python -m zipfile -e "$package" build/libretro-install
           cmake -E rename "$MODULE_PATH" "$MODULE_PATH.unpacked-build"
           cmake -E copy "build/libretro-install/cores/$(basename "$MODULE_PATH")" "$MODULE_PATH"
 
-      - name: Require all six packaged-core regressions
+      - name: Require all seven packaged-core regressions
         run: |
           ctest --test-dir build -C Release -R '^pom2_libretro_' --no-tests=error \
             --output-on-failure --output-junit "$PWD/dist/libretro-results/ctest.xml" \
             | tee dist/libretro-results/ctest.log
           python - <<'PY'
           import xml.etree.ElementTree as ET
-          expected = {"abi", "media", "disk_persistence", "keyboard", "dix", "desktop"}
+          expected = {"abi", "media", "disk_persistence", "keyboard", "dix", "desktop", "formats"}
           expected = {"pom2_libretro_" + name for name in expected}
           cases = ET.parse("dist/libretro-results/ctest.xml").findall(".//testcase")
           names = {case.get("name") for case in cases}
@@ -261,7 +261,9 @@ jobs:
           bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           module=build/pom2_libretro_android.so
           "$bin/llvm-strip" --strip-unneeded "$module"
-          "$bin/llvm-readelf" -h "$module" | grep -q 'AArch64'
+          # grep reads all of it: a grep -q exiting early breaks the pipe
+          # under pipefail (readelf exits 74).
+          "$bin/llvm-readelf" -h "$module" | grep 'AArch64' > /dev/null
           exported=$("$bin/llvm-nm" -D --defined-only "$module" | awk '$2 == "T" {print $3}')
           if echo "$exported" | grep -v '^retro_'; then
             echo "::error::the Android module exports more than the libretro API"; exit 1

@@ -174,9 +174,10 @@ const std::vector<Option>& options()
          nullptr, nullptr, percent(0, 200, 10, 100)},
         {"pom2_drive_sounds", "audio", "Disk drive sounds (restart)", "Bruits des lecteurs (redémarrage)",
          "The motor, head steps and door of the drives, from MAME's samples in system/pom2/floppy_samples. "
-         "They are not in save states: keep them off with run-ahead.",
+         "With run-ahead each step is heard once; a loaded state picks up the drive's motor.",
          "Le moteur, les pas de tête et la porte des lecteurs, d'après les échantillons de MAME dans "
-         "system/pom2/floppy_samples. Ils ne sont pas dans les sauvegardes d'état : à désactiver avec le run-ahead.",
+         "system/pom2/floppy_samples. Avec le run-ahead chaque pas s'entend une fois ; une sauvegarde chargée "
+         "reprend le moteur du lecteur.",
          {{"disabled", "Off", "Désactivés"}, {"enabled", "On", "Activés"}}},
         {"pom2_drive_sound_volume", "audio", "Disk drive sound volume", "Volume des bruits de lecteur",
          nullptr, nullptr, percent(0, 200, 10, 100)},
