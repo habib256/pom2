@@ -21,7 +21,7 @@ an explicit request before scheduling.
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
 | [STORAGE-017](#storage-017) | 🟢 | Ready | A2R 3.x flux import, ShrinkIt archives, multi-disk archives |
-| [STORAGE-018](#storage-018) | 🟠 | Ready: Glutton met the condition | 5.25" timeline on the true LSS clock + measured read jitter |
+| [STORAGE-018](#storage-018) | 🧊 | Frozen: the speed drift shipped 2026-11-24; the clock half waits for a title | 5.25" timeline on the true LSS clock |
 
 <a id="storage-014"></a>
 
@@ -239,44 +239,30 @@ mount through `MediaSource` with the archive never written.
 
 <a id="storage-018"></a>
 
-## STORAGE-018 — 5.25" timeline on the true LSS clock, with the measured read jitter
+## STORAGE-018 — 5.25" timeline on the true LSS clock
 
-**Priority:** 🟠 · **State:** Ready. The scheduling condition was met on 2026-11-23.
+**Priority:** 🧊 · **State:** Frozen again (2026-11-24): the half Glutton needed shipped, see below.
 
-The bit-cell platter turns 2.2 % fast: 8 LSS cycles of 488.9 ns per nominal
-4 µs cell (the block above `DiskImage::lssCyclesPerCell`), and every pulse
-is exactly where the cell puts it. FLUX tracks already use the true clock
-(`fluxBusHz_`). Bit tracks do not.
+**Shipped 2026-11-24 — the platter's speed drifts** (CHANGELOG of that date,
+`DiskImageWozFlux.cpp`). A WOZ track's flux events take a smooth offset of
+at most ±8 LSS cycles, drawn per revolution from a hash, so two revolutions
+never play alike. [A] Glutton's Applesauce A2R measures tens to hundreds of
+µs of wander between revolutions. Glutton, the one protected title of 37
+POM2 alone failed, boots, and the protected corpus holds it. Pinned by
+`woz_bit_timing_smoke` (`checkSpeedDrift`) and the corpus title `glutton`.
 
-**The title that needs it: Glutton** (woz-a-day). It is the one protected
-disk of 37 that POM2 alone cannot boot
-([three-way audit](../audits/protected-woz-three-way-2026-11-23.md#glutton-not-fixed--what-is-known)).
-Its loader passes only when its wait loop reads a `$D7` in the first ~2
-cycles of a 12-cycle latch window, so that the count loop reads it again.
+**Still open — the clock.** The bit-cell platter turns 2.2 % fast: 8 LSS
+cycles of 488.9 ns per nominal 4 µs cell (the block above
+`DiskImage::lssCyclesPerCell`). FLUX tracks already use the true clock
+(`fluxBusHz_`). Glutton did not need this half: with the drift it boots on
+the integer grid, and the true clock alone did not boot it (706 failures in
+150 s).
 
-- With phase-locked pulses that never happens. POM2: 706 failures in 150 s,
-  even with the true clock alone, and even replaying the real flux.
-- MAME gets there after 85 tries.
-- **[A] Applesauce's A2R capture** of the disk measures single cells at 28
-  to 36 ticks around 32.
+Moving bit tracks onto the true clock moves the byte cadence that every
+pinned disk test, the DIX/OLDSKOOL raster probes and the write-splice
+geometry are calibrated against. Writes onto a bit track would also need a
+per-interval normalisation, as Applesauce does.
 
-**Work:**
-1. WOZ bit cells take `optimal_bit_timing` ticks of real time on the
-   machine's LSS clock, as FLUX tracks do. `.dsk`/`.nib` keep exactly 8: an
-   Apple II writes a bit every 4 bus cycles.
-2. A per-revolution read jitter of ±2 ticks, drawn from a deterministic hash
-   of (revolution, cell) like the weak bits, so rewind, run-ahead and the
-   corpus stay reproducible.
-3. Writes onto a bit track are normalised per interval (cell += round(Δ /
-   cell)), as Applesauce does, so a guest write still lands one cell per bit.
-4. Re-bless the WOZ corpus titles and the DIX/OLDSKOOL probes, with the
-   reason recorded.
-
-**Acceptance criterion:**
-- Glutton reaches its title within 60 s, in the protected corpus.
-- Prisoner 2 (33), Mr. Do, Captain Goodnight, Prince of Persia, Bandits and
-  Phantasie keep booting.
-- `diskii_*`, `woz_*` and `dos33_save_smoke` pass.
-- **Also check:** the unpatched Prisoner 2. On the true clock its weak-bit
-  check lands about 2.3 % later, which is where it needs to be.
+**Scheduling condition:** a title that fails because of the 2.2 % and passes
+at 8.17 cycles a cell; then re-bless the corpus with the reason recorded.
 

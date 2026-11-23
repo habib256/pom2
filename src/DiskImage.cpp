@@ -1383,9 +1383,8 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
         for (int qt = 0; qt < kQuarterTracks; qt += 4)
             if (bitStreamValid[qt] && wozQtFluxPeriodTicks[qt] == 0) counts.push_back(wozQtBitCount[qt]);
         const uint8_t played = pom2::effectiveWozBitTiming(optimalBitTiming, counts);
-        if (played != optimalBitTiming)
-            pom2::log().info("Disk II", "WOZ declares bit timing " + std::to_string(optimalBitTiming)
-                + ", one revolution of its tracks gives " + std::to_string(played) + ": played at " + std::to_string(played));
+        if (played != optimalBitTiming) pom2::log().info("Disk II", "WOZ declares bit timing "
+            + std::to_string(optimalBitTiming) + ", its tracks fill a revolution at " + std::to_string(played));
         optimalBitTiming = played;
     }
 
@@ -2059,10 +2058,10 @@ inline bool weakPulse(int64_t revolution, int64_t zone, int64_t interval)
 
 }  // namespace
 
-int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
-                                     int64_t revolutionStart) const
-{
-    if (qt < 0 || qt >= kQuarterTracks) return kFluxNever;
+int64_t DiskImage::nextTransitionRaw(int qt, int64_t fromLssCycle, int64_t revolutionStart,
+                                     int64_t& rev, int64_t& index, int64_t& angle) const
+{   // getNextTransition (DiskImageWozFlux.cpp) adds a WOZ track's speed drift.
+    if (index = -1; qt < 0 || qt >= kQuarterTracks) return kFluxNever;
     const auto& flux = fluxEvents(qt);
     if (flux.empty()) return kFluxNever;
     const int period = trackPeriod(qt);
@@ -2176,7 +2175,11 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
             ++interval;
         }
     }
-    return origin + fullRevs * period + nextPos;
+    const int64_t base = origin + fullRevs * period;
+    rev   = base / period + (idx == n ? 1 : 0);
+    index = static_cast<int64_t>(idx == n ? 0 : idx);
+    angle = (idx == n) ? int64_t{flux.front()} : nextPos;
+    return base + nextPos;
 }
 
 // MAME `floppy_image_device::write_flux` — splice `count` flux events

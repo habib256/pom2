@@ -28,7 +28,7 @@ three corpus titles at the end. The images stay outside the checkout.
 | Cyclod, Minotaur, Fly Wars, Jellyfish | **WOZ 2.1 FLUX** | **boots** | **no** (no FLUX support) | boots |
 | The Newsroom | non-standard bit timing | boots | boots | **"DISK ERROR"** |
 | **Mr. Do** | weak bits on T0, INFO bit timing 29 | **no** (boot PROM, `$C65E`) → **fixed** | boots | boots |
-| **Glutton** | nibble count between `$D7` marks | **no** | boots | boots (slowly) |
+| **Glutton** | nibble count between `$D7` marks | **no** → **fixed** (2026-11-24) | boots | boots (slowly) |
 | Choplifter, Zenith, Seafox, Star Maze, Computer Foosball | ][ / ][+ / unenhanced only | black screen, as on the iron | same | same, or still on the title |
 
 **][+**, 60 s, for the ][-only titles and the two failures:
@@ -38,7 +38,7 @@ three corpus titles at the end. The images stay outside the checkout.
 | Choplifter, Computer Foosball, Free Fall, Seafox, Star Maze, Zenith | boots | boots | boots (Choplifter still on its title: mametesters #07955) |
 | **Lady Tut** (side A) | **title after `N`**, on a ][+ and on a ][ | reaches the Mockingboard question | game on a ][+; **`@` garbage on a ][** |
 | Mr. Do | fixed, see below | boots | boots |
-| Glutton | **no** | boots | boots |
+| Glutton | **no** → **fixed** (2026-11-24) | boots | boots |
 
 Choplifter and Zenith end on a black screen after their title on an enhanced
 //e, in POM2 and AppleWin alike (MAME stays on the title). They are ][+ games;
@@ -78,7 +78,7 @@ rounded down. 32 and slower, and any larger mismatch, are never touched, so
 every image in the corpus plays as before, Prisoner 2's 33 included. Mr. Do now reaches its joystick calibration. Pinned by
 `woz_bit_timing_smoke` and the protected corpus title `mr-do`.
 
-## Glutton: not fixed — what is known
+## Glutton: fixed on 2026-11-24 — the platter's speed drifts
 
 The loader (`$BB91`) waits for a `$D7` nibble, counts nibbles to the next
 `$D7`, retries while the count is under 256, then compares it with a table.
@@ -126,12 +126,19 @@ cell and from revolution to revolution, so the landing point wanders until it
 lands early. MAME gets there by its non-integer cell. Other emulators get
 there with explicit jitter (AppleWin #1021).
 
-**Not fixed in this round.** The fix belongs to the 5.25" timeline re-basing
-recorded above `DiskImage::lssCyclesPerCell()`: bit cells on the true LSS
-clock plus a per-revolution, deterministically seeded read jitter of
-±2 ticks (the A2R's measured spread). That changes the read timing of every
-WOZ, so it needs its own pass with the protected corpus re-blessed. Backlog:
-STORAGE-018.
+**Fixed on 2026-11-24** (`DiskImageWozFlux.cpp`, STORAGE-018). A per-event
+jitter of 0/+1 LSS cycle was tried first and is not enough: in the
+`FF … FD D7` run the wait loop's read latency is conserved exactly
+(11 + 3 × 7 = 32 cycles a nibble), and independent noise averages out. What
+moves it is a **cumulative** drift, the platter's speed wandering. A WOZ
+track's events now take a smooth offset of at most ±8 LSS cycles (±4 µs),
+interpolated between knots every 4096 cycles, drawn per revolution from a
+hash, and 0 at both ends of a turn. That is far under the measured wander
+and enough to break the lock. Glutton shows its title at 30 s and its demo
+at 60 s. The other eight protected titles still pass; Bandits, Cyclod and
+Prisoner 2 were re-blessed after looking at their frames. The steady
+platter stays available (`DiskImage::setSpeedDrift(false)`) for the tests
+that pin sequencer logic to exact cycles.
 
 ## Other observations
 

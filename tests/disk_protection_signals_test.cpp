@@ -156,6 +156,7 @@ void testFluxOracle() {
         Fixture fixture(obt, {50003, 49999, 50009});
         DiskImage image;
         require(image.loadFile(fixture.path), "load fixture: " + image.getLastError());
+        image.setSpeedDrift(false);   // the exact geometry; the drift has its own test
         for (int qt = 0; qt < 8; ++qt) {
             const int length = fixture.bits[fixture.map[qt]].size();
             require(image.trackBitLength(qt) == length, "declared non-byte bit_count lost");

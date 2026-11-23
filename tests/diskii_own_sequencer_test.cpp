@@ -75,13 +75,14 @@ struct Stream {
     std::map<int, int> holds;   // bit-7 run length (CPU cycles) -> count
 };
 
-Stream readStream(const std::string& woz, bool appleP6)
+Stream readStream(const std::string& woz, bool appleP6, bool drift = true)
 {
     Stream s;
     DiskIICard c(6);
     c.setWriteBackEnabled(false);
     if (appleP6) c.loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"));
     if (!c.insertDisk(0, woz)) { std::fprintf(stderr, "insert %s failed\n", woz.c_str()); std::exit(1); }
+    c.driveImage(0).setSpeedDrift(drift);
     c.deviceSelectRead(0x9);                     // motor on
     c.deviceSelectRead(0xE);                     // Q7L
     for (int i = 0; i < 200'000; ++i) c.advanceCycles(1);
@@ -140,6 +141,7 @@ std::vector<int> writeBurst(const std::string& woz, bool appleP6, int lead, int 
     if (appleP6) c.loadLssRom(pom2test::diskIIRomPath("diskii_p6.rom"));
     if (!c.insertDisk(0, tmp.string())) std::exit(1);
     c.driveImage(0).setWriteBackEnabled(true);
+    c.driveImage(0).setSpeedDrift(false);        // the write phase against a steady read
     long now = 0;
     auto at = [&](long t) { if (t > now) { c.advanceCycles(int(t - now)); now = t; } };
     auto rd = [&](long t, uint8_t sw) { at(t); c.deviceSelectRead(sw); };
@@ -179,9 +181,15 @@ int main()
                 static_cast<unsigned long long>(own.hash));
     check(apple.nibbles > 10000, "the control reads a stream");
     check(own.nibbles == apple.nibbles && own.hash == apple.hash,
-          "the same nibbles at the same cycles as Apple's P6");
-    check(own.holds == apple.holds, "the same hold windows as Apple's P6");
-    check(own.holds.count(8) && own.holds.count(16),
+          "the same nibbles at the same cycles as Apple's P6, on a drifting platter");
+    // Hold windows on the steady platter. Under the speed drift
+    // (DiskImageWozFlux.cpp) the P6 holds a nibble 7 or 9 cycles where the
+    // own sequencer still holds 8: the nibbles stay the same, the windows are
+    // where it is only a stand-in.
+    const Stream appleSteady = readStream(woz, true, false);
+    const Stream ownSteady   = readStream(woz, false, false);
+    check(ownSteady.holds == appleSteady.holds, "the same hold windows as Apple's P6 (steady platter)");
+    check(ownSteady.holds.count(8) && ownSteady.holds.count(16),
           "data nibbles held 8 cycles, sync bytes 16");
 
     // 2. A whole boot, the same RAM at every checkpoint.

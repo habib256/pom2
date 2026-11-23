@@ -85,3 +85,14 @@ title cyclod-flux iie protected flux
   diskii 1 cyclod.woz sha256=7c50a7c9f30469368d1e2e06602a25d37f01c687175cbddab1f15b50a8ef07e0
   run 45
   check running
+
+# The one title of the 2026-11-23 round POM2 alone could not boot. Its loader
+# needs a $D7 read twice, which happens only when the platter's speed
+# wanders (STORAGE-018, DiskImageWozFlux.cpp): 706 failures in 150 s on a
+# steady platter, its title at 30 s with the drift.
+title glutton ii+ protected
+  diskii 1 glutton.woz sha256=323b32b72abd12ad27cd08943ffee3105713bcc09e5ba2477fdcbe712ab03e3e
+  run 30
+  check title
+  run 30
+  check demo

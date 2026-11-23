@@ -541,3 +541,73 @@ bool DiskImage::loadWriteFraming(const uint8_t* data, std::size_t len)
     writeFraming = next;
     return true;
 }
+
+// ── The platter's speed wanders (STORAGE-018) ───────────────────────────
+// [A] Applesauce's A2R capture of Glutton (woz-a-day "extras", 2022-01-14):
+//     the same flux event comes back on the next revolution offset by tens
+//     to hundreds of µs (up to 0.5 ms) depending on where it is in the turn. A
+//     real drive never plays two revolutions alike.
+// [A] Same capture: single cells measure 28 to 36 ticks of 125 ns around 32.
+// A bit-cell track replayed identically on every turn phase-locks the CPU to
+// the disk: after Glutton's 9,696 one-bits, `LDA $C08C,X / BPL` reads its
+// `$D7` at the same point of the latch window on every revolution, and its
+// loader (which needs that `$D7` read twice) never passes. POM2 failed it 706
+// times in 150 s. MAME gets there after 85 tries, by its non-integer cell.
+// See docs/audits/protected-woz-three-way-2026-11-23.md.
+//
+// So a WOZ track's flux events are offset by a smooth drift drawn per
+// revolution. Knots every 4096 LSS cycles (2 ms) take an offset in [-8, +8]
+// LSS cycles (±4 µs), from a hash of (revolution, knot), so rewind, run-ahead
+// and the corpus replay it exactly. Events between two knots follow the
+// linear interpolation (the order of events is kept: the slope is under 1 %),
+// and the offset is 0 at both ends of the revolution so consecutive turns
+// join. Weak-zone pulses are left alone: they are random already.
+// [F] ±4 µs is deliberately far under the measured wander. It is enough to
+//     break the phase lock, and small enough not to move a cross-track sync
+//     or a cell-counting check. The real drift of an Apple Disk II drive (not
+//     Applesauce's) is unmeasured. Settled by: index-to-index flux captures
+//     on a Disk II. .dsk / .nib images keep a steady platter: their tests pin
+//     exact cycles, and they are not captures of a real disk.
+namespace {
+uint64_t driftHash(int64_t revolution, int64_t knot)
+{
+    uint64_t x = static_cast<uint64_t>(revolution) * 0x9E3779B97F4A7C15ull
+               ^ static_cast<uint64_t>(knot) * 0xD1B54A32D192ED03ull ^ 0x6A17ull;
+    x ^= x >> 30; x *= 0xBF58476D1CE4E5B9ull;
+    x ^= x >> 27; x *= 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+} // namespace
+
+int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
+                                     int64_t revolutionStart) const
+{
+    int64_t rev = 0, index = -1, angle = 0;
+    if (!wozFormat || !speedDrift_)
+        return nextTransitionRaw(qt, fromLssCycle, revolutionStart, rev, index, angle);
+    constexpr int64_t kKnot = 4096, kAmp = 8;
+    const int64_t period = trackPeriod(qt);
+    auto drift = [&](int64_t r, int64_t p) -> int64_t {
+        const int64_t last = period / kKnot;              // knots 0 .. last
+        auto knot = [&](int64_t k) -> int64_t {
+            if (k <= 0 || k >= last) return 0;
+            return static_cast<int64_t>(driftHash(r, k) % (2 * kAmp + 1)) - kAmp;
+        };
+        const int64_t k = p / kKnot;
+        const bool tail = k + 1 >= last;                  // the last span closes at 0
+        const int64_t a = knot(k), b = tail ? 0 : knot(k + 1);
+        const int64_t span = tail ? std::max<int64_t>(1, period - k * kKnot) : kKnot;
+        return a + (b - a) * (p - k * kKnot) / span;
+    };
+    // An event served late by up to kAmp may still be ahead of fromLssCycle:
+    // search kAmp + 1 cycles early, then skip whatever drifted into the past.
+    int64_t from = fromLssCycle - kAmp - 1;
+    for (int guard = 0; guard < 8; ++guard) {
+        const int64_t at = nextTransitionRaw(qt, from, revolutionStart, rev, index, angle);
+        if (at == kFluxNever) return at;
+        const int64_t t = (index < 0 || period <= 0) ? at : at + drift(rev, angle);
+        if (t >= fromLssCycle) return t;
+        from = at + 1;
+    }
+    return nextTransitionRaw(qt, fromLssCycle, revolutionStart, rev, index, angle);
+}

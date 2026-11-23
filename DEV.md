@@ -5244,6 +5244,21 @@ the P6 simulation behind it are in
 The loader logs the substitution. Pinned by `woz_bit_timing_smoke`
 (`checkFastObtAgainstRevolution`) and the protected corpus's `mr-do`.
 
+**The platter's speed drifts** (`DiskImageWozFlux.cpp`, 2026-11-24). A WOZ
+track's flux events (bit-cell and FLUX alike, not weak-zone pulses) are
+served with a smooth offset of at most ±8 LSS cycles. It is interpolated
+between knots every 4096 cycles, drawn per (revolution, knot) from a hash,
+and 0 at both ends of a turn. `getNextTransition` searches 9 cycles early
+and skips events that drifted into the past, so no event is lost or served
+twice; `nextTransitionRaw` is the steady lookup.
+
+Without it, a CPU loop phase-locks to the disk. Glutton failed for that
+reason ([audit](docs/audits/protected-woz-three-way-2026-11-23.md)).
+`.dsk`/`.nib` keep the steady platter. `setSpeedDrift(false)` restores it
+for a WOZ in tests that pin exact sequencer cycles. Pinned by
+`woz_bit_timing_smoke` (`checkSpeedDrift`) and the protected corpus's
+`glutton`.
+
 ### Disks from a URL or an archive (`MediaSource`)
 
 `resolveMediaSource(source, cacheDir)` runs before any mount and outside

@@ -10,6 +10,36 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — The platter's speed drifts: Glutton boots
+
+Glutton was the one protected disk of the 2026-11-23 round that POM2 alone
+could not boot. Its loader counts nibbles between two `$D7` marks and passes
+only when the counting loop reads the first `$D7` a second time, which
+happens only when the CPU's read lands in the first two cycles of that
+nibble's 12-cycle latch window.
+
+After the 9,696 one-bits before the mark, the wait loop's latency is
+conserved exactly (11 + 3 × 7 = 32 cycles a nibble). On a platter that
+replays every revolution identically, it lands at the same point every
+time: 706 failures in 150 s. Two things were tried and do not boot it: the
+true LSS clock, and the disk's real flux replayed from its Applesauce A2R
+capture.
+
+[A] That capture shows what does: the same flux event comes back tens to
+hundreds of µs apart between revolutions. A WOZ track's events now take a
+smooth, per-revolution offset of at most ±8 LSS cycles, drawn from a hash so
+rewind, run-ahead and the corpus replay it exactly (`DiskImageWozFlux.cpp`).
+Glutton reaches its title at 30 s and joins the protected corpus. Bandits,
+Cyclod and Prisoner 2 moved by a few frames and were re-blessed after a
+look. The other protected titles and the 17-title corpus are unchanged.
+
+Two tests compare sequencer logic at exact cycles and now ask for the steady
+platter (`setSpeedDrift(false)`): `disk_protection_flux`, and the hold
+windows and writes of `diskii_own_sequencer`. That test also gained a check
+that POM2's own sequencer reads the same nibbles as Apple's P6 on a
+drifting platter. STORAGE-018's other half, bit tracks on the true clock,
+stays frozen until a title needs it.
+
 ## 2026-11-23 — Protected WOZ disks against MAME and AppleWin: Mr. Do boots
 
 37 protected woz-a-day images were booted in POM2, AppleWin (libretro,

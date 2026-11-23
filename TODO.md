@@ -3,8 +3,8 @@
 Action queue reconciled **2026-11-23**, after the three-way round against MAME
 and AppleWin ([protected WOZ](docs/audits/protected-woz-three-way-2026-11-23.md))
 and the [ROM gap audit](docs/audits/rom-gaps-vs-mame-2026-11-23.md). Current
-release: **v1.2.2**. The index covers **47 active domain entries**, **11
-release items** and **29 frozen entries**. Each task's acceptance criterion
+release: **v1.2.2**. The index covers **46 active domain entries**, **11
+release items** and **30 frozen entries**. Each task's acceptance criterion
 and evidence live in its domain entry, not here. The Apple IIgs is not
 POM2's: it is the separate **pom2gs** program
 ([scope](docs/decisions/project-scope.md#out-of-scope)).
@@ -19,16 +19,18 @@ How a task moves and what must not be scheduled again:
 ## 0. Chosen direction — in this order
 
 **Silicon parity: POM2 runs everything the iron runs** (owner, 2026-11-23).
-On 37 protected disks POM2 already boots every title MAME and AppleWin boot
-except one. It is the only one of the three that boots both The Newsroom and
-the FLUX images, and Lady Tut on a ][. One at a time, each closed by its own
-acceptance test:
+On 37 protected disks POM2 now boots every title MAME and AppleWin boot. It is
+the only one of the three that boots both The Newsroom and the FLUX images,
+and Lady Tut on a ][. One at a time, each closed by its own acceptance test:
 
 | Order | Task | What closes it |
 |---|---|---|
-| 1 | [STORAGE-018](docs/backlog/storage.md#storage-018) — the true LSS clock + measured read jitter | Glutton boots (the one title POM2 alone fails); the protected corpus keeps booting, re-blessed. |
-| 2 | [AUDIO-015](docs/backlog/audio.md#audio-015) — Votrax SC-01A | A Mockingboard Sound/Speech I title speaks and its A/R handshake advances. |
-| 3 | [VALIDATION-007](docs/backlog/validation.md#validation-007) — wide three-way corpus | ≥ 200 titles on ][+, //e, //c and PAL with a pass count per emulator; each POM2-only failure filed. |
+| 1 | [AUDIO-015](docs/backlog/audio.md#audio-015) — Votrax SC-01A | A Mockingboard Sound/Speech I title speaks and its A/R handshake advances. |
+| 2 | [VALIDATION-007](docs/backlog/validation.md#validation-007) — wide three-way corpus | ≥ 200 titles on ][+, //e, //c and PAL with a pass count per emulator; each POM2-only failure filed. |
+
+Done on 2026-11-24: Glutton, the one protected title POM2 alone failed,
+boots since the platter's speed drifts (STORAGE-018's first half; the
+true-clock half is frozen again until a title needs it).
 
 The developer-tooling track chosen on 2026-11-18 comes next:
 [UI-015](docs/backlog/ui-debugger.md#ui-015) MCP + debugger verbs, then
@@ -147,12 +149,12 @@ Release obligations: rerun the candidate checklist for each real release.
 
 ## 5. Frozen — no implementation scheduled
 
-All **29** formal frozen entries. Each needs its domain's reopening condition
+All **30** formal frozen entries. Each needs its domain's reopening condition
 (named software or an explicit request), not an attractive estimate.
 
 | Domain | Frozen entries |
 |---|---|
-| Storage | [STORAGE-005](docs/backlog/storage.md#storage-005) multi-partition; [STORAGE-007](docs/backlog/storage.md#storage-007) half-track NIB; [STORAGE-008](docs/backlog/storage.md#storage-008) Floppy Emu modes; [STORAGE-010](docs/backlog/storage.md#storage-010) NIB revolution. |
+| Storage | [STORAGE-005](docs/backlog/storage.md#storage-005) multi-partition; [STORAGE-007](docs/backlog/storage.md#storage-007) half-track NIB; [STORAGE-008](docs/backlog/storage.md#storage-008) Floppy Emu modes; [STORAGE-010](docs/backlog/storage.md#storage-010) NIB revolution; [STORAGE-018](docs/backlog/storage.md#storage-018) bit tracks on the true LSS clock (the speed drift shipped). |
 | Audio/cassette | [AUDIO-004](docs/backlog/audio.md#audio-004) resampling; [AUDIO-005](docs/backlog/audio.md#audio-005) analog stage; [AUDIO-008](docs/backlog/audio.md#audio-008) DAC; [AUDIO-014](docs/backlog/audio.md#audio-014) AY-3-8913 voicing; [CASSETTE-001](docs/backlog/cassette.md#cassette-001) enriched playback. |
 | Display | [DISPLAY-003](docs/backlog/display.md#display-003) analog composite; [DISPLAY-008](docs/backlog/display.md#display-008) smooth interpolation; [DISPLAY-012](docs/backlog/display.md#display-012) 80-column colour phase. |
 | Cards | [CARDS-002](docs/backlog/cards.md#cards-002) Workstation/LocalTalk; [CARDS-006](docs/backlog/cards.md#cards-006) SCSI (MAME reference since 2026-08, no named software); [CARDS-007](docs/backlog/cards.md#cards-007) VGA; [CARDS-008](docs/backlog/cards.md#cards-008) UDC; [CARDS-010](docs/backlog/cards.md#cards-010) IWM-level controller; [CARDS-018](docs/backlog/cards.md#cards-018) SuperSprite (disks + manual found 2026-11-19; frozen on value, the overlay is display work). |

@@ -1,13 +1,15 @@
 # POM2 compatibility corpus - recorded frames (VALIDATION-006).
 # Written by `pom2_corpus --bless`; see tests/corpus/README.md.
 # <title> <check> <frame hash> fw=<firmware fingerprint>
-bandits-flux game 48308bc8a44111ee fw=1c7f33d5d64a
-bandits-flux title 0b12107c58341149 fw=1c7f33d5d64a
+bandits-flux game 0c4bbb46ed0656f6 fw=1c7f33d5d64a
+bandits-flux title b7f1ed8f2b7e0320 fw=1c7f33d5d64a
 captain-goodnight arrived 92318ac1ab393389 fw=1c7f33d5d64a
 captain-goodnight running 127ba836bd356604 fw=1c7f33d5d64a
 captain-goodnight title d5a020feaa9c2647 fw=1c7f33d5d64a
 captain-goodnight turn-disk 938bcf6cd1fefa65 fw=1c7f33d5d64a
-cyclod-flux running 0d5299b788976a59 fw=dd709ebbd095
+cyclod-flux running 42a08d1b29b8a44b fw=dd709ebbd095
+glutton demo a373dbbe1efb760d fw=e92e4b611da7
+glutton title 4b8c330646be34e0 fw=e92e4b611da7
 lady-tut maze 03362ecca384dde1 fw=e92e4b611da7
 lady-tut mockingboard-question 94d492bef90c5d51 fw=e92e4b611da7
 mr-do calibrate 5f1c967c88800b69 fw=e92e4b611da7
@@ -16,6 +18,6 @@ phantasie title f0da770d4065c9a8 fw=dd709ebbd095
 prince-of-persia after-input 0757ef065313d0f4 fw=dd709ebbd095
 prince-of-persia dungeon f9cd697e913845dd fw=dd709ebbd095
 prince-of-persia title e32bb57880cd0951 fw=dd709ebbd095
-prisoner2 resignation-code b849d05d9f6effad fw=dd709ebbd095
-prisoner2 resignation-file 18ecaac06039c418 fw=dd709ebbd095
+prisoner2 resignation-code 8fd1dae292bc85a5 fw=dd709ebbd095
+prisoner2 resignation-file 2af05b8ca8246428 fw=dd709ebbd095
 prisoner2 title 170093511c3174ee fw=dd709ebbd095

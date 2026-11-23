@@ -220,6 +220,55 @@ bool checkFastObtAgainstRevolution() {
     return ok;
 }
 
+// The platter's speed drifts on each revolution (STORAGE-018,
+// DiskImageWozFlux.cpp): Glutton's loader passes only when two revolutions
+// differ. The drift is deterministic, keeps the order of events, stays within
+// ±8 LSS cycles of the steady platter, starts each revolution at 0, and differs
+// from one revolution to the next.
+bool checkSpeedDrift() {
+    const uint32_t bits = 51200;                        // a real track's length
+    const auto woz = buildWoz2WithBitTiming(32, std::vector<uint8_t>(bits / 8, 0x92), bits);
+    const std::string path = writeTempFile(woz, "drift");
+    DiskImage a, b, steady;
+    if (!a.loadFile(path) || !b.loadFile(path) || !steady.loadFile(path)) {
+        std::printf("FAIL: load the drift fixture\n");
+        return false;
+    }
+    steady.setSpeedDrift(false);
+    const int64_t period = a.trackPeriod(0);
+    auto walk = [&](const DiskImage& img) {
+        std::vector<int64_t> out;
+        for (int64_t t = 0; t < 3 * period;) {
+            const int64_t e = img.getNextTransition(0, t, 0);
+            if (e == DiskImage::kFluxNever || e >= 3 * period) break;
+            out.push_back(e);
+            t = e + 1;
+        }
+        return out;
+    };
+    const auto ea = walk(a), eb = walk(b), es = walk(steady);
+    bool ok = true;
+    auto fail = [&](const char* what) { std::printf("FAIL: speed drift: %s\n", what); ok = false; };
+    if (ea != eb) fail("two loads of one image drift differently");
+    if (ea.size() != es.size()) fail("the drift added or lost an event");
+    for (size_t i = 0; ok && i < ea.size(); ++i) {
+        if (i && ea[i] <= ea[i - 1]) fail("events out of order");
+        if (ea[i] - es[i] > 8 || es[i] - ea[i] > 8) fail("an event moved by more than 8 cycles");
+    }
+    bool moved = false, differs = false;
+    const size_t perRev = es.size() / 3;
+    for (size_t i = 0; ok && i < perRev; ++i) {
+        const int64_t d1 = ea[i + perRev] - es[i + perRev], d2 = ea[i + 2 * perRev] - es[i + 2 * perRev];
+        if (d1 != 0) moved = true;
+        if (d1 != d2) differs = true;
+    }
+    if (ok && ea[perRev] != es[perRev]) fail("a revolution does not start at offset 0");
+    if (ok && !moved) fail("the platter never drifted");
+    if (ok && !differs) fail("two revolutions drifted alike");
+    if (ok) std::printf("OK : the platter drifts, alike per load, differently per revolution\n");
+    return ok;
+}
+
 // A value that is not a multiple of 4 (STORAGE-016). 33 quarter cycles =
 // 8.25 LSS cycles a cell: Prisoner 2's WOZ boots only with it (its weak-bit
 // check wants $C9 one 13-cycle loop later than 32 gives). Before 2026-11-18
@@ -482,6 +531,7 @@ int main() {
     allOk &= checkTimingForObt(40);      // 5 µs cells (slower master)
     allOk &= checkTimingForObt(28, 57143); // 3.5 µs cells: one revolution's worth
     allOk &= checkFastObtAgainstRevolution();
+    allOk &= checkSpeedDrift();
     allOk &= checkFractionalObt33();     // 4.125 µs: not a whole LSS cycle count
     allOk &= checkFluxTrackPeriod(32);   // FLUX period = tick sum (default)
     allOk &= checkFluxTrackPeriod(40);   // FLUX period independent of obt

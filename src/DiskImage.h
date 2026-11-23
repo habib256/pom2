@@ -376,6 +376,14 @@ public:
     static constexpr int64_t kFluxNever = INT64_MAX;
     int64_t getNextTransition(int qt, int64_t fromLssCycle,
                               int64_t revolutionStart = -1) const;
+    /// A WOZ track's platter speed drifts a little on each revolution
+    /// (DiskImageWozFlux.cpp). Off: the steady platter, for tests that pin
+    /// exact cycles of sequencer logic rather than the drive.
+    void setSpeedDrift(bool on) { speedDrift_ = on; }
+    /// The transition before the speed drift, and which one it is: `rev` and
+    /// `index` identify a flux event (index < 0 for a weak-zone pulse).
+    int64_t nextTransitionRaw(int qt, int64_t fromLssCycle, int64_t revolutionStart,
+                              int64_t& rev, int64_t& index, int64_t& pos) const;
 
     /// MAME `floppy_image_device::write_flux(start, end, count, transitions)`
     /// — splice a window of flux events into quarter-track `qt`. For
@@ -677,6 +685,7 @@ private:
     // wrote reads back on the cycle it was written at, and a write window
     // [a, b) of cycles covers exactly the ticks that project into it.
     int fluxBusHz_ = kNtscBusHz;
+    bool speedDrift_ = true;
     int64_t fluxTicksToLss(int64_t ticks) const {
         return ticks * fluxBusHz_ / 4000000;
     }
