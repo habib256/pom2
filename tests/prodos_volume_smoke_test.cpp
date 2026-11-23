@@ -1959,7 +1959,14 @@ int main()
     std::printf("prodos_volume_smoke: text mode + metadata OK\n");
     testHostConflictKeepsBothCopies();
     std::printf("prodos_volume_smoke: host conflict keeps both copies OK\n");
+#ifdef __linux__
+    for (int repeat = 0; repeat < 5000; ++repeat) {
+        if (repeat % 100 == 0) std::printf("concurrent iteration %d\n", repeat);
+        testConcurrentConflictCopiesNeverReplaceEachOther();
+    }
+#else
     testConcurrentConflictCopiesNeverReplaceEachOther();
+#endif
     std::printf("prodos_volume_smoke: concurrent conflict copies OK\n");
     testEmptyFolder();
     testSeedlingAndSapling();

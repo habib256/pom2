@@ -1827,7 +1827,7 @@ target_include_directories(test_prodos_volume PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_prodos_volume PRIVATE Threads::Threads)
 
 add_test(NAME prodos_volume_smoke COMMAND test_prodos_volume)
-set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 5)
+set_tests_properties(prodos_volume_smoke PROPERTIES TIMEOUT 300)
 
 # A guest name that starts with a period (A2osX's /ROOT/.PROFILE) leaves the
 # host folder under the CiderPress %xx escape and comes back intact; nothing
