@@ -50,6 +50,15 @@ tagged packages follow their release notes.
 
 ## Start playing
 
+### In RetroArch
+
+Build the experimental POM2 libretro core to boot an NTSC Apple //e Enhanced
+into BASIC, play Disk II games with a keyboard or RetroPad, or run DIX with
+PAL video and Mockingboard stereo. The core saves each writable disk side in
+a private copy. Open
+an M3U playlist to switch sides from the RetroArch disc menu during play.
+[Build, firmware and controls](libretro/README.md).
+
 ### In a browser
 
 [Launch POM2](https://habib256.github.io/pom2/wasm/). It opens a PAL Apple //c

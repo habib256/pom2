@@ -10,6 +10,7 @@ that the current candidate has repeated those runs.
 | Subject | Reference |
 |---|---|
 | Installation, controls, machines, media and builds | [User guide](USER-GUIDE.md) |
+| Building the RetroArch core, installing firmware and playing Dirtbike | [Libretro core](../libretro/README.md) |
 | Docking presets, interface accents and zoom | [Workspace](USER-GUIDE.md#arrange-the-workspace) |
 | Screenshot format, output/configuration directories and settings edits | [Screenshots and settings](USER-GUIDE.md#screenshots-and-settings) |
 | Image formats, automatic drive selection and conversion limits | [Media and drives](USER-GUIDE.md#pick-the-right-image-and-drive) |

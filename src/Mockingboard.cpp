@@ -25,6 +25,8 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <iterator>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -867,6 +869,162 @@ void MockingboardCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // The restored IFR/IER need not match the IRQ line the card is driving;
     // nothing else re-evaluates it until the next VIA access.
     updateIrq();
+}
+
+namespace {
+template<class F> void visitSynthState(pom2::ay::ChipSynthState& s, F field)
+{
+    field(s.tickPhase);
+    for (auto& value : s.toneCounter) field(value);
+    for (auto& value : s.toneOut) field(value);
+    field(s.noiseCounter); field(s.noiseLfsr);
+    field(s.noiseOut); field(s.noisePrescale);
+    field(s.envCounter); field(s.envStep); field(s.envAttack);
+    field(s.envHold); field(s.envAlternate); field(s.envHolding);
+    field(s.lastShape); field(s.envRetrigger);
+    field(s.lastSeenResetCount); field(s.lastSeenEnvWriteCount);
+}
+}
+
+void MockingboardCard::appendSdkAudio(std::vector<uint8_t>& out) const
+{
+    using namespace pom2::byteio;
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto putFloat = [&](float value) {
+        uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        putU32(out, bits);
+    };
+    putU64(out, lastSyncCycle_); putU64(out, busNow_);
+    putU64(out, latestAyEventCycle_.load());
+    putU64(out, audio_->audioCursor);
+    uint64_t fracBits;
+    std::memcpy(&fracBits, &audio_->cursorFrac, sizeof(fracBits));
+    putU64(out, fracBits);
+    putU32(out, ayQueueGen_); putU32(out, audio_->lastSeenQueueGen);
+    putU8(out, (ayBreakResetsGens_ ? 1 : 0) | (ayBreakResetsCursor_ ? 2 : 0) |
+               (audio_->regsPrimed ? 4 : 0) | (audio_->gainPrimed ? 8 : 0));
+    putFloat(audio_->gainRamp);
+    for (int chip = 0; chip < 2; ++chip) {
+        putU32(out, ayResetCount_[chip]); putU32(out, ayEnvWriteCount_[chip]);
+        putU8(out, ayResetHeld_[chip]); putU8(out, via_[chip]->t1Pb7); putU8(out, via_[chip]->latchA);
+        out.insert(out.end(), std::begin(audio_->liveRegs[chip]), std::end(audio_->liveRegs[chip]));
+        auto synth = audio_->chip[chip];
+        visitSynthState(synth, [&](auto& field) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(field)>, float>) putFloat(field);
+            else putU32(out, static_cast<uint32_t>(field));
+        });
+    }
+    for (const auto& history : {audio_->dcL.history(), audio_->dcR.history()})
+        for (float value : {history.x1, history.x2, history.y1, history.y2}) putFloat(value);
+    const auto putEvents = [&](const auto& queue) {
+        putU32(out, static_cast<uint32_t>(queue.size()));
+        for (size_t i = 0; i < queue.size(); ++i) {
+            const auto& event = queue[i];
+            putU64(out, event.cycle); putU8(out, event.chip);
+            putU8(out, event.reg); putU8(out, event.val);
+        }
+    };
+    putEvents(ayEvents_);
+    putEvents(audio_->pending);
+}
+
+bool MockingboardCard::loadSdkAudio(const uint8_t* data, std::size_t size, bool apply)
+{
+    pom2::byteio::Reader r(data, size);
+    if (!data || !r.has(53 + 2 * (11 + kAyNumRegs + 84) + 32)) return false;
+    constexpr uint64_t maxClock = uint64_t{1} << 61;
+    const auto sync = r.u64(), bus = r.u64(), latest = r.u64(), cursor = r.u64();
+    const auto fracBits = r.u64();
+    double fraction;
+    std::memcpy(&fraction, &fracBits, sizeof(fraction));
+    const auto generation = r.u32(), seenGeneration = r.u32();
+    const auto flags = r.u8();
+    const auto readFloat = [&] {
+        const auto bits = r.u32();
+        float value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+    const auto gain = readFloat();
+    if (sync >= maxClock || bus >= maxClock || latest >= maxClock || cursor >= maxClock ||
+        !(fraction >= 0 && fraction < 1) || flags > 15 || !(gain >= 0 && gain <= 2)) return false;
+
+    struct ChipState {
+        uint32_t resets, envelopeWrites;
+        uint8_t resetHeld, pb7, latch;
+        std::array<uint8_t, kAyNumRegs> regs;
+        pom2::ay::ChipSynthState synth;
+    } chips[2]{};
+    for (auto& chip : chips) {
+        chip.resets = r.u32(); chip.envelopeWrites = r.u32();
+        chip.resetHeld = r.u8(); chip.pb7 = r.u8(); chip.latch = r.u8();
+        if (chip.resetHeld > 1 || chip.pb7 > 1) return false;
+        for (auto& reg : chip.regs) reg = r.u8();
+        bool valid = true;
+        auto& synth = chip.synth;
+        visitSynthState(synth, [&](auto& field) {
+            using Type = std::decay_t<decltype(field)>;
+            if constexpr (std::is_same_v<Type, float>) field = readFloat();
+            else {
+                const auto value = r.u32();
+                field = static_cast<Type>(value);
+                valid &= static_cast<uint32_t>(field) == value;
+            }
+        });
+        if (!valid || !(synth.tickPhase >= 0 && synth.tickPhase < 1) ||
+            synth.noiseLfsr > 0x1ffff || synth.noiseOut > 1 || synth.noisePrescale > 1 ||
+            synth.envStep < -1 || synth.envStep > 15 || synth.lastShape < -1 || synth.lastShape > 15 ||
+            (synth.envAttack != 0 && synth.envAttack != 15) || synth.envHold > 1 ||
+            synth.envAlternate > 15 || synth.envHolding > 1) return false;
+        for (auto bit : synth.toneOut) if (bit > 1) return false;
+    }
+    pom2::ay::DcBlocker::History history[2];
+    for (auto& h : history)
+        for (auto* value : {&h.x1, &h.x2, &h.y1, &h.y2}) {
+            *value = readFloat();
+            if (!(std::abs(*value) <= 16)) return false;
+        }
+    const auto queuesStart = r.pos;
+    const auto readEvents = [&](auto& queue, bool store) {
+        if (!r.has(4)) return false;
+        const auto count = r.u32();
+        if (count > queue.capacity() || !r.has(size_t(count) * 11)) return false;
+        if (store) queue.clear();
+        for (size_t i = 0; i < count; ++i) {
+            const AyRegEvent event{r.u64(), r.u8(), r.u8(), r.u8()};
+            if (event.cycle >= maxClock || event.chip > 1 ||
+                (event.reg >= kAyNumRegs && event.reg != kRegAyReset)) return false;
+            if (store) queue.push_back(event);
+        }
+        return true;
+    };
+    if (!readEvents(ayEvents_, false) || !readEvents(audio_->pending, false) || r.pos != size)
+        return false;
+    if (!apply) return true;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    lastSyncCycle_ = sync; busNow_ = bus;
+    latestAyEventCycle_.store(latest);
+    audio_->audioCursor = cursor; audio_->cursorFrac = fraction;
+    ayQueueGen_ = generation; audio_->lastSeenQueueGen = seenGeneration;
+    ayBreakResetsGens_ = (flags & 1) != 0; ayBreakResetsCursor_ = (flags & 2) != 0;
+    audio_->regsPrimed = (flags & 4) != 0; audio_->gainPrimed = (flags & 8) != 0;
+    audio_->gainRamp = gain;
+    for (int i = 0; i < 2; ++i) {
+        const auto& chip = chips[i];
+        ayResetCount_[i] = chip.resets; ayEnvWriteCount_[i] = chip.envelopeWrites;
+        ayResetHeld_[i] = chip.resetHeld != 0; via_[i]->t1Pb7 = chip.pb7 != 0;
+        via_[i]->latchA = chip.latch;
+        std::copy(chip.regs.begin(), chip.regs.end(), audio_->liveRegs[i]);
+        audio_->chip[i] = chip.synth;
+    }
+    const auto rate = audio_->sampleRate.load();
+    audio_->dcL.setRate(rate); audio_->dcL.setHistory(history[0]);
+    audio_->dcR.setRate(rate); audio_->dcR.setHistory(history[1]);
+    r.pos = queuesStart;
+    readEvents(ayEvents_, true); readEvents(audio_->pending, true);
+    return true;
 }
 
 void MockingboardCard::onReset()

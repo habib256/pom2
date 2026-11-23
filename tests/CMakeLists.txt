@@ -36,6 +36,39 @@ separate_arguments(_pom2_test_warn_flags NATIVE_COMMAND "${POM2_WARN_FLAGS}")
 set_property(SOURCE ${_pom2_test_sources} APPEND PROPERTY
              COMPILE_OPTIONS ${_pom2_test_warn_flags})
 
+# Exercise the actual loadable module through the same ABI a frontend uses.
+if(TARGET pom2_libretro)
+    add_executable(test_pom2_libretro libretro_module_test.cpp)
+    target_compile_definitions(test_pom2_libretro PRIVATE RETRO_IMPORT_SYMBOLS)
+    target_include_directories(test_pom2_libretro SYSTEM PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/third_party/libretro")
+    target_link_libraries(test_pom2_libretro PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(test_pom2_libretro pom2_libretro)
+    add_test(NAME pom2_libretro_abi COMMAND test_pom2_libretro
+        "$<TARGET_FILE:pom2_libretro>" "${CMAKE_CURRENT_BINARY_DIR}/libretro-abi")
+    add_test(NAME pom2_libretro_media COMMAND test_pom2_libretro
+        "$<TARGET_FILE:pom2_libretro>" "${CMAKE_CURRENT_BINARY_DIR}/libretro-media"
+        "${CMAKE_SOURCE_DIR}/roms" "${CMAKE_SOURCE_DIR}/packaging/disks/DIRTBIKE.dsk")
+    add_test(NAME pom2_libretro_disk_persistence COMMAND test_pom2_libretro
+        "$<TARGET_FILE:pom2_libretro>" "${CMAKE_CURRENT_BINARY_DIR}/libretro-disk-persistence"
+        --disk-persistence "${CMAKE_SOURCE_DIR}/roms" "${CMAKE_SOURCE_DIR}/disks_5.4/dsk/dos33_master.dsk")
+    set_tests_properties(pom2_libretro_abi pom2_libretro_media pom2_libretro_disk_persistence PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    foreach(scenario IN ITEMS keyboard dix desktop)
+        set(media)
+        if(scenario STREQUAL "dix")
+            set(media "${CMAKE_SOURCE_DIR}/packaging/disks/DIX-fix.po")
+        elseif(scenario STREQUAL "desktop")
+            set(media "${CMAKE_SOURCE_DIR}/disks_3.5/A2DeskTop-1.5-en_800k.2mg")
+        endif()
+        add_test(NAME pom2_libretro_${scenario} COMMAND "${Python3_EXECUTABLE}" -B
+            "${CMAKE_CURRENT_SOURCE_DIR}/libretro_profiles.py" "$<TARGET_FILE:pom2_libretro>"
+            "${CMAKE_SOURCE_DIR}/roms" "${scenario}" ${media})
+        set_tests_properties(pom2_libretro_${scenario} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    endforeach()
+endif()
+
 # Select a self-contained native core subset without configuring/downloading
 # the POSIX-only harnesses. CI exercises this exact entry point under MSVC.
 option(POM2_PORTABLE_TESTS_ONLY "Configure only portable core regressions" OFF)

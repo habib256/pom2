@@ -216,6 +216,8 @@ public:
     // state), including the Sound II SSI263 registers/timer/PCM cursor.
     void    appendSnapshotState(std::vector<uint8_t>& out) const override;
     void    loadSnapshotState(const uint8_t* data, std::size_t len) override;
+    void    appendSdkAudio(std::vector<uint8_t>& out) const;
+    bool    loadSdkAudio(const uint8_t* data, std::size_t size, bool apply);
 
     // ─── Music capture (AUDIO-013) ───────────────────────────────────────
     /// Start recording every AY register store and /RESET with its bus-cycle

@@ -263,6 +263,9 @@ public:
     bool loadReadOnlySession(const uint8_t* data, size_t len, std::string& error);
     bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
     bool loadSessionMedia(const uint8_t* data, size_t len, std::string& error, bool allowWritable);
+    // SDK restore can bind the prepared snapshot to a host-selected working
+    // copy. A snapshot's own bytes never provide the write-back path.
+    bool bindSnapshotBacking(const std::string& backing);
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }
     size_t sessionStorageBytes() const;

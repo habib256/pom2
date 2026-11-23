@@ -32,6 +32,7 @@
 #include "LeChatMauveCard.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
+#include "MachineSnapshot.h"
 #include "Mockingboard.h"
 #include "Sha256.h"
 #include "Version.h"
@@ -46,9 +47,12 @@
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
 #include "SpeakerDevice.h"
+#include "SessionIO.h"
+#include "SnapshotIO.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -115,6 +119,15 @@ public:
     bool iicClass() const
     {
         return machine == Machine::AppleIIc || machine == Machine::AppleIIcPlus;
+    }
+
+    bool canSnapshot() const
+    {
+        return !plus && !hardDisk && !mouseMcu && !mouseHle && !ezColor &&
+               std::all_of(mockingboards.begin(), mockingboards.end(), [](const auto* card) {
+                   return card->getVariant() == MockingboardCard::Variant::AC;
+               }) && !cassette.hasLoadedTape() &&
+               !cassette.hasRecordedTape() && !cassette.isRecordingArmed();
     }
 
     // The //c+'s disk hardware, wired as tests/iicplus_boot35 and
@@ -277,6 +290,234 @@ Core::~Core() = default;
 Core::Core(Core&&) noexcept = default;
 Core& Core::operator=(Core&&) noexcept = default;
 
+namespace {
+constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 1};
+constexpr size_t kMaxSdkStateBytes = 40u << 20;
+}
+
+bool Core::supportsState() const
+{
+    return impl_->canSnapshot();
+}
+
+bool Core::saveState(std::vector<std::uint8_t>& out)
+{
+    auto& state = *impl_;
+    if (!state.canSnapshot()) {
+        state.error = "SDK snapshots do not cover this peripheral configuration";
+        return false;
+    }
+    std::vector<uint8_t> machine, speaker, keyboard, video, disk, diskIdentity, diskTiming, smartPort, rgb, mb;
+    SnapshotWriter writer(machine);
+    captureMachineState(writer, state.cpu, state.memory);
+    if (!writer.finish()) {
+        state.error = "Cannot capture machine snapshot";
+        return false;
+    }
+    state.speaker.appendSdkState(speaker);
+    state.memory.appendSdkKeyboard(keyboard);
+    state.memory.appendSdkVideoState(video);
+    if (state.diskII) {
+        state.diskII->appendSessionIdentity(diskIdentity);
+        state.diskII->appendSdkTiming(diskTiming);
+        if (!state.diskII->appendSessionState(disk, state.error)) return false;
+    }
+    if (state.smartPort) {
+        smartPort.push_back(static_cast<uint8_t>(state.smartPort->getSlot()));
+        std::vector<uint8_t> unit;
+        for (size_t i = 0; i < 2; ++i) {
+            unit.clear();
+            const auto& image = static_cast<const SmartPort35Unit*>(state.smartPort->unit(i))->image();
+            if (!image.appendSessionMedia(unit, state.error)) return false;
+            sessionio::blob(smartPort, unit);
+        }
+        unit.clear();
+        state.smartPort->appendSnapshotState(unit);
+        sessionio::blob(smartPort, unit);
+    }
+    if (state.rgbCard) state.rgbCard->appendSnapshotState(rgb);
+    for (const auto* card : state.mockingboards) {
+        mb.push_back(static_cast<uint8_t>(card->getSlot()));
+        std::vector<uint8_t> payload;
+        card->appendSnapshotState(payload);
+        sessionio::blob(mb, payload);
+        payload.clear();
+        card->appendSdkAudio(payload);
+        sessionio::blob(mb, payload);
+    }
+    out.assign(std::begin(kSdkStateMagic), std::end(kSdkStateMagic));
+    out.push_back(static_cast<uint8_t>(state.machine));
+    byteio::putU32(out, state.audioSampleRate);
+    const auto paddles = state.memory.sdkPaddleState();
+    out.insert(out.end(), paddles.begin(), paddles.end());
+    for (const auto* blob : {&machine, &speaker, &keyboard, &video, &diskIdentity,
+                             &disk, &diskTiming, &smartPort, &rgb, &mb})
+        sessionio::blob(out, *blob);
+    state.error.clear();
+    return true;
+}
+
+bool Core::loadState(const void* data, std::size_t size, std::string_view diskBacking,
+                     std::string_view smartPortBacking, const std::function<bool()>& beforeRestore)
+{
+    auto& state = *impl_;
+    const auto fail = [&](std::string error) {
+        state.error = std::move(error);
+        return false;
+    };
+    if (!data || size < sizeof(kSdkStateMagic) || size > kMaxSdkStateBytes ||
+        std::memcmp(data, kSdkStateMagic, sizeof(kSdkStateMagic)) != 0)
+        return fail("Invalid SDK snapshot header");
+    if (!state.canSnapshot())
+        return fail("SDK snapshots do not cover this peripheral configuration");
+
+    sessionio::Reader reader(static_cast<const uint8_t*>(data), size);
+    reader.pos = sizeof(kSdkStateMagic);
+    if (reader.u8() != static_cast<uint8_t>(state.machine) || reader.u32() != state.audioSampleRate)
+        return fail("SDK snapshot machine or sample rate differs");
+    if (!reader.need(6)) return fail("Invalid SDK game-port state");
+    const auto* paddles = reader.data + reader.pos;
+    reader.pos += 6;
+    std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb;
+    if (!reader.blob(machine, 2u << 20) || !reader.blob(speaker, 256u << 10) ||
+        !reader.blob(keyboard, 8u << 10) || !reader.blob(video, 4u << 20) ||
+        !reader.blob(diskIdentity, 4096) ||
+        !reader.blob(disk, 36u << 20) || !reader.blob(diskTiming, 64) ||
+        !reader.blob(smartPort, 36u << 20) ||
+        !reader.blob(rgb, 64) || !reader.blob(mb, 5u << 20) || !reader.done())
+        return fail("Invalid SDK snapshot section lengths");
+    if (!state.speaker.loadSdkState(speaker.data(), speaker.size(), false) ||
+        !state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), false) ||
+        !state.memory.loadSdkPaddles(paddles, 6, false) ||
+        !state.memory.loadSdkVideoState(video.data(), video.size(), false))
+        return fail("Invalid SDK speaker, keyboard or video state");
+    if (bool(state.diskII) != !disk.empty() || bool(state.smartPort) != !smartPort.empty() ||
+        bool(state.rgbCard) != !rgb.empty())
+        return fail("SDK snapshot slot topology differs");
+    if (!state.diskII && (!diskBacking.empty() || !diskIdentity.empty() || !diskTiming.empty()))
+        return fail("SDK snapshot contains unexpected Disk II data");
+    if (!state.smartPort && !smartPortBacking.empty())
+        return fail("SDK snapshot contains unexpected SmartPort backing");
+
+    DiskIICard::SessionRestore prepared;
+    if (state.diskII) {
+        std::vector<uint8_t> identity;
+        state.diskII->appendSessionIdentity(identity);
+        if (diskIdentity != identity)
+            return fail("SDK snapshot Disk II firmware differs");
+        if (!state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), false))
+            return fail("Invalid SDK Disk II timing state");
+        // Prepare against a clean controller. The live drive can contain
+        // pending writes from the future timeline we are about to abandon.
+        DiskIICard validator(state.diskII->getSlot());
+        validator.installSessionIdentity(identity);
+        if (!validator.prepareSessionState(disk.data(), disk.size(), prepared, state.error,
+                                           /*allowWoz=*/true, /*allowWritable=*/true))
+            return false;
+        if (!diskBacking.empty() &&
+            (!mediaWritableByDefault() ||
+             !DiskIICard::bindSdkBacking(prepared, std::string(diskBacking))))
+            return fail("Cannot bind restored Disk II medium to its working copy");
+    }
+    std::unique_ptr<SmartPortCard> preparedSmartPort;
+    std::vector<uint8_t> smartPortRuntime;
+    if (state.smartPort) {
+        sessionio::Reader units(smartPort.data(), smartPort.size());
+        if (units.u8() != state.smartPort->getSlot())
+            return fail("SDK snapshot SmartPort slot differs");
+        preparedSmartPort = std::make_unique<SmartPortCard>(state.smartPort->getSlot());
+        preparedSmartPort->setUnitCount(2);
+        for (size_t i = 0; i < 2; ++i) {
+            std::vector<uint8_t> payload;
+            if (!units.blob(payload, (16u << 20) + 32)) return fail("Invalid SDK SmartPort disk length");
+            auto unit = std::make_unique<SmartPort35Unit>();
+            if (!unit->image().loadSessionMedia(payload.data(), payload.size(), state.error, true))
+                return false;
+            if (i == 0 && !smartPortBacking.empty() &&
+                (!mediaWritableByDefault() ||
+                 !unit->image().bindSnapshotBacking(std::string(smartPortBacking))))
+                return fail("Cannot bind restored SmartPort medium to its working copy");
+            preparedSmartPort->setUnit(i, std::move(unit));
+        }
+        if (!units.blob(smartPortRuntime, 96u << 10) || !units.done())
+            return fail("Invalid SDK SmartPort controller length");
+        // Each runtime tail holds the medium paths. These are the only
+        // fields changed by reconstructing the paired, embedded media.
+        constexpr auto identitySize = 8 * SmartPortCard::kMaxUnits;
+        std::vector<uint8_t> canonical;
+        preparedSmartPort->appendSnapshotState(canonical);
+        if (smartPortRuntime.size() < canonical.size())
+            return fail("Invalid SDK SmartPort controller state");
+        std::copy(canonical.end() - identitySize, canonical.end(), smartPortRuntime.end() - identitySize);
+        preparedSmartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());
+        canonical.clear();
+        preparedSmartPort->appendSnapshotState(canonical);
+        if (canonical != smartPortRuntime) return fail("Invalid SDK SmartPort controller state");
+    }
+    if (state.rgbCard) {
+        std::vector<uint8_t> live;
+        state.rgbCard->appendSnapshotState(live);
+        if (rgb.size() != live.size() || !std::equal(rgb.begin(), rgb.begin() + 3, live.begin()))
+            return fail("Invalid SDK RGB card state");
+    }
+
+    struct MockingboardState {
+        std::vector<uint8_t> registers;
+        std::vector<uint8_t> timeline;
+    };
+    std::vector<MockingboardState> boardStates(state.mockingboards.size());
+    sessionio::Reader boardReader(mb.data(), mb.size());
+    for (size_t i = 0; i < boardStates.size(); ++i) {
+        auto& board = boardStates[i];
+        auto* live = state.mockingboards[i];
+        if (boardReader.u8() != live->getSlot() ||
+            !boardReader.blob(board.registers, 1024) ||
+            !boardReader.blob(board.timeline, 600u << 10) ||
+            !live->loadSdkAudio(board.timeline.data(), board.timeline.size(), false))
+            return fail("Invalid SDK Mockingboard state");
+        MockingboardCard validator(live->getSlot());
+        validator.loadSnapshotState(board.registers.data(), board.registers.size());
+        std::vector<uint8_t> canonical;
+        validator.appendSnapshotState(canonical);
+        if (canonical != board.registers) return fail("Invalid SDK Mockingboard registers");
+    }
+    if (!boardReader.done()) return fail("SDK snapshot Mockingboard topology differs");
+
+    SnapshotReader machineReader(machine.data(), machine.size());
+    std::string section;
+    uint32_t sectionSize = 0;
+    if (!machineReader.nextSection(section, sectionSize) || section != "ENV")
+        return fail("SDK snapshot must name its firmware");
+    SnapshotReader machinePayload(machine.data(), machine.size());
+    const auto restored = restoreMachineState(machinePayload, state.cpu, state.memory,
+                                              /*transactional=*/true, /*logSuccess=*/false,
+                                              beforeRestore);
+    if (!restored.ok) return fail(restored.error);
+    if (state.diskII) {
+        state.diskII->applySessionState(std::move(prepared));
+        state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), true);
+    }
+    if (preparedSmartPort) {
+        for (size_t i = 0; i < 2; ++i)
+            state.smartPort->setUnit(i, preparedSmartPort->setUnit(i, nullptr));
+        state.smartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());
+    }
+    if (state.rgbCard) state.rgbCard->loadSnapshotState(rgb.data(), rgb.size());
+    for (size_t i = 0; i < boardStates.size(); ++i) {
+        const auto& board = boardStates[i];
+        auto* card = state.mockingboards[i];
+        card->loadSnapshotState(board.registers.data(), board.registers.size());
+        card->loadSdkAudio(board.timeline.data(), board.timeline.size(), true);
+    }
+    state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), true);
+    state.memory.loadSdkPaddles(paddles, 6, true);
+    state.memory.loadSdkVideoState(video.data(), video.size(), true);
+    state.speaker.loadSdkState(speaker.data(), speaker.size(), true);
+    state.display.invalidateTextFrameCache();
+    state.error.clear();
+    return true;
+}
+
 bool Core::loadRom(std::string_view path, bool lowerBankFor32K)
 {
     const std::string ownedPath(path);
@@ -403,6 +644,11 @@ bool Core::ejectDisk(int drive)
 bool Core::diskInserted(int drive) const
 {
     return impl_->diskII && impl_->diskII->isDiskLoaded(drive);
+}
+
+bool Core::diskReadRecently(std::uint64_t maxBusCycles) const
+{
+    return impl_->diskII && impl_->diskII->readRecently(maxBusCycles);
 }
 
 bool Core::flushDisk(int drive)
@@ -642,6 +888,29 @@ bool Core::flushSmartPortDisk(int unit)
     return saved;
 }
 
+bool Core::setSmartPortDiskWriteProtected(int unit, bool protectedOn)
+{
+    if (!smartPortDiskInserted(unit)) {
+        impl_->error = "No SmartPort disk in that unit";
+        return false;
+    }
+    if (protectedOn && !flushSmartPortDisk(unit)) return false;
+    const bool writeBack = !protectedOn && pom2::mediaWritableByDefault();
+    if (impl_->plus)
+        impl_->plus->image35[unit].setWriteBackEnabled(writeBack);
+    else
+        impl_->smartPort->unit(static_cast<std::size_t>(unit))->setWriteBackEnabled(writeBack);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::smartPortDiskWriteProtected(int unit) const
+{
+    if (!smartPortDiskInserted(unit)) return false;
+    if (impl_->plus) return impl_->plus->image35[unit].isWriteProtected();
+    return impl_->smartPort->unit(static_cast<std::size_t>(unit))->isWriteProtected();
+}
+
 bool Core::attachHardDisk(int slot)
 {
     if (impl_->hardDisk) {
@@ -874,6 +1143,14 @@ bool Core::attachRgbCard(int slot, RgbCardModel model)
 bool Core::rgbCardAttached() const
 {
     return impl_->rgbCard != nullptr;
+}
+
+bool Core::setRgbMonitor(bool enabled)
+{
+    if (enabled && !impl_->rgbCard) return false;
+    impl_->display.setHiResMode(enabled ? Apple2Display::HiResMode::ChatMauveRGB
+                                        : Apple2Display::HiResMode::ColorNTSC);
+    return true;
 }
 
 static_assert(static_cast<int>(pom2::EzColorInterrupt::Irq)  == static_cast<int>(EzColorCard::InterruptWiring::Irq)

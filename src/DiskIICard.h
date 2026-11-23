@@ -185,10 +185,13 @@ public:
     bool installSessionIdentity(const std::vector<uint8_t>& bytes);
     void appendSessionIdentity(std::vector<uint8_t>& out) const;
     bool appendSessionState(std::vector<uint8_t>& out, std::string& error) const;
+    void appendSdkTiming(std::vector<uint8_t>& out) const;
+    bool loadSdkTiming(const uint8_t* data, size_t size, bool apply);
     bool prepareSessionState(const uint8_t* data, size_t len,
                              SessionRestore& out, std::string& error, bool allowWoz = false,
                              bool allowWritable = false) const;
     void applySessionState(SessionRestore&& prepared);
+    static bool bindSdkBacking(SessionRestore& prepared, const std::string& backing);
     /// Is the bit-level LSS actually driving the head right now? Distinct
     /// from `hasLssRom()`: a mounted WOZ forces the bit-level path (through
     /// POM2's own sequencer when there is no `diskii_p6.rom`), and with
@@ -348,6 +351,8 @@ public:
     int  getHalfTrack   (int drive = 0) const { return validDrive(drive) ? headQuarterTrack[drive] / 2 : 0; }
     int  getQuarterTrack(int drive = 0) const { return validDrive(drive) ? headQuarterTrack[drive] : 0; }
     bool isMotorOn() const { return motorOn; }
+    /// Rotating media supplied a data-latch byte within the given bus cycles.
+    bool readRecently(uint64_t maxBusCycles) const;
     /// Index of the drive currently selected by the most recent
     /// $C0nA / $C0nB access (0 = drive 1, 1 = drive 2).
     int  getActiveDrive() const { return activeDrive; }
@@ -731,6 +736,8 @@ private:
     // converted via clock()*2).
     uint64_t lssCycle       = 0;
     uint64_t cpuCycleTotal  = 0;
+    static constexpr uint64_t kNeverRead = UINT64_MAX;
+    std::array<uint64_t, kDriveCount> lastReadCycle_{kNeverRead, kNeverRead};
 
     // MAME `floppy_image_device::m_revolution_start_time`, one per drive.
     // Set to the current `lssCycle` on a motor-on transition (MAME's

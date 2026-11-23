@@ -5,6 +5,34 @@
 #include <memory>
 #include <utility>
 
+bool DiskImage::bindSnapshotBacking(const std::string& backing)
+{
+    if (!loaded || !detachedSession_ || isFileWriteProtected() || !writeBackEnabled)
+        return false;
+    auto baseline = std::make_unique<DiskImage>();
+    if (!baseline->loadFile(backing) || !baseline->fileStamp_.known ||
+        baseline->isFileWriteProtected() || wozFormat != baseline->wozFormat ||
+        nibFormat != baseline->nibFormat || sectorsPerTrack_ != baseline->sectorsPerTrack_ ||
+        (!wozFormat && sectorOrder != baseline->sectorOrder))
+        return false;
+    path = backing;
+    fileStamp_ = baseline->fileStamp_;
+    detachedSession_ = false;
+    cnib2Format = baseline->cnib2Format;
+    twoImgFormat = baseline->twoImgFormat;
+    twoImgHeaderRaw = std::move(baseline->twoImgHeaderRaw);
+    twoImgTrailerRaw = std::move(baseline->twoImgTrailerRaw);
+    if (wozFormat) {
+        anyDirty = wozRaw != baseline->wozRaw;
+    } else {
+        for (size_t track = 0; track < tracks.size(); ++track) {
+            dirty[track] = tracks[track] != baseline->tracks[track];
+            anyDirty |= dirty[track];
+        }
+    }
+    return true;
+}
+
 bool DiskImage::appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const
 {
     if (!sessionCaptureReady()) { error = "Disk II write-back is still pending"; return false; }

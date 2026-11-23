@@ -487,6 +487,7 @@ bool DiskIICard::installPreparedLocked(int drive, DiskImage&& replacement)
     }
     DiskImage& img = images[drive];
     img = std::move(replacement);
+    lastReadCycle_[drive] = kNeverRead;
     img.setFluxClockHz(motorClock_.busHz());   // see syncFluxClock
     mediaErrors[drive].clear();
     trackPos[drive] = 0;
@@ -557,6 +558,7 @@ std::shared_ptr<DiskImage> DiskIICard::takeEjectWriteBack(int drive)
         ejecting_[drive] = pending;          // the drive is reserved until it is gone
     }
     img.eject();
+    lastReadCycle_[drive] = kNeverRead;
     mediaErrors[drive].clear();
     trackPos[drive] = 0;
     // `writeLatch` is the CPU's last byte on the data bus, not a property of
@@ -649,6 +651,7 @@ void DiskIICard::dumpRecentReads(size_t maxEntries) const
 
 void DiskIICard::onReset()
 {
+    lastReadCycle_.fill(kNeverRead);
     // The drive really does stop, so the mechanical-sound source has to be
     // told. It only silences its spin loop on an explicit motor(false)
     // command; a Ctrl-Reset (F11) mid-read used to clear `motorOn` behind
@@ -1008,6 +1011,7 @@ void DiskIICard::loadSnapshotState(const uint8_t* data, std::size_t len)
     lssData       = g8();
     lssCycle      = g64();
     cpuCycleTotal = g64();
+    lastReadCycle_.fill(kNeverRead);
     for (int d = 0; d < kDriveCount; ++d) revolutionStartLssCycle[d] = static_cast<int64_t>(g64());
     for (int d = 0; d < kDriveCount; ++d) stoppedPosition[d] = static_cast<int64_t>(g64());
 
@@ -1968,6 +1972,8 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
         }
         if (!(low4 & 1)) {
             lssSync(1);
+            if (low4 == 0xC && (lssData & 0x80) && !writeMode && motorOn && images[activeDrive].isLoaded())
+                lastReadCycle_[activeDrive] = cpuCycleTotal;
             // Debug log: capture (cycle, byte, qt) for hero_probe to dump.
             static const bool kLogReads = std::getenv("POM2_DEBUG_DISK_READS") != nullptr;
             if (kLogReads && low4 == 0xC) {
@@ -2023,6 +2029,7 @@ uint8_t DiskIICard::deviceSelectRead(uint8_t low4)
     if (low4 == 0xC && !writeMode && !loadMode) {
         if (!img.isLoaded() || !motorOn) return 0xFF;
         const uint8_t out = byteReady ? dataLatch : (dataLatch & 0x7F);
+        if (out & 0x80) lastReadCycle_[activeDrive] = cpuCycleTotal;
         if (debugEnabled() && byteReady && !trace.sawFirstNibble) {
             trace.sawFirstNibble = true;
             char buf[96];

@@ -7,6 +7,24 @@
 #include <utility>
 
 namespace pom2 {
+bool Disk35Image::bindSnapshotBacking(const std::string& backing)
+{
+    if (!loaded_ || !detachedSession_ || bitstream_ || isFileWriteProtected() || !writeBackEnabled_)
+        return false;
+    Disk35Image baseline;
+    if (!baseline.loadFile(backing) || !baseline.fileStamp_.known || baseline.bitstream_ ||
+        baseline.isFileWriteProtected() || baseline.blocks_.size() != blocks_.size())
+        return false;
+    path_ = backing;
+    fileStamp_ = baseline.fileStamp_;
+    kind_ = baseline.kind_;
+    twoImgHeaderRaw_ = std::move(baseline.twoImgHeaderRaw_);
+    twoImgTrailerRaw_ = std::move(baseline.twoImgTrailerRaw_);
+    detachedSession_ = false;
+    dirty_ = blocks_ != baseline.blocks_;
+    return true;
+}
+
 bool Disk35Image::appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const {
     if (!sessionCaptureReady()) { error = "3.5-inch write-back is still pending"; return false; }
     if (!loaded_ || (isFileWriteProtected() && !dirty_ && !detachedSession_))

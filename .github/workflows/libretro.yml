@@ -1,0 +1,271 @@
+name: Native Libretro packages
+
+on:
+  push:
+    branches: [feat/libretro-core]
+    tags: ['libretro-v*']
+  pull_request:
+    paths:
+      - '.github/workflows/libretro.yml'
+      - '.github/actions/fetch-test-media/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'imgui_pin.env'
+      - 'include/**'
+      - 'libretro/**'
+      - 'packaging/disks/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'vcpkg.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: libretro-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Libretro ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            module: build/pom2_libretro.so
+          - platform: macos-arm64
+            runner: macos-15
+            module: build/pom2_libretro.dylib
+          - platform: windows-x64
+            runner: windows-2022
+            module: build/Release/pom2_libretro.dll
+    defaults:
+      run:
+        shell: bash
+    env:
+      MODULE_PATH: ${{ matrix.module }}
+      PACKAGE_FILE: pom2-libretro-${{ matrix.platform }}.zip
+      RETROARCH_VERSION: '1.22.2'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - uses: ./.github/actions/fetch-test-media
+
+      - name: Fetch pinned Dear ImGui
+        run: tools/fetch_imgui_pinned.sh
+
+      - name: Install Linux build and RetroArch dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config libglfw3-dev libgl1-mesa-dev libgl1-mesa-dri \
+            retroarch retroarch-assets xvfb xauth
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install glfw
+
+      - name: Prefetch pinned Windows vcpkg sources
+        if: runner.os == 'Windows'
+        run: tools/prefetch_vcpkg_sources.sh
+
+      - name: Configure native Unix build
+        if: runner.os != 'Windows'
+        run: |
+          native=()
+          if [ "$RUNNER_OS" = macOS ]; then
+            native+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+          fi
+          cmake -S . -B build "${native[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPOM2_ENABLE_SLIRP=OFF \
+            -DPOM2_ENABLE_TESTS=ON \
+            -DPOM2_PORTABLE_TESTS_ONLY=ON \
+            -DPOM2_BUILD_LIBRETRO=ON
+
+      - name: Configure MSVC x64 build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DPOM2_ENABLE_SLIRP=OFF `
+            -DPOM2_ENABLE_TESTS=ON `
+            -DPOM2_PORTABLE_TESTS_ONLY=ON `
+            -DPOM2_BUILD_LIBRETRO=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the module and ABI test frontend
+        run: cmake --build build --config Release --parallel 4 --target test_pom2_libretro
+
+      - name: Package and stage the shipped module for CTest
+        run: |
+          mkdir -p dist/libretro dist/libretro-results
+          package="dist/libretro/$PACKAGE_FILE"
+          if [ "$RUNNER_OS" = macOS ]; then
+            lipo "$MODULE_PATH" -verify_arch arm64
+          fi
+          python tools/package_libretro.py "$MODULE_PATH" "$package" | tee dist/libretro-results/package.log
+          (cd dist/libretro && cmake -E sha256sum "$PACKAGE_FILE" > "$PACKAGE_FILE.sha256")
+
+          # The six CTest commands resolve the configured target file. Replacing
+          # it with the extracted ZIP member makes every command test the package.
+          python -m zipfile -e "$package" build/libretro-install
+          cmake -E rename "$MODULE_PATH" "$MODULE_PATH.unpacked-build"
+          cmake -E copy "build/libretro-install/cores/$(basename "$MODULE_PATH")" "$MODULE_PATH"
+
+      - name: Require all six packaged-core regressions
+        run: |
+          ctest --test-dir build -C Release -R '^pom2_libretro_' --no-tests=error \
+            --output-on-failure --output-junit "$PWD/dist/libretro-results/ctest.xml" \
+            | tee dist/libretro-results/ctest.log
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          expected = {"abi", "media", "disk_persistence", "keyboard", "dix", "desktop"}
+          expected = {"pom2_libretro_" + name for name in expected}
+          cases = ET.parse("dist/libretro-results/ctest.xml").findall(".//testcase")
+          names = {case.get("name") for case in cases}
+          if names != expected or len(cases) != len(expected):
+              raise SystemExit(f"Unexpected CTest inventory: missing {expected - names}; extra {names - expected}")
+          for case in cases:
+              if any(case.find(tag) is not None for tag in ("skipped", "failure", "error")):
+                  raise SystemExit(f"Required package regression did not pass: {case.get('name')}")
+          print(f"All {len(cases)} packaged-core regressions passed without skips")
+          PY
+
+      - name: Install the RetroArch smoke test dependency
+        run: python -m pip install 'Pillow==13.0.0'
+
+      - name: Boot and resume the package in Linux RetroArch
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          retroarch --version | tee dist/libretro-results/retroarch-version.txt
+          xvfb-run -a -s '-screen 0 1280x1024x24' \
+            python tools/check_libretro_package.py "dist/libretro/$PACKAGE_FILE" \
+            "$(command -v retroarch)" roms packaging/disks/DIRTBIKE.dsk \
+            --output dist/libretro-results | tee dist/libretro-results/retroarch-smoke.log
+
+      - name: Boot and resume the package in macOS RetroArch
+        if: runner.os == 'macOS'
+        run: |
+          archive="$RUNNER_TEMP/RetroArch_Metal.dmg"
+          mountpoint="$RUNNER_TEMP/retroarch-mounted"
+          mkdir -p "$mountpoint"
+          curl --fail --location --retry 5 --retry-all-errors --connect-timeout 30 \
+            "https://buildbot.libretro.com/stable/$RETROARCH_VERSION/apple/osx/universal/RetroArch_Metal.dmg" \
+            --output "$archive"
+          echo "81b79121ba26d539064ae13b4d0419a120c3d165afbe656cf5f5412b15fdb434  $archive" | shasum -a 256 -c -
+          hdiutil attach "$archive" -readonly -nobrowse -mountpoint "$mountpoint"
+          trap 'hdiutil detach "$mountpoint"' EXIT
+          executable="$mountpoint/RetroArch.app/Contents/MacOS/RetroArch"
+          "$executable" --version | tee dist/libretro-results/retroarch-version.txt
+          python tools/check_libretro_package.py "dist/libretro/$PACKAGE_FILE" \
+            "$executable" roms packaging/disks/DIRTBIKE.dsk \
+            --output dist/libretro-results | tee dist/libretro-results/retroarch-smoke.log
+
+      - name: Install portable Windows RetroArch
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'RetroArch.7z'
+          $output = Join-Path $env:RUNNER_TEMP 'retroarch-portable'
+          $url = "https://buildbot.libretro.com/stable/$env:RETROARCH_VERSION/windows/x86_64/RetroArch.7z"
+          curl.exe --fail --location --retry 5 --retry-all-errors --connect-timeout 30 $url --output $archive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+          if ($digest -ne 'b2139b1d0f9d4526dc6b5ce23cbb3efdc766096fa6f2c3df016818b486ac6372') {
+            throw 'Unexpected checksum for the official Windows RetroArch archive'
+          }
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+          & $sevenZip x $archive "-o$output" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $executables = @(Get-ChildItem -Path $output -File -Recurse -Filter 'retroarch.exe')
+          if ($executables.Count -ne 1) { throw 'Expected one RetroArch executable in the official Windows archive' }
+          "RETROARCH_EXECUTABLE=$($executables[0].FullName)" >> $env:GITHUB_ENV
+
+      - name: Boot and resume the package in Windows RetroArch
+        if: runner.os == 'Windows'
+        run: |
+          printf 'RetroArch %s (portable x86_64)\n' "$RETROARCH_VERSION" > dist/libretro-results/retroarch-version.txt
+          python tools/check_libretro_package.py "dist/libretro/$PACKAGE_FILE" \
+            "$RETROARCH_EXECUTABLE" roms packaging/disks/DIRTBIKE.dsk \
+            --output dist/libretro-results | tee dist/libretro-results/retroarch-smoke.log
+
+      - name: Upload verified release package
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pom2-libretro-${{ matrix.platform }}
+          path: dist/libretro/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload package verification results
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pom2-libretro-results-${{ matrix.platform }}
+          path: dist/libretro-results/
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish Libretro release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/libretro-v')
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: pom2-libretro-*
+          path: artifacts
+
+      - name: Verify release inputs and collect checksums
+        shell: bash
+        run: |
+          mkdir release
+          results=()
+          for platform in linux-x64 macos-arm64 windows-x64; do
+            artifact="pom2-libretro-$platform"
+            (cd "artifacts/$artifact" && sha256sum --check "$artifact.zip.sha256")
+            cp "artifacts/$artifact/$artifact.zip" release/
+            result="artifacts/pom2-libretro-results-$platform"
+            test -s "$result/ctest.xml"
+            test -s "$result/retroarch-smoke.log"
+            results+=("$result")
+          done
+          python3 -m zipfile -c release/pom2-libretro-verification.zip "${results[@]}"
+          (cd release && sha256sum ./*.zip > SHA256SUMS)
+
+          cat > release-notes.md <<'EOF'
+          Native POM2 Libretro core packages tested with RetroArch on Linux x64, macOS arm64, and Windows x64.
+
+          Download the ZIP for your platform and extract it into your RetroArch directory. The package includes installation instructions and does not include Apple II firmware. Use `SHA256SUMS` to verify the download. The verification ZIP contains CTest results, RetroArch logs, and screenshots for all three platforms.
+          EOF
+
+      - name: Publish assets for the existing Libretro tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --latest=false --title "POM2 Libretro ${GITHUB_REF_NAME#libretro-}" \
+            --notes-file release-notes.md release/*.zip release/SHA256SUMS

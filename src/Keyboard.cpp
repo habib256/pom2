@@ -21,8 +21,64 @@
 // publishKbLatch → publish, kbMutex → mtx_).
 
 #include "Keyboard.h"
+#include "ByteIO.h"
 
 namespace pom2 {
+
+void Keyboard::appendSdkState(std::vector<uint8_t>& out) const
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    byteio::putU8(out, (keyReady_ ? 1 : 0) | (hostKeysTracked_ ? 2 : 0) |
+                      (injectedKey_ ? 4 : 0) | (pressCodeValid_ ? 8 : 0) |
+                      (streamPrevCR_ ? 16 : 0) | (pasteHeld_.load() ? 32 : 0));
+    byteio::putU8(out, lastKey_);
+    byteio::putU8(out, pressCode_);
+    byteio::putU16(out, pressToken_);
+    for (size_t i = 0; i < heldKeys_.size(); i += 8) {
+        uint8_t keys = 0;
+        for (size_t bit = 0; bit < 8; ++bit)
+            if (heldKeys_[i + bit]) keys |= static_cast<uint8_t>(1u << bit);
+        byteio::putU8(out, keys);
+    }
+    byteio::putU16(out, static_cast<uint16_t>(pasteQueue_.size()));
+    out.insert(out.end(), pasteQueue_.begin(), pasteQueue_.end());
+}
+
+bool Keyboard::loadSdkState(const uint8_t* data, std::size_t size, bool apply)
+{
+    byteio::Reader r(data, size);
+    if (!data || !r.has(7 + heldKeys_.size() / 8)) return false;
+    const auto flags = r.u8(), key = r.u8(), press = r.u8();
+    const auto token = r.u16();
+    if (flags > 63 || key > 127 || press > 127 || token >= heldKeys_.size()) return false;
+    std::bitset<512> held;
+    for (size_t i = 0; i < held.size(); i += 8) {
+        const auto keys = r.u8();
+        for (size_t bit = 0; bit < 8; ++bit) held[i + bit] = (keys & (1u << bit)) != 0;
+    }
+    const auto count = r.u16();
+    if (count > kPasteMaxChars || size - r.pos != count) return false;
+    const auto* first = data + r.pos;
+    for (size_t i = 0; i < count; ++i)
+        if (first[i] > 127) return false;
+    if (!apply) return true;
+
+    std::deque<uint8_t> paste(first, first + count);
+    std::lock_guard<std::mutex> lock(mtx_);
+    pasteQueue_.swap(paste);
+    heldKeys_ = held;
+    keyReady_ = (flags & 1) != 0;
+    hostKeysTracked_ = (flags & 2) != 0;
+    injectedKey_ = (flags & 4) != 0;
+    pressCodeValid_ = (flags & 8) != 0;
+    streamPrevCR_ = (flags & 16) != 0;
+    pasteHeld_.store((flags & 32) != 0, std::memory_order_relaxed);
+    lastKey_ = key;
+    pressCode_ = press;
+    pressToken_ = token;
+    publish();
+    return true;
+}
 
 void Keyboard::queueKey(uint8_t apple2Key)
 {

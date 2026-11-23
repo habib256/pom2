@@ -10,6 +10,20 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Apple //e Enhanced in RetroArch
+
+The optional [POM2 libretro core](libretro/README.md) boots Applesoft BASIC
+and 5.25-inch floppy images. It supports the keyboard, RetroPad, software
+composite video and speaker audio. Fast disk loading can be toggled in
+RetroArch. The Disc Control menu swaps images during play and accepts named
+disks from M3U playlists. The core reports Disk II reads on frontend LED 0.
+The core persists private writable disk images, supports save states on
+compatible configurations, and boots 400/800 KiB SmartPort media. DIX runs
+in PAL with Mockingboard stereo and Féline RGB. A RetroPad keyboard, paddle
+settings and AppleMouse let players enter text or drag icons in DeskTop.
+The media test opens the Dirtbike track menu and accelerates the bike.
+[Reproduce the 12-scenario compatibility benchmark](docs/audits/libretro-compatibility-2026-11-23.md).
+
 **v1.2.2 marker** — 2026-11-19. Release notes: [v1.2.2](docs/releases/v1.2.2.md).
 
 ## 2026-11-19 — Bug hunt before v1.2.2: sixteen findings in the day's own code, fixed

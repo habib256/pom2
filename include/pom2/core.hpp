@@ -237,6 +237,9 @@ public:
     bool insertDisk(int drive, std::string_view path);
     bool ejectDisk(int drive);
     bool diskInserted(int drive = 0) const;
+    /// True if the selected drive supplied a Disk II data byte within the last
+    /// maxBusCycles of the machine's stock bus clock and is still spinning.
+    bool diskReadRecently(std::uint64_t maxBusCycles) const;
     /// Write `drive`'s guest writes back to its file now, without ejecting.
     /// True when there was nothing to write.
     bool flushDisk(int drive);
@@ -279,6 +282,10 @@ public:
     /// Write the unit's changed blocks back to its image file now, durably
     /// (temp file + rename). True when there was nothing to write.
     bool flushSmartPortDisk(int unit);
+    /// Enable or release the write-protect notch on a mounted SmartPort disk.
+    /// Container and host write protection remain in force.
+    bool setSmartPortDiskWriteProtected(int unit, bool protectedOn);
+    bool smartPortDiskWriteProtected(int unit) const;
     /// Cold boot directly at the boot ROM of the card in `slot` ($Cn00).
     /// Returns false unless that slot's ROM carries the ProDOS boot
     /// signature ($Cn01=$20, $Cn03=$00, $Cn05=$03), with RAM untouched; and
@@ -385,6 +392,9 @@ public:
     bool attachRgbCard(int slot = 7,
                        RgbCardModel model = RgbCardModel::LeChatMauveFeline);
     bool rgbCardAttached() const;
+    /// Select the card's RGB monitor for renderFrame(); false selects composite.
+    /// Enabling it requires an attached RGB card.
+    bool setRgbMonitor(bool enabled);
     /// Install the E-Z Color Graphics Interface (Steve Ciarcia, BYTE, August
     /// 1982) in an empty slot: a TMS9918A with 16 KB of VRAM and its own video
     /// output, no ROM. The card decodes A0 only (BYTE's Fig. 4): every even
@@ -460,6 +470,21 @@ public:
 
     /// The version, commit and capabilities of this archive.
     static SdkInfo sdkInfo();
+
+    bool supportsState() const;
+
+    /// Capture a synchronous machine snapshot in memory. The destination is
+    /// replaced on success. State is versioned and binds the configured
+    /// firmware and device topology.
+    bool saveState(std::vector<std::uint8_t>& out);
+
+    /// Restore a snapshot into the same configuration. Disk II media are
+    /// embedded and restored in memory. Passing a trusted path explicitly
+    /// lets drive 0 resume writing to an existing private working copy.
+    /// An empty path keeps the restored media detached from host writes.
+    bool loadState(const void* data, std::size_t size, std::string_view diskBacking = {},
+                   std::string_view smartPortBacking = {},
+                   const std::function<bool()>& beforeRestore = {});
     /// Lowercase hex SHA-256, for a host recording what it ran. sha256File
     /// answers "" when the file cannot be read.
     static std::string sha256(const std::uint8_t* data, std::size_t length);

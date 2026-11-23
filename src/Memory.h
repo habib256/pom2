@@ -872,6 +872,16 @@ public:
     /// What a $C000 read would answer, without promoting a queued key.
     uint8_t keyLatchPeek() const  { return keyboard_.latchMirror(); }
     void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
+    void appendSdkKeyboard(std::vector<uint8_t>& out) const { keyboard_.appendSdkState(out); }
+    bool loadSdkKeyboard(const uint8_t* data, size_t size, bool apply)
+    {
+        return keyboard_.loadSdkState(data, size, apply);
+    }
+    std::array<uint8_t, 6> sdkPaddleState() const { return paddles_.sdkState(); }
+    bool loadSdkPaddles(const uint8_t* data, size_t size, bool apply)
+    {
+        return paddles_.loadSdkState(data, size, apply);
+    }
     /// The //c keyboard's 80/40-column switch, read at $C060 bit 7 (set =
     /// 40 columns, switch down — [B] //c Technical Reference, Table 4-1; the
     /// citations are at the read, Memory.cpp). A physical key on the
@@ -1121,6 +1131,8 @@ public:
     /// a snapshot whose sections happened to put CPU last (section order comes
     /// from the FILE and was never constrained) bypassed it.
     void     resetVideoEventLogForClockJump();
+    void     appendSdkVideoState(std::vector<uint8_t>& out) const;
+    bool     loadSdkVideoState(const uint8_t* data, size_t size, bool apply);
 
     // ── Snapshot state (de)serialization ────────────────────────────────
     // The main 64 KB (mem) is the caller's "MEM" section; these cover

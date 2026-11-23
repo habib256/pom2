@@ -34,6 +34,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 namespace pom2 {
@@ -239,6 +240,30 @@ public:
     void setAxis(int idx, uint64_t latch, uint32_t armed) {
         latch_[idx] = latch;
         armed_[idx] = armed;
+    }
+    std::array<uint8_t, 6> sdkState() const
+    {
+        const auto flags = static_cast<uint8_t>((button_[0] ? 1 : 0) | (button_[1] ? 2 : 0) |
+            (button_[2] ? 4 : 0) | (openApple_.load() ? 8 : 0) | (solidApple_.load() ? 16 : 0) |
+            (shift_.load() ? 32 : 0) | (shiftMod_.load() ? 64 : 0) | (ctrl_.load() ? 128 : 0));
+        return {value_[0], value_[1], value_[2], value_[3], flags,
+                static_cast<uint8_t>(iiWiring_.load() | (connected_.load() ? 128 : 0))};
+    }
+    bool loadSdkState(const uint8_t* data, std::size_t size, bool apply)
+    {
+        if (!data || size != 6 || (data[5] & 0x7f) > static_cast<unsigned>(IiShiftWiring::Sw01))
+            return false;
+        if (!apply) return true;
+        for (int i = 0; i < 4; ++i) value_[i] = data[i];
+        for (int i = 0; i < 3; ++i) button_[i] = (data[4] & (1 << i)) != 0;
+        setOpenAppleKey((data[4] & 8) != 0);
+        setSolidAppleKey((data[4] & 16) != 0);
+        setShiftKey((data[4] & 32) != 0);
+        setShiftKeyMod((data[4] & 64) != 0);
+        setControlKey((data[4] & 128) != 0);
+        setIiShiftWiring(static_cast<IiShiftWiring>(data[5] & 0x7f));
+        setConnected((data[5] & 128) != 0);
+        return true;
     }
 
 private:

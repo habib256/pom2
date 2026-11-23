@@ -116,6 +116,11 @@ public:
     /// front stamped in the far future. Diagnostic/test hook only.
     uint64_t staleDropCount() const;
 
+    // The synchronous SDK owns both timelines and can capture their full
+    // phase between calls. Desktop audio may be running on another thread.
+    void appendSdkState(std::vector<uint8_t>& out) const;
+    bool loadSdkState(const uint8_t* data, std::size_t size, bool apply);
+
 private:
     // CPU clock the reconstruction assumes. Runtime (not constexpr) so PAL
     // profiles can retune it; audio thread reads, UI/worker thread writes.

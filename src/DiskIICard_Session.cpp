@@ -20,6 +20,46 @@ bool sessionWriteSpanSafe(int count, int64_t start, uint64_t end)
     const auto first = static_cast<uint64_t>(start);
     return end >= first ? end - first <= kMaxSessionWriteSpan : first - end <= 32;
 }
+
+void setSnapshotPath(std::vector<uint8_t>& runtime, size_t offset, const std::string& path)
+{
+    const auto* data = reinterpret_cast<const uint8_t*>(path.data());
+    const auto identity = pom2::hashMediaBytes(data, path.size());
+    for (int i = 0; i < 8; ++i) runtime[offset + size_t(i)] = uint8_t(identity >> (i * 8));
+}
+}
+
+void DiskIICard::appendSdkTiming(std::vector<uint8_t>& out) const
+{
+    using namespace pom2::byteio;
+    for (auto stamp : lastReadCycle_) putU64(out, stamp);
+    for (auto phases : drivePhases_) putU8(out, phases);
+    putU64(out, lastStep_.cycle);
+    putU8(out, static_cast<uint8_t>(lastStep_.drive + 1));
+    putU8(out, static_cast<uint8_t>(lastStep_.from));
+    putU8(out, static_cast<uint8_t>(lastStep_.to));
+    putU8(out, lastStep_.click ? 1 : 0);
+}
+
+bool DiskIICard::loadSdkTiming(const uint8_t* data, size_t size, bool apply)
+{
+    if (!data || size != 8 * 3 + 6) return false;
+    pom2::byteio::Reader r(data, size);
+    const std::array<uint64_t, 2> reads{r.u64(), r.u64()};
+    const std::array<uint8_t, 2> phases{r.u8(), r.u8()};
+    const auto cycle = r.u64();
+    const auto drive = r.u8(), from = r.u8(), to = r.u8(), click = r.u8();
+    for (const auto stamp : reads)
+        if (stamp != kNeverRead && stamp >= (uint64_t{1} << 61)) return false;
+    if (phases[0] > 15 || phases[1] > 15 || cycle >= (uint64_t{1} << 61) ||
+        drive > kDriveCount || from >= DiskImage::kQuarterTracks ||
+        to >= DiskImage::kQuarterTracks || click > 1) return false;
+    if (apply) {
+        lastReadCycle_ = reads;
+        drivePhases_ = phases;
+        lastStep_ = {cycle, static_cast<int>(drive) - 1, from, to, click != 0};
+    }
+    return true;
 }
 
 void DiskIICard::appendSessionIdentity(std::vector<uint8_t>& out) const
@@ -64,11 +104,9 @@ bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& erro
     // D2S1 v4's fixed controller header is followed by two optional nibble
     // captures. Bind their path hashes to the private session medium name.
     size_t pos = kSnapFixedBytes;   // never a literal: see the header
-    uint64_t identity = 14695981039346656037ULL;
-    for (unsigned char c : std::string("(session disk)")) { identity ^= c; identity *= 1099511628211ULL; }
     for (int d = 0; d < kDriveCount; ++d) {
         if (runtime[pos++]) {
-            for (int i = 0; i < 8; ++i) runtime[pos + size_t(i)] = uint8_t(identity >> (i * 8));
+            setSnapshotPath(runtime, pos, "(session disk)");
             pos += 8 + DiskImage::kMediaSnapshotBytes;
         }
     }
@@ -161,6 +199,16 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
         validator->images[d].eject();
     }
     out = std::move(staged);
+    return true;
+}
+
+bool DiskIICard::bindSdkBacking(SessionRestore& prepared, const std::string& backing)
+{
+    if (!prepared.media[0]->bindSnapshotBacking(backing)) return false;
+    // The prepared capture was validated in its detached form. Update the
+    // identity of the writable nibble surface to match its new backing.
+    if (prepared.runtime[kSnapFixedBytes])
+        setSnapshotPath(prepared.runtime, kSnapFixedBytes + 1, backing);
     return true;
 }
 

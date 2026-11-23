@@ -59,6 +59,10 @@ the classification in code.
 
 ### Supported — works, pinned, fixed on report, no proactive work
 
+| Frontend | Initial scope |
+|---|---|
+| [POM2 libretro](../../libretro/README.md) | Apple //e Enhanced NTSC and DIX PAL through the C++ SDK, private writable disks, M3U, Disk II, SmartPort, save states on supported configurations, keyboard, RetroPad and AppleMouse. The integration test loads the built module. |
+
 Z80 core + SoftCard *(a finished subsystem — its cleanup list is quality, not
 correctness: do not schedule it)* · RamWorks III above 128 K · AppleWin NTSC,
 artifact-colour LUT modes, mono phosphor, CRT glass pass *(selected rendering

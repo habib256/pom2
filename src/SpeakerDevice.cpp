@@ -15,9 +15,11 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "SpeakerDevice.h"
+#include "ByteIO.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 SpeakerDevice::SpeakerDevice()
@@ -28,6 +30,89 @@ SpeakerDevice::SpeakerDevice()
     // real click loop produces). Growth beyond it is still legal, just
     // rare enough not to be a per-tick cost.
     windowEvents_.reserve(2048);
+}
+
+void SpeakerDevice::appendSdkState(std::vector<uint8_t>& out) const
+{
+    using namespace pom2::byteio;
+    std::lock_guard<std::mutex> lock(eventMutex);
+    const auto putDouble = [&](double value) {
+        uint64_t bits;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        putU64(out, bits);
+    };
+    putU64(out, audioCpuCursor);
+    putU64(out, latestEventCycle.load(std::memory_order_relaxed));
+    putU64(out, stampBaseCycle_);
+    putDouble(stampBaseStock_);
+    putDouble(stampRatio_);
+    putDouble(subSampleAccum);
+    putDouble(dcPrevX);
+    putDouble(dcPrevY);
+    putU8(out, static_cast<uint8_t>(composedIdx));
+    putU8(out, (currentLevel ? 1 : 0) | (resetPending_.load() ? 2 : 0) |
+               (stampIdentity_ ? 4 : 0));
+    for (double value : composedVolume) putDouble(value);
+    putU32(out, static_cast<uint32_t>(events.size()));
+    for (size_t i = 0; i < events.size(); ++i) putU64(out, events.at(i));
+}
+
+bool SpeakerDevice::loadSdkState(const uint8_t* data, std::size_t size, bool apply)
+{
+    pom2::byteio::Reader r(data, size);
+    if (!data || !r.has(8 * (8 + kFilterLength) + 2 + 4)) return false;
+    const auto getDouble = [&] {
+        const uint64_t bits = r.u64();
+        double value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+    const auto cursor = r.u64(), latest = r.u64(), baseCycle = r.u64();
+    const auto baseStock = getDouble(), ratio = getDouble(), accumulator = getDouble();
+    const auto dcX = getDouble(), dcY = getDouble();
+    const auto index = r.u8(), flags = r.u8();
+    if (!(baseStock >= 0 && baseStock < 0x1p62 && ratio > 0 && ratio <= 64 &&
+          accumulator >= 0 && accumulator <= 1 &&
+          std::abs(dcX) <= 4 && std::abs(dcY) <= 4) ||
+        index >= kFilterLength || flags > 7 || cursor >= (uint64_t{1} << 62) ||
+        latest >= (uint64_t{1} << 62) || baseCycle >= (uint64_t{1} << 62)) return false;
+    std::array<double, kFilterLength> history{};
+    for (auto& value : history) {
+        value = getDouble();
+        if (!(value >= 0 && value <= 1.000001)) return false;
+    }
+    const auto count = r.u32();
+    if (count > kMaxEvents || size - r.pos != 8 * size_t(count)) return false;
+    const auto eventsStart = r.pos;
+    uint64_t previous = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const auto stamp = r.u64();
+        if (stamp < previous || stamp > latest) return false;
+        previous = stamp;
+    }
+    if (!apply) return true;
+
+    std::lock_guard<std::mutex> lock(eventMutex);
+    pom2::EventRing<uint64_t> restored;
+    r.pos = eventsStart;
+    for (size_t i = 0; i < count; ++i) restored.push_back(r.u64());
+    events = std::move(restored);
+    ++queueGen_;
+    audioCpuCursor = cursor;
+    latestEventCycle.store(latest, std::memory_order_relaxed);
+    stampBaseCycle_ = baseCycle;
+    stampBaseStock_ = baseStock;
+    stampRatio_ = ratio;
+    subSampleAccum = accumulator;
+    dcPrevX = dcX;
+    dcPrevY = dcY;
+    composedIdx = index;
+    composedVolume = history;
+    currentLevel = (flags & 1) != 0;
+    resetPending_.store((flags & 2) != 0, std::memory_order_relaxed);
+    stampIdentity_ = (flags & 4) != 0;
+    return true;
 }
 
 void SpeakerDevice::buildSincKernel()

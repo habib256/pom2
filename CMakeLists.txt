@@ -1981,7 +1981,17 @@ add_library(POM2::core ALIAS pom2_core)
 # The ALIAS above only exists inside this build. EXPORT_NAME is what makes the
 # INSTALLED package spell it POM2::core too — without it a consumer has to
 # write POM2::pom2_core, and the two spellings would diverge silently.
-set_target_properties(pom2_core PROPERTIES EXPORT_NAME core)
+set_target_properties(pom2_core PROPERTIES
+    EXPORT_NAME core
+    POSITION_INDEPENDENT_CODE ON)
+
+option(POM2_BUILD_LIBRETRO "Build the native POM2 libretro module" OFF)
+if(POM2_BUILD_LIBRETRO)
+    if(EMSCRIPTEN)
+        message(FATAL_ERROR "POM2_BUILD_LIBRETRO requires a native toolchain")
+    endif()
+    add_subdirectory(libretro)
+endif()
 
 target_include_directories(pom2_core
     PUBLIC

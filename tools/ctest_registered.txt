@@ -334,6 +334,12 @@ pom2_core_hdd
 pom2_core_hdd_policy_protected
 pom2_core_sdk_consumer
 pom2_imageconv_consumer
+pom2_libretro_abi
+pom2_libretro_desktop
+pom2_libretro_disk_persistence
+pom2_libretro_dix
+pom2_libretro_keyboard
+pom2_libretro_media
 porte_parole_card
 porte_parole_reference
 postscript_render

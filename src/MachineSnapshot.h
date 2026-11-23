@@ -50,6 +50,7 @@
 #ifndef POM2_MACHINE_SNAPSHOT_H
 #define POM2_MACHINE_SNAPSHOT_H
 
+#include <functional>
 #include <string>
 
 class M6502;
@@ -88,7 +89,8 @@ struct RestoreResult {
 /// Rewind uses false for its trusted in-memory frames to avoid duplicating a
 /// full snapshot on every scrub.
 RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
-                                  bool transactional = true);
+                                  bool transactional = true, bool logSuccess = true,
+                                  const std::function<bool()>& beforeRestore = {});
 
 }  // namespace pom2
 

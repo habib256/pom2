@@ -87,7 +87,6 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 | [NETWORK-001](docs/backlog/network.md#network-001), [NETWORK-007](docs/backlog/network.md#network-007) | Name a use case for native FujiNet phases 2–4 or //c support, or freeze them. |
 | [NETWORK-004](docs/backlog/network.md#network-004) | Name a live delayed TNFS peer, or close the extra validation under the Supported rule. |
 | [RELEASE-010](docs/backlog/release.md#release-010) | A pre-push check and GL-call guard beyond the existing CI guards — implement one concrete guard or close. |
-| A libretro core | Needs a scope-ruling row first ([possibilities](docs/backlog/possibilities.md)). |
 
 Set aside by the owner and not proposed as next steps:
 [RELEASE-001](docs/backlog/release.md#release-001) (history distribution),

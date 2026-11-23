@@ -37,6 +37,13 @@ void DiskIICard::rememberStoppedPosition(int drive)
         : 0;
 }
 
+bool DiskIICard::readRecently(uint64_t maxBusCycles) const
+{
+    const auto lastRead = lastReadCycle_[activeDrive];
+    return motorOn && !writeMode && lastRead != kNeverRead
+        && cpuCycleTotal >= lastRead && cpuCycleTotal - lastRead <= maxBusCycles;
+}
+
 void DiskIICard::advanceCycles(int cycles)
 {
     // A caller's batch can straddle the spindle-stop deadline. Catch up
@@ -105,6 +112,7 @@ void DiskIICard::stopSpindle()
 {
     motorOffDelay = 0;
     motorOn       = false;
+    lastReadCycle_.fill(kNeverRead);
     if (cardTrace()) {                   // the spindle really stops (DiskIICard.h)
         flushSeekRun();
         traceLine("DISK S" + std::to_string(busSlot()) + ",D" +

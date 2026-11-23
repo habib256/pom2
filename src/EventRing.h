@@ -24,6 +24,7 @@ public:
     bool        empty() const { return size_ == 0; }
     std::size_t size()  const { return size_; }
     const T&    front() const { return buf_[head_]; }
+    const T&    at(std::size_t offset) const { return buf_[(head_ + offset) % buf_.size()]; }
     void        clear()       { head_ = size_ = 0; }
 
     void push_back(const T& v)

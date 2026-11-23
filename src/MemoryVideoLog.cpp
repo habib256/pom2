@@ -38,6 +38,7 @@
 
 #include "Memory.h"
 #include "M6502.h"
+#include "ByteIO.h"
 
 #include <algorithm>
 #include <climits>
@@ -55,6 +56,118 @@ int fetchColumn(uint16_t addr)
     return off < 120 ? off % 40 : 40;
 }
 }  // namespace
+
+void Memory::appendSdkVideoState(std::vector<uint8_t>& out) const
+{
+    using namespace pom2::byteio;
+    std::lock_guard<std::mutex> lock(stateMutex);
+    const auto putDisplay = [&](const DisplayState& state) {
+        for (bool value : {state.textMode, state.mixedMode, state.page2, state.hiRes,
+                          state.eightyCol, state.an3, state.altChar, state.dhgr,
+                          state.eightyStore, state.an0, state.an2})
+            putU8(out, value ? 1 : 0);
+    };
+    putU64(out, lastVideoFrameStart_);
+    putU64(out, videoPublishedStart_);
+    putU64(out, videoLogValidFrom_);
+    putU32(out, static_cast<uint32_t>(videoQuietFrames_));
+    putU8(out, videoLogArmed_ ? 1 : 0);
+    putDisplay(displayAtFrameStart_);
+    putDisplay(publishedFrameStart_);
+    const auto putEvents = [&](const std::vector<VideoEvent>& events) {
+        putU32(out, static_cast<uint32_t>(events.size()));
+        for (const auto& event : events) {
+            putU64(out, event.emuCycle);
+            putU16(out, event.scanline);
+            putU8(out, static_cast<uint8_t>(event.kind));
+            putU8(out, event.value ? 1 : 0);
+        }
+    };
+    putEvents(videoEvents_);
+    putEvents(publishedEvents_);
+    putU32(out, static_cast<uint32_t>(videoLog_.size()));
+    for (const auto& entry : videoLog_) {
+        putU64(out, entry.cycle);
+        putU16(out, entry.addr);
+        putU8(out, entry.oldValue);
+        putU8(out, entry.newValue);
+        putU8(out, entry.toAux ? 1 : 0);
+    }
+}
+
+bool Memory::loadSdkVideoState(const uint8_t* data, size_t size, bool apply)
+{
+    pom2::byteio::Reader r(data, size);
+    if (!data || !r.has(24 + 4 + 1 + 22)) return false;
+    const auto frameStart = r.u64(), publishedStart = r.u64(), validFrom = r.u64();
+    const auto quietFrames = r.u32();
+    const auto armed = r.u8();
+    constexpr uint64_t maxClock = uint64_t{1} << 61;
+    if (armed > 1 || quietFrames > kVideoLogQuietFrames + 1 ||
+        frameStart >= maxClock || publishedStart >= maxClock || validFrom >= maxClock)
+        return false;
+    const auto getDisplay = [&](DisplayState& state) {
+        for (auto* field : {&state.textMode, &state.mixedMode, &state.page2, &state.hiRes,
+                            &state.eightyCol, &state.an3, &state.altChar, &state.dhgr,
+                            &state.eightyStore, &state.an0, &state.an2}) {
+            const auto value = r.u8();
+            if (value > 1) return false;
+            *field = value != 0;
+        }
+        return true;
+    };
+    DisplayState active, published;
+    if (!getDisplay(active) || !getDisplay(published)) return false;
+    const auto getEvents = [&](std::vector<VideoEvent>& events) {
+        if (!r.has(4)) return false;
+        const auto count = r.u32();
+        if (count > kVideoLogCap || !r.has(size_t(count) * 12)) return false;
+        if (apply) events.reserve(count);
+        uint64_t previous = 0;
+        for (size_t i = 0; i < count; ++i) {
+            const auto cycle = r.u64();
+            const auto line = r.u16();
+            const auto kind = r.u8(), value = r.u8();
+            if (cycle < previous || cycle >= maxClock || line > kVisibleLines ||
+                kind >= static_cast<uint8_t>(VideoEventKind::Cut) || value > 1) return false;
+            if (apply) events.push_back({cycle, line, static_cast<VideoEventKind>(kind), value != 0});
+            previous = cycle;
+        }
+        return true;
+    };
+    std::vector<VideoEvent> activeEvents, publishedEvents;
+    if (!getEvents(activeEvents) || !getEvents(publishedEvents) || !r.has(4)) return false;
+    const auto count = r.u32();
+    if (count > kVideoLogCap || (!armed && count) || size - r.pos != size_t(count) * 13)
+        return false;
+    std::vector<VideoWrite> writes;
+    if (apply) writes.reserve(count);
+    uint64_t previous = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const auto cycle = r.u64();
+        const auto address = r.u16();
+        const auto oldValue = r.u8(), newValue = r.u8(), auxiliary = r.u8();
+        if (cycle < previous || cycle >= maxClock || auxiliary > 1 ||
+            !((address >= 0x0400 && address < 0x0c00) ||
+              (address >= 0x2000 && address < 0x6000))) return false;
+        if (apply) writes.push_back({cycle, address, oldValue, newValue, auxiliary != 0});
+        previous = cycle;
+    }
+    if (apply) {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        setVideoWriteLog(armed != 0);
+        displayAtFrameStart_ = active;
+        publishedFrameStart_ = published;
+        videoEvents_ = std::move(activeEvents);
+        publishedEvents_ = std::move(publishedEvents);
+        videoLog_ = std::move(writes);
+        lastVideoFrameStart_ = frameStart;
+        videoPublishedStart_ = publishedStart;
+        videoLogValidFrom_ = validFrom;
+        videoQuietFrames_ = static_cast<int>(quietFrames);
+    }
+    return true;
+}
 
 uint8_t* Memory::videoWriteTarget(const VideoWrite& w)
 {

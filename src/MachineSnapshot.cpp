@@ -304,7 +304,8 @@ RestoreResult applyMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
 }  // namespace
 
 RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
-                                  bool transactional)
+                                  bool transactional, bool logSuccess,
+                                  const std::function<bool()>& beforeRestore)
 {
     if (!transactional)
         return applyMachineState(r, cpu, mem, /*allowSlots=*/true);
@@ -482,6 +483,8 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
             return { false, "cannot create snapshot rollback checkpoint" };
     }
 
+    if (beforeRestore && !beforeRestore())
+        return { false, "snapshot restore commit was declined" };
     SnapshotReader stagedReader(staged.data(), staged.size());
     RestoreResult result = applyMachineState(stagedReader, cpu, mem,
                                              /*allowSlots=*/false);
@@ -493,9 +496,10 @@ RestoreResult restoreMachineState(SnapshotReader& r, M6502& cpu, Memory& mem,
         // restored machine whose disk I/O, printer and sound cards are simply
         // where the live session left them. Logged on the file path only; the
         // rewind ring restores slots and never reaches here.
-        pom2::log().info("Snapshot",
-            "restored CPU + RAM snapshot core. Standalone .pom2snap files "
-            "exclude card state; a session loader restores supported cards separately.");
+        if (logSuccess)
+            pom2::log().info("Snapshot",
+                "restored CPU + RAM snapshot core. Standalone .pom2snap files "
+                "exclude card state; a session loader restores supported cards separately.");
         return result;
     }
 

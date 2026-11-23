@@ -102,6 +102,11 @@ optional SmartPort controller (slot 5 by default), one optional hard disk device
 (slot 7 by default), and multiple Mockingboards in separate empty slots (slot 4
 by default).
 
+`diskReadRecently(maxBusCycles)` reports recent Disk II data reads on the
+selected drive in emulated bus cycles. A frontend can use this to speed up
+floppy loading while a game that leaves the motor spinning keeps ordinary
+playback speed.
+
 `attachDiskII(bootRom, sequencerRom, slot)` takes any slot from 1 to 7: the
 P5 PROM finds its own slot at run time (`JSR $FF58`), so a controller in
 slot 5 boots at `$C500` and hands the boot sector X = `$50`. A second call
@@ -193,9 +198,8 @@ patent's two-bit shift register: each `$C05E`→`$C05F` edge pushes the current
 and `$C00D,$C00D` 140 colours (the power-on and reset mode).
 `rgbDhgrMode()` reports `Color140`, `Mono560` or `Mixed` — `Color140` with no
 card. The card has no slot ROM and no I/O space, so a program cannot detect
-it, which is why a host checks it from here. `renderFrame()` keeps painting
-the composite picture; the card changes what `rgbDhgrMode()` reports, not the
-software framebuffer.
+it. With the card attached, `setRgbMonitor(true)` selects its RGB picture for
+`renderFrame()`. The default and `setRgbMonitor(false)` use composite.
 
 ## E-Z Color (TMS9918A)
 
@@ -493,8 +497,8 @@ derived from the emulated frame, and the text and hi-res painters of that mode.
 It is **not** what the application shows by default. The application's default
 display is `ColorCompositeOE`: the bitstream demodulated by POM2's OpenEmulator-style
 GLSL shader, then the CRT glass pass (scanlines, mask, vignette, phosphor gamma,
-`CrtEffectStack`). Both need a GL context, the facade has none, and the facade offers
-no call to select another mode, so neither runs here:
+`CrtEffectStack`). The SDK software renderer supports the composite table
+and the Le Chat Mauve monitor with an installed card.
 
 | Picture | Application | `renderFrame()` |
 |---|---|---|
@@ -509,6 +513,22 @@ The capabilities say the same: `render.cpu-composite` is present and there is no
 match, this region holds what the guest drew). It does not stand for the look a
 player gets on the default display, and a judgement of an image belongs in the
 application or a tool built to show that pipeline.
+
+## In-memory snapshots
+
+`supportsState()` reports whether the current machine and peripherals support
+an in-memory snapshot. `saveState(out)` and `loadState(data, size)` use a
+versioned format with firmware and device checks. The state includes the
+processor, memory, the video beam's frame history, keyboard and paddles,
+speaker phase, and the Disk II controller and mounted media. SmartPort, hard
+disks, Mockingboard, Apple Mouse expansion models, E-Z Color, the //c Plus
+and active cassette sessions are currently outside this API.
+
+Restored Disk II media are detached from host files. A frontend that manages
+private working copies may pass the trusted path of its existing drive-0
+copy to `loadState`. A restore can move that copy's in-memory state before
+or after guest writes. A subsequent explicit write-back commits the restored
+timeline through the normal atomic Disk II path.
 
 ## Delivery
 

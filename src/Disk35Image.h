@@ -102,6 +102,7 @@ public:
     bool loadReadOnlySession(const uint8_t* data, size_t size, std::string& error);
     bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
     bool loadSessionMedia(const uint8_t* data, size_t size, std::string& error, bool allowWritable);
+    bool bindSnapshotBacking(const std::string& backing);
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool sessionReplaceable() const { return (!dirty_ || detachedSession_) && !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }

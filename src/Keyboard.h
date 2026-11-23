@@ -62,6 +62,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <vector>
 
 namespace pom2 {
 
@@ -184,6 +185,9 @@ public:
         pasteHeld_.store(false, std::memory_order_relaxed);
         publish();
     }
+
+    void appendSdkState(std::vector<uint8_t>& out) const;
+    bool loadSdkState(const uint8_t* data, std::size_t size, bool apply);
 
     // Reset (construction / soft reset): abandon any in-flight paste and
     // drop the strobe. The latched byte itself is cleared too.

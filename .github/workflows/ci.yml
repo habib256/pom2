@@ -294,6 +294,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=ON \
+            -DPOM2_BUILD_LIBRETRO=ON \
             -DPOM2_FETCH_TOMHARTE=ON \
             -DPOM2_WERROR=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -459,6 +460,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DPOM2_ENABLE_TESTS=ON \
+            -DPOM2_BUILD_LIBRETRO=ON \
             -DPOM2_WERROR=ON
           cmake --build build --parallel 3
 
@@ -536,8 +538,8 @@ jobs:
       - name: Configure + build
         shell: cmd
         run: |
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=ON -DPOM2_PORTABLE_TESTS_ONLY=ON
-          cmake --build build --config Release --parallel 3 --target pom2_imgui test_cpu_cycle_count test_bus_fastpath test_memory_cpu_view test_pal_timing test_debugger test_w5100_socket_seam test_vidhd_card test_snesmax_card test_snapshot_environment test_snapshot_preflight test_session_snapshot test_session_machine test_atomic_file_replace
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="%VCPKG_INSTALLATION_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DPOM2_ENABLE_TESTS=ON -DPOM2_PORTABLE_TESTS_ONLY=ON -DPOM2_BUILD_LIBRETRO=ON
+          cmake --build build --config Release --parallel 3 --target pom2_imgui test_cpu_cycle_count test_bus_fastpath test_memory_cpu_view test_pal_timing test_debugger test_w5100_socket_seam test_vidhd_card test_snesmax_card test_snapshot_environment test_snapshot_preflight test_session_snapshot test_session_machine test_atomic_file_replace test_pom2_libretro
 
       # 77 is a SKIP here as everywhere (Pom2PortableTests.cmake), and the
       # media are fetched above, so a skip means a fixture went missing:
