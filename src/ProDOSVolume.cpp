@@ -78,7 +78,7 @@ constexpr std::size_t  kMaxRecursionDepth   = 16;
 // Bounds for the write-back walk (`decodeOneDir`). The image is guest RAM, so
 // a subdir key_pointer may point back at an ancestor or its own block, and a
 // depth cap does not bound the fan-out (12 self-referential entries to depth
-// 16 is 12^17 visits, each a real `create_directories`). The walk keeps a set
+// 16 is 12^17 visits, each touching the filesystem). The walk keeps a set
 // of expanded directory blocks (each walked once) and a budget on dirs made.
 // Blocks per directory chain. ProDOS bounds a directory only by its 16-bit
 // entry count and the volume, so neither may the decode: at 256 blocks
@@ -1252,12 +1252,26 @@ void noteUnsaved(ProDOSDecodeResult& r, const std::string& name)
     if (r.unsavedNames.size() < 4) r.unsavedNames.push_back(name);
 }
 
+// Two saves can create the same tree. libstdc++'s create_directories crashed
+// when a missing ancestor appeared during its walk. Create each directory
+// separately: create_directory succeeds if another writer created it first.
+void ensureDirectory(const fs::path& dir, std::error_code& ec)
+{
+    if (fs::is_directory(dir, ec)) return;
+    fs::create_directory(dir, ec);
+    if (ec != std::errc::no_such_file_or_directory) return;
+    const fs::path parent = dir.parent_path();
+    if (parent.empty() || parent == dir) return;
+    ensureDirectory(parent, ec);
+    if (!ec) fs::create_directory(dir, ec);
+}
+
 /// Is `dest` — a path the decode is about to create or write — still inside
 /// the served root once every symlink on the way has been followed?
 ///
 /// `isHostSafeProDOSName` vets the last component only. The guest can name a
 /// directory `LINK` where the host has a symlink `root/LINK` pointing out:
-/// `create_directories` follows it silently and every file under it lands
+/// Directory creation follows it silently and every file under it lands
 /// outside the jail (the scan hides symlinks, so the user never sees it).
 /// `weakly_canonical` resolves the components that exist and leaves the rest
 /// lexical — exactly the question. `dest` itself must not BE a symlink
@@ -1583,7 +1597,7 @@ void decodeOneDir(DecodeWalk& w,
                     continue;
                 }
                 std::error_code ec;
-                fs::create_directories(subDest, ec);
+                ensureDirectory(subDest, ec);
                 if (ec) {
                     pom2::log().warn("ProDOSVol",
                         "cannot create subdir " + subDest.string() + ": " + ec.message());
@@ -1890,13 +1904,8 @@ void decodeOneDir(DecodeWalk& w,
             // rename: leave it alone and write a fresh file instead.
             if (!renameFrom.empty() && !destStaysInsideRoot(w, renameFrom))
                 renameFrom.clear();
-            // The volume is a snapshot taken at MOUNT time; a host file the
-            // user edited since then is NEWER than that snapshot, and
-            // rewriting it here would silently revert the user's edit to
-            // the mount-time copy (reported as a successful save, no less).
-            // Preserve it and say so — the guest's own writes leave the
-            // host mtime alone, so they still land. The file about to be
-            // renamed is the one being overwritten, so it is the one asked.
+            // Preserve host edits made since mount. For a rename, check the
+            // original file's mtime before replacing it.
             if (w.newerThan) {
                 std::error_code mec;
                 const fs::path& probe = renameFrom.empty() ? dest : renameFrom;
@@ -1915,9 +1924,7 @@ void decodeOneDir(DecodeWalk& w,
                             if (current && hostBytes == data) continue;
                         }
                     }
-                    // Keep BOTH versions. The guest copy is written under a
-                    // hidden sibling tree so the next folder scan does not
-                    // turn it into another ProDOS directory entry.
+                    // The next folder scan skips the hidden tree of guest copies.
                     std::error_code relEc;
                     const fs::path relative = fs::relative(
                         fs::path(hostFolder), w.rootReal, relEc);
@@ -1928,7 +1935,7 @@ void decodeOneDir(DecodeWalk& w,
                         ++r.filesSkipped;
                         continue;
                     }
-                    fs::create_directories(baseCopy.parent_path(), relEc);
+                    ensureDirectory(baseCopy.parent_path(), relEc);
                     if (relEc) {
                         r.error = "cannot create conflict folder: " + relEc.message();
                         w.ioFailed = true;
@@ -2113,22 +2120,18 @@ ProDOSDecodeResult decodeVolumeToFolder(
     const std::size_t totalBlocks = image.size() / kBlockBytes;
 
     std::error_code ec;
-    fs::create_directories(hostFolder, ec);
+    ensureDirectory(hostFolder, ec);
     if (ec) {
         r.error = "cannot create host folder '" + hostFolder + "': " + ec.message();
         return r;
     }
 
-    // Every directory owns at least one block the walk expands once, so the
-    // volume's size bounds the directories a decode can create; a smaller
-    // budget (2048) silently dropped the guest's files past it (STORAGE-014 #4).
+    // Each directory owns at least one block, so the volume bounds the walk (STORAGE-014 #4).
     DecodeWalk walk{ image, totalBlocks, {}, std::max(kMaxDecodeDirs, totalBlocks),
                      kMaxLogicalBytes, kMaxDecodeReadBytes, r, false,
                      preserveNewerThan, stickyPreserved, convertText, {},
                      fs::file_time_type::clock::now(), {} };
-    // Resolved ONCE, before anything is written: every destination is checked
-    // back against this. `create_directories` above has just made sure the
-    // root exists, so this canonicalises a real directory.
+    // Resolve the existing root once for all destination checks.
     walk.mountNames = mountNames;
     walk.rootReal = fs::weakly_canonical(hostFolder, ec);
     if (ec || walk.rootReal.empty()) {

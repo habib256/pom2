@@ -43,6 +43,7 @@
 
 #include "FujiNetNetDevice.h"
 #include "FujiNetNetwork.h"   // the kNetErr* bytes are contract, not detail
+#include "SocketUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -112,6 +113,7 @@ struct HttpStub {
         th = std::thread([this, lfd] {
             const int c = ::accept(lfd, nullptr, nullptr);
             if (c < 0) return;
+            pom2::disableSigpipe(c);
             char buf[2048];
             const ssize_t r = ::recv(c, buf, sizeof buf - 1, 0);
             if (r > 0) { buf[r] = '\0'; seenRequest = buf; }
@@ -126,7 +128,7 @@ struct HttpStub {
             // any platform, and a short write would silently shorten the
             // very case that is about length.
             for (std::size_t off = 0; off < resp.size(); ) {
-                const ssize_t w = ::send(c, resp.data() + off, resp.size() - off, 0);
+                const auto w = pom2::sendNoSignal(c, resp.data() + off, resp.size() - off);
                 if (w <= 0) break;
                 off += static_cast<std::size_t>(w);
             }

@@ -1959,7 +1959,9 @@ int main()
     std::printf("prodos_volume_smoke: text mode + metadata OK\n");
     testHostConflictKeepsBothCopies();
     std::printf("prodos_volume_smoke: host conflict keeps both copies OK\n");
-    testConcurrentConflictCopiesNeverReplaceEachOther();
+    // Each fresh tree gives the writers another chance to race on its creation.
+    for (int attempt = 0; attempt < 64; ++attempt)
+        testConcurrentConflictCopiesNeverReplaceEachOther();
     std::printf("prodos_volume_smoke: concurrent conflict copies OK\n");
     testEmptyFolder();
     testSeedlingAndSapling();
