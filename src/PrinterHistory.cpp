@@ -272,11 +272,12 @@ uint64_t PrinterHistory::highestPageFileNumber() const
     return highest;
 }
 
-void PrinterHistory::resumeCountersFromDirectory()
+void PrinterHistory::resumeCountersFromDirectory(bool jobs)
 {
     const uint64_t highest = highestPageFileNumber();
     if (highest == std::numeric_limits<uint64_t>::max()) return;
     nextFile_ = std::max(nextFile_, highest + 1);
+    if (!jobs) return;
     // Job numbers have no on-disk trace of their own, but they are only ever
     // read back through the index that just failed to parse, so the only
     // requirement is that a new job does not claim a number a surviving page
@@ -476,7 +477,12 @@ void PrinterHistory::mergeForeignPages()
     const IndexState state = readIndex(/*keepMissing=*/true);
     std::vector<HistoryPage> disk = std::move(pages_);
     pages_ = std::move(own);
-    resumeCountersFromDirectory();
+    // Jobs only when the index did not parse: a parsed one already carried
+    // every job number (readIndex). Walking nextJob_ past the highest PNG on
+    // every page split a document in two whenever the writer thread had
+    // already landed the previous sheet's file (printer_history, macOS CI
+    // 2026-11-23).
+    resumeCountersFromDirectory(/*jobs=*/state != IndexState::Parsed);
     if (state != IndexState::Parsed) return;
     auto number = [](const HistoryPage& p) -> uint64_t {
         try { return std::stoull(p.file.substr(1, p.file.size() - 5)); }

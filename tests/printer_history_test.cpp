@@ -175,9 +175,14 @@ void testPagesGroupIntoJobs()
     assert(h.open(dir.string(), err));
 
     // Three sheets ejected back to back, as a three-page document does.
-    for (int i = 0; i < 3; ++i)
+    // flushPending lands each PNG before the next sheet: the interleaving
+    // in which the merge used to walk the job number past the highest file
+    // on disk and split the document (flaky on macOS CI, 2026-11-23).
+    for (int i = 0; i < 3; ++i) {
         assert(h.addPage(makePage(32, 24, static_cast<uint8_t>(i)), 0, 0,
                          8.0, 11.0, err));
+        h.flushPending();
+    }
 
     assert(h.size() == 3);
     const uint64_t job = h.pages()[0].job;

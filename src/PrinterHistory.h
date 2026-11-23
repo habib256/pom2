@@ -182,10 +182,11 @@ private:
     void trimToCap(std::vector<std::string>& evicted);
     /// Largest N over the `pNNNNNN.png` files actually present in `dir_`.
     uint64_t highestPageFileNumber() const;
-    /// Set `nextFile_`/`nextJob_` past every page file on disk. Used on the
-    /// two paths where no index says which numbers are taken (Bad, Missing) —
-    /// without it the next print overwrites `p000001.png`.
-    void resumeCountersFromDirectory();
+    /// Set `nextFile_` (and `nextJob_` when `jobs`) past every page file on
+    /// disk. Used on the two paths where no index says which numbers are
+    /// taken (Bad, Missing) — without it the next print overwrites
+    /// `p000001.png` — and by the merge, files only behind a parsed index.
+    void resumeCountersFromDirectory(bool jobs = true);
     void writerLoop();
     void startWriter();
     void stopWriter();
