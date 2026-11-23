@@ -469,6 +469,26 @@ gated like the ROM offer, would give a new user a library at once.
 **Decision needed:** whether POM2 offers third-party disks at all, even by
 download from their own host. Until then, not scheduled.
 
+<a id="release-016"></a>
+
+### RELEASE-016 — libretro: buildbot inclusion, RetroAchievements hardcore, shader presets
+
+**Priority:** 🟡 · **State:** Waiting for the owner for the public steps (2026-11-23).
+
+The core ships from `.github/workflows/libretro.yml`. The libretro GitLab
+recipe (`.gitlab-ci.yml`) is ready. Public steps, each the owner's decision:
+- a PR to `libretro/libretro-super` (core info + recipe);
+- a RetroAchievements hardcore approval request, with the rcheevos memory
+  map already proven (main RAM at 0, aux at `$10000`).
+
+Not public, doable now: **RetroArch shader presets** (`.slangp`) tuned for
+POM2's picture (composite, RGB, monochrome), shipped in the release zip. The
+core draws a CPU composite. The desktop's GPU CRT pass is not in it.
+
+**Acceptance criterion:** the presets load in RetroArch on the three desktop
+OSes and are named in `libretro/README.md`. The two public steps are done,
+or recorded as declined.
+
 <a id="release-015"></a>
 
 ### RELEASE-015 — Test-media archive update: deater's demos (pom2_media_20261119)

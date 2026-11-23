@@ -21,7 +21,7 @@ an explicit request before scheduling.
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
 | [STORAGE-017](#storage-017) | 🟢 | Ready | A2R 3.x flux import, ShrinkIt archives, multi-disk archives |
-| [STORAGE-018](#storage-018) | 🧊 | Frozen — needs a re-bless | 5.25" timeline re-based on the true LSS clock (8.17 cycles a cell) |
+| [STORAGE-018](#storage-018) | 🟠 | Ready: Glutton met the condition | 5.25" timeline on the true LSS clock + measured read jitter |
 
 <a id="storage-014"></a>
 
@@ -239,17 +239,44 @@ mount through `MediaSource` with the archive never written.
 
 <a id="storage-018"></a>
 
-## STORAGE-018 — 5.25" timeline re-based on the true LSS clock (8.17 cycles a cell)
+## STORAGE-018 — 5.25" timeline on the true LSS clock, with the measured read jitter
 
-**Priority:** 🧊 · **State:** Frozen: a deliberate, documented limit.
+**Priority:** 🟠 · **State:** Ready. The scheduling condition was met on 2026-11-23.
 
 The bit-cell platter turns 2.2 % fast: 8 LSS cycles of 488.9 ns per nominal
-4 µs cell (the block above `DiskImage::lssCyclesPerCell`). MAME runs it at
-real time. Fixing it moves the byte cadence every pinned disk test, the
-DIX/OLDSKOOL raster probes and the write-splice geometry are calibrated
-against, so it is a re-basing pass with a full corpus re-bless, not a
-constant swap. STORAGE-016 (fractional cells, shipped 2026-11-18) is the
-smaller step it builds on.
+4 µs cell (the block above `DiskImage::lssCyclesPerCell`), and every pulse
+is exactly where the cell puts it. FLUX tracks already use the true clock
+(`fluxBusHz_`). Bit tracks do not.
 
-**Scheduling condition:** a title that fails because of the 2.2 %, shown to
-pass at 8.17; then re-bless the corpus with the reason recorded.
+**The title that needs it: Glutton** (woz-a-day). It is the one protected
+disk of 37 that POM2 alone cannot boot
+([three-way audit](../audits/protected-woz-three-way-2026-11-23.md#glutton-not-fixed--what-is-known)).
+Its loader passes only when its wait loop reads a `$D7` in the first ~2
+cycles of a 12-cycle latch window, so that the count loop reads it again.
+
+- With phase-locked pulses that never happens. POM2: 706 failures in 150 s,
+  even with the true clock alone, and even replaying the real flux.
+- MAME gets there after 85 tries.
+- **[A] Applesauce's A2R capture** of the disk measures single cells at 28
+  to 36 ticks around 32.
+
+**Work:**
+1. WOZ bit cells take `optimal_bit_timing` ticks of real time on the
+   machine's LSS clock, as FLUX tracks do. `.dsk`/`.nib` keep exactly 8: an
+   Apple II writes a bit every 4 bus cycles.
+2. A per-revolution read jitter of ±2 ticks, drawn from a deterministic hash
+   of (revolution, cell) like the weak bits, so rewind, run-ahead and the
+   corpus stay reproducible.
+3. Writes onto a bit track are normalised per interval (cell += round(Δ /
+   cell)), as Applesauce does, so a guest write still lands one cell per bit.
+4. Re-bless the WOZ corpus titles and the DIX/OLDSKOOL probes, with the
+   reason recorded.
+
+**Acceptance criterion:**
+- Glutton reaches its title within 60 s, in the protected corpus.
+- Prisoner 2 (33), Mr. Do, Captain Goodnight, Prince of Persia, Bandits and
+  Phantasie keep booting.
+- `diskii_*`, `woz_*` and `dos33_save_smoke` pass.
+- **Also check:** the unpatched Prisoner 2. On the true clock its weak-bit
+  check lands about 2.3 % later, which is where it needs to be.
+

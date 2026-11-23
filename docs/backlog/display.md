@@ -22,6 +22,8 @@ an explicit request before scheduling.
 | [DISPLAY-008](#display-008) | 🧊 | Frozen — triage 2026-10-28 | "Smooth" interpolated sub-pixel mode |
 | [DISPLAY-010](#display-010) | 🟢 | Partial: F6 only | CRT parity refinements vs OpenEmulator |
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
+| [DISPLAY-013](#display-013) | 🟢 | Ready | Videx Videoterm: the nine other character sets |
+| [DISPLAY-014](#display-014) | 🟡 | To verify | //e unenhanced character ROM: a clone's file under Apple's name |
 
 <a id="display-001"></a>
 
@@ -225,3 +227,42 @@ decay. See [CHANGELOG](../../CHANGELOG.md) and `hgr_render_smoke`.
 - 🧊 **Pure-analog signal-level composite pipeline** *(deferred, academic)* —
   IIR on the signal itself before demod, against today's 1-bit signal + FIR.
   *5-10 d.* Frozen: an alternative to a pipeline that is already core and green.
+
+<a id="display-013"></a>
+
+## DISPLAY-013 — Videx Videoterm: the nine other character sets
+
+**Priority:** 🟢 · **State:** Ready (2026-11-23).
+
+The card has a primary and an alternate character-set socket. MAME offers 11
+sets for each (`a2videoterm.cpp:279-305` @ mame0288): ASCII, ASCII uppercase,
+APL, Epson block graphics, **French**, German, Katakana, Spanish,
+super/subscript, symbol (MAME marks it `BAD_DUMP`), and inverse.
+`VidexVideotermCard::loadCharRoms(normal, alternate)` already takes any pair,
+but POM2 catalogues only normal and inverse. The nine others are in
+RetroBIOS `bios/Arcade/MAME/a2vidtrm.zip` at the pinned commit.
+[ROM gap audit](../audits/rom-gaps-vs-mame-2026-11-23.md).
+
+**Acceptance criterion:** catalogue entries (RomFetch + RomCatalog, and the
+archive), a setting per socket in Slot Config, and a test that loads the
+French set and checks one of its accented glyphs on the card's own picture.
+
+<a id="display-014"></a>
+
+## DISPLAY-014 — //e unenhanced character ROM: a clone's file under Apple's name
+
+**Priority:** 🟡 · **State:** To verify (2026-11-23).
+
+`apple2e_char_us_unenh.rom` / `apple2e_char_2k.rom` match
+`u13.9433c-0202.rcl-zh-32.bin`, the CEC / Zijin clones' character ROM, not
+Apple's 342-0133-A. The two differ in 32 glyphs, codes `$60-$7F` of the
+first bank: lowercase there, punctuation on Apple's chip. Today nothing on
+screen changes. POM2, like MAME, masks `$40-$7F` outside ALTCHAR and moves
+`$60-$7F` to `$E0-$FF` with it (`lookupCsbitsGlyph`). The real dump is
+already downloaded with the unenhanced firmware (`apple2e.zip`).
+[ROM gap audit](../audits/rom-gaps-vs-mame-2026-11-23.md).
+
+**Acceptance criterion:** the catalogue serves 342-0133-A under both names
+(the old file still accepted). [F] Settled by: a photo of an unenhanced //e
+showing codes `$60-$7F` in both character sets, which says whether those
+cells are ever read.

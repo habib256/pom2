@@ -25,6 +25,7 @@ an explicit request before scheduling.
 | [AUDIO-009](#audio-009) | 🟢 | Implemented 2026-11-18; Ultima V run pending | Passport MIDI Music Card |
 | [AUDIO-013](#audio-013) | 🟠 | Ready — chosen | WAV capture and Mockingboard VGM/YM export |
 | [AUDIO-014](#audio-014) | 🧊 | Needs explicit request | AY-3-8913 voicing option |
+| [AUDIO-015](#audio-015) | 🟠 | Ready | Votrax SC-01A on the Mockingboard Sound/Speech I |
 
 <a id="audio-011"></a>
 
@@ -323,3 +324,24 @@ envelopes. POM2 models the 8913's register read-back, not its sound.
 
 **Scheduling condition:** an explicit request, with a recording of a real
 8913 board as the oracle.
+
+<a id="audio-015"></a>
+
+## AUDIO-015 — Votrax SC-01A on the Mockingboard Sound/Speech I
+
+**Priority:** 🟠 · **State:** Ready (2026-11-23).
+
+POM2 has no SC-01, the speech chip of Sweet Micro's *Mockingboard
+Sound/Speech I*. MAME has one (its default //e Mockingboard, `a2mockingboard.cpp`
+@ mame0288 `VOTRAX_SC01A`, VIA 1 port B, A/R on CB1), and so does AppleWin.
+A program that speaks through it gets silence. If it waits for A/R on CB1, it
+hangs. The chip's internal phoneme ROM `sc01a.bin` (512 B) is in RetroBIOS
+at the pinned commit (`bios/Arcade/Arcade/votrax.zip`). MAME's `votrax.cpp`
+(BSD-3) simulates the chip from it. Port it the way the SSI263 and the
+MEA8000 were ported, as a Mockingboard variant (`mockingboard_variant`),
+with its own catalogue entry and grade-D pin table.
+
+**Acceptance criterion:** a speech title that writes the SC-01 (to name
+before starting, e.g. one of Sweet Micro's demo disks) speaks, and its A/R
+handshake advances it. The phoneme timing is pinned against MAME's at the
+same clock, and `sc01a.bin` is catalogued and in `pom2_firm.zip`.

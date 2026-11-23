@@ -40,6 +40,13 @@ belongs in `docs/audits/` and the task links to it.
 
 ## Already done — do not schedule again
 
+**2026-11-23 batch** (CHANGELOG of that date): the three-way protected-WOZ
+round against MAME and AppleWin; Mr. Do's rounded bit timing
+(`WozBitTiming.h`); Mr. Do, Lady Tut and Cyclod in the protected corpus; the
+`printer_history` job race; the ROM gap audit against MAME's catalogue.
+**Looked at and not done:** Glutton by the clock alone or by replaying its
+real flux (both fail; STORAGE-018 holds what does work).
+
 **2026-11-19 batch** (CHANGELOG of that date): the paravirtual test port
 and `pom2_headless --load` (ARCH-017); Mockingboard VGM/YM and mixed-bus WAV
 capture (AUDIO-013); per-drive link parameters, `--mount sNdM:path` and the

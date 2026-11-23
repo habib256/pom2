@@ -25,6 +25,7 @@ It separates reproduced defects, tested contracts and remaining hardware limits.
 | [CARDS-010](#cards-010) | 🧊 | Frozen | Apple 3.5" Controller IWM-level |
 | [CARDS-017](#cards-017) | 🟢 | Ready | Hayes AT modem layer on the Super Serial Card |
 | [CARDS-018](#cards-018) | 🧊 | Frozen — media found, low value | Synetix SuperSprite |
+| [CARDS-019](#cards-019) | 🟢 | To verify | Apple II Parallel Printer Interface: the real PROM |
 
 <a id="cards-016"></a>
 
@@ -413,3 +414,19 @@ Other implementations, both grade D:
   horizontal-alignment pot puts it; `$C0F7` "centers" it. The vertical
   alignment of the two 192-line rasters is also unstated. A photo of a mixed
   screen on a real card would settle both.
+
+<a id="cards-019"></a>
+
+## CARDS-019 — Apple II Parallel Printer Interface: the real PROM
+
+**Priority:** 🟢 · **State:** To verify (2026-11-23).
+
+POM2's `printer` card is synthetic. MAME's `a2parprn` dumps its 256-byte
+PROM (`prom.b4`, SHA-1 `c6788835…`, RetroBIOS `bios/Arcade/MAME/a2parprn.zip`).
+**AppleWin's `Parallel.rom` is a different file** (`c75c7515…`), and
+AppleWin's default printer card is this one. First find out which is Apple's
+chip and why the other differs.
+
+**Acceptance criterion:** the difference explained and graded. If the real
+PROM is confirmed, the card runs it (LLE) when present, as the other
+ROM-gated cards do.

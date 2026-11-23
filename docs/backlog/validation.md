@@ -19,6 +19,7 @@ an explicit request before scheduling.
 | [VALIDATION-003](#validation-003) | 🟡 | Partial: automated boot/gameplay checks | Spiradisc / RWTS18 |
 | [VALIDATION-004](#validation-004) | 🟢 | Needs oracle: hardware or MAME romsets | DOS 3.1 / 3.1.1 `]` anomaly |
 | [VALIDATION-005](#validation-005) | 🟢 | Unknown: GUI-only, retest on the current release | A2 File Cmd one-in-three GUI-only DHGR failure |
+| [VALIDATION-007](#validation-007) | 🟠 | Ready | A wide three-way corpus: POM2, MAME, AppleWin — //e, //c, PAL |
 
 <a id="validation-006"></a>
 
@@ -168,3 +169,31 @@ GPU-presented window — the stage the 2026-09-09 report pointed at — so a
 presentation-only fault would not show in this test; the report itself was
 against A2FC 0.6.8. Reopen on a new sighting with the window captured.
 
+<a id="validation-007"></a>
+
+## VALIDATION-007 — A wide three-way corpus: POM2, MAME, AppleWin — //e, //c, PAL
+
+**Priority:** 🟠 · **State:** Ready (2026-11-23).
+
+The [three-way round of 2026-11-23](../audits/protected-woz-three-way-2026-11-23.md)
+covered 37 protected woz-a-day titles on //e and ][+, judged by eye at 45-90 s.
+The tooling now exists:
+- `tools/libretro_corpus.py` drives POM2 and AppleWin's libretro cores;
+- a MAME runner takes a snapshot at a given emulated second;
+- a Lua debugger probe logs a loader's branches in MAME.
+
+**Work:**
+- Hundreds of titles (woz-a-day by machine, with each item's own boot
+  notes).
+- A //c MAME set assembled from POM2's //c dump plus `342-0132-c.e12` from
+  RetroBIOS `apple2e.zip`.
+- The PAL machines.
+- An automatic verdict (text-page witness plus a per-title expected screen)
+  instead of the eye.
+
+Every title POM2 alone fails gets a domain entry. Every title MAME or
+AppleWin alone fails is recorded there as evidence.
+
+**Acceptance criterion:** a published table of at least 200 titles across
+][+, //e, //c and PAL, with a pass count per emulator. The tool lives in
+`tools/`, and each POM2-only failure is filed.

@@ -1,12 +1,13 @@
 # POM2 — TODO
 
-Action queue reconciled **2026-11-18** (after the research of the same day:
-competing emulators, hardware references, developer tooling, distribution,
-community needs); ARCH-017, AUDIO-013, WASM-004, UI-017, UI-021 and
-WASM-005 closed 2026-11-19, then DISPLAY-002 (measured) and VALIDATION-005
-(not reproduced). Current release: **v1.2.2**. The index covers **40 active
-domain entries**, **10 release items** and **30 frozen entries**; each task's
-acceptance criterion and evidence live in its domain entry, not here.
+Action queue reconciled **2026-11-23**, after the three-way round against MAME
+and AppleWin ([protected WOZ](docs/audits/protected-woz-three-way-2026-11-23.md))
+and the [ROM gap audit](docs/audits/rom-gaps-vs-mame-2026-11-23.md). Current
+release: **v1.2.2**. The index covers **47 active domain entries**, **11
+release items** and **29 frozen entries**. Each task's acceptance criterion
+and evidence live in its domain entry, not here. The Apple IIgs is not
+POM2's: it is the separate **pom2gs** program
+([scope](docs/decisions/project-scope.md#out-of-scope)).
 
 The [scope ruling](docs/decisions/project-scope.md#the-scope-ruling) still
 applies: core correctness is proactive; supported devices are fixed on report;
@@ -17,18 +18,23 @@ How a task moves and what must not be scheduled again:
 
 ## 0. Chosen direction — in this order
 
-Chosen on 2026-11-18. The research found POM2 ahead of AppleWin, MAME and
-izapple2 on the emulated machine and behind them on the host side; this
-track makes it the best-tooled Apple II emulator for developers and the
-demoscene. One at a time, each closed by its own acceptance test.
+**Silicon parity: POM2 runs everything the iron runs** (owner, 2026-11-23).
+On 37 protected disks POM2 already boots every title MAME and AppleWin boot
+except one. It is the only one of the three that boots both The Newsroom and
+the FLUX images, and Lady Tut on a ][. One at a time, each closed by its own
+acceptance test:
 
 | Order | Task | What closes it |
 |---|---|---|
-| 1 | [UI-015](docs/backlog/ui-debugger.md#ui-015) — MCP + debugger verbs | Claude Code drives `/mcp`: breakpoint, run-to, registers, wait for screen text — in a ctest. Read the current MCP revision first. |
-| 2 | [UI-018](docs/backlog/ui-debugger.md#ui-018) — DAP for VS Code | Needs UI-015. A cc65 program stops on a `.s` breakpoint and steps by source line, both banks. |
+| 1 | [STORAGE-018](docs/backlog/storage.md#storage-018) — the true LSS clock + measured read jitter | Glutton boots (the one title POM2 alone fails); the protected corpus keeps booting, re-blessed. |
+| 2 | [AUDIO-015](docs/backlog/audio.md#audio-015) — Votrax SC-01A | A Mockingboard Sound/Speech I title speaks and its A/R handshake advances. |
+| 3 | [VALIDATION-007](docs/backlog/validation.md#validation-007) — wide three-way corpus | ≥ 200 titles on ][+, //e, //c and PAL with a pass count per emulator; each POM2-only failure filed. |
 
-Next on the same track, any order: [UI-016](docs/backlog/ui-debugger.md#ui-016)
-expression conditions / access counters / code-data log,
+The developer-tooling track chosen on 2026-11-18 comes next:
+[UI-015](docs/backlog/ui-debugger.md#ui-015) MCP + debugger verbs, then
+[UI-018](docs/backlog/ui-debugger.md#ui-018) DAP for VS Code (needs UI-015).
+After them, in any order: [UI-016](docs/backlog/ui-debugger.md#ui-016)
+expression conditions / access counters / code-data log, and
 [UI-019](docs/backlog/ui-debugger.md#ui-019) reverse debugging (design first).
 
 ## 1. Doable alone, now
@@ -42,6 +48,16 @@ expression conditions / access counters / code-data log,
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | A2R 3.x import into the FLUX engine; ShrinkIt; multi-disk zips as a swap list. |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
+
+**ROMs MAME has and POM2 lacks** ([audit](docs/audits/rom-gaps-vs-mame-2026-11-23.md)), each from
+RetroBIOS at the pinned commit; a new catalogue entry also goes into `pom2_firm.zip`:
+
+| Task | Concrete next action |
+|---|---|
+| [DISPLAY-013](docs/backlog/display.md#display-013) | The nine Videoterm character sets (French among them): catalogue + a setting per socket. |
+| [INPUT-008](docs/backlog/input.md#input-008) | The //e and //c encoder ROMs as the test oracle for the key map. |
+| [DISPLAY-014](docs/backlog/display.md#display-014) | Serve Apple's 342-0133-A instead of the clone file; settle the `$60-$7F` question. |
+| [CARDS-019](docs/backlog/cards.md#cards-019) | Explain why AppleWin's parallel printer PROM differs from MAME's, then run the real one. |
 
 **Correctness and internals** — recommended order (durability and testable
 correctness before cleanup):
@@ -74,6 +90,7 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 | Task | What is needed |
 |---|---|
 | [RELEASE-012](docs/backlog/release.md#release-012) | POM2's own archives serve the corrected `apple2p.rom` since 2026-11-19; only the RetroBIOS report remains, deferred by the owner. |
+| [RELEASE-016](docs/backlog/release.md#release-016) | libretro buildbot PR and RetroAchievements hardcore request (public steps). The RetroArch shader presets in it can be done now. |
 
 **Decisions:**
 
@@ -111,7 +128,7 @@ Release obligations: rerun the candidate checklist for each real release.
 | Task | Missing evidence |
 |---|---|
 | [VALIDATION-001](docs/backlog/validation.md#validation-001) | Real //c head movement for PH1→PH3 gaps of 4…512 cycles during motor coast. |
-| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Gameplay-level protected checks against hardware (Captain, Prince, Bandits, Phantasie, Prisoner 2 boot/entry exist). |
+| [VALIDATION-003](docs/backlog/validation.md#validation-003) | Gameplay-level protected checks against hardware (Captain, Prince, Bandits, Phantasie, Prisoner 2, Mr. Do, Lady Tut, Cyclod boot/entry exist). |
 | [VALIDATION-004](docs/backlog/validation.md#validation-004) | DOS 3.1/3.1.1 on a ][+ with 13-sector PROMs, or an independent setup. |
 | [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Real Language Card power-on bank with distinct bytes in both banks. |
 | [DISPLAY-001](docs/backlog/display.md#display-001) | Real VidHD SHR 320/640/fill and `$C022`/`$C034` captures (Total Replay 6.x's SHR art makes it more pressing). |
@@ -130,12 +147,12 @@ Release obligations: rerun the candidate checklist for each real release.
 
 ## 5. Frozen — no implementation scheduled
 
-All **30** formal frozen entries. Each needs its domain's reopening condition
+All **29** formal frozen entries. Each needs its domain's reopening condition
 (named software or an explicit request), not an attractive estimate.
 
 | Domain | Frozen entries |
 |---|---|
-| Storage | [STORAGE-005](docs/backlog/storage.md#storage-005) multi-partition; [STORAGE-007](docs/backlog/storage.md#storage-007) half-track NIB; [STORAGE-008](docs/backlog/storage.md#storage-008) Floppy Emu modes; [STORAGE-010](docs/backlog/storage.md#storage-010) NIB revolution; [STORAGE-018](docs/backlog/storage.md#storage-018) 8.17-cycle re-basing (needs a re-bless). |
+| Storage | [STORAGE-005](docs/backlog/storage.md#storage-005) multi-partition; [STORAGE-007](docs/backlog/storage.md#storage-007) half-track NIB; [STORAGE-008](docs/backlog/storage.md#storage-008) Floppy Emu modes; [STORAGE-010](docs/backlog/storage.md#storage-010) NIB revolution. |
 | Audio/cassette | [AUDIO-004](docs/backlog/audio.md#audio-004) resampling; [AUDIO-005](docs/backlog/audio.md#audio-005) analog stage; [AUDIO-008](docs/backlog/audio.md#audio-008) DAC; [AUDIO-014](docs/backlog/audio.md#audio-014) AY-3-8913 voicing; [CASSETTE-001](docs/backlog/cassette.md#cassette-001) enriched playback. |
 | Display | [DISPLAY-003](docs/backlog/display.md#display-003) analog composite; [DISPLAY-008](docs/backlog/display.md#display-008) smooth interpolation; [DISPLAY-012](docs/backlog/display.md#display-012) 80-column colour phase. |
 | Cards | [CARDS-002](docs/backlog/cards.md#cards-002) Workstation/LocalTalk; [CARDS-006](docs/backlog/cards.md#cards-006) SCSI (MAME reference since 2026-08, no named software); [CARDS-007](docs/backlog/cards.md#cards-007) VGA; [CARDS-008](docs/backlog/cards.md#cards-008) UDC; [CARDS-010](docs/backlog/cards.md#cards-010) IWM-level controller; [CARDS-018](docs/backlog/cards.md#cards-018) SuperSprite (disks + manual found 2026-11-19; frozen on value, the overlay is display work). |

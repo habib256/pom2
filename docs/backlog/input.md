@@ -13,8 +13,13 @@ an explicit request before scheduling.
 
 ## Task index
 
-No open task: every entry below is implemented (the last on 2026-11-06)
-and kept only so incoming links still resolve.
+| Task | Priority | State | Subject |
+|---|---|---|---|
+| [INPUT-008](#input-008) | 🟢 | Ready | //e and //c keyboard encoder ROMs as the reference for the key map |
+
+
+Every other entry below is implemented (the last on 2026-11-06) and kept only
+so incoming links still resolve.
 
 <a id="input-007"></a>
 
@@ -155,3 +160,20 @@ and keep 2/3 centered, because extra raw axes may be triggers.
 `joystick_square_gate` covers independent sticks, right-axis inversion,
 deadzone and disconnect fallback. The historical unbound-axis report is
 superseded; see [CHANGELOG](../../CHANGELOG.md).
+
+<a id="input-008"></a>
+
+## INPUT-008 — //e and //c keyboard encoder ROMs as the reference for the key map
+
+**Priority:** 🟢 · **State:** Ready (2026-11-23).
+
+`341-0132-D` (//e) and `342-0132-C` (//c) are the AY-5-3600 encoder ROMs:
+key matrix × Shift/Ctrl/Caps → ASCII. POM2 maps host characters to ASCII by
+hand (`Keyboard.cpp`, `KeyChord.h`). Both ROMs are in RetroBIOS's
+`apple2ee.zip` / `apple2e.zip`, at the pinned commit. POM2 already holds the
+French one (`342-0326-a.f12`).
+
+**Acceptance criterion:** a test that decodes the ROM table and checks
+POM2's map against it for every Shift/Ctrl combination of the US keyboard.
+Each difference is either fixed or recorded as an intentional host-side
+choice.
