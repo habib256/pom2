@@ -21,6 +21,7 @@
 // `update_axis<>`.
 
 #include "MouseCard.h"
+#include "ByteIO.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -491,4 +492,25 @@ void MouseCard::loadSnapshotState(const uint8_t* data, std::size_t len)
     // firmware WRITES port B, which it next does after the host services
     // the request that was already outstanding.
     assertIrq((mcu.getPortPins(1) & 0x40) == 0);
+}
+
+void MouseCard::appendSdkInput(std::vector<uint8_t>& out) const
+{
+    out.insert(out.end(), {hostX.load(), hostY.load(), hostSetX_, hostSetY_, uint8_t(hostButton.load())});
+    for (const auto& axis : hostAcc_)
+        pom2::byteio::putU32(out, static_cast<uint32_t>(axis.load()));
+}
+
+bool MouseCard::loadSdkInput(const uint8_t* data, std::size_t size, bool apply)
+{
+    if (!data || size != 13 || data[4] > 1) return false;
+    pom2::byteio::Reader r(data + 5, size - 5);
+    const auto dx = static_cast<int32_t>(r.u32()), dy = static_cast<int32_t>(r.u32());
+    constexpr int32_t limit = 1 << 24;
+    if (dx < -limit || dx > limit || dy < -limit || dy > limit) return false;
+    if (!apply) return true;
+    hostX.store(data[0]); hostY.store(data[1]);
+    hostSetX_ = data[2]; hostSetY_ = data[3]; hostButton.store(data[4] != 0);
+    hostAcc_[0].store(dx); hostAcc_[1].store(dy);
+    return true;
 }

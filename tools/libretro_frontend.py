@@ -37,19 +37,29 @@ class AVInfo(C.Structure):
                 ("aspect", C.c_float), ("fps", C.c_double), ("sample_rate", C.c_double)]
 
 
+class DiskControl(C.Structure):
+    _fields_ = [("set_eject_state", C.CFUNCTYPE(C.c_bool, C.c_bool)),
+                ("get_eject_state", C.CFUNCTYPE(C.c_bool)),
+                ("get_image_index", C.CFUNCTYPE(C.c_uint)),
+                ("set_image_index", C.CFUNCTYPE(C.c_bool, C.c_uint)),
+                ("get_num_images", C.CFUNCTYPE(C.c_uint))]
+
+
 class Frontend:
     def __init__(self, binary, system, saves, options):
         self.system = str(system).encode()
-        self.saves = str(saves).encode()
+        self.saves = str(saves).encode() if saves is not None else None
         self.options = {key.encode(): val.encode() for key, val in options.items()}
         self.option_names = set()
         self.keyboard = None
+        self.disk = None
         self.video = None
         self.format = 0
         self.frames = 0
         self.audio_frames = 0
         self.polls = 0
         self.pad = set()
+        self.analog = (0, 0)
         self.core = C.CDLL(str(binary))
         self.core.retro_api_version.restype = C.c_uint
         if self.core.retro_api_version() != 1:
@@ -88,6 +98,9 @@ class Frontend:
             return self.format in (0, 1, 2)
         elif command == 12:  # SET_KEYBOARD_CALLBACK
             self.keyboard = KEYBOARD(C.cast(data, C.POINTER(C.c_void_p))[0])
+        elif command in (13, 58):  # SET_DISK_CONTROL[_EXT]_INTERFACE
+            # Both versions start with the same eject/index/count callbacks.
+            self.disk = DiskControl.from_buffer_copy(C.string_at(data, C.sizeof(DiskControl)))
         elif command == 15:  # GET_VARIABLE
             var = Variable.from_address(data)
             if var.key not in self.options:
@@ -124,7 +137,18 @@ class Frontend:
         return frames
 
     def input_state(self, port, device, index, button):
+        if port == 0 and device == 5 and index == 0 and button < 2:
+            return self.analog[button]
         return int(port == 0 and device == 1 and button in self.pad)
+
+    def swap_disk(self, index):
+        disk = self.disk
+        if disk is None or index >= disk.get_num_images():
+            raise RuntimeError("frontend disk swap requires an available playlist entry")
+        if not (disk.set_eject_state(True) and disk.get_eject_state()
+                and disk.set_image_index(index) and disk.set_eject_state(False)
+                and not disk.get_eject_state() and disk.get_image_index() == index):
+            raise RuntimeError(f"frontend could not insert playlist entry {index}")
 
     def load(self, path):
         game = Game(str(path).encode(), None, 0, None) if path else None

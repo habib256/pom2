@@ -11,11 +11,14 @@ If you have a release ZIP for your operating system and architecture, put
 the file from `cores/` in RetroArch’s **Cores** directory and the file from
 `info/` in **Core Info**. Find both locations under **Settings → Directory**.
 
-From a checkout with the [POM2 build dependencies](../README.md#build-it),
-run:
+From a fresh source checkout, use CMake 3.16 or later and a native C++17
+toolchain. The module-only build uses the same core as the SDK and skips
+the desktop and browser frontends, including their ImGui setup and
+GLFW, OpenGL and vcpkg dependencies. Set `POM2_ENABLE_SLIRP=OFF` to omit
+the optional networking backend.
 
 ```sh
-cmake -S . -B build-libretro -DCMAKE_BUILD_TYPE=Release -DPOM2_BUILD_LIBRETRO=ON -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+cmake -S . -B build-libretro -DCMAKE_BUILD_TYPE=Release -DPOM2_LIBRETRO_ONLY=ON -DPOM2_ENABLE_SLIRP=OFF
 cmake --build build-libretro --config Release --target pom2_libretro --parallel
 ```
 
@@ -24,6 +27,9 @@ Copy `pom2_libretro.dylib` (macOS), `pom2_libretro.so` (Linux) or
 `pom2_libretro.info` into its **Core Info** directory. Both files are in the
 build directory, or its `Release` subdirectory with a multi-configuration
 generator. RetroArch lists these directories under **Settings → Directory**.
+
+For a combined desktop and module build, use `-DPOM2_BUILD_LIBRETRO=ON`
+with the [desktop build dependencies](../README.md#build-it).
 
 With the [C++ SDK](../docs/SDK.md) installed from the same checkout, the
 frontend can also be configured on its own:
@@ -62,11 +68,26 @@ The original images retain their original bytes. Reopen the same image or
 playlist from the same location to resume using those disks. A locked image
 or read-only file reports write protection to the guest.
 
-For BASIC and Disk II games, **Quick Menu → Save State / Load State**
-captures the running machine, including the active disk and the keyboard.
+**Quick Menu → Save State / Load State** captures the running machine,
+including its active disk, keyboard, audio and position within the video
+frame. This works with BASIC, Disk II, DIX and Apple II DeskTop.
 Enable **Settings → Frame Throttle → Rewind** to move back through play.
 State availability depends on the attached cards. Use in-game disk saves
 for configurations where RetroArch reports that states are unavailable.
+Disk changes made on another side persist across a rewind. When two
+instances open the same saved side, the first holds the write lock and the
+second can read its latest committed data.
+Restore a state with the same media paths, playlist order, firmware and
+hardware configuration that produced it.
+
+The state buffer is fixed for each play session. Starting BASIC still
+reserves room for a hot-inserted 800 KiB SmartPort disk. For a larger WOZ,
+load it directly or list it in the playlist at startup so the core can
+reserve enough space. A disk that outgrows the buffer can still be played,
+and the first failed save reports the limit. Embedded WOZ snapshots support
+images up to 16 MiB. Apple II DeskTop snapshots preserve SmartPort 2IMG
+sector data and AppleMouse motion. Writable 2IMG disks use the existing
+private working copy for write-back after restoration.
 
 ## Change disks during a game
 
@@ -135,3 +156,23 @@ and Space brakes. If RetroArch intercepts letter keys as hotkeys, turn on
 
 The module uses the MIT-licensed
 [libretro API header at ae22debd](https://github.com/libretro/libretro-common/blob/ae22debd425c33fe355ac2e51d9a140d7e8b3fa6/include/libretro.h).
+
+## Compatibility and distribution
+
+The [compatibility report](../docs/audits/libretro-compatibility-2026-11-23.md)
+lists the firmware, media, guest actions, timings and reproduction commands
+for POM2 and AppleWin. To replay the complete DIX tour through the built
+module, run this command from the source checkout.
+
+```sh
+python3 tests/libretro_profiles.py build-libretro/pom2_libretro.dylib roms dix packaging/disks/DIX-fix.po --full
+```
+
+The [native package workflow](../.github/workflows/libretro.yml) builds
+Linux x64, macOS arm64 and Windows x64. Each runner checks the extracted
+module, starts Dirtbike in RetroArch, closes the process during boot and
+verifies that the next launch resumes from the saved state. Core releases
+use the `libretro-v*` tag series and include checksums and verification
+results. The core metadata, firmware names and user guide are ready for
+upstream review. Inclusion in the Core Downloader is handled by Libretro.
+[Upstream core integration](https://docs.libretro.com/development/cores/developing-cores/#add-your-core-to-libretro-infrastructure).

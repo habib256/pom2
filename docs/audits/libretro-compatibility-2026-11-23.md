@@ -1,10 +1,19 @@
 # Apple II Libretro compatibility and loading benchmark
 
-The benchmark runs 12 NTSC Enhanced //e scenarios through the same headless Libretro frontend. Each scenario requires a guest-visible outcome. Two POM2 profiles exercise original Disk II timing and accelerated loading. A third profile runs AppleWin `ra2` with comparable machine settings.
+The benchmark runs 12 NTSC Enhanced //e scenarios through the same headless Libretro frontend. Each scenario requires a guest-visible outcome. **Use `pom2-fast` to evaluate the default shipping load mode.** Use `pom2-original` for the same build with original Disk II timing. A third profile runs AppleWin `ra2` with comparable machine settings.
 
 ## Reproduce
 
 Run from the POM2 checkout with the regular test media present. `tools/fetch_test_media.py --strict` stages the optional fixtures. The frontend uses Python 3 and the benchmark's screen checks use Pillow. No RetroArch installation is required.
+
+For the two protected scenarios, follow the [protected corpus retrieval recipe](../../tests/corpus/protected.md#fetch-temporarily-and-replay) into a temporary directory outside the checkout. Provide `captain-a.woz`, `captain-b.woz`, `prisoner2a-t33.woz` and `prisoner2a-unpatched.woz`. To get the last file, save the original `Prisoner 2 - Disk 1, Side A.woz` entry from the Prisoner II archive before editing the INFO byte and recomputing the CRC in that recipe. The benchmark checks all four SHA-256s before loading.
+
+```sh
+curl -fL https://github.com/AppleWin/AppleWin/files/7645198/Prisoner.2.-.Disk.1.Side.A.zip \
+  -o "$media_dir/prisoner-ii.zip"
+unzip -p "$media_dir/prisoner-ii.zip" 'Prisoner 2 - Disk 1, Side A.woz' \
+  > "$media_dir/prisoner2a-unpatched.woz"
+```
 
 ```sh
 cmake -S . -B build -DPOM2_BUILD_LIBRETRO=ON -DCMAKE_BUILD_TYPE=Release
@@ -23,49 +32,64 @@ python3 tools/libretro_bench.py \
   --core pom2-fast=build/pom2_libretro.dylib \
   --core applewin=/tmp/applewin-audit/build/source/frontends/libretro/applewin_libretro.dylib \
   --applewin-source /tmp/applewin-audit \
+  --protected-media "$media_dir" \
   --json /tmp/apple2-libretro-bench.json \
   --captures /tmp/apple2-libretro-frames
 ```
 
-On Linux use `.so` modules. Omit AppleWin arguments for a POM2-only run. Repeat `--scenario` to select workloads. `--json` records library and media SHA-256 digests, frontend options, host frame counts, audio sample and input polling counts. `--captures` adds PNG evidence at each verified screen and on failure. Missing fixtures report `SKIP`. A missed checkpoint, rejected load, or changed input-copy digest reports `FAIL` and makes the process exit with status 1.
+On Linux use `.so` modules. Omit AppleWin arguments for a POM2-only run. Repeat `--scenario` to select workloads. `--json` records library and media SHA-256 digests, frontend options, host frame counts, audio sample and input polling counts, and comparable timing statistics. `--captures` adds PNG evidence at each verified screen and on failure. Missing fixtures report `SKIP`. A missed checkpoint, rejected load, or changed input-copy digest reports `FAIL` and makes the process exit with status 1.
 
 ## What is compared
 
-- Both cores load separate temporary copies of identical disk images and receive the same Libretro keyboard events. The script compares each copy byte for byte by SHA-256 after unloading. BASIC starts without content and runs `PRINT 1111+1234`; the witness checks the displayed glyphs `2345`.
-- POM2 explicitly selects Enhanced //e NTSC. AppleWin selects Enhanced //e, 60 Hz, RGB video, no expansion cards in slots 3, 4, 5 or 7, and a write-protected Disk II in drive 1. It runs its upstream Libretro execution path with its own disk controller implementation. POM2 reports 60.0544 Hz and AppleWin reports 60.0000 Hz.
+- Both cores load separate temporary read-only copies of identical disk images and receive the same Libretro keyboard, analog and disk-control events. The script compares each copy byte for byte by SHA-256 after unloading. BASIC starts without content and runs `PRINT 1111+1234`. The witness checks the displayed glyphs `2345`.
+- POM2 explicitly selects Enhanced //e NTSC and uses the core's read-only mode without a save directory. AppleWin selects Enhanced //e, 60 Hz, RGB video, no expansion cards in slots 3, 4, 5 or 7, and a write-protected Disk II in drive 1. It runs its upstream Libretro execution path with its own disk controller implementation. POM2 reports 60.0544 Hz and AppleWin reports 60.0000 Hz.
 - The Enhanced //e system ROM (the upper 16 KiB of POM2's 32 KiB file), character ROM, and Disk II boot PROM match AppleWin's built-in resources by SHA-256. POM2 was also given its P6 sequencer ROM. AppleWin's software sequencer is a separate implementation.
 - Screen checks normalize the active video area to 280 × 192, then use expected regions, glyphs and changes. Loading checkpoints need two samples eight frontend frames apart. The benchmark counts calls to `retro_run` to the confirmation sample. Reported seconds divide that count by the core's reported output rate. The host runs without pacing, so this is front-end time at nominal playback rate and independent of the machine's wall-clock throughput.
-- This audit checks the screens and actions listed below. It does not grade pixel fidelity, audio accuracy, copy protection, two-drive titles, or PAL/SmartPort DIX. Heartbeat and Monster Splash are visual checkpoints with no Mockingboard configured in either profile.
+- ChromaBreak boots the checked ProDOS volume and reads five signed analog X values with Y held at the paddle floor. The benchmark locates the moving paddle in five distinct, increasing screen positions. The two WOZ cases exercise Captain Goodnight's protected Boot A and disk-turn path, and Prisoner II's timing-sensitive protection. The Prisoner II original at timing 32 serves as a 5,400-frame negative control with its own fresh load. The timed result comes from the patched capture at timing 33 reaching the resignation code.
+- The scope is the displayed milestones, disk-turn, and analog behavior listed below. Heartbeat and Monster Splash are visual checkpoints with no Mockingboard configured in either profile. PAL, SmartPort, FLUX images, audio quality and full playthroughs require separate runs.
 
 ## Local results
 
+Measured on arm64 macOS 15.8.3 with release builds, Python 3.14.7 and Pillow 13.0.0. POM2 identified itself as 1.2.2, from the working tree based on `34e0375cec349dfdf7a76a81a3fbfb1cb9175be4`. AppleWin identified itself as 1.32.1.0 and was built without source changes from `6e6df2cb7503af105422a01cfa08a0ebc48486a3`.
 
-Measured on arm64 macOS 15.8.3 with release builds, Python 3.14.7 and Pillow 13.0.0. POM2 identified itself as 1.2.2, from the working tree based on `93ad35bc4097f247731a85eb8aaf30fbe8a84258`. AppleWin identified itself as 1.32.1.0 and was built without source changes from `6e6df2cb7503af105422a01cfa08a0ebc48486a3`.
+**POM2 original 12/12, POM2 accelerated 12/12, AppleWin 11/12.** All fixtures ran and their disk image digests were unchanged after unloading. The table reports *frontend frames / seconds* to the final witness, including scripted actions and waits.
 
-**POM2 original 12/12, POM2 accelerated 12/12, AppleWin 11/12.** No fixture was skipped or input disk copy modified. The table reports *frontend frames / seconds* to the final witness, including scripted actions and waits. A second full run on the same binaries reproduced the outcome and final frame count of every scenario. Individual animated screenshots sometimes differed.
+A second full run reproduced all outcomes and both timing statistics. POM2 reproduced every final frame count in both modes. AppleWin reproduced ten of its eleven successful final frame counts. Its Prisoner II witness appeared at frame 4,634 on the repeat, 32 frames earlier than in the table.
 
 | Scenario | Verified result | POM2 original | POM2 accelerated | AppleWin |
 | --- | --- | ---: | ---: | ---: |
 | `applesoft-calculate` | No-content Applesoft prompt and exact `2345` result | 104 / 1.73 | 104 / 1.73 | Fail at 720 / 12.00 |
-| `dirtbike-track-menu` | HGR title, Return opens two-column track menu | 1,354 / 22.55 | 530 / 8.83 | 850 / 14.17 |
-| `dirtbike-race-throttle` | First race starts, rider is stationary before throttle, repeated A moves it | 1,692 / 28.17 | 844 / 14.05 | 1,252 / 20.87 |
-| `sokoban-help` | H opens help from the title | 922 / 15.35 | 482 / 8.03 | 818 / 13.63 |
+| `dirtbike-race-throttle` | Return opens the track menu and starts the race. Repeated A moves the rider | 1,692 / 28.17 | 844 / 14.05 | 1,188 / 19.80 |
 | `sokoban-move-undo` | Return enters tutorial, Right moves the character, U restores the board | 978 / 16.29 | 538 / 8.96 | 874 / 14.57 |
-| `chromabreak-paddle` | Space starts level one, Right moves the paddle across the lower field | 1,266 / 21.08 | 674 / 11.22 | 978 / 16.30 |
+| `chromabreak-prodos-analog` | Boot checked ProDOS volume, J selects joystick, five analog values move the paddle to five positions | 1,302 / 21.68 | 710 / 11.82 | 1,022 / 17.03 |
 | `a2filecmd-help` | DOS 3.3 file list, `?` shows commands, Escape returns to file list | 1,908 / 31.77 | 716 / 11.92 | 1,108 / 18.47 |
 | `hectic-raster` | Space launches the raster, a later sample verifies animation | 612 / 10.19 | 356 / 5.93 | 500 / 8.33 |
 | `midline-intro` | Space launches the full-screen text effect after the DOS loader | 466 / 7.76 | 210 / 3.50 | 346 / 5.77 |
 | `lemm-level-one` | Return advances from level introduction to the playfield and HUD | 586 / 9.76 | 482 / 8.03 | 570 / 9.50 |
 | `monster-splash-logo` | Loader text gives way to the graphic logo and its reflection | 1,408 / 23.45 | 1,104 / 18.38 | 1,352 / 22.53 |
-| `heartbeat-animation` | Space launches the heart raster, a later sample verifies animation | 586 / 9.76 | 330 / 5.50 | 474 / 7.90 |
+| `heartbeat-animation` | Space launches the heart raster, a later sample verifies animation | 586 / 9.76 | 330 / 5.50 | 482 / 8.03 |
+| `captain-woz-disk-turn` | Protected Boot A shows `TURN DISK OVER`. Libretro eject/select/insert face B, then Space reaches the helicopter arrival | 2,052 / 34.17 | 1,516 / 25.24 | 2,092 / 34.87 |
+| `prisoner-woz-timing` | Timing-33 WOZ shows `RESIGNATION FILE` then the code. Timing-32 control stays short of both witnesses | 4,522 / 75.30 | 3,458 / 57.58 | 4,666 / 77.77 |
 
-AppleWin accepted the no-content load and displayed `Apple //e`. Under this frontend and configuration the BASIC prompt was absent after 720 frames, so the script never sent the arithmetic command. All 11 disk scenarios passed on AppleWin. POM2 accelerated was faster than both alternatives on these 11 scenarios and tied original mode on the no-disk case.
+AppleWin accepted the no-content load and displayed `Apple //e`. Under this frontend and configuration the BASIC prompt was absent after 720 frames, so the script never sent the arithmetic command. All 11 disk scenarios, including both protected WOZ cases, passed on AppleWin. POM2 accelerated reached every common final witness earlier than both comparison profiles.
+
+### Common timings
+
+The paired set consists of the **11 scenarios that passed on all three profiles**. For each profile, sort the 11 elapsed times to their final positive witness, with each scenario given equal weight. The median is the sixth value. P90 uses the nearest-rank definition, the value at one-based rank `ceil(0.90 × 11) = 10`. The BASIC timeout and the negative Prisoner II control are outside this timing sample. The benchmark calculates these statistics from unrounded `host frames / FPS` values.
+
+| Profile | Median | P90 |
+| --- | ---: | ---: |
+| pom2-original | 21.68 s | 34.17 s |
+| pom2-fast | 11.82 s | 25.24 s |
+| applewin | 17.03 s | 34.87 s |
 
 For a loading-only comparison, DIRTBIKE's HGR title was confirmed before any input at **1,328 / 22.11** on original POM2, **496 / 8.26** on accelerated POM2, and **824 / 13.73** on AppleWin. These measurements use the external Disk II boot PROM and P6 ROM in the POM2 profiles. The separate C++ module regression uses the core's firmware fallback and verifies the HGR logo on every frame, so its frame numbers differ.
 
+For a control comparison, both POM2 profiles produced ChromaBreak paddle centers at **48.5, 94.5, 138.5, 182.5, and 228.5 px** for the five left-stick positions. AppleWin produced **30.5, 90, 138, 186, and 249.5 px** under its mapping. Every profile reached the positive Prisoner II resignation code and ran the original timing-32 image for 5,400 frames without reaching the file or code screen.
+
 | Binary or matching ROM | SHA-256 |
 | --- | --- |
-| POM2 module, both profiles | `3b3f20a4e6d0980566a56c71bff91c82e3171f01389db579b7654e860cac5166` |
+| POM2 module, both profiles | `e48fffa43934c83bb24e52cb6568fd079a4a87e2fc552fd2985a4e998793750b` |
 | AppleWin module | `6236a127c4151aa8d7948fa5df71176ab5a1c4e7a57c9b0e2bccc6132434dbad` |
 | Enhanced //e system ROM | `aab38a03ca8deabbb2f868733148c2efd6f655a59cd9c5d058ef3e0b7aa86a1a` |
 | Enhanced //e character ROM | `52c3b87900ac939f6525402cab1ccfd8f8259290fc6df54da48fb4c98ae3ed0f` |

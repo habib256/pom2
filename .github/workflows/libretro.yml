@@ -258,8 +258,10 @@ jobs:
           cat > release-notes.md <<'EOF'
           Native POM2 Libretro core packages tested with RetroArch on Linux x64, macOS arm64, and Windows x64.
 
-          Download the ZIP for your platform and extract it into your RetroArch directory. The package includes installation instructions and does not include Apple II firmware. Use `SHA256SUMS` to verify the download. The verification ZIP contains CTest results, RetroArch logs, and screenshots for all three platforms.
+          Install the core and its info file in the directories listed by RetroArch under Settings → Directory. Supply your Apple //e firmware in `system/pom2/`. Each ZIP includes the user guide and compatibility report. The verification ZIP contains native test results, RetroArch logs and screenshots of a resumed Dirtbike session for all three platforms.
           EOF
+          base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME"
+          printf '\n[Installation and controls](%s/libretro/README.md) · [Compatibility measurements](%s/docs/audits/libretro-compatibility-2026-11-23.md)\n' "$base" "$base" >> release-notes.md
 
       - name: Publish assets for the existing Libretro tag
         shell: bash

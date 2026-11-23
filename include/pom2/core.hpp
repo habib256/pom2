@@ -478,10 +478,10 @@ public:
     /// firmware and device topology.
     bool saveState(std::vector<std::uint8_t>& out);
 
-    /// Restore a snapshot into the same configuration. Disk II media are
-    /// embedded and restored in memory. Passing a trusted path explicitly
-    /// lets drive 0 resume writing to an existing private working copy.
-    /// An empty path keeps the restored media detached from host writes.
+    /// Restore a snapshot into the same configuration. Embedded disks are
+    /// restored in memory. A trusted path may bind drive/unit 0 to an
+    /// existing private working copy. An empty path keeps its media detached
+    /// from host writes. After validation, beforeRestore may veto the commit.
     bool loadState(const void* data, std::size_t size, std::string_view diskBacking = {},
                    std::string_view smartPortBacking = {},
                    const std::function<bool()>& beforeRestore = {});

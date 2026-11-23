@@ -21,6 +21,7 @@
 // against POM2 without re-deriving the protocol.
 
 #include "MouseCardAppleWin.h"
+#include "ByteIO.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -816,4 +817,38 @@ void MouseCardAppleWin::loadSnapshotState(const uint8_t* data, std::size_t len)
     // Re-publish the slot IRQ: the wire-OR bookkeeping lives in
     // SlotPeripheral, not in any serialized member.
     assertIrq(irq);
+}
+
+void MouseCardAppleWin::appendSdkInput(std::vector<uint8_t>& out) const
+{
+    using namespace pom2::byteio;
+    out.insert(out.end(), {hostX.load(), hostY.load(), hostSetX_, hostSetY_, lastHostX, lastHostY,
+        uint8_t((hostButton.load() ? 1 : 0) | (lastHostButton ? 2 : 0) | (hostPrimed ? 4 : 0))});
+    putU32(out, hostGen.load()); putU32(out, lastHostGen_);
+    putU32(out, static_cast<uint32_t>(hostAccX_.load()));
+    putU32(out, static_cast<uint32_t>(hostAccY_.load()));
+    putU64(out, nextVblCycle_);
+    putU64(out, ownClock_);
+}
+
+bool MouseCardAppleWin::loadSdkInput(const uint8_t* data, std::size_t size, bool apply)
+{
+    if (!data || size != 39 || data[6] > 7) return false;
+    pom2::byteio::Reader r(data + 7, size - 7);
+    const auto generation = r.u32(), lastGeneration = r.u32();
+    const auto dx = static_cast<int32_t>(r.u32()), dy = static_cast<int32_t>(r.u32());
+    const auto vbl = r.u64(), own = r.u64();
+    constexpr uint64_t maxClock = uint64_t{1} << 61;
+    constexpr int32_t motionLimit = 1 << 24;
+    if ((vbl != kVblUnphased && vbl >= maxClock) || own >= maxClock ||
+        dx < -motionLimit || dx > motionLimit || dy < -motionLimit || dy > motionLimit) return false;
+    if (!apply) return true;
+    hostX.store(data[0]); hostY.store(data[1]); hostSetX_ = data[2]; hostSetY_ = data[3];
+    lastHostX = data[4]; lastHostY = data[5];
+    hostButton.store((data[6] & 1) != 0); lastHostButton = (data[6] & 2) != 0;
+    hostPrimed = (data[6] & 4) != 0;
+    hostGen.store(generation); lastHostGen_ = lastGeneration;
+    hostAccX_.store(dx); hostAccY_.store(dy);
+    nextVblCycle_ = vbl; ownClock_ = own;
+    return true;
 }

@@ -11,7 +11,7 @@ import zipfile
 from PIL import Image
 
 
-def run_game(executable, config, module, disk, directory, frames, label):
+def run_game(executable, config, module, disk, directory, evidence, frames, label):
     screenshot = directory / (label + ".png")
     log = directory / (label + ".log")
     cmd = [str(executable), "--verbose", "--config", str(config), "--log-file", str(log),
@@ -26,6 +26,11 @@ def run_game(executable, config, module, disk, directory, frames, label):
         if log.exists():
             print(log.read_text(errors="replace")[-6000:], flush=True)
         raise
+    finally:
+        if evidence:
+            for path in (log, screenshot):
+                if path.is_file():
+                    shutil.copyfile(path, evidence / path.name)
     return screenshot
 
 
@@ -82,12 +87,13 @@ def main():
         config.write_text("".join(f'{key} = "{str(value).replace(chr(92), "/")}"\n' for key, value in settings.items()))
         disk = args.disk.resolve()
         exe = args.retroarch.resolve()
-        out = args.output.resolve() if args.output else profile
-        out.mkdir(parents=True, exist_ok=True)
-        first = run_game(exe, config, module, disk, out, 300, "loading")
+        evidence = args.output.resolve() if args.output else None
+        if evidence:
+            evidence.mkdir(parents=True, exist_ok=True)
+        first = run_game(exe, config, module, disk, profile, evidence, 300, "loading")
         if logo(first) or not any(p.stat().st_size > 0 for p in (profile / "states").rglob("*.auto")):
             raise RuntimeError("first session did not stop and save during disk loading")
-        resumed = run_game(exe, config, module, disk, out, 155, "resumed")
+        resumed = run_game(exe, config, module, disk, profile, evidence, 155, "resumed")
         if not logo(resumed):
             raise RuntimeError("second session did not resume loading and reach the Dirtbike title")
         print("PASS: fresh install, cold boot, automatic save, process restart and resumed Dirtbike title")

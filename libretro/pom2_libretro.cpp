@@ -48,6 +48,7 @@ retro_input_state_t inputState = nullptr;
 retro_log_printf_t logMessage = nullptr;
 retro_led_interface driveLed{};
 bool driveLedOn = false;
+bool supportsExecutionPhase = false;
 
 void showDiskRead(bool active)
 {
@@ -96,6 +97,7 @@ unsigned machineAudioRemainder = 0;
 unsigned frontendAudioRemainder = 0;
 bool fastDiskLoading = true;
 std::size_t stateCapacity = 0;
+bool stateCapacityWarning = false;
 std::vector<std::uint8_t> stateScratch;
 
 bool joypadEnabled = true;
@@ -426,6 +428,7 @@ bool ejectMountedDisk(pom2::Core& machine, DiskState& state)
 
 bool keepDiskEffects()
 {
+    if (!supportsExecutionPhase) return true;
     auto phase = RETRO_EXECUTION_PHASE_RETAINED;
     return !environment(RETRO_ENVIRONMENT_GET_EXECUTION_PHASE, &phase)
         || phase == RETRO_EXECUTION_PHASE_RETAINED;
@@ -665,13 +668,23 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
         machine->coldBoot();
     }
     machineTiming = pal ? POM2_TIMING_PAL : POM2_TIMING_NTSC;
-    stateCapacity = 1024u * 1024u;
-    for (const auto& image : state.images) {
+    // The ABI buffer may never grow after a content load. Reserve space
+    // for a standard SmartPort disk even when starting BASIC with no disk.
+    constexpr std::size_t minimumDiskBudget = 1u << 20;
+    constexpr std::size_t maxEmbeddedDisk = 16u << 20;
+    const std::size_t machineBudget = pal ? (1536u << 10) : (1u << 20);
+    std::size_t diskBudget = minimumDiskBudget;
+    const auto reserveDisk = [&](const std::filesystem::path& path) {
         std::error_code error;
-        const auto size = std::filesystem::file_size(image.path, error);
-        if (!error && size <= (16u << 20))
-            stateCapacity = std::max(stateCapacity, static_cast<std::size_t>(size) + (1u << 20));
+        const auto size = std::filesystem::file_size(path, error);
+        if (!error && size <= maxEmbeddedDisk)
+            diskBudget = std::max(diskBudget, static_cast<std::size_t>(size));
+    };
+    for (const auto& image : state.images) {
+        reserveDisk(image.path);
     }
+    if (state.mounted) reserveDisk(state.mounted->path);
+    stateCapacity = machineBudget + diskBudget;
     disks = std::move(state);
     core = std::move(machine);
     readOptions();
@@ -681,7 +694,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     return true;
 }
 
-constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 1};
+constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 2};
 constexpr std::size_t kRetroStateHeader = sizeof(kRetroStateMagic) + 4 * 6 + 8 * 3 + 3 + 2;
 constexpr unsigned kNoDisk = UINT32_MAX;
 
@@ -701,8 +714,22 @@ std::uint64_t playlistIdentity()
 
 bool saveRetroState(void* data, std::size_t size)
 {
-    if (!core || !data || size < stateCapacity || !core->saveState(stateScratch) ||
-        stateScratch.size() > stateCapacity - kRetroStateHeader) return false;
+    if (!core || !data || size < stateCapacity) return false;
+    const auto warnOnce = [](const std::string& message) {
+        if (!stateCapacityWarning) {
+            stateCapacityWarning = true;
+            reportError(message);
+        }
+    };
+    if (!core->saveState(stateScratch)) {
+        warnOnce("Save state unavailable: " + core->lastError());
+        return false;
+    }
+    if (stateScratch.size() > stateCapacity - kRetroStateHeader) {
+        warnOnce("Save state exceeds this session's fixed buffer. Load the large disk as content "
+                 "or include it in the playlist from startup to reserve more space.");
+        return false;
+    }
     using namespace pom2::byteio;
     std::vector<std::uint8_t> header(std::begin(kRetroStateMagic), std::end(kRetroStateMagic));
     putU32(header, static_cast<std::uint32_t>(stateScratch.size()));
@@ -827,6 +854,7 @@ void retro_set_input_state(retro_input_state_t callback) { inputState = callback
 void retro_init()
 {
     supportsPadMask = environment && environment(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, nullptr);
+    supportsExecutionPhase = environment && environment(RETRO_ENVIRONMENT_GET_EXECUTION_PHASE, nullptr);
     if (environment)
         environment(RETRO_ENVIRONMENT_GET_LED_INTERFACE, &driveLed);
     retro_log_callback callback{};
@@ -839,6 +867,7 @@ void retro_init()
 void retro_deinit()
 {
     retro_unload_game();
+    supportsExecutionPhase = false;
     driveLed = {};
     logMessage = nullptr;
 }
@@ -924,6 +953,7 @@ void retro_unload_game()
     machineAudioRemainder = 0;
     frontendAudioRemainder = 0;
     stateCapacity = 0;
+    stateCapacityWarning = false;
 }
 
 unsigned retro_get_region() { return machineTiming.standard == VideoStandard::PAL ? RETRO_REGION_PAL : RETRO_REGION_NTSC; }

@@ -136,6 +136,8 @@ struct Frontend {
     std::string messages;
     const char* fastDiskValue = nullptr;
     bool fastDiskEnabledByDefault = false;
+    unsigned executionPhaseProbes = 0;
+    unsigned executionPhaseQueries = 0;
     retro_keyboard_event_t keyboard = nullptr;
     bool supportNoGame = false;
     bool xrgb8888 = false;
@@ -146,6 +148,7 @@ struct Frontend {
     unsigned driveReadSignals = 0;
     bool button = false;
     bool start = false;
+    bool nextDisk = false;
     unsigned diskControlVersion = 1;
     unsigned extendedRegistrations = 0;
     bool rejectExtendedDiskControl = false;
@@ -182,6 +185,10 @@ void logMessage(enum retro_log_level, const char* format, ...)
 bool environment(unsigned command, void* data)
 {
     switch (command) {
+    case RETRO_ENVIRONMENT_GET_EXECUTION_PHASE:
+        if (data) ++frontend.executionPhaseQueries;
+        else ++frontend.executionPhaseProbes;
+        return false;
     case RETRO_ENVIRONMENT_GET_LED_INTERFACE:
         if (!frontend.supportsDriveLed) return false;
         static_cast<retro_led_interface*>(data)->set_led_state = setLed;
@@ -285,6 +292,7 @@ int16_t inputState(unsigned port, unsigned device, unsigned, unsigned id)
     if (port == 0 && device == RETRO_DEVICE_JOYPAD) {
         if (id == RETRO_DEVICE_ID_JOYPAD_B) return frontend.button;
         if (id == RETRO_DEVICE_ID_JOYPAD_START) return frontend.start;
+        if (id == RETRO_DEVICE_ID_JOYPAD_R3) return frontend.nextDisk;
     }
     return 0;
 }
@@ -537,6 +545,34 @@ void writeBootDisk(const fs::path& path, uint8_t marker)
     writeFile(path, disk);
 }
 
+void writePaddedWoz(const fs::path& path)
+{
+    // A valid WOZ1 surface with one tiny track and a large ignored chunk.
+    // This tests snapshot sizing without relying on an external disk.
+    Bytes disk{'W', 'O', 'Z', '1', 0xff, 10, 13, 10, 0, 0, 0, 0};
+    const auto chunk = [&](const char* tag, const Bytes& payload) {
+        disk.insert(disk.end(), tag, tag + 4);
+        const auto length = static_cast<uint32_t>(payload.size());
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            disk.push_back(static_cast<uint8_t>(length >> shift));
+        disk.insert(disk.end(), payload.begin(), payload.end());
+    };
+    Bytes info(60);
+    info[0] = info[1] = info[2] = 1;
+    chunk("INFO", info);
+    Bytes map(160, 0xff);
+    map.front() = 0;
+    chunk("TMAP", map);
+    Bytes track(6656);
+    track[0] = 0xd5;
+    track[6646] = 1;
+    track[6648] = 8;
+    track[6650] = track[6651] = 0xff;
+    chunk("TRKS", track);
+    chunk("JUNK", Bytes(3u << 20));
+    writeFile(path, disk);
+}
+
 retro_game_info contentInfo(const std::string& path)
 {
     return {path.c_str(), nullptr, 0, nullptr};
@@ -618,6 +654,18 @@ void testExtendedDisks(Core& core, const fs::path& work, const std::string& firs
             !disk.get_image_label(0, shortBuffer, sizeof shortBuffer) &&
             !disk.get_image_path(2, shortBuffer, sizeof shortBuffer), "disk metadata accepted invalid output arguments");
     waitForBootMarker(core, secondMarker);
+
+    frontend.nextDisk = true;
+    run(core, 4);
+    require(disk.get_image_index() == 0 && cell(0) == secondMarker,
+            "holding R3 should change sides once without rebooting the game");
+    frontend.nextDisk = false;
+    run(core, 1);
+    frontend.nextDisk = true;
+    run(core, 1);
+    frontend.nextDisk = false;
+    run(core, 1);
+    require(disk.get_image_index() == 1, "R3 did not return to the second side");
 
     const auto first = contentInfo(firstPath);
     const auto second = contentInfo(secondPath);
@@ -740,6 +788,43 @@ void testLegacyDisks(Core& core, const std::string& firstPath, const std::string
     waitForBootMarker(core, firstMarker);
     core.retro_unload_game();
     requireEmptyDiskState(disk);
+
+    require(core.retro_load_game(nullptr), "could not boot BASIC before adding SmartPort media");
+    const auto capacity = core.retro_serialize_size();
+    const auto smartPortPath = (fs::path(firstPath).parent_path() / "SmartPort 800K.po").string();
+    writeFile(smartPortPath, Bytes(800 * 1024));
+    const auto smartPort = contentInfo(smartPortPath);
+    require(disk.add_image_index() && disk.set_eject_state(true) &&
+            disk.replace_image_index(0, &smartPort) && disk.set_image_index(0) &&
+            disk.set_eject_state(false), "could not hot-insert an 800 KiB SmartPort disk");
+    require(core.retro_serialize_size() == capacity, "hot insertion changed the save-state capacity");
+    const auto inserted = saveState(core);
+    require(disk.set_eject_state(true) && core.retro_unserialize(inserted.data(), inserted.size()) &&
+            !disk.get_eject_state() && disk.get_image_index() == 0 &&
+            core.retro_serialize_size() == capacity,
+            "could not restore the hot-inserted SmartPort disk within the BASIC session's capacity");
+    core.retro_unload_game();
+
+    const auto wozPath = (fs::path(firstPath).parent_path() / "Large.woz").string();
+    writePaddedWoz(wozPath);
+    const auto woz = contentInfo(wozPath);
+    require(core.retro_load_game(nullptr) && disk.add_image_index() && disk.set_eject_state(true) &&
+            disk.replace_image_index(0, &woz) && disk.set_image_index(0) && disk.set_eject_state(false),
+            "large WOZ could not be hot-inserted");
+    require(core.retro_serialize_size() == capacity, "large WOZ changed the fixed save-state capacity");
+    Bytes tooSmall(capacity);
+    const auto previousMessages = frontend.messages.size();
+    require(!core.retro_serialize(tooSmall.data(), tooSmall.size()) &&
+            frontend.messages.find("fixed buffer", previousMessages) != std::string::npos,
+            "large hot-inserted WOZ did not report the buffer limit");
+    const auto afterWarning = frontend.messages.size();
+    require(!core.retro_serialize(tooSmall.data(), tooSmall.size()) &&
+            afterWarning == frontend.messages.size(), "repeated save requests spammed the buffer warning");
+    core.retro_unload_game();
+    require(core.retro_load_game(&woz) && core.retro_serialize_size() > capacity,
+            "starting with the large WOZ did not reserve additional save-state space");
+    saveState(core);
+    core.retro_unload_game();
 }
 
 void testDiskControl(Core& core, const fs::path& work)
@@ -947,6 +1032,8 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     for (const auto& entry : fs::recursive_directory_iterator(storage))
         if (entry.path().extension() == ".dsk" && readFile(entry.path()) != original) ++copiesWithChanges;
     require(copiesWithChanges == 1, "restoring face A discarded or contaminated the writes to face B");
+    require(frontend.executionPhaseProbes == 1 && frontend.executionPhaseQueries == 0,
+            "an unsupported execution-phase command was queried after probing");
     require(disk.set_eject_state(true) && disk.set_image_index(1) && disk.set_eject_state(false),
             "could not reinsert face B after restoring A");
     typeCommand(core, "LOAD POM2FACETEST\r");

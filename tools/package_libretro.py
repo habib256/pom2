@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 from pathlib import Path
+import subprocess
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,12 +19,20 @@ def main():
         parser.error("expected a POM2 libretro module")
     files = {f"cores/{module.name}": module, "info/pom2_libretro.info": module.with_suffix(".info"),
              "doc/pom2/README.md": ROOT / "libretro/README.md", "doc/pom2/LICENSE": ROOT / "LICENSE",
+             "doc/pom2/compatibility.md": ROOT / "docs/audits/libretro-compatibility-2026-11-23.md",
              "doc/pom2/libretro.h": ROOT / "src/third_party/libretro/libretro.h"}
     args.output.parent.mkdir(exist_ok=True, parents=True)
     checksums = []
     with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, source in files.items():
             data = source.read_bytes()
+            if source.name == "README.md":
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                                          capture_output=True, text=True).stdout.strip() or "main"
+                base = f"](https://github.com/habib256/pom2/blob/{revision}/"
+                guide = data.decode().replace("](../docs/audits/libretro-compatibility-2026-11-23.md)",
+                                              "](compatibility.md)")
+                data = guide.replace("](../", base).encode()
             checksums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
             archive.writestr(name, data)
         archive.writestr("doc/pom2/SHA256SUMS", "".join(checksums))

@@ -506,7 +506,7 @@ and the Le Chat Mauve monitor with an installed card.
 | OpenEmulator composite (GPU, or `ColorCompositeOECpu`) | default | no |
 | CRT glass pass | default | no |
 | AppleWin NTSC, monochrome phosphors | selectable | no |
-| RGB card picture | when the card is plugged | no: composite, see § Display state |
+| Le Chat Mauve RGB | selectable with the card installed | `setRgbMonitor(true)` |
 
 The capabilities say the same: `render.cpu-composite` is present and there is no
 `render.crt`. Use a frame as technical evidence (this mode changed, these two frames
@@ -520,15 +520,17 @@ application or a tool built to show that pipeline.
 an in-memory snapshot. `saveState(out)` and `loadState(data, size)` use a
 versioned format with firmware and device checks. The state includes the
 processor, memory, the video beam's frame history, keyboard and paddles,
-speaker phase, and the Disk II controller and mounted media. SmartPort, hard
-disks, Mockingboard, Apple Mouse expansion models, E-Z Color, the //c Plus
-and active cassette sessions are currently outside this API.
+speaker phase, Disk II and SmartPort controllers and mounted media, the
+Mockingboard A/C's synthesis and register queue, Le Chat Mauve, and the
+mouse. Hard disks, Mockingboard Sound II, E-Z Color, the //c Plus and active
+cassette sessions are currently outside this API.
 
-Restored Disk II media are detached from host files. A frontend that manages
-private working copies may pass the trusted path of its existing drive-0
-copy to `loadState`. A restore can move that copy's in-memory state before
-or after guest writes. A subsequent explicit write-back commits the restored
-timeline through the normal atomic Disk II path.
+Restored media are detached from host files. A frontend that manages private
+working copies may pass the trusted path of its existing Disk II drive-0 or
+SmartPort unit-0 copy to `loadState`. SmartPort write-back after restore is
+supported for sector-based disks. A restore can move a working copy's
+in-memory state before or after guest writes. A subsequent explicit write-back
+commits the restored timeline through the normal atomic disk path.
 
 ## Delivery
 
@@ -563,8 +565,10 @@ checkout. A capability name is added with its API and never reused:
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |
 | `render.cpu-composite` | `renderFrame`, as § Rendering describes |
+| `render.rgb-monitor` | `setRgbMonitor` with a Le Chat Mauve card |
 | `rgbcard` | `attachRgbCard` and its calls |
 | `smartport35` | `attachSmartPort` and its calls |
+| `state.memory` | `supportsState`, `saveState`, `loadState` |
 
 **System dependencies**, for linking: libslirp when the build found it (no zlib);
 resolv (iphlpapi on Windows) for the host DNS; CoreAudio, AudioToolbox,

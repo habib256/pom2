@@ -164,6 +164,8 @@ public:
     /// restored firmware into the LIVE MCU's handshake.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
+    void appendSdkInput(std::vector<uint8_t>& out) const;
+    bool loadSdkInput(const uint8_t* data, std::size_t size, bool apply);
     void    onUnplug() override;
     /// [B] Apple schematic 050-0101-A (A// Mouse Board): there is NO crystal
     ///     — X1/X2 are jumper pads; the 6805's EXT input (pin 4) takes the
