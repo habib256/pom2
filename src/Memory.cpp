@@ -788,9 +788,7 @@ void Memory::resetSoftSwitches(bool warm)
 
 void Memory::clearRam()
 {
-    // Power-on: the 4c sleeps ([D] MAME machine_reset @ 4033598f); reset_w,
-    // i.e. Ctrl-Reset, leaves it awake ([F], see iicExpansionAwake_).
-    iicExpansionAwake_ = false;
+    iicExpansionAwake_ = false;   // power-on: the 4c sleeps; Ctrl-Reset does not ([F], Memory.h)
     // Power-on also drops a No-Slot Clock transfer caught half-way: nothing
     // else called its reset, so a cold boot in the middle of a 64-bit
     // readout left the next driver's recognition key counted as DATA and
@@ -2315,9 +2313,7 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
         if (iicProfile_ && addr >= 0xC100 && addr <= 0xC7FF) {
             if (SlotPeripheral* p =
                     slots.peripheralForIicRomPage((addr >> 8) & 0x07)) {
-                // [B] MB4c manual: any write into the page wakes the card
-                // (see iicExpansionAwake_ in Memory.h for the full account).
-                iicExpansionAwake_ = true;
+                iicExpansionAwake_ = true;   // [B] MB4c manual: any write wakes it (Memory.h)
                 p->slotRomWrite(static_cast<uint8_t>(addr & 0xFF), value);
                 return;
             }
