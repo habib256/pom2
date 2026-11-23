@@ -724,6 +724,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
 
 void Block512Backing::markDirty(uint32_t blk)
 {
+    if (blk < changed_.size() && tracksChanges()) changed_[blk] = 1;
     if (blk < blockVersions_.size()) ++blockVersions_[blk];
     if (blk < dirtyBlocks_.size() && !dirtyBlocks_[blk]) {
         dirtyBlocks_[blk] = true;

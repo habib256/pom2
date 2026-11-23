@@ -1,0 +1,58 @@
+# Build recipe for libretro's own infrastructure (git.libretro.com), which
+# feeds RetroArch's Core Downloader. GitHub Actions (.github/workflows/
+# libretro.yml) remains the tested release path; this file only declares the
+# core to libretro's templates, which build the `pom2_libretro` CMake target.
+# The module-only configure skips the desktop frontend, ImGui and vcpkg.
+
+.core-defs:
+  variables:
+    CORENAME: pom2
+    CORE_ARGS: -DPOM2_LIBRETRO_ONLY=ON -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+
+include:
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-cmake.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/windows-cmake-mingw.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-arm64.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-x86.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/android-cmake.yml'
+
+stages:
+  - build-prepare
+  - build-shared
+
+libretro-build-linux-x64:
+  extends:
+    - .libretro-linux-cmake-x86_64
+    - .core-defs
+
+libretro-build-linux-aarch64:
+  extends:
+    - .libretro-linux-cmake-aarch64
+    - .core-defs
+
+libretro-build-windows-x64:
+  extends:
+    - .libretro-windows-cmake-x86_64
+    - .core-defs
+
+libretro-build-osx-arm64:
+  extends:
+    - .libretro-osx-cmake-arm64
+    - .core-defs
+
+libretro-build-osx-x64:
+  extends:
+    - .libretro-osx-cmake-x86_64
+    - .core-defs
+  variables:
+    MACOSX_DEPLOYMENT_TARGET: "10.15"   # std::filesystem
+
+android-arm64-v8a:
+  extends:
+    - .libretro-android-cmake-arm64-v8a
+    - .core-defs

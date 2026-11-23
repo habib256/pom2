@@ -1201,6 +1201,61 @@ void testPolicyProtected()
 
 } // namespace
 
+// setHardDiskStateBase: a snapshot carries only the blocks that differ from
+// the base image. A restore puts the state's blocks back and the base's for
+// blocks changed after it; another base, or another image, refuses it.
+void testStatesAgainstBase()
+{
+    const std::string base = "pom2_core_hdd_state_base.2mg";
+    const std::string work = "pom2_core_hdd_state_work.2mg";
+    const Bytes original = wrap2mg(makeVolume(2000));
+    writeFile(base, original);
+    writeFile(work, original);
+
+    pom2::Core core = makeIIe();
+    assert(core.attachHardDisk());
+    assert(core.insertHardDisk(0, work));
+    assert(!core.supportsState() && "a hard disk needs its base first");
+    assert(core.setHardDiskStateBase(base) && core.supportsState());
+    assert(core.bootSlot(7));
+    runUntilBooted(core, 0x70);
+
+    assert(!guestWritesBlock(core, 7, 100, 0x11).carry);
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    assert(state.size() < 4u * 1024 * 1024 && "the state holds changed blocks, not the disk");
+
+    assert(!guestWritesBlock(core, 7, 100, 0x55).carry);
+    assert(!guestWritesBlock(core, 7, 200, 0x66).carry);
+    assert(core.loadState(state.data(), state.size()));
+    (void)driverCall(core, 7, 0x01, 0, 100);
+    assert(core.read(kBuffer + 3) == 0x14 && "block 100 is the state's");
+    (void)driverCall(core, 7, 0x01, 0, 200);
+    for (std::uint16_t i = 0; i < 512; ++i)
+        assert(core.read(static_cast<std::uint16_t>(kBuffer + i)) == original[64 + 200 * 512 + i] &&
+               "block 200 is the base's again");
+
+    // The restored disk reaches its file like any guest write.
+    assert(core.flushHardDisk(0));
+    assert(blockIs(readFile(work), 64, 100, 0x11));
+    assert(std::equal(original.begin() + 64 + 200 * 512, original.begin() + 64 + 201 * 512,
+                      readFile(work).begin() + 64 + 200 * 512));
+
+    // Another base is another disk.
+    Bytes other = original;
+    other[64 + 5 * 512] ^= 0xFF;
+    writeFile("pom2_core_hdd_state_other.2mg", other);
+    pom2::Core second = makeIIe();
+    assert(second.attachHardDisk() && second.insertHardDisk(0, work));
+    assert(second.setHardDiskStateBase("pom2_core_hdd_state_other.2mg"));
+    assert(!second.loadState(state.data(), state.size()));
+    assert(core.ejectHardDisk(0) && !core.supportsState() && "an eject ends the tracking");
+    std::remove(base.c_str());
+    std::remove(work.c_str());
+    std::remove("pom2_core_hdd_state_other.2mg");
+    std::printf("  ok: hard disk states against a base, %zu KiB\n", state.size() >> 10);
+}
+
 int main(int argc, char** argv)
 {
     gSource = POM2_TEST_SOURCE_DIR;
@@ -1218,6 +1273,7 @@ int main(int argc, char** argv)
     testAttachContract();
     testBootAndReplay();
     testWritePersistence();
+    testStatesAgainstBase();
     testCapacityLimit();
     testProtection();
     testRefusals();

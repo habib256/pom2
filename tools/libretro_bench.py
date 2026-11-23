@@ -4,8 +4,10 @@
 import argparse
 import hashlib
 import json
+import math
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -53,7 +55,10 @@ def firmware_info(roms, applewin):
 
 def default_options(core):
     if core.startswith("pom2"):
-        return {"pom2_machine_profile": "ntsc",
+        # The AppleWin profile below has no card in slots 3-5 and 7: match it.
+        return {"pom2_machine": "iie-enhanced", "pom2_video_standard": "ntsc",
+                "pom2_dix_preset": "disabled", "pom2_mockingboard": "disabled",
+                "pom2_display": "composite",
                 "pom2_fast_disk_loading": "enabled" if core == "pom2-fast" else "disabled"}
     return {"applewin_machine": "Apple //e (enhanced)", "applewin_video_refresh_rate": "60Hz",
             "applewin_video_style": "280 x 192", "applewin_video_mode": "Color (RGB Card/Monitor)",
@@ -82,6 +87,23 @@ class Observation:
     def difference(self, other, box=(0, 0, 280, 192)):
         return ImageChops.difference(self.mask.crop(box), other.mask.crop(box)).histogram()[255]
 
+    def paddle_x(self):
+        # The paddle is the longest horizontal light segment near the floor.
+        # This ignores the borders and the much smaller ball.
+        region = self.mask.crop((9, 176, 271, 191))
+        best_length = best_start = 0
+        for y in range(region.height):
+            left = 0
+            for x in range(region.width + 1):
+                if x < region.width and region.getpixel((x, y)):
+                    continue
+                if x - left > best_length:
+                    best_start, best_length = left, x - left
+                left = x + 1
+        if not 25 <= best_length <= 60:
+            raise AssertionError(f"could not locate ChromaBreak paddle, largest segment {best_length} pixels")
+        return 9 + best_start + best_length / 2
+
 
 PROMPT = (62, 48, 48, 48, 48, 48, 62, 0)
 ANSWER = ((28, 34, 32, 24, 4, 2, 62, 0), (62, 32, 16, 24, 32, 34, 28, 0),
@@ -107,9 +129,6 @@ def witnesses():
         "soko-title": lambda im: (im.lit((0, 0, 16, 192)) > 1600 and
                                   im.lit((70, 10, 207, 30)) > 1100 and
                                   im.lit((70, 77, 205, 155)) > 2200),
-        "soko-help": lambda im: (im.lit((0, 0, 16, 192)) > 1600 and
-                                 270 < im.lit((70, 10, 207, 30)) < 470 and
-                                 1000 < im.lit((70, 77, 205, 155)) < 1350),
         "soko-tutorial": lambda im: (im.lit((0, 0, 16, 192)) < 550 and
                                      im.lit(SOKO_BOARD) > 1300 and
                                      im.lit((0, 0, 60, 16)) > 150),
@@ -118,8 +137,6 @@ def witnesses():
         "chroma-level": lambda im: (im.lit((0, 26, 280, 100)) > 5800 and
                                     im.lit((50, 177, 160, 191)) > 100 and
                                     im.lit((192, 177, 270, 191)) < 40),
-        "chroma-paddle-right": lambda im: (im.lit((0, 26, 280, 100)) > 5400 and
-                                           im.lit((192, 177, 270, 191)) > 100),
         "file-list": lambda im: (im.lit((0, 0, 280, 8)) > 900 and
                                  im.lit((0, 8, 280, 56)) > 1600 and
                                  im.lit((0, 60, 280, 150)) < 100 and
@@ -155,34 +172,59 @@ def witnesses():
                                          1700 < im.lit((0, 0, 280, 192)) < 3500),
         "heartbeat-moving-raster": lambda im: (im.lit((0, 125, 280, 190)) > 4000 and
                                                 im.lit((95, 45, 185, 145)) > 2600),
+        "captain-title": lambda im: (2100 < im.lit((0, 0, 280, 32)) < 3100 and
+                                     im.lit((0, 48, 280, 139)) > 10000 and
+                                     100 < im.lit((0, 184, 280, 192)) < 450),
+        "captain-turn-disk": lambda im: (1300 < im.lit((0, 32, 280, 57)) < 2300 and
+                                         im.lit((0, 0, 280, 32)) < 30 and
+                                         im.lit((0, 57, 280, 192)) < 40),
+        "captain-arrived": lambda im: (im.lit((0, 0, 280, 57)) < 40 and
+                                        im.lit((0, 140, 280, 180)) > 4900 and
+                                        im.lit((0, 172, 280, 188)) > 3500 and
+                                        im.lit((0, 184, 280, 192)) > 1500),
+        "prisoner-resignation-file": lambda im: (im.lit((0, 0, 280, 6)) < 400 and
+                                                   900 < im.lit((16, 8, 133, 24)) < 1150 and
+                                                   110 < im.lit((20, 31, 136, 61)) < 550 and
+                                                   400 < im.lit((15, 174, 267, 190)) < 650 and
+                                                   im.lit((20, 128, 145, 163)) < 30),
+        "prisoner-resignation-code": lambda im: (im.lit((0, 0, 280, 6)) < 400 and
+                                                   im.lit((20, 128, 145, 163)) > 2800 and
+                                                   im.lit((170, 137, 245, 165)) > 750 and
+                                                   im.lit((20, 33, 246, 110)) > 1900 and
+                                                   im.lit((15, 174, 267, 190)) > 1200),
     }
 
 
 DIRT = "packaging/disks/DIRTBIKE.dsk"
 SOKO = "packaging/disks/MICRO-SOKOBAN.dsk"
 DEATER = "disks_5.4/demo/deater/"
+CHROMA = "packaging/disks/CHROMABREAK.po"
+CAPTAIN = ("captain-a.woz", "captain-b.woz")
+PRISONER = ("prisoner2a-t33.woz", "prisoner2a-unpatched.woz")
+PROTECTED_SHA256 = {
+    "captain-a.woz": "85dde3ce4b6ca17cb30db8d0be060c916092332853568abb8d941594571aa332",
+    "captain-b.woz": "6f522c7d0cb9919db127a864b440acb7d18bfc25d422dba26b43268ca732d465",
+    "prisoner2a-t33.woz": "09ed6f060c18f88e95cab3990830b65b0128015c9f58ea0dcd570d050cf3cc6a",
+    "prisoner2a-unpatched.woz": "a43838dda629d6ba83a6dc1385227c663d66535fb26fbb4769a5795aa749eaeb",
+}
 DIRT_MENU = [("wait", "dirt-title", 2200), ("key", "RETURN"), ("wait", "dirt-menu", 240)]
 # Every row waits for a named guest screen; key actions alone cannot pass.
 # wait windows are expressed in host frames, even when a core accelerates disk I/O.
 SCENARIOS = {
     "applesoft-calculate": (None, [("wait", "applesoft-prompt", 720),
                                   ("type", "PRINT 1111+1234"), ("wait", "answer-2345", 120)]),
-    "dirtbike-track-menu": (DIRT, DIRT_MENU),
     "dirtbike-race-throttle": (DIRT, DIRT_MENU + [("key", "RETURN"), ("wait", "dirt-start", 540),
                                                 ("frames", 140), ("expect", "dirt-start"),
                                                 ("repeat-key", "a", 25), ("wait", "dirt-moved", 120)]),
-    "sokoban-help": (SOKO, [("wait", "soko-title", 1800), ("key", "h"),
-                            ("wait", "soko-help", 420)]),
     "sokoban-move-undo": (SOKO, [("wait", "soko-title", 1800), ("key", "RETURN"),
                                  ("wait", "soko-tutorial", 420), ("save", "board-before-move"),
                                  ("key", "RIGHT"), ("frames", 30),
                                  ("diff", "board-before-move", SOKO_BOARD, 20, 500),
                                  ("key", "u"), ("frames", 30), ("expect", "soko-tutorial"),
                                  ("diff", "board-before-move", SOKO_BOARD, 0, 4)]),
-    "chromabreak-paddle": ("packaging/disks/CHROMABREAK.po",
-                            [("wait", "chroma-title", 2200), ("key", "SPACE"),
-                             ("wait", "chroma-level", 400), ("repeat-key", "RIGHT", 12),
-                             ("wait", "chroma-paddle-right", 240)]),
+    "chromabreak-prodos-analog": (CHROMA, [("controller-analog",), ("wait", "chroma-title", 2200),
+                                           ("key", "j"), ("wait", "chroma-level", 400),
+                                           ("analog-paddle", (-24000, -12000, 0, 12000, 24000))]),
     "a2filecmd-help": ("disks_5.4/A2FILECMD-DOS3.3-1.0.dsk",
                        [("wait", "file-list", 3000), ("key", "?"), ("wait", "file-help", 400),
                         ("key", "ESC"), ("wait", "file-list", 2200)]),
@@ -199,6 +241,11 @@ SCENARIOS = {
                                                        ("wait", "heartbeat-moving-raster", 700),
                                                        ("save", "first-heart"), ("frames", 120),
                                                        ("diff", "first-heart", (0, 0, 280, 192), 600, 53760)]),
+    "captain-woz-disk-turn": (CAPTAIN, [("wait", "captain-title", 2400), ("key", "SPACE"),
+                                       ("wait", "captain-turn-disk", 1200), ("swap", 1), ("key", "SPACE"),
+                                       ("wait", "captain-arrived", 2400)]),
+    "prisoner-woz-timing": (PRISONER, [("wait", "prisoner-resignation-file", 4800), ("key", "RETURN"),
+                                       ("wait", "prisoner-resignation-code", 1800)]),
 }
 
 
@@ -258,11 +305,50 @@ def run_steps(host, steps, result, captures):
             for key in command:
                 host.key(key)
             host.key("RETURN")
+        elif operation == "controller-analog":
+            host.core.retro_set_controller_port_device(0, 5)
+            host.analog = (0, 32767)
+        elif operation == "analog-paddle":
+            positions = []
+            for x in args[0]:
+                host.analog = (x, 32767)
+                host.frame(20)
+                position = Observation(host.image()).paddle_x()
+                positions.append(position)
+                mark(f"paddle-analog-{x}-x-{position:g}")
+            if not (positions[0] < 70 and positions[-1] > 200
+                    and all(right - left >= 15 for left, right in zip(positions, positions[1:]))):
+                raise AssertionError(f"analog inputs did not produce distinct paddle positions: {positions}")
+        elif operation == "swap":
+            host.swap_disk(*args)
         else:
             raise ValueError(f"unknown benchmark operation: {operation}")
 
 
-def benchmark(profile, library, names, roms, capture_root):
+def check_prisoner_unpatched(library, system, saves, options, path, captures):
+    # The original WOZ has the same protection check with timing 32. This
+    # companion run isn't part of the patched image's time-to-witness.
+    host = Frontend(library, system, saves, options)
+    checks = witnesses()
+    try:
+        av = host.load(path)
+        for _ in range(0, 5400, 8):
+            host.frame(8)
+            frame = Observation(host.image())
+            if (host.frames >= 48 and (checks["prisoner-resignation-file"](frame)
+                                      or checks["prisoner-resignation-code"](frame))):
+                if captures:
+                    host.image().save(captures / "unpatched-unexpected.png")
+                raise AssertionError(f"unpatched Prisoner II reached the resignation witness at frame {host.frames}")
+        if captures:
+            host.image().save(captures / "unpatched-final.png")
+        return {"host_frames": host.frames, "seconds": round(host.frames / av["fps"], 4),
+                "resignation_screen": False}
+    finally:
+        host.close()
+
+
+def benchmark(profile, library, names, roms, protected_media, capture_root):
     options = default_options(profile)
     results = []
     with tempfile.TemporaryDirectory(prefix="pom2-libretro-bench-") as directory:
@@ -272,7 +358,14 @@ def benchmark(profile, library, names, roms, capture_root):
             source, steps = SCENARIOS[name]
             result = {"id": name, "media": source, "checks": []}
             results.append(result)
-            if source and not (ROOT / source).is_file():
+            if isinstance(source, tuple):
+                if protected_media is None:
+                    result.update(status="skip", reason="provide protected fixtures via --protected-media")
+                    continue
+                sources = [protected_media / leaf for leaf in source]
+            else:
+                sources = [ROOT / source] if source else []
+            if any(not item.is_file() for item in sources):
                 result.update(status="skip", reason="media missing")
                 continue
             if any(not (roms / leaf).is_file() for leaf in ("apple2e.rom", "apple2e_char.rom")):
@@ -280,15 +373,34 @@ def benchmark(profile, library, names, roms, capture_root):
                 continue
             saves = root / name
             saves.mkdir()
-            media = None
-            if source:
-                media = saves / Path(source).name
-                shutil.copyfile(ROOT / source, media)
-                result["media_sha256"] = sha256(media)
+            digests = {}
+            for item in sources:
+                dst = saves / item.name
+                shutil.copyfile(item, dst)
+                digests[dst.name] = sha256(dst)
+            result["media_sha256"] = digests
+            if any(leaf in PROTECTED_SHA256 and digest != PROTECTED_SHA256[leaf]
+                   for leaf, digest in digests.items()):
+                result.update(status="fail", reason="protected disk SHA-256 differs from the corpus")
+                continue
+            media = saves / sources[0].name if sources else None
+            if source == CAPTAIN:
+                media = saves / "captain-goodnight.m3u"
+                media.write_text("\n".join(CAPTAIN) + "\n", encoding="utf-8")
+            elif source == CHROMA:
+                # ProDOS volume directory header in block 2 of the 140 KiB
+                # image, including storage type, name length and volume name.
+                if media.read_bytes()[1028:1040] != b"\xfbCHROMABREAK":
+                    result.update(status="fail", reason="expected the CHROMABREAK ProDOS volume")
+                    continue
+                result["guest_filesystem"] = "ProDOS"
             captures = capture_root / profile / name if capture_root else None
             if captures:
                 captures.mkdir(parents=True, exist_ok=True)
-            host = Frontend(library, root / "system", saves, options)
+            # AppleWin selects read-only media via its registered option.
+            # With no frontend save path, POM2 mounts its copy read-only too.
+            frontend_save = saves if profile == "applewin" else None
+            host = Frontend(library, root / "system", frontend_save, options)
             try:
                 result.update(host.load(media))
                 result["registered_options"] = sorted(host.option_names & options.keys())
@@ -306,11 +418,35 @@ def benchmark(profile, library, names, roms, capture_root):
                     host.image().save(captures / "failure.png")
             finally:
                 host.close()
-            if media and sha256(media) != result["media_sha256"]:
+            if source == PRISONER and result["status"] == "pass":
+                try:
+                    result["unpatched_control"] = check_prisoner_unpatched(
+                        library, root / "system", frontend_save, options, saves / PRISONER[1], captures)
+                except (RuntimeError, AssertionError) as error:
+                    result.update(status="fail", reason=str(error))
+            if any(not (saves / leaf).is_file() or sha256(saves / leaf) != digest
+                   for leaf, digest in digests.items()):
                 result.update(status="fail", reason="core modified the copied input image")
             result.update(total_host_frames=host.frames, audio_frames=host.audio_frames, input_polls=host.polls)
     return {"profile": profile, "module": library.name, "module_sha256": sha256(library),
             "options": options, "scenarios": results}
+
+
+def common_timing(runs):
+    per_profile = []
+    for run in runs:
+        per_profile.append({row["id"]: row["checks"][-1]["host_frame"] / row["fps"]
+                            for row in run["scenarios"] if row["status"] == "pass"})
+    shared = sorted(set.intersection(*(set(profile) for profile in per_profile)))
+    summary = {}
+    for run, measurements in zip(runs, per_profile):
+        ordered = sorted(measurements[name] for name in shared)
+        if ordered:
+            summary[run["profile"]] = {
+                "median_seconds": statistics.median(ordered),
+                "p90_seconds": ordered[math.ceil(0.90 * len(ordered)) - 1],
+            }
+    return {"scenarios": shared, "profiles": summary}
 
 
 def main():
@@ -319,6 +455,7 @@ def main():
                         help="pom2-original, pom2-fast or applewin (repeat to compare)")
     parser.add_argument("--scenario", action="append", choices=SCENARIOS, help="limit run to named scenarios")
     parser.add_argument("--roms", type=Path, default=ROOT / "roms")
+    parser.add_argument("--protected-media", type=Path, help="external WOZ fixture directory (see the audit)")
     parser.add_argument("--applewin-source", type=Path, help="verify the comparison build's bundled ROM resources")
     parser.add_argument("--captures", type=Path, help="write ready/verified and failed screen captures as PNG")
     parser.add_argument("--json", type=Path, help="write machine-readable measurements")
@@ -338,10 +475,12 @@ def main():
         firmware = firmware_info(args.roms, args.applewin_source)
     except OSError as error:
         parser.error(str(error))
-    data = {"schema": 1, "sample_interval_frames": 8, "pom2_checkout_revision": revision(ROOT),
+    data = {"schema": 2, "sample_interval_frames": 8, "pom2_checkout_revision": revision(ROOT),
             "platform": platform.platform(), "firmware": firmware,
-            "runs": [benchmark(mode, path, args.scenario or SCENARIOS, args.roms, args.captures)
+            "runs": [benchmark(mode, path, args.scenario or SCENARIOS, args.roms,
+                               args.protected_media, args.captures)
                      for mode, path in profiles]}
+    data["common_timing"] = common_timing(data["runs"])
     if args.json:
         args.json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     for run in data["runs"]:
@@ -350,6 +489,10 @@ def main():
             timing = ", ".join(f"{check['witness']}={check['host_frame']}f/{check['seconds']:.2f}s"
                                for check in row["checks"])
             print(f"  {row['status'].upper():4} {row['id']}: {row.get('reason', timing)}")
+    common = data["common_timing"]
+    print(f"Common successful scenarios: {len(common['scenarios'])}")
+    for label, timing in common["profiles"].items():
+        print(f"  {label}: median {timing['median_seconds']:.2f} s, P90 {timing['p90_seconds']:.2f} s")
     return 1 if any(row["status"] == "fail" for run in data["runs"] for row in run["scenarios"]) else 0
 
 

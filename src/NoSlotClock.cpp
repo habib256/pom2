@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <utility>
 
 namespace pom2 {
 
@@ -38,7 +39,7 @@ std::tm NoSlotClock::defaultTimeFn()
 NoSlotClock::NoSlotClock() : timeFn_(&NoSlotClock::defaultTimeFn) {}
 
 NoSlotClock::NoSlotClock(TimeFn fn)
-    : timeFn_(fn ? fn : &NoSlotClock::defaultTimeFn) {}
+    : timeFn_(fn ? std::move(fn) : TimeFn(&NoSlotClock::defaultTimeFn)) {}
 
 void NoSlotClock::onReset()
 {

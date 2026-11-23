@@ -22,7 +22,9 @@ namespace pom2::libretro {
 namespace {
 namespace fs = std::filesystem;
 
-constexpr std::uintmax_t kMaxDiskBytes = 16 * 1024 * 1024;
+// The largest ProDOS volume (65535 blocks, 32 MiB) with room for a 2IMG
+// header and comment: a hard disk image needs its private copy as a floppy does.
+constexpr std::uintmax_t kMaxDiskBytes = 33 * 1024 * 1024;
 
 std::string digest(std::string_view text)
 {

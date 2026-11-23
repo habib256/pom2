@@ -311,8 +311,10 @@ is empty. A Disk II sits in slot 6 from the start, sharing the IWM — the ROM
 reads the 5.25" port even with no 5.25" disk — so `insertDisk` works without
 `attachDiskII`, and `bootDisk` needs no PROM (`$C600` is the system ROM, as on
 the //c). `attachMockingboard()` is the 4c+, the same rule as the 4c, over the
-ROM's memory-expansion page. The facade runs it at 1 MHz: the CGGA
-accelerator, which the ROM switches on at every reset, is the application's.
+ROM's memory-expansion page. The facade runs it at 1 MHz until
+`setAccelerator(Accelerator::ZipChip)` seats its CGGA, which the ROM then
+switches on at every reset; drive it with `runVideo` (§ Accelerators and the
+clock).
 The ROM's slot-6 ProDOS block driver at `$C64E` (the slot-5 SmartPort code
 called as slot 6) serves the 5.25" disk. Pinned by `pom2_core_api`: a 3.5"
 boot from the internal drive (X = `$50`), and through `$C64E` the numbers of
@@ -382,6 +384,13 @@ reaches those addresses through the language card's own names. The `$C000-$CFFF`
 I/O space and ROM are not RAM and are not offered. `writeRam` is a debugger's
 write. It lands in the cell as a CPU store never could, and neither a card nor the
 beam-time video log sees a bus cycle for it; a later `renderFrame` does show it.
+
+`ramRegion(bank)` returns the same cells in place, a pointer and a size, for a
+host that maps them rather than copies them: a libretro memory map, an achievement
+runtime, a cheat engine. The pointer stays valid for the life of the `Core`, a move
+included. `Main` is the 48 KiB below `$C000`, the language card banks are 4, 4 and
+8 KiB, and the aux banks are empty without //e memory. A store through the pointer
+is `writeRam`'s debugger write.
 
 `keyboardState()` returns the latched character, the strobe and the count of paste
 bytes queued behind it, and acknowledges nothing: reading it clears no strobe and
@@ -478,6 +487,13 @@ names, and CREATE/OPEN/WRITE/CLOSE/READ through a real ProDOS MLI on a 65535-blo
 
 ## Mockingboard and cassette
 
+`attachPhasor(slot)` installs Applied Engineering's Phasor: two 6522s, four
+AY-3-8910s and two SSI263s, Mockingboard-compatible until the guest switches
+it. Its snapshot carries the registers and timers, so the machine replays
+exactly; its synthesis picks up from those registers after a restore, where a
+Mockingboard's replays sample for sample. `setMockingboardVolume` sets both
+kinds of card.
+
 `attachMockingboard` accepts multiple cards in different empty slots. The
 complete audio pull mixes all attached cards; `setMockingboardVolume` applies
 to every attached card, not only the last one. The public models are A/C and
@@ -487,48 +503,103 @@ Sound II; the desktop card catalogue is not the facade's attachment API.
 WAV and other suffixes select ACI. It does not append a suffix as the desktop
 CLI does. Supply `.aci` or `.wav` explicitly when saving through the SDK.
 
+`attachDriveSounds(folder)` adds the drives' mechanical sounds, from MAME's
+floppy samples (POM2's `roms/floppy_samples/`): the 5.25" set for the Disk II,
+attached now or later, and the `35_` set for the //c+'s 3.5" drives. They are
+timed in emulated cycles and mixed centred by `pullAudio`;
+`setDriveSoundVolume` scales them. They are host sound and a snapshot does not
+carry them. A host that replays frames turns them off with
+`setDriveSoundEventsEnabled(false)` for the frames whose audio it discards,
+so each step is heard once, and calls `resyncDriveSounds()` after a restore
+to drop what is playing and take the restored motor's state.
+
 ## Rendering
 
-`renderFrame()` paints with `Apple2Display` in its default mode, `ColorNTSC`: POM2's
-port of MAME's composite colour table, on the CPU, into a 280- or 560-wide
+`renderFrame()` paints with `Apple2Display` on the CPU, into a 280- or 560-wide
 framebuffer. It shares with the application the class, the memory it reads, FLASH
-derived from the emulated frame, and the text and hi-res painters of that mode.
+derived from the emulated frame, and every CPU painter. At construction it runs
+`ColorNTSC`, POM2's port of MAME's composite colour table; `setDisplayMode(mode)`
+selects any other CPU renderer the application has, and `displayMode()` reads it back.
 
-It is **not** what the application shows by default. The application's default
-display is `ColorCompositeOE`: the bitstream demodulated by POM2's OpenEmulator-style
-GLSL shader, then the CRT glass pass (scanlines, mask, vignette, phosphor gamma,
-`CrtEffectStack`). The SDK software renderer supports the composite table
-and the Le Chat Mauve monitor with an installed card.
+| `DisplayMode` | Application mode | Width |
+|---|---|---|
+| `Composite` (default) | `ColorNTSC`, MAME's composite table | 280 or 560 |
+| `CompositeMedium`, `CompositeSharp` | `ColorCompMedium`, `ColorComp4Bit` | 280 or 560 |
+| `CompositeOpenEmulator` | `ColorCompositeOECpu`, the OpenEmulator demodulation on the CPU (PAL line alternation on PAL timing) | 560 |
+| `AppleWinMonitor`, `AppleWinTv`, `AppleWinIdealized` | `ColorAppleWin` and its three sub-modes | 560 |
+| `MonoWhite`, `MonoGreen`, `MonoAmber` | the monochrome monitors (amber with persistence) | 560 |
+| `Rgb` | `ChatMauveRGB`; refused, mode unchanged, without `attachRgbCard()` | 560 |
+
+`setRgbMonitor(true)` is `setDisplayMode(Rgb)`; `setRgbMonitor(false)` returns to
+`Composite`.
+
+What the SDK does not have is the application's **default** look: the bitstream
+demodulated by POM2's OpenEmulator-style GLSL shader, then the CRT glass pass
+(scanlines, mask, vignette, phosphor gamma, `CrtEffectStack`). Both need a GL
+context.
 
 | Picture | Application | `renderFrame()` |
 |---|---|---|
-| MAME composite table (`ColorNTSC`) | selectable | **this** |
-| OpenEmulator composite (GPU, or `ColorCompositeOECpu`) | default | no |
+| MAME composite tables | selectable | `Composite`, `CompositeMedium`, `CompositeSharp` |
+| OpenEmulator composite | default on the GPU | `CompositeOpenEmulator`, on the CPU |
 | CRT glass pass | default | no |
-| AppleWin NTSC, monochrome phosphors | selectable | no |
-| RGB card picture | when the card is plugged | no: composite, see § Display state |
+| AppleWin NTSC, monochrome phosphors | selectable | the matching `DisplayMode` |
+| Le Chat Mauve RGB | selectable with the card installed | `Rgb` |
 
-The capabilities say the same: `render.cpu-composite` is present and there is no
-`render.crt`. Use a frame as technical evidence (this mode changed, these two frames
-match, this region holds what the guest drew). It does not stand for the look a
-player gets on the default display, and a judgement of an image belongs in the
-application or a tool built to show that pipeline.
+The capabilities say the same: `render.cpu-composite` and `render.modes` are present
+and there is no `render.crt`. A frame is technical evidence (this mode changed, these
+two frames match, this region holds what the guest drew), and in the composite modes
+it is close to what a player sees, but the CRT pass is not in it.
 
 ## In-memory snapshots
 
 `supportsState()` reports whether the current machine and peripherals support
 an in-memory snapshot. `saveState(out)` and `loadState(data, size)` use a
-versioned format with firmware and device checks. The state includes the
-processor, memory, the video beam's frame history, keyboard and paddles,
-speaker phase, and the Disk II controller and mounted media. SmartPort, hard
-disks, Mockingboard, Apple Mouse expansion models, E-Z Color, the //c Plus
-and active cassette sessions are currently outside this API.
+versioned format with firmware and device checks (version 3; version 2 states
+still load). The state includes the processor, memory, the video beam's frame
+history, keyboard and paddles, speaker phase, Disk II and SmartPort
+controllers and mounted media, the Mockingboard's synthesis and register queue
+(the Sound II's SSI263 included), Le Chat Mauve, the mouse, the No-Slot Clock,
+the socket accelerator, on a //c Plus its IWM, MIG, Sony drives and 3.5"
+media, and a hard disk in unit 0 once `setHardDiskStateBase(original)` names
+the image it was copied from: the state then carries only the blocks that
+differ from that original, and a restore reads back from it only the blocks
+it must put back. E-Z Color, a //c's rear-port hard disk and active cassette
+sessions are currently outside this API.
 
-Restored Disk II media are detached from host files. A frontend that manages
-private working copies may pass the trusted path of its existing drive-0
-copy to `loadState`. A restore can move that copy's in-memory state before
-or after guest writes. A subsequent explicit write-back commits the restored
-timeline through the normal atomic Disk II path.
+Restored media are detached from host files. A frontend that manages private
+working copies may pass the trusted path of each copy to
+`loadState(data, size, backings)`: `disk[0]` and `disk[1]` for the Disk II's
+two drives, `smartPort` for SmartPort unit 0 or the //c Plus's internal drive.
+The older form takes drive 0 and the SmartPort unit. SmartPort write-back after
+restore is supported for sector-based disks. A restore can move a working
+copy's in-memory state before or after guest writes. A subsequent explicit
+write-back commits the restored timeline through the normal atomic disk path.
+
+## RamWorks
+
+`setRamWorksBanks(banks)` puts an Applied Engineering RamWorks III in a //e's
+auxiliary slot, before `loadRom` (it clears auxiliary memory): 1 bank is the
+stock 64 KiB card, 4 to 128 the card's 256 KiB to 8 MiB. The guest selects a
+bank at `$C073`. Snapshots carry every bank, which makes an 8 MiB state about
+10 MiB; `ramRegion(Aux)` is the bank selected now.
+
+## Accelerators and the clock
+
+`setAccelerator(model)` seats a Zip Chip (4 MHz) or a FASTChip (up to
+16.6 MHz) in the 6502 socket of a ][, ][+ or //e; on a //c Plus, `ZipChip` is
+its built-in CGGA, fast from reset. The guest then runs faster than the beam,
+and `runVideo(videoCycles)` is the call that keeps them apart: it runs that
+much beam time, sizing each slice from the speed the guest selects, and tells
+every clocked device (speaker, cards, drives, the beam) the speed, as the
+application's frame loop does. Without an accelerator it is `run`.
+`cpuSpeedMultiplier()` reads the speed.
+
+`attachNoSlotClock(startEpoch)` puts a DS1216E under the ROM. With a start
+time it runs from beam time, not the host's clock: a replayed or restored
+machine reads the same date, which a netplay or a rewind needs. The start is
+part of the snapshot like the RAM: a restore takes the state's, so a state
+saved in an earlier session resumes on its own date.
 
 ## Delivery
 
@@ -553,18 +624,28 @@ checkout. A capability name is added with its API and never reused:
 | Capability | API |
 |---|---|
 | `cassette` | `loadCassette` and the transport |
+| `accelerator` | `setAccelerator`, `runVideo`, `cpuSpeedMultiplier` |
 | `disk2` | `attachDiskII`, `insertDisk`, `bootDisk` |
+| `drive.sounds` | `attachDriveSounds`, `setDriveSoundVolume` |
 | `ezcolor` | `attachEzColor` and its calls |
 | `harddisk` | `attachHardDisk` and its calls |
+| `harddisk.states` | `setHardDiskStateBase` |
 | `keyboard.state` | `keyboardState` |
 | `machine.iic`, `machine.iicplus` | `Machine::AppleIIc`, `Machine::AppleIIcPlus` |
 | `mockingboard` | `attachMockingboard` |
 | `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
+| `noslotclock` | `attachNoSlotClock` |
+| `phasor` | `attachPhasor`, `phasorAttached` |
+| `ramworks` | `setRamWorksBanks`, `ramWorksBanks` |
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |
+| `ram.regions` | `ramRegion` |
 | `render.cpu-composite` | `renderFrame`, as § Rendering describes |
+| `render.modes` | `setDisplayMode`, `displayMode` |
+| `render.rgb-monitor` | `setRgbMonitor` with a Le Chat Mauve card |
 | `rgbcard` | `attachRgbCard` and its calls |
 | `smartport35` | `attachSmartPort` and its calls |
+| `state.memory` | `supportsState`, `saveState`, `loadState` |
 
 **System dependencies**, for linking: libslirp when the build found it (no zlib);
 resolv (iphlpapi on Windows) for the host DNS; CoreAudio, AudioToolbox,

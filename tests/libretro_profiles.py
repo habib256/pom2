@@ -1,5 +1,7 @@
 """Hardware and controller scenarios exercised through the public libretro ABI."""
 import argparse
+import ctypes
+import hashlib
 from pathlib import Path
 import shutil
 import sys
@@ -13,6 +15,7 @@ class Host(Frontend):
     x = y = 0
     left = False
     stereo = False
+    capture_audio = False
 
     def input_state(self, port, device, index, button):
         if port == 0 and device == 2:
@@ -20,6 +23,8 @@ class Host(Frontend):
         return super().input_state(port, device, index, button)
 
     def batch_audio(self, data, frames):
+        if self.capture_audio:
+            self.audio_digest = hashlib.sha256(ctypes.string_at(data, frames * 4)).digest()
         if self.frames % 30 == 0 and not self.stereo:
             self.stereo = any(data[2*i] != data[2*i+1] for i in range(0, frames, 5))
         return super().batch_audio(data, frames)
@@ -45,6 +50,30 @@ class Host(Frontend):
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def check_replay(host, frames, inputs):
+    host.core.retro_serialize_size.restype = ctypes.c_size_t
+    save, restore = host.core.retro_serialize, host.core.retro_unserialize
+    save.argtypes = restore.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    save.restype = restore.restype = ctypes.c_bool
+    size = host.core.retro_serialize_size()
+    require(size > 0, "configuration did not offer save states")
+    state = ctypes.create_string_buffer(size)
+    require(save(state, size), "could not capture the machine state")
+
+    def replay():
+        for frame in range(frames):
+            inputs(frame)
+            host.frame()
+            yield hashlib.sha256(host.video[0]).digest(), host.audio_digest
+
+    host.capture_audio = True
+    expected = list(replay())
+    require(restore(state, size), "could not restore the machine state")
+    for index, (reference, output) in enumerate(zip(expected, replay())):
+        require(reference == output, f"replay diverged at frame {index}")
+    host.capture_audio = False
 
 
 def check_dix(host, disk, full):
@@ -76,6 +105,7 @@ def check_dix(host, disk, full):
             scene(frame, expected)
     require(abs(host.audio_frames - host.frames * av["sample_rate"] / av["fps"]) < 1.01,
             "PAL audio drifted relative to the beam")
+    check_replay(host, 600, lambda _: None)
 
 
 def check_mouse(host, disk):
@@ -102,6 +132,12 @@ def check_mouse(host, disk):
     require(host.crop(*old) != old_icon and host.crop(*dest) != background
             and len(set(host.crop(*old))) == len(set(background)),
             "DeskTop did not move the volume icon when dragged and released")
+    def replay_motion(frame):
+        host.x = (frame % 6) - 3
+        host.y = 2 if frame % 8 < 4 else -2
+        host.left = 40 <= frame < 60
+
+    check_replay(host, 180, replay_motion)
 
 
 def check_keyboard(host):
@@ -125,11 +161,62 @@ def check_keyboard(host):
             "virtual keyboard did not type the selected key into BASIC")
 
 
+def text_page(host):
+    """The 40-column text page as ASCII, read through the memory map."""
+    get = host.core.retro_get_memory_data
+    get.restype, get.argtypes = ctypes.c_void_p, [ctypes.c_uint]
+    ram = (ctypes.c_uint8 * 0xC000).from_address(get(2))
+    rows = []
+    for row in range(24):
+        base = 0x400 + (row % 8) * 0x80 + (row // 8) * 0x28
+        rows.append("".join(chr((ram[base + c] & 0x7F) + (0x40 if (ram[base + c] & 0x7F) < 0x20 else 0))
+                            for c in range(40)))
+    return ram, "\n".join(rows)
+
+
+def check_formats(module, system, root, disk):
+    """Archives and programs as content: a zip, a two-disk zip, a gzip, an
+    Applesoft listing and a tagged binary, each through retro_load_game."""
+    import gzip
+    import zipfile
+    content = root / "content"
+    content.mkdir()
+    with zipfile.ZipFile(content / "game.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(disk, "Games/DIRTBIKE.dsk")
+    with zipfile.ZipFile(content / "two disks.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(disk, "Game (Disk 1).dsk")
+        z.write(disk, "Game (Disk 2).dsk")
+        z.writestr("readme.txt", "not a disk")
+    (content / "game.dsk.gz").write_bytes(gzip.compress(disk.read_bytes()))
+    (content / "hello.bas").write_text('10 HOME\n20 PRINT "POM2 BAS OK"\n30 END\n')
+    # LDA #$A5 / STA $0350 / RTS at $0300, the address in its name.
+    (content / "MARK#060300.bin").write_bytes(bytes([0xA9, 0xA5, 0x8D, 0x50, 0x03, 0x60]))
+
+    def boot(name, frames):
+        host = Host(module, system, root / "saves", {})
+        try:
+            host.load(content / name)
+            host.frame(frames)
+            ram, text = text_page(host)
+            return host.disk.get_num_images(), ram[0x350], text
+        finally:
+            host.close()
+
+    for name, images in (("game.zip", 1), ("two disks.zip", 2), ("game.dsk.gz", 1)):
+        count, _, text = boot(name, 300)
+        require(count == images, f"{name} should hold {images} disk(s), not {count}")
+        require("DIRTBIKE" in text, f"{name} did not boot Dirtbike")
+    _, _, text = boot("hello.bas", 240)
+    require("POM2 BAS OK" in text, "the Applesoft listing did not RUN")
+    _, marker, text = boot("MARK#060300.bin", 240)
+    require(marker == 0xA5 and "CALL 768" in text, "the binary was not loaded at $0300 and called")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("module", type=Path)
     parser.add_argument("roms", type=Path)
-    parser.add_argument("scenario", choices=("dix", "desktop", "keyboard"))
+    parser.add_argument("scenario", choices=("dix", "desktop", "keyboard", "formats"))
     parser.add_argument("disk", type=Path, nargs="?")
     parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
@@ -145,8 +232,15 @@ def main():
         folder.mkdir(parents=True)
         for rom in roms:
             shutil.copyfile(args.roms / rom, folder / rom)
+        if args.scenario == "formats":
+            check_formats(args.module.resolve(), folder.parent, root, args.disk.resolve())
+            print("PASS formats")
+            return 0
+        # The clock off: DeskTop draws the time, and a clock started at the
+        # host's date made the scripted drag depend on when the test ran.
         host = Host(args.module.resolve(), folder.parent, root / "saves",
-                    {"pom2_mouse": "enabled" if args.scenario == "desktop" else "disabled"})
+                    {"pom2_mouse": "enabled" if args.scenario == "desktop" else "disabled",
+                     "pom2_clock": "disabled"})
         try:
             if args.scenario == "dix":
                 check_dix(host, args.disk.resolve(), args.full)

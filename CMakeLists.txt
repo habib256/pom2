@@ -9,7 +9,11 @@ cmake_minimum_required(VERSION 3.16)
 cmake_policy(SET CMP0091 NEW)
 
 project(pom2_imgui VERSION 1.2.2 LANGUAGES CXX)
-if(APPLE)
+option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SDK" OFF)
+if(POM2_LIBRETRO_ONLY AND EMSCRIPTEN)
+    message(FATAL_ERROR "POM2_LIBRETRO_ONLY requires a native target")
+endif()
+if(APPLE AND NOT POM2_LIBRETRO_ONLY)
     # Native macOS hooks use Objective-C++: Finder/Dock open-file events
     # and the AppKit file chooser.
     enable_language(OBJCXX)
@@ -220,20 +224,22 @@ endif()
 
 # ─── Dear ImGui (vendored) ────────────────────────────────────────────────
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
-if(NOT EXISTS "${IMGUI_DIR}/imgui.cpp")
-    message(FATAL_ERROR
-        "Dear ImGui not found in ${IMGUI_DIR}. Run ./setup_imgui.sh first.")
-endif()
+if(NOT POM2_LIBRETRO_ONLY)
+    if(NOT EXISTS "${IMGUI_DIR}/imgui.cpp")
+        message(FATAL_ERROR
+            "Dear ImGui not found in ${IMGUI_DIR}. Run ./setup_imgui.sh first.")
+    endif()
 
-file(GLOB IMGUI_SOURCES
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
-)
+    file(GLOB IMGUI_SOURCES
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_demo.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+endif()
 
 # ─── POM2 sources ────────────────────────────────────────────────────────
 # All first-party C++ lives under src/. The prefix is spelled here once per
@@ -433,6 +439,7 @@ set(SOURCES
     # package is exported below as POM2::core by the pom2_core_sdk install
     # component; the source tree and installed consumer use the same facade.
     src/Pom2Core.cpp
+    src/Pom2Core_Snapshot.cpp
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
     src/AudioCoordinator.cpp
@@ -998,6 +1005,7 @@ set(POM2_RUNTIME_HEADERS
     src/AiControlJson.h
     src/PrinterPortControl.h
     src/AudioMix.h
+    src/Pom2CoreImpl.h
     src/Apple2Display_Internal.h
     include/pom2/core.hpp
     src/Debugger.h
@@ -1081,6 +1089,7 @@ set(POM2_RUNTIME_SOURCES
     src/ImageWriterPdf.cpp
     src/MachineSnapshot.cpp
     src/Pom2Core.cpp
+    src/Pom2Core_Snapshot.cpp
     src/PrinterHistory.cpp
     src/PostScriptRender.cpp
     src/PrinterScreenDump.cpp
@@ -1450,6 +1459,7 @@ if(NOT POM2_SLIRP_TARGET)
                    "transport (Uthernet II TCP/UDP is unaffected)")
 endif()
 
+if(NOT POM2_LIBRETRO_ONLY)
 # The Windows resource script embeds the application icon AND the VERSIONINFO
 # block into POM2.exe. It is generated from packaging/windows/POM2.rc.in so the
 # version numbers come from `project(... VERSION ...)` above — the same single
@@ -1736,6 +1746,7 @@ else()
         target_link_libraries(${PROJECT_NAME} opengl32)
     endif()
 endif()
+endif() # Desktop and browser frontends
 
 # ─── pom2_core_test ───────────────────────────────────────────────────────
 # Assertion-enabled twin of the emulator core, ported from
@@ -1813,6 +1824,7 @@ set(POM2_CORE_SOURCES
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
     src/Pom2Core.cpp
+    src/Pom2Core_Snapshot.cpp
     src/Apple2Display.cpp
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
@@ -1986,7 +1998,7 @@ set_target_properties(pom2_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
 option(POM2_BUILD_LIBRETRO "Build the native POM2 libretro module" OFF)
-if(POM2_BUILD_LIBRETRO)
+if(POM2_BUILD_LIBRETRO OR POM2_LIBRETRO_ONLY)
     if(EMSCRIPTEN)
         message(FATAL_ERROR "POM2_BUILD_LIBRETRO requires a native toolchain")
     endif()
@@ -2000,7 +2012,6 @@ target_include_directories(pom2_core
     PRIVATE
         ${POM2_SRC_DIR}
         ${POM2_GENERATED_DIR}
-        ${IMGUI_DIR}          # miniaudio.h location only, no ImGui linkage
 )
 target_compile_features(pom2_core PUBLIC cxx_std_17)
 
@@ -2017,6 +2028,24 @@ if(APPLE)
 endif()
 if(WIN32)
     target_link_libraries(pom2_core PUBLIC winmm ws2_32)
+endif()
+# Native DNS wire queries (NatHostSockets): host resolver on Unix, system DNS
+# server configuration on Windows. Keep the SDK's link interface self-contained.
+# GCC 8 and earlier keep std::filesystem in a separate library, libstdc++fs;
+# GCC 9.1 moved it into libstdc++ (libretro's Linux image is GCC 9).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.1)
+    target_link_libraries(pom2_core PUBLIC stdc++fs)
+endif()
+# Android's Bionic has no libresolv: NatHostSockets answers no host DNS there.
+if(WIN32)
+    set(POM2_NATIVE_DNS_LIB iphlpapi)
+elseif(ANDROID)
+    set(POM2_NATIVE_DNS_LIB "")
+else()
+    set(POM2_NATIVE_DNS_LIB resolv)
+endif()
+if(POM2_NATIVE_DNS_LIB)
+    target_link_libraries(pom2_core PUBLIC ${POM2_NATIVE_DNS_LIB})
 endif()
 if(POM2_SLIRP_TARGET)
     target_link_libraries(pom2_core PUBLIC ${POM2_SLIRP_TARGET})
@@ -2078,6 +2107,26 @@ install(FILES
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_core
         COMPONENT pom2_core_sdk
         EXCLUDE_FROM_ALL)
+
+# The commit Core::sdkInfo() reports, re-read on every build (cmake/Pom2CoreBuildId.cmake).
+add_custom_target(pom2_core_build_id
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT=${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2CoreBuildId.cmake
+    BYPRODUCTS ${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
+    VERBATIM)
+add_dependencies(pom2_core pom2_core_build_id)
+
+if(POM2_LIBRETRO_ONLY)
+    if(MINGW)
+        # Some MinGW headers emit an unused MapViewOfFile2 implementation
+        # in the miniaudio translation unit. Target the base Windows 10 SDK
+        # contract so this optional API cannot become a load-time dependency.
+        set_property(SOURCE src/AudioDevice.cpp APPEND PROPERTY
+                     COMPILE_DEFINITIONS NTDDI_VERSION=0x0A000000)
+    endif()
+    return()
+endif()
 
 # ─── pom2_imageconv : the image conversion package ───────────────────────
 # hgrpaint's conversion half, which owes nothing to the emulator: a program that
@@ -2155,15 +2204,6 @@ install(FILES
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pom2_imageconv
         COMPONENT pom2_imageconv_sdk
         EXCLUDE_FROM_ALL)
-
-# The commit Core::sdkInfo() reports, re-read on every build (cmake/Pom2CoreBuildId.cmake).
-add_custom_target(pom2_core_build_id
-    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-            -DOUT=${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2CoreBuildId.cmake
-    BYPRODUCTS ${POM2_GENERATED_DIR}/Pom2CoreBuildId.h
-    VERBATIM)
-add_dependencies(pom2_core pom2_core_build_id)
 
 add_library(pom2_core_test STATIC ${POM2_CORE_SOURCES})
 add_dependencies(pom2_core_test pom2_core_build_id)
@@ -2297,15 +2337,7 @@ add_executable(pom2_headless
     src/AppleSingle.cpp
     src/Z80.cpp
 )
-# Native DNS wire queries (NatHostSockets): host resolver on Unix, system DNS
-# server configuration on Windows. Transitive on SDK/test archives.
 if(NOT EMSCRIPTEN)
-    if(WIN32)
-        set(POM2_NATIVE_DNS_LIB iphlpapi)
-    else()
-        set(POM2_NATIVE_DNS_LIB resolv)
-    endif()
-    target_link_libraries(pom2_core PUBLIC ${POM2_NATIVE_DNS_LIB})
     if(TARGET pom2_core_test)
         target_link_libraries(pom2_core_test PUBLIC ${POM2_NATIVE_DNS_LIB})
     endif()

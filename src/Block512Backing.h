@@ -37,6 +37,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <chrono>
 #include <memory>
@@ -377,6 +378,32 @@ public:
     bool readBlock (uint32_t blk, uint8_t* dst512) const;
     bool writeBlock(uint32_t blk, const uint8_t* src512);
 
+    /// Change tracking for a host's snapshots (the SDK's hard-disk states):
+    /// `differs` flags the blocks known to differ from the host's base image
+    /// when tracking starts, and every block written afterwards is flagged
+    /// too. Tied to the mount: another image, or none, ends it.
+    void trackChanges(std::vector<uint8_t> differs)
+    {
+        differs.resize(blockCount());
+        changed_ = std::move(differs);
+        trackedMount_ = mountId();
+    }
+    bool tracksChanges() const { return trackedMount_ != 0 && trackedMount_ == mountId(); }
+    const std::vector<uint8_t>& changedBlocks() const { return changed_; }
+    void setChangedBlocks(std::vector<uint8_t> changed) { changed.resize(blockCount()); changed_ = std::move(changed); }
+    /// Put a snapshot's block back, write-protected or not: the guest's
+    /// earlier writes are what it restores, not a new write.
+    void restoreBlock(uint32_t blk, const uint8_t* src512)
+    {
+        if (blk >= blockCount()) return;
+        const size_t base = static_cast<size_t>(blk) * kBlockBytes;
+        if (std::memcmp(&image_[base], src512, kBlockBytes) == 0) return;
+        std::memcpy(&image_[base], src512, kBlockBytes);
+        markDirty(blk);
+    }
+    /// Where the blocks start in the image file (a 2IMG header's length).
+    size_t imageDataOffset() const { return dataOffset_; }
+
     /// Byte-level access (streaming HDV port). `absolute` = blk*512 + offset.
     /// readByte returns 0xFF out of range; writeByte is a no-op out of range
     /// or when WP, and marks the containing block dirty otherwise.
@@ -423,6 +450,8 @@ private:
     }
 
     std::vector<uint8_t> image_;
+    std::vector<uint8_t> changed_;        // trackChanges
+    uint64_t             trackedMount_ = 0;
     std::vector<uint8_t> headerBytes_;   // 2IMG container bytes [0..dataOffset)
     size_t  dataOffset_ = 0;
     size_t  dataLength_ = 0;

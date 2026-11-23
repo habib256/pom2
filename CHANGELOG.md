@@ -10,6 +10,133 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Libretro: a real power-on, a wide corpus, ARM and Android
+
+The core boots a Disk II the way the machine does: power on, and the //e
+ROM's reset and slot scan find the drive. It used the SDK's `bootDisk()`,
+which jumps to `$C600` after a cold boot without the reset routine, and
+DIGIDREAM and the fastloader WOZ drew nothing after it. A new wide corpus
+(`tools/libretro_corpus.py`, 46 images) found the pair: POM2 now shows a
+picture on 44, AppleWin on 35 of the 38 it can load, and the two images that
+fail fail the same way on both. The Apple ][ of 1977 keeps the shortcut: its
+ROM does not boot on its own.
+
+Content beyond disk images: a `.zip` or `.gz` opens as its contents (several
+disks become a playlist, unpacked once beside the private copies so they
+persist), an Applesoft `.bas` listing is tokenized and RUN, and a `.bin` is
+loaded at the address its CiderPress name, AppleSingle or DOS 3.3 header gives
+and CALLed. Drive sounds now follow run-ahead (events of frames whose audio
+RetroArch discards are dropped) and a loaded state (they resync to its motor).
+
+The Phasor joins the sound card option (SDK `attachPhasor`), with save
+states: its registers and timers are exact, its synthesis resumes from them.
+
+`pom2_libretro_desktop` failed now and then (once locally, once on the ARM64
+runner): the emulated No-Slot Clock starts at the host's date, Apple II
+DeskTop draws the time, and the test's scripted drag came to depend on when
+it ran. The test runs with the clock off; 40 repetitions pass, where 25 had
+failed one.
+
+A RamWorks III (256 KiB to 8 MiB, //e) is a core option and an SDK call
+(`setRamWorksBanks`). An 8 MiB machine saved its state but refused to load
+it: the SDK capped a state's machine section at 2 MiB, and 128 banks with
+their language cards are 10 MiB.
+
+Two more fixes from running the packages:
+
+- **A restored state brings its own clock date.** The emulated No-Slot Clock
+  starts at the date the content loads; the SDK refused a state with another
+  start, so every RetroArch session after the first refused its own
+  automatic state (CI caught it on all three platforms). The start is now
+  restored like the RAM.
+- **Android and Linux ARM64 builds.** Bionic has no libresolv, so the host
+  DNS helper of the built-in NAT answers nothing there (the libretro core runs
+  no network card); the Android module is named `pom2_libretro_android.so`
+  and, like the Linux one, exports only the 25 `retro_*` functions. CI builds
+  it with the NDK; the Linux ARM64 package runs the same tests and RetroArch
+  check as x64 on a native runner.
+
+## 2026-11-23 — Libretro: two drives, 4 MHz, a ProDOS clock, states on //c+ and speech
+
+The libretro core gains a second 5.25-inch drive (the playlist's next disk,
+and a Disc Control drive option), an accelerator option (the //c Plus now
+runs at its built-in 4 MHz; a Zip Chip or FASTChip for the ][+ and //e), and
+a No-Slot Clock that dates ProDOS files. The //c Plus and the speech
+Mockingboard now have save states, so rewind, run-ahead and netplay work
+there, and so do hard disks: a state carries the blocks the guest changed
+since the original image (`setHardDiskStateBase`), 189 KiB for a test volume
+with two changed blocks instead of the whole disk. The SDK grows `setAccelerator` and
+`runVideo`, `attachNoSlotClock`, and a `loadState` that binds each drive's
+working copy.
+
+Why the pieces look the way they do:
+
+- **The clock runs on beam time, not the host's.** With the host clock a
+  netplay peer or a rewound frame reads another date, and ProDOS writes it
+  into RAM at boot: the machines diverge. The start date is in the state, so
+  a state refuses a machine started at another date. Beam time, not CPU
+  cycles, because an accelerator speeds the CPU, not the chip.
+- **`runVideo`, not `run`, drives an accelerated frame.** The application
+  sizes each 4096-cycle slice from the speed the guest selects and tells the
+  speaker, cards and beam the clock; a plain `run(17030)` gave an
+  accelerated machine a quarter of a frame. Without an accelerator it is
+  `run`, so no unaccelerated timing moved (the benchmark's frame counts are
+  unchanged).
+- **The Sound II was refused only by its own check.** The SDK validated the
+  card's registers with a Mockingboard A/C, which has no SSI263, so the
+  canonical form never matched. Its speech state was already in the card's
+  registers. The //c Plus needed only its 3.5-inch media beside the machine
+  snapshot, through the application's own `captureSessionSonyMedia`.
+- **The //c Plus state test boots Apple II DeskTop, not DIX**: DIX is not a
+  //c Plus program and stops in its loader there.
+- **A hard disk state is a delta against the ORIGINAL image, not the mount.**
+  The frontend's private copy carries the writes of earlier sessions; a delta
+  against it would stop matching the next session's copy and strand every
+  state. Against the unchanged original, a state stays valid as long as the
+  game does. `Block512Backing` flags every block written since the mount
+  (tied to its mount id), so a save never scans 32 MiB, and a restore reads
+  from the original only the blocks the live disk changed and the state did
+  not. The rewind rule (never cross an irreversible write) holds: the
+  restored blocks are written back as the guest's own.
+
+## 2026-11-23 — Every Apple II in RetroArch, with a full set of core options
+
+The [libretro core](libretro/README.md) now runs the ][, ][+, //e, //e
+Enhanced, //c and //c Plus, in NTSC or PAL. Twenty-five core options in five
+categories, in English and French, choose the machine, processor, display,
+cards, volumes, joystick behaviour, mouse and disk policy. Automatic picks the
+machine a WOZ 2 disk names, then the first one whose ROMs are present, so a
+player with only a //c or ][+ dump is no longer refused. `.hdv` and large
+ProDOS images boot as hard disks, on a //c through its rear port. A
+Mockingboard A/C is in slot 4 by default. The eleven CPU renderers the
+application has (three composite tables, OpenEmulator's composite signal,
+AppleWin's monitor, TV and idealized NTSC, three monochrome monitors and
+Le Chat Mauve RGB) are a Display option. The RetroPad can type arrows,
+I J K M or W A S D with key repeat, and a second pad drives paddles 2 and 3.
+The core publishes a memory map in RetroAchievements' Apple II layout,
+declares achievement support, and takes cheats in the same address space.
+The Disk II and //c+ drives can sound, from MAME's floppy samples, which the
+release ZIP now carries (the SDK's new `attachDriveSounds`). The core's log
+lines reach RetroArch's log instead of stderr. A private disk copy may now be
+33 MiB, so a 32 MiB hard disk saves like a floppy; at 16 MiB it mounted
+read-only, which a RetroArch session showed. The package check accepts the
+package's own `system/pom2` folder; it stopped on it before.
+
+Two points to keep:
+
+- **The //c is given its built-in Disk II at load, and a Reset once
+  powered up.** Without the card the //c ROM boots a slot full of floating
+  bus and paints garbage. With it and no disk, the ROM waits forever, as
+  the real machine does until Ctrl-Reset. The core runs two emulated
+  seconds, the time the //c Plus needs to mark itself powered up, then resets.
+  Half a second was too early on the //c Plus and restarted the cold boot.
+- **The memory map follows rcheevos, and so does POM2's own layout.**
+  `lcPhysical`/`auxPhysical` already keep the `$D000` bank 1 at `$C000`,
+  AppleWin's arrangement, which rcheevos' `0x10000`-sized main region assumes.
+  The SDK's new `ramRegion()` hands those cells out in place; `setDisplayMode()`
+  exposes the renderers. Both are pinned by `pom2_core_harness`, the core
+  features by `pom2_libretro_abi`.
+
 ## 2026-11-23 — Apple //e Enhanced in RetroArch
 
 The optional [POM2 libretro core](libretro/README.md) boots Applesoft BASIC

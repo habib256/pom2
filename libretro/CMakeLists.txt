@@ -7,8 +7,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(pom2_core CONFIG REQUIRED)
 endif()
 
-add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp)
-target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cpp)
+add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
+    core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp)
+target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cpp
+    # Host formats the SDK does not take: archives and programs.
+    ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
+    ../src/HostFileTag.cpp ../src/AppleSingle.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)
 target_include_directories(pom2_libretro PRIVATE
@@ -31,8 +35,12 @@ if(APPLE)
     file(GENERATE OUTPUT "${retro_exports}" CONTENT "_retro_*\n")
     target_link_options(pom2_libretro PRIVATE "LINKER:-exported_symbols_list,${retro_exports}")
     set_property(TARGET pom2_libretro APPEND PROPERTY LINK_DEPENDS "${retro_exports}")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
     target_link_options(pom2_libretro PRIVATE "LINKER:--exclude-libs,ALL")
+endif()
+# RetroArch on Android looks cores up as <name>_libretro_android.so.
+if(ANDROID)
+    set_target_properties(pom2_libretro PROPERTIES OUTPUT_NAME pom2_libretro_android)
 endif()
 
 file(GENERATE

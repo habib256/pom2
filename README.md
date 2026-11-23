@@ -52,12 +52,14 @@ tagged packages follow their release notes.
 
 ### In RetroArch
 
-Build the experimental POM2 libretro core to boot an NTSC Apple //e Enhanced
-into BASIC, play Disk II games with a keyboard or RetroPad, or run DIX with
-PAL video and Mockingboard stereo. The core saves each writable disk side in
-a private copy. Open
-an M3U playlist to switch sides from the RetroArch disc menu during play.
-[Build, firmware and controls](libretro/README.md).
+Build the experimental POM2 libretro core to run an Apple ][, ][+, //e,
+//e Enhanced, //c or //c Plus, in NTSC or PAL. It boots floppies, 3.5-inch
+disks and ProDOS hard disks, with a Mockingboard, an AppleMouse and eleven
+monitor styles chosen from RetroArch's core options. Play with a keyboard or
+a RetroPad, run DIX in PAL with Mockingboard stereo, and earn achievements
+through the core's memory map. The core saves each writable disk side in a
+private copy. Open an M3U playlist to switch sides during play.
+[Build, firmware, options and controls](libretro/README.md).
 
 ### In a browser
 

@@ -63,6 +63,46 @@ enum class RgbDhgrMode : std::uint8_t {
     Mixed,
 };
 
+/// The picture renderFrame() paints: each of the application's CPU renderers.
+/// Composite is POM2's composite colour table (the default); the next two are
+/// its other tables (medium runs, and a sharp nibble-per-colour one).
+/// CompositeOpenEmulator runs OpenEmulator's composite demodulation on the CPU
+/// (the GPU shader's twin, 560 wide). The three AppleWin modes are its
+/// IIR-filtered NTSC decode as a monitor, a TV, and POM2's saturated variant.
+/// The Mono modes are a monochrome monitor (amber with long persistence). Rgb
+/// is the RGB card's monitor and needs attachRgbCard(). New modes are added at
+/// the end.
+enum class DisplayMode : std::uint8_t {
+    Composite,
+    CompositeMedium,
+    CompositeSharp,
+    CompositeOpenEmulator,
+    AppleWinMonitor,
+    AppleWinTv,
+    AppleWinIdealized,
+    MonoWhite,
+    MonoGreen,
+    MonoAmber,
+    Rgb,
+};
+
+/// An accelerator in the 6502 socket. On a //c Plus, ZipChip is its own
+/// soldered CGGA (4 MHz from reset, Esc held at reset for 1 MHz), not a part
+/// the owner added. New models are added at the end.
+enum class Accelerator : std::uint8_t {
+    None,
+    ZipChip,    ///< Zip Chip 8000: 4 MHz, switched by the guest at $C05A/$C05B
+    FastChip,   ///< FASTChip //e: up to 16.6 MHz, set at $C06A-$C06F
+};
+
+/// A physical RAM bank's cells in place: `data` stays valid, at the same
+/// address, for the life of the Core (moves included: it points into the
+/// machine, not into the facade). Empty when the machine has no such bank.
+struct RamRegion {
+    std::uint8_t* data = nullptr;
+    std::size_t   size = 0;
+};
+
 /// A named machine, or Custom to take `cpu` and `iieMemory` as given.
 /// AppleIIPlus = NMOS, II+ memory; AppleIIe = NMOS, //e memory;
 /// AppleIIeEnhanced = 65C02, //e memory; AppleIIc = 65C02, //e memory, the
@@ -71,8 +111,8 @@ enum class RgbDhgrMode : std::uint8_t {
 /// loaded as a //c dump (bank 0 at reset). AppleIIcPlus is the //c+: the same,
 /// its mouse firmware at $C700, plus the MIG, the IWM and the two 3.5" drives
 /// its ROM drives — reached through the SmartPort calls below — and a Disk II
-/// in slot 6 from the start. It runs at 1 MHz: the CGGA accelerator is the
-/// application's, not the facade's. The ROM itself is still loadRom().
+/// in slot 6 from the start. It runs at 1 MHz until setAccelerator(ZipChip)
+/// seats its CGGA (then drive it with runVideo). The ROM is still loadRom().
 /// New machines are added at the end.
 enum class Machine : std::uint8_t {
     Custom,
@@ -210,6 +250,15 @@ public:
     Core(const Core&) = delete;
     Core& operator=(const Core&) = delete;
 
+    /// Applied Engineering RamWorks III in a //e's auxiliary slot: `banks`
+    /// of 64 KiB, the guest selecting one at $C073 (MAME a2eramworks3.cpp's
+    /// model). 1 is the stock 64 KiB card; 4, 8, 16, 48 and 128 are the card's
+    /// 256 KiB, 512 KiB, 1, 3 and 8 MiB. Call before loadRom(): it clears
+    /// auxiliary memory. Snapshots carry every bank. False on a ][, ][+ or
+    /// //c, or for a count outside 1-128.
+    bool setRamWorksBanks(int banks);
+    int ramWorksBanks() const;
+
     /// Load an Apple II system ROM: common sizes are 12/16/20/32 KiB.
     /// A 20 KiB dump skips its 4 KiB prefix; other accepted sizes in
     /// 2..64 KiB use the loader's best-effort top-of-memory placement.
@@ -343,6 +392,15 @@ public:
     bool setHardDiskWriteProtected(int unit, bool protectedOn);
     /// The protection the guest sees, whatever its cause.
     bool hardDiskWriteProtected(int unit = 0) const;
+    /// Make the hard disk in unit 0 part of saveState(): the snapshot then
+    /// carries only the blocks that differ from `basePath`, the image the
+    /// mounted one was copied from (a frontend's original content, kept
+    /// unchanged), and loadState() rebuilds the disk from that base, reading
+    /// from it only the blocks it must put back. Call after insertHardDisk;
+    /// another image in the unit ends it. The base must be the same size as
+    /// the mounted image. A //c's rear-port hard disk, and unit 1, stay
+    /// outside snapshots. False with the reason in lastError().
+    bool setHardDiskStateBase(std::string_view basePath);
 
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
     /// by the host transport below, while the guest sees the real $C060 input.
@@ -372,7 +430,45 @@ public:
     bool attachMockingboard(int slot = 4,
                             MockingboardModel model = MockingboardModel::AC);
     bool mockingboardAttached() const;
+    /// The gain of every sound card: Mockingboards and Phasors.
     void setMockingboardVolume(float volume);
+    /// Applied Engineering's Phasor in an empty slot (4 by convention): two
+    /// 6522s, four AY-3-8910s and two SSI263s, Mockingboard-compatible until
+    /// the guest switches it to Phasor mode. A //c refuses it. Mixed by
+    /// pullAudio(). Snapshots carry its registers and timers exactly; its
+    /// synthesis picks up from them after a restore.
+    bool attachPhasor(int slot = 4);
+    bool phasorAttached() const;
+
+    /// The drives' mechanical sounds — motor, head steps, the track-0 rattle,
+    /// the door — from MAME's floppy sample set in `sampleDirectory` (POM2
+    /// ships it as roms/floppy_samples/, BSD-licensed). The 5.25" set plays for
+    /// the Disk II, the "35_" set for the //c+'s 3.5" drives. pullAudio()
+    /// mixes them in, centred. Their timing is emulated time, so fast loading
+    /// collapses a seek into one click as the application does. Host-side
+    /// sound: a snapshot does not carry it. False when the 5.25" samples are
+    /// missing.
+    bool attachDriveSounds(std::string_view sampleDirectory);
+    bool driveSoundsAttached() const;
+
+    /// The Dallas DS1216E "No-Slot Clock" under the motherboard ROM, the
+    /// clock ProDOS's NS.CLOCK driver and many //e programs read; no slot.
+    /// `startEpoch` < 0 runs it from the host's clock. Otherwise it starts
+    /// at that time (seconds since 1970, read as local time) and advances
+    /// with EMULATED cycles, so a replayed or restored machine reads the same
+    /// date; the snapshot carries the start. A time the guest sets is kept as
+    /// an offset, as on the chip. False when a clock is already attached.
+    bool attachNoSlotClock(std::int64_t startEpoch = -1);
+    bool noSlotClockAttached() const;
+    /// Drive sound gain in [0, 2]. Values outside the range are clamped.
+    void setDriveSoundVolume(float volume);
+    /// While false, the drives' movements make no sound: a host that runs
+    /// frames whose audio it discards (run-ahead) calls it so that every
+    /// motor start and head step is heard once, on the frame it presents.
+    void setDriveSoundEventsEnabled(bool enabled);
+    /// After a restore: drop what the drive sounds are playing and take the
+    /// restored drive's state (its motor turning or not) from now on.
+    void resyncDriveSounds();
 
     /// Install an Apple Mouse card in an empty slot (4 by convention: the
     /// slot Apple sold it for, and the one software that skips the scan
@@ -453,6 +549,23 @@ public:
     int run(int minCycles);
     void step();
 
+    /// Seat (or, with None, remove) a socket accelerator: the guest then
+    /// runs faster than the beam. A ][, ][+ or //e takes either part; a //c
+    /// Plus takes ZipChip, its built-in one; a plain //c none. Reset as when
+    /// seated. False, nothing changed, for a machine that cannot take it.
+    bool setAccelerator(Accelerator model);
+    Accelerator accelerator() const;
+    /// The CPU's speed now, in multiples of the stock clock (1 without an
+    /// accelerator, or with one the guest has slowed).
+    double cpuSpeedMultiplier() const;
+    /// Run `videoCycles` of the BEAM's time, the way the application paces a
+    /// frame: the CPU runs that many cycles times the accelerator's speed,
+    /// in slices that follow the guest's speed switches, and every clocked
+    /// device (speaker, Mockingboard, drives, the beam) is told the speed.
+    /// Returns the beam cycles actually run (a slice ends on an instruction).
+    /// Without an accelerator it is exactly run(videoCycles).
+    int runVideo(int videoCycles);
+
     /// Apple II bus accesses. Reads may have hardware side effects, exactly as
     /// they do for the emulated CPU; these are not debugger-style peeks.
     std::uint8_t read(std::uint16_t address);
@@ -466,6 +579,12 @@ public:
     /// could, and a card or the video scanner sees no bus cycle for it.
     bool readRam(RamBank bank, std::uint16_t address, std::uint8_t* out, std::size_t length);
     bool writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* data, std::size_t length);
+    /// The cells readRam() reaches, in place, for a host that maps them
+    /// (a libretro memory map, a cheat engine, an achievement runtime).
+    /// Main is $0000-$BFFF (48 KiB); LanguageCard1/2 4 KiB each;
+    /// LanguageCardHigh 8 KiB; Aux 48 KiB and its language card only with
+    /// //e memory. A write through `data` is writeRam()'s debugger write.
+    RamRegion ramRegion(RamBank bank);
     KeyboardState keyboardState() const;
 
     /// The version, commit and capabilities of this archive.
@@ -478,12 +597,21 @@ public:
     /// firmware and device topology.
     bool saveState(std::vector<std::uint8_t>& out);
 
-    /// Restore a snapshot into the same configuration. Disk II media are
-    /// embedded and restored in memory. Passing a trusted path explicitly
-    /// lets drive 0 resume writing to an existing private working copy.
-    /// An empty path keeps the restored media detached from host writes.
+    /// Restore a snapshot into the same configuration. Embedded disks are
+    /// restored in memory. A trusted path may bind drive/unit 0 to an
+    /// existing private working copy. An empty path keeps its media detached
+    /// from host writes. After validation, beforeRestore may veto the commit.
     bool loadState(const void* data, std::size_t size, std::string_view diskBacking = {},
                    std::string_view smartPortBacking = {},
+                   const std::function<bool()>& beforeRestore = {});
+    /// The same, with a working copy for each drive: `disk[0]` and `disk[1]`
+    /// for the Disk II's two drives, `smartPort` for SmartPort unit 0. An
+    /// empty path keeps that medium detached, as above.
+    struct StateBackings {
+        std::string_view disk[2];
+        std::string_view smartPort;
+    };
+    bool loadState(const void* data, std::size_t size, const StateBackings& backings,
                    const std::function<bool()>& beforeRestore = {});
     /// Lowercase hex SHA-256, for a host recording what it ran. sha256File
     /// answers "" when the file cannot be read.
@@ -526,6 +654,11 @@ public:
     /// is technical evidence and does not stand for what the application
     /// shows (docs/SDK.md § Rendering).
     FramebufferView renderFrame();
+    /// Select the renderer renderFrame() runs. False, with the mode left as
+    /// it was, for Rgb without an RGB card. Composite at construction. The
+    /// OpenEmulator mode demodulates with PAL line alternation on PAL timing.
+    bool setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const;
     /// Machine cycle at which the last FINISHED video frame began. It changes
     /// once per video frame (17030 cycles NTSC, 20280 PAL), so a recorder
     /// that polls it between run() slices shorter than a frame renders every

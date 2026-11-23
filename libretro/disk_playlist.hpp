@@ -10,10 +10,15 @@
 
 namespace pom2::libretro {
 
+// Where an image goes: a 5.25" Disk II drive, a 3.5" SmartPort drive (400
+// or 800 KiB), or a ProDOS hard disk (an .hdv, or a larger .po / 2IMG).
+enum class MediaKind { DiskII, SmartPort, HardDisk };
+
 struct DiskEntry {
     std::filesystem::path path;
     std::string label;
-    bool smartPort() const;
+    MediaKind kind() const;
+    bool smartPort() const { return kind() == MediaKind::SmartPort; }
 };
 
 DiskEntry loadDiskImage(const std::filesystem::path& path);

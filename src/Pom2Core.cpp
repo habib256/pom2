@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-#include <pom2/core.hpp>
+#include "Pom2CoreImpl.h"
 
 #include "Apple2Display.h"
 #include "AudioMix.h"
@@ -22,6 +22,8 @@
 #include "CpuClock.h"
 #include "DiskIICard.h"
 #include "EzColorCard.h"
+#include "NoSlotClock.h"
+#include "FloppySoundDevice.h"
 #include "M6502.h"
 #include "Memory.h"
 #include "AudioSource.h"   // AudioSource + RateAware, named in setAudioSampleRate
@@ -32,8 +34,8 @@
 #include "LeChatMauveCard.h"
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
-#include "MachineSnapshot.h"
 #include "Mockingboard.h"
+#include "PhasorCard.h"
 #include "Sha256.h"
 #include "Version.h"
 #include "MountableMediaCard.h"
@@ -47,13 +49,11 @@
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
 #include "SpeakerDevice.h"
-#include "SessionIO.h"
-#include "SnapshotIO.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <fstream>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <utility>
@@ -69,217 +69,124 @@
 
 namespace pom2 {
 
-class Core::Impl {
-public:
-    explicit Impl(const CoreConfig& requested)
-        : cpu(&memory)
-    {
-        cpu.setNcr65C02(true);   // the Apple's 65C02 is NCR's (M6502.h)
-        const CoreConfig config = resolve(requested);
-        machine = config.machine;
-        iieMemory = config.iieMemory;
-        busWatchSink.owner = this;
-        memory.setCpu(&cpu);
-        memory.setIIEMode(config.iieMemory);
-        videoStandard = config.timing == VideoTiming::PAL
+Core::Impl::Impl(const CoreConfig& requested)
+    : cpu(&memory)
+{
+    cpu.setNcr65C02(true);   // the Apple's 65C02 is NCR's (M6502.h)
+    const CoreConfig config = resolve(requested);
+    machine = config.machine;
+    iieMemory = config.iieMemory;
+    busWatchSink.owner = this;
+    memory.setCpu(&cpu);
+    memory.setIIEMode(config.iieMemory);
+    videoStandard = config.timing == VideoTiming::PAL
+        ? ::VideoStandard::PAL
+        : ::VideoStandard::NTSC;
+    memory.setVideoStandard(videoStandard);
+    cpu.setCpuMode(config.cpu == CpuModel::CMOS65C02
+        ? M6502::CpuMode::CMOS
+        : M6502::CpuMode::NMOS);
+    display.setAuxMemory(memory.auxData());
+    cpuClockHz = static_cast<double>(pom2VideoTiming(
+        config.timing == VideoTiming::PAL
             ? ::VideoStandard::PAL
-            : ::VideoStandard::NTSC;
-        memory.setVideoStandard(videoStandard);
-        cpu.setCpuMode(config.cpu == CpuModel::CMOS65C02
-            ? M6502::CpuMode::CMOS
-            : M6502::CpuMode::NMOS);
-        display.setAuxMemory(memory.auxData());
-        cpuClockHz = static_cast<double>(pom2VideoTiming(
-            config.timing == VideoTiming::PAL
-                ? ::VideoStandard::PAL
-                : ::VideoStandard::NTSC).cpuClockHz);
-        speaker.setCpuClock(cpuClockHz);
-        cassette.setCpuClock(cpuClockHz);
-        cassette.setAudioAvailable(true);
-        cassette.setAudioOutputSampleRate(audioSampleRate);
-        memory.setSpeakerDevice(&speaker);
-        memory.setCassetteDevice(&cassette);
-        if (machine == Machine::AppleIIcPlus) wireIIcPlus();
-        if (iicClass()) {
-            // The //c's IOU mouse: no card, no ROM of its own — port 4 only
-            // owns its lifecycle, IRQ and snapshot (SlotCardFactory
-            // "iicmouse"). Its firmware page is $C400, $C700 on the //c+.
-            auto mouse = std::make_unique<IIcMouse>(
-                machine == Machine::AppleIIcPlus ? 7 : 4);
-            mouseIic = mouse.get();
-            // The firmware's screen holes follow its page: port 7 on the
-            // //c+ ([C] apple2cp.rom bank 1 reads $047F/$04FF), port 4 on the
-            // //c. setMouse read port 4's on a //c+ and never saw the cursor
-            // move (bug hunt 2026-11-07).
-            mouseSlot = machine == Machine::AppleIIcPlus ? 7 : 4;
-            memory.slotBus().plug(4, std::move(mouse));
+            : ::VideoStandard::NTSC).cpuClockHz);
+    speaker.setCpuClock(cpuClockHz);
+    cassette.setCpuClock(cpuClockHz);
+    cassette.setAudioAvailable(true);
+    cassette.setAudioOutputSampleRate(audioSampleRate);
+    memory.setSpeakerDevice(&speaker);
+    memory.setCassetteDevice(&cassette);
+    if (machine == Machine::AppleIIcPlus) wireIIcPlus();
+    if (iicClass()) {
+        // The //c's IOU mouse: no card, no ROM of its own — port 4 only
+        // owns its lifecycle, IRQ and snapshot (SlotCardFactory
+        // "iicmouse"). Its firmware page is $C400, $C700 on the //c+.
+        auto mouse = std::make_unique<IIcMouse>(
+            machine == Machine::AppleIIcPlus ? 7 : 4);
+        mouseIic = mouse.get();
+        // The firmware's screen holes follow its page: port 7 on the
+        // //c+ ([C] apple2cp.rom bank 1 reads $047F/$04FF), port 4 on the
+        // //c. setMouse read port 4's on a //c+ and never saw the cursor
+        // move (bug hunt 2026-11-07).
+        mouseSlot = machine == Machine::AppleIIcPlus ? 7 : 4;
+        memory.slotBus().plug(4, std::move(mouse));
+    }
+}
+
+bool Core::Impl::iicClass() const
+{
+    return machine == Machine::AppleIIc || machine == Machine::AppleIIcPlus;
+}
+
+// The //c+'s disk hardware, wired as tests/iicplus_boot35 and
+// EmulationController wire it, before the ROM is loaded (the //c-class
+// profile takes the IWM and the hub when it is built). The MIG drives
+// the internal 3.5" Sony through the IWM; the external one joins the
+// chain when a disk is first put in it. A Disk II card sits in slot 6
+// from the start, sharing the IWM: the firmware reads the 5.25" port
+// through it even with no 5.25" disk, and the floating bus there sends
+// it down a branch the machine never takes.
+void Core::Impl::wireIIcPlus()
+{
+    plus = std::make_unique<IIcPlusDisks>();
+    for (int d = 0; d < 2; ++d) plus->drive35[d].setImage(&plus->image35[d]);
+    plus->hub.attach(&plus->iwm);
+    plus->hub.setSony35(&plus->drive35[0], nullptr, nullptr);
+    memory.setIWM(&plus->iwm);
+    memory.setSmartPortHub(&plus->hub);
+    auto card = std::make_unique<DiskIICard>(DiskIICard::kDefaultSlot);
+    card->setCpu(&cpu);
+    card->setIWM(&plus->iwm);
+    diskII = card.get();
+    memory.slotBus().plug(DiskIICard::kDefaultSlot, std::move(card));
+}
+
+// The IWM's drive-disable timer runs on its own clock; the application
+// ticks it once a frame, the boot test every 4096 cycles.
+void Core::Impl::tickIwm()
+{
+    if (!plus) return;
+    plus->iwm.tick(memory.getCycleCounter());
+    plus->lastIwmTick = memory.getCycleCounter();
+}
+
+CoreConfig Core::Impl::resolve(CoreConfig c)
+{
+    switch (c.machine) {
+    case Machine::Custom:           break;
+    case Machine::AppleIIPlus:      c.cpu = CpuModel::NMOS6502;  c.iieMemory = false; break;
+    case Machine::AppleIIe:         c.cpu = CpuModel::NMOS6502;  c.iieMemory = true;  break;
+    case Machine::AppleIIeEnhanced: c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
+    case Machine::AppleIIc:         c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
+    case Machine::AppleIIcPlus:     c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
+    }
+    return c;
+}
+
+Core::Impl::~Impl()
+{
+    // ProDOSHardDiskCard has no save-on-destruction of its own: the
+    // application flushes it before unplugging. The SmartPort HDV unit
+    // does save, so this is what makes the two machines keep one promise.
+    if (hardDisk) {
+        for (int unit = 0; unit < 2; ++unit) {
+            std::string ignored;
+            (void)hardDisk->flushBay(unit, ignored);
         }
     }
-
-    bool iicClass() const
-    {
-        return machine == Machine::AppleIIc || machine == Machine::AppleIIcPlus;
+    memory.setExternalSmartPort(nullptr);
+    // The 3.5" disks' writes, as the application's eject would land them.
+    if (plus) {
+        for (auto& image : plus->image35)
+            if (image.isLoaded() && image.hasUnsavedChanges()) (void)image.saveDirty();
+        memory.setIWM(nullptr);
+        memory.setSmartPortHub(nullptr);
     }
-
-    bool canSnapshot() const
-    {
-        return !plus && !hardDisk && !mouseMcu && !mouseHle && !ezColor &&
-               std::all_of(mockingboards.begin(), mockingboards.end(), [](const auto* card) {
-                   return card->getVariant() == MockingboardCard::Variant::AC;
-               }) && !cassette.hasLoadedTape() &&
-               !cassette.hasRecordedTape() && !cassette.isRecordingArmed();
-    }
-
-    // The //c+'s disk hardware, wired as tests/iicplus_boot35 and
-    // EmulationController wire it, before the ROM is loaded (the //c-class
-    // profile takes the IWM and the hub when it is built). The MIG drives
-    // the internal 3.5" Sony through the IWM; the external one joins the
-    // chain when a disk is first put in it. A Disk II card sits in slot 6
-    // from the start, sharing the IWM: the firmware reads the 5.25" port
-    // through it even with no 5.25" disk, and the floating bus there sends
-    // it down a branch the machine never takes.
-    void wireIIcPlus()
-    {
-        plus = std::make_unique<IIcPlusDisks>();
-        for (int d = 0; d < 2; ++d) plus->drive35[d].setImage(&plus->image35[d]);
-        plus->hub.attach(&plus->iwm);
-        plus->hub.setSony35(&plus->drive35[0], nullptr, nullptr);
-        memory.setIWM(&plus->iwm);
-        memory.setSmartPortHub(&plus->hub);
-        auto card = std::make_unique<DiskIICard>(DiskIICard::kDefaultSlot);
-        card->setCpu(&cpu);
-        card->setIWM(&plus->iwm);
-        diskII = card.get();
-        memory.slotBus().plug(DiskIICard::kDefaultSlot, std::move(card));
-    }
-
-    // The IWM's drive-disable timer runs on its own clock; the application
-    // ticks it once a frame, the boot test every 4096 cycles.
-    void tickIwm()
-    {
-        if (!plus) return;
-        plus->iwm.tick(memory.getCycleCounter());
-        plus->lastIwmTick = memory.getCycleCounter();
-    }
-
-    static CoreConfig resolve(CoreConfig c)
-    {
-        switch (c.machine) {
-        case Machine::Custom:           break;
-        case Machine::AppleIIPlus:      c.cpu = CpuModel::NMOS6502;  c.iieMemory = false; break;
-        case Machine::AppleIIe:         c.cpu = CpuModel::NMOS6502;  c.iieMemory = true;  break;
-        case Machine::AppleIIeEnhanced: c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
-        case Machine::AppleIIc:         c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
-        case Machine::AppleIIcPlus:     c.cpu = CpuModel::CMOS65C02; c.iieMemory = true;  break;
-        }
-        return c;
-    }
-
-    ~Impl()
-    {
-        // ProDOSHardDiskCard has no save-on-destruction of its own: the
-        // application flushes it before unplugging. The SmartPort HDV unit
-        // does save, so this is what makes the two machines keep one promise.
-        if (hardDisk) {
-            for (int unit = 0; unit < 2; ++unit) {
-                std::string ignored;
-                (void)hardDisk->flushBay(unit, ignored);
-            }
-        }
-        memory.setExternalSmartPort(nullptr);
-        // The 3.5" disks' writes, as the application's eject would land them.
-        if (plus) {
-            for (auto& image : plus->image35)
-                if (image.isLoaded() && image.hasUnsavedChanges()) (void)image.saveDirty();
-            memory.setIWM(nullptr);
-            memory.setSmartPortHub(nullptr);
-        }
-        memory.setWatchSink(nullptr);
-        memory.setCassetteDevice(nullptr);
-        memory.setSpeakerDevice(nullptr);
-    }
-
-    // The //c+'s disk hardware, Machine::AppleIIcPlus only: allocated there
-    // and nowhere else, so that no other Core builds a Disk35Image (whose
-    // first construction fixes the process-wide POM2_MEDIA_WRITE_DEFAULT
-    // reading). Declared before `memory`, so it outlives it: Memory and its
-    // //c-class profile hold pointers into it.
-    struct IIcPlusDisks {
-        pom2::IWMDevice    iwm;
-        pom2::SmartPortHub hub;
-        pom2::Disk35Image  image35[2];            // internal, external
-        pom2::Sony35Drive  drive35[2];
-        bool               external35 = false;    // on the chain yet
-        std::uint64_t      lastIwmTick = 0;
-    };
-    std::unique_ptr<IIcPlusDisks> plus;
-    // The plain //c's rear connector, once a hard disk hangs off it. Declared
-    // before `memory` for the same reason: its profile holds a pointer to it.
-    std::unique_ptr<pom2::IIcExternalSmartPort> iicRearPort;
-    Memory memory;
-    M6502  cpu;
-    Apple2Display display;
-    SpeakerDevice speaker;
-    CassetteDevice cassette;
-    DiskIICard* diskII = nullptr; // non-owning; its slot owns the card
-    SmartPortCard* smartPort = nullptr; // non-owning; its slot owns the card
-    // attachHardDisk's device, a ProDOSHardDiskCard or (//c) a SmartPortCard
-    // of HDV units: non-owning, and the same two bays either way.
-    pom2::MountableMediaCard* hardDisk = nullptr;
-    int hardDiskSlot = 0;
-    // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
-    // mixes every card on the bus, so a second attached card was being mixed
-    // at a rate and volume it was never told about — `attachMockingboard`
-    // simply overwrote the single pointer and the earlier card kept 44 100
-    // while the mixer consumed 48 000.
-    std::vector<MockingboardCard*> mockingboards;
-    // Non-owning; the slot owns the card. One of the two, or neither.
-    MouseCard*         mouseMcu = nullptr;
-    MouseCardAppleWin* mouseHle = nullptr;
-    IIcMouse*          mouseIic = nullptr;   // the //c's built-in one
-    Machine            machine  = Machine::Custom;
-    bool               iieMemory = false;
-    LeChatMauveCard*   rgbCard  = nullptr;   // non-owning; its slot owns it
-    EzColorCard*       ezColor  = nullptr;   // non-owning; its slot owns it
-    std::vector<std::uint32_t> ezFrame;      // renderEzColorFrame()'s pixels
-    // setBusWatch: Memory reports each watched access here. Only the CPU's
-    // accesses go out — `cpuRunning` is set across run()/step(), so the
-    // host's read()/write() and the facade's own peeks (boot signatures,
-    // the mouse's screen holes) stay silent.
-    struct BusWatchSink final : MemoryWatchSink {
-        Impl* owner = nullptr;
-        void noteAccess(std::uint16_t addr, std::uint8_t value, bool write) override
-        {
-            if (owner->cpuRunning && owner->busWatch)
-                owner->busWatch(addr, value, write, owner->memory.accessCycle());
-        }
-    } busWatchSink;
-    Core::BusWatch     busWatch;
-    bool               cpuRunning = false;
-    int                mouseSlot = 0;
-    std::uint8_t       mouseRawX = 0, mouseRawY = 0;   // the host's running counters
-    // setMouse on the MCU card: where the screen holes stood when the last
-    // correction went out. Until they move, that correction is not published.
-    bool               mousePushOut = false;
-    int                mousePushHoleX = 0, mousePushHoleY = 0;
-    // Calls spent waiting on a push the holes never showed: one that could
-    // not move the cursor (target past the clamp, mouse off, a guest that
-    // stopped reading) latched setMouse false for the whole session.
-    int                mousePushWaits = 0;
-    ::VideoStandard    videoStandard = ::VideoStandard::NTSC;
-    double cpuClockHz = static_cast<double>(POM2_CPU_CLOCK_HZ);
-    std::uint32_t audioSampleRate = 44100;
-    std::vector<float> speakerScratch;
-    std::vector<float> cassetteScratch;
-    std::vector<float> leftScratch;
-    std::vector<float> rightScratch;
-    /// The bus this core mixes into — the same law the emulator's own audio
-    /// device plays through (`AudioMix.h`). `mixList` is refilled per buffer
-    /// and keeps its capacity, so the audio path stays allocation-free.
-    pom2::MixBusState         mixBus;
-    std::vector<AudioSource*> mixList;
-    std::string error;
-};
+    memory.setWatchSink(nullptr);
+    memory.setCassetteDevice(nullptr);
+    memory.setSpeakerDevice(nullptr);
+}
 
 Core::Core(CoreConfig config)
     : impl_(std::make_unique<Impl>(config))
@@ -289,234 +196,6 @@ Core::Core(CoreConfig config)
 Core::~Core() = default;
 Core::Core(Core&&) noexcept = default;
 Core& Core::operator=(Core&&) noexcept = default;
-
-namespace {
-constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 1};
-constexpr size_t kMaxSdkStateBytes = 40u << 20;
-}
-
-bool Core::supportsState() const
-{
-    return impl_->canSnapshot();
-}
-
-bool Core::saveState(std::vector<std::uint8_t>& out)
-{
-    auto& state = *impl_;
-    if (!state.canSnapshot()) {
-        state.error = "SDK snapshots do not cover this peripheral configuration";
-        return false;
-    }
-    std::vector<uint8_t> machine, speaker, keyboard, video, disk, diskIdentity, diskTiming, smartPort, rgb, mb;
-    SnapshotWriter writer(machine);
-    captureMachineState(writer, state.cpu, state.memory);
-    if (!writer.finish()) {
-        state.error = "Cannot capture machine snapshot";
-        return false;
-    }
-    state.speaker.appendSdkState(speaker);
-    state.memory.appendSdkKeyboard(keyboard);
-    state.memory.appendSdkVideoState(video);
-    if (state.diskII) {
-        state.diskII->appendSessionIdentity(diskIdentity);
-        state.diskII->appendSdkTiming(diskTiming);
-        if (!state.diskII->appendSessionState(disk, state.error)) return false;
-    }
-    if (state.smartPort) {
-        smartPort.push_back(static_cast<uint8_t>(state.smartPort->getSlot()));
-        std::vector<uint8_t> unit;
-        for (size_t i = 0; i < 2; ++i) {
-            unit.clear();
-            const auto& image = static_cast<const SmartPort35Unit*>(state.smartPort->unit(i))->image();
-            if (!image.appendSessionMedia(unit, state.error)) return false;
-            sessionio::blob(smartPort, unit);
-        }
-        unit.clear();
-        state.smartPort->appendSnapshotState(unit);
-        sessionio::blob(smartPort, unit);
-    }
-    if (state.rgbCard) state.rgbCard->appendSnapshotState(rgb);
-    for (const auto* card : state.mockingboards) {
-        mb.push_back(static_cast<uint8_t>(card->getSlot()));
-        std::vector<uint8_t> payload;
-        card->appendSnapshotState(payload);
-        sessionio::blob(mb, payload);
-        payload.clear();
-        card->appendSdkAudio(payload);
-        sessionio::blob(mb, payload);
-    }
-    out.assign(std::begin(kSdkStateMagic), std::end(kSdkStateMagic));
-    out.push_back(static_cast<uint8_t>(state.machine));
-    byteio::putU32(out, state.audioSampleRate);
-    const auto paddles = state.memory.sdkPaddleState();
-    out.insert(out.end(), paddles.begin(), paddles.end());
-    for (const auto* blob : {&machine, &speaker, &keyboard, &video, &diskIdentity,
-                             &disk, &diskTiming, &smartPort, &rgb, &mb})
-        sessionio::blob(out, *blob);
-    state.error.clear();
-    return true;
-}
-
-bool Core::loadState(const void* data, std::size_t size, std::string_view diskBacking,
-                     std::string_view smartPortBacking, const std::function<bool()>& beforeRestore)
-{
-    auto& state = *impl_;
-    const auto fail = [&](std::string error) {
-        state.error = std::move(error);
-        return false;
-    };
-    if (!data || size < sizeof(kSdkStateMagic) || size > kMaxSdkStateBytes ||
-        std::memcmp(data, kSdkStateMagic, sizeof(kSdkStateMagic)) != 0)
-        return fail("Invalid SDK snapshot header");
-    if (!state.canSnapshot())
-        return fail("SDK snapshots do not cover this peripheral configuration");
-
-    sessionio::Reader reader(static_cast<const uint8_t*>(data), size);
-    reader.pos = sizeof(kSdkStateMagic);
-    if (reader.u8() != static_cast<uint8_t>(state.machine) || reader.u32() != state.audioSampleRate)
-        return fail("SDK snapshot machine or sample rate differs");
-    if (!reader.need(6)) return fail("Invalid SDK game-port state");
-    const auto* paddles = reader.data + reader.pos;
-    reader.pos += 6;
-    std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb;
-    if (!reader.blob(machine, 2u << 20) || !reader.blob(speaker, 256u << 10) ||
-        !reader.blob(keyboard, 8u << 10) || !reader.blob(video, 4u << 20) ||
-        !reader.blob(diskIdentity, 4096) ||
-        !reader.blob(disk, 36u << 20) || !reader.blob(diskTiming, 64) ||
-        !reader.blob(smartPort, 36u << 20) ||
-        !reader.blob(rgb, 64) || !reader.blob(mb, 5u << 20) || !reader.done())
-        return fail("Invalid SDK snapshot section lengths");
-    if (!state.speaker.loadSdkState(speaker.data(), speaker.size(), false) ||
-        !state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), false) ||
-        !state.memory.loadSdkPaddles(paddles, 6, false) ||
-        !state.memory.loadSdkVideoState(video.data(), video.size(), false))
-        return fail("Invalid SDK speaker, keyboard or video state");
-    if (bool(state.diskII) != !disk.empty() || bool(state.smartPort) != !smartPort.empty() ||
-        bool(state.rgbCard) != !rgb.empty())
-        return fail("SDK snapshot slot topology differs");
-    if (!state.diskII && (!diskBacking.empty() || !diskIdentity.empty() || !diskTiming.empty()))
-        return fail("SDK snapshot contains unexpected Disk II data");
-    if (!state.smartPort && !smartPortBacking.empty())
-        return fail("SDK snapshot contains unexpected SmartPort backing");
-
-    DiskIICard::SessionRestore prepared;
-    if (state.diskII) {
-        std::vector<uint8_t> identity;
-        state.diskII->appendSessionIdentity(identity);
-        if (diskIdentity != identity)
-            return fail("SDK snapshot Disk II firmware differs");
-        if (!state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), false))
-            return fail("Invalid SDK Disk II timing state");
-        // Prepare against a clean controller. The live drive can contain
-        // pending writes from the future timeline we are about to abandon.
-        DiskIICard validator(state.diskII->getSlot());
-        validator.installSessionIdentity(identity);
-        if (!validator.prepareSessionState(disk.data(), disk.size(), prepared, state.error,
-                                           /*allowWoz=*/true, /*allowWritable=*/true))
-            return false;
-        if (!diskBacking.empty() &&
-            (!mediaWritableByDefault() ||
-             !DiskIICard::bindSdkBacking(prepared, std::string(diskBacking))))
-            return fail("Cannot bind restored Disk II medium to its working copy");
-    }
-    std::unique_ptr<SmartPortCard> preparedSmartPort;
-    std::vector<uint8_t> smartPortRuntime;
-    if (state.smartPort) {
-        sessionio::Reader units(smartPort.data(), smartPort.size());
-        if (units.u8() != state.smartPort->getSlot())
-            return fail("SDK snapshot SmartPort slot differs");
-        preparedSmartPort = std::make_unique<SmartPortCard>(state.smartPort->getSlot());
-        preparedSmartPort->setUnitCount(2);
-        for (size_t i = 0; i < 2; ++i) {
-            std::vector<uint8_t> payload;
-            if (!units.blob(payload, (16u << 20) + 32)) return fail("Invalid SDK SmartPort disk length");
-            auto unit = std::make_unique<SmartPort35Unit>();
-            if (!unit->image().loadSessionMedia(payload.data(), payload.size(), state.error, true))
-                return false;
-            if (i == 0 && !smartPortBacking.empty() &&
-                (!mediaWritableByDefault() ||
-                 !unit->image().bindSnapshotBacking(std::string(smartPortBacking))))
-                return fail("Cannot bind restored SmartPort medium to its working copy");
-            preparedSmartPort->setUnit(i, std::move(unit));
-        }
-        if (!units.blob(smartPortRuntime, 96u << 10) || !units.done())
-            return fail("Invalid SDK SmartPort controller length");
-        // Each runtime tail holds the medium paths. These are the only
-        // fields changed by reconstructing the paired, embedded media.
-        constexpr auto identitySize = 8 * SmartPortCard::kMaxUnits;
-        std::vector<uint8_t> canonical;
-        preparedSmartPort->appendSnapshotState(canonical);
-        if (smartPortRuntime.size() < canonical.size())
-            return fail("Invalid SDK SmartPort controller state");
-        std::copy(canonical.end() - identitySize, canonical.end(), smartPortRuntime.end() - identitySize);
-        preparedSmartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());
-        canonical.clear();
-        preparedSmartPort->appendSnapshotState(canonical);
-        if (canonical != smartPortRuntime) return fail("Invalid SDK SmartPort controller state");
-    }
-    if (state.rgbCard) {
-        std::vector<uint8_t> live;
-        state.rgbCard->appendSnapshotState(live);
-        if (rgb.size() != live.size() || !std::equal(rgb.begin(), rgb.begin() + 3, live.begin()))
-            return fail("Invalid SDK RGB card state");
-    }
-
-    struct MockingboardState {
-        std::vector<uint8_t> registers;
-        std::vector<uint8_t> timeline;
-    };
-    std::vector<MockingboardState> boardStates(state.mockingboards.size());
-    sessionio::Reader boardReader(mb.data(), mb.size());
-    for (size_t i = 0; i < boardStates.size(); ++i) {
-        auto& board = boardStates[i];
-        auto* live = state.mockingboards[i];
-        if (boardReader.u8() != live->getSlot() ||
-            !boardReader.blob(board.registers, 1024) ||
-            !boardReader.blob(board.timeline, 600u << 10) ||
-            !live->loadSdkAudio(board.timeline.data(), board.timeline.size(), false))
-            return fail("Invalid SDK Mockingboard state");
-        MockingboardCard validator(live->getSlot());
-        validator.loadSnapshotState(board.registers.data(), board.registers.size());
-        std::vector<uint8_t> canonical;
-        validator.appendSnapshotState(canonical);
-        if (canonical != board.registers) return fail("Invalid SDK Mockingboard registers");
-    }
-    if (!boardReader.done()) return fail("SDK snapshot Mockingboard topology differs");
-
-    SnapshotReader machineReader(machine.data(), machine.size());
-    std::string section;
-    uint32_t sectionSize = 0;
-    if (!machineReader.nextSection(section, sectionSize) || section != "ENV")
-        return fail("SDK snapshot must name its firmware");
-    SnapshotReader machinePayload(machine.data(), machine.size());
-    const auto restored = restoreMachineState(machinePayload, state.cpu, state.memory,
-                                              /*transactional=*/true, /*logSuccess=*/false,
-                                              beforeRestore);
-    if (!restored.ok) return fail(restored.error);
-    if (state.diskII) {
-        state.diskII->applySessionState(std::move(prepared));
-        state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), true);
-    }
-    if (preparedSmartPort) {
-        for (size_t i = 0; i < 2; ++i)
-            state.smartPort->setUnit(i, preparedSmartPort->setUnit(i, nullptr));
-        state.smartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());
-    }
-    if (state.rgbCard) state.rgbCard->loadSnapshotState(rgb.data(), rgb.size());
-    for (size_t i = 0; i < boardStates.size(); ++i) {
-        const auto& board = boardStates[i];
-        auto* card = state.mockingboards[i];
-        card->loadSnapshotState(board.registers.data(), board.registers.size());
-        card->loadSdkAudio(board.timeline.data(), board.timeline.size(), true);
-    }
-    state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), true);
-    state.memory.loadSdkPaddles(paddles, 6, true);
-    state.memory.loadSdkVideoState(video.data(), video.size(), true);
-    state.speaker.loadSdkState(speaker.data(), speaker.size(), true);
-    state.display.invalidateTextFrameCache();
-    state.error.clear();
-    return true;
-}
 
 bool Core::loadRom(std::string_view path, bool lowerBankFor32K)
 {
@@ -604,6 +283,7 @@ bool Core::attachDiskII(std::string_view bootRom,
     if (impl_->diskII && impl_->diskII->getSlot() != slot)
         impl_->memory.slotBus().unplug(impl_->diskII->getSlot());
     impl_->diskII = card.get();
+    if (impl_->driveSound525) impl_->diskII->setFloppySound(impl_->driveSound525.get());
     impl_->memory.slotBus().plug(slot, std::move(card));
     impl_->error.clear();
     return true;
@@ -1027,6 +707,47 @@ bool Core::insertHardDisk(int unit, std::string_view path)
     return true;
 }
 
+pom2::Block512Backing* Core::Impl::hardDiskTracked() const
+{
+    auto* card = dynamic_cast<ProDOSHardDiskCard*>(hardDisk);
+    if (!card || iicClass()) return nullptr;
+    auto& backing = card->backing(0);
+    return backing.isLoaded() && backing.tracksChanges() && !hardDiskBasePath.empty() ? &backing : nullptr;
+}
+
+bool Core::setHardDiskStateBase(std::string_view basePath)
+{
+    auto* card = dynamic_cast<ProDOSHardDiskCard*>(impl_->hardDisk);
+    if (!card || impl_->iicClass() || !card->backing(0).isLoaded()) {
+        impl_->error = "Hard disk states need a slot card with a disk in unit 0";
+        return false;
+    }
+    auto& backing = card->backing(0);
+    std::ifstream base{std::string(basePath), std::ios::binary};
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(base)), {});
+    const std::size_t offset = backing.imageDataOffset();
+    const std::size_t blocks = backing.blockCount();
+    if (!base.good() && !base.eof()) {
+        impl_->error = "Cannot read the hard disk's base image";
+        return false;
+    }
+    if (bytes.size() < offset + blocks * 512) {
+        impl_->error = "The base image is smaller than the mounted hard disk";
+        return false;
+    }
+    std::vector<std::uint8_t> differs(blocks);
+    std::uint8_t block[512];
+    for (std::size_t b = 0; b < blocks; ++b) {
+        backing.readBlock(static_cast<std::uint32_t>(b), block);
+        differs[b] = std::memcmp(block, bytes.data() + offset + b * 512, 512) != 0;
+    }
+    backing.trackChanges(std::move(differs));
+    impl_->hardDiskBasePath = std::string(basePath);
+    impl_->hardDiskBaseDigest = pom2::sha256Hex(bytes.data() + offset, blocks * 512);
+    impl_->error.clear();
+    return true;
+}
+
 bool Core::ejectHardDisk(int unit)
 {
     pom2::MountableMediaCard* card = hardDiskBay(impl_->hardDisk, unit, impl_->error);
@@ -1138,6 +859,120 @@ bool Core::attachRgbCard(int slot, RgbCardModel model)
     impl_->display.setChatMauveCard(impl_->rgbCard);
     impl_->error.clear();
     return true;
+}
+
+bool Core::attachDriveSounds(std::string_view sampleDirectory)
+{
+    auto sound525 = std::make_unique<FloppySoundDevice>();
+    if (!sound525->loadSamples(std::string(sampleDirectory), FloppySoundDevice::FormFactor::FF525)) {
+        impl_->error = "No floppy drive samples in " + std::string(sampleDirectory);
+        return false;
+    }
+    std::unique_ptr<FloppySoundDevice> sound35;
+    if (impl_->plus) {
+        sound35 = std::make_unique<FloppySoundDevice>();
+        if (!sound35->loadSamples(std::string(sampleDirectory), FloppySoundDevice::FormFactor::FF35))
+            sound35.reset();
+    }
+    for (auto* drive : {sound525.get(), sound35.get()}) {
+        if (!drive) continue;
+        drive->setCpuClock(impl_->cpuClockHz);
+        drive->setSampleRate(impl_->audioSampleRate);
+    }
+    // The //c family's Sony drives spin faster than the Shugart the samples
+    // were recorded on: the application raises their pitch the same way.
+    if (impl_->iicClass()) sound525->setMotorPitch(1.4f);
+    // Retire the old devices only after the drives point at the new ones.
+    if (impl_->diskII) impl_->diskII->setFloppySound(sound525.get());
+    if (impl_->plus)
+        for (auto& drive : impl_->plus->drive35) drive.setFloppySound(sound35.get());
+    impl_->driveSound525 = std::move(sound525);
+    impl_->driveSound35 = std::move(sound35);
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::attachNoSlotClock(std::int64_t startEpoch)
+{
+    if (impl_->noSlotClock) {
+        impl_->error = "A No-Slot Clock is already attached";
+        return false;
+    }
+    auto* impl = impl_.get();
+    // The start lives in the machine, not in the callable: a restore sets it
+    // from the snapshot, and a start < 0 is the host's clock.
+    pom2::NoSlotClock::TimeFn source = [impl]() {
+        std::time_t when = std::time(nullptr);
+        if (impl->clockStartEpoch >= 0) {
+            // Beam time: an accelerator speeds the CPU, not the clock chip.
+            const auto elapsed = static_cast<std::int64_t>(
+                static_cast<double>(impl->memory.videoNow()) / impl->cpuClockHz);
+            when = static_cast<std::time_t>(impl->clockStartEpoch + elapsed);
+        }
+        std::tm tm{};
+#if defined(_WIN32)
+        localtime_s(&tm, &when);
+#else
+        localtime_r(&when, &tm);
+#endif
+        return tm;
+    };
+    impl_->clockStartEpoch = startEpoch;
+    impl_->noSlotClock = std::make_unique<pom2::NoSlotClock>(std::move(source));
+    impl_->memory.setNoSlotClock(impl_->noSlotClock.get());
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::noSlotClockAttached() const
+{
+    return impl_->noSlotClock != nullptr;
+}
+
+bool Core::setRamWorksBanks(int banks)
+{
+    if (!impl_->iieMemory || impl_->iicClass() || banks < 1 || banks > 128) {
+        impl_->error = "RamWorks III needs a //e and 1 to 128 banks";
+        return false;
+    }
+    impl_->memory.setRamWorksBanks(static_cast<std::uint32_t>(banks));
+    impl_->error.clear();
+    return true;
+}
+
+int Core::ramWorksBanks() const
+{
+    return static_cast<int>(impl_->memory.ramWorksBanks());
+}
+
+bool Core::driveSoundsAttached() const
+{
+    return impl_->driveSound525 != nullptr;
+}
+
+void Core::setDriveSoundEventsEnabled(bool enabled)
+{
+    auto* sound525 = enabled ? impl_->driveSound525.get() : nullptr;
+    auto* sound35 = enabled ? impl_->driveSound35.get() : nullptr;
+    if (impl_->diskII) impl_->diskII->setFloppySound(sound525);
+    if (impl_->plus)
+        for (auto& drive : impl_->plus->drive35) drive.setFloppySound(sound35);
+}
+
+void Core::resyncDriveSounds()
+{
+    if (!impl_->driveSound525) return;
+    impl_->driveSound525->reset();
+    if (impl_->diskII && impl_->diskII->isMotorOn())
+        impl_->driveSound525->motor(true, impl_->diskII->isDiskLoaded(impl_->diskII->getActiveDrive()));
+    if (impl_->driveSound35) impl_->driveSound35->reset();
+}
+
+void Core::setDriveSoundVolume(float volume)
+{
+    const float gain = std::clamp(volume, 0.0f, 2.0f);
+    for (auto* drive : {impl_->driveSound525.get(), impl_->driveSound35.get()})
+        if (drive) drive->setVolume(gain);
 }
 
 bool Core::rgbCardAttached() const
@@ -1400,6 +1235,32 @@ bool Core::attachMockingboard(int slot, MockingboardModel model)
     return true;
 }
 
+bool Core::attachPhasor(int slot)
+{
+    if (impl_->iicClass()) {
+        impl_->error = "The Phasor is a slot card; a //c has no slots";
+        return false;
+    }
+    if (slot < 1 || slot > 7 || impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "The Phasor needs an empty slot between 1 and 7";
+        return false;
+    }
+    auto card = std::make_unique<PhasorCard>(slot);
+    card->setCpu(&impl_->cpu);
+    card->setCpuClock(impl_->cpuClockHz * impl_->appliedSpeed);
+    card->setStandardClock(impl_->cpuClockHz);   // its AYs keep the bus clock
+    card->setSampleRate(impl_->audioSampleRate);
+    impl_->phasors.push_back(card.get());
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::phasorAttached() const
+{
+    return !impl_->phasors.empty();
+}
+
 bool Core::mockingboardAttached() const
 {
     return !impl_->mockingboards.empty();
@@ -1409,6 +1270,8 @@ void Core::setMockingboardVolume(float volume)
 {
     // Every attached card, not just the last one: they are all mixed.
     for (MockingboardCard* card : impl_->mockingboards)
+        if (card) card->setVolume(volume);
+    for (PhasorCard* card : impl_->phasors)
         if (card) card->setVolume(volume);
 }
 
@@ -1444,6 +1307,7 @@ bool Core::attachMouse(int slot, MouseModel model, std::string_view romDirectory
         card->setCpuClock(impl_->cpuClockHz);
         impl_->mouseHle = card.get();
         impl_->memory.slotBus().plug(slot, std::move(card));
+        impl_->mouseRomIdentity = sha256File(slotRom);
     } else {
         const std::string mcuRom = dir + "/mouse_341-0269.bin";
         auto card = std::make_unique<MouseCard>(slot);
@@ -1455,6 +1319,7 @@ bool Core::attachMouse(int slot, MouseModel model, std::string_view romDirectory
         card->setCpuClock(impl_->cpuClockHz);
         impl_->mouseMcu = card.get();
         impl_->memory.slotBus().plug(slot, std::move(card));
+        impl_->mouseRomIdentity = sha256File(slotRom) + sha256File(mcuRom);
     }
     impl_->mouseSlot = slot;
     impl_->mouseRawX = impl_->mouseRawY = 0;
@@ -1609,6 +1474,88 @@ int Core::run(int minCycles)
         impl_->tickIwm();
     }
     return done;
+}
+
+void Core::Impl::applySpeed(double multiplier)
+{
+    if (multiplier == appliedSpeed) return;
+    appliedSpeed = multiplier;
+    const double stockHz = cpuClockHz;
+    const double hz = stockHz * multiplier;
+    // As EmulationController::applyAcceleratorClock: the beam keeps the
+    // crystal's time, the speaker stamps stock time from this cycle on, and
+    // the cards are told the CPU's clock (their AYs keep the bus clock).
+    memory.setVideoClockRatio(1.0 / multiplier);
+    speaker.setCpuClockAt(memory.getCycleCounter(), hz, stockHz);
+    cassette.setCpuClock(hz);
+    if (driveSound525) driveSound525->setCpuClock(stockHz);   // the Disk II stamps stock time
+    if (driveSound35) driveSound35->setCpuClock(hz);
+    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot)
+        if (SlotPeripheral* card = memory.slotBus().peripheral(slot)) {
+            card->setCpuClock(hz);
+            card->setMachineCpuClock(hz);
+        }
+}
+
+bool Core::setAccelerator(Accelerator model)
+{
+    const bool plusMachine = impl_->machine == Machine::AppleIIcPlus;
+    if ((impl_->machine == Machine::AppleIIc && model != Accelerator::None) ||
+        (plusMachine && model == Accelerator::FastChip)) {
+        impl_->error = "This machine cannot take that accelerator";
+        return false;
+    }
+    pom2::CpuSocketAccelerator* part = nullptr;
+    const double stock = impl_->cpuClockHz;
+    if (model == Accelerator::ZipChip) {
+        impl_->zipChip = pom2::ZipChip{};
+        impl_->zipChip.setStockClockHz(stock);
+        // [D] MAME apple2e.cpp accel_reset: the //c+ comes up fast.
+        impl_->zipChip.setBootFast(true);
+        impl_->zipChip.setSoldered(plusMachine);
+        impl_->zipChip.onReset(impl_->memory.getCycleCounter());
+        part = &impl_->zipChip;
+    } else if (model == Accelerator::FastChip) {
+        impl_->fastChip = pom2::FastChip{};
+        impl_->fastChip.setStockClockHz(stock);
+        impl_->fastChip.onReset(impl_->memory.getCycleCounter());
+        part = &impl_->fastChip;
+    }
+    impl_->memory.setCpuSocketAccelerator(part);
+    impl_->acceleratorModel = model;
+    impl_->applySpeed(std::max(1e-3, impl_->memory.cpuSpeedMultiplier()));
+    impl_->error.clear();
+    return true;
+}
+
+Accelerator Core::accelerator() const
+{
+    return impl_->acceleratorModel;
+}
+
+double Core::cpuSpeedMultiplier() const
+{
+    return impl_->memory.cpuSpeedMultiplier();
+}
+
+int Core::runVideo(int videoCycles)
+{
+    if (videoCycles <= 0) return 0;
+    if (impl_->acceleratorModel == Accelerator::None && impl_->appliedSpeed == 1.0)
+        return run(videoCycles);
+    // The application's chunk loop (EmulationController::runFor): each
+    // slice is sized from the speed the guest has selected now.
+    constexpr int kSlice = 4096;
+    double done = 0.0;
+    while (done < videoCycles) {
+        const double speed = std::max(1e-3, impl_->memory.cpuSpeedMultiplier());
+        impl_->applySpeed(speed);
+        const double remaining = std::ceil((videoCycles - done) * speed);
+        const int slice = static_cast<int>(std::min<double>(kSlice, std::max(1.0, remaining)));
+        const int ran = run(slice);
+        done += static_cast<double>(ran > 0 ? ran : slice) / speed;
+    }
+    return static_cast<int>(std::lround(done));
 }
 
 void Core::step()
@@ -1767,6 +1714,24 @@ bool Core::writeRam(RamBank bank, std::uint16_t address, const std::uint8_t* dat
     return true;
 }
 
+RamRegion Core::ramRegion(RamBank bank)
+{
+    auto& memory = impl_->memory;
+    const bool aux = impl_->iieMemory;
+    switch (bank) {
+    case RamBank::Main:             return {memory.mainRamData(), 0xC000};
+    case RamBank::LanguageCard1:    return {&memory.lcPhysical(0xC000), 0x1000};
+    case RamBank::LanguageCard2:    return {&memory.lcPhysical(0xD000), 0x1000};
+    case RamBank::LanguageCardHigh: return {&memory.lcPhysical(0xE000), 0x2000};
+    case RamBank::Aux:              return aux ? RamRegion{&memory.auxPhysical(0x0000), 0xC000} : RamRegion{};
+    case RamBank::AuxLanguageCard1: return aux ? RamRegion{&memory.auxPhysical(0xC000), 0x1000} : RamRegion{};
+    case RamBank::AuxLanguageCard2: return aux ? RamRegion{&memory.auxPhysical(0xD000), 0x1000} : RamRegion{};
+    case RamBank::AuxLanguageCardHigh:
+        return aux ? RamRegion{&memory.auxPhysical(0xE000), 0x2000} : RamRegion{};
+    }
+    return {};
+}
+
 KeyboardState Core::keyboardState() const
 {
     KeyboardState state;
@@ -1784,20 +1749,30 @@ SdkInfo Core::sdkInfo()
     info.commit = POM2_CORE_COMMIT;
     // Sorted, and a name is never reused: docs/SDK.md § Delivery.
     info.capabilities = {
+        "accelerator",
         "cassette",
         "disk2",
+        "drive.sounds",
         "ezcolor",
         "harddisk",
+        "harddisk.states",
         "keyboard.state",
         "machine.iic",
         "machine.iicplus",
         "mockingboard",
         "mouse",
+        "noslotclock",
+        "phasor",
         "provenance",
         "ram.banks",
+        "ram.regions",
+        "ramworks",
         "render.cpu-composite",
+        "render.modes",
+        "render.rgb-monitor",
         "rgbcard",
         "smartport35",
+        "state.memory",
     };
     return info;
 }
@@ -1870,6 +1845,59 @@ FramebufferView Core::renderFrame()
     };
 }
 
+namespace {
+struct DisplayModeMap {
+    DisplayMode mode;
+    Apple2Display::HiResMode hiRes;
+    Apple2Display::AppleWinSubMode sub;
+};
+using HR = Apple2Display::HiResMode;
+using AW = Apple2Display::AppleWinSubMode;
+constexpr DisplayModeMap kDisplayModes[] = {
+    {DisplayMode::Composite,             HR::ColorNTSC,           AW::Tv},
+    {DisplayMode::CompositeMedium,       HR::ColorCompMedium,     AW::Tv},
+    {DisplayMode::CompositeSharp,        HR::ColorComp4Bit,       AW::Tv},
+    {DisplayMode::CompositeOpenEmulator, HR::ColorCompositeOECpu, AW::Tv},
+    {DisplayMode::AppleWinMonitor,       HR::ColorAppleWin,       AW::Monitor},
+    {DisplayMode::AppleWinTv,            HR::ColorAppleWin,       AW::Tv},
+    {DisplayMode::AppleWinIdealized,     HR::ColorAppleWin,       AW::Idealized},
+    {DisplayMode::MonoWhite,             HR::MonoWhite,           AW::Tv},
+    {DisplayMode::MonoGreen,             HR::MonoGreen,           AW::Tv},
+    {DisplayMode::MonoAmber,             HR::MonoAmber,           AW::Tv},
+    {DisplayMode::Rgb,                   HR::ChatMauveRGB,        AW::Tv},
+};
+} // namespace
+
+bool Core::setDisplayMode(DisplayMode mode)
+{
+    for (const auto& entry : kDisplayModes) {
+        if (entry.mode != mode) continue;
+        if (mode == DisplayMode::Rgb && !impl_->rgbCard) {
+            impl_->error = "The RGB monitor needs an RGB card";
+            return false;
+        }
+        auto params = impl_->display.getOeDemodParams();
+        params.palMode = impl_->videoStandard == ::VideoStandard::PAL;
+        impl_->display.setOeDemodParams(params);
+        impl_->display.setAppleWinSubMode(entry.sub);
+        impl_->display.setHiResMode(entry.hiRes);
+        impl_->error.clear();
+        return true;
+    }
+    impl_->error = "Unknown display mode";
+    return false;
+}
+
+DisplayMode Core::displayMode() const
+{
+    const auto hiRes = impl_->display.getHiResMode();
+    const auto sub = impl_->display.getAppleWinSubMode();
+    for (const auto& entry : kDisplayModes)
+        if (entry.hiRes == hiRes && (hiRes != HR::ColorAppleWin || entry.sub == sub))
+            return entry.mode;
+    return DisplayMode::Composite;
+}
+
 std::uint64_t Core::lastVideoFrameStart() const
 {
     return impl_->memory.videoPublishedFrameStart();
@@ -1883,6 +1911,8 @@ void Core::setAudioSampleRate(std::uint32_t sampleRate)
     impl_->cassette.setAudioOutputSampleRate(sampleRate);
     for (MockingboardCard* card : impl_->mockingboards)
         if (card) card->setSampleRate(sampleRate);
+    for (auto* drive : {impl_->driveSound525.get(), impl_->driveSound35.get()})
+        if (drive) drive->setSampleRate(sampleRate);
     // …and every OTHER card the mixer walks. `pullAudio` sums each plugged
     // card's audioSource(), so anything rendering at a rate it was not told
     // about drifts against the producer: its cycles-per-sample is computed
@@ -1940,6 +1970,8 @@ std::size_t Core::pullAudio(float* interleavedStereo,
     impl_->mixList.clear();
     impl_->mixList.push_back(&impl_->speaker);
     impl_->mixList.push_back(&impl_->cassette);
+    if (impl_->driveSound525) impl_->mixList.push_back(impl_->driveSound525.get());
+    if (impl_->driveSound35) impl_->mixList.push_back(impl_->driveSound35.get());
     for (int slot = 1; slot <= 7; ++slot) {
         if (SlotPeripheral* card = impl_->memory.slotBus().peripheral(slot)) {
             if (AudioSource* source = card->audioSource())

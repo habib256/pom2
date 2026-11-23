@@ -644,6 +644,9 @@ public:
 
     // Direct access for the display / debugger / snapshot.
     const uint8_t* data() const { return mem.data(); }
+    /// Main RAM in place, $0000-$BFFF valid (the SDK's ramRegion). A store
+    /// through it is writeRamUnchecked's: no bus cycle, no card sees it.
+    uint8_t* mainRamData() { return mem.data(); }
 
     /// Side-effect-free view of what the CPU would FETCH at `addr`, i.e. the
     /// flat mirror resolved through the live paging state:
@@ -1557,11 +1560,31 @@ private:
     // //c-class on-board SmartPort ROM-exposure gate (see setIicSmartPortArmed).
     bool iicSmartPortArmed_ = false;
     bool iic40ColSwitch_ = false;   // setIic40ColumnSwitch
-    /// //c-class internal expansion connector: has the program written into
-    /// the card's page yet? Until it has, reads there stay the machine's own
-    /// firmware (MAME `m_mockingboard4c`). Cleared at power-on only
-    /// (`clearRam`, MAME machine_reset `apple2e.cpp:1292`); Ctrl-Reset
-    /// (`reset_w`) leaves the card awake.
+    /// //c-class internal expansion connector (the Mockingboard 4c): has the
+    /// program written into the card's page yet? Until it has, reads there
+    /// stay the machine's own firmware (the //c's mouse at $C400).
+    /// [B] Mockingboard 4c User Manual, the designer's own account of the
+    ///     card's CPLD (quoted in tomcw/mb-audit issue #8): "If some data
+    ///     wrote to $C400 (In fact C400-C4ff) the CPLD make vacant the
+    ///     Slot#4 and set the Mockingboard to use it." ANY write into the
+    ///     page wakes it; which register is written does not matter.
+    /// [D] MAME apple2e.cpp @ 4033598f — c400_w (any write below $100 sets
+    ///     m_mockingboard4c on a //c) and c400_int_r (the page then reads
+    ///     from the card): the same rule, as MAME reads it.
+    /// Kept deliberately, and not to be narrowed to "Mockingboard set-up"
+    /// writes (DDR, IER): a program that writes the page for another reason
+    /// wakes the card and loses the //c's mouse firmware, as on the real
+    /// machine. A2osX 0.95 does (its Z80 probe writes $Cn00 in every slot,
+    /// KERNEL.S.INIT3 INIT3.CPUZ80), then finds no mouse at $C4FB and falls
+    /// back to polling $C019, which on a //c is VBLINT (Apple IIc Technical
+    /// Note #9), not VBLBAR: its clock never ticks and its shell never
+    /// starts. That is the hardware's answer, not a POM2 bug
+    /// (docs/audits/libretro-compatibility-2026-11-23.md).
+    /// Cleared at power-on only (`clearRam`; MAME machine_reset,
+    /// apple2e.cpp:1293 @ 4033598f). Ctrl-Reset (`reset_w`) leaves the card
+    /// awake. [F] Unknown: the manual warns that Ctrl-Open-Apple-Reset
+    /// misbehaves once the card is active, and does not say whether a
+    /// reset puts it back to sleep. Settled by: a //c with a 4c.
     bool iicExpansionAwake_ = false;
     /// //c-classe : le flux d'execution est-il "chez" la carte percee ?
     /// Ouvert par un fetch dans sa page $C5xx, referme par tout acces

@@ -237,6 +237,8 @@ public:
     /// release the line.
     void appendSnapshotState(std::vector<uint8_t>& out) const override;
     void loadSnapshotState(const uint8_t* data, std::size_t len) override;
+    void appendSdkInput(std::vector<uint8_t>& out) const;
+    bool loadSdkInput(const uint8_t* data, std::size_t size, bool apply);
     // //c-class punches the forced INTCXROM mask for this card's $Cn00
     // firmware so PR#4 runs the AppleWin EPROM (which drives our PIA at
     // $C0C0) instead of the //c's on-board mouse firmware (which would

@@ -14,6 +14,12 @@ public:
     /// The running counters the last setHostMouse set (any feeder's).
     uint8_t hostCounterX() const { return hostX_; }
     uint8_t hostCounterY() const { return hostY_; }
+    bool sdkHostButton() const { return button_; }
+    void restoreSdkInput(uint8_t x, uint8_t y, bool button) {
+        hostX_ = x;
+        hostY_ = y;
+        button_ = button;
+    }
     bool iicMouseAccess(uint8_t low, bool write, bool ioudis,
                         uint8_t bus, uint8_t& out) override;
     void advanceCycles(int cycles) override;

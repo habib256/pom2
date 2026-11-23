@@ -11,9 +11,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -127,6 +129,10 @@ struct Core {
     ABI_FUNCTION(retro_serialize_size);
     ABI_FUNCTION(retro_serialize);
     ABI_FUNCTION(retro_unserialize);
+    ABI_FUNCTION(retro_cheat_reset);
+    ABI_FUNCTION(retro_cheat_set);
+    ABI_FUNCTION(retro_get_memory_data);
+    ABI_FUNCTION(retro_get_memory_size);
 };
 #undef ABI_FUNCTION
 
@@ -136,6 +142,8 @@ struct Frontend {
     std::string messages;
     const char* fastDiskValue = nullptr;
     bool fastDiskEnabledByDefault = false;
+    unsigned executionPhaseProbes = 0;
+    unsigned executionPhaseQueries = 0;
     retro_keyboard_event_t keyboard = nullptr;
     bool supportNoGame = false;
     bool xrgb8888 = false;
@@ -146,6 +154,7 @@ struct Frontend {
     unsigned driveReadSignals = 0;
     bool button = false;
     bool start = false;
+    bool nextDisk = false;
     unsigned diskControlVersion = 1;
     unsigned extendedRegistrations = 0;
     bool rejectExtendedDiskControl = false;
@@ -159,6 +168,18 @@ struct Frontend {
     unsigned width = 0;
     unsigned height = 0;
     std::vector<uint32_t> pixels;
+    // Core options: the version offered, what a v2 core registered, the
+    // values the "user" chose, and whether they changed since the last poll.
+    unsigned optionsVersion = 0;
+    unsigned language = RETRO_LANGUAGE_ENGLISH;
+    const retro_core_options_v2* optionsUs = nullptr;
+    const retro_core_options_v2* optionsLocal = nullptr;
+    std::map<std::string, std::string> options;
+    bool optionsUpdated = false;
+    std::vector<retro_memory_descriptor> memoryMap;
+    bool achievements = false;
+    unsigned pad = 0;          // RetroPad 1 buttons, as a bit mask
+    unsigned pad2 = 0;         // RetroPad 2
 };
 Frontend frontend;
 
@@ -182,6 +203,10 @@ void logMessage(enum retro_log_level, const char* format, ...)
 bool environment(unsigned command, void* data)
 {
     switch (command) {
+    case RETRO_ENVIRONMENT_GET_EXECUTION_PHASE:
+        if (data) ++frontend.executionPhaseQueries;
+        else ++frontend.executionPhaseProbes;
+        return false;
     case RETRO_ENVIRONMENT_GET_LED_INTERFACE:
         if (!frontend.supportsDriveLed) return false;
         static_cast<retro_led_interface*>(data)->set_led_state = setLed;
@@ -233,10 +258,41 @@ bool environment(unsigned command, void* data)
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         auto& variable = *static_cast<retro_variable*>(data);
-        if (std::strcmp(variable.key, fastDiskOption) != 0 || !frontend.fastDiskValue) return false;
-        variable.value = frontend.fastDiskValue;
+        if (std::strcmp(variable.key, fastDiskOption) == 0 && frontend.fastDiskValue) {
+            variable.value = frontend.fastDiskValue;
+            return true;
+        }
+        const auto chosen = frontend.options.find(variable.key);
+        if (chosen == frontend.options.end()) return false;
+        variable.value = chosen->second.c_str();
         return true;
     }
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        *static_cast<bool*>(data) = std::exchange(frontend.optionsUpdated, false);
+        return true;
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        *static_cast<unsigned*>(data) = frontend.optionsVersion;
+        return true;
+    case RETRO_ENVIRONMENT_GET_LANGUAGE:
+        *static_cast<unsigned*>(data) = frontend.language;
+        return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        if (frontend.optionsVersion < 2) return false;
+        const auto* intl = static_cast<const retro_core_options_v2_intl*>(data);
+        frontend.optionsUs = intl->us;
+        frontend.optionsLocal = intl->local;
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        return frontend.optionsVersion >= 2;
+    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+        const auto* map = static_cast<const retro_memory_map*>(data);
+        frontend.memoryMap.assign(map->descriptors, map->descriptors + map->num_descriptors);
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
+        frontend.achievements = *static_cast<const bool*>(data);
+        return true;
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         return true;
@@ -282,9 +338,12 @@ void inputPoll() { ++frontend.polls; }
 
 int16_t inputState(unsigned port, unsigned device, unsigned, unsigned id)
 {
+    if (port == 1 && device == RETRO_DEVICE_JOYPAD && id < 16) return (frontend.pad2 >> id) & 1;
     if (port == 0 && device == RETRO_DEVICE_JOYPAD) {
+        if (id < 16 && ((frontend.pad >> id) & 1)) return 1;
         if (id == RETRO_DEVICE_ID_JOYPAD_B) return frontend.button;
         if (id == RETRO_DEVICE_ID_JOYPAD_START) return frontend.start;
+        if (id == RETRO_DEVICE_ID_JOYPAD_R3) return frontend.nextDisk;
     }
     return 0;
 }
@@ -537,6 +596,34 @@ void writeBootDisk(const fs::path& path, uint8_t marker)
     writeFile(path, disk);
 }
 
+void writePaddedWoz(const fs::path& path)
+{
+    // A valid WOZ1 surface with one tiny track and a large ignored chunk.
+    // This tests snapshot sizing without relying on an external disk.
+    Bytes disk{'W', 'O', 'Z', '1', 0xff, 10, 13, 10, 0, 0, 0, 0};
+    const auto chunk = [&](const char* tag, const Bytes& payload) {
+        disk.insert(disk.end(), tag, tag + 4);
+        const auto length = static_cast<uint32_t>(payload.size());
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            disk.push_back(static_cast<uint8_t>(length >> shift));
+        disk.insert(disk.end(), payload.begin(), payload.end());
+    };
+    Bytes info(60);
+    info[0] = info[1] = info[2] = 1;
+    chunk("INFO", info);
+    Bytes map(160, 0xff);
+    map.front() = 0;
+    chunk("TMAP", map);
+    Bytes track(6656);
+    track[0] = 0xd5;
+    track[6646] = 1;
+    track[6648] = 8;
+    track[6650] = track[6651] = 0xff;
+    chunk("TRKS", track);
+    chunk("JUNK", Bytes(3u << 20));
+    writeFile(path, disk);
+}
+
 retro_game_info contentInfo(const std::string& path)
 {
     return {path.c_str(), nullptr, 0, nullptr};
@@ -552,6 +639,13 @@ std::vector<uint32_t> typeMarker(Core& core, unsigned key, char character)
 
 void waitForBootMarker(Core& core, const std::vector<uint32_t>& expected)
 {
+    // The core powers the machine on and lets the ROM boot the disk. The
+    // synthetic ROM has no slot scan: '!' is its boot command (JMP $C600).
+    run(core, 2);
+    if (cell(0) != expected) {
+        frontend.keyboard(true, RETROK_EXCLAIM, '!', 0);
+        frontend.keyboard(false, RETROK_EXCLAIM, '!', 0);
+    }
     for (unsigned attempt = 0; attempt < 16; ++attempt) {
         run(core, 15);
         if (cell(0) == expected) return;
@@ -618,6 +712,18 @@ void testExtendedDisks(Core& core, const fs::path& work, const std::string& firs
             !disk.get_image_label(0, shortBuffer, sizeof shortBuffer) &&
             !disk.get_image_path(2, shortBuffer, sizeof shortBuffer), "disk metadata accepted invalid output arguments");
     waitForBootMarker(core, secondMarker);
+
+    frontend.nextDisk = true;
+    run(core, 4);
+    require(disk.get_image_index() == 0 && cell(0) == secondMarker,
+            "holding R3 should change sides once without rebooting the game");
+    frontend.nextDisk = false;
+    run(core, 1);
+    frontend.nextDisk = true;
+    run(core, 1);
+    frontend.nextDisk = false;
+    run(core, 1);
+    require(disk.get_image_index() == 1, "R3 did not return to the second side");
 
     const auto first = contentInfo(firstPath);
     const auto second = contentInfo(secondPath);
@@ -740,6 +846,43 @@ void testLegacyDisks(Core& core, const std::string& firstPath, const std::string
     waitForBootMarker(core, firstMarker);
     core.retro_unload_game();
     requireEmptyDiskState(disk);
+
+    require(core.retro_load_game(nullptr), "could not boot BASIC before adding SmartPort media");
+    const auto capacity = core.retro_serialize_size();
+    const auto smartPortPath = (fs::path(firstPath).parent_path() / "SmartPort 800K.po").string();
+    writeFile(smartPortPath, Bytes(800 * 1024));
+    const auto smartPort = contentInfo(smartPortPath);
+    require(disk.add_image_index() && disk.set_eject_state(true) &&
+            disk.replace_image_index(0, &smartPort) && disk.set_image_index(0) &&
+            disk.set_eject_state(false), "could not hot-insert an 800 KiB SmartPort disk");
+    require(core.retro_serialize_size() == capacity, "hot insertion changed the save-state capacity");
+    const auto inserted = saveState(core);
+    require(disk.set_eject_state(true) && core.retro_unserialize(inserted.data(), inserted.size()) &&
+            !disk.get_eject_state() && disk.get_image_index() == 0 &&
+            core.retro_serialize_size() == capacity,
+            "could not restore the hot-inserted SmartPort disk within the BASIC session's capacity");
+    core.retro_unload_game();
+
+    const auto wozPath = (fs::path(firstPath).parent_path() / "Large.woz").string();
+    writePaddedWoz(wozPath);
+    const auto woz = contentInfo(wozPath);
+    require(core.retro_load_game(nullptr) && disk.add_image_index() && disk.set_eject_state(true) &&
+            disk.replace_image_index(0, &woz) && disk.set_image_index(0) && disk.set_eject_state(false),
+            "large WOZ could not be hot-inserted");
+    require(core.retro_serialize_size() == capacity, "large WOZ changed the fixed save-state capacity");
+    Bytes tooSmall(capacity);
+    const auto previousMessages = frontend.messages.size();
+    require(!core.retro_serialize(tooSmall.data(), tooSmall.size()) &&
+            frontend.messages.find("fixed buffer", previousMessages) != std::string::npos,
+            "large hot-inserted WOZ did not report the buffer limit");
+    const auto afterWarning = frontend.messages.size();
+    require(!core.retro_serialize(tooSmall.data(), tooSmall.size()) &&
+            afterWarning == frontend.messages.size(), "repeated save requests spammed the buffer warning");
+    core.retro_unload_game();
+    require(core.retro_load_game(&woz) && core.retro_serialize_size() > capacity,
+            "starting with the large WOZ did not reserve additional save-state space");
+    saveState(core);
+    core.retro_unload_game();
 }
 
 void testDiskControl(Core& core, const fs::path& work)
@@ -897,6 +1040,203 @@ std::string visibleText(const Bytes& characters)
     return result;
 }
 
+const retro_core_option_v2_definition* findDefinition(const retro_core_options_v2* options, const char* key)
+{
+    for (auto* definition = options->definitions; definition->key; ++definition)
+        if (std::strcmp(definition->key, key) == 0) return definition;
+    return nullptr;
+}
+
+void testCoreOptionsV2(Core& core)
+{
+    // A v2 frontend gets categories and every option filed under one, the
+    // first value its default; a French frontend gets the translation too.
+    frontend.optionsVersion = 2;
+    frontend.language = RETRO_LANGUAGE_FRENCH;
+    core.retro_set_environment(environment);
+    require(frontend.optionsUs && frontend.optionsLocal, "core options v2 were not registered with a translation");
+    unsigned categories = 0, definitions = 0;
+    for (auto* category = frontend.optionsUs->categories; category->key; ++category) ++categories;
+    for (auto* definition = frontend.optionsUs->definitions; definition->key; ++definition, ++definitions) {
+        require(definition->category_key && definition->values[0].value && definition->default_value &&
+                std::strcmp(definition->default_value, definition->values[0].value) == 0,
+                "a v2 option lacks a category or does not default to its first value");
+    }
+    require(categories >= 5 && definitions >= 20, "the core registered fewer option categories or options than expected");
+    for (const char* key : {"pom2_machine", "pom2_display", "pom2_mockingboard", "pom2_cpu", fastDiskOption}) {
+        const auto* english = findDefinition(frontend.optionsUs, key);
+        const auto* french = findDefinition(frontend.optionsLocal, key);
+        require(english && french, "an expected core option is missing");
+        if (std::strcmp(key, fastDiskOption) != 0)
+            require(std::strcmp(english->desc, french->desc) != 0, "an option was not translated into French");
+    }
+    require(frontend.achievements, "the core did not declare achievement support");
+    frontend.optionsVersion = 0;
+    frontend.language = RETRO_LANGUAGE_ENGLISH;
+    frontend.optionsUs = frontend.optionsLocal = nullptr;
+    core.retro_set_environment(environment);
+}
+
+void testFeatures(Core& core, const fs::path& firmware)
+{
+    testCoreOptionsV2(core);
+
+    // A machine whose firmware is absent names the file it needs.
+    frontend.messages.clear();
+    frontend.options["pom2_machine"] = "iiplus";
+    require(!core.retro_load_game(nullptr) && frontend.messages.find("apple2p.rom") != std::string::npos,
+            "a missing ][+ firmware was not named");
+    frontend.options.erase("pom2_machine");
+
+    frontend.options["pom2_display"] = "mono-green";
+    require(core.retro_load_game(nullptr), "could not load with a monochrome display");
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    run(core, 4);
+    unsigned green = 0, other = 0;
+    for (auto pixel : frontend.pixels) {
+        const unsigned r = (pixel >> 16) & 0xff, g = (pixel >> 8) & 0xff, b = pixel & 0xff;
+        if (!r && !g && !b) continue;
+        ++(g > r && g > b ? green : other);
+    }
+    require(green > 0 && other == 0, "the green monitor painted a pixel that is not green");
+    frontend.options["pom2_display"] = "composite";
+    frontend.optionsUpdated = true;
+    run(core, 2);
+    const auto seeded = cell(0);   // the firmware's 'A' at $0400
+
+    // The memory map: RetroAchievements' Apple II layout, main RAM then aux.
+    require(frontend.memoryMap.size() == 8, "a //e must map main, aux and both language cards");
+    const auto descriptor = [](uint64_t start) -> const retro_memory_descriptor& {
+        for (const auto& d : frontend.memoryMap) if (d.start == start) return d;
+        throw std::runtime_error("the memory map lacks an expected region");
+    };
+    require(descriptor(0x00000).len == 0xC000 && descriptor(0x0C000).len == 0x1000 &&
+            descriptor(0x0D000).len == 0x1000 && descriptor(0x0E000).len == 0x2000 &&
+            descriptor(0x10000).len == 0xC000 && descriptor(0x1E000).len == 0x2000,
+            "the memory map regions have the wrong sizes");
+    auto* main = static_cast<uint8_t*>(core.retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
+    require(main == descriptor(0).ptr && core.retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM) == 0xC000,
+            "system RAM is not the map's main region");
+    main[0x400] = 0xC5;
+    run(core, 2);
+    require(cell(0) != seeded, "a write through the memory map did not reach the screen");
+
+    // Cheats share the map's addresses: main, compare, aux and language card.
+    core.retro_cheat_set(0, true, "$0400:C1");
+    run(core, 2);
+    require(cell(0) == seeded && main[0x400] == 0xC1, "a RAM cheat did not apply");
+    core.retro_cheat_reset();
+    main[0x400] = 0xC5;
+    run(core, 2);
+    require(main[0x400] == 0xC5, "a reset cheat kept applying");
+    core.retro_cheat_set(1, true, "0400?C1:C2");
+    run(core, 2);
+    require(main[0x400] == 0xC5, "a compare cheat applied to a cell that did not match");
+    core.retro_cheat_set(2, true, "10400:AA+0D000:12;1C000=34");
+    core.retro_cheat_set(3, true, "not a cheat");
+    run(core, 1);
+    require(static_cast<uint8_t*>(descriptor(0x10000).ptr)[0x400] == 0xAA &&
+            static_cast<uint8_t*>(descriptor(0x0D000).ptr)[0] == 0x12 &&
+            static_cast<uint8_t*>(descriptor(0x1C000).ptr)[0] == 0x34,
+            "a multi-code cheat missed aux RAM or a language-card bank");
+    core.retro_cheat_reset();
+
+    // The RetroPad as a keyboard: arrows, then I J K M, with repeat.
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0));
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+    run(core, 2);
+    require(main[0x400] == 0x95, "the arrow-key RetroPad did not type Right");
+    main[0x400] = 0;
+    run(core, 40);
+    require(main[0x400] == 0x95, "a held RetroPad direction did not repeat");
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_B;
+    run(core, 2);
+    require(main[0x400] == 0xA0 && main[0x401] == 0xC2, "keyboard B must type Space, not press button 0");
+    frontend.pad = 0;
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_UP;
+    run(core, 2);
+    require(main[0x400] == 0xC9, "the I J K M RetroPad did not type I");
+    frontend.pad = 0;
+    run(core, 1);
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+
+    // Joystick buttons swap; the keyboard folds to uppercase.
+    frontend.options["pom2_swap_buttons"] = "enabled";
+    frontend.options["pom2_uppercase"] = "enabled";
+    frontend.optionsUpdated = true;
+    frontend.pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
+    run(core, 2);
+    require(main[0x401] == 0xC3, "with swapped buttons A did not press button 0");
+    frontend.pad = 0;
+    frontend.keyboard(true, RETROK_b, 'b', 0);
+    frontend.keyboard(false, RETROK_b, 'b', 0);
+    run(core, 2);
+    require(main[0x400] == 0xC2, "the uppercase option let a lowercase key through");
+    const auto state = saveState(core);
+    require(core.retro_unserialize(state.data(), state.size()), "a state with the new header did not restore");
+    core.retro_unload_game();
+    for (const char* key : {"pom2_display", "pom2_swap_buttons", "pom2_uppercase"}) frontend.options.erase(key);
+    (void)firmware;
+}
+
+// Two 5.25-inch drives: the playlist's second face preloaded in drive 2,
+// Disc Control moved to drive 2, a state carrying both writable drives, and a
+// private copy for each face.
+void connectFrontend(Core& core);
+
+void testSecondDrive(Core& core, const fs::path& work, const fs::path& master)
+{
+    // The persistence test opens a second instance; take the disk callbacks
+    // back from this one.
+    core.retro_deinit();
+    connectFrontend(core);
+    const auto folder = work / "two-drives";
+    fs::create_directories(folder);
+    const Bytes original = readFile(master);
+    writeFile(folder / "Boot.dsk", original);
+    writeFile(folder / "Data.dsk", original);
+    const std::string playlistPath = (folder / "Two drives.m3u").string();
+    const std::string playlist = "Boot.dsk|Boot\nData.dsk|Data\n";
+    writeFile(playlistPath, Bytes(playlist.begin(), playlist.end()));
+    const auto saves = work / "two-drive-saves";
+    fs::create_directories(saves);
+    frontend.saveDirectoryOverride = saves.string();
+    frontend.options["pom2_drive2"] = "next";
+    const auto game = contentInfo(playlistPath);
+    require(core.retro_load_game(&game), "could not load a two-drive playlist");
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    const auto& disk = frontend.diskControlExt;
+    require(disk.get_image_index() == 0 && !disk.get_eject_state(), "drive 1 does not hold the boot disk");
+    frontend.options["pom2_disk_control_drive"] = "2";
+    frontend.optionsUpdated = true;
+    run(core, 1);
+    require(disk.get_image_index() == 1 && !disk.get_eject_state(),
+            "Disc Control on drive 2 does not see the preloaded second disk");
+    run(core, 120);
+    const auto state = saveState(core);
+    run(core, 30);
+    require(core.retro_unserialize(state.data(), state.size()),
+            "a state holding two writable drives did not restore");
+    require(disk.get_image_index() == 1 && !disk.get_eject_state(), "the restore lost drive 2");
+    require(disk.set_eject_state(true) && disk.get_eject_state() && disk.get_image_index() == 1,
+            "drive 2 did not eject");
+    require(disk.set_image_index(1) && disk.set_eject_state(false) && !disk.get_eject_state(),
+            "drive 2 did not take its disk back");
+    frontend.options["pom2_disk_control_drive"] = "1";
+    frontend.optionsUpdated = true;
+    run(core, 1);
+    require(disk.get_image_index() == 0, "Disc Control did not return to drive 1");
+    core.retro_unload_game();
+    unsigned copies = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(saves))
+        copies += entry.is_regular_file() && entry.path().extension() == ".dsk";
+    require(copies == 2, "each drive's disk needs its own private copy");
+    frontend.options.erase("pom2_drive2");
+    frontend.options.erase("pom2_disk_control_drive");
+    frontend.saveDirectoryOverride.clear();
+}
+
 void connectFrontend(Core& core)
 {
     core.retro_set_environment(environment);
@@ -947,6 +1287,8 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     for (const auto& entry : fs::recursive_directory_iterator(storage))
         if (entry.path().extension() == ".dsk" && readFile(entry.path()) != original) ++copiesWithChanges;
     require(copiesWithChanges == 1, "restoring face A discarded or contaminated the writes to face B");
+    require(frontend.executionPhaseProbes == 1 && frontend.executionPhaseQueries == 0,
+            "an unsupported execution-phase command was queried after probing");
     require(disk.set_eject_state(true) && disk.set_image_index(1) && disk.set_eject_state(false),
             "could not reinsert face B after restoring A");
     typeCommand(core, "LOAD POM2FACETEST\r");
@@ -1125,9 +1467,11 @@ int main(int argc, char* argv[])
         require(frontend.supportNoGame, "module did not advertise no-content boot");
         if (argc == 3) {
             testFixture(core, firmware);
+            testFeatures(core, firmware);
             testDiskControl(core, work);
         } else if (persistence) {
             testPersistentDisks(core, work, firmware, argv[4], argv[5], argv[1]);
+            testSecondDrive(core, work, argv[5]);
         } else {
             testMedia(core, work, firmware, argv[3], argv[4]);
         }
