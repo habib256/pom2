@@ -10,6 +10,33 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Protected WOZ disks against MAME and AppleWin: Mr. Do boots
+
+37 protected woz-a-day images were booted in POM2, AppleWin (libretro,
+1.32.1.0) and MAME 0.288 (docs/audits/protected-woz-three-way-2026-11-23.md).
+POM2 boots every image the other two boot except Glutton. It is the only
+one of the three that boots both The Newsroom (MAME fails it) and the five
+FLUX images (AppleWin fails them). It also boots Lady Tut on a ][, where
+MAME does not; AppleWin was not tried there.
+
+Mr. Do failed in POM2 alone: its INFO declares bit timing 29 (3.625 µs) for
+tracks that fill a 300 RPM revolution only at 30. At 29 the P6 latch holds
+a nibble for 6.5 CPU cycles, under the boot PROM's 7-cycle poll, and the
+PROM never reads sector 0. A plain DOS 3.3 WOZ made from a .dsk fails the
+same way at 29. `WozBitTiming.h` now raises a declared cell faster than 32
+by one 125 ns step when the tracks fill a revolution at exactly that step:
+the value was rounded down. Images that declare 32 or slower, which is every
+image the corpus pins, play exactly as before, and so does any other
+mismatch. Glutton is
+recorded as unresolved, with what would settle it. Mr. Do, Lady Tut and
+Cyclod (FLUX) join the protected corpus. `tools/libretro_corpus.py` now
+stages the ][ ROM and reports media outside the tree.
+
+`printer_history` failed once on the macOS runner: the merge with another
+window's pages moved the job counter past the highest PNG on disk, and the
+writer thread sometimes had already landed the previous sheet's file. The
+counter now moves from the directory only when the index did not parse.
+
 ## 2026-11-23 — The bundled games follow pom2games
 
 `DIRTBIKE.dsk`, `MICRO-SOKOBAN.dsk` and `CHROMABREAK.po` (packaging/disks and

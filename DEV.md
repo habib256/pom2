@@ -5231,6 +5231,19 @@ nominal integer for the non-WOZ write framer. Pinned:
 `woz_bit_timing_smoke` (obt 32/40/28/33 + WOZ1 fallback, a write splice at
 33) and the protected corpus's `prisoner2`.
 
+**A declared fast cell is checked against the platter** (`WozBitTiming.h`,
+2026-11-23). A value under 32 is raised by one 125 ns step when the median
+track fills one 300 RPM revolution at exactly that step: the field was
+rounded down. 32 and slower, and any other mismatch, are never touched (a
+synthetic track proves nothing about rotation). Mr. Do declares 29 for
+53,367-bit tracks (193.8 ms a turn) and boots only at 30. At 29 the latch
+holds a finished nibble for 6.5 CPU cycles, under the boot PROM's 7-cycle
+poll, so the PROM loses nibbles on the silicon's own terms. The evidence and
+the P6 simulation behind it are in
+[docs/audits/protected-woz-three-way-2026-11-23.md](docs/audits/protected-woz-three-way-2026-11-23.md).
+The loader logs the substitution. Pinned by `woz_bit_timing_smoke`
+(`checkFastObtAgainstRevolution`) and the protected corpus's `mr-do`.
+
 ### Disks from a URL or an archive (`MediaSource`)
 
 `resolveMediaSource(source, cacheDir)` runs before any mount and outside

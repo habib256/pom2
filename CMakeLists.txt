@@ -735,6 +735,7 @@ set(POM2_FOUNDATION_HEADERS
     src/AudioBufferLadder.h
     src/AudioBufferPolicy.h
     src/AudioDeviceWatch.h
+    src/WozBitTiming.h
     src/WozCompat.h
     src/AudioSource.h
     src/ByteIO.h

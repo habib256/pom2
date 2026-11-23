@@ -37,6 +37,7 @@
 // contained so this TU compiles independently in CI bisects.
 
 #include "DiskImage.h"
+#include "WozBitTiming.h"
 
 #include <algorithm>
 #include <cassert>
@@ -98,13 +99,15 @@ std::vector<uint8_t> buildWoz2WithBitTiming(uint8_t optimalBitTiming,
     // TRKS — 160 × 8B headers + 1 block of bit data at file offset 1536.
     std::vector<uint8_t> trks;
     trks.reserve(1280 + 512);
+    // A real track (~50k bits) spans 13 blocks; the blocks follow the first.
+    const uint16_t blocks = static_cast<uint16_t>(std::max<uint32_t>(1, (bitCount + 4095) / 4096));
     putU16LE(trks, 3);                      // starting_block
-    putU16LE(trks, 1);                      // block_count
+    putU16LE(trks, blocks);                 // block_count
     putU32LE(trks, bitCount);               // bit_count (u32 LE)
     while (trks.size() < 160 * 8) trks.push_back(0);
     while (trks.size() < (1536 - 12 - 8 - 60 - 8 - 160 - 8)) trks.push_back(0);
-    std::vector<uint8_t> blockData(512, 0);
-    const size_t copy = std::min<size_t>(bitData.size(), 512);
+    std::vector<uint8_t> blockData(static_cast<size_t>(blocks) * 512, 0);
+    const size_t copy = std::min<size_t>(bitData.size(), blockData.size());
     std::memcpy(blockData.data(), bitData.data(), copy);
     trks.insert(trks.end(), blockData.begin(), blockData.end());
     addChunk("TRKS", trks);
@@ -125,11 +128,11 @@ std::string writeTempFile(const std::vector<uint8_t>& bytes, const char* tag) {
 // Verify that an image with `optimal_bit_timing = obt` produces:
 //   trackPeriod = 32 cells × (obt/4) LSS cycles
 //   first flux event at (obt/4)/2 + 0  (since bit 0 is the only "1")
-bool checkTimingForObt(uint8_t obt) {
-    // 4 bytes (= 32 bits): MSB of byte 0 set, rest zero. Yields one
-    // flux event at cell index 0 — easy to assert against.
+bool checkTimingForObt(uint8_t obt, uint32_t bitCount = 32) {
+    // MSB of byte 0 set, rest zero. Yields one flux event at cell index 0 —
+    // easy to assert against. A fast `obt` (< 32) needs a track that fills a
+    // revolution at that cell, or WozBitTiming.h slows it to one that does.
     std::vector<uint8_t> bitData = { 0x80, 0x00, 0x00, 0x00 };
-    const uint32_t bitCount = 32;
 
     const auto woz = buildWoz2WithBitTiming(obt, bitData, bitCount);
     const std::string path = writeTempFile(
@@ -148,7 +151,7 @@ bool checkTimingForObt(uint8_t obt) {
     }
 
     const int expectedCyc    = obt / 4;          // LSS cycles per cell
-    const int expectedPeriod = 32 * expectedCyc; // 32 bit cells in our payload
+    const int expectedPeriod = static_cast<int>(bitCount) * expectedCyc;
     const int actualPeriod   = img.trackPeriod(0);
     if (actualPeriod != expectedPeriod) {
         std::printf("FAIL: obt=%u trackPeriod=%d expected=%d\n",
@@ -173,6 +176,48 @@ bool checkTimingForObt(uint8_t obt) {
                 static_cast<unsigned>(obt), expectedCyc,
                 actualPeriod, flux[0]);
     return true;
+}
+
+// A declared FAST cell one 125 ns step under the revolution's is a rounded
+// value (WozBitTiming.h). Mr. Do (woz-a-day) declares 29 for tracks of
+// 53,367 bits: 193.8 ms a turn at 3.625 µs. One revolution gives 30, and
+// only at 30 does it boot. A 29 whose tracks do fill a revolution keeps it;
+// 32 and 33 are never touched, nor is any other mismatch.
+bool checkFastObtAgainstRevolution() {
+    bool ok = true;
+    auto expect = [&](uint8_t declared, std::vector<std::size_t> counts, uint8_t want) {
+        const uint8_t got = pom2::effectiveWozBitTiming(declared, counts);
+        if (got != want) {
+            std::printf("FAIL: effectiveWozBitTiming(%u) = %u, expected %u\n",
+                        unsigned(declared), unsigned(got), unsigned(want));
+            ok = false;
+        }
+    };
+    expect(29, {53367, 53461, 53400}, 30);  // Mr. Do
+    expect(29, {55200}, 29);                // a real 3.625 µs track
+    expect(31, {51200}, 32);                // one step rounded down: raised
+    expect(28, {50003}, 28);                // four steps off: as declared
+    expect(28, {32}, 28);                   // a synthetic test track: untouched
+    expect(32, {40000}, 32);                // the standard cell: untouched
+    expect(33, {50967}, 33);                // Prisoner 2 patched: untouched
+    expect(29, {}, 29);                     // no bit-cell track to weigh
+
+    // Through the loader: the track then lasts (bits * 30 + 2) / 4 cycles.
+    const auto woz = buildWoz2WithBitTiming(29, { 0x80 }, 53367);
+    const std::string path = writeTempFile(woz, "29rev");
+    DiskImage img;
+    if (!img.loadFile(path)) {
+        std::printf("FAIL: load WOZ2 obt=29: %s\n", img.getLastError().c_str());
+        return false;
+    }
+    const int want = (53367 * 30 + 2) / 4;
+    if (img.trackPeriod(0) != want) {
+        std::printf("FAIL: obt=29 over 53,367 bits: period %d, expected %d (a 30)\n",
+                    img.trackPeriod(0), want);
+        ok = false;
+    }
+    if (ok) std::printf("OK : a declared 29 over a full revolution plays at 30\n");
+    return ok;
 }
 
 // A value that is not a multiple of 4 (STORAGE-016). 33 quarter cycles =
@@ -435,7 +480,8 @@ int main() {
     allOk &= checkWoz1FallsBackTo32();   // baseline: no INFO+39 → 32
     allOk &= checkTimingForObt(32);      // explicit default
     allOk &= checkTimingForObt(40);      // 5 µs cells (slower master)
-    allOk &= checkTimingForObt(28);      // 3.5 µs cells (faster master)
+    allOk &= checkTimingForObt(28, 57143); // 3.5 µs cells: one revolution's worth
+    allOk &= checkFastObtAgainstRevolution();
     allOk &= checkFractionalObt33();     // 4.125 µs: not a whole LSS cycle count
     allOk &= checkFluxTrackPeriod(32);   // FLUX period = tick sum (default)
     allOk &= checkFluxTrackPeriod(40);   // FLUX period independent of obt

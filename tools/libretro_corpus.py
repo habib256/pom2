@@ -93,7 +93,7 @@ def run(profile, library, images, roms, seconds, captures, extra):
     with tempfile.TemporaryDirectory(prefix="pom2-libretro-corpus-") as directory:
         root = Path(directory)
         prepare_system(root / "system", roms)
-        for name in ("apple2c-32Kv0.rom", "apple2cp.rom", "apple2p.rom", "apple2_char.rom"):
+        for name in ("apple2c-32Kv0.rom", "apple2cp.rom", "apple2p.rom", "apple2o.rom", "apple2_char.rom"):
             if (roms / name).is_file():   # the other machines' firmware, when present
                 shutil.copyfile(roms / name, root / "system" / "pom2" / name)
         for image in images:
@@ -153,7 +153,9 @@ def main():
         for name in names:
             verdict, detail = table[name][image]
             cells.append(verdict + (f" ({detail})" if detail and verdict in ("error", "reject", "fail") else ""))
-        lines.append(f"| {image.relative_to(ROOT)} | {kind(image)} | {' | '.join(cells)} |")
+        # A root outside the checkout (a temporary media folder) is shown as given.
+        shown = image.relative_to(ROOT) if image.is_relative_to(ROOT) else image
+        lines.append(f"| {shown} | {kind(image)} | {' | '.join(cells)} |")
     lines.append("")
     for name in names:
         counts = {}

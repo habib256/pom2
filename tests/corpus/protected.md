@@ -1,6 +1,6 @@
 # Real protected-disk corpus
 
-Five optional games, with commercial images kept outside the checkout and all
+Eight optional games, with commercial images kept outside the checkout and all
 mounted media copied by the runner. The recorded checks are change detectors,
 not certification of a complete game or hardware accuracy.
 
@@ -18,6 +18,13 @@ weak-bit case, or test Prince side B and later levels.
 
 | Phantasie | [AppleWin #1278 attachment](https://github.com/AppleWin/AppleWin/issues/1278) (`Phantasie-Boot.woz`) | enhanced //e, NTSC | Title at 15 s, SPACE, game menu at 30 s |
 | Prisoner 2 | [AppleWin #1005 attachment](https://github.com/AppleWin/AppleWin/issues/1005), bit timing patched to 33 | enhanced //e, NTSC | Title at 30 s, "RESIGNATION FILE" at 60 s, RETURN, the resignation code at 75 s |
+| Mr. Do | [WOZ-a-day item](https://archive.org/details/wozaday_Mr_Do) (`00playable.woz`) | ][+ | Joystick calibration at 30 s |
+| Lady Tut | [WOZ-a-day item](https://archive.org/details/wozaday_Lady_Tut) (`00playable2.woz` = side A; `00playable.woz` is Anti-M) | ][+ | Mockingboard question at 40 s, N, in the maze at 70 s |
+| Cyclod | [WOZ-a-day item](https://archive.org/details/wozaday_Cyclod) (`00playable.woz`, WOZ 2.1 FLUX) | enhanced //e | Running at 45 s |
+
+The last three come from the [three-way round of 2026-11-23](../../docs/audits/protected-woz-three-way-2026-11-23.md):
+Mr. Do boots since the bit-timing fix there, Lady Tut is the protection 4am
+calls "ridiculously aggressive", and Cyclod is a FLUX image AppleWin cannot read.
 
 Phantasie is the boot disk a user attached to AppleWin #1278 (2024-02-16):
 it boots in MAME and does not in AppleWin. POM2 reaches its title and, after
@@ -109,6 +116,12 @@ with zipfile.ZipFile(io.BytesIO(data)) as z:
     if len(names) != 1:
         raise RuntimeError('Expected exactly one Bandits WOZ')
     (root / 'bandits.woz').write_bytes(z.read(names[0]))
+for name, item, member in (('mr-do.woz', 'wozaday_Mr_Do', '00playable.woz'),
+                           ('lady-tut-a.woz', 'wozaday_Lady_Tut', '00playable2.woz'),
+                           ('cyclod.woz', 'wozaday_Cyclod', '00playable.woz')):
+    url = 'https://archive.org/download/' + item + '/' + member
+    with urllib.request.urlopen(url, timeout=60) as response:
+        (root / name).write_bytes(response.read())
 print(root)
 PY
 cmake --build build-release-tests --target pom2_corpus --parallel 3

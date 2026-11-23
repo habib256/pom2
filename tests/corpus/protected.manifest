@@ -57,3 +57,31 @@ title prisoner2 iie protected
   key RETURN
   run 15
   check resignation-code
+
+# The three-way WOZ round of 2026-11-23 (docs/audits/protected-woz-three-way-
+# 2026-11-23.md). Mr. Do declares bit timing 29 for tracks that fill a
+# revolution at 30; it boots since WozBitTiming.h plays such an image at the
+# one-revolution cell. Before, POM2 alone (of POM2, MAME, AppleWin) stayed in
+# the boot PROM at $C65E.
+title mr-do ii+ protected
+  diskii 1 mr-do.woz sha256=5a5c171a2dd077072d3c7aeed5a7fbaff797b6cf9a2c6760df7f91d86820d1ee
+  run 30
+  check calibrate
+
+# "Ridiculously aggressive copy protection, it will probably not work on your
+# emulator" (4am). POM2 reaches the maze on a ][+ and on a ][; MAME's ][
+# does not. N answers its Mockingboard question.
+title lady-tut ii+ protected
+  diskii 1 lady-tut-a.woz sha256=06d2f2c51d0ab3b23d8e878ede127009dde7c4fb6de75411feca8b379b2a9dfb
+  run 40
+  check mockingboard-question
+  key N
+  run 30
+  check maze
+
+# A WOZ 2.1 FLUX capture (Sirius): boots in POM2 and MAME, not in AppleWin
+# (no FLUX support); MAME 0.260 failed it (AppleWin #1255).
+title cyclod-flux iie protected flux
+  diskii 1 cyclod.woz sha256=7c50a7c9f30469368d1e2e06602a25d37f01c687175cbddab1f15b50a8ef07e0
+  run 45
+  check running

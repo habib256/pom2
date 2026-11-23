@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "DiskImage.h"
+#include "WozBitTiming.h"
 #include "MacBinary.h"
 #include "MediaNotch.h"
 #include "TwoImgHeader.h"
@@ -1376,6 +1377,16 @@ bool DiskImage::loadWozBytes(std::vector<uint8_t> buf, const std::string& imgPat
     if (populatedWholeTracks == 0) {
         lastError = "WOZ file has no usable whole tracks";
         loaded = false; return false;
+    }
+    {   // A fast cell rounded down by one 125 ns step is played at the revolution's (WozBitTiming.h).
+        std::vector<std::size_t> counts;
+        for (int qt = 0; qt < kQuarterTracks; qt += 4)
+            if (bitStreamValid[qt] && wozQtFluxPeriodTicks[qt] == 0) counts.push_back(wozQtBitCount[qt]);
+        const uint8_t played = pom2::effectiveWozBitTiming(optimalBitTiming, counts);
+        if (played != optimalBitTiming)
+            pom2::log().info("Disk II", "WOZ declares bit timing " + std::to_string(optimalBitTiming)
+                + ", one revolution of its tracks gives " + std::to_string(played) + ": played at " + std::to_string(played));
+        optimalBitTiming = played;
     }
 
     // 13-sector routing. INFO+38 (v2) is authoritative; WOZ1 and v2
