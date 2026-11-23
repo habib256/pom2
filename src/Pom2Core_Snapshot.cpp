@@ -25,6 +25,7 @@
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
 #include "NoSlotClock.h"
+#include "PhasorCard.h"
 #include "ProDOSHardDiskCard.h"
 #include "SessionIIc.h"
 #include <fstream>
@@ -57,8 +58,8 @@ bool Core::Impl::canSnapshot() const
 
 namespace {
 // Version 3 appends the No-Slot Clock, the socket accelerator, the //c+'s
-// 3.5" media and a hard disk's changed blocks; version 2 (without them)
-// still loads.
+// 3.5" media, a hard disk's changed blocks and the Phasors' registers;
+// version 2 (without them) still loads.
 constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 3};
 constexpr std::size_t kSdkMagicPrefix = sizeof(kSdkStateMagic) - 1;
 constexpr size_t kMaxSdkStateBytes = 40u << 20;
@@ -172,6 +173,13 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
         card->appendSnapshotState(registers);
         sessionio::blob(hdv, registers);
     }
+    std::vector<uint8_t> phasor;
+    for (const auto* card : state.phasors) {
+        phasor.push_back(static_cast<uint8_t>(card->getSlot()));
+        std::vector<uint8_t> registers;
+        card->appendSnapshotState(registers);
+        sessionio::blob(phasor, registers);
+    }
     std::vector<uint8_t> accel;
     if (state.acceleratorModel != Accelerator::None) {
         accel.push_back(static_cast<uint8_t>(state.acceleratorModel));
@@ -184,7 +192,7 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
     const auto paddles = state.memory.sdkPaddleState();
     out.insert(out.end(), paddles.begin(), paddles.end());
     for (const auto* blob : {&machine, &speaker, &keyboard, &video, &diskIdentity,
-                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse, &clock, &accel, &sony, &hdv})
+                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse, &clock, &accel, &sony, &hdv, &phasor})
         sessionio::blob(out, *blob);
     state.error.clear();
     return true;
@@ -224,7 +232,7 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
     const auto* paddles = reader.data + reader.pos;
     reader.pos += 6;
     std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb, mouse,
-                         clock, accel, sony, hdv;
+                         clock, accel, sony, hdv, phasor;
     // The machine section carries every RamWorks bank: 128 of them, 80 KiB
     // each with its language card, on top of the base 2 MiB budget.
     constexpr size_t kMaxMachineBytes = (2u << 20) + 128u * 0x14000u;
@@ -236,7 +244,8 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         !reader.blob(rgb, 64) || !reader.blob(mb, 5u << 20) ||
         !reader.blob(mouse, 16u << 10) ||
         (version >= 3 && (!reader.blob(clock, 4096) || !reader.blob(accel, 4096) ||
-                          !reader.blob(sony, 40u << 20) || !reader.blob(hdv, 36u << 20))) ||
+                          !reader.blob(sony, 40u << 20) || !reader.blob(hdv, 36u << 20) ||
+                          !reader.blob(phasor, 64u << 10))) ||
         !reader.done())
         return fail("Invalid SDK snapshot section lengths");
     if (!state.speaker.loadSdkState(speaker.data(), speaker.size(), false) ||
@@ -458,6 +467,22 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         }
     }
 
+    std::vector<std::vector<uint8_t>> phasorStates(state.phasors.size());
+    {
+        sessionio::Reader pr(phasor.data(), phasor.size());
+        for (size_t i = 0; i < state.phasors.size(); ++i) {
+            const auto* live = state.phasors[i];
+            if (pr.u8() != live->getSlot() || !pr.blob(phasorStates[i], 16u << 10))
+                return fail("SDK snapshot Phasor topology differs");
+            PhasorCard validator(live->getSlot());
+            validator.loadSnapshotState(phasorStates[i].data(), phasorStates[i].size());
+            std::vector<uint8_t> canonical;
+            validator.appendSnapshotState(canonical);
+            if (canonical != phasorStates[i]) return fail("Invalid SDK Phasor registers");
+        }
+        if (!pr.done()) return fail("SDK snapshot Phasor topology differs");
+    }
+
     SnapshotReader machineReader(machine.data(), machine.size());
     std::string section;
     uint32_t sectionSize = 0;
@@ -469,6 +494,8 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
                                               beforeRestore);
     if (!restored.ok) return fail(restored.error);
     if (state.plus) applySessionSonyMedia(state.memory, sonyMedia);
+    for (size_t i = 0; i < state.phasors.size(); ++i)
+        state.phasors[i]->loadSnapshotState(phasorStates[i].data(), phasorStates[i].size());
     if (trackedDisk) {
         for (const auto& [block, bytes] : diskBlocks) trackedDisk->restoreBlock(block, bytes.data());
         trackedDisk->setChangedBlocks(std::move(diskChanged));

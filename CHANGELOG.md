@@ -28,6 +28,15 @@ loaded at the address its CiderPress name, AppleSingle or DOS 3.3 header gives
 and CALLed. Drive sounds now follow run-ahead (events of frames whose audio
 RetroArch discards are dropped) and a loaded state (they resync to its motor).
 
+The Phasor joins the sound card option (SDK `attachPhasor`), with save
+states: its registers and timers are exact, its synthesis resumes from them.
+
+`pom2_libretro_desktop` failed now and then (once locally, once on the ARM64
+runner): the emulated No-Slot Clock starts at the host's date, Apple II
+DeskTop draws the time, and the test's scripted drag came to depend on when
+it ran. The test runs with the clock off; 40 repetitions pass, where 25 had
+failed one.
+
 A RamWorks III (256 KiB to 8 MiB, //e) is a core option and an SDK call
 (`setRamWorksBanks`). An 8 MiB machine saved its state but refused to load
 it: the SDK capped a state's machine section at 2 MiB, and 128 banks with

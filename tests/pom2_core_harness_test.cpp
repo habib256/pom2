@@ -302,7 +302,7 @@ void testIdentity()
             != info.capabilities.end();
     };
     for (const char* name : { "accelerator", "harddisk", "ram.banks", "ram.regions", "keyboard.state", "provenance",
-                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "noslotclock", "ramworks", "smartport35" })
+                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "noslotclock", "phasor", "ramworks", "smartport35" })
         assert(has(name));
     // Declared by its absence: the SDK has no CRT profile (docs/SDK.md § Rendering).
     assert(!has("render.crt"));
@@ -721,6 +721,76 @@ void testRamWorks()
     std::printf("  ok: RamWorks III banks in snapshots\n");
 }
 
+// attachPhasor: in its Mockingboard mode the guest's AY tone reaches the mix,
+// a //c refuses it, and a snapshot replays the guest-visible machine exactly.
+void testPhasor()
+{
+    pom2::Core core = makeIIe();
+    assert(core.loadCharacterRom(gSource + "/roms/apple2e_char.rom"));
+    assert(core.attachPhasor(4) && core.phasorAttached() && !core.attachPhasor(4));
+    assert(core.supportsState());
+    std::vector<std::uint8_t> code = {0x8D, 0x06, 0xC0,               // SETSLOTCXROM
+                                      0xA9, 0xFF, 0x8D, 0x03, 0xC4,   // DDRA = $FF
+                                      0xA9, 0x07, 0x8D, 0x02, 0xC4,   // DDRB = $07
+                                      0xA9, 0x00, 0x8D, 0x00, 0xC4,   // /RESET low
+                                      0xA9, 0x04, 0x8D, 0x00, 0xC4};  // inactive
+    // AY register writes: latch the address (ORB 7), then the data (ORB 6).
+    for (const auto [reg, value] : {std::pair<std::uint8_t, std::uint8_t>{0, 0xFF}, {1, 0x01},
+                                    {7, 0x3E}, {8, 0x0F}}) {
+        for (const std::uint8_t b : {std::uint8_t(0xA9), reg, std::uint8_t(0x8D), std::uint8_t(0x01), std::uint8_t(0xC4),
+                                     std::uint8_t(0xA9), std::uint8_t(0x07), std::uint8_t(0x8D), std::uint8_t(0x00), std::uint8_t(0xC4),
+                                     std::uint8_t(0xA9), std::uint8_t(0x04), std::uint8_t(0x8D), std::uint8_t(0x00), std::uint8_t(0xC4),
+                                     std::uint8_t(0xA9), value, std::uint8_t(0x8D), std::uint8_t(0x01), std::uint8_t(0xC4),
+                                     std::uint8_t(0xA9), std::uint8_t(0x06), std::uint8_t(0x8D), std::uint8_t(0x00), std::uint8_t(0xC4),
+                                     std::uint8_t(0xA9), std::uint8_t(0x04), std::uint8_t(0x8D), std::uint8_t(0x00), std::uint8_t(0xC4)})
+            code.push_back(b);
+    }
+    std::uint16_t at = 0x0300;
+    for (const std::uint8_t b : code) put(core, pom2::RamBank::Main, at++, b);
+    put(core, pom2::RamBank::Main, at, 0x4C);
+    put(core, pom2::RamBank::Main, static_cast<std::uint16_t>(at + 1), static_cast<std::uint8_t>(at));
+    put(core, pom2::RamBank::Main, static_cast<std::uint16_t>(at + 2), static_cast<std::uint8_t>(at >> 8));
+    pom2::CpuState st = core.cpuState();
+    st.programCounter = 0x0300;
+    st.status = 0x24;
+    core.setCpuState(st);
+    std::vector<float> chunk(2 * 735);
+    double energy = 0;
+    for (int frame = 0; frame < 30; ++frame) {
+        core.run(17030);
+        assert(core.pullAudio(chunk.data(), 735) == 735);
+        for (float sample : chunk) energy += std::abs(sample);
+    }
+    assert(energy > 1.0 && "the Phasor's AY plays the guest's tone");
+
+    const auto timeline = [&] {
+        std::vector<std::uint64_t> hashes;
+        for (int frame = 0; frame < 60; ++frame) {
+            core.run(17030);
+            core.pullAudio(chunk.data(), 735);
+            std::vector<std::uint8_t> bytes(0xC000);
+            assert(core.readRam(pom2::RamBank::Main, 0, bytes.data(), bytes.size()));
+            std::uint64_t h = 1469598103934665603ull;
+            for (auto b : bytes) h = (h ^ b) * 1099511628211ull;
+            hashes.push_back(h ^ core.cpuState().cycles);
+        }
+        return hashes;
+    };
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    const auto first = timeline();
+    assert(core.loadState(state.data(), state.size()));
+    assert(timeline() == first && "a restored Phasor replays the machine");
+    pom2::Core none = makeIIe();
+    assert(!none.loadState(state.data(), state.size()) && "the Phasor is part of the configuration");
+
+    pom2::CoreConfig iic;
+    iic.machine = pom2::Machine::AppleIIc;
+    pom2::Core plainIIc(iic);
+    assert(!plainIIc.attachPhasor(4));
+    std::printf("  ok: Phasor\n");
+}
+
 int main()
 {
     gSource = POM2_TEST_SOURCE_DIR;
@@ -737,5 +807,6 @@ int main()
     testSpeechSnapshot();
     testIIcPlusSnapshot();
     testRamWorks();
+    testPhasor();
     return 0;
 }

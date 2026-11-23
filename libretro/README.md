@@ -114,8 +114,8 @@ Options marked *(restart)* take effect at the next **Load Content** or
 | | DIX preset *(restart)* | Automatic, Always, Never |
 | Video | Display | Automatic, three composite colour tables, OpenEmulator composite signal, AppleWin NTSC monitor, TV or idealized, monochrome white, green or amber, RGB |
 | | Le Chat Mauve RGB card *(restart)* | Automatic (DIX), Absent, Installed |
-| Audio | Mockingboard *(restart)* | Mockingboard A/C, with SSI263 speech, Absent |
-| | Mockingboard slot *(restart)* | Automatic (4, or 2 beside the mouse), 4, 5, 2, 1, 7 |
+| Audio | Sound card *(restart)* | Mockingboard A/C, Mockingboard with SSI263 speech, Phasor, Absent |
+| | Mockingboard slot *(restart)* | Automatic (4, or 2 beside the mouse), 4, 5, 2, 1, 7 (the Phasor's too) |
 | | Speaker volume, Mockingboard volume | 0 to 200 % |
 | | Disk drive sounds *(restart)* | Off, On |
 | | Disk drive sound volume | 0 to 200 % |

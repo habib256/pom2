@@ -487,6 +487,13 @@ names, and CREATE/OPEN/WRITE/CLOSE/READ through a real ProDOS MLI on a 65535-blo
 
 ## Mockingboard and cassette
 
+`attachPhasor(slot)` installs Applied Engineering's Phasor: two 6522s, four
+AY-3-8910s and two SSI263s, Mockingboard-compatible until the guest switches
+it. Its snapshot carries the registers and timers, so the machine replays
+exactly; its synthesis picks up from those registers after a restore, where a
+Mockingboard's replays sample for sample. `setMockingboardVolume` sets both
+kinds of card.
+
 `attachMockingboard` accepts multiple cards in different empty slots. The
 complete audio pull mixes all attached cards; `setMockingboardVolume` applies
 to every attached card, not only the last one. The public models are A/C and
@@ -628,6 +635,7 @@ checkout. A capability name is added with its API and never reused:
 | `mockingboard` | `attachMockingboard` |
 | `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
 | `noslotclock` | `attachNoSlotClock` |
+| `phasor` | `attachPhasor`, `phasorAttached` |
 | `ramworks` | `setRamWorksBanks`, `ramWorksBanks` |
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |

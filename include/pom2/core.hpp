@@ -430,7 +430,15 @@ public:
     bool attachMockingboard(int slot = 4,
                             MockingboardModel model = MockingboardModel::AC);
     bool mockingboardAttached() const;
+    /// The gain of every sound card: Mockingboards and Phasors.
     void setMockingboardVolume(float volume);
+    /// Applied Engineering's Phasor in an empty slot (4 by convention): two
+    /// 6522s, four AY-3-8910s and two SSI263s, Mockingboard-compatible until
+    /// the guest switches it to Phasor mode. A //c refuses it. Mixed by
+    /// pullAudio(). Snapshots carry its registers and timers exactly; its
+    /// synthesis picks up from them after a restore.
+    bool attachPhasor(int slot = 4);
+    bool phasorAttached() const;
 
     /// The drives' mechanical sounds — motor, head steps, the track-0 rattle,
     /// the door — from MAME's floppy sample set in `sampleDirectory` (POM2

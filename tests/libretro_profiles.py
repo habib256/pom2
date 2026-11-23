@@ -236,8 +236,11 @@ def main():
             check_formats(args.module.resolve(), folder.parent, root, args.disk.resolve())
             print("PASS formats")
             return 0
+        # The clock off: DeskTop draws the time, and a clock started at the
+        # host's date made the scripted drag depend on when the test ran.
         host = Host(args.module.resolve(), folder.parent, root / "saves",
-                    {"pom2_mouse": "enabled" if args.scenario == "desktop" else "disabled"})
+                    {"pom2_mouse": "enabled" if args.scenario == "desktop" else "disabled",
+                     "pom2_clock": "disabled"})
         try:
             if args.scenario == "dix":
                 check_dix(host, args.disk.resolve(), args.full)

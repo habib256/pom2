@@ -1054,7 +1054,14 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
         if (slotOption != "auto") slot = std::stoi(std::string(slotOption));
         else if (machine.dix || state.slotUsed[4]) slot = 2;
         if (slotted && state.slotUsed[slot]) {
-            reportError("Mockingboard: slot " + std::to_string(slot) + " is taken; the card was left out.");
+            reportError("Sound card: slot " + std::to_string(slot) + " is taken; the card was left out.");
+        } else if (board == "phasor") {
+            if (target.attachPhasor(slot)) {
+                state.slotUsed[slot] = true;
+                summary += " · Phasor slot " + std::to_string(slot);
+            } else {
+                reportError("Phasor: " + target.lastError());
+            }
         } else if (target.attachMockingboard(slot, model)) {
             if (slotted) state.slotUsed[slot] = true;
             summary += slotted ? " · Mockingboard slot " + std::to_string(slot) : " · Mockingboard 4c";

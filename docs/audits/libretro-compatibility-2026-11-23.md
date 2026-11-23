@@ -189,3 +189,30 @@ are the same on both cores. Every 5.25-inch image AppleWin boots, POM2 boots.
 Before the power-on change POM2 showed black on DIGIDREAM (`DD.dsk`) and
 `fastloader.woz`, which AppleWin drew: that difference is what found the
 `bootDisk()` problem.
+
+### The same corpus on a //c and in PAL
+
+AppleWin runs neither machine, so these runs compare POM2 with itself, each
+profile through the core's options (`--set pom2-iic:pom2_machine=iic`,
+`--set pom2-pal:pom2_video_standard=pal`), the Mockingboard on (on the //c,
+the Mockingboard 4c on its internal connector) and the No-Slot Clock in
+emulated time:
+
+| Profile | Picture | Black | Error |
+|---|---:|---:|---:|
+| //e Enhanced NTSC | 44 | 1 | 1 |
+| //e Enhanced PAL | 44 | 1 | 1 |
+| //c NTSC | 42 | 2 | 2 |
+
+PAL changes no outcome. The //c's two extra failures:
+
+- `DOS32STD.d13` reports CHECK DISK DRIVE: the //c's ROM reads 16-sector
+  disks only, so a 13-sector DOS 3.2 disk does not boot on one, as on the
+  real machine.
+- A2osX 0.95 stays black (3.5-inch, through the //c's rear port, which boots
+  Apple II DeskTop, AppleShare and CardCat). Over three runs each it boots
+  with the Mockingboard 4c off and the clock on, and stays black with the 4c
+  on, or with both off. A reading, not verified on a //c: the 4c sleeps until
+  a program writes into `$C400-$C4FF` and then answers that page over the
+  //c's mouse firmware (MAME `c400_w`); a slot probe that writes there wakes
+  it and loses the mouse. Settled by: A2osX on a //c with a Mockingboard 4c.

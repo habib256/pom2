@@ -38,6 +38,7 @@ class EzColorCard;
 class IIcMouse;
 class LeChatMauveCard;
 class MockingboardCard;
+class PhasorCard;
 class MouseCard;
 class MouseCardAppleWin;
 namespace pom2 { class NoSlotClock; }
@@ -112,6 +113,7 @@ public:
     // simply overwrote the single pointer and the earlier card kept 44 100
     // while the mixer consumed 48 000.
     std::vector<MockingboardCard*> mockingboards;
+    std::vector<PhasorCard*> phasors;   // non-owning; their slots own them
     // Non-owning; the slot owns the card. One of the two, or neither.
     MouseCard*         mouseMcu = nullptr;
     MouseCardAppleWin* mouseHle = nullptr;

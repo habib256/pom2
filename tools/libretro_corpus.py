@@ -47,12 +47,13 @@ def kind(path):
     return "3.5"
 
 
-def options_for(profile):
+def options_for(profile, extra):
     options = dict(default_options("pom2-fast" if profile.startswith("pom2") else "applewin"))
     if profile.startswith("pom2"):
         options.update(pom2_mockingboard="ac", pom2_mockingboard_slot="4")
     else:
         options.update(applewin_slot4="Mockingboard")
+    options.update(extra.get(profile, {}))
     return options
 
 
@@ -87,11 +88,14 @@ def classify(host):
     return "screen", ""
 
 
-def run(profile, library, images, roms, seconds, captures):
+def run(profile, library, images, roms, seconds, captures, extra):
     results = {}
     with tempfile.TemporaryDirectory(prefix="pom2-libretro-corpus-") as directory:
         root = Path(directory)
         prepare_system(root / "system", roms)
+        for name in ("apple2c-32Kv0.rom", "apple2cp.rom", "apple2p.rom", "apple2_char.rom"):
+            if (roms / name).is_file():   # the other machines' firmware, when present
+                shutil.copyfile(roms / name, root / "system" / "pom2" / name)
         for image in images:
             if profile == "applewin" and kind(image) != "5.25":
                 results[image] = ("skip", "this AppleWin profile mounts 5.25-inch disks only")
@@ -103,7 +107,7 @@ def run(profile, library, images, roms, seconds, captures):
             copy.chmod(0o444)
             before = hashlib.sha256(copy.read_bytes()).hexdigest()
             host = Frontend(library, root / "system", work if profile == "applewin" else None,
-                            options_for(profile))
+                            options_for(profile, extra))
             try:
                 info = host.load(copy)
                 host.frame(int(seconds * info["fps"]))
@@ -129,11 +133,18 @@ def main():
     parser.add_argument("--seconds", type=float, default=30.0)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--captures", type=Path)
+    parser.add_argument("--set", action="append", default=[], metavar="NAME:KEY=VALUE",
+                        help="a core option for one profile, e.g. pom2-iic:pom2_machine=iic")
     args = parser.parse_args()
+    extra = {}
+    for item in args.set:
+        name, assignment = item.split(":", 1)
+        key, value = assignment.split("=", 1)
+        extra.setdefault(name, {})[key] = value
     images = sorted(p for r in args.roots for p in (ROOT / r).rglob("*")
                     if p.is_file() and p.suffix.lower() in FLOPPY | {".po", ".2mg", ".hdv"})
     profiles = [item.split("=", 1) for item in args.core]
-    table = {name: run(name, Path(module).resolve(), images, args.roms, args.seconds, args.captures)
+    table = {name: run(name, Path(module).resolve(), images, args.roms, args.seconds, args.captures, extra)
              for name, module in profiles}
     names = [name for name, _ in profiles]
     lines = [f"| Image | Kind | {' | '.join(names)} |", "|---|---|" + "---|" * len(names)]

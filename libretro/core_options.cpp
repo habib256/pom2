@@ -153,13 +153,16 @@ const std::vector<Option>& options()
           {"enabled", "Installed", "Installée"}}},
 
         // ---- Audio -----------------------------------------------------
-        {"pom2_mockingboard", "audio", "Mockingboard (restart)", "Mockingboard (redémarrage)",
-         "Two AY-3-8910 sound chips in stereo; the speech model adds an SSI263. On a //c it is the "
-         "Mockingboard 4c.",
-         "Deux puces son AY-3-8910 en stéréo ; le modèle à voix ajoute un SSI263. Sur un //c, c'est le "
-         "Mockingboard 4c.",
+        {"pom2_mockingboard", "audio", "Sound card (restart)", "Carte son (redémarrage)",
+         "A Mockingboard: two AY-3-8910 sound chips in stereo, the speech model adds an SSI263; on a //c, "
+         "the Mockingboard 4c. Or a Phasor: four AY-3-8910s and two SSI263s, Mockingboard-compatible "
+         "until a program switches it (not on a //c).",
+         "Un Mockingboard : deux puces son AY-3-8910 en stéréo, le modèle à voix ajoute un SSI263 ; sur un "
+         "//c, le Mockingboard 4c. Ou une Phasor : quatre AY-3-8910 et deux SSI263, compatible Mockingboard "
+         "jusqu'à ce qu'un programme la bascule (pas sur un //c).",
          {{"ac", "Mockingboard A/C", "Mockingboard A/C"},
           {"sound2", "Mockingboard with speech (SSI263)", "Mockingboard avec voix (SSI263)"},
+          {"phasor", "Phasor (Applied Engineering)", "Phasor (Applied Engineering)"},
           {"disabled", "Absent", "Absent"}}},
         {"pom2_mockingboard_slot", "audio", "Mockingboard slot (restart)", "Slot du Mockingboard (redémarrage)",
          "Most programs look for it in slot 4. Automatic uses slot 2 when the mouse or DIX takes slot 4.",

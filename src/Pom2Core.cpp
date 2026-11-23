@@ -35,6 +35,7 @@
 #include "MediaNotch.h"
 #include "MediaWritePolicy.h"
 #include "Mockingboard.h"
+#include "PhasorCard.h"
 #include "Sha256.h"
 #include "Version.h"
 #include "MountableMediaCard.h"
@@ -1234,6 +1235,32 @@ bool Core::attachMockingboard(int slot, MockingboardModel model)
     return true;
 }
 
+bool Core::attachPhasor(int slot)
+{
+    if (impl_->iicClass()) {
+        impl_->error = "The Phasor is a slot card; a //c has no slots";
+        return false;
+    }
+    if (slot < 1 || slot > 7 || impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "The Phasor needs an empty slot between 1 and 7";
+        return false;
+    }
+    auto card = std::make_unique<PhasorCard>(slot);
+    card->setCpu(&impl_->cpu);
+    card->setCpuClock(impl_->cpuClockHz * impl_->appliedSpeed);
+    card->setStandardClock(impl_->cpuClockHz);   // its AYs keep the bus clock
+    card->setSampleRate(impl_->audioSampleRate);
+    impl_->phasors.push_back(card.get());
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::phasorAttached() const
+{
+    return !impl_->phasors.empty();
+}
+
 bool Core::mockingboardAttached() const
 {
     return !impl_->mockingboards.empty();
@@ -1243,6 +1270,8 @@ void Core::setMockingboardVolume(float volume)
 {
     // Every attached card, not just the last one: they are all mixed.
     for (MockingboardCard* card : impl_->mockingboards)
+        if (card) card->setVolume(volume);
+    for (PhasorCard* card : impl_->phasors)
         if (card) card->setVolume(volume);
 }
 
@@ -1733,6 +1762,7 @@ SdkInfo Core::sdkInfo()
         "mockingboard",
         "mouse",
         "noslotclock",
+        "phasor",
         "provenance",
         "ram.banks",
         "ram.regions",
