@@ -22,6 +22,7 @@
 #include "AudioMix.h"
 #include "CassetteDevice.h"
 #include "Disk35Image.h"
+#include "FastChip.h"
 #include "IWMDevice.h"
 #include "M6502.h"
 #include "Memory.h"
@@ -29,6 +30,7 @@
 #include "SmartPortHub.h"
 #include "Sony35Drive.h"
 #include "SpeakerDevice.h"
+#include "ZipChip.h"
 
 class DiskIICard;
 class FloppySoundDevice;
@@ -38,6 +40,7 @@ class LeChatMauveCard;
 class MockingboardCard;
 class MouseCard;
 class MouseCardAppleWin;
+namespace pom2 { class NoSlotClock; }
 
 namespace pom2 {
 
@@ -78,6 +81,16 @@ public:
     // Declared before `memory` too: the drives that hold them are its cards.
     std::unique_ptr<FloppySoundDevice> driveSound525;
     std::unique_ptr<FloppySoundDevice> driveSound35;
+    // attachNoSlotClock: Memory holds a raw pointer to it.
+    std::unique_ptr<pom2::NoSlotClock> noSlotClock;
+    // setAccelerator: the socket part Memory points at, and the speed the
+    // clocked devices were last told (0: tell them again).
+    pom2::ZipChip  zipChip;
+    pom2::FastChip fastChip;
+    Accelerator    acceleratorModel = Accelerator::None;
+    double         appliedSpeed = 1.0;
+    void applySpeed(double multiplier);
+    std::int64_t clockStartEpoch = -1;
     Memory memory;
     M6502  cpu;
     Apple2Display display;
@@ -88,6 +101,10 @@ public:
     // attachHardDisk's device, a ProDOSHardDiskCard or (//c) a SmartPortCard
     // of HDV units: non-owning, and the same two bays either way.
     pom2::MountableMediaCard* hardDisk = nullptr;
+    // setHardDiskStateBase: the original image and its digest.
+    std::string hardDiskBasePath;
+    std::string hardDiskBaseDigest;
+    pom2::Block512Backing* hardDiskTracked() const;
     int hardDiskSlot = 0;
     // Non-owning; their slots own them. A LIST, not one pointer: `pullAudio`
     // mixes every card on the bus, so a second attached card was being mixed

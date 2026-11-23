@@ -96,6 +96,8 @@ Options marked *(restart)* take effect at the next **Load Content** or
 | System | Machine *(restart)* | Automatic, //e Enhanced, //e, ][+, ][, //c, //c Plus |
 | | Video standard *(restart)* | Automatic, NTSC 60 Hz, PAL 50 Hz |
 | | Processor *(restart)* | The machine's own, NMOS 6502, 65C02 (][, ][+ and //e) |
+| | Accelerator *(restart)* | Automatic (the //c Plus at 4 MHz), None, Zip Chip, FASTChip |
+| | No-Slot Clock *(restart)* | Emulated time, Host clock, Absent |
 | | DIX preset *(restart)* | Automatic, Always, Never |
 | Video | Display | Automatic, three composite colour tables, OpenEmulator composite signal, AppleWin NTSC monitor, TV or idealized, monochrome white, green or amber, RGB |
 | | Le Chat Mauve RGB card *(restart)* | Automatic (DIX), Absent, Installed |
@@ -114,6 +116,8 @@ Options marked *(restart)* take effect at the next **Load Content** or
 | | AppleMouse model *(restart)* | Automatic, Apple MCU firmware, AppleWin model |
 | | Mouse speed | 25 to 300 % |
 | Disks | Fast disk loading | Enabled, original drive timing |
+| | Disk II drive 2 *(restart)* | Empty, next disk of the playlist |
+| | Disc Control drive | Drive 1, Drive 2 |
 | | Write-protect every disk | No, Yes |
 | | Disk save interval | 1 to 30 seconds |
 | | Disk II firmware *(restart)* | Apple's when present, POM2's own |
@@ -123,7 +127,10 @@ door. The release ZIP carries them in `system/pom2/floppy_samples`: copy
 that folder next to the ROMs. They are not part of save states, so turn them
 off when you use run-ahead.
 
-The //c Plus and the speech Mockingboard have no save states. RetroArch
+Every configuration has save states, the //c Plus, the speech Mockingboard
+and hard disks included. A hard disk's state holds only the blocks the game
+changed since the original image, up to 8 MiB of them; a //c's hard disk on
+its rear port is the exception. RetroArch
 says so in the notification it shows when the content starts, which also
 names the machine and its cards.
 
@@ -204,6 +211,13 @@ choose **Eject Disc**, change **Current Disc Index**, then **Insert Disc**.
 Resume the game to continue from the same point. If you started from a single
 disk, **Load New Disc** lets you select another image during play.
 [RetroArch disc swapping guide](https://docs.libretro.com/guides/disc-swapping/).
+
+Games that use two 5.25-inch drives (Ultima, Wizardry, The Bard's Tale) can
+have both: set **Core Options → Disk II drive 2** to **Next disk of the
+playlist** and reload; the playlist's second disk starts in drive 2. Set
+**Disc Control drive** to **Drive 2** to change the disk in drive 2 with Disc
+Control and R3, and back to **Drive 1** for the boot drive. Each drive's disk
+keeps its own private copy, and a save state holds both.
 
 Frontends with LED support can map **LED 0** to the Disk II read indicator.
 

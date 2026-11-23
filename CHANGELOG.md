@@ -10,6 +10,49 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-23 — Libretro: two drives, 4 MHz, a ProDOS clock, states on //c+ and speech
+
+The libretro core gains a second 5.25-inch drive (the playlist's next disk,
+and a Disc Control drive option), an accelerator option (the //c Plus now
+runs at its built-in 4 MHz; a Zip Chip or FASTChip for the ][+ and //e), and
+a No-Slot Clock that dates ProDOS files. The //c Plus and the speech
+Mockingboard now have save states, so rewind, run-ahead and netplay work
+there, and so do hard disks: a state carries the blocks the guest changed
+since the original image (`setHardDiskStateBase`), 189 KiB for a test volume
+with two changed blocks instead of the whole disk. The SDK grows `setAccelerator` and
+`runVideo`, `attachNoSlotClock`, and a `loadState` that binds each drive's
+working copy.
+
+Why the pieces look the way they do:
+
+- **The clock runs on beam time, not the host's.** With the host clock a
+  netplay peer or a rewound frame reads another date, and ProDOS writes it
+  into RAM at boot: the machines diverge. The start date is in the state, so
+  a state refuses a machine started at another date. Beam time, not CPU
+  cycles, because an accelerator speeds the CPU, not the chip.
+- **`runVideo`, not `run`, drives an accelerated frame.** The application
+  sizes each 4096-cycle slice from the speed the guest selects and tells the
+  speaker, cards and beam the clock; a plain `run(17030)` gave an
+  accelerated machine a quarter of a frame. Without an accelerator it is
+  `run`, so no unaccelerated timing moved (the benchmark's frame counts are
+  unchanged).
+- **The Sound II was refused only by its own check.** The SDK validated the
+  card's registers with a Mockingboard A/C, which has no SSI263, so the
+  canonical form never matched. Its speech state was already in the card's
+  registers. The //c Plus needed only its 3.5-inch media beside the machine
+  snapshot, through the application's own `captureSessionSonyMedia`.
+- **The //c Plus state test boots Apple II DeskTop, not DIX**: DIX is not a
+  //c Plus program and stops in its loader there.
+- **A hard disk state is a delta against the ORIGINAL image, not the mount.**
+  The frontend's private copy carries the writes of earlier sessions; a delta
+  against it would stop matching the next session's copy and strand every
+  state. Against the unchanged original, a state stays valid as long as the
+  game does. `Block512Backing` flags every block written since the mount
+  (tied to its mount id), so a save never scans 32 MiB, and a restore reads
+  from the original only the blocks the live disk changed and the state did
+  not. The rewind rule (never cross an irreversible write) holds: the
+  restored blocks are written back as the guest's own.
+
 ## 2026-11-23 — Every Apple II in RetroArch, with a full set of core options
 
 The [libretro core](libretro/README.md) now runs the ][, ][+, //e, //e

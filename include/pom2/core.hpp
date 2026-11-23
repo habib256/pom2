@@ -86,6 +86,15 @@ enum class DisplayMode : std::uint8_t {
     Rgb,
 };
 
+/// An accelerator in the 6502 socket. On a //c Plus, ZipChip is its own
+/// soldered CGGA (4 MHz from reset, Esc held at reset for 1 MHz), not a part
+/// the owner added. New models are added at the end.
+enum class Accelerator : std::uint8_t {
+    None,
+    ZipChip,    ///< Zip Chip 8000: 4 MHz, switched by the guest at $C05A/$C05B
+    FastChip,   ///< FASTChip //e: up to 16.6 MHz, set at $C06A-$C06F
+};
+
 /// A physical RAM bank's cells in place: `data` stays valid, at the same
 /// address, for the life of the Core (moves included: it points into the
 /// machine, not into the facade). Empty when the machine has no such bank.
@@ -102,8 +111,8 @@ struct RamRegion {
 /// loaded as a //c dump (bank 0 at reset). AppleIIcPlus is the //c+: the same,
 /// its mouse firmware at $C700, plus the MIG, the IWM and the two 3.5" drives
 /// its ROM drives — reached through the SmartPort calls below — and a Disk II
-/// in slot 6 from the start. It runs at 1 MHz: the CGGA accelerator is the
-/// application's, not the facade's. The ROM itself is still loadRom().
+/// in slot 6 from the start. It runs at 1 MHz until setAccelerator(ZipChip)
+/// seats its CGGA (then drive it with runVideo). The ROM is still loadRom().
 /// New machines are added at the end.
 enum class Machine : std::uint8_t {
     Custom,
@@ -374,6 +383,15 @@ public:
     bool setHardDiskWriteProtected(int unit, bool protectedOn);
     /// The protection the guest sees, whatever its cause.
     bool hardDiskWriteProtected(int unit = 0) const;
+    /// Make the hard disk in unit 0 part of saveState(): the snapshot then
+    /// carries only the blocks that differ from `basePath`, the image the
+    /// mounted one was copied from (a frontend's original content, kept
+    /// unchanged), and loadState() rebuilds the disk from that base, reading
+    /// from it only the blocks it must put back. Call after insertHardDisk;
+    /// another image in the unit ends it. The base must be the same size as
+    /// the mounted image. A //c's rear-port hard disk, and unit 1, stay
+    /// outside snapshots. False with the reason in lastError().
+    bool setHardDiskStateBase(std::string_view basePath);
 
     /// Load a program tape (.aci/.wav/.mp3/.ogg/.flac). Playback is controlled
     /// by the host transport below, while the guest sees the real $C060 input.
@@ -415,6 +433,16 @@ public:
     /// missing.
     bool attachDriveSounds(std::string_view sampleDirectory);
     bool driveSoundsAttached() const;
+
+    /// The Dallas DS1216E "No-Slot Clock" under the motherboard ROM, the
+    /// clock ProDOS's NS.CLOCK driver and many //e programs read; no slot.
+    /// `startEpoch` < 0 runs it from the host's clock. Otherwise it starts
+    /// at that time (seconds since 1970, read as local time) and advances
+    /// with EMULATED cycles, so a replayed or restored machine reads the same
+    /// date; the snapshot carries the start. A time the guest sets is kept as
+    /// an offset, as on the chip. False when a clock is already attached.
+    bool attachNoSlotClock(std::int64_t startEpoch = -1);
+    bool noSlotClockAttached() const;
     /// Drive sound gain in [0, 2]. Values outside the range are clamped.
     void setDriveSoundVolume(float volume);
 
@@ -497,6 +525,23 @@ public:
     int run(int minCycles);
     void step();
 
+    /// Seat (or, with None, remove) a socket accelerator: the guest then
+    /// runs faster than the beam. A ][, ][+ or //e takes either part; a //c
+    /// Plus takes ZipChip, its built-in one; a plain //c none. Reset as when
+    /// seated. False, nothing changed, for a machine that cannot take it.
+    bool setAccelerator(Accelerator model);
+    Accelerator accelerator() const;
+    /// The CPU's speed now, in multiples of the stock clock (1 without an
+    /// accelerator, or with one the guest has slowed).
+    double cpuSpeedMultiplier() const;
+    /// Run `videoCycles` of the BEAM's time, the way the application paces a
+    /// frame: the CPU runs that many cycles times the accelerator's speed,
+    /// in slices that follow the guest's speed switches, and every clocked
+    /// device (speaker, Mockingboard, drives, the beam) is told the speed.
+    /// Returns the beam cycles actually run (a slice ends on an instruction).
+    /// Without an accelerator it is exactly run(videoCycles).
+    int runVideo(int videoCycles);
+
     /// Apple II bus accesses. Reads may have hardware side effects, exactly as
     /// they do for the emulated CPU; these are not debugger-style peeks.
     std::uint8_t read(std::uint16_t address);
@@ -534,6 +579,15 @@ public:
     /// from host writes. After validation, beforeRestore may veto the commit.
     bool loadState(const void* data, std::size_t size, std::string_view diskBacking = {},
                    std::string_view smartPortBacking = {},
+                   const std::function<bool()>& beforeRestore = {});
+    /// The same, with a working copy for each drive: `disk[0]` and `disk[1]`
+    /// for the Disk II's two drives, `smartPort` for SmartPort unit 0. An
+    /// empty path keeps that medium detached, as above.
+    struct StateBackings {
+        std::string_view disk[2];
+        std::string_view smartPort;
+    };
+    bool loadState(const void* data, std::size_t size, const StateBackings& backings,
                    const std::function<bool()>& beforeRestore = {});
     /// Lowercase hex SHA-256, for a host recording what it ran. sha256File
     /// answers "" when the file cannot be read.

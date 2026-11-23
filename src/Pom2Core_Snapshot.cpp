@@ -24,12 +24,17 @@
 #include "Mockingboard.h"
 #include "MouseCard.h"
 #include "MouseCardAppleWin.h"
+#include "NoSlotClock.h"
+#include "ProDOSHardDiskCard.h"
+#include "SessionIIc.h"
+#include <fstream>
 #include "SessionIO.h"
 #include "SmartPort35Unit.h"
 #include "SmartPortCard.h"
 #include "SnapshotIO.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iterator>
 #include <utility>
@@ -38,15 +43,24 @@ namespace pom2 {
 
 bool Core::Impl::canSnapshot() const
 {
-    return !plus && !hardDisk && !ezColor &&
-           std::all_of(mockingboards.begin(), mockingboards.end(), [](const auto* card) {
-               return card->getVariant() == MockingboardCard::Variant::AC;
-           }) && !cassette.hasLoadedTape() &&
+    // The SSI263 of a Sound II rides in its card's registers (playback
+    // cursor included); its event queue is drained by each audio pull.
+    // The //c+'s IWM, MIG and Sony mechanisms ride in the machine snapshot;
+    // its 3.5" media travel beside it (captureSessionSonyMedia).
+    // A hard disk rides as its blocks that differ from a base image
+    // (setHardDiskStateBase); unit 1 and the //c's rear port do not.
+    const bool hardDiskReady = !hardDisk ||
+        (hardDiskTracked() && !static_cast<ProDOSHardDiskCard*>(hardDisk)->backing(1).isLoaded());
+    return hardDiskReady && !ezColor && !cassette.hasLoadedTape() &&
            !cassette.hasRecordedTape() && !cassette.isRecordingArmed();
 }
 
 namespace {
-constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 2};
+// Version 3 appends the No-Slot Clock, the socket accelerator, the //c+'s
+// 3.5" media and a hard disk's changed blocks; version 2 (without them)
+// still loads.
+constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 3};
+constexpr std::size_t kSdkMagicPrefix = sizeof(kSdkStateMagic) - 1;
 constexpr size_t kMaxSdkStateBytes = 40u << 20;
 }
 
@@ -126,13 +140,51 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
         sessionio::blob(mouse, cardState);
         sessionio::blob(mouse, input);
     }
+    std::vector<uint8_t> clock;
+    if (state.noSlotClock) {
+        byteio::putU64(clock, static_cast<uint64_t>(state.clockStartEpoch));
+        state.noSlotClock->appendSnapshotState(clock);
+    }
+    std::vector<uint8_t> sony;
+    if (state.plus) {
+        SessionArchive::Slot record;
+        size_t mediaBytes = 0;
+        if (!captureSessionSonyMedia(state.memory, record, mediaBytes, state.error)) return false;
+        sessionio::blob(sony, record.identity);
+        sessionio::blob(sony, record.state);
+    }
+    std::vector<uint8_t> hdv;
+    if (auto* backing = state.hardDiskTracked()) {
+        auto* card = static_cast<ProDOSHardDiskCard*>(state.hardDisk);
+        hdv.push_back(static_cast<uint8_t>(card->getSlot()));
+        sessionio::blob(hdv, std::vector<uint8_t>(state.hardDiskBaseDigest.begin(), state.hardDiskBaseDigest.end()));
+        const auto& changed = backing->changedBlocks();
+        byteio::putU32(hdv, static_cast<uint32_t>(backing->blockCount()));
+        byteio::putU32(hdv, static_cast<uint32_t>(std::count(changed.begin(), changed.end(), 1)));
+        uint8_t block[512];
+        for (uint32_t b = 0; b < changed.size(); ++b) {
+            if (!changed[b]) continue;
+            backing->readBlock(b, block);
+            byteio::putU32(hdv, b);
+            hdv.insert(hdv.end(), block, block + 512);
+        }
+        std::vector<uint8_t> registers;
+        card->appendSnapshotState(registers);
+        sessionio::blob(hdv, registers);
+    }
+    std::vector<uint8_t> accel;
+    if (state.acceleratorModel != Accelerator::None) {
+        accel.push_back(static_cast<uint8_t>(state.acceleratorModel));
+        if (state.acceleratorModel == Accelerator::ZipChip) state.zipChip.appendSnapshotState(accel);
+        else state.fastChip.appendSnapshotState(accel);
+    }
     out.assign(std::begin(kSdkStateMagic), std::end(kSdkStateMagic));
     out.push_back(static_cast<uint8_t>(state.machine));
     byteio::putU32(out, state.audioSampleRate);
     const auto paddles = state.memory.sdkPaddleState();
     out.insert(out.end(), paddles.begin(), paddles.end());
     for (const auto* blob : {&machine, &speaker, &keyboard, &video, &diskIdentity,
-                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse})
+                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse, &clock, &accel, &sony, &hdv})
         sessionio::blob(out, *blob);
     state.error.clear();
     return true;
@@ -141,14 +193,26 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
 bool Core::loadState(const void* data, std::size_t size, std::string_view diskBacking,
                      std::string_view smartPortBacking, const std::function<bool()>& beforeRestore)
 {
+    StateBackings backings;
+    backings.disk[0] = diskBacking;
+    backings.smartPort = smartPortBacking;
+    return loadState(data, size, backings, beforeRestore);
+}
+
+bool Core::loadState(const void* data, std::size_t size, const StateBackings& backings,
+                     const std::function<bool()>& beforeRestore)
+{
+    const std::string_view smartPortBacking = backings.smartPort;
     auto& state = *impl_;
     const auto fail = [&](std::string error) {
         state.error = std::move(error);
         return false;
     };
     if (!data || size < sizeof(kSdkStateMagic) || size > kMaxSdkStateBytes ||
-        std::memcmp(data, kSdkStateMagic, sizeof(kSdkStateMagic)) != 0)
+        std::memcmp(data, kSdkStateMagic, kSdkMagicPrefix) != 0)
         return fail("Invalid SDK snapshot header");
+    const uint8_t version = static_cast<const uint8_t*>(data)[kSdkMagicPrefix];
+    if (version != 2 && version != 3) return fail("Unsupported SDK snapshot version");
     if (!state.canSnapshot())
         return fail("SDK snapshots do not cover this peripheral configuration");
 
@@ -159,14 +223,18 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
     if (!reader.need(6)) return fail("Invalid SDK game-port state");
     const auto* paddles = reader.data + reader.pos;
     reader.pos += 6;
-    std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb, mouse;
+    std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb, mouse,
+                         clock, accel, sony, hdv;
     if (!reader.blob(machine, 2u << 20) || !reader.blob(speaker, 256u << 10) ||
         !reader.blob(keyboard, 8u << 10) || !reader.blob(video, 4u << 20) ||
         !reader.blob(diskIdentity, 4096) ||
         !reader.blob(disk, 36u << 20) || !reader.blob(diskTiming, 64) ||
         !reader.blob(smartPort, 36u << 20) ||
         !reader.blob(rgb, 64) || !reader.blob(mb, 5u << 20) ||
-        !reader.blob(mouse, 16u << 10) || !reader.done())
+        !reader.blob(mouse, 16u << 10) ||
+        (version >= 3 && (!reader.blob(clock, 4096) || !reader.blob(accel, 4096) ||
+                          !reader.blob(sony, 40u << 20) || !reader.blob(hdv, 36u << 20))) ||
+        !reader.done())
         return fail("Invalid SDK snapshot section lengths");
     if (!state.speaker.loadSdkState(speaker.data(), speaker.size(), false) ||
         !state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), false) ||
@@ -176,9 +244,10 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
     if (bool(state.diskII) != !disk.empty() || bool(state.smartPort) != !smartPort.empty() ||
         bool(state.rgbCard) != !rgb.empty())
         return fail("SDK snapshot slot topology differs");
-    if (!state.diskII && (!diskBacking.empty() || !diskIdentity.empty() || !diskTiming.empty()))
+    if (!state.diskII && (!backings.disk[0].empty() || !backings.disk[1].empty() ||
+                          !diskIdentity.empty() || !diskTiming.empty()))
         return fail("SDK snapshot contains unexpected Disk II data");
-    if (!state.smartPort && !smartPortBacking.empty())
+    if (!state.smartPort && !state.plus && !smartPortBacking.empty())
         return fail("SDK snapshot contains unexpected SmartPort backing");
 
     DiskIICard::SessionRestore prepared;
@@ -196,10 +265,12 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
         if (!validator.prepareSessionState(disk.data(), disk.size(), prepared, state.error,
                                            /*allowWoz=*/true, /*allowWritable=*/true))
             return false;
-        if (!diskBacking.empty() &&
-            (!mediaWritableByDefault() ||
-             !DiskIICard::bindSdkBacking(prepared, std::string(diskBacking))))
-            return fail("Cannot bind restored Disk II medium to its working copy");
+        for (int drive = 0; drive < 2; ++drive) {
+            if (backings.disk[drive].empty()) continue;
+            if (!mediaWritableByDefault() ||
+                !DiskIICard::bindSdkBacking(prepared, std::string(backings.disk[drive]), drive))
+                return fail("Cannot bind restored Disk II medium to its working copy");
+        }
     }
     std::unique_ptr<SmartPortCard> preparedSmartPort;
     std::vector<uint8_t> smartPortRuntime;
@@ -259,7 +330,7 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
             !boardReader.blob(board.timeline, 600u << 10) ||
             !live->loadSdkAudio(board.timeline.data(), board.timeline.size(), false))
             return fail("Invalid SDK Mockingboard state");
-        MockingboardCard validator(live->getSlot());
+        MockingboardCard validator(live->getSlot(), live->getVariant());
         validator.loadSnapshotState(board.registers.data(), board.registers.size());
         std::vector<uint8_t> canonical;
         validator.appendSnapshotState(canonical);
@@ -303,6 +374,82 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
         if (canonical != mouseRegisters) return fail("Invalid SDK mouse registers");
     }
 
+    if (bool(state.noSlotClock) != !clock.empty())
+        return fail("SDK snapshot No-Slot Clock configuration differs");
+    if (state.noSlotClock) {
+        byteio::Reader clockReader(clock.data(), clock.size());
+        if (static_cast<int64_t>(clockReader.u64()) != state.clockStartEpoch ||
+            !state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, /*commit=*/false))
+            return fail("Invalid SDK No-Slot Clock state");
+    }
+
+    if ((state.acceleratorModel == Accelerator::None) != accel.empty() ||
+        (!accel.empty() && accel[0] != static_cast<uint8_t>(state.acceleratorModel)))
+        return fail("SDK snapshot accelerator differs");
+    if (!accel.empty()) {
+        const bool valid = state.acceleratorModel == Accelerator::ZipChip
+            ? state.zipChip.validateSnapshotState(accel.data() + 1, accel.size() - 1)
+            : state.fastChip.validateSnapshotState(accel.data() + 1, accel.size() - 1);
+        if (!valid) return fail("Invalid SDK accelerator state");
+    }
+
+    if (bool(state.plus) != !sony.empty()) return fail("SDK snapshot //c+ drive configuration differs");
+    SessionSonyMedia sonyMedia;
+    if (state.plus) {
+        SessionArchive::Slot record;
+        record.kind = SessionArchive::Card::SonyMedia;
+        sessionio::Reader sonyReader(sony.data(), sony.size());
+        if (!sonyReader.blob(record.identity, 16) || !sonyReader.blob(record.state, 40u << 20) || !sonyReader.done())
+            return fail("Invalid SDK //c+ drive state");
+        size_t mediaBytes = 0;
+        if (!prepareSessionSonyMedia(state.memory, record, sonyMedia, mediaBytes, state.error, /*allowWritable=*/true))
+            return false;
+        if (!smartPortBacking.empty() &&
+            (!sonyMedia[0] || !mediaWritableByDefault() ||
+             !sonyMedia[0]->bindSnapshotBacking(std::string(smartPortBacking))))
+            return fail("Cannot bind restored 3.5\" medium to its working copy");
+    }
+
+    // The hard disk: the state's blocks, and the base's for every block the
+    // live disk changed that the state did not. Read here, before the commit.
+    auto* trackedDisk = state.hardDiskTracked();
+    if (bool(trackedDisk) != !hdv.empty()) return fail("SDK snapshot hard disk configuration differs");
+    std::vector<std::pair<uint32_t, std::array<uint8_t, 512>>> diskBlocks;
+    std::vector<uint8_t> diskRegisters, diskChanged;
+    if (trackedDisk) {
+        auto* card = static_cast<ProDOSHardDiskCard*>(state.hardDisk);
+        sessionio::Reader hr(hdv.data(), hdv.size());
+        std::vector<uint8_t> digest;
+        if (hr.u8() != card->getSlot() || !hr.blob(digest, 128) ||
+            std::string(digest.begin(), digest.end()) != state.hardDiskBaseDigest ||
+            hr.u32() != trackedDisk->blockCount())
+            return fail("SDK snapshot hard disk differs");
+        const uint32_t count = hr.u32();
+        if (count > trackedDisk->blockCount()) return fail("Invalid SDK hard disk state");
+        diskChanged.assign(trackedDisk->blockCount(), 0);
+        for (uint32_t i = 0; i < count; ++i) {
+            std::pair<uint32_t, std::array<uint8_t, 512>> entry;
+            entry.first = hr.u32();
+            if (entry.first >= diskChanged.size() || diskChanged[entry.first] || !hr.need(512))
+                return fail("Invalid SDK hard disk block");
+            std::memcpy(entry.second.data(), hr.data + hr.pos, 512);
+            hr.pos += 512;
+            diskChanged[entry.first] = 1;
+            diskBlocks.push_back(entry);
+        }
+        if (!hr.blob(diskRegisters, 64) || !hr.done()) return fail("Invalid SDK hard disk state");
+        const auto& live = trackedDisk->changedBlocks();
+        std::ifstream base(state.hardDiskBasePath, std::ios::binary);
+        for (uint32_t b = 0; b < live.size(); ++b) {
+            if (!live[b] || diskChanged[b]) continue;
+            std::pair<uint32_t, std::array<uint8_t, 512>> entry{b, {}};
+            base.seekg(static_cast<std::streamoff>(trackedDisk->imageDataOffset() + std::size_t(b) * 512));
+            if (!base.read(reinterpret_cast<char*>(entry.second.data()), 512))
+                return fail("Cannot read the hard disk's base image");
+            diskBlocks.push_back(entry);
+        }
+    }
+
     SnapshotReader machineReader(machine.data(), machine.size());
     std::string section;
     uint32_t sectionSize = 0;
@@ -313,6 +460,12 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
                                               /*transactional=*/true, /*logSuccess=*/false,
                                               beforeRestore);
     if (!restored.ok) return fail(restored.error);
+    if (state.plus) applySessionSonyMedia(state.memory, sonyMedia);
+    if (trackedDisk) {
+        for (const auto& [block, bytes] : diskBlocks) trackedDisk->restoreBlock(block, bytes.data());
+        trackedDisk->setChangedBlocks(std::move(diskChanged));
+        static_cast<ProDOSHardDiskCard*>(state.hardDisk)->loadSnapshotState(diskRegisters.data(), diskRegisters.size());
+    }
     if (state.diskII) {
         state.diskII->applySessionState(std::move(prepared));
         state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), true);
@@ -328,6 +481,14 @@ bool Core::loadState(const void* data, std::size_t size, std::string_view diskBa
         auto* card = state.mockingboards[i];
         card->loadSnapshotState(board.registers.data(), board.registers.size());
         card->loadSdkAudio(board.timeline.data(), board.timeline.size(), true);
+    }
+    if (state.noSlotClock) state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, true);
+    if (!accel.empty()) {
+        if (state.acceleratorModel == Accelerator::ZipChip)
+            state.zipChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
+        else
+            state.fastChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
+        state.appliedSpeed = -1.0;   // tell the devices the restored speed at the next slice
     }
     state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), true);
     state.memory.loadSdkPaddles(paddles, 6, true);

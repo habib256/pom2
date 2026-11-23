@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <initializer_list>
 #include <string>
@@ -300,8 +301,8 @@ void testIdentity()
         return std::find(info.capabilities.begin(), info.capabilities.end(), name)
             != info.capabilities.end();
     };
-    for (const char* name : { "harddisk", "ram.banks", "ram.regions", "keyboard.state", "provenance",
-                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "smartport35" })
+    for (const char* name : { "accelerator", "harddisk", "ram.banks", "ram.regions", "keyboard.state", "provenance",
+                              "render.cpu-composite", "render.modes", "disk2", "drive.sounds", "noslotclock", "smartport35" })
         assert(has(name));
     // Declared by its absence: the SDK has no CRT profile (docs/SDK.md § Rendering).
     assert(!has("render.crt"));
@@ -444,6 +445,223 @@ void testDriveSounds()
     std::printf("  ok: drive sounds\n");
 }
 
+// attachNoSlotClock with a start date: a guest reading the DS1216E by its
+// own protocol gets that date, ten emulated seconds later the date ten
+// seconds on, and after a snapshot restore the date the snapshot holds.
+std::tm readNoSlotClock(pom2::Core& core)
+{
+    // LDA $C304 resets the key; 64 reads of $C300|bit send C5 3A A3 5C x2,
+    // LSB first; 64 reads of $C304 shift the registers out on D0.
+    const std::uint8_t key[8] = {0xC5, 0x3A, 0xA3, 0x5C, 0xC5, 0x3A, 0xA3, 0x5C};
+    assert(core.writeRam(pom2::RamBank::Main, 0x0380, key, sizeof(key)));
+    const std::uint8_t code[] = {
+        0xAD, 0x04, 0xC3, 0xA2, 0x00,                   // LDA $C304; LDX #0
+        0xBD, 0x80, 0x03, 0x85, 0x00, 0xA0, 0x08,       // key byte: LDA $0380,X; STA $00; LDY #8
+        0xA5, 0x00, 0x29, 0x01, 0xF0, 0x06,             // key bit: LDA $00; AND #1; BEQ zero
+        0xAD, 0x01, 0xC3, 0x4C, 0x1B, 0x03,             // LDA $C301; JMP next
+        0xAD, 0x00, 0xC3,                               // zero: LDA $C300
+        0x46, 0x00, 0x88, 0xD0, 0xEC,                   // next: LSR $00; DEY; BNE key bit
+        0xE8, 0xE0, 0x08, 0xD0, 0xE0,                   // INX; CPX #8; BNE key byte
+        0xA2, 0x00,                                     // LDX #0
+        0xA0, 0x08, 0xA9, 0x00, 0x85, 0x01,             // byte: LDY #8; LDA #0; STA $01
+        0xAD, 0x04, 0xC3, 0x4A, 0x66, 0x01,             // bit: LDA $C304; LSR A; ROR $01
+        0x88, 0xD0, 0xF7,                               // DEY; BNE bit
+        0xA5, 0x01, 0x9D, 0x90, 0x03,                   // LDA $01; STA $0390,X
+        0xE8, 0xE0, 0x08, 0xD0, 0xE7,                   // INX; CPX #8; BNE byte
+        0x4C, 0x40, 0x03,                               // JMP *
+    };
+    assert(core.writeRam(pom2::RamBank::Main, 0x0300, code, sizeof(code)));
+    pom2::CpuState st = core.cpuState();
+    st.programCounter = 0x0300;
+    st.status = 0x24;
+    core.setCpuState(st);
+    for (int i = 0; i < 20000 && core.cpuState().programCounter != 0x0340; ++i) core.step();
+    assert(core.cpuState().programCounter == 0x0340);
+    std::uint8_t r[8];
+    assert(core.readRam(pom2::RamBank::Main, 0x0390, r, sizeof(r)));
+    const auto bcd = [](std::uint8_t v) { return (v >> 4) * 10 + (v & 0x0F); };
+    std::tm tm{};
+    tm.tm_sec = bcd(r[1]); tm.tm_min = bcd(r[2]); tm.tm_hour = bcd(r[3]);
+    tm.tm_mday = bcd(r[5]); tm.tm_mon = bcd(r[6]) - 1; tm.tm_year = 100 + bcd(r[7]);
+    tm.tm_isdst = -1;
+    return tm;
+}
+
+void testNoSlotClock()
+{
+    constexpr std::int64_t start = 1700000000;   // 2023-11-14 22:13:20 UTC
+    pom2::Core core = makeIIe();
+    assert(!core.noSlotClockAttached());
+    assert(core.attachNoSlotClock(start) && core.noSlotClockAttached());
+    assert(!core.attachNoSlotClock(start) && "one chip");
+    std::tm first = readNoSlotClock(core);
+    const std::time_t t0 = std::mktime(&first);
+    assert(t0 >= start && t0 <= start + 1 && "the guest reads the start date");
+    core.run(10 * 1022727);
+    std::tm later = readNoSlotClock(core);
+    const std::time_t t1 = std::mktime(&later);
+    assert(t1 - t0 >= 9 && t1 - t0 <= 11 && "ten emulated seconds later");
+
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    std::tm atSave = readNoSlotClock(core);
+    core.run(30 * 1022727);
+    assert(core.loadState(state.data(), state.size()));
+    std::tm restored = readNoSlotClock(core);
+    assert(std::mktime(&restored) == std::mktime(&atSave) && "a restore reads the snapshot's date");
+
+    pom2::Core other = makeIIe();
+    assert(other.attachNoSlotClock(start + 3600));
+    assert(!other.loadState(state.data(), state.size()) && "another start date is another machine");
+    pom2::Core none = makeIIe();
+    assert(!none.loadState(state.data(), state.size()) && "a clock is part of the configuration");
+    std::printf("  ok: No-Slot Clock in emulated time\n");
+}
+
+// setAccelerator + runVideo: over the same beam time a guest counting in a
+// loop gets about four times as far with a Zip Chip, and a snapshot carries
+// the chip; without one runVideo is run.
+long countLoop(pom2::Core& core, int videoCycles)
+{
+    // $0300: INC $00 / BNE / INC $01 / JMP $0300 — a 16-bit counter.
+    const std::uint8_t code[] = {0xE6, 0x00, 0xD0, 0x02, 0xE6, 0x01, 0x4C, 0x00, 0x03};
+    const std::uint8_t zero[2] = {0, 0};
+    assert(core.writeRam(pom2::RamBank::Main, 0x0300, code, sizeof(code)));
+    assert(core.writeRam(pom2::RamBank::Main, 0x0000, zero, 2));
+    pom2::CpuState st = core.cpuState();
+    st.programCounter = 0x0300;
+    st.status = 0x24;
+    core.setCpuState(st);
+    const int ran = core.runVideo(videoCycles);
+    assert(ran >= videoCycles && ran < videoCycles + 64);
+    std::uint8_t counter[2];
+    assert(core.readRam(pom2::RamBank::Main, 0x0000, counter, 2));
+    return counter[0] | (counter[1] << 8);
+}
+
+void testAccelerator()
+{
+    pom2::Core stock = makeIIe();
+    assert(stock.accelerator() == pom2::Accelerator::None && stock.cpuSpeedMultiplier() == 1.0);
+    const long base = countLoop(stock, 17030 * 3);
+
+    pom2::Core fast = makeIIe();
+    assert(fast.setAccelerator(pom2::Accelerator::ZipChip));
+    assert(fast.cpuSpeedMultiplier() > 3.5);
+    const long quick = countLoop(fast, 17030 * 3);
+    const double ratio = static_cast<double>(quick) / static_cast<double>(base);
+    assert(ratio > 3.5 && ratio < 4.5 && "a Zip Chip runs the guest four times as fast");
+
+    std::vector<std::uint8_t> state;
+    assert(fast.saveState(state));
+    assert(fast.loadState(state.data(), state.size()));
+    assert(countLoop(fast, 17030 * 3) == quick && "a restored Zip Chip keeps its speed");
+    assert(!stock.loadState(state.data(), state.size()) && "the accelerator is part of the configuration");
+
+    pom2::CoreConfig iic;
+    iic.machine = pom2::Machine::AppleIIc;
+    pom2::Core plainIIc(iic);
+    assert(!plainIIc.setAccelerator(pom2::Accelerator::ZipChip));
+    assert(fast.setAccelerator(pom2::Accelerator::None) && fast.cpuSpeedMultiplier() == 1.0);
+    std::printf("  ok: accelerator, %.2fx\n", ratio);
+}
+
+// A Mockingboard Sound II whose SSI263 is speaking: saveState is allowed,
+// and the restored machine replays the same samples, speech included.
+void testSpeechSnapshot()
+{
+    pom2::Core core = makeIIe();
+    assert(core.attachMockingboard(4, pom2::MockingboardModel::SoundII));
+    assert(core.supportsState());
+    core.coldBoot();
+    core.run(1022727 / 2);   // the ROM's reset handler sets the slot switches
+    // ssi263_speech_timeline's sequence at $C440+reg: powered down, filter,
+    // a voiced phoneme, power up; the chip then repeats the phoneme.
+    const std::uint8_t code[] = {
+        0x8D, 0x06, 0xC0,               // SETSLOTCXROM: $C4xx is slot 4's
+        0xA9, 0xFF, 0x8D, 0x02, 0xC4,   // VIA 1 DDRB = $FF
+        0xA9, 0x04, 0x8D, 0x00, 0xC4,   // ORB = $04: the AY's /RESET released
+        0xA9, 0x8F, 0x8D, 0x43, 0xC4,   // CTTRAMP = $8F (CTL high)
+        0xA9, 0x80, 0x8D, 0x44, 0xC4,   // FILFREQ = $80
+        0xA9, 0x0A, 0x8D, 0x40, 0xC4,   // DURPHON = $0A
+        0xA9, 0x0F, 0x8D, 0x43, 0xC4,   // CTTRAMP = $0F (CTL low)
+        0x4C, 0x21, 0x03,               // JMP *
+    };
+    assert(core.writeRam(pom2::RamBank::Main, 0x0300, code, sizeof(code)));
+    pom2::CpuState st = core.cpuState();
+    st.programCounter = 0x0300;
+    st.status = 0x24;
+    core.setCpuState(st);
+    std::vector<float> chunk(2 * 735);
+    const auto play = [&](int frames) {
+        std::vector<float> audio;
+        for (int i = 0; i < frames; ++i) {
+            core.run(17030);
+            assert(core.pullAudio(chunk.data(), 735) == 735);
+            audio.insert(audio.end(), chunk.begin(), chunk.end());
+        }
+        return audio;
+    };
+    play(30);
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    const auto first = play(60);
+    double energy = 0;
+    for (float sample : first) energy += std::abs(sample);
+    assert(energy > 1.0 && "the SSI263 speaks");
+    assert(core.loadState(state.data(), state.size()));
+    const auto second = play(60);
+    assert(first == second && "a restored Sound II replays the same speech");
+    std::printf("  ok: Sound II speech in snapshots\n");
+}
+
+// A //c Plus booting its internal 3.5" drive: saveState is allowed and the
+// restored machine replays the same frames, its drives' media included.
+void testIIcPlusSnapshot()
+{
+    // Apple II DeskTop's 800 KiB disk, from the test media archive.
+    const std::string disk = gSource + "/disks_3.5/A2DeskTop-1.5-en_800k.2mg";
+    if (!std::ifstream(disk) || !std::ifstream(gSource + "/roms/apple2cp.rom")) {
+        std::printf("  skip: //c Plus snapshot (test media not fetched)\n");
+        return;
+    }
+    pom2::CoreConfig config;
+    config.machine = pom2::Machine::AppleIIcPlus;
+    pom2::Core core(config);
+    assert(core.loadRom(gSource + "/roms/apple2cp.rom"));
+    assert(core.loadCharacterRom(gSource + "/roms/apple2e_char.rom"));
+    assert(core.insertSmartPortDisk(0, disk));
+    assert(core.supportsState());
+    assert(core.bootSlot(5));
+    const auto frames = [&](int count) {
+        std::vector<std::uint64_t> hashes;
+        for (int i = 0; i < count; ++i) {
+            core.run(17030);
+            const auto view = core.renderFrame();
+            std::uint64_t h = 1469598103934665603ull;
+            for (int p = 0; p < view.width * view.height; ++p) h = (h ^ view.pixels[p]) * 1099511628211ull;
+            hashes.push_back(h);
+        }
+        return hashes;
+    };
+    const auto ram = [&] {
+        std::vector<std::uint8_t> bytes(0xC000);
+        assert(core.readRam(pom2::RamBank::Main, 0, bytes.data(), bytes.size()));
+        return bytes;
+    };
+    frames(120);   // ProDOS is loading from the internal drive
+    std::vector<std::uint8_t> state;
+    assert(core.saveState(state));
+    const auto atSave = ram();
+    const auto first = frames(240);
+    const auto firstRam = ram();
+    assert(core.loadState(state.data(), state.size()));
+    const auto second = frames(240);
+    assert(first == second && ram() == firstRam && "a restored //c Plus replays the same boot");
+    assert(firstRam != atSave && "the guest went on loading after the save");
+    std::printf("  ok: //c Plus snapshot, %zu KiB\n", state.size() >> 10);
+}
+
 int main()
 {
     gSource = POM2_TEST_SOURCE_DIR;
@@ -455,5 +673,9 @@ int main()
     testRamRegions();
     testDisplayModes();
     testDriveSounds();
+    testNoSlotClock();
+    testAccelerator();
+    testSpeechSnapshot();
+    testIIcPlusSnapshot();
     return 0;
 }

@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <initializer_list>
@@ -82,10 +83,20 @@ struct MountedDisk {
     std::shared_ptr<pom2::libretro::DiskSaveLock> lease;
 };
 
-struct DiskState {
-    std::vector<pom2::libretro::DiskEntry> images;
+// One drive as the frontend's Disc Control sees it: which playlist entry it
+// holds, whether its door is open, and the medium mounted behind it. Drive 0
+// takes any image; drive 1 is the Disk II's second 5.25-inch drive.
+struct DriveState {
     std::optional<unsigned> index;
     bool ejected = false;
+    std::optional<MountedDisk> mounted;
+    unsigned framesSinceFlush = 0;
+    bool flushWarning = false;
+};
+
+struct DiskState {
+    std::vector<pom2::libretro::DiskEntry> images;
+    std::array<DriveState, 2> drives;
     bool controllerAttached = false;
     bool smartPortAttached = false;
     bool hardDiskAttached = false;
@@ -96,9 +107,6 @@ struct DiskState {
     std::filesystem::path firmware;
     std::filesystem::path saves;
     std::filesystem::path content;
-    std::optional<MountedDisk> mounted;
-    unsigned framesSinceFlush = 0;
-    bool flushWarning = false;
 };
 
 struct InitialDisk {
@@ -108,6 +116,9 @@ struct InitialDisk {
 
 DiskState disks;
 std::optional<InitialDisk> initialDisk;
+unsigned controlDrive = 0;   // the drive Disc Control acts on (pom2_disk_control_drive)
+
+DriveState& controlled() { return disks.drives[controlDrive]; }
 
 std::array<std::uint32_t, kMaxWidth * kHeight> videoPixels;
 std::array<float, 2 * kMaxAudioFrames> audioFloat;
@@ -264,6 +275,7 @@ void applyRuntimeOptions()
     settings.mouseSpeed = percentOption("pom2_mouse_speed");
     settings.fastDiskLoading = option("pom2_fast_disk_loading") != "disabled";
     settings.writeProtectAll = option("pom2_write_protect") == "enabled";
+    controlDrive = option("pom2_disk_control_drive") == "2" ? 1 : 0;
     const double fps = double(machineTiming.cpuClockHz) / machineTiming.cyclesPerFrame;
     unsigned seconds = 5;
     try { seconds = static_cast<unsigned>(std::stoul(std::string(option("pom2_autosave_interval")))); }
@@ -624,7 +636,7 @@ unsigned runFrame()
 {
     // Charge any extra cycles at the end of a 6502 instruction to the next frame.
     const int budget = machineTiming.cyclesPerFrame - cycleOvershoot;
-    cycleOvershoot = core->run(budget) - budget;
+    cycleOvershoot = core->runVideo(budget) - budget;
     const auto frames = audioFramesForTick(machineAudioRemainder);
     core->pullAudio(audioFloat.data(), frames, kSampleRate);
     return frames;
@@ -690,49 +702,59 @@ bool attachController(pom2::Core& target, DiskState& state, MediaKind kind)
     return false;
 }
 
-bool insertMedia(pom2::Core& target, MediaKind kind, const std::string& path)
+bool insertMedia(pom2::Core& target, MediaKind kind, int drive, const std::string& path)
 {
     switch (kind) {
-    case MediaKind::DiskII:    return target.insertDisk(0, path);
+    case MediaKind::DiskII:    return target.insertDisk(drive, path);
     case MediaKind::SmartPort: return target.insertSmartPortDisk(0, path);
     case MediaKind::HardDisk:  return target.insertHardDisk(0, path);
     }
     return false;
 }
 
-bool protectMedia(pom2::Core& target, MediaKind kind)
+bool protectMedia(pom2::Core& target, MediaKind kind, int drive)
 {
     switch (kind) {
-    case MediaKind::DiskII:    return target.setDiskWriteProtected(0, true);
+    case MediaKind::DiskII:    return target.setDiskWriteProtected(drive, true);
     case MediaKind::SmartPort: return target.setSmartPortDiskWriteProtected(0, true);
     case MediaKind::HardDisk:  return target.setHardDiskWriteProtected(0, true);
     }
     return false;
 }
 
-bool mediaProtected(pom2::Core& target, MediaKind kind)
+bool mediaProtected(pom2::Core& target, MediaKind kind, int drive)
 {
     switch (kind) {
-    case MediaKind::DiskII:    return target.diskWriteProtected(0);
+    case MediaKind::DiskII:    return target.diskWriteProtected(drive);
     case MediaKind::SmartPort: return target.smartPortDiskWriteProtected(0);
     case MediaKind::HardDisk:  return target.hardDiskWriteProtected(0);
     }
     return true;
 }
 
-bool ejectMedia(pom2::Core& target, MediaKind kind)
+bool ejectMedia(pom2::Core& target, MediaKind kind, int drive)
 {
     switch (kind) {
-    case MediaKind::DiskII:    return target.ejectDisk(0);
+    case MediaKind::DiskII:    return target.ejectDisk(drive);
     case MediaKind::SmartPort: return target.ejectSmartPortDisk(0);
     case MediaKind::HardDisk:  return target.ejectHardDisk(0);
     }
     return false;
 }
 
-bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskEntry& image)
+bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskEntry& image, int drive)
 {
     const auto kind = image.kind();
+    if (drive == 1 && kind != MediaKind::DiskII) {
+        reportError("Drive 2 is a 5.25-inch Disk II drive: " + image.label + " goes in drive 1.");
+        return false;
+    }
+    for (const auto& other : state.drives) {
+        if (other.mounted && other.mounted->kind == kind && kind != MediaKind::DiskII) {
+            reportError(image.label + ": the other drive already holds this kind of disk.");
+            return false;
+        }
+    }
     pom2::libretro::DiskStorage storage{image.path};
     std::shared_ptr<pom2::libretro::DiskSaveLock> lease;
     if (!settings.writeProtectAll) {
@@ -750,42 +772,55 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     if (!attachController(target, state, kind)) return false;
 
     const auto path = storage.path.string();
-    if (!insertMedia(target, kind, path)) {
+    if (!insertMedia(target, kind, drive, path)) {
         reportError("Cannot insert disk " + image.path.string() + ": " + target.lastError());
         return false;
     }
     // Only a private copy with a write lease may accept guest writes.
-    if (!lease && !protectMedia(target, kind)) {
+    if (!lease && !protectMedia(target, kind, drive)) {
         const auto reason = target.lastError();
-        ejectMedia(target, kind);
+        ejectMedia(target, kind, drive);
         reportError("Cannot write-protect disk " + path + ": " + reason);
         return false;
     }
-    const bool protectedDisk = mediaProtected(target, kind);
+    const bool protectedDisk = mediaProtected(target, kind, drive);
     if (protectedDisk) lease.reset();
-    state.mounted = MountedDisk{storage.path, kind, !protectedDisk, std::move(lease)};
-    state.framesSinceFlush = 0;
-    state.flushWarning = false;
+    // A hard disk's save states carry the blocks it changed from the original.
+    if (kind == MediaKind::HardDisk && !target.setHardDiskStateBase(image.path.string()) && logMessage)
+        logMessage(RETRO_LOG_WARN, "POM2: no save states for this hard disk: %s\n", target.lastError().c_str());
+    auto& slot = state.drives[drive];
+    slot.mounted = MountedDisk{storage.path, kind, !protectedDisk, std::move(lease)};
+    slot.framesSinceFlush = 0;
+    slot.flushWarning = false;
     return true;
 }
 
-bool flushMountedDisk(pom2::Core& target, const DiskState& state)
+bool flushMountedDisk(pom2::Core& target, const DiskState& state, int drive)
 {
-    if (!state.mounted || !state.mounted->writable) return true;
-    switch (state.mounted->kind) {
-    case MediaKind::DiskII:    return target.flushDisk(0);
+    const auto& mounted = state.drives[drive].mounted;
+    if (!mounted || !mounted->writable) return true;
+    switch (mounted->kind) {
+    case MediaKind::DiskII:    return target.flushDisk(drive);
     case MediaKind::SmartPort: return target.flushSmartPortDisk(0);
     case MediaKind::HardDisk:  return target.flushHardDisk(0);
     }
     return true;
 }
 
-bool ejectMountedDisk(pom2::Core& target, DiskState& state)
+bool flushAllDisks(pom2::Core& target, const DiskState& state)
 {
-    if (!state.mounted) return true;
-    if (!flushMountedDisk(target, state)) return false;
-    const bool ejected = ejectMedia(target, state.mounted->kind);
-    if (ejected) state.mounted.reset();
+    bool ok = true;
+    for (int drive = 0; drive < 2; ++drive) ok = flushMountedDisk(target, state, drive) && ok;
+    return ok;
+}
+
+bool ejectMountedDisk(pom2::Core& target, DiskState& state, int drive)
+{
+    auto& mounted = state.drives[drive].mounted;
+    if (!mounted) return true;
+    if (!flushMountedDisk(target, state, drive)) return false;
+    const bool ejected = ejectMedia(target, mounted->kind, drive);
+    if (ejected) mounted.reset();
     return ejected;
 }
 
@@ -799,33 +834,38 @@ bool keepDiskEffects()
 
 void autosaveMountedDisk()
 {
-    if (!disks.mounted || !disks.mounted->writable || !keepDiskEffects()) return;
-    if (++disks.framesSinceFlush < settings.autosaveFrames) return;
-    disks.framesSinceFlush = 0;
-    try {
-        if (flushMountedDisk(*core, disks)) {
-            disks.flushWarning = false;
-            return;
+    if (!keepDiskEffects()) return;
+    for (int drive = 0; drive < 2; ++drive) {
+        auto& slot = disks.drives[drive];
+        if (!slot.mounted || !slot.mounted->writable) continue;
+        if (++slot.framesSinceFlush < settings.autosaveFrames) continue;
+        slot.framesSinceFlush = 0;
+        try {
+            if (flushMountedDisk(*core, disks, drive)) {
+                slot.flushWarning = false;
+                continue;
+            }
+            if (!slot.flushWarning) reportError(core->lastError());
+        } catch (const std::exception& error) {
+            if (!slot.flushWarning) reportError(error.what());
         }
-        if (!disks.flushWarning) reportError(core->lastError());
-    } catch (const std::exception& error) {
-        if (!disks.flushWarning) reportError(error.what());
+        slot.flushWarning = true;
     }
-    disks.flushWarning = true;
 }
 
 bool RETRO_CALLCONV setDiskEjected(bool ejected)
 {
-    if (disks.ejected == ejected) return true;
+    auto& slot = controlled();
+    if (slot.ejected == ejected) return true;
     if (!core) return false;
     try {
-        if (ejected && !ejectMountedDisk(*core, disks)) {
+        if (ejected && !ejectMountedDisk(*core, disks, int(controlDrive))) {
             reportError(core->lastError());
             return false;
         }
-        if (!ejected && disks.index && !mountDisk(*core, disks, disks.images[*disks.index]))
+        if (!ejected && slot.index && !mountDisk(*core, disks, disks.images[*slot.index], int(controlDrive)))
             return false;
-        disks.ejected = ejected;
+        slot.ejected = ejected;
         if (ejected) showDiskRead(false);
         return true;
     } catch (const std::exception& error) {
@@ -834,18 +874,19 @@ bool RETRO_CALLCONV setDiskEjected(bool ejected)
     }
 }
 
-bool RETRO_CALLCONV getDiskEjected() { return disks.ejected; }
+bool RETRO_CALLCONV getDiskEjected() { return controlled().ejected; }
 unsigned RETRO_CALLCONV getDiskCount() { return static_cast<unsigned>(disks.images.size()); }
-unsigned RETRO_CALLCONV getDiskIndex() { return disks.index.value_or(getDiskCount()); }
+unsigned RETRO_CALLCONV getDiskIndex() { return controlled().index.value_or(getDiskCount()); }
 
 bool RETRO_CALLCONV setDiskIndex(unsigned index)
 {
-    if (!disks.ejected) return false;
+    auto& slot = controlled();
+    if (!slot.ejected) return false;
     if (index >= getDiskCount()) {
-        disks.index.reset();
+        slot.index.reset();
     } else {
         if (disks.images[index].path.empty()) return false;
-        disks.index = index;
+        slot.index = index;
     }
     return true;
 }
@@ -853,10 +894,15 @@ bool RETRO_CALLCONV setDiskIndex(unsigned index)
 void nextDisk()
 {
     const unsigned count = getDiskCount();
-    if (count < 2 || disks.ejected || !keepDiskEffects()) return;
+    if (count < 2 || controlled().ejected || !keepDiskEffects()) return;
     const auto previous = getDiskIndex();
+    const auto& other = disks.drives[1 - controlDrive];
+    const auto usable = [&](unsigned i) {
+        return !disks.images[i].path.empty() && !(other.mounted && other.index == i)
+            && (controlDrive == 0 || disks.images[i].kind() == MediaKind::DiskII);
+    };
     unsigned next = previous < count ? (previous + 1) % count : 0;
-    while (next != previous && disks.images[next].path.empty()) {
+    while (next != previous && !usable(next)) {
         next = (next + 1) % count;
         if (next == 0 && previous >= count) return;
     }
@@ -865,17 +911,23 @@ void nextDisk()
         if (setDiskIndex(previous)) setDiskEjected(false);
         return;
     }
-    retro_message message{disks.images[next].label.c_str(), 120};
+    const std::string label = (controlDrive ? "Drive 2: " : "") + disks.images[next].label;
+    retro_message message{label.c_str(), 120};
     environment(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 }
 
 bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
 {
-    if (!disks.ejected || index >= getDiskCount()) return false;
+    if (!controlled().ejected || index >= getDiskCount()) return false;
     if (!game) {
+        for (auto& slot : disks.drives) {
+            if (slot.index == index && slot.mounted) return false;   // in the other drive
+        }
         disks.images.erase(disks.images.begin() + index);
-        if (disks.index == index) disks.index.reset();
-        else if (disks.index && *disks.index > index) --*disks.index;
+        for (auto& slot : disks.drives) {
+            if (slot.index == index) slot.index.reset();
+            else if (slot.index && *slot.index > index) --*slot.index;
+        }
         return true;
     }
     if (!game->path || !*game->path) return false;
@@ -998,6 +1050,23 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
             reportError("Mockingboard: " + target.lastError());
         }
     }
+    const auto accel = option("pom2_accelerator");
+    const bool plus = machine.kind == pom2::libretro::MachineKind::IIcPlus;
+    const auto model = accel == "zip" || (accel == "auto" && plus) ? pom2::Accelerator::ZipChip
+                     : accel == "fastchip" ? pom2::Accelerator::FastChip : pom2::Accelerator::None;
+    if (model != pom2::Accelerator::None) {
+        if (target.setAccelerator(model))
+            summary += model == pom2::Accelerator::FastChip ? " · FASTChip" : plus ? " · 4 MHz" : " · Zip Chip";
+        else
+            reportError("Accelerator: " + target.lastError());
+    }
+    const auto clock = option("pom2_clock");
+    if (clock != "disabled") {
+        if (target.attachNoSlotClock(clock == "host" ? -1 : static_cast<std::int64_t>(std::time(nullptr))))
+            summary += " · No-Slot Clock";
+        else
+            reportError("No-Slot Clock: " + target.lastError());
+    }
     if (option("pom2_drive_sounds") == "enabled") {
         const auto samples = state.firmware / "floppy_samples";
         if (target.attachDriveSounds(samples.string())) summary += " · drive sounds";
@@ -1091,16 +1160,29 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     machineTiming = machine.config.timing == pom2::VideoTiming::PAL ? POM2_TIMING_PAL : POM2_TIMING_NTSC;
     applyRuntimeOptions();   // the write-protect setting is needed before the first mount
 
+    state.drives[1].ejected = true;   // drive 2 starts empty
     if (game) {
-        state.index = 0;
+        unsigned first = 0;
         std::error_code pathError;
         if (requestedDisk && requestedDisk->index < state.images.size()
                 && std::filesystem::equivalent(state.images[requestedDisk->index].path,
                                                 requestedDisk->path, pathError))
-            state.index = requestedDisk->index;
+            first = requestedDisk->index;
+        state.drives[0].index = first;
         disks = std::move(state);   // the controllers read the machine's choice
-        if (!mountDisk(*target, disks, disks.images[*disks.index])) return false;
-        if (!bootMedia(*target, *disks.mounted)) {
+        if (!mountDisk(*target, disks, disks.images[first], 0)) return false;
+        // Drive 2 takes the next 5.25-inch disk of the playlist, when asked.
+        if (option("pom2_drive2") == "next" && disks.drives[0].mounted->kind == MediaKind::DiskII) {
+            for (unsigned step = 1; step < disks.images.size(); ++step) {
+                const unsigned i = (first + step) % disks.images.size();
+                if (disks.images[i].kind() != MediaKind::DiskII) continue;
+                disks.drives[1].index = i;
+                if (!mountDisk(*target, disks, disks.images[i], 1)) return false;
+                disks.drives[1].ejected = false;
+                break;
+            }
+        }
+        if (!bootMedia(*target, *disks.drives[0].mounted)) {
             reportError("Cannot boot disk " + std::string(game->path) + ": " + target->lastError());
             return false;
         }
@@ -1114,27 +1196,31 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             // which lands in BASIC: do the same.
             if (!attachController(*target, disks, MediaKind::DiskII)) return false;
             target->coldBoot();
-            target->run(static_cast<int>(machineTiming.cpuClockHz * 2));
+            target->runVideo(static_cast<int>(machineTiming.cpuClockHz * 2));
             target->softReset();
         }
     }
 
-    // The ABI buffer may never grow after a content load. Reserve space
-    // for a standard SmartPort disk even when starting BASIC with no disk.
+    // The ABI buffer may never grow after a content load. A state carries
+    // both drives' media: reserve the two largest images of the playlist,
+    // and at least a standard SmartPort disk even when starting BASIC.
     constexpr std::size_t minimumDiskBudget = 1u << 20;
     constexpr std::size_t maxEmbeddedDisk = 16u << 20;
     const bool pal = machine.config.timing == pom2::VideoTiming::PAL;
     const std::size_t machineBudget = pal ? (1536u << 10) : (1u << 20);
-    std::size_t diskBudget = minimumDiskBudget;
-    const auto reserveDisk = [&](const std::filesystem::path& path) {
+    std::vector<std::size_t> sizes;
+    for (const auto& image : disks.images) {
         std::error_code sizeError;
-        const auto size = std::filesystem::file_size(path, sizeError);
-        if (!sizeError && size <= maxEmbeddedDisk)
-            diskBudget = std::max(diskBudget, static_cast<std::size_t>(size));
-    };
-    for (const auto& image : disks.images)
-        if (image.kind() != MediaKind::HardDisk) reserveDisk(image.path);
-    if (disks.mounted && disks.mounted->kind != MediaKind::HardDisk) reserveDisk(disks.mounted->path);
+        const auto size = std::filesystem::file_size(image.path, sizeError);
+        if (!sizeError && size <= maxEmbeddedDisk && image.kind() != MediaKind::HardDisk)
+            sizes.push_back(static_cast<std::size_t>(size));
+    }
+    std::sort(sizes.rbegin(), sizes.rend());
+    // A hard disk's state is the blocks it changed: room for 8 MiB of them.
+    const bool hardDisk = std::any_of(disks.images.begin(), disks.images.end(),
+        [](const auto& image) { return image.kind() == MediaKind::HardDisk; });
+    const std::size_t diskBudget = std::max(minimumDiskBudget, sizes.empty() ? 0 : sizes[0])
+                                 + (sizes.size() > 1 ? sizes[1] : 0) + (hardDisk ? (8u << 20) : 0);
     stateCapacity = machineBudget + diskBudget;
     core = std::move(target);
     applyRuntimeOptions();
@@ -1149,8 +1235,12 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
 
 // ---- Save states --------------------------------------------------------------
 
-constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 3};
-constexpr std::size_t kRetroStateHeader = sizeof(kRetroStateMagic) + 4 * 6 + 8 * 3 + 3 + 2 + 4;
+constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 4};
+// Magic, then: length, playlist, 2 x (backing identity, index, frames since
+// flush, flags), overshoot, two audio remainders, input flags, pad keyboard,
+// held keys, repeat, checksum.
+constexpr std::size_t kRetroStateHeader =
+    sizeof(kRetroStateMagic) + 4 + 8 + 2 * (8 + 4 + 4 + 1) + 4 * 3 + 1 + 2 + 2 + 2 + 2 + 8;
 constexpr unsigned kNoDisk = UINT32_MAX;
 
 std::uint64_t pathIdentity(const std::filesystem::path& path, std::uint64_t hash = 0xcbf29ce484222325ull)
@@ -1189,16 +1279,18 @@ bool saveRetroState(void* data, std::size_t size)
     std::vector<std::uint8_t> header(std::begin(kRetroStateMagic), std::end(kRetroStateMagic));
     putU32(header, static_cast<std::uint32_t>(stateScratch.size()));
     putU64(header, playlistIdentity());
-    putU64(header, disks.mounted && disks.mounted->writable ? pathIdentity(disks.mounted->path) : 0);
-    putU32(header, disks.index.value_or(kNoDisk));
+    for (const auto& slot : disks.drives) {
+        const bool writable = slot.mounted && slot.mounted->writable;
+        putU64(header, writable ? pathIdentity(slot.mounted->path) : 0);
+        putU32(header, slot.index.value_or(kNoDisk));
+        putU32(header, slot.framesSinceFlush);
+        putU8(header, (slot.ejected ? 1 : 0) | (slot.mounted ? 2 : 0) | (writable ? 4 : 0));
+    }
     putU32(header, static_cast<std::uint32_t>(cycleOvershoot));
     putU32(header, machineAudioRemainder);
     putU32(header, frontendAudioRemainder);
-    putU32(header, disks.framesSinceFlush);
-    putU8(header, (disks.ejected ? 1 : 0) | (disks.mounted ? 2 : 0) |
-                  (disks.mounted && disks.mounted->writable ? 4 : 0) |
-                  (openApple ? 8 : 0) | (solidApple ? 16 : 0) |
-                  (startHeld ? 32 : 0) | (selectHeld ? 64 : 0) | (driveLedOn ? 128 : 0));
+    putU8(header, (openApple ? 1 : 0) | (solidApple ? 2 : 0) | (startHeld ? 4 : 0) |
+                  (selectHeld ? 8 : 0) | (driveLedOn ? 16 : 0));
     putU8(header, padKeyboard.column);
     putU8(header, padKeyboard.row | (padKeyboard.open ? 16 : 0) | (padKeyboard.shifted ? 32 : 0));
     putU16(header, padKeyboard.held);
@@ -1224,76 +1316,102 @@ bool restoreRetroState(const void* data, std::size_t size)
     reader.pos = sizeof(kRetroStateMagic);
     const auto length = reader.u32();
     if (reader.u64() != playlistIdentity()) return false;
-    const auto backingIdentity = reader.u64();
-    const auto index = reader.u32(), overshoot = reader.u32();
+    struct SavedDrive {
+        std::uint64_t backing;
+        std::uint32_t index, framesSinceFlush;
+        bool ejected, mounted, writable;
+    };
+    std::array<SavedDrive, 2> saved{};
+    for (auto& drive : saved) {
+        drive.backing = reader.u64();
+        drive.index = reader.u32();
+        drive.framesSinceFlush = reader.u32();
+        const auto flags = reader.u8();
+        drive.ejected = (flags & 1) != 0;
+        drive.mounted = (flags & 2) != 0;
+        drive.writable = (flags & 4) != 0;
+        if (flags > 7) return false;
+    }
+    const auto overshoot = reader.u32();
     const auto machineRemainder = reader.u32(), frontendRemainder = reader.u32();
-    const auto framesSinceFlush = reader.u32();
     const auto flags = reader.u8(), column = reader.u8(), rowFlags = reader.u8();
     const auto held = reader.u16();
     const auto keysHeld = reader.u16();
     const auto keyRepeated = reader.u8(), repeatCount = reader.u8();
     const auto headerHash = pom2::hashMediaBytes(bytes, reader.pos);
     const auto checksum = reader.u64();
-    const bool ejected = (flags & 1) != 0;
-    const bool mounted = (flags & 2) != 0;
-    const bool writable = (flags & 4) != 0;
     if (stateCapacity < reader.pos || length > stateCapacity - reader.pos || !reader.has(length) ||
         checksum != pom2::hashMediaBytes(bytes + reader.pos, length, headerHash) ||
-        (index != kNoDisk && index >= disks.images.size()) || (mounted && index == kNoDisk) ||
-        (mounted && ejected) || (writable && !mounted) || bool(backingIdentity) != writable ||
         overshoot > 16 || machineRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
-        frontendRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
+        frontendRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) || flags > 31 ||
         column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= 64) return false;
 
-    std::optional<MountedDisk> restoredDisk;
-    std::string backing;
-    if (mounted) {
-        const auto& image = disks.images[index];
-        if (image.kind() == MediaKind::HardDisk) return false;
+    std::array<std::optional<MountedDisk>, 2> restored;
+    std::array<std::string, 2> backing;
+    for (int drive = 0; drive < 2; ++drive) {
+        const auto& s = saved[drive];
+        if ((s.index != kNoDisk && s.index >= disks.images.size()) || (s.mounted && s.index == kNoDisk) ||
+            (s.mounted && s.ejected) || (s.writable && !s.mounted) || bool(s.backing) != s.writable)
+            return false;
+        if (!s.mounted) continue;
+        const auto& image = disks.images[s.index];
+        if (drive == 1 && image.kind() != MediaKind::DiskII) return false;
         std::filesystem::path path = image.path;
         std::shared_ptr<pom2::libretro::DiskSaveLock> lease;
-        if (writable) {
+        if (s.writable) {
             const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path,
                 pom2::libretro::DiskStorageAccess::ExistingOnly);
-            if (!storage.privateCopy || pathIdentity(storage.path) != backingIdentity) return false;
+            if (!storage.privateCopy || pathIdentity(storage.path) != s.backing) return false;
             path = storage.path;
-            lease = disks.mounted && disks.mounted->path == path && disks.mounted->lease
-                ? disks.mounted->lease : pom2::libretro::lockDiskStorage(path);
+            for (const auto& live : disks.drives)
+                if (live.mounted && live.mounted->path == path && live.mounted->lease) lease = live.mounted->lease;
+            if (!lease) lease = pom2::libretro::lockDiskStorage(path);
             if (!lease) return false;
-            backing = path.string();
+            backing[drive] = path.string();
         }
-        restoredDisk = MountedDisk{std::move(path), image.kind(), writable, std::move(lease)};
+        restored[drive] = MountedDisk{std::move(path), image.kind(), s.writable, std::move(lease)};
     }
-    const bool smartPort = restoredDisk && restoredDisk->kind == MediaKind::SmartPort;
-    // A state rolls back its own face. Writes to an outgoing face are
-    // independent and would otherwise vanish when the controller is restored.
-    const auto preserveOutgoingFace = [&] {
-        if (!disks.mounted || !disks.mounted->writable ||
-            (restoredDisk && restoredDisk->path == disks.mounted->path && restoredDisk->writable))
-            return true;
-        return keepDiskEffects() && flushMountedDisk(*core, disks);
+    pom2::Core::StateBackings backings;
+    // A hard disk is restored in place, block by block, so it takes no backing.
+    if (restored[0] && restored[0]->kind == MediaKind::SmartPort) backings.smartPort = backing[0];
+    else if (!restored[0] || restored[0]->kind == MediaKind::DiskII) backings.disk[0] = backing[0];
+    backings.disk[1] = backing[1];
+    // A state rolls back its own disks. Writes to a disk it does not hold
+    // are independent and would otherwise vanish when the controller is restored.
+    const auto preserveOutgoingDisks = [&] {
+        for (int drive = 0; drive < 2; ++drive) {
+            const auto& live = disks.drives[drive].mounted;
+            if (!live || !live->writable) continue;
+            bool kept = false;
+            for (const auto& next : restored)
+                kept |= next && next->writable && next->path == live->path;
+            if (!kept && !(keepDiskEffects() && flushMountedDisk(*core, disks, drive))) return false;
+        }
+        return true;
     };
-    if (!core->loadState(bytes + reader.pos, length, smartPort ? std::string_view{} : backing,
-                         smartPort ? backing : std::string_view{}, preserveOutgoingFace)) return false;
+    if (!core->loadState(bytes + reader.pos, length, backings, preserveOutgoingDisks)) return false;
 
-    disks.index = index == kNoDisk ? std::nullopt : std::optional<unsigned>(index);
-    disks.ejected = ejected;
-    disks.mounted = std::move(restoredDisk);
-    disks.framesSinceFlush = framesSinceFlush;
-    disks.flushWarning = false;
+    for (int drive = 0; drive < 2; ++drive) {
+        auto& slot = disks.drives[drive];
+        slot.index = saved[drive].index == kNoDisk ? std::nullopt : std::optional<unsigned>(saved[drive].index);
+        slot.ejected = saved[drive].ejected;
+        slot.mounted = std::move(restored[drive]);
+        slot.framesSinceFlush = saved[drive].framesSinceFlush;
+        slot.flushWarning = false;
+    }
     cycleOvershoot = static_cast<int>(overshoot);
     machineAudioRemainder = machineRemainder;
     frontendAudioRemainder = frontendRemainder;
-    openApple = (flags & 8) != 0;
-    solidApple = (flags & 16) != 0;
-    startHeld = (flags & 32) != 0;
-    selectHeld = (flags & 64) != 0;
+    openApple = (flags & 1) != 0;
+    solidApple = (flags & 2) != 0;
+    startHeld = (flags & 4) != 0;
+    selectHeld = (flags & 8) != 0;
     padKeyboard = {held, column, static_cast<std::uint8_t>(rowFlags & 15),
                    (rowFlags & 16) != 0, (rowFlags & 32) != 0};
     keyPadHeld = keysHeld;
     repeatKey = keyRepeated;
     repeatFrames = repeatCount;
-    showDiskRead((flags & 128) != 0);
+    showDiskRead((flags & 16) != 0);
     return true;
 }
 
@@ -1394,14 +1512,16 @@ void retro_run()
     applyInput();
     applyCheats();
     auto frames = runFrame();
-    const bool readDuringFrame = core->diskReadRecently(machineTiming.cyclesPerFrame);
+    // "Recently" in CPU cycles: an accelerated frame runs more of them.
+    const auto frameCpuCycles = static_cast<std::uint64_t>(machineTiming.cyclesPerFrame * core->cpuSpeedMultiplier());
+    const bool readDuringFrame = core->diskReadRecently(frameCpuCycles);
     showDiskRead(readDuringFrame);
     // Keep advancing the audio mixer for the frames skipped by the frontend.
     // Present the final frame's sound and picture at the normal output rate.
     bool keepLoading = settings.fastDiskLoading && readDuringFrame;
     for (unsigned i = 1; keepLoading && i < kMaxDiskLoadFrames; ++i) {
         frames = runFrame();
-        keepLoading = core->diskReadRecently(machineTiming.cyclesPerFrame);
+        keepLoading = core->diskReadRecently(frameCpuCycles);
     }
     renderVideo();
     outputAudio(frames);
@@ -1425,7 +1545,7 @@ void retro_unload_game()
 {
     showDiskRead(false);
     try {
-        if (core && !flushMountedDisk(*core, disks)) reportError(core->lastError());
+        if (core && !flushAllDisks(*core, disks)) reportError(core->lastError());
     } catch (const std::exception& error) {
         reportError(error.what());
     }

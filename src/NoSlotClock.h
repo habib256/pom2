@@ -75,6 +75,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <functional>
 #include <vector>
 
 namespace pom2 {
@@ -83,8 +84,9 @@ class NoSlotClock
 {
 public:
     /// Time source. Defaults to `std::time + localtime`; tests swap a
-    /// deterministic source via the second constructor.
-    using TimeFn = std::tm (*)();
+    /// deterministic source via the second constructor, and the SDK can run
+    /// the clock from emulated cycles (a callable, hence std::function).
+    using TimeFn = std::function<std::tm()>;
 
     NoSlotClock();
     explicit NoSlotClock(TimeFn fn);

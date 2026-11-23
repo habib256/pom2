@@ -311,8 +311,10 @@ is empty. A Disk II sits in slot 6 from the start, sharing the IWM — the ROM
 reads the 5.25" port even with no 5.25" disk — so `insertDisk` works without
 `attachDiskII`, and `bootDisk` needs no PROM (`$C600` is the system ROM, as on
 the //c). `attachMockingboard()` is the 4c+, the same rule as the 4c, over the
-ROM's memory-expansion page. The facade runs it at 1 MHz: the CGGA
-accelerator, which the ROM switches on at every reset, is the application's.
+ROM's memory-expansion page. The facade runs it at 1 MHz until
+`setAccelerator(Accelerator::ZipChip)` seats its CGGA, which the ROM then
+switches on at every reset; drive it with `runVideo` (§ Accelerators and the
+clock).
 The ROM's slot-6 ProDOS block driver at `$C64E` (the slot-5 SmartPort code
 called as slot 6) serves the 5.25" disk. Pinned by `pom2_core_api`: a 3.5"
 boot from the internal drive (X = `$50`), and through `$C64E` the numbers of
@@ -543,19 +545,42 @@ it is close to what a player sees, but the CRT pass is not in it.
 
 `supportsState()` reports whether the current machine and peripherals support
 an in-memory snapshot. `saveState(out)` and `loadState(data, size)` use a
-versioned format with firmware and device checks. The state includes the
-processor, memory, the video beam's frame history, keyboard and paddles,
-speaker phase, Disk II and SmartPort controllers and mounted media, the
-Mockingboard A/C's synthesis and register queue, Le Chat Mauve, and the
-mouse. Hard disks, Mockingboard Sound II, E-Z Color, the //c Plus and active
-cassette sessions are currently outside this API.
+versioned format with firmware and device checks (version 3; version 2 states
+still load). The state includes the processor, memory, the video beam's frame
+history, keyboard and paddles, speaker phase, Disk II and SmartPort
+controllers and mounted media, the Mockingboard's synthesis and register queue
+(the Sound II's SSI263 included), Le Chat Mauve, the mouse, the No-Slot Clock,
+the socket accelerator, on a //c Plus its IWM, MIG, Sony drives and 3.5"
+media, and a hard disk in unit 0 once `setHardDiskStateBase(original)` names
+the image it was copied from: the state then carries only the blocks that
+differ from that original, and a restore reads back from it only the blocks
+it must put back. E-Z Color, a //c's rear-port hard disk and active cassette
+sessions are currently outside this API.
 
 Restored media are detached from host files. A frontend that manages private
-working copies may pass the trusted path of its existing Disk II drive-0 or
-SmartPort unit-0 copy to `loadState`. SmartPort write-back after restore is
-supported for sector-based disks. A restore can move a working copy's
-in-memory state before or after guest writes. A subsequent explicit write-back
-commits the restored timeline through the normal atomic disk path.
+working copies may pass the trusted path of each copy to
+`loadState(data, size, backings)`: `disk[0]` and `disk[1]` for the Disk II's
+two drives, `smartPort` for SmartPort unit 0 or the //c Plus's internal drive.
+The older form takes drive 0 and the SmartPort unit. SmartPort write-back after
+restore is supported for sector-based disks. A restore can move a working
+copy's in-memory state before or after guest writes. A subsequent explicit
+write-back commits the restored timeline through the normal atomic disk path.
+
+## Accelerators and the clock
+
+`setAccelerator(model)` seats a Zip Chip (4 MHz) or a FASTChip (up to
+16.6 MHz) in the 6502 socket of a ][, ][+ or //e; on a //c Plus, `ZipChip` is
+its built-in CGGA, fast from reset. The guest then runs faster than the beam,
+and `runVideo(videoCycles)` is the call that keeps them apart: it runs that
+much beam time, sizing each slice from the speed the guest selects, and tells
+every clocked device (speaker, cards, drives, the beam) the speed, as the
+application's frame loop does. Without an accelerator it is `run`.
+`cpuSpeedMultiplier()` reads the speed.
+
+`attachNoSlotClock(startEpoch)` puts a DS1216E under the ROM. With a start
+time it runs from beam time, not the host's clock: a replayed or restored
+machine reads the same date, which a netplay or a rewind needs. The start is
+part of the snapshot, so a state does not load into a machine with another.
 
 ## Delivery
 
@@ -580,14 +605,17 @@ checkout. A capability name is added with its API and never reused:
 | Capability | API |
 |---|---|
 | `cassette` | `loadCassette` and the transport |
+| `accelerator` | `setAccelerator`, `runVideo`, `cpuSpeedMultiplier` |
 | `disk2` | `attachDiskII`, `insertDisk`, `bootDisk` |
 | `drive.sounds` | `attachDriveSounds`, `setDriveSoundVolume` |
 | `ezcolor` | `attachEzColor` and its calls |
 | `harddisk` | `attachHardDisk` and its calls |
+| `harddisk.states` | `setHardDiskStateBase` |
 | `keyboard.state` | `keyboardState` |
 | `machine.iic`, `machine.iicplus` | `Machine::AppleIIc`, `Machine::AppleIIcPlus` |
 | `mockingboard` | `attachMockingboard` |
 | `mouse` | `attachMouse`, `moveMouse`, `setMouse` |
+| `noslotclock` | `attachNoSlotClock` |
 | `provenance` | `sdkInfo`, `sha256`, `sha256File` |
 | `ram.banks` | `readRam`, `writeRam` |
 | `ram.regions` | `ramRegion` |

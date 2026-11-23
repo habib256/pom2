@@ -1173,6 +1173,63 @@ void testFeatures(Core& core, const fs::path& firmware)
     (void)firmware;
 }
 
+// Two 5.25-inch drives: the playlist's second face preloaded in drive 2,
+// Disc Control moved to drive 2, a state carrying both writable drives, and a
+// private copy for each face.
+void connectFrontend(Core& core);
+
+void testSecondDrive(Core& core, const fs::path& work, const fs::path& master)
+{
+    // The persistence test opens a second instance; take the disk callbacks
+    // back from this one.
+    core.retro_deinit();
+    connectFrontend(core);
+    const auto folder = work / "two-drives";
+    fs::create_directories(folder);
+    const Bytes original = readFile(master);
+    writeFile(folder / "Boot.dsk", original);
+    writeFile(folder / "Data.dsk", original);
+    const std::string playlistPath = (folder / "Two drives.m3u").string();
+    const std::string playlist = "Boot.dsk|Boot\nData.dsk|Data\n";
+    writeFile(playlistPath, Bytes(playlist.begin(), playlist.end()));
+    const auto saves = work / "two-drive-saves";
+    fs::create_directories(saves);
+    frontend.saveDirectoryOverride = saves.string();
+    frontend.options["pom2_drive2"] = "next";
+    const auto game = contentInfo(playlistPath);
+    require(core.retro_load_game(&game), "could not load a two-drive playlist");
+    core.retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    const auto& disk = frontend.diskControlExt;
+    require(disk.get_image_index() == 0 && !disk.get_eject_state(), "drive 1 does not hold the boot disk");
+    frontend.options["pom2_disk_control_drive"] = "2";
+    frontend.optionsUpdated = true;
+    run(core, 1);
+    require(disk.get_image_index() == 1 && !disk.get_eject_state(),
+            "Disc Control on drive 2 does not see the preloaded second disk");
+    run(core, 120);
+    const auto state = saveState(core);
+    run(core, 30);
+    require(core.retro_unserialize(state.data(), state.size()),
+            "a state holding two writable drives did not restore");
+    require(disk.get_image_index() == 1 && !disk.get_eject_state(), "the restore lost drive 2");
+    require(disk.set_eject_state(true) && disk.get_eject_state() && disk.get_image_index() == 1,
+            "drive 2 did not eject");
+    require(disk.set_image_index(1) && disk.set_eject_state(false) && !disk.get_eject_state(),
+            "drive 2 did not take its disk back");
+    frontend.options["pom2_disk_control_drive"] = "1";
+    frontend.optionsUpdated = true;
+    run(core, 1);
+    require(disk.get_image_index() == 0, "Disc Control did not return to drive 1");
+    core.retro_unload_game();
+    unsigned copies = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(saves))
+        copies += entry.is_regular_file() && entry.path().extension() == ".dsk";
+    require(copies == 2, "each drive's disk needs its own private copy");
+    frontend.options.erase("pom2_drive2");
+    frontend.options.erase("pom2_disk_control_drive");
+    frontend.saveDirectoryOverride.clear();
+}
+
 void connectFrontend(Core& core)
 {
     core.retro_set_environment(environment);
@@ -1407,6 +1464,7 @@ int main(int argc, char* argv[])
             testDiskControl(core, work);
         } else if (persistence) {
             testPersistentDisks(core, work, firmware, argv[4], argv[5], argv[1]);
+            testSecondDrive(core, work, argv[5]);
         } else {
             testMedia(core, work, firmware, argv[3], argv[4]);
         }

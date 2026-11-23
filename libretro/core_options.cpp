@@ -79,7 +79,7 @@ const std::vector<Option>& options()
           {"iiplus", "Apple ][+", "Apple ][+"},
           {"ii", "Apple ][ (1977)", "Apple ][ (1977)"},
           {"iic", "Apple //c", "Apple //c"},
-          {"iic-plus", "Apple //c Plus (no save states)", "Apple //c Plus (sans sauvegarde d'état)"}}},
+          {"iic-plus", "Apple //c Plus", "Apple //c Plus"}}},
         {"pom2_video_standard", "system", "Video standard (restart)", "Standard vidéo (redémarrage)",
          "NTSC is 60 Hz at 1.0227 MHz. PAL is the European 50 Hz machine at 1.0156 MHz, needed by "
          "French Touch demos. Automatic selects PAL for DIX.",
@@ -92,6 +92,24 @@ const std::vector<Option>& options()
          "Remplace le 6502 d'un ][, ][+ ou //e. Les //c gardent leur 65C02 soudé.",
          {{"auto", "Machine's own", "Celui de la machine"}, {"nmos", "NMOS 6502", "NMOS 6502"},
           {"cmos", "65C02", "65C02"}}},
+        {"pom2_accelerator", "system", "Accelerator (restart)", "Accélérateur (redémarrage)",
+         "A faster 6502 in the socket. Automatic gives the //c Plus its built-in 4 MHz. The Zip Chip runs "
+         "at 4 MHz, the FASTChip up to 16.6 MHz; programs can slow them, and Esc held at reset starts a "
+         "//c Plus at 1 MHz.",
+         "Un 6502 plus rapide dans le support. Automatique donne au //c Plus ses 4 MHz intégrés. La Zip "
+         "Chip tourne à 4 MHz, la FASTChip jusqu'à 16,6 MHz ; les programmes peuvent les ralentir, et Échap "
+         "maintenue au reset démarre un //c Plus à 1 MHz.",
+         {{"auto", "Automatic", "Automatique"}, {"none", "None (1 MHz)", "Aucun (1 MHz)"},
+          {"zip", "Zip Chip (4 MHz)", "Zip Chip (4 MHz)"}, {"fastchip", "FASTChip (16.6 MHz)", "FASTChip (16,6 MHz)"}}},
+        {"pom2_clock", "system", "No-Slot Clock (restart)", "Horloge No-Slot Clock (redémarrage)",
+         "A DS1216E clock under the ROM gives ProDOS and many programs the date. Emulated time starts at "
+         "the host's date when the content loads and follows the machine, so save states and netplay "
+         "replay the same date.",
+         "Une horloge DS1216E sous la ROM donne la date à ProDOS et à de nombreux programmes. Le temps "
+         "émulé part de la date de l'hôte au chargement et suit la machine : sauvegardes d'état et netplay "
+         "retrouvent la même date.",
+         {{"emulated", "Emulated time", "Temps émulé"}, {"host", "Host clock", "Horloge de l'hôte"},
+          {"disabled", "Absent", "Absente"}}},
         {"pom2_dix_preset", "system", "DIX preset (restart)", "Préréglage DIX (redémarrage)",
          "French Touch's DIX anthology: a PAL //e Enhanced with a Mockingboard in slot 2 and a Le Chat "
          "Mauve RGB card. Automatic recognizes the published DIX images.",
@@ -128,10 +146,10 @@ const std::vector<Option>& options()
 
         // ---- Audio -----------------------------------------------------
         {"pom2_mockingboard", "audio", "Mockingboard (restart)", "Mockingboard (redémarrage)",
-         "Two AY-3-8910 sound chips in stereo. On a //c it is the Mockingboard 4c. The speech model "
-         "(SSI263) has no save states.",
-         "Deux puces son AY-3-8910 en stéréo. Sur un //c, c'est le Mockingboard 4c. Le modèle à voix "
-         "(SSI263) n'a pas de sauvegarde d'état.",
+         "Two AY-3-8910 sound chips in stereo; the speech model adds an SSI263. On a //c it is the "
+         "Mockingboard 4c.",
+         "Deux puces son AY-3-8910 en stéréo ; le modèle à voix ajoute un SSI263. Sur un //c, c'est le "
+         "Mockingboard 4c.",
          {{"ac", "Mockingboard A/C", "Mockingboard A/C"},
           {"sound2", "Mockingboard with speech (SSI263)", "Mockingboard avec voix (SSI263)"},
           {"disabled", "Absent", "Absent"}}},
@@ -200,6 +218,17 @@ const std::vector<Option>& options()
          "Run up to twelve frames per frontend frame while a floppy is read.",
          "Exécute jusqu'à douze trames par trame affichée pendant la lecture d'une disquette.",
          {{"enabled", "Enabled", "Activé"}, {"disabled", "Original drive timing", "Vitesse d'origine"}}},
+        {"pom2_drive2", "media", "Disk II drive 2 (restart)", "Lecteur 2 du Disk II (redémarrage)",
+         "Put the playlist's next 5.25-inch disk in drive 2 at start, for games that use two drives "
+         "(Ultima, Wizardry, The Bard's Tale).",
+         "Met le disque 5.25 suivant de la playlist dans le lecteur 2 au démarrage, pour les jeux à deux "
+         "lecteurs (Ultima, Wizardry, The Bard's Tale).",
+         {{"empty", "Empty", "Vide"}, {"next", "Next disk of the playlist", "Disque suivant de la playlist"}}},
+        {"pom2_disk_control_drive", "media", "Disc Control drive", "Lecteur de Disc Control",
+         "The drive that Quick Menu > Disc Control and the R3 button eject and load. Drive 2 takes 5.25-inch disks.",
+         "Le lecteur qu'éjectent et chargent Menu rapide > Disc Control et le bouton R3. Le lecteur 2 prend "
+         "les disques 5.25.",
+         {{"1", "Drive 1", "Lecteur 1"}, {"2", "Drive 2", "Lecteur 2"}}},
         {"pom2_write_protect", "media", "Write-protect every disk", "Protéger tous les disques en écriture",
          "Disks always mount read-only and no private copy is made. Applies to the next disk inserted.",
          "Les disques sont montés en lecture seule, sans copie privée. S'applique au prochain disque inséré.",
