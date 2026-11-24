@@ -16,6 +16,7 @@
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
 #include "polled_keyboard.hpp"
+#include "content_vfs.hpp"
 #include "program_file.hpp"
 #include "tape_content.hpp"
 #include "pom2/core.hpp"
@@ -153,7 +154,7 @@ struct RuntimeOptions {
 RuntimeOptions settings;
 bool rgbWarning = false;
 
-std::array<unsigned, 3> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE};
+std::array<unsigned, 4> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE, RETRO_DEVICE_NONE};
 bool openApple = false;
 bool solidApple = false;
 bool startHeld = false;
@@ -207,13 +208,20 @@ const retro_controller_description port3Types[] = {
     {"None (keyboard typed directly)", RETRO_DEVICE_NONE},
     {"Keyboard (for netplay)", RETRO_DEVICE_KEYBOARD},
 };
+// And the mouse: netplay carries one only from a port set to the mouse.
+const retro_controller_description port4Types[] = {
+    {"None (mouse read with port 1)", RETRO_DEVICE_NONE},
+    {"Mouse (for netplay)", RETRO_DEVICE_MOUSE},
+};
 const retro_controller_info controllerInfo[] = {
     {port1Types, 5},
     {port2Types, 2},
     {port3Types, 2},
+    {port4Types, 2},
     {nullptr, 0},
 };
 constexpr unsigned kKeyboardPort = 2;
+constexpr unsigned kMousePort = 3;
 
 std::string_view option(const char* key)
 {
@@ -604,13 +612,27 @@ void applyInput()
     const bool padEnabled = (device & RETRO_DEVICE_MASK) == RETRO_DEVICE_JOYPAD;
     padButtons = padEnabled ? readPad(0) : 0;
     if (core->mouseAttached() && inputState) {
-        const auto mouse = [](unsigned id) { return inputState(0, RETRO_DEVICE_MOUSE, 0, id); };
-        // Keep the fraction a slow speed would drop, so no motion is lost.
-        mouseRemainderX += settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_X);
-        mouseRemainderY += settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_Y);
-        const int dx = static_cast<int>(mouseRemainderX), dy = static_cast<int>(mouseRemainderY);
-        mouseRemainderX -= dx;
-        mouseRemainderY -= dy;
+        // Port 4 set to the mouse is the netplay mouse: RetroArch sends and
+        // replays that port's mouse, never the one read beside port 1's pad.
+        const bool netplayMouse = (portDevice[kMousePort] & RETRO_DEVICE_MASK) == RETRO_DEVICE_MOUSE;
+        const unsigned port = netplayMouse ? kMousePort : 0;
+        const auto mouse = [port](unsigned id) { return inputState(port, RETRO_DEVICE_MOUSE, 0, id); };
+        int dx = 0, dy = 0;
+        if (netplayMouse) {
+            // No carried fraction: it is not in the saved state, so a
+            // rollback would replay the motion differently.
+            dx = static_cast<int>(std::lround(settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_X)));
+            dy = static_cast<int>(std::lround(settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_Y)));
+            mouseRemainderX = mouseRemainderY = 0;
+        } else {
+            // Keep the fraction a slow speed would drop, so no motion is lost.
+            mouseRemainderX += settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_X);
+            mouseRemainderY += settings.mouseSpeed * mouse(RETRO_DEVICE_ID_MOUSE_Y);
+            dx = static_cast<int>(mouseRemainderX);
+            dy = static_cast<int>(mouseRemainderY);
+            mouseRemainderX -= dx;
+            mouseRemainderY -= dy;
+        }
         core->moveMouse(dx, dy, mouse(RETRO_DEVICE_ID_MOUSE_LEFT) != 0);
     }
     // The second joystick: paddles 2 and 3 and push button 2.
@@ -1098,7 +1120,11 @@ bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
     }
     if (!game->path || !*game->path) return false;
     try {
-        auto path = std::filesystem::u8path(game->path);
+        std::string vfsError;
+        const auto contentCache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "content";
+        const auto reachable = pom2::libretro::localizeContent(game->path, contentCache, vfsError);
+        if (reachable.empty()) throw std::runtime_error(vfsError);
+        auto path = std::filesystem::u8path(reachable);
         if (pom2::libretro::isArchive(path)) {
             // An archive's first disk, from the same cache as content.
             const auto cache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "archives";
@@ -1324,7 +1350,16 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             reportError("A filesystem path is required for a disk image or M3U playlist.");
             return false;
         }
-        state.content = std::filesystem::absolute(std::filesystem::u8path(game->path));
+        // A path only the frontend's VFS opens (Android's saf://) becomes a
+        // local copy first (content_vfs.hpp).
+        std::string vfsError;
+        const auto contentCache = (state.saves.empty() ? state.firmware : state.saves / "pom2") / "content";
+        const auto reachable = pom2::libretro::localizeContent(game->path, contentCache, vfsError);
+        if (reachable.empty()) {
+            reportError(vfsError);
+            return false;
+        }
+        state.content = std::filesystem::absolute(std::filesystem::u8path(reachable));
         // An archive unpacks beside the private disk copies, so its disks
         // keep them from one session to the next.
         if (pom2::libretro::isArchive(state.content)) {
@@ -1720,6 +1755,7 @@ void retro_set_environment(retro_environment_t callback)
     bool noContent = true;
     environment(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &noContent);
     pom2::libretro::registerCoreOptions(environment);
+    pom2::libretro::initContentVfs(environment);
     environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, const_cast<retro_controller_info*>(controllerInfo));
     bool achievements = true;
     environment(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
@@ -1752,7 +1788,7 @@ void retro_init()
         logMessage = callback.log;
     if (logMessage) pom2::log().setSink(forwardLog, nullptr);
     if (environment) registerDiskControl();
-    portDevice = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE};
+    portDevice = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE, RETRO_DEVICE_NONE};
 }
 
 void retro_deinit()

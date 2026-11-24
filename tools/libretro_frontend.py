@@ -1,6 +1,7 @@
 """Small headless Libretro ABI adapter used by POM2 tests and benchmarks."""
 
 import ctypes as C
+from pathlib import Path
 import shutil
 
 ENVIRONMENT = C.CFUNCTYPE(C.c_bool, C.c_uint, C.c_void_p)
@@ -14,6 +15,26 @@ AUDIO_STATUS = C.CFUNCTYPE(None, C.c_bool, C.c_uint, C.c_bool)
 MIDI_ENABLED = C.CFUNCTYPE(C.c_bool)
 MIDI_READ = C.CFUNCTYPE(C.c_bool, C.POINTER(C.c_uint8))
 MIDI_WRITE = C.CFUNCTYPE(C.c_bool, C.c_uint8, C.c_uint32)
+
+
+VFS_GET_PATH = C.CFUNCTYPE(C.c_char_p, C.c_void_p)
+VFS_OPEN = C.CFUNCTYPE(C.c_void_p, C.c_char_p, C.c_uint, C.c_uint)
+VFS_CLOSE = C.CFUNCTYPE(C.c_int, C.c_void_p)
+VFS_SIZE = C.CFUNCTYPE(C.c_int64, C.c_void_p)
+VFS_SEEK = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.c_int64, C.c_int)
+VFS_READ = C.CFUNCTYPE(C.c_int64, C.c_void_p, C.c_void_p, C.c_uint64)
+VFS_PATH_OP = C.CFUNCTYPE(C.c_int, C.c_char_p)
+VFS_RENAME = C.CFUNCTYPE(C.c_int, C.c_char_p, C.c_char_p)
+
+
+class VfsInterface(C.Structure):
+    _fields_ = [("get_path", VFS_GET_PATH), ("open", VFS_OPEN), ("close", VFS_CLOSE), ("size", VFS_SIZE),
+                ("tell", VFS_SIZE), ("seek", VFS_SEEK), ("read", VFS_READ), ("write", VFS_READ),
+                ("flush", VFS_CLOSE), ("remove", VFS_PATH_OP), ("rename", VFS_RENAME)]
+
+
+class VfsInterfaceInfo(C.Structure):
+    _fields_ = [("required_interface_version", C.c_uint32), ("iface", C.POINTER(VfsInterface))]
 
 
 class MidiInterface(C.Structure):
@@ -69,6 +90,9 @@ class Frontend:
         self.polls = 0
         self.midi = []            # (byte, microseconds since the previous one)
         self.audio_status = None  # the core's audio buffer status callback, if set
+        # Android's saf:// paths, served from this folder by a read-only VFS
+        # (set before load); None: no VFS offered.
+        self.vfs_root = getattr(self, "vfs_root", None)
         self.pad = set()
         self.analog = (0, 0)
         self.core = C.CDLL(str(binary))
@@ -127,6 +151,33 @@ class Frontend:
             C.cast(data, C.POINTER(C.c_bool))[0] = False
         elif command in (52, 57):  # GET_CORE_OPTIONS_VERSION / GET_DISK_CONTROL_INTERFACE_VERSION
             C.cast(data, C.POINTER(C.c_uint))[0] = int(command == 57)
+        elif command == 45 | 0x10000:  # GET_VFS_INTERFACE
+            if self.vfs_root is None:
+                return False
+            if not hasattr(self, "_vfs"):
+                self._vfs_files = {}
+                def vopen(path, mode, hints):
+                    p = path.decode()
+                    if not p.startswith("saf://tree/") or mode != 1:
+                        return None
+                    local = Path(self.vfs_root) / p[len("saf://tree/"):]
+                    if not local.is_file():
+                        return None
+                    handle = len(self._vfs_files) + 1
+                    self._vfs_files[handle] = [local.read_bytes(), 0]
+                    return handle
+                def vread(handle, buffer, length):
+                    data, pos = self._vfs_files[handle]
+                    chunk = data[pos:pos + length]
+                    C.memmove(buffer, chunk, len(chunk))
+                    self._vfs_files[handle][1] = pos + len(chunk)
+                    return len(chunk)
+                self._vfs = VfsInterface(VFS_GET_PATH(lambda h: None), VFS_OPEN(vopen),
+                                         VFS_CLOSE(lambda h: 0), VFS_SIZE(lambda h: len(self._vfs_files[h][0])),
+                                         VFS_SIZE(lambda h: self._vfs_files[h][1]), VFS_SEEK(lambda h, o, w: -1),
+                                         VFS_READ(vread), VFS_READ(lambda h, b, n: -1), VFS_CLOSE(lambda h: -1),
+                                         VFS_PATH_OP(lambda p: -1), VFS_RENAME(lambda a, b: -1))
+            C.cast(data, C.POINTER(VfsInterfaceInfo))[0].iface = C.pointer(self._vfs)
         elif command == 3:  # GET_CAN_DUPE
             C.cast(data, C.POINTER(C.c_bool))[0] = True
         elif command == 62:  # SET_AUDIO_BUFFER_STATUS_CALLBACK

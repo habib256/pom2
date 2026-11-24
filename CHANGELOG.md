@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — Android's saf:// content, and the netplay mouse
+
+**Android.** RetroArch on Android hands content picked through the Storage
+Access Framework as `saf://<tree>/<path>`, which only its VFS opens
+(libretro-common `vfs_implementation.c` @ v1.22.2); the core read files with
+the C++ library and could not boot it. It now asks for the VFS (version 1)
+and copies such content once into `pom2/content/<location>/` of the save
+directory, then plays the copy (`content_vfs.*`). An M3U brings the disks it
+names; Disk Control's replaced images go the same way. One folder per
+original location, so a disk's private copy carries over between sessions.
+Pinned in `pom2_libretro_formats`, whose frontend now serves `saf://` paths.
+
+**The netplay mouse.** RetroArch's netplay carries a mouse only from a port
+set to the mouse device; the core read it beside port 1's pad, so a mouse
+game desynchronised. Port 4 now has "Mouse (for netplay)". From that port
+the motion is not carried as a fraction between frames: the remainder is
+not in the state, and a mouse speed off 100 % made a rollback replay a
+different motion. The netplay suite gained Apple II DeskTop with the mouse
+moved and clicked from port 4, at 150 %.
+
 ## 2026-11-24 — Ready for the libretro buildbot
 
 Before asking libretro to build the core, its toolchains were rebuilt from

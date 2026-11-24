@@ -22,7 +22,8 @@ For each scenario this runs:
            netplay client does, and must reach the same CRCs to the end.
 
 The inputs are a seeded script: the joystick (port 1), the second joystick
-(port 2) and the keyboard as a netplay device (port 3), plus typed lines.
+(port 2), the keyboard as a netplay device (port 3) and the mouse (port 4),
+plus typed lines.
 
   python3 tools/libretro_netplay.py build/pom2_libretro.dylib roms \\
       [--disk packaging/disks/DIRTBIKE.dsk] [--frames 1800]
@@ -42,16 +43,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from libretro_frontend import Frontend, prepare_system  # noqa: E402
 
-RETRO_DEVICE_JOYPAD, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_ANALOG = 1, 3, 5
+RETRO_DEVICE_JOYPAD, RETRO_DEVICE_MOUSE, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_ANALOG = 1, 2, 3, 5
 RETROK_RETURN, RETROK_LSHIFT = 13, 304
 
 # (disk relative to the checkout, machine, frames): the keyboard and BASIC;
 # a Disk II .dsk; a WOZ through the flux path; a 3.5-inch disk on the //c
-# Plus, whose 4 MHz accelerator and SmartPort media each had a netplay bug.
-SUITE = [(None, "iie-enhanced", 600),
-         ("packaging/disks/DIRTBIKE.dsk", "iie-enhanced", 900),
-         ("disks_5.4/demo/fastloader/fastloader.woz", "iie-enhanced", 900),
-         ("packaging/disks/DIX-fix.po", "iic-plus", 900)]
+# Plus, whose 4 MHz accelerator and SmartPort media each had a netplay bug;
+# Apple II DeskTop with the AppleMouse driven from port 4.
+SUITE = [(None, "iie-enhanced", 600, "disabled"),
+         ("packaging/disks/DIRTBIKE.dsk", "iie-enhanced", 900, "disabled"),
+         ("disks_5.4/demo/fastloader/fastloader.woz", "iie-enhanced", 900, "disabled"),
+         ("packaging/disks/DIX-fix.po", "iic-plus", 900, "disabled"),
+         # the AppleMouse, moved and clicked from port 4
+         ("disks_3.5/A2DeskTop-1.5-en_800k.2mg", "iie-enhanced", 900, "enabled")]
 
 # The US keyboard a netplay keyboard device is read as: character -> (RETROK, shift).
 US_KEYS = {"\r": (RETROK_RETURN, False), " ": (32, False), ";": (59, False), ":": (59, True),
@@ -111,15 +115,20 @@ def script(seed, frames):
     # Then noise on every device: buttons, the stick, the second stick, keys.
     for _ in range(frames // 6):
         start, length = rng.randrange(typed_until, max(typed_until + 1, frames)), rng.randrange(1, 20)
-        kind = rng.randrange(4)
+        kind = rng.randrange(5)
         if kind == 0:
             hold(start, length, (0, RETRO_DEVICE_JOYPAD, rng.choice([0, 4, 5, 6, 7, 8])))
         elif kind == 1:
             hold(start, length, (0, RETRO_DEVICE_ANALOG, rng.randrange(2)), rng.randrange(-32768, 32767))
         elif kind == 2:
             hold(start, length, (1, RETRO_DEVICE_JOYPAD, rng.choice([0, 4, 5, 6, 7])))
-        else:
+        elif kind == 3:
             hold(start, length, (2, RETRO_DEVICE_KEYBOARD, rng.choice(list(range(97, 123)) + [32, 273, 274])))
+        else:   # the netplay mouse on port 4: a move, sometimes a click
+            hold(start, length, (3, RETRO_DEVICE_MOUSE, 0), rng.randrange(-7, 8))
+            hold(start, length, (3, RETRO_DEVICE_MOUSE, 1), rng.randrange(-7, 8))
+            if rng.random() < 0.3:
+                hold(start, min(length, 6), (3, RETRO_DEVICE_MOUSE, 2))
     return held
 
 
@@ -134,11 +143,14 @@ def worker(args):
     options = {"pom2_machine": args.machine, "pom2_video_standard": "ntsc",
                "pom2_dix_preset": "disabled", "pom2_mockingboard": args.mockingboard,
                "pom2_clock": args.clock, "pom2_fast_disk_loading": "disabled",
-               "pom2_frameskip": "auto" if args.frameskip else "disabled"}
+               "pom2_frameskip": "auto" if args.frameskip else "disabled",
+               # A speed off 100 %: a carried fraction would break rollbacks.
+               "pom2_mouse": args.mouse, "pom2_mouse_speed": "150"}
     host = NetplayFrontend(Path(args.core), system, work / "saves", options)
     try:
         host.load(Path(args.disk) if args.disk else None)
         host.core.retro_set_controller_port_device(2, RETRO_DEVICE_KEYBOARD)
+        host.core.retro_set_controller_port_device(3, RETRO_DEVICE_MOUSE)
         held = script(args.seed, args.frames)
         crcs = {}
         start = 0
@@ -181,7 +193,7 @@ def run(args, **extra):
     command = [sys.executable, "-B", __file__, "--worker", args.core, args.roms,
                "--frames", str(args.frames), "--seed", str(args.seed),
                "--clock", extra.get("clock", args.clock), "--mockingboard", args.mockingboard,
-               "--machine", args.machine]
+               "--machine", args.machine, "--mouse", args.mouse]
     if args.disk:
         command += ["--disk", args.disk]
     for flag in ("rollback", "frameskip"):
@@ -255,6 +267,7 @@ def main():
     parser.add_argument("--clock", default="enabled")
     parser.add_argument("--mockingboard", default="mockingboard")
     parser.add_argument("--machine", default="iie-enhanced")
+    parser.add_argument("--mouse", default="disabled")
     parser.add_argument("--suite", action="store_true",
                         help="the ctest scenarios: BASIC, a .dsk, a WOZ, a //c Plus 3.5-inch disk")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -275,7 +288,7 @@ def main():
     if args.suite:
         root = Path(__file__).resolve().parent.parent
         failures = 0
-        for disk, machine, frames in SUITE:
+        for disk, machine, frames, mouse in SUITE:
             if disk and not (root / disk).is_file():
                 print(f"-- {disk}: not fetched (tools/fetch_test_media.py), not run")
                 continue
@@ -284,7 +297,7 @@ def main():
                 continue
             scenario = argparse.Namespace(**vars(args))
             scenario.disk = str(root / disk) if disk else None
-            scenario.machine, scenario.frames = machine, frames
+            scenario.machine, scenario.frames, scenario.mouse = machine, frames, mouse
             failures += check(scenario)
         print("OK" if not failures else f"FAILED ({failures})")
         return 1 if failures else 0

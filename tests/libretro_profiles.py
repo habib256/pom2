@@ -239,6 +239,27 @@ def check_formats(module, system, root, disk):
                 f"MIDI bytes are not timed a byte apart: {host.midi}")
     finally:
         host.close()
+    # Android's Storage Access Framework: RetroArch hands saf://<tree>/<path>,
+    # which only its VFS opens. The core copies the content through the VFS
+    # (a disk, then an M3U and the disks it names) and boots the copy.
+    saf = root / "saf"
+    (saf / "Games").mkdir(parents=True)
+    shutil.copyfile(disk, saf / "Games" / "DIRTBIKE.dsk")
+    shutil.copyfile(disk, saf / "Games" / "Side B.dsk")
+    (saf / "Games" / "dirtbike.m3u").write_text("DIRTBIKE.dsk|Side A\nSide B.dsk|Side B\n")
+    class SafHost(Host):
+        vfs_root = str(saf)
+    for name, images in (("saf://tree/Games/DIRTBIKE.dsk", 1), ("saf://tree/Games/dirtbike.m3u", 2)):
+        host = SafHost(module, system, root / "saves", {})
+        try:
+            host.load(name)
+            host.frame(300)
+            _, text = text_page(host)
+            count = host.disk.get_num_images()
+            require(count == images, f"{name} should hold {images} disk(s), not {count}")
+            require("DIRTBIKE" in text, f"{name} did not boot Dirtbike through the VFS")
+        finally:
+            host.close()
     # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
     # boots DOS 3.2's System Master to its greeting (its Integer BASIC
     # HELLO is not available under Applesoft, and DOS says so).

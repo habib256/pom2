@@ -68,6 +68,12 @@ mostly Integer BASIC, which a ][+ lacks. The original Apple ][ has no
 autostart ROM: it powers on to garbage and the monitor's `*`, as the real
 one did.
 
+On Android, a disk picked through the system's file picker reaches the core
+as a `saf://` path that only RetroArch can open: the core copies it once, by
+RetroArch's VFS, into `pom2/content/` of the Save Files directory (an M3U
+brings the disks it lists) and plays the copy. The original is never
+written.
+
 POM2's built-in Disk II PROMs can boot every disk, 13-sector ones included
 (DOS 3.1/3.2: POM2 has its own 13-sector boot PROM too). Apple's always win
 when they are present: put `disk2.rom` (P5) and `diskii_p6.rom` (P6) in the
@@ -228,6 +234,8 @@ on-screen keyboard and R3 inserts the next disk of a playlist. Port 2's
 joystick drives paddles 2 and 3 and push button 2, for two-player paddle
 games.
 
+Port 4 is the same for the mouse: **Mouse (for netplay)**.
+
 Port 3 is the keyboard **for netplay**. RetroArch's netplay sends each
 player's joypad and, from a port set to the keyboard device, its keys; it
 never sends the keys a core receives as typed characters. With **Port 3
@@ -249,9 +257,10 @@ it on every package (`pom2_libretro_netplay`).
 
 Both players need the same content and the same core options. Set Port 3 to
 the keyboard for games played at the keyboard. The No-Slot Clock starts at
-the host's date; the joining player gets it with the host's state. The
-AppleMouse is not carried: RetroArch's netplay sends a mouse only from a
-port set to the mouse device, and the core reads it beside the joystick.
+the host's date; the joining player gets it with the host's state. For the
+AppleMouse (Apple II DeskTop, MousePaint), set **Port 4 → Mouse (for
+netplay)**: RetroArch's netplay sends a mouse only from a port set to the
+mouse device; left on None, the core reads the mouse beside port 1's pad.
 
 ## Achievements and cheats
 
