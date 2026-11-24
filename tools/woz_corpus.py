@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# POM2 Apple II Emulator
+# Copyright (C) 2026 VERHILLE Arnaud
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Boot a WOZ corpus in POM2, AppleWin and MAME, and publish the pass rates.
 
 The wide counterpart of tools/libretro_corpus.py: every disk of a corpus

@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // Regression: 816Paint/DeskTop INITMOUSE spun at $C42B forever on //c.
 // Execute the real EPROM through the production card factory, then use
 // READMOUSE to verify motion/buttons and the independent //c VBLINT latch.

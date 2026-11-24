@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 //
 // imagewriter_escape — escape-sequence parsing defects found by the
 // 2026-10-27 bug hunt, kept out of imagewriter_smoke (at its size budget):

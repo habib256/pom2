@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator
+// Copyright (C) 2026 VERHILLE Arnaud
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The per-game RetroPad profiles (pad_profiles.hpp). One row a game: its
 // title, other titles ('|'), whether it plays with a joystick (which then

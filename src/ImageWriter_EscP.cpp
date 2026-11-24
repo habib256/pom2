@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 //
 // ImageWriter_EscP — the Epson ESC/P head (FX-80, MX-80, RX-80): its byte
 // grammar over the shared ImageWriter mechanism. Split out of ImageWriter.cpp

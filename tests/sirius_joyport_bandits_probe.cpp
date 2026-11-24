@@ -1,3 +1,4 @@
+// Copyright (C) 2026 VERHILLE Arnaud
 // POM2 — SPDX-License-Identifier: GPL-3.0-or-later
 // Optional gameplay regression with user-supplied media. No game/ROM bytes
 // embedded here. Addresses are [C] Bandits (Asimov bandits-fixed.zip), whose

@@ -1,3 +1,4 @@
+// Copyright (C) 2026 VERHILLE Arnaud
 // POM2 — SPDX-License-Identifier: GPL-3.0-or-later
 // Game-port bit 7, including the cassette-input mirror at $C068.
 // Called by softSwitchAccess with the low address resolved to $60-$67;

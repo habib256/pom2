@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator
+// Copyright (C) 2026 VERHILLE Arnaud
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "pad_profiles.hpp"
 

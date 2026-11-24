@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // Run the unmodified //c firmware through the production factory. Raw
 // X0/Y0 transitions, IRQ acknowledgement, snapshots and host input are
 // checked independently before INITMOUSE/SETMOUSE/READMOUSE integration.

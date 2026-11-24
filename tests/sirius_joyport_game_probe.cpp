@@ -1,3 +1,4 @@
+// Copyright (C) 2026 VERHILLE Arnaud
 // POM2 — SPDX-License-Identifier: GPL-3.0-or-later
 // Optional local-media probe, no third-party ROM/disk bundled. Usage in
 // docs/hardware/sirius-joyport.md. This deliberately runs the game's driver.

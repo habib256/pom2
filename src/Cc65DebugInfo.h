@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // cc65 debug information (ld65 --dbgfile / cl65 -g -Wl --dbgfile) turned into
 // the two texts the debugger already reads: a `.p2map` source map
 // (DebuggerSourceMap) and a symbol list (DebuggerSymbols). Nothing new is

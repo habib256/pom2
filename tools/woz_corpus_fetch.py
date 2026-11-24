@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# POM2 Apple II Emulator
+# Copyright (C) 2026 VERHILLE Arnaud
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Fetch the boot disk of every title in 4am's woz-a-day collection.
 
 The collection is archive.org's `wozaday`: one item per title, its playable

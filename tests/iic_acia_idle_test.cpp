@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // Regression: on a //c with no SSC model in slots 1/2, the ACIA registers
 // ($C098-$C09F, $C0A8-$C0AF) read the floating bus. The //c ROM polls both
 // ACIA status registers on every IRQ; a video byte with bit 7 set passed for

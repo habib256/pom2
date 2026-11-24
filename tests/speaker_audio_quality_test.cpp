@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // Signal-level checks for alias rejection and sample-rate-independent bass.
 #include "SpeakerDevice.h"
 

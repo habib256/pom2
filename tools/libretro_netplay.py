@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# POM2 Apple II Emulator
+# Copyright (C) 2026 VERHILLE Arnaud
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Check that POM2's libretro core is deterministic enough for netplay.
 
 RetroArch's netplay runs one copy of the core on each machine, feeds both

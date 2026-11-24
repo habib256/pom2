@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 // User symbols, independent of the CPU and UI. Imports are transactional.
 #ifndef POM2_DEBUGGER_SYMBOLS_H
 #define POM2_DEBUGGER_SYMBOLS_H

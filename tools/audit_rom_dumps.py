@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # POM2 Apple II Emulator — GPL-3.0-or-later
+# Copyright (C) 2026 VERHILLE Arnaud
 """Compare every dump in roms/ with the CRC-32s MAME records for the chips.
 
     tools/audit_rom_dumps.py                 # fetch MAME at the pin, audit roms/

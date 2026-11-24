@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — PostScript delegation test.
+// Copyright (C) 2026 VERHILLE Arnaud
 //
 // The LaserWriter's PostScript mode does not parse; it runs somebody else's
 // interpreter (PostScriptRender.h explains why). Two thirds of that path are

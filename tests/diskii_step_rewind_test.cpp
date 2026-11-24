@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 //
 // diskii_step_rewind — a head step still inside its 256-cycle cancel window
 // (DiskIICard::seekPhaseW) belongs to the timeline it was made in. A rewind

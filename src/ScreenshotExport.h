@@ -1,3 +1,4 @@
+// Copyright (C) 2026 VERHILLE Arnaud
 // POM2 — SPDX-License-Identifier: GPL-3.0-or-later
 #ifndef POM2_SCREENSHOT_EXPORT_H
 #define POM2_SCREENSHOT_EXPORT_H

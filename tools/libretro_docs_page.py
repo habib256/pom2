@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# POM2 Apple II Emulator
+# Copyright (C) 2026 VERHILLE Arnaud
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Write POM2's page for docs.libretro.com (libretro/docs, docs/library/pom2.md).
 
 Everything on the page comes from the core itself, so it cannot drift: the

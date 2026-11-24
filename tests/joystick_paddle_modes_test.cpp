@@ -1,3 +1,4 @@
+// Copyright (C) 2026 VERHILLE Arnaud
 // POM2 — SPDX-License-Identifier: GPL-3.0-or-later
 // Production polling and paddle routing, with explicit host-frame durations.
 #include "JoystickInput.h"

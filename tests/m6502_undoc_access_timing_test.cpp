@@ -1,4 +1,5 @@
 // POM2 Apple II Emulator — GPL-3.0-or-later
+// Copyright (C) 2026 VERHILLE Arnaud
 //
 // m6502_undoc_access_timing — an undocumented NMOS opcode touches the bus at
 // the same in-flight cycle as the documented opcode with the same addressing
