@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 1.2.2 LANGUAGES CXX)
+project(pom2_imgui VERSION 1.2.3 LANGUAGES CXX)
 option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SDK" OFF)
 if(POM2_LIBRETRO_ONLY AND EMSCRIPTEN)
     message(FATAL_ERROR "POM2_LIBRETRO_ONLY requires a native target")

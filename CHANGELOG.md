@@ -10,6 +10,8 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.3 marker** — 2026-11-24. Release notes: [v1.2.3](docs/releases/v1.2.3.md).
+
 ## 2026-11-24 — POM2's own 13-sector boot PROM: DOS 3.2 disks boot with no Apple ROM
 
 19 woz-a-day titles (VisiCalc 1.37, Apple Bowl, the Programma catalogue…)
