@@ -7,6 +7,7 @@
 #include "WozCompat.h"
 
 #include <array>
+#include <vector>
 #include <cstring>
 #include <fstream>
 #include <initializer_list>
@@ -109,6 +110,19 @@ std::uint16_t wozCompatibleHardware(const std::filesystem::path& path)
     return static_cast<std::uint16_t>((info[40] | (info[41] << 8)) & woz::kKnownHardware);
 }
 
+bool wozBoots13Sector(const std::filesystem::path& path)
+{
+    // [B] WOZ 2.1 specification: INFO byte 38 is the boot sector format,
+    // 2 = 13-sector (DOS 3.1/3.2), 3 = both. Absent before INFO version 2.
+    std::array<unsigned char, 64> head{};
+    std::ifstream file(path, std::ios::binary);
+    if (!file.read(reinterpret_cast<char*>(head.data()), head.size())) return false;
+    if (std::memcmp(head.data(), "WOZ2", 4) != 0 || std::memcmp(head.data() + 12, "INFO", 4) != 0)
+        return false;
+    const unsigned char* info = head.data() + 20;
+    return info[0] >= 2 && (info[38] == 2 || info[38] == 3);
+}
+
 bool isDixImage(const std::filesystem::path& path)
 {
     // The bundled DIX-fix and the reference corpus image have distinct hashes.
@@ -139,8 +153,15 @@ bool chooseMachine(const MachineRequest& request, MachineChoice& choice, std::st
         }
         // A WOZ that names its machines picks the first of them we can run.
         const auto bits = request.firstDisk.empty() ? 0 : wozCompatibleHardware(request.firstDisk);
-        for (MachineKind kind : {MachineKind::IIeEnhanced, MachineKind::IIe, MachineKind::IIPlus,
-                                 MachineKind::II, MachineKind::IIc, MachineKind::IIcPlus}) {
+        // A 13-sector disk that runs on the original ][ asks for it first:
+        // the DOS 3.2 era wrote its programs in Integer BASIC, which a ][+
+        // only has on a language card ("LANGUAGE NOT AVAILABLE" otherwise;
+        // 9 of 19 such woz-a-day titles, 2026-11-24).
+        const bool original13 = (bits & woz::kAppleII) && wozBoots13Sector(request.firstDisk);
+        std::vector<MachineKind> order{MachineKind::IIeEnhanced, MachineKind::IIe, MachineKind::IIPlus,
+                                       MachineKind::II, MachineKind::IIc, MachineKind::IIcPlus};
+        if (original13) order.insert(order.begin(), MachineKind::II);
+        for (MachineKind kind : order) {
             const auto& entry = firmwareFor(kind);
             if ((bits & entry.wozBit) && available(request.firmware, entry)) {
                 picked = &entry;

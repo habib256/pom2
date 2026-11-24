@@ -3472,6 +3472,43 @@ endif()
 add_test(NAME dos32_boot_trace COMMAND test_dos32_boot_trace)
 set_tests_properties(dos32_boot_trace PROPERTIES TIMEOUT 60)
 
+# POM2's own 13-sector boot PROM (DiskIIBootRom13.h): a synthesized boot
+# sector with no ROM file at all, then DOS 3.2's master from the test media.
+add_executable(test_diskii_boot13
+    diskii_boot13_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImageWozFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskImage_WriteBack.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Cycles.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Sequencer.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskIICard_Trace.cpp
+    ${CMAKE_SOURCE_DIR}/src/IWMDevice.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Bitstream.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disk35Image_Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Gcr.cpp
+    ${CMAKE_SOURCE_DIR}/src/SmartPortHub.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive.cpp
+    ${CMAKE_SOURCE_DIR}/src/Sony35Drive_Session.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_diskii_boot13 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_diskii_boot13 PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_diskii_boot13 PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_diskii_boot13 PRIVATE winmm)
+endif()
+add_test(NAME diskii_boot13 COMMAND test_diskii_boot13
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(diskii_boot13 PROPERTIES TIMEOUT 60)
+
 
 # ─── DOS 3.3 SAVE / LOAD round-trip smoke test ────────────────────────────
 # End-to-end: boot DOS 3.3 into a writable .dsk copy, paste a small BASIC

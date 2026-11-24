@@ -290,6 +290,25 @@ bool Core::attachDiskII(std::string_view bootRom,
     return true;
 }
 
+bool Core::setDiskII13SectorRoms(std::string_view bootRom13,
+                                 std::string_view sequencerRom13)
+{
+    if (!impl_->diskII) {
+        impl_->error = "Disk II controller is not attached";
+        return false;
+    }
+    if (!bootRom13.empty() && !impl_->diskII->loadBootRom13(std::string(bootRom13))) {
+        impl_->error = "Cannot load Disk II 13-sector boot ROM: " + std::string(bootRom13);
+        return false;
+    }
+    if (!sequencerRom13.empty() && !impl_->diskII->loadLssRom13(std::string(sequencerRom13))) {
+        impl_->error = "Cannot load Disk II 13-sector sequencer ROM: " + std::string(sequencerRom13);
+        return false;
+    }
+    impl_->error.clear();
+    return true;
+}
+
 bool Core::insertDisk(int drive, std::string_view path)
 {
     if (!impl_->diskII) {

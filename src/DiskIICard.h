@@ -534,7 +534,8 @@ private:
     int activeDrive = 0;
     std::array<uint8_t, 256> bootRom{};
     bool bootRomLoaded = false;
-    // 13-sector (341-0009) boot PROM — served only when serving13_.
+    // 13-sector boot PROM — served only when serving13_: POM2's own
+    // (DiskIIBootRom13.h) until loadBootRom13() installs Apple's 341-0009.
     std::array<uint8_t, 256> bootRom13{};
     bool bootRom13Loaded = false;
 

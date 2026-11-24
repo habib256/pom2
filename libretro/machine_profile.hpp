@@ -44,6 +44,8 @@ bool chooseMachine(const MachineRequest& request, MachineChoice& choice, std::st
 // WOZ 2 INFO "compatible hardware" bits (pom2::woz::Hardware), 0 when the
 // file is not a WOZ 2 or names none.
 std::uint16_t wozCompatibleHardware(const std::filesystem::path& path);
+/// True when a WOZ 2's INFO says it boots 13-sector (DOS 3.1/3.2).
+bool wozBoots13Sector(const std::filesystem::path& path);
 
 bool isDixImage(const std::filesystem::path& path);
 

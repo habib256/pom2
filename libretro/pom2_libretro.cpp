@@ -670,6 +670,10 @@ bool attachController(pom2::Core& target, DiskState& state, MediaKind kind)
         // A //c's $C600 is its own ROM: only the sequencer is Apple's to give.
         if (!target.attachDiskII(slotted ? optionalRom(state, "disk2.rom") : std::string{},
                                  optionalRom(state, "diskii_p6.rom"))) break;
+        // A 13-sector disk boots through Apple's 341-0009 when it is there,
+        // else POM2's own (a //c's $C600 is its ROM: no 13-sector boot).
+        if (slotted && !target.setDiskII13SectorRoms(optionalRom(state, "disk2_13.rom"),
+                                                     optionalRom(state, "diskii_p6_13.rom"))) break;
         state.controllerAttached = true;
         state.slotUsed[6] = true;
         return true;

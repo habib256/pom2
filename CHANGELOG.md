@@ -10,6 +10,39 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — POM2's own 13-sector boot PROM: DOS 3.2 disks boot with no Apple ROM
+
+19 woz-a-day titles (VisiCalc 1.37, Apple Bowl, the Programma catalogue…)
+stayed on the `APPLE ][` banner in POM2, MAME and AppleWin alike: they are
+13-sector disks, and none of the three had the 341-0009 boot PROM they need
+(POM2 and MAME ship no Apple firmware; MAME's `diskii13` set marks it
+missing). The 16-sector page cannot read them — the address prologue is
+`D5 AA B5`, the data is 5-and-3.
+
+`DiskIIBootRom13.h` is POM2's own page, written from the contract the boot
+sectors rely on, as `DiskIIBootRom.h` is for 16 sectors: the translate
+table at `$0800` (Battalion Commander's boot1 rewrites it in place), the
+read entry at `$Cn5D` (boot1 calls back through `JMP ($003E)`), the join of
+the 5-and-3 values into `$0300`, and `JMP $0301` with Y = `$99` and
+X = `$33` — registers a boot1 reads. `diskii_boot13` boots a synthetic
+sector built by inverting the decode, and when Apple's dump is present
+checks that both pages leave the same `$0300` page, translate table,
+registers and zero page; it also boots DOS 3.2's System Master on a ][+
+through the own page alone. Apple's PROMs, when present, always win
+(`loadBootRom13`; SDK `setDiskII13SectorRoms`; libretro `disk2_13.rom` /
+`diskii_p6_13.rom` as optional firmware).
+
+The read stays on the 16-sector sequencer, Apple's P6 or POM2's own: the
+LSS is encoding-agnostic, the decode is the PROM's.
+
+Two choices follow. The libretro core's Automatic machine starts a
+13-sector WOZ that names the original ][ on the original ][: on a ][+, 9
+of the 19 stop on DOS's `LANGUAGE NOT AVAILABLE` — their HELLO is Integer
+BASIC. And the corpus witness counts that message as a failure, starts
+MAME with its `diskiing13` card for a 13-sector disk (given Apple's dump in
+its rompath, as for any MAME set), and types `C600G` on the original ][,
+which has no Autostart.
+
 ## 2026-11-24 — The platter's drift is continuous: 13 woz-a-day titles boot
 
 The full woz-a-day run (2245 titles in scope: POM2 97.1 %, MAME 97.1 %,

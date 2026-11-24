@@ -290,6 +290,15 @@ public:
     bool attachDiskII(std::string_view bootRom,
                       std::string_view sequencerRom = {},
                       int slot = 6);
+    /// Give the attached controller Apple's 13-sector PROMs, the pair a
+    /// DOS 3.1/3.2 disk boots through: the 341-0009 boot ROM and, optional,
+    /// the 341-0010 sequencer. Without them a 13-sector disk boots through
+    /// POM2's own 13-sector PROM (the same page and registers as Apple's at
+    /// boot1's entry) and the 16-sector sequencer, which reads 5-and-3
+    /// nibbles as well. Apple's, when given, always win. Call it after
+    /// attachDiskII; a later attachDiskII starts from POM2's own again.
+    bool setDiskII13SectorRoms(std::string_view bootRom13,
+                               std::string_view sequencerRom13 = {});
     /// Drive 0 or 1 (drive 1 and drive 2 of the controller).
     bool insertDisk(int drive, std::string_view path);
     bool ejectDisk(int drive);

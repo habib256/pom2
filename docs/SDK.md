@@ -115,6 +115,10 @@ when the slot differs; it does not retain the mounted disks. A different card
 in the requested slot refuses attachment, and a //c, whose disk port is wired
 to slot 6, refuses any other. SmartPort can be attached only once, and
 SmartPort/Mockingboard attachment requires an empty destination slot.
+A 13-sector disk (DOS 3.1/3.2, `.d13` or a WOZ) switches the controller to
+its 13-sector boot page while it is mounted: POM2's own (`DiskIIBootRom13.h`)
+unless `setDiskII13SectorRoms(bootRom13, sequencerRom13)` gave it Apple's
+341-0009 and 341-0010, which then always win. Call it after `attachDiskII`.
 `bootDisk()` cold-boots and enters `$Cn00` of the controller's slot; its
 success means that the controller/PROM/media preconditions passed, not that
 the guest has completed booting. It needs a disk in **drive 0**: the PROM

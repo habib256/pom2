@@ -131,6 +131,7 @@ disk35_atomic_save
 disk35_eject_pending
 disk35_flux_write
 disk35_remount
+diskii_boot13
 diskii_empty_drive
 diskii_format_smoke
 diskii_format_woz_unmapped

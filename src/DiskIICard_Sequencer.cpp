@@ -115,3 +115,79 @@ void DiskIICard::ownSequencerStep(DiskImage& img, int qt, int64_t revStart)
         seqPending_ = true;
     }
 }
+
+// One P6 PROM step's effect: the next state into `address` and the ALU op
+// on the data register. Shared by the read/write walker (lssSync) and the
+// empty drive (stepEmptyDrive).
+void DiskIICard::applyLssOp(uint8_t op)
+{
+    // Update state bits of address (7,6,5,0) from opcode bits
+    // (7,6,4,5) using MAME's exact PROM-pin pack.
+    address = static_cast<uint8_t>((address & 0x1E)
+            | (op & 0xC0)
+            | ((op & 0x20) >> 5)
+            | ((op & 0x10) << 1));
+
+    // ALU dispatch — MAME's full opcode range, no fall-through.
+    switch (op & 0x0F) {
+        case 0x0: case 0x1: case 0x2: case 0x3:
+        case 0x4: case 0x5: case 0x6: case 0x7:
+            lssData = 0;
+            break;
+        case 0x8: case 0xC:
+            break;
+        case 0x9:
+            lssData = static_cast<uint8_t>(lssData << 1);
+            break;
+        case 0xA: case 0xE:
+            // The WPT line, not the medium's flag: MAME
+            // `floppy_image_device::wpt_r()` (floppy.cpp:817-820) is
+            // `m_wpt || (m_phases & 2)` — stepper phase 1 drives the
+            // same wire, which is why RWTS drops all phases before it
+            // asks. POM2 already modelled the WRITE half of this
+            // (`writingInhibited()`, DiskIICard.h) and not the SENSE
+            // half, so a guest that asked with phase 1 on was told
+            // the disk was writable and then found its write silently
+            // inhibited (bug hunt 4 #12).
+            lssData = static_cast<uint8_t>((lssData >> 1)
+                | (senseWriteProtect() ? 0x80 : 0x00));
+            break;
+        case 0xB: case 0xF:
+            lssData = writeLatch;
+            break;
+        case 0xD:
+            lssData = static_cast<uint8_t>((lssData << 1) | 0x01);
+            break;
+    }
+
+    // QA = data MSB.
+    if (lssData & 0x80) address |= 0x02; else address &= ~0x02;
+}
+
+// A drive with no disk: no flux, so no read pulse; the sequencer runs on.
+// [C] 4am's Anti-M (woz-a-day `00playable.woz`, $20E3): motor on drive 2,
+//     then 256 x `EOR $C0EC` — a result of 0 means "no disk in drive 2" and
+//     it asks for the original in drive 1. Written for and used on real
+//     machines with an empty drive 2, so on the iron that register does not
+//     change. The old model served a fresh random byte every 32 us instead,
+//     and Anti-M waited for a $D5 that never came (black screen; MAME shows
+//     the prompt). [D] MAME: an empty floppy device has no transitions.
+// [B]/[C] The P6 PROM (roms/diskii_p6.rom) run with PULSE never asserted
+//     settles on a constant register, bit 7 set from any byte in progress;
+//     only a register already at $00 stays $00. POM2's own sequencer has the
+//     same shape (DiskIICard_Sequencer.cpp). Nothing here writes: there is no
+//     medium to take the flux.
+void DiskIICard::stepEmptyDrive(uint64_t extraCycles)
+{
+    const uint64_t target = cpuCycleTotal * 2 + extraCycles;
+    address = static_cast<uint8_t>(address | 0x10);   // PULSE inactive
+    while (lssCycle < target) {
+        if (lssTable_) {
+            applyLssOp(p6Rom[address]);
+        } else {
+            writePosition = 0;                          // a write goes nowhere
+            ownSequencerStep(images[activeDrive], headQuarterTrack[activeDrive], 0);
+        }
+        ++lssCycle;
+    }
+}

@@ -2036,21 +2036,11 @@ constexpr int64_t kWeakHalfLss = 4;    // 2 µs
 constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
 
 /// After MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
-/// + interval_index)`: each input goes through a full avalanche before the
-/// next is folded in. Deterministic in (revolution, zone, interval), so a
-/// rewind re-reads the same surface the same way while two consecutive
-/// revolutions differ — which is the whole point. `weakPulse` is the draw.
-///
-/// Until 2026-11-24 the inputs were multiplied by ONE constant and added
-/// with a single xor-shift between them, so a revolution's draws were a
-/// sliding window over one sequence and not independent: over the 6
-/// intervals of the 40 µs gap below, NO revolution in 5000 came out without
-/// a pulse (2.3 % on the test's gap), where a 30 % coin gives 11.8 %. SSI's RDOS check (Battalion Commander,
-/// Bomb Alley, Carrier Force: `$EE` read 28 cycles after an address field
-/// whose epilogue is followed by 8 zero bits) retries 255 times for a clean
-/// revolution and never got one. SplitMix64's finaliser
-/// (Steele, Lea, Flood 2014) mixes each input fully; measured: 30.0 % ones,
-/// 11.8 % clean six-interval runs, adjacent pairs at 9.0 %.
+/// + interval_index)`: each input fully avalanched (SplitMix64's finaliser,
+/// Steele, Lea, Flood 2014) before the next is folded in, so the draws are
+/// independent — 30.0 % ones, 11.8 % clean six-interval runs, as a 30 % coin
+/// gives; SSI's RDOS check needs those (CHANGELOG 2026-11-24). Deterministic
+/// in (revolution, zone, interval): a rewind re-reads the same surface.
 inline uint64_t splitMix(uint64_t x)
 {
     x += 0x9E3779B97F4A7C15ull;

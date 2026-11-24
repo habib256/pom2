@@ -61,12 +61,17 @@ of this table.
 | Apple ][ (1977) | `apple2o.rom` | `apple2_char.rom` |
 
 A WOZ 2 disk names the machines it runs on. With Automatic, the core starts
-the first of them whose ROMs are present. The original Apple ][ has no
+the first of them whose ROMs are present; a 13-sector (DOS 3.2) WOZ that runs
+on the original Apple ][ starts that one first, because its programs are
+mostly Integer BASIC, which a ][+ lacks. The original Apple ][ has no
 autostart ROM: it powers on to garbage and the monitor's `*`, as the real
 one did.
 
-POM2's built-in Disk II PROMs can boot every disk. To use Apple's, put
-`disk2.rom` (P5) and `diskii_p6.rom` (P6) in the same `pom2` subdirectory.
+POM2's built-in Disk II PROMs can boot every disk, 13-sector ones included
+(DOS 3.1/3.2: POM2 has its own 13-sector boot PROM too). Apple's always win
+when they are present: put `disk2.rom` (P5) and `diskii_p6.rom` (P6) in the
+same `pom2` subdirectory, and `disk2_13.rom` (341-0009) and
+`diskii_p6_13.rom` (341-0010) for 13-sector disks.
 Reference firmware SHA-256 hashes are in the
 [test media manifest](../tools/test_media.sha256).
 

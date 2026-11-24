@@ -216,6 +216,16 @@ def check_formats(module, system, root, disk):
     require(count == 1 and "DIRTBIKE" in text, "the ShrinkIt disk archive did not boot Dirtbike")
     _, _, text = boot("hello.aci", 60 * 45)
     require("POM2 TAPE OK" in text and "LOAD" in text, "the Applesoft tape was not LOADed and RUN")
+    # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
+    # boots DOS 3.2's System Master to its greeting (its Integer BASIC
+    # HELLO is not available under Applesoft, and DOS says so).
+    master = Path(__file__).resolve().parent.parent / "disks_5.4" / "dsk" / "DOS32STD.d13"
+    if master.is_file():
+        shutil.copyfile(master, content / "DOS32STD.d13")
+        _, _, text = boot("DOS32STD.d13", 60 * 20)
+        require("LANGUAGE NOT AVAILABLE" in text, "DOS 3.2 did not boot through POM2's 13-sector PROM")
+    else:
+        print("SKIP 13-sector: DOS32STD.d13 not fetched")
 
 
 def crc16(data, crc=0):

@@ -466,7 +466,11 @@ src/Apple2Display.cpp                    2536
 # (one line at the adoption point), the static_assert that ties DiskImage's
 # restated NTSC clock to CpuClock.h, and the grade on the blank-track noise.
 #   src/DiskIICard.cpp: 2106 -> 2114 (+8)
-src/DiskIICard.cpp                       2114
+# 2026-11-24 — the empty drive steps the sequencer with no read pulse
+# (Anti-M) and the P6 step it shares with lssSync: both went to
+# DiskIICard_Sequencer.cpp; the own 13-sector PROM is installed here.
+#   src/DiskIICard.cpp: 2114 -> 2088 (-26)
+src/DiskIICard.cpp                       2088
 # 2026-10-16: MacBinary data-fork bounds and WOZ CRC handling stay beside
 # the existing format detection and loader; covered by disk_macbinary_smoke.
 #   src/DiskImage.cpp: 3293 -> 3316 (+23)
@@ -492,7 +496,11 @@ src/DiskIICard.cpp                       2114
 # the hash it reads, and the graded citations of both rules — the long forms
 # are in DEV.md.
 #   src/DiskImage.cpp: 3240 -> 3280 (+40)
-src/DiskImage.cpp                        3280
+# 2026-11-24 — weak bits drawn independently (SSI's RDOS check): the
+# SplitMix64 finaliser the hash now folds each input through, its source
+# and the measured rates; the history went to the CHANGELOG.
+#   src/DiskImage.cpp: 3280 -> 3285 (+5)
+src/DiskImage.cpp                        3285
 src/ImageWriter.cpp                      2809
 src/M6502.cpp                            2359
 # 2026-11-06 — a guest name that starts with a period (A2osX's .PROFILE):
