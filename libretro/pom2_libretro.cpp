@@ -885,29 +885,49 @@ void clearInput()
 }
 
 // ---- Memory map: the layout RetroAchievements gives the Apple II -----------
+// rcheevos (rc_consoleinfo.c) reads main RAM at $00000-$0FFFF and aux at
+// $10000-$1FFFF, each with AppleWin's arrangement of the language card:
+// bank 1 of $D000 at $C000 (AppleWin MemGetPtrBANK1, RAppleWin's reader).
+// Every piece is a power of two long and aligned on it: RetroArch's
+// mmap_preprocess_descriptors (runloop.c @ v1.22.2) gives up on the whole map
+// at the first descriptor that is not, which leaves its cheat search with no
+// selects; so the 48 KB below the language card is two pieces, 32 + 16 KB.
 
 struct MapPiece {
     pom2::RamBank bank;
+    std::uint32_t offset;   ///< into the bank
+    std::uint32_t length;   ///< 0 = to the end of the bank
     std::uint32_t start;
     const char* space;
 };
 
 constexpr MapPiece kMapPieces[] = {
-    {pom2::RamBank::Main, 0x00000, "Main"},
-    {pom2::RamBank::LanguageCard1, 0x0C000, "Main language card bank 1"},
-    {pom2::RamBank::LanguageCard2, 0x0D000, "Main language card bank 2"},
-    {pom2::RamBank::LanguageCardHigh, 0x0E000, "Main language card"},
-    {pom2::RamBank::Aux, 0x10000, "Aux"},
-    {pom2::RamBank::AuxLanguageCard1, 0x1C000, "Aux language card bank 1"},
-    {pom2::RamBank::AuxLanguageCard2, 0x1D000, "Aux language card bank 2"},
-    {pom2::RamBank::AuxLanguageCardHigh, 0x1E000, "Aux language card"},
+    {pom2::RamBank::Main, 0x0000, 0x8000, 0x00000, "Main"},
+    {pom2::RamBank::Main, 0x8000, 0x4000, 0x08000, "Main"},
+    {pom2::RamBank::LanguageCard1, 0, 0, 0x0C000, "Main language card bank 1"},
+    {pom2::RamBank::LanguageCard2, 0, 0, 0x0D000, "Main language card bank 2"},
+    {pom2::RamBank::LanguageCardHigh, 0, 0, 0x0E000, "Main language card"},
+    {pom2::RamBank::Aux, 0x0000, 0x8000, 0x10000, "Aux"},
+    {pom2::RamBank::Aux, 0x8000, 0x4000, 0x18000, "Aux"},
+    {pom2::RamBank::AuxLanguageCard1, 0, 0, 0x1C000, "Aux language card bank 1"},
+    {pom2::RamBank::AuxLanguageCard2, 0, 0, 0x1D000, "Aux language card bank 2"},
+    {pom2::RamBank::AuxLanguageCardHigh, 0, 0, 0x1E000, "Aux language card"},
 };
+
+/// The piece's bytes, or {nullptr, 0} when the machine lacks the bank.
+pom2::RamRegion pieceRegion(const MapPiece& piece)
+{
+    const auto region = core->ramRegion(piece.bank);
+    if (!region.data || piece.offset >= region.size) return {};
+    const auto rest = region.size - piece.offset;
+    return {region.data + piece.offset, piece.length ? std::min<std::size_t>(piece.length, rest) : rest};
+}
 
 std::uint8_t* memoryCell(std::uint32_t address)
 {
     if (!core) return nullptr;
     for (const auto& piece : kMapPieces) {
-        const auto region = core->ramRegion(piece.bank);
+        const auto region = pieceRegion(piece);
         if (region.data && address >= piece.start && address < piece.start + region.size)
             return region.data + (address - piece.start);
     }
@@ -919,7 +939,7 @@ void registerMemoryMap()
     static std::array<retro_memory_descriptor, std::size(kMapPieces)> descriptors;
     unsigned count = 0;
     for (const auto& piece : kMapPieces) {
-        const auto region = core->ramRegion(piece.bank);
+        const auto region = pieceRegion(piece);
         if (!region.data) continue;
         retro_memory_descriptor descriptor{};
         descriptor.flags = RETRO_MEMDESC_SYSTEM_RAM;

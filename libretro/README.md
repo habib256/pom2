@@ -288,8 +288,16 @@ mouse device; left on None, the core reads the mouse beside port 1's pad.
 The core gives RetroArch a memory map in the layout RetroAchievements uses
 for the Apple II: main RAM at `$00000`, the language card's `$D000` bank 1
 at `$0C000`, bank 2 at `$0D000` and its upper RAM at `$0E000`, then the same
-in auxiliary RAM from `$10000`. Achievement sets written for that layout and
-RetroArch's own cheat search work on it.
+in auxiliary RAM from `$10000` — AppleWin's arrangement, which RAppleWin
+gives RetroAchievements. Every piece is a power of two long, so RetroArch's
+cheat search accepts the map too.
+
+RetroAchievements finds a game by the MD5 of the whole disk file (`.dsk`,
+`.nib`, `.woz`, or the first disk of an `.m3u`); `.po`, `.do` and `.2mg` are
+not hashed by rcheevos. The core never writes the original file — a guest's
+writes go to a private copy in the saves folder — so a disk keeps its hash
+after a game saves to it. The default machine is NTSC, as RAppleWin's is:
+a timed leaderboard counts 60 frames a second.
 
 Cheats use the same addresses, in hexadecimal: `0400:C1` writes `$C1` at
 `$0400` before every frame, `0400?C5:C1` only while the byte holds `$C5`,

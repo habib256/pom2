@@ -1105,14 +1105,28 @@ void testFeatures(Core& core, const fs::path& firmware)
     const auto seeded = cell(0);   // the firmware's 'A' at $0400
 
     // The memory map: RetroAchievements' Apple II layout, main RAM then aux.
-    require(frontend.memoryMap.size() == 8, "a //e must map main, aux and both language cards");
+    // Each piece is a power of two long and aligned on it, and together they
+    // tile $00000-$1FFFF: RetroArch's mmap_preprocess_descriptors refuses the
+    // whole map at the first piece that is not, so 48 KB is 32 + 16 KB.
+    require(frontend.memoryMap.size() == 10, "a //e must map main, aux and both language cards");
     const auto descriptor = [](uint64_t start) -> const retro_memory_descriptor& {
         for (const auto& d : frontend.memoryMap) if (d.start == start) return d;
         throw std::runtime_error("the memory map lacks an expected region");
     };
-    require(descriptor(0x00000).len == 0xC000 && descriptor(0x0C000).len == 0x1000 &&
-            descriptor(0x0D000).len == 0x1000 && descriptor(0x0E000).len == 0x2000 &&
-            descriptor(0x10000).len == 0xC000 && descriptor(0x1E000).len == 0x2000,
+    {
+        uint64_t next = 0;
+        for (const auto& d : frontend.memoryMap) {
+            require(d.start == next && d.len != 0 && (d.len & (d.len - 1)) == 0 && (d.start & (d.len - 1)) == 0,
+                    "a memory map piece is out of order, not a power of two, or misaligned");
+            next = d.start + d.len;
+        }
+        require(next == 0x20000, "the memory map does not reach $1FFFF");
+    }
+    require(descriptor(0x00000).len == 0x8000 && descriptor(0x08000).len == 0x4000 &&
+            static_cast<uint8_t*>(descriptor(0x08000).ptr) == static_cast<uint8_t*>(descriptor(0).ptr) + 0x8000 &&
+            descriptor(0x0C000).len == 0x1000 && descriptor(0x0D000).len == 0x1000 &&
+            descriptor(0x0E000).len == 0x2000 && descriptor(0x10000).len == 0x8000 &&
+            descriptor(0x18000).len == 0x4000 && descriptor(0x1E000).len == 0x2000,
             "the memory map regions have the wrong sizes");
     auto* main = static_cast<uint8_t*>(core.retro_get_memory_data(RETRO_MEMORY_SYSTEM_RAM));
     require(main == descriptor(0).ptr && core.retro_get_memory_size(RETRO_MEMORY_SYSTEM_RAM) == 0xC000,

@@ -10,6 +10,30 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-25 — The libretro memory map, as RetroArch and rcheevos read it
+
+Checked end to end with a harness that loads the core, passes its
+`SET_MEMORY_MAPS` through RetroArch 1.22.2's `mmap_preprocess_descriptors`
+(runloop.c) and builds rcheevos's Apple II regions from it
+(`rc_libretro_memory_init`, rcheevos 094616b): every address
+`$00000-$1FFFF` lands on the byte the core means, in the arrangement
+RAppleWin gives RetroAchievements (AppleWin's `MemGetPtrBANK1`: the `$D000`
+bank 1 at `$C000`).
+
+It found one fault on RetroArch's side of the map: the 48 KB below the
+language card was one descriptor, and `mmap_preprocess_descriptors` returns
+at the first descriptor whose length is not a power of two — so it set no
+`select` on ANY of them. rcheevos has a fallback for that (explicit
+start/len), RetroArch's cheat search does not. The 48 KB is now two pieces,
+32 + 16 KB, in main and aux; the ABI test checks that the pieces are powers
+of two, aligned, in order and reach `$1FFFF`.
+
+Also checked: RetroArch's scanner finds POM2's content in `Apple - II.rdb`
+(TOSEC) by CRC — 20 of 20 files listed there matched — but only 594 of the
+2833 woz-a-day disks are in that DAT, the others being later revisions; and
+rcheevos hashes an Apple II disk as the MD5 of the whole file, which stays
+stable because the core writes a guest's changes to a private copy.
+
 ## 2026-11-24 — Per-game RetroPad profiles
 
 An Apple II game is often a keyboard game, and a RetroPad has no keyboard:
