@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — The platter's drift is continuous: 13 woz-a-day titles boot
+
+The full woz-a-day run (2245 titles in scope: POM2 97.1 %, MAME 97.1 %,
+AppleWin 95.9 %) left 15 titles POM2 failed and another emulator booted. 13
+of them booted with the platter's drift switched off — the drift added this
+morning for Glutton (entry below). The Royal Rules shows how: its loader
+decodes each sector between reads and does not retry a data error, and it
+got one bad sector.
+
+The drift was one random curve per (revolution, angle), the revolution
+number read off the anchor DiskIICard re-bases every turn. That number did
+not turn over at angle 0, so mid-revolution the offset jumped from one
+curve to the other, up to 16 LSS cycles (8 µs, two bit cells) between two
+neighbouring transitions: one misread byte a turn. The drift is now a
+function of absolute time, knots every 2 ms
+(`DiskImage::getNextTransition`, DiskImageWozFlux.cpp): it cannot jump, and
+as a revolution is not a whole number of knots, the same angle still meets
+another offset every turn. Glutton still reaches its game; the 13 titles
+(The Royal Rules, Getting Ready to Read and Add, Now You See It..., Marty's
+Reading Workout, Raster Blaster, Red Alert, Robot Rascals, Microzine 29,
+Boa, Easy Street, Fathom's 40, Jawbreaker ][, Labyrinth) boot.
+`woz_bit_timing_smoke` now requires neighbouring events' offsets to differ
+by at most one rounding step; its old "a revolution starts at offset 0" went
+with the per-revolution curve.
+
 ## 2026-11-24 — Weak bits drawn independently: SSI's RDOS check passes
 
 Three SSI wargames of the woz-a-day corpus (Battalion Commander, Bomb

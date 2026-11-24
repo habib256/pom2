@@ -555,13 +555,13 @@ bool DiskImage::loadWriteFraming(const uint8_t* data, std::size_t len)
 // times in 150 s. MAME gets there after 85 tries, by its non-integer cell.
 // See docs/audits/protected-woz-three-way-2026-11-23.md.
 //
-// So a WOZ track's flux events are offset by a smooth drift drawn per
-// revolution. Knots every 4096 LSS cycles (2 ms) take an offset in [-8, +8]
-// LSS cycles (±4 µs), from a hash of (revolution, knot), so rewind, run-ahead
-// and the corpus replay it exactly. Events between two knots follow the
-// linear interpolation (the order of events is kept: the slope is under 1 %),
-// and the offset is 0 at both ends of the revolution so consecutive turns
-// join. Weak-zone pulses are left alone: they are random already.
+// So a WOZ track's flux events are offset by a smooth drift. Knots every 4096
+// LSS cycles (2 ms) of absolute time take an offset in [-8, +8] LSS cycles
+// (±4 µs) from a hash of the knot, so rewind, run-ahead and the corpus replay
+// it exactly. Events between two knots follow the linear interpolation (the
+// order of events is kept: the slope is under 1 %). A revolution is not a
+// whole number of knots, so each turn meets the curve at another phase.
+// Weak-zone pulses are left alone: they are random already.
 // [F] ±4 µs is deliberately far under the measured wander. It is enough to
 //     break the phase lock, and small enough not to move a cross-track sync
 //     or a cell-counting check. The real drift of an Apple Disk II drive (not
@@ -586,18 +586,24 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
     if (!wozFormat || !speedDrift_)
         return nextTransitionRaw(qt, fromLssCycle, revolutionStart, rev, index, angle);
     constexpr int64_t kKnot = 4096, kAmp = 8;
-    const int64_t period = trackPeriod(qt);
-    auto drift = [&](int64_t r, int64_t p) -> int64_t {
-        const int64_t last = period / kKnot;              // knots 0 .. last
-        auto knot = [&](int64_t k) -> int64_t {
-            if (k <= 0 || k >= last) return 0;
-            return static_cast<int64_t>(driftHash(r, k) % (2 * kAmp + 1)) - kAmp;
-        };
-        const int64_t k = p / kKnot;
-        const bool tail = k + 1 >= last;                  // the last span closes at 0
-        const int64_t a = knot(k), b = tail ? 0 : knot(k + 1);
-        const int64_t span = tail ? std::max<int64_t>(1, period - k * kKnot) : kKnot;
-        return a + (b - a) * (p - k * kKnot) / span;
+    // A function of ABSOLUTE time, knots every 2 ms of the drive's clock.
+    // It used to be one curve per (revolution, angle), the revolution read
+    // off the anchor DiskIICard re-bases every turn: where that number turned
+    // over was not angle 0, so mid-revolution the offset jumped from one
+    // random curve to another, up to 16 LSS cycles (8 µs, two bit cells) at
+    // once, and one byte a turn read wrong. On the woz-a-day corpus that was
+    // 13 of the 15 titles POM2 failed and MAME or AppleWin booted (The Royal
+    // Rules and its loader family, Raster Blaster, Robot Rascals, Microzine
+    // 29...: 2026-11-24). Continuous in time, the drift cannot jump; and as a
+    // revolution is not a whole number of knots, the same angle still meets a
+    // different offset on every turn, which is what Glutton needs.
+    auto knotOffset = [&](int64_t k) -> int64_t {
+        return static_cast<int64_t>(driftHash(0, k) % (2 * kAmp + 1)) - kAmp;
+    };
+    auto drift = [&](int64_t t) -> int64_t {
+        const int64_t k = (t >= 0 ? t : t - (kKnot - 1)) / kKnot;   // floor
+        const int64_t a = knotOffset(k), b = knotOffset(k + 1);
+        return a + (b - a) * (t - k * kKnot) / kKnot;
     };
     // An event served late by up to kAmp may still be ahead of fromLssCycle:
     // search kAmp + 1 cycles early, then skip whatever drifted into the past.
@@ -605,7 +611,7 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
     for (int guard = 0; guard < 8; ++guard) {
         const int64_t at = nextTransitionRaw(qt, from, revolutionStart, rev, index, angle);
         if (at == kFluxNever) return at;
-        const int64_t t = (index < 0 || period <= 0) ? at : at + drift(rev, angle);
+        const int64_t t = index < 0 ? at : at + drift(at);
         if (t >= fromLssCycle) return t;
         from = at + 1;
     }

@@ -262,10 +262,18 @@ bool checkSpeedDrift() {
         if (d1 != 0) moved = true;
         if (d1 != d2) differs = true;
     }
-    if (ok && ea[perRev] != es[perRev]) fail("a revolution does not start at offset 0");
+    // Continuous: two neighbouring events never see offsets more than a
+    // rounding step apart. The drift used to be one curve per revolution
+    // number, and that number turned over at an angle other than 0, so the
+    // offset jumped up to 16 cycles mid-turn and one byte a turn read wrong
+    // (13 woz-a-day titles, 2026-11-24).
+    for (size_t i = 1; ok && i < ea.size(); ++i) {
+        const int64_t step = (ea[i] - es[i]) - (ea[i - 1] - es[i - 1]);
+        if (step > 1 || step < -1) fail("the offset jumps between two neighbouring events");
+    }
     if (ok && !moved) fail("the platter never drifted");
     if (ok && !differs) fail("two revolutions drifted alike");
-    if (ok) std::printf("OK : the platter drifts, alike per load, differently per revolution\n");
+    if (ok) std::printf("OK : the platter drifts, continuously, alike per load, differently per revolution\n");
     return ok;
 }
 
@@ -463,7 +471,10 @@ bool checkFluxTrackPeriod(uint8_t obt) {
         return false;
     }
     // Wrap math runs through the same period: past the last event the
-    // next transition is the first event of the NEXT revolution.
+    // next transition is the first event of the NEXT revolution. The
+    // platter's drift (checkSpeedDrift) would move it a cycle or two: this
+    // checks the period arithmetic, so the platter is held steady.
+    img.setSpeedDrift(false);
     const int64_t wrapped = img.getNextTransition(0, expectedFlux.back() + 1);
     if (wrapped != expectedPeriod + expectedFlux.front()) {
         std::printf("FAIL: FLUX obt=%u wrap → %lld, expected %d\n",
