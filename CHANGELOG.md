@@ -10,6 +10,32 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — Weak bits drawn independently: SSI's RDOS check passes
+
+Three SSI wargames of the woz-a-day corpus (Battalion Commander, Bomb
+Alley, Carrier Force) sat on a black screen, beeping, in POM2 and showed
+their menu in AppleWin and MAME. Their BASIC is `& RECALL "QWERTY": CALL
+768` then `IF PEEK(0) THEN CALL -1052: GOTO 20`: the routine at `$0300` reads
+track 0's one `D4 AA B7` address field, waits 28 cycles past its `DE AA`
+and wants the `$EE` that follows 8 zero cells. A 40 µs gap is a weak zone
+(16 µs and up, as MAME's freakout time), so the read passes only on a
+revolution that draws no fake pulse in it — 0.7^6 = 11.8 % at 30 % — and the
+check retries 255 times.
+
+POM2's draw was not independent: revolution and interval went through one
+multiplier with a single xor-shift between, so a revolution's six draws were
+a window over one sequence and none of 5000 came out clean on that gap. The
+inputs now each go through SplitMix64's finaliser (`DiskImage.cpp`,
+`weakHash`): 30.0 % ones, 11.8 % clean six-interval runs, adjacent pairs at
+9.0 %. The three titles boot; so does Crown of Arthain, which crashed into
+the Monitor. `diskii_track_reach_weak` adds the 40 µs gap over 2000
+revolutions (11.2 % clean; the old hash gave 2.3 % there).
+
+The corpus run also judges POM2 at original drive timing now: fast loading
+runs more emulated time per host second, and an attract loop that blanks
+between scenes (Cavern Creatures) was caught at another moment than in the
+two other emulators.
+
 ## 2026-11-24 — An empty drive's register stands still: Anti-M asks for its disk
 
 The woz-a-day corpus run (POM2, AppleWin, MAME) found titles black in POM2

@@ -309,6 +309,46 @@ void testWeakZoneIsNoisyAndVaries() {
 }
 
 // ── 3. a head step keeps the angle, not the cycle offset ────────────────
+// ── 2b. a short gap's draws are independent, revolution after revolution ─
+// SSI's RDOS check (Battalion Commander, Bomb Alley, Carrier Force) reads
+// `$EE` 28 cycles after an address field's `DE AA`, past 8 zero cells: it
+// passes only on a revolution whose 40 µs gap draws no pulse, and retries
+// 255 times for one. At 30 % over the gap's 6 intervals that is 0.7^6 =
+// 11.8 % of revolutions. Until 2026-11-24 the draws were not independent
+// and it was 0 % — the check never passed (DiskImage.cpp, weakHash).
+void testShortGapHasCleanRevolutions() {
+    std::printf("\n-- weak zone: a 40 us gap, revolution after revolution --\n");
+    // Sync, then AA, 8 zero cells, EE EF, then sync to the end.
+    std::vector<uint8_t> nb(6000, 0xFF);
+    const int at = 3000;
+    nb[at] = 0xAA; nb[at + 1] = 0x00; nb[at + 2] = 0xEE; nb[at + 3] = 0xEF;
+    const std::string p = writeWoz1("pom2_shortgap.woz", {{0, nb}});
+    DiskImage img;
+    check(img.loadFile(p), "short-gap WOZ loads");
+    const int64_t period = img.trackPeriod(0);
+    const int revolutions = 2000;
+    int clean = 0;
+    for (int r = 0; r < revolutions; ++r) {
+        // AA's last one sits in its cell 6 (8 LSS cycles a cell, 64 a byte;
+        // the platter's drift moves it by a few cycles); then the next one.
+        const int64_t byteStart = r * period + int64_t{at} * 64;
+        int64_t aaLast = 0, cur = byteStart - 8;
+        for (;;) {
+            const int64_t t = img.getNextTransition(0, cur, 0);
+            if (t >= byteStart + 56) break;
+            aaLast = t;
+            cur = t + 1;
+        }
+        const int64_t next = img.getNextTransition(0, aaLast + 1, 0);
+        if (next - aaLast >= 78) ++clean;   // the next is EE's own first one (80 LSS cycles)
+    }
+    const double share = 100.0 * clean / revolutions;
+    char msg[128];
+    std::snprintf(msg, sizeof(msg), "%.1f %% of revolutions draw no pulse in the gap (want 9-15, i.e. 0.7^6)", share);
+    check(share > 9.0 && share < 15.0, msg);
+    std::error_code ec; fs::remove(p, ec);
+}
+
 void testAngleCarriesAcrossAStep() {
     std::printf("\n-- cross-track angle: tracks of unequal length --\n");
     std::vector<uint8_t> t0 = trackNibbles(0), t1 = trackNibbles(1);
@@ -422,6 +462,7 @@ int main() {
     std::printf("== Disk II track reach + weak-zone parity ==\n");
     testHeadReachesTrack39();
     testWeakZoneIsNoisyAndVaries();
+    testShortGapHasCleanRevolutions();
     testAngleCarriesAcrossAStep();
     testTrackZeroStopIsReported();
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK",

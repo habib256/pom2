@@ -2036,19 +2036,34 @@ constexpr int64_t kWeakHalfLss = 4;    // 2 µs
 constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
 
 /// After MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
-/// + interval_index)`. Deterministic in (revolution, zone, interval), so a
+/// + interval_index)`: each input goes through a full avalanche before the
+/// next is folded in. Deterministic in (revolution, zone, interval), so a
 /// rewind re-reads the same surface the same way while two consecutive
 /// revolutions differ — which is the whole point. `weakPulse` is the draw.
+///
+/// Until 2026-11-24 the inputs were multiplied by ONE constant and added
+/// with a single xor-shift between them, so a revolution's draws were a
+/// sliding window over one sequence and not independent: over the 6
+/// intervals of the 40 µs gap below, NO revolution in 5000 came out without
+/// a pulse (2.3 % on the test's gap), where a 30 % coin gives 11.8 %. SSI's RDOS check (Battalion Commander,
+/// Bomb Alley, Carrier Force: `$EE` read 28 cycles after an address field
+/// whose epilogue is followed by 8 zero bits) retries 255 times for a clean
+/// revolution and never got one. SplitMix64's finaliser
+/// (Steele, Lea, Flood 2014) mixes each input fully; measured: 30.0 % ones,
+/// 11.8 % clean six-interval runs, adjacent pairs at 9.0 %.
+inline uint64_t splitMix(uint64_t x)
+{
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
 inline uint64_t weakHash(int64_t revolution, int64_t zone, int64_t interval)
 {
-    uint64_t h = static_cast<uint64_t>(revolution) * 0x9E3779B97F4A7C15ull;
-    h ^= 0x4242ull;
-    h += static_cast<uint64_t>(zone) * 0xC2B2AE3D27D4EB4Full;
-    h ^= h >> 29;
-    h += static_cast<uint64_t>(interval) * 0x9E3779B97F4A7C15ull;
-    h *= 0xBF58476D1CE4E5B9ull;
-    h ^= h >> 32;
-    return h;
+    uint64_t h = splitMix(static_cast<uint64_t>(revolution) ^ 0x4242ull);
+    h = splitMix(h ^ static_cast<uint64_t>(zone));
+    return splitMix(h ^ static_cast<uint64_t>(interval));
 }
 
 inline bool weakPulse(int64_t revolution, int64_t zone, int64_t interval)
