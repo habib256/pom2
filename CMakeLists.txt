@@ -774,6 +774,7 @@ set(POM2_FRONTEND_HEADERS
     src/IconsFontAwesome6.h
     src/CrtPresets.h
     src/KeyChord.h
+    src/BugReportUrl.h
     src/KeyboardJoystick.h
     src/Mat4.h
     src/MouseCoordinator.h
@@ -1039,6 +1040,7 @@ set(POM2_RUNTIME_HEADERS
     src/VsDriveProtocol.h
     src/VsDriveTransport.h
     src/ThreadGuard.h
+    src/ThreadPriority.h
     src/W5100NameResolver.h
     src/BuiltinNatBackend.h
     src/NatPacket.h
@@ -1319,6 +1321,7 @@ set(HEADERS
     src/StatusLed.h
     src/SuperSerialCard.h
     src/ThreadGuard.h
+    src/ThreadPriority.h
     src/MacBinary.h
 )
 

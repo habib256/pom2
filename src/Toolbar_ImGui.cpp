@@ -16,6 +16,8 @@
 
 #include "Toolbar_ImGui.h"
 
+#include <cmath>
+
 #include "IconsFontAwesome6.h"
 #include "Pom2Theme.h"
 #include "imgui.h"
@@ -361,6 +363,29 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
                               snap.cyclesPerFrame == kSpeedMax))
             r.setCyclesPerFrame = kSpeedMax;
         ImGui::EndCombo();
+    }
+    // The machine's own clock, when it is not the stock one or the machine
+    // has an accelerator on board: "1×" is the pacing, and a //c Plus at "1×"
+    // runs at 4 MHz. Without this the Esc-at-reset switch to 1 MHz was
+    // invisible (a //c Plus user reported "still too fast", 2026-10-20).
+    {
+        const double stockHz = vt.cpuClockHz;
+        const bool plus = snap.activeProfile == SystemProfile::AppleIIcPlus;
+        if (snap.machineCpuHz > 0.0 && (plus || std::abs(snap.machineCpuHz - stockHz) > stockHz * 0.02)) {
+            ImGui::SameLine();
+            const bool fast = snap.machineCpuHz > stockHz * 1.02;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(fast ? ImVec4(1.0f, 0.78f, 0.35f, 1.0f) : ImVec4(0.65f, 0.85f, 1.0f, 1.0f),
+                               fast ? ICON_FA_BOLT " %.2f MHz" : ICON_FA_GAUGE_SIMPLE " %.2f MHz",
+                               snap.machineCpuHz / 1e6);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(plus
+                    ? "The //c Plus runs at 4 MHz with its built-in accelerator.\n"
+                      "Hold Esc while pressing Reset (F11 or F12) to run at 1 MHz,\n"
+                      "as on the real machine; reset without Esc for 4 MHz again."
+                    : "An accelerator sets the machine's clock.\n"
+                      "The speed menu paces the emulation on top of it.");
+        }
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emulation speed");
 

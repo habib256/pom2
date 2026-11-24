@@ -54,6 +54,11 @@
 #include "ResourcePaths.h"
 #include "Settings.h"
 #include "StatusLed.h"
+#include "BugReportUrl.h"
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
+#include "Version.h"
 #include "Apple2Display.h"
 #include "SystemProfile.h"
 
@@ -1112,11 +1117,37 @@ void MainWindow::renderMenuBar()
         // and ROM Status showed none. Both now come from the catalog.
         panelMenuGroup(pom2::PanelGroup::Help);
         ImGui::Separator();
+        if (ImGui::MenuItem(ICON_FA_BUG "  Report a bug..."))
+            openBugReport();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Opens a new GitHub issue with this version, edition and machine filled in.");
         if (ImGui::MenuItem("About POM2")) showAbout = true;
         ImGui::EndMenu();
     }
 
     ImGui::EndMainMenuBar();
+}
+
+// Help > Report a bug: a GitHub issue that already says which build it is
+// about. Reports mixed the browser demo and the desktop packages.
+void MainWindow::openBugReport()
+{
+    const auto& profile = pom2::profileConfig(activeProfile);
+    const std::string mode = display
+        ? "mode " + std::to_string(static_cast<int>(display->getHiResMode())) : std::string("?");
+    const std::string url = pom2::bugReportUrl(POM2_VERSION_STRING, pom2::bugReportEdition(),
+                                               std::string(profile.displayName), mode);
+#if defined(__EMSCRIPTEN__)
+    const std::string script = "window.open('" + url + "', '_blank', 'noopener')";
+    emscripten_run_script(script.c_str());
+#else
+    ImGuiPlatformIO& io = ImGui::GetPlatformIO();
+    if (!io.Platform_OpenInShellFn || !io.Platform_OpenInShellFn(ImGui::GetCurrentContext(), url.c_str())) {
+        ImGui::SetClipboardText(url.c_str());
+        tapeStatusMessage = "No browser could be opened: the issue link is on the clipboard.";
+        tapeStatusUntil = lastFrameTime + 8.0;
+    }
+#endif
 }
 
 // Bottom-of-viewport status bar. Carries the machine/mode/graphics summary,

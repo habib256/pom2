@@ -419,11 +419,14 @@ CassetteDeck_ImGui::render(const char* title,
         std::string msg = onRewind(emulation, snap);
         if (!msg.empty()) out.statusMessage = std::move(msg);
     }
+    // A held REW or FF winds faster the longer it is held, as a deck's
+    // reels pick up speed: 30x at first, 240x after about three seconds
+    // (a ten-minute side used to take twenty seconds at a flat 30x).
+    const double scrubSpeedX = std::min(240.0, 30.0 * (1.0 + 2.5 * windHeldSeconds_));
     if (rewHeld && snap.audioStreamMode && snap.loadedTape) {
-        constexpr double kScrubSpeedX = 30.0;
         if (emulation) {
             emulation->stopTape();
-            emulation->seekTapeRelative(-static_cast<double>(deltaSeconds) * kScrubSpeedX);
+            emulation->seekTapeRelative(-static_cast<double>(deltaSeconds) * scrubSpeedX);
         }
         transport_ = Transport::Rewinding;
         paused_    = false;
@@ -437,15 +440,16 @@ CassetteDeck_ImGui::render(const char* title,
         if (!msg.empty()) out.statusMessage = std::move(msg);
     }
     if (ffHeld && snap.audioStreamMode && snap.loadedTape) {
-        constexpr double kScrubSpeedX = 30.0;
         if (emulation) {
             emulation->stopTape();
-            emulation->seekTapeRelative(+static_cast<double>(deltaSeconds) * kScrubSpeedX);
+            emulation->seekTapeRelative(+static_cast<double>(deltaSeconds) * scrubSpeedX);
         }
         transport_ = Transport::FastForwarding;
         paused_    = false;
         rewEndsAt_ = wallClock_ + 0.25;
     }
+    if (rewHeld || ffHeld) windHeldSeconds_ += deltaSeconds;
+    else windHeldSeconds_ = 0.0;
 
     if (drawPianoKey(dl, p0, s, kKeyCenterXs[4], kKeysTop + kKeyH * 0.5f,
                      "##DeckKeyStop", "stop", stopKeyEngaged(), false)) {

@@ -99,6 +99,7 @@ private:
     double    counterAccum_ = 0.0;
     float     hubAngle_    = 0.0f;
     double    rewEndsAt_   = 0.0;
+    double    windHeldSeconds_ = 0.0;   // how long REW or FF has been held
     double    wallClock_   = 0.0;
     float     volume_      = 1.0f;
     bool      volumeSynced_ = false;

@@ -20,6 +20,7 @@
 #include "Block512Backing.h"   // pom2::mediaWriteEpoch
 #include "Logger.h"
 #include "ThreadGuard.h"
+#include "ThreadPriority.h"
 #include "BlockWriteBackExecutor.h"   // pom2::drainMediaCommits
 
 #include <algorithm>
@@ -761,6 +762,9 @@ void EmulationController::start()
     // not) publish a coherent state: Stopped and parked, so waitUntilParked()
     // returns at once instead of burning its 200-step poll on a dead thread.
     worker = std::thread([this] {
+        // The audio is made on this thread: ask the OS to run it ahead of
+        // ordinary work, as far as the user may (ThreadPriority.h).
+        pom2::log().info("Emulation", "thread " + pom2::raiseCurrentThreadPriority());
         pom2::runGuarded("Emulation", [this] { workerLoop(); });
         mode.store(Mode::Stopped);
         workerParked_.store(true);

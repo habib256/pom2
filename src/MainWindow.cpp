@@ -1483,6 +1483,7 @@ void MainWindow::render()
         const auto mode = controller->getMode();
         tb.isRunning          = (mode == EmulationController::Mode::Running);
         tb.cyclesPerFrame     = controller->getCyclesPerFrame();
+        tb.machineCpuHz       = controller->machineCpuClockHz();
         tb.videoStandard      = controller->getVideoStandard();
         tb.activeProfile      = activeProfile;
         tb.charRomLocale      = charRomLocale;

@@ -62,6 +62,10 @@ public:
         // recording is on AND there is history to scrub.
         bool          rewindEnabled       = false;
         bool          rewindHasFrames     = false;
+        // The machine's own clock with its accelerator, without the speed
+        // menu's pacing (EmulationController::machineCpuClockHz): what a
+        // //c Plus actually runs at, 4 MHz or 1 MHz after Esc at reset.
+        double        machineCpuHz        = 0.0;
     };
 
     struct Result {

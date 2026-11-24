@@ -229,10 +229,26 @@ void MainWindow::runDriveRackAction(const pom2::DrivePicture& drive,
 bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path,
                                       bool explain) {
     std::string error;
-    const bool ok = pom2::mountEmptyDrive(*controller, *settings, *storageCoordinator_, target, path, error);
+    DiskSlotClass fileKind = DiskSlotClass::Unknown;
+    const bool ok = pom2::mountEmptyDrive(*controller, *settings, *storageCoordinator_, target, path,
+                                          error, &fileKind);
     tapeStatusMessage = ok ? "Inserted into " + target.label + ": " + path : error;
     tapeStatusUntil = lastFrameTime + 5.0;
-    if (!ok && explain) showDiskRefusal(path, error);
+    if (!ok && explain) {
+        showDiskRefusal(path, error);
+        // A disk of the wrong kind for this drive: offer the empty drive of
+        // this machine that does take it (Stephane's 5.25-inch image dropped
+        // on the 3.5-inch drive of the web demo, 2026-10-20). A button, not a
+        // silent redirection: the user picked a drive and is told why not.
+        if (fileKind != DiskSlotClass::Unknown) {
+            const auto drives = collectDrivePictures();
+            if (const auto* other = pom2::emptyDriveFor(drives, fileKind);
+                other && !(other->slot == target.slot && other->bay == target.bay && other->kind == target.kind)) {
+                diskRefusalAlternative_ = *other;
+                diskRefusalPath_ = path;
+            }
+        }
+    }
     return ok;
 }
 
@@ -264,6 +280,8 @@ bool MainWindow::swapDriveDisk(const pom2::DrivePicture& drive, const std::strin
 
 void MainWindow::showDiskRefusal(const std::string& path, const std::string& why)
 {
+    diskRefusalAlternative_.reset();
+    diskRefusalPath_.clear();
     diskRefusalFile_ = std::filesystem::path(path).filename().string();
     diskRefusalText_ = why;
     diskRefusalPending_ = true;
@@ -293,11 +311,24 @@ void MainWindow::renderDiskRefusal()
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     const float w = ImGui::GetFontSize() * 6;
+    bool insertElsewhere = false;
+    if (diskRefusalAlternative_) {
+        const std::string label = ICON_FA_ARROW_RIGHT "  Insert into " + diskRefusalAlternative_->label;
+        if (ImGui::Button(label.c_str()) || ImGui::IsKeyPressed(ImGuiKey_Enter)) insertElsewhere = true;
+        ImGui::SameLine();
+    }
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - w - ImGui::GetStyle().WindowPadding.x);
-    if (ImGui::Button("OK", ImVec2(w, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-        ImGui::IsKeyPressed(ImGuiKey_Enter))
+    if (insertElsewhere || ImGui::Button(diskRefusalAlternative_ ? "Cancel" : "OK", ImVec2(w, 0)) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        (!diskRefusalAlternative_ && ImGui::IsKeyPressed(ImGuiKey_Enter)))
         ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+    if (insertElsewhere) {
+        const auto target = *diskRefusalAlternative_;
+        const auto path = diskRefusalPath_;
+        diskRefusalAlternative_.reset();
+        insertDriveRackImage(target, path);
+    }
 }
 
 void MainWindow::processDriveRackFileDrop() {

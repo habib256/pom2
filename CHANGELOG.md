@@ -10,6 +10,34 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — What the first users stumbled on
+
+The Apple II Enthusiasts thread of 2026-10-20 and the GitHub issues showed
+a machine emulated right and still hard to drive. Each point is fixed where
+the user met it:
+
+- **A disk in the wrong drive** (a 5.25-inch image dropped on the demo's
+  3.5-inch drive). The refusal already said why; it now also offers the
+  empty drive of this machine that takes that disk, as a button —
+  `emptyDriveFor` (DriveRackMount.h), pinned by `drive_rack_mount`. The user
+  picked a drive and stays in charge: nothing is redirected silently.
+- **"The //c Plus is still too fast" after Esc at reset.** The rule worked
+  (`iicplus_accelerator_test`); nothing showed it. The toolbar now shows the
+  machine's own clock beside the speed menu whenever an accelerator sets it
+  — 4.09 MHz, or 1.02 MHz after Esc — with the rule in its tooltip ("1×" is
+  the pacing, not the clock).
+- **Audio crackles on a Raspberry Pi until POM2 was reniced by hand.** The
+  emulation thread, which makes the audio, now asks the OS for more
+  priority itself, as far as the user may (ThreadPriority.h): a negative
+  nice on Linux when RLIMIT_NICE allows one (the log says how to grant it
+  otherwise), the user-interactive QoS on macOS, above normal on Windows.
+  Never real time, which the speed menu's MAX would turn into a stolen core.
+- **A long tape winds slowly** (issue #21). A held REW or FF now speeds up
+  as a deck's reels do, from 30x to 240x in about three seconds.
+- **Reports mixed the browser demo and the desktop packages.** Help > Report
+  a bug opens a GitHub issue already holding the version, the edition (web
+  demo or desktop and its OS) and the machine (BugReportUrl.h).
+
 **v1.2.3 marker** — 2026-11-24. Release notes: [v1.2.3](docs/releases/v1.2.3.md).
 
 ## 2026-11-24 — Netplay: the libretro core keeps two machines in step

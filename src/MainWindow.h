@@ -1537,9 +1537,14 @@ private:
     void renderDiskRefusal();
     std::string diskRefusalFile_, diskRefusalText_;
     bool diskRefusalPending_ = false;
+    /// The empty drive that does take the refused disk, offered as a button.
+    std::optional<pom2::DrivePicture> diskRefusalAlternative_;
+    std::string diskRefusalPath_;
     /// Every drive of the machine as plain values, in the rack's order — the
     /// one list the Drives window and the File menu both draw from.
     std::vector<pom2::DrivePicture> collectDrivePictures();
+    /// Help > Report a bug: a prefilled GitHub issue (BugReportUrl.h).
+    void openBugReport();
     bool isCompactDriveProfile() const;
     /// Eject / write-protect / insert (opens the rack's picker) / mount one
     /// drive — the rack's actions, callable from any menu.

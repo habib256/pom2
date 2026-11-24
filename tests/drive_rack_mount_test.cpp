@@ -55,8 +55,24 @@ int main() {
         pom2::DrivePicture target;
         target.slot = 4; target.bay = 1; target.kind = pom2::DrivePictureKind::DiskII;
         std::string error;
-        assert(!pom2::mountEmptyDrive(controller, settings, storage, target, hd, error));
+        DiskSlotClass fileKind = DiskSlotClass::Unknown;
+        assert(!pom2::mountEmptyDrive(controller, settings, storage, target, hd, error, &fileKind));
         assert(!error.empty());
+        // The refusal knows what the file is, and the drive that takes it.
+        assert(fileKind == DiskSlotClass::Hdv);
+        {
+            std::vector<pom2::DrivePicture> drives(4);
+            drives[0].kind = pom2::DrivePictureKind::DiskII;   drives[0].slot = 6;
+            drives[1].kind = pom2::DrivePictureKind::Floppy35; drives[1].slot = 5;
+            drives[2].kind = pom2::DrivePictureKind::HardDisk; drives[2].slot = 7; drives[2].loaded = true;
+            drives[3].kind = pom2::DrivePictureKind::Generic;  drives[3].slot = 2;
+            assert(pom2::emptyDriveFor(drives, DiskSlotClass::Floppy525) == &drives[0]);
+            assert(pom2::emptyDriveFor(drives, DiskSlotClass::Sony35) == &drives[1]);
+            assert(pom2::emptyDriveFor(drives, DiskSlotClass::Hdv) == &drives[3]);   // the loaded one is skipped
+            drives[3].loaded = true;
+            assert(pom2::emptyDriveFor(drives, DiskSlotClass::Hdv) == nullptr);
+            assert(pom2::emptyDriveFor(drives, DiskSlotClass::Unknown) == nullptr);
+        }
         assert(pom2::mountEmptyDrive(controller, settings, storage, target, floppy, error));
         // Target the second drive on a non-primary card; no reboot or auto-route.
         assert(controller.getMode() == mode);

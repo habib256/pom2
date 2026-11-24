@@ -64,10 +64,25 @@ std::string explainUnknownDisk(const std::string& path)
            "archive has to be unpacked first.";
 }
 
+const DrivePicture* emptyDriveFor(const std::vector<DrivePicture>& drives, DiskSlotClass kind)
+{
+    for (const auto& d : drives) {
+        if (d.loaded || d.busy) continue;
+        const bool takes =
+            (d.kind == DrivePictureKind::DiskII && kind == DiskSlotClass::Floppy525) ||
+            (d.kind == DrivePictureKind::Floppy35 && kind == DiskSlotClass::Sony35) ||
+            (d.kind == DrivePictureKind::HardDisk && kind == DiskSlotClass::Hdv) ||
+            (d.kind == DrivePictureKind::Generic && (kind == DiskSlotClass::Sony35 || kind == DiskSlotClass::Hdv));
+        if (takes) return &d;
+    }
+    return nullptr;
+}
+
 bool mountEmptyDrive(EmulationController& controller, Settings& settings,
                      StorageCoordinator& storage, const DrivePicture& target,
-                     const std::string& source, std::string& error) {
+                     const std::string& source, std::string& error, DiskSlotClass* fileKind) {
     error.clear();
+    if (fileKind) *fileKind = DiskSlotClass::Unknown;
     // A .zip, a .gz or a URL becomes its local image first (MediaSource.h),
     // outside the machine lock; the drive then mounts that file.
     std::string path = source;
@@ -126,6 +141,7 @@ bool mountEmptyDrive(EmulationController& controller, Settings& settings,
     // Classification does file I/O, outside the machine lock. Loaders validate
     // the actual payload; a bad image cannot be redirected to another drive.
     const auto kind = classifyDiskForSlot(path);
+    if (fileKind) *fileKind = kind;
     const auto expected = target.kind == DrivePictureKind::DiskII ? DiskSlotClass::Floppy525 :
                           target.kind == DrivePictureKind::Floppy35 ? DiskSlotClass::Sony35 : DiskSlotClass::Hdv;
     // A bay that takes either kind lets the file decide (mountMediaBay routes).
