@@ -5,6 +5,8 @@ set -euo pipefail
 version="${1:?SDK version required}"
 case "$version" in
     6.0.9) revision=5eb0bde7585670252e8ba05e9d361627bffd08b5 ;;
+    # libretro's emscripten image, which the buildbot links RetroArch with.
+    3.1.46) revision=93360d3670018769b424e4e8f1d3d9b26d32c977 ;;
     *) echo "No pinned Emscripten bootstrap for $version" >&2; exit 1 ;;
 esac
 dest="${RUNNER_TEMP:?}/pom2-emsdk-fallback"

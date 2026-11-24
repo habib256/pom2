@@ -10,6 +10,43 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-25 — The libretro core in a web browser and on 32-bit ARM
+
+**Web.** RetroArch's web build links its core statically: libretro's
+emscripten template configures with `-DLIBRETRO_STATIC=ON
+-DLIBRETRO_SUFFIX=_emscripten` and takes `pom2_libretro_emscripten.bc`.
+`LIBRETRO_STATIC` now builds `pom2_libretro` as one archive, with pom2_core's
+members merged in after the build by an MRI script
+(`libretro/merge_static.cmake`: two objects with one name both stay), and
+with no threads, as RetroArch's web build has none (`HAVE_THREADS ?= 0`).
+The archive is named `.bc` because the template asks for it, but emcc reads
+a `.bc` input as bitcode: RetroArch renames it `.a` before it links
+(`mv_libretro`), and so does our check.
+
+Checked with Emscripten 3.1.46, the version in libretro's emscripten image
+(`reallibretroretroarch/libretro-build-emscripten`), not the desktop WASM's
+6.0.9. That matters twice. Emscripten 6.0.6 stopped linking libc++ from
+`emcc`, and RetroArch links with `emcc`: a 6.x link of RetroArch fails on
+`operator delete`, a 3.1.46 link does not. RetroArch master and the core
+then link into `pom2_libretro.js`/`.wasm` with no symbol clash.
+
+The second time is a real bug. Under 3.1.46 the core aborted at
+`retro_load_game`: `publishNewFileAtomic` (`AtomicFileReplace.h`) publishes
+a new disk save by `link()`, Emscripten's file systems have no hard links,
+and the throw that followed cannot be caught, because RetroArch's web build
+disables exception catching. A page is one process on one thread, so under
+Emscripten the publish is now check-then-rename. The libretro workflow's
+`web` job builds the archive with 3.1.46, links it into
+`tests/libretro_web_smoke.cpp` and runs it under Node: Dirtbike boots, and a
+restored state replays its frames identically.
+
+**32-bit ARM.** Linux armhf is cross-compiled in the `linux-armhf` job, and
+the ABI frontend runs the module under qemu-arm (ABI, media, disk
+persistence), so a 32-bit `size_t` and armv7 are exercised, not just
+compiled. Android armeabi-v7a is compiled and its exports are checked.
+`.gitlab-ci.yml` declares Android armeabi-v7a and the emscripten template for
+libretro's buildbot; Linux armhf comes from libretro-super's armhf recipes.
+
 ## 2026-11-25 — The libretro memory map, as RetroArch and rcheevos read it
 
 Checked end to end with a harness that loads the core, passes its

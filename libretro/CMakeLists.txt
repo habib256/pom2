@@ -7,9 +7,16 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(pom2_core CONFIG REQUIRED)
 endif()
 
-add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
+set(pom2_libretro_sources pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
     core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp
     tape_content.cpp)
+if(LIBRETRO_STATIC)
+    # A frontend that links its core statically (RetroArch's web build) takes
+    # ONE archive: this one, with pom2_core's objects added after the build.
+    add_library(pom2_libretro STATIC ${pom2_libretro_sources})
+else()
+    add_library(pom2_libretro MODULE ${pom2_libretro_sources})
+endif()
 target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp content_vfs.cpp pad_profiles.cpp ../src/hgrpaint/HgrFont.cpp
     # Host formats the SDK does not take: archives and programs.
     ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
@@ -23,7 +30,7 @@ target_compile_features(pom2_libretro PRIVATE cxx_std_17)
 # libstdc++-6.dll, libgcc_s_seh-1.dll or libwinpthread-1.dll does not load
 # in a RetroArch that does not ship them (MXE's static target does this by
 # default; a plain MinGW-w64 did not, 2026-11-24).
-if(MINGW)
+if(MINGW AND NOT LIBRETRO_STATIC)
     target_link_options(pom2_libretro PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 # As pom2_core: no FMA contraction, so netplay peers on ARM64 and x86-64
@@ -45,7 +52,25 @@ set_target_properties(pom2_libretro PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-if(APPLE)
+if(LIBRETRO_STATIC)
+    # libretro's emscripten template moves pom2_libretro_emscripten.bc into
+    # RetroArch's tree as libretro_emscripten.bc; wasm-ld reads an archive
+    # by its magic, whatever the suffix (mGBA does the same).
+    set_target_properties(pom2_libretro PROPERTIES
+        OUTPUT_NAME "pom2_libretro${LIBRETRO_SUFFIX}"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    if(EMSCRIPTEN)
+        set_target_properties(pom2_libretro PROPERTIES SUFFIX ".bc")
+    endif()
+    # Add pom2_core's members to the archive, by an MRI script so that two
+    # objects with one name (two directories) both stay.
+    add_dependencies(pom2_libretro pom2_core)
+    add_custom_command(TARGET pom2_libretro POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -DAR=${CMAKE_AR}
+                "-DOUT=$<TARGET_FILE:pom2_libretro>" "-DCORE=$<TARGET_FILE:pom2_core>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/merge_static.cmake"
+        VERBATIM)
+elseif(APPLE)
     set_target_properties(pom2_libretro PROPERTIES SUFFIX ".dylib")
     set(retro_exports "${CMAKE_CURRENT_BINARY_DIR}/retro-exports.txt")
     file(GENERATE OUTPUT "${retro_exports}" CONTENT "_retro_*\n")

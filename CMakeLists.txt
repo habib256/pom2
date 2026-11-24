@@ -10,8 +10,12 @@ cmake_policy(SET CMP0091 NEW)
 
 project(pom2_imgui VERSION 1.2.3 LANGUAGES CXX)
 option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SDK" OFF)
-if(POM2_LIBRETRO_ONLY AND EMSCRIPTEN)
-    message(FATAL_ERROR "POM2_LIBRETRO_ONLY requires a native target")
+# RetroArch's web build links one core statically: libretro's emscripten
+# template configures with -DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_emscripten
+# and takes pom2_libretro_emscripten.bc (libretro/CMakeLists.txt).
+option(LIBRETRO_STATIC "Build the libretro core as one static archive (RetroArch web)" OFF)
+if(POM2_LIBRETRO_ONLY AND EMSCRIPTEN AND NOT LIBRETRO_STATIC)
+    message(FATAL_ERROR "POM2_LIBRETRO_ONLY under Emscripten needs LIBRETRO_STATIC=ON")
 endif()
 if(APPLE AND NOT POM2_LIBRETRO_ONLY)
     # Native macOS hooks use Objective-C++: Finder/Dock open-file events
@@ -1787,7 +1791,7 @@ endif() # Desktop and browser frontends
 #
 # -UNDEBUG is applied by tests/CMakeLists.txt at directory scope, so this
 # archive is compiled with asserts live — see the note at the top of that file.
-if(NOT EMSCRIPTEN)
+if(NOT EMSCRIPTEN OR POM2_LIBRETRO_ONLY)
 # The core sources, shared by the installable SDK archive and the
 # assertion-enabled test twin. One list so the two cannot drift.
 set(POM2_CORE_SOURCES
@@ -2032,8 +2036,8 @@ endif()
 
 option(POM2_BUILD_LIBRETRO "Build the native POM2 libretro module" OFF)
 if(POM2_BUILD_LIBRETRO OR POM2_LIBRETRO_ONLY)
-    if(EMSCRIPTEN)
-        message(FATAL_ERROR "POM2_BUILD_LIBRETRO requires a native toolchain")
+    if(EMSCRIPTEN AND NOT LIBRETRO_STATIC)
+        message(FATAL_ERROR "POM2_BUILD_LIBRETRO under Emscripten needs LIBRETRO_STATIC=ON")
     endif()
     add_subdirectory(libretro)
 endif()
@@ -2050,7 +2054,9 @@ target_compile_features(pom2_core PUBLIC cxx_std_17)
 
 set(POM2_CORE_PACKAGE_NEEDS_THREADS 0)
 set(POM2_CORE_PACKAGE_WITH_SLIRP 0)
-if(UNIX AND NOT APPLE)
+# RetroArch's web build runs without threads (Makefile.emscripten,
+# HAVE_THREADS ?= 0): -pthread here would ask its link for shared memory.
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     find_package(Threads REQUIRED)
     target_link_libraries(pom2_core PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
     set(POM2_CORE_PACKAGE_NEEDS_THREADS 1)
@@ -2079,7 +2085,7 @@ endif()
 # Android's Bionic has no libresolv: NatHostSockets answers no host DNS there.
 if(WIN32)
     set(POM2_NATIVE_DNS_LIB iphlpapi)
-elseif(ANDROID)
+elseif(ANDROID OR EMSCRIPTEN)
     set(POM2_NATIVE_DNS_LIB "")
 else()
     set(POM2_NATIVE_DNS_LIB resolv)

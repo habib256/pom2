@@ -24,10 +24,13 @@ include:
     file: '/ios-cmake.yml'
   - project: 'libretro-infrastructure/ci-templates'
     file: '/tvos-cmake.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/emscripten-static-cmake.yml'
 
 stages:
   - build-prepare
   - build-shared
+  - build-static
 
 libretro-build-linux-x64:
   extends:
@@ -61,6 +64,11 @@ android-arm64-v8a:
     - .libretro-android-cmake-arm64-v8a
     - .core-defs
 
+android-armeabi-v7a:
+  extends:
+    - .libretro-android-cmake-armeabi-v7a
+    - .core-defs
+
 # iOS and tvOS: std::filesystem needs iOS/tvOS 13 (the templates default to
 # 8.0 and 12.0). miniaudio's CoreAudio backend is left out there (the core
 # hands its samples to RetroArch) and tvOS has no child processes.
@@ -77,3 +85,11 @@ libretro-build-tvos-arm64:
     - .core-defs
   variables:
     MINVER: "13.0"
+
+# RetroArch's web build: the template configures with LIBRETRO_STATIC=ON and
+# LIBRETRO_SUFFIX=_emscripten, and links pom2_libretro_emscripten.bc, one
+# archive holding the core and pom2_core (libretro/CMakeLists.txt).
+libretro-build-emscripten:
+  extends:
+    - .libretro-emscripten-static-cmake-retroarch-master
+    - .core-defs

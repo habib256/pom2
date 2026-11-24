@@ -21,6 +21,17 @@ builds for both (iOS and tvOS 13 or later, arm64) with the same CMake
 arguments as the buildbot's templates; our CI compiles them on every
 change.
 
+RetroArch in a web browser links its core statically. The core builds as one
+archive for it (`-DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_emscripten`, with
+Emscripten 3.1.46 as in libretro's image), holding the core and the emulator
+library; our CI links that archive into a small frontend and runs it under
+Node: it boots Dirtbike and replays a restored state frame for frame. The
+build has no threads, as RetroArch's web build has none.
+
+32-bit ARM: Linux armhf (Raspberry Pi OS 32-bit, armv7 handhelds) is
+cross-compiled in CI and its ABI, media and disk persistence checks run under
+qemu-arm; Android armeabi-v7a is compiled and its exports checked.
+
 From a fresh source checkout, use CMake 3.16 or later and a native C++17
 toolchain. The module-only build uses the same core as the SDK and skips
 the desktop and browser frontends, including their ImGui setup and
@@ -422,7 +433,8 @@ python3 tests/libretro_profiles.py build-libretro/pom2_libretro.dylib roms dix p
 The [native package workflow](../.github/workflows/libretro.yml) builds
 Linux x64, Linux arm64 (Raspberry Pi and other ARM boards), macOS arm64,
 Windows x64 and Android arm64 (`pom2_libretro_android.so`, built with the NDK
-and not run in CI). Each runner checks the extracted
+and not run in CI); it also builds Linux armhf, Android armeabi-v7a and the
+static web core, which are checked but not packaged. Each runner checks the extracted
 module, starts Dirtbike in RetroArch, closes the process during boot and
 verifies that the next launch resumes from the saved state. Core releases
 use the `libretro-v*` tag series and include checksums and verification

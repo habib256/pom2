@@ -418,6 +418,23 @@ inline bool publishNewFileAtomic(const std::filesystem::path& from,
         ec = std::error_code(errno, std::generic_category());
         return false;
     }
+#  elif defined(__EMSCRIPTEN__)
+    // Emscripten's file systems (MEMFS and IDBFS in a browser, NODERAWFS
+    // under 3.1.46) have no hard links, so link() below fails. A page is one
+    // process on one thread: nothing can create `to` between this check and
+    // the rename. Found by the static libretro core, whose disk saves are
+    // published here (2026-11-25).
+    {
+        std::error_code probe;
+        if (std::filesystem::exists(std::filesystem::symlink_status(to, probe))) {
+            ec = std::make_error_code(std::errc::file_exists);
+            return false;
+        }
+        std::filesystem::rename(from, to, ec);
+        if (ec) return false;
+        ec.clear();
+        return true;
+    }
 #  endif
     if (::link(from.c_str(), to.c_str()) != 0) {
         ec = std::error_code(errno, std::generic_category());

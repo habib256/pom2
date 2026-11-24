@@ -277,6 +277,24 @@ jobs:
             dist/libretro/pom2-libretro-android-arm64.zip
           (cd dist/libretro && cmake -E sha256sum pom2-libretro-android-arm64.zip > pom2-libretro-android-arm64.zip.sha256)
 
+      - name: Cross-compile and check the 32-bit Android core (armeabi-v7a)
+        run: |
+          cmake -S . -B build-armv7 \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-21 -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release -DPOM2_LIBRETRO_ONLY=ON \
+            -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+          cmake --build build-armv7 --target pom2_libretro --parallel 4
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          module=build-armv7/pom2_libretro_android.so
+          "$bin/llvm-readelf" -h "$module" | grep -E 'Class:.*ELF32' > /dev/null
+          "$bin/llvm-readelf" -h "$module" | grep 'ARM' > /dev/null
+          exported=$("$bin/llvm-nm" -D --defined-only "$module" | awk '$2 == "T" {print $3}')
+          if echo "$exported" | grep -v '^retro_'; then
+            echo "::error::the armeabi-v7a module exports more than the libretro API"; exit 1
+          fi
+          test "$(echo "$exported" | wc -l)" -eq 25
+
       - name: Upload the Android package
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
@@ -284,6 +302,115 @@ jobs:
           path: dist/libretro/
           if-no-files-found: error
           compression-level: 0
+
+  # 32-bit ARM Linux (Raspberry Pi OS armhf, handhelds on armv7): libretro
+  # builds it from libretro-super's armhf recipes. Cross-compiled here, then
+  # the ABI frontend runs the module under qemu-arm: a 32-bit size_t, a
+  # 32-bit time_t and armv7's alignment are exercised, not just compiled.
+  linux-armhf:
+    name: Libretro linux-armhf (qemu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - uses: ./.github/actions/fetch-test-media
+
+      - name: Install the armhf cross compiler and qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabihf qemu-user
+
+      - name: Cross-compile the core and the ABI test frontend
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=armv7l \
+            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+            -DPOM2_LIBRETRO_ONLY=ON -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+          cmake --build build --target pom2_libretro --parallel 4
+          arm-linux-gnueabihf-g++ -std=c++17 -O1 -DRETRO_IMPORT_SYMBOLS \
+            -isystem src/third_party/libretro tests/libretro_module_test.cpp -ldl -o build/test_pom2_libretro
+          arm-linux-gnueabihf-readelf -h build/pom2_libretro.so | grep -E 'Class|Machine'
+          exported=$(arm-linux-gnueabihf-nm -D --defined-only build/pom2_libretro.so | awk '$2 == "T" {print $3}')
+          if echo "$exported" | grep -v '^retro_'; then
+            echo "::error::the armhf module exports more than the libretro API"; exit 1
+          fi
+
+      - name: Run the ABI, media and disk persistence checks under qemu-arm
+        env:
+          QEMU_LD_PREFIX: /usr/arm-linux-gnueabihf
+          POM2_MEDIA_WRITE_DEFAULT: protected
+        run: |
+          t=build/test_pom2_libretro; core=build/pom2_libretro.so
+          qemu-arm "$t" "$core" build/abi
+          qemu-arm "$t" "$core" build/media roms packaging/disks/DIRTBIKE.dsk
+          qemu-arm "$t" "$core" build/persist --disk-persistence roms disks_5.4/dsk/dos33_master.dsk
+
+  # RetroArch's web build links one core statically: libretro's emscripten
+  # template configures with LIBRETRO_STATIC and takes the archive. Built
+  # here the same way, then linked into a small frontend and RUN under Node.
+  web:
+    name: Libretro web (emscripten, node)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - uses: ./.github/actions/fetch-test-media
+
+      - name: Set up Emscripten SDK
+        id: emsdk
+        continue-on-error: true
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          # libretro's emscripten image (libretro-build-emscripten, the one
+          # the buildbot links RetroArch with) is Emscripten 3.1.46: the
+          # version the core must build with, not the desktop WASM's 6.0.9.
+          version: 3.1.46
+          actions-cache-folder: emsdk-cache-libretro
+
+      - name: Install the same Emscripten SDK through Git if archive download failed
+        if: steps.emsdk.outcome == 'failure'
+        run: bash tools/setup_emsdk_git_fallback.sh 3.1.46
+
+      - name: Build the static core as libretro's emscripten template does
+        run: |
+          emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLIBRETRO_STATIC=ON \
+            -DLIBRETRO_SUFFIX=_emscripten -DPOM2_LIBRETRO_ONLY=ON \
+            -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+          emmake cmake --build build --target pom2_libretro --parallel 4
+          ls -l build/pom2_libretro_emscripten.bc
+
+      - name: Link it into a frontend and run it under Node
+        run: |
+          # RetroArch renames libretro_emscripten.bc to .a before it links
+          # (Makefile.emscripten, mv_libretro); emcc reads .bc as bitcode.
+          cp build/pom2_libretro_emscripten.bc build/libretro_emscripten.a
+          em++ -std=c++17 -O2 -isystem src/third_party/libretro -c tests/libretro_web_smoke.cpp -o build/web_smoke.o
+          em++ -O2 build/web_smoke.o build/libretro_emscripten.a -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 \
+            -sINITIAL_MEMORY=134217728 -sSTACK_SIZE=4194304 -sWASM_BIGINT=1 -o build/web_smoke.js
+          mkdir -p build/web/system build/web/saves
+          ln -s "$PWD/roms" build/web/system/pom2
+          cp packaging/disks/DIRTBIKE.dsk build/web/
+          node build/web_smoke.js "$PWD/build/web/system" "$PWD/build/web/saves" "$PWD/build/web/DIRTBIKE.dsk"
 
   # iOS and tvOS are built by libretro's buildbot (.gitlab-ci.yml); compile
   # them here with the same arguments as its templates so a change that
