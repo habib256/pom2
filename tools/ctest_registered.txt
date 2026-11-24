@@ -279,6 +279,7 @@ klaus_6502_functional
 klaus_65c02_extended
 language_card_smoke
 le_chat_mauve_smoke
+libretro_pad_profiles
 liron_boot35
 liron_chain
 liron_smartport_dispatch

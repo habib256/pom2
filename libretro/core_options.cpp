@@ -231,6 +231,14 @@ const std::vector<Option>& options()
          "Les ][ et ][+ n'ont pas de minuscules. Beaucoup de jeux //e attendent le verrouillage majuscule.",
          {{"auto", "Automatic (][ and ][+)", "Automatique (][ et ][+)"}, {"enabled", "Always", "Toujours"},
           {"disabled", "Never", "Jamais"}}},
+        {"pom2_pad_profile", "input", "Game pad profiles", "Profils de manette par jeu",
+         "A known keyboard game gets its keys on the RetroPad (the controls menu names them). A game "
+         "that plays with a joystick keeps the D-pad and B/A on the joystick, and gets only its other "
+         "keys. Applies when port 1 is the Apple II joystick.",
+         "Un jeu au clavier connu reçoit ses touches sur la RetroPad (le menu des commandes les nomme). "
+         "Un jeu qui se joue au joystick garde la croix et B/A sur le joystick, et ne reçoit que ses "
+         "autres touches. S'applique quand le port 1 est le joystick Apple II.",
+         {{"auto", "Automatic", "Automatique"}, {"disabled", "Off", "Désactivé"}}},
         {"pom2_mouse", "input", "AppleMouse in slot 4 (restart)", "AppleMouse en slot 4 (redémarrage)",
          "Needs mouse_341-0270-c.bin in system/pom2. The //c has its mouse built in.",
          "Demande mouse_341-0270-c.bin dans system/pom2. Le //c a sa souris intégrée.",

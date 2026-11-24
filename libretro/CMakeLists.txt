@@ -10,7 +10,7 @@ endif()
 add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
     core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp
     tape_content.cpp)
-target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp content_vfs.cpp ../src/hgrpaint/HgrFont.cpp
+target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp content_vfs.cpp pad_profiles.cpp ../src/hgrpaint/HgrFont.cpp
     # Host formats the SDK does not take: archives and programs.
     ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
     ../src/HostFileTag.cpp ../src/AppleSingle.cpp

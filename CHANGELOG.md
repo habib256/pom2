@@ -10,6 +10,22 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — The libretro core builds for iOS and tvOS
+
+Built with the arguments of libretro's `ios-cmake.yml` and `tvos-cmake.yml`
+templates, the core met three walls, each fixed where it stands:
+- miniaudio's CoreAudio backend includes AVFoundation on iOS and tvOS, an
+  Objective-C header a C++ file cannot compile. The core never opens an
+  audio device there (RetroArch plays its samples): `MA_NO_COREAUDIO`, and
+  only AudioToolbox and CoreFoundation are linked — AudioUnit is a macOS
+  framework (CMakeLists.txt).
+- tvOS has no `fork`/`execve`: `POM2_HAS_CHILD_PROCESS` is 0 there, as in a
+  browser, and the FujiNet helper's `start()` fails cleanly (ChildProcess.h).
+- `std::filesystem` needs iOS and tvOS 13; the templates default to 8.0 and
+  12.0. `.gitlab-ci.yml` sets 13.0 for both new jobs.
+The libretro workflow compiles both on every change (`apple-mobile`), with
+the same arguments, so the buildbot's jobs should not be the first to fail.
+
 ## 2026-11-24 — Android's saf:// content, and the netplay mouse
 
 **Android.** RetroArch on Android hands content picked through the Storage

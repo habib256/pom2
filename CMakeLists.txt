@@ -2055,7 +2055,14 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(pom2_core PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
     set(POM2_CORE_PACKAGE_NEEDS_THREADS 1)
 endif()
-if(APPLE)
+if(CMAKE_SYSTEM_NAME MATCHES "^(iOS|tvOS)$")
+    # The libretro core on iOS and tvOS hands its samples to RetroArch and
+    # never opens an audio device. miniaudio's CoreAudio backend there pulls
+    # AVFoundation, an Objective-C header a C++ file cannot compile, and the
+    # AudioUnit framework exists only on macOS.
+    target_compile_definitions(pom2_core PRIVATE MA_NO_COREAUDIO)
+    target_link_libraries(pom2_core PUBLIC "-framework AudioToolbox" "-framework CoreFoundation")
+elseif(APPLE)
     target_link_libraries(pom2_core PUBLIC
         "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation" "-framework AudioUnit")
 endif()

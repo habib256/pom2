@@ -46,6 +46,8 @@ bool chooseMachine(const MachineRequest& request, MachineChoice& choice, std::st
 std::uint16_t wozCompatibleHardware(const std::filesystem::path& path);
 /// True when a WOZ 2's INFO says it boots 13-sector (DOS 3.1/3.2).
 bool wozBoots13Sector(const std::filesystem::path& path);
+/// A WOZ disk's META title ("" when it has none): its name for the pad profiles.
+std::string wozMetaTitle(const std::filesystem::path& path);
 
 bool isDixImage(const std::filesystem::path& path);
 

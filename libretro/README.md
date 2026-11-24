@@ -15,6 +15,12 @@ the file from `cores/` in RetroArch’s **Cores** directory, the file from
 `info/` in **Core Info** and the `system/pom2` folder in **System/BIOS**.
 Find these locations under **Settings → Directory**.
 
+On iOS and tvOS, RetroArch installs cores itself, from libretro's buildbot
+(**Online Updater → Core Downloader**, once POM2 is listed there). The core
+builds for both (iOS and tvOS 13 or later, arm64) with the same CMake
+arguments as the buildbot's templates; our CI compiles them on every
+change.
+
 From a fresh source checkout, use CMake 3.16 or later and a native C++17
 toolchain. The module-only build uses the same core as the SDK and skips
 the desktop and browser frontends, including their ImGui setup and

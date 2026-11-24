@@ -49,7 +49,7 @@
 //      to terminating the Job
 //      Object if the helper does not leave within the grace period.
 //
-// Not available under Emscripten (no processes in a browser):
+// Not available under Emscripten (no processes in a browser) nor on tvOS:
 // POM2_HAS_CHILD_PROCESS is 0 there and `start()` fails cleanly.
 
 #ifndef POM2_CHILD_PROCESS_H
@@ -58,7 +58,13 @@
 #include <string>
 #include <vector>
 
-#if defined(__EMSCRIPTEN__)
+#if defined(__APPLE__)
+#  include <TargetConditionals.h>
+#endif
+// tvOS and watchOS have no fork/execve: the libretro core built for an Apple
+// TV starts no helper process, and start() fails cleanly as in a browser.
+#if defined(__EMSCRIPTEN__) || (defined(TARGET_OS_TV) && TARGET_OS_TV) || \
+    (defined(TARGET_OS_WATCH) && TARGET_OS_WATCH)
 #  define POM2_HAS_CHILD_PROCESS 0
 #else
 #  define POM2_HAS_CHILD_PROCESS 1

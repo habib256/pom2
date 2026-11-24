@@ -20,6 +20,10 @@ include:
     file: '/osx-cmake-x86.yml'
   - project: 'libretro-infrastructure/ci-templates'
     file: '/android-cmake.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/ios-cmake.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/tvos-cmake.yml'
 
 stages:
   - build-prepare
@@ -56,3 +60,20 @@ android-arm64-v8a:
   extends:
     - .libretro-android-cmake-arm64-v8a
     - .core-defs
+
+# iOS and tvOS: std::filesystem needs iOS/tvOS 13 (the templates default to
+# 8.0 and 12.0). miniaudio's CoreAudio backend is left out there (the core
+# hands its samples to RetroArch) and tvOS has no child processes.
+libretro-build-ios-arm64:
+  extends:
+    - .libretro-ios-cmake-arm64
+    - .core-defs
+  variables:
+    IOS_MINVER: "13.0"
+
+libretro-build-tvos-arm64:
+  extends:
+    - .libretro-tvos-cmake-arm64
+    - .core-defs
+  variables:
+    MINVER: "13.0"

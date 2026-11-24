@@ -69,6 +69,12 @@ if(TARGET pom2_libretro)
             "${CMAKE_SOURCE_DIR}/roms" "${scenario}" ${media})
         set_tests_properties(pom2_libretro_${scenario} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     endforeach()
+    # The per-game RetroPad profiles: the line, titles, the table's rules.
+    add_executable(test_libretro_pad_profiles libretro_pad_profiles_test.cpp
+        "${CMAKE_SOURCE_DIR}/libretro/pad_profiles.cpp")
+    target_include_directories(test_libretro_pad_profiles PRIVATE "${CMAKE_SOURCE_DIR}/libretro")
+    target_include_directories(test_libretro_pad_profiles SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/third_party/libretro")
+    add_test(NAME libretro_pad_profiles COMMAND test_libretro_pad_profiles)
     # Netplay: two processes, rollback and a joining client must keep the same
     # state byte for byte (tools/libretro_netplay.py).
     add_test(NAME pom2_libretro_netplay COMMAND "${Python3_EXECUTABLE}" -B

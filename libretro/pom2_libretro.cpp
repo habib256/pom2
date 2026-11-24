@@ -16,6 +16,7 @@
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
 #include "polled_keyboard.hpp"
+#include "pad_profiles.hpp"
 #include "content_vfs.hpp"
 #include "program_file.hpp"
 #include "tape_content.hpp"
@@ -155,6 +156,10 @@ RuntimeOptions settings;
 bool rgbWarning = false;
 
 std::array<unsigned, 4> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE, RETRO_DEVICE_NONE};
+const pom2::libretro::PadProfile* padProfile = nullptr;   // the content's game profile, if any
+bool padProfileEnabled = true;                            // pom2_pad_profile
+void releaseKeyPad();
+void installDescriptors();
 bool openApple = false;
 bool solidApple = false;
 bool startHeld = false;
@@ -365,6 +370,12 @@ void applyRuntimeOptions()
         if (!rgbWarning) reportError("The RGB display needs the Le Chat Mauve RGB card (Core Options, restart).");
         rgbWarning = true;
     }
+    const bool profileWanted = option("pom2_pad_profile") != "disabled";
+    if (profileWanted != padProfileEnabled) {
+        releaseKeyPad();
+        padProfileEnabled = profileWanted;
+        if (core) installDescriptors();
+    }
     const auto skip = option("pom2_frameskip");
     try { frameskipThreshold = static_cast<unsigned>(std::stoul(std::string(option("pom2_frameskip_threshold")))); }
     catch (const std::exception&) { frameskipThreshold = 33; }
@@ -493,33 +504,24 @@ unsigned readPad(unsigned port)
     return buttons;
 }
 
-// The RetroPad as a keyboard: the directions and two buttons type keys, and
-// hold them for the //e's any-key-down flag.
-void applyKeyPad(unsigned device)
+// RetroPad buttons that type keys, and hold them for the //e's any-key-down
+// flag. The first `directions` bindings repeat while held, as a key does.
+// `keyPadHeld` (in the saved state) remembers which are down.
+struct KeyBinding { unsigned button; std::uint8_t ascii; std::uint16_t token; };
+
+void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directions)
 {
-    struct Binding { unsigned button; std::uint8_t ascii; std::uint16_t token; };
-    const Binding arrows[] = {
-        {RETRO_DEVICE_ID_JOYPAD_UP, 0x0b, RETROK_UP}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 0x0a, RETROK_DOWN},
-        {RETRO_DEVICE_ID_JOYPAD_LEFT, 0x08, RETROK_LEFT}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 0x15, RETROK_RIGHT}};
-    const Binding ijkm[] = {
-        {RETRO_DEVICE_ID_JOYPAD_UP, 'I', RETROK_i}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 'M', RETROK_m},
-        {RETRO_DEVICE_ID_JOYPAD_LEFT, 'J', RETROK_j}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 'K', RETROK_k}};
-    const Binding wasd[] = {
-        {RETRO_DEVICE_ID_JOYPAD_UP, 'W', RETROK_w}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 'S', RETROK_s},
-        {RETRO_DEVICE_ID_JOYPAD_LEFT, 'A', RETROK_a}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 'D', RETROK_d}};
-    const Binding* directions = device == kPadIjkm ? ijkm : device == kPadWasd ? wasd : arrows;
-    std::array<Binding, 6> bindings{directions[0], directions[1], directions[2], directions[3],
-        Binding{RETRO_DEVICE_ID_JOYPAD_B, ' ', RETROK_SPACE},
-        Binding{RETRO_DEVICE_ID_JOYPAD_A, 0x0d, RETROK_RETURN}};
     std::uint8_t pressedKey = 0;
-    for (unsigned i = 0; i < bindings.size(); ++i) {
+    for (unsigned i = 0; i < count; ++i) {
         const bool down = padPressed(bindings[i].button);
         const bool was = (keyPadHeld & (1u << i)) != 0;
         if (down != was) core->setKeyHeld(bindings[i].token, down);
         if (down && !was) {
             core->queueKey(typed(bindings[i].ascii));
-            pressedKey = bindings[i].ascii;
-            repeatFrames = 0;
+            if (i < directions) {
+                pressedKey = bindings[i].ascii;
+                repeatFrames = 0;
+            }
         }
         keyPadHeld = static_cast<std::uint16_t>(down ? keyPadHeld | (1u << i) : keyPadHeld & ~(1u << i));
     }
@@ -529,7 +531,7 @@ void applyKeyPad(unsigned device)
     }
     // Repeat only the most recently pressed direction, while it is held.
     bool held = false;
-    for (unsigned i = 0; i < 4; ++i)
+    for (unsigned i = 0; i < directions; ++i)
         held |= (keyPadHeld & (1u << i)) && bindings[i].ascii == repeatKey;
     if (!held) {
         repeatKey = 0;
@@ -540,13 +542,165 @@ void applyKeyPad(unsigned device)
     if (repeatFrames > 60) repeatFrames = 34;
 }
 
+// The RetroPad as a keyboard (port 1's three keyboard types).
+void applyKeyPad(unsigned device)
+{
+    const KeyBinding arrows[] = {
+        {RETRO_DEVICE_ID_JOYPAD_UP, 0x0b, RETROK_UP}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 0x0a, RETROK_DOWN},
+        {RETRO_DEVICE_ID_JOYPAD_LEFT, 0x08, RETROK_LEFT}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 0x15, RETROK_RIGHT}};
+    const KeyBinding ijkm[] = {
+        {RETRO_DEVICE_ID_JOYPAD_UP, 'I', RETROK_i}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 'M', RETROK_m},
+        {RETRO_DEVICE_ID_JOYPAD_LEFT, 'J', RETROK_j}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 'K', RETROK_k}};
+    const KeyBinding wasd[] = {
+        {RETRO_DEVICE_ID_JOYPAD_UP, 'W', RETROK_w}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 'S', RETROK_s},
+        {RETRO_DEVICE_ID_JOYPAD_LEFT, 'A', RETROK_a}, {RETRO_DEVICE_ID_JOYPAD_RIGHT, 'D', RETROK_d}};
+    const KeyBinding* directions = device == kPadIjkm ? ijkm : device == kPadWasd ? wasd : arrows;
+    const std::array<KeyBinding, 6> bindings{directions[0], directions[1], directions[2], directions[3],
+        KeyBinding{RETRO_DEVICE_ID_JOYPAD_B, ' ', RETROK_SPACE},
+        KeyBinding{RETRO_DEVICE_ID_JOYPAD_A, 0x0d, RETROK_RETURN}};
+    applyBindings(bindings.data(), static_cast<unsigned>(bindings.size()), 4);
+}
+
+// ---- Per-game pad profiles (pad_profiles.hpp) ------------------------------
+
+constexpr unsigned kProfileOrder[] = {
+    RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN, RETRO_DEVICE_ID_JOYPAD_LEFT,
+    RETRO_DEVICE_ID_JOYPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_B, RETRO_DEVICE_ID_JOYPAD_A,
+    RETRO_DEVICE_ID_JOYPAD_Y, RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_L,
+    RETRO_DEVICE_ID_JOYPAD_R, RETRO_DEVICE_ID_JOYPAD_L2, RETRO_DEVICE_ID_JOYPAD_R2,
+    RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT};
+
+bool profileActive()
+{
+    return padProfile && padProfileEnabled && portDevice[0] == RETRO_DEVICE_JOYPAD;
+}
+
+// What a button does under the profile: its own entry, else the standard
+// joystick layout (B, A the joystick buttons; Start Return, Select Escape).
+pom2::libretro::PadAssign profileAssign(unsigned id)
+{
+    using pom2::libretro::PadAction;
+    auto assign = padProfile->buttons[id];
+    if (assign.action != PadAction::Default) return assign;
+    if (id == RETRO_DEVICE_ID_JOYPAD_B) assign.action = PadAction::Button0;
+    else if (id == RETRO_DEVICE_ID_JOYPAD_A) assign.action = PadAction::Button1;
+    else if (id == RETRO_DEVICE_ID_JOYPAD_START) { assign.action = PadAction::Key; assign.ascii = 0x0d; assign.token = RETROK_RETURN; }
+    else if (id == RETRO_DEVICE_ID_JOYPAD_SELECT) { assign.action = PadAction::Key; assign.ascii = 0x1b; assign.token = RETROK_ESCAPE; }
+    else if (id <= RETRO_DEVICE_ID_JOYPAD_RIGHT && id >= RETRO_DEVICE_ID_JOYPAD_UP) assign.action = PadAction::Joystick;
+    else assign.action = PadAction::None;
+    return assign;
+}
+
+unsigned profileBindings(std::array<KeyBinding, 14>& out, unsigned& directions)
+{
+    unsigned n = 0;
+    directions = 0;
+    for (unsigned id : kProfileOrder) {
+        const auto assign = profileAssign(id);
+        if (assign.action != pom2::libretro::PadAction::Key) continue;
+        out[n++] = {id, assign.ascii, assign.token};
+        if (id >= RETRO_DEVICE_ID_JOYPAD_UP && id <= RETRO_DEVICE_ID_JOYPAD_RIGHT) ++directions;
+    }
+    return n;
+}
+
+void applyProfile()
+{
+    using pom2::libretro::PadAction;
+    std::array<KeyBinding, 14> bindings{};
+    unsigned directions = 0;
+    const unsigned count = profileBindings(bindings, directions);
+    applyBindings(bindings.data(), count, directions);
+    // The joystick: the D-pad unless it types keys, the left stick always.
+    float x = padProfile->dpadKeys() ? stickAxis(0, RETRO_DEVICE_ID_ANALOG_X)
+        : padAxis(RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
+    float y = padProfile->dpadKeys() ? stickAxis(0, RETRO_DEVICE_ID_ANALOG_Y)
+        : padAxis(RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN);
+    if (settings.swapAxes) std::swap(x, y);
+    if (settings.invertX) x = -x;
+    if (settings.invertY) y = -y;
+    core->setJoystickAxes(x, y);
+    bool button0 = false, button1 = false;
+    for (unsigned id : kProfileOrder) {
+        const auto action = profileAssign(id).action;
+        if (action == PadAction::Button0) button0 |= padPressed(id);
+        if (action == PadAction::Button1) button1 |= padPressed(id);
+    }
+    if (settings.swapButtons) std::swap(button0, button1);
+    core->setPaddleButton(0, openApple || button0);
+    core->setPaddleButton(1, solidApple || button1);
+}
+
+// The controls menu: the standard names, with the profile's own for the
+// buttons it changes ("Key U: dig left").
+std::vector<retro_input_descriptor> profileDescriptors;
+std::vector<std::string> profileDescriptorText;
+
+std::string keyName(std::uint8_t ascii)
+{
+    switch (ascii) {
+    case 0x0d: return "Return";
+    case 0x1b: return "Escape";
+    case 0x09: return "Tab";
+    case 0x7f: return "Delete";
+    case 0x20: return "Space";
+    case 0x08: return "Left arrow";
+    case 0x15: return "Right arrow";
+    case 0x0b: return "Up arrow";
+    case 0x0a: return "Down arrow";
+    default: break;
+    }
+    if (ascii < 0x20) return std::string("Ctrl-") + static_cast<char>(ascii + '@');
+    return std::string(1, static_cast<char>(ascii));
+}
+
+void installDescriptors()
+{
+    if (!environment) return;
+    if (!profileActive()) {
+        environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, inputDescriptors);
+        return;
+    }
+    profileDescriptors.clear();
+    profileDescriptorText.clear();
+    profileDescriptorText.reserve(64);
+    for (const auto& d : inputDescriptors) {
+        if (!d.description) break;
+        const bool joypad0 = d.port == 0 && d.device == RETRO_DEVICE_JOYPAD;
+        std::string text = d.description;
+        if (joypad0) {
+            const auto assign = profileAssign(d.id);
+            using pom2::libretro::PadAction;
+            if (assign.action == PadAction::Key)
+                text = "Key " + keyName(assign.ascii) + (assign.label.empty() ? "" : ": " + assign.label);
+            else if (assign.action == PadAction::None)
+                continue;
+            else if (!assign.label.empty())
+                text += ": " + assign.label;
+        }
+        profileDescriptorText.push_back(text);
+        profileDescriptors.push_back(d);
+    }
+    for (std::size_t i = 0; i < profileDescriptors.size(); ++i)
+        profileDescriptors[i].description = profileDescriptorText[i].c_str();
+    profileDescriptors.push_back({});
+    environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, profileDescriptors.data());
+}
+
 void releaseKeyPad()
 {
     const std::uint16_t tokens[] = {RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
                                     RETROK_i, RETROK_m, RETROK_j, RETROK_k,
                                     RETROK_w, RETROK_s, RETROK_a, RETROK_d, RETROK_SPACE, RETROK_RETURN};
-    if (core && keyPadHeld)
+    if (core && keyPadHeld) {
         for (auto token : tokens) core->setKeyHeld(token, false);
+        if (padProfile) {
+            std::array<KeyBinding, 14> bindings{};
+            unsigned directions = 0;
+            const unsigned count = profileBindings(bindings, directions);
+            for (unsigned i = 0; i < count; ++i) core->setKeyHeld(bindings[i].token, false);
+        }
+    }
     keyPadHeld = 0;
     repeatKey = 0;
     repeatFrames = 0;
@@ -665,6 +819,13 @@ void applyInput()
         return;
     }
     if (swap) nextDisk();
+    if (profileActive()) {
+        // The game's profile types its keys; Start and Select are part of it.
+        applyProfile();
+        startHeld = padPressed(RETRO_DEVICE_ID_JOYPAD_START);
+        selectHeld = padPressed(RETRO_DEVICE_ID_JOYPAD_SELECT);
+        return;
+    }
     const bool keyPad = device == kPadArrows || device == kPadIjkm || device == kPadWasd;
     if (keyPad) {
         applyKeyPad(device);
@@ -1374,6 +1535,18 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             state.images = pom2::libretro::loadDiskList(state.content);
     }
 
+    // The game's pad profile, by the disk's own title, then its file names.
+    {
+        std::vector<std::string> names;
+        if (!state.images.empty()) {
+            const auto title = pom2::libretro::wozMetaTitle(state.images.front().path);
+            if (!title.empty()) names.push_back(title + ".x");
+            names.push_back(state.images.front().path.u8string());
+        }
+        if (!state.content.empty()) names.push_back(state.content.u8string());
+        padProfile = pom2::libretro::findPadProfile(names);
+    }
+
     pom2::libretro::MachineRequest request;
     request.machine = option("pom2_machine");
     request.standard = option("pom2_video_standard");
@@ -1532,7 +1705,8 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     registerMemoryMap();
     retro_keyboard_callback keyboard{keyboardEvent};
     environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, &keyboard);
-    environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, inputDescriptors);
+    installDescriptors();
+    if (padProfile) summary += " · pad profile: " + padProfile->title;
     if (!core->supportsState()) summary += " · no save states";
     if (!tapeNote.empty()) summary += " · " + tapeNote;
     notify(summary);
@@ -1667,7 +1841,7 @@ bool restoreRetroState(const void* data, std::size_t size)
         checksum != pom2::hashMediaBytes(bytes + reader.pos, length, headerHash) ||
         overshoot > 16 || machineRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
         frontendRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) || flags > 31 ||
-        column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= 64) return false;
+        column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= (1u << 14)) return false;
 
     std::array<std::optional<MountedDisk>, 2> restored;
     std::array<std::string, 2> backing;
@@ -1907,6 +2081,7 @@ void retro_unload_game()
     stateCapacity = 0;
     midiCycleKnown = false;
     stateCapacityWarning = false;
+    padProfile = nullptr;
     configureFrameskip(Frameskip::Off);
     rgbWarning = false;
 }
