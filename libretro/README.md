@@ -89,12 +89,35 @@ with its own `.m3u`, that playlist. The core unpacks it once into
 `pom2/archives` in the save directory, so its disks keep their private copies
 from one session to the next.
 
+The exchange formats of the Apple II world open the same way, unpacked once
+into `pom2/archives`; the original file is never written:
+
+| File | Becomes |
+|---|---|
+| `.shk`, `.sdk`, `.bxy`, `.sea` (ShrinkIt) | each disk it holds, a playlist when there are several; files become a ProDOS data volume with their types (140 KB, 800 KB or a hard disk, the smallest that holds them). That volume has no boot code: put it in drive 2 beside a ProDOS boot disk |
+| `.dc`, `.dc42`, a DiskCopy `.image` | the 400 KB, 800 KB or 1.44 MB disk inside, checksums checked |
+| `.a2r` (Applesauce flux capture, A2R 2 or 3) | a WOZ 2.1 with one revolution of flux a quarter track: Applesauce's own solved loop when the file has one, otherwise the point where the flux repeats |
+
+Uncompressed, LZW/1 and LZW/2 ShrinkIt archives are read; a GS/OS
+resource fork is left out, and the notification says so.
+
 A program loads without a disk, at the BASIC prompt:
 
 | File | Loaded | Started with |
 |---|---|---|
 | `.bas` | an Applesoft listing in text, tokenized to `$0801` | `RUN` |
 | `.bin` | at the address its name gives (`GAME#062000.bin`, CiderPress's convention), its AppleSingle or DOS 3.3 header gives, or `$0803` | `CALL` to that address |
+| `.wav`, `.aci` (cassette) | from the tape, by the machine's own ROM | `LOAD`, then `RUN` |
+
+A tape is read before the machine starts, the way the Monitor's READ reads
+it, to know what it holds. An Applesoft program picks a ][+ or a //e
+(Automatic machine) and the core types `LOAD` and `RUN`; an Integer BASIC
+program picks the original Apple ][, whose ROM has Integer BASIC, and the
+core enters BASIC with Ctrl-B first. A machine-code tape does not say where
+it loads: the notification says so, and you type the Monitor's `START.ENDR`
+from its instructions. The //c and //c Plus have no cassette port. Loading
+takes as long as the tape plays, 10 to 30 seconds for a small program; fast
+forward shortens it.
 
 ## Core options
 

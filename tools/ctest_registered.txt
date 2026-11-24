@@ -65,6 +65,7 @@ card_snapshot_contract
 card_snapshot_state
 card_video_source
 cassette_hostile
+cassette_records
 cassette_stream_rate
 cassette_wav_tail
 ccs7710_card
@@ -163,6 +164,7 @@ drol_pageflip_render
 echoplus_card_smoke
 echoplus_tms5220
 ezcolor_card
+exchange_media
 fast_chip
 fetch_test_media
 floating_bus_measured

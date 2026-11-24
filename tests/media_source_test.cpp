@@ -313,6 +313,75 @@ int main()
     CHECK(pom2::isCompressedImage("https://x/y.zip?dl=1") && !pom2::isCompressedImage("c.dsk"));
     CHECK(!pom2::needsMediaResolve("/disks/plain.woz"));
 
+    // 6. Exchange files (ExchangeMedia.h), converted once into the cache.
+    //    A DiskCopy 4.2 image built here, its blocks as a .po; the guest's
+    //    writes to the converted copy survive the next resolve.
+    {
+        auto endsWith = [](const std::string& s, const std::string& x) {
+            return s.size() >= x.size() && s.compare(s.size() - x.size(), x.size(), x) == 0;
+        };
+        std::vector<uint8_t> blocks(819200);
+        for (std::size_t i = 0; i < blocks.size(); ++i) blocks[i] = uint8_t(i * 7 + (i >> 9));
+        auto be32 = [](std::vector<uint8_t>& v, std::size_t at, uint32_t x) {
+            for (int k = 0; k < 4; ++k) v[at + k] = uint8_t(x >> (24 - 8 * k));
+        };
+        std::vector<uint8_t> dc(84, 0);
+        dc[0] = 4; dc[1] = 'T'; dc[2] = 'E'; dc[3] = 'S'; dc[4] = 'T';
+        be32(dc, 64, 819200);
+        uint32_t sum = 0;   // [B] File Type Note $E0/$0005: add each word, rotate right
+        for (std::size_t i = 0; i < blocks.size(); i += 2) {
+            sum += (uint32_t(blocks[i]) << 8) | blocks[i + 1];
+            sum = (sum >> 1) | (sum << 31);
+        }
+        be32(dc, 72, sum);
+        dc[82] = 0x01;
+        dc.insert(dc.end(), blocks.begin(), blocks.end());
+        put(dir / "Game.image", dc);
+        CHECK(pom2::needsMediaResolve((dir / "Game.image").string()));
+        auto got = pom2::resolveMediaSource((dir / "Game.image").string(), cache);
+        CHECK(got.ok && endsWith(fs::path(got.localPath).filename().string(), "Game.po"));
+        CHECK(got.ok && get(got.localPath) == blocks);
+        CHECK(got.note.find("DiskCopy") != std::string::npos);
+        if (got.ok) {
+            auto written = get(got.localPath);
+            written[1024] ^= 0xFF;
+            put(got.localPath, written);
+            auto reopened = pom2::resolveMediaSource((dir / "Game.image").string(), cache);
+            CHECK(reopened.ok && reopened.localPath == got.localPath && get(reopened.localPath) == written);
+        }
+        // A raw 800 KB .image is mounted as it is.
+        put(dir / "raw.image", blocks);
+        CHECK(!pom2::needsMediaResolve((dir / "raw.image").string()));
+        // A ShrinkIt archive inside a zip: unzipped, then converted.
+        std::ifstream shk("tests/fixtures/nufx/files.shk", std::ios::binary);
+        std::vector<uint8_t> archive{std::istreambuf_iterator<char>(shk), {}};
+        CHECK(!archive.empty());
+        CHECK(pom2::isExchangeMedia("Files.SHK") && pom2::needsMediaResolve("x.sdk"));
+        put(dir / "files.zip", zipStored({ { "Files.shk", archive } }));
+        auto zipped = pom2::resolveMediaSource((dir / "files.zip").string(), cache);
+        CHECK(zipped.ok && endsWith(fs::path(zipped.localPath).filename().string(), "Files.po"));
+        CHECK(zipped.ok && get(zipped.localPath).size() == 143360);
+        CHECK(zipped.note.find("ShrinkIt") != std::string::npos);
+
+        // A zip of two sides: both land in the cache under one key, the
+        // first is mounted, and the set names both, in name order.
+        std::vector<uint8_t> sideB = disk;
+        sideB[0] ^= 0xFF;
+        put(dir / "game2.zip", zipStored({ { "Game Side B.dsk", sideB }, { "Game Side A.dsk", disk } }));
+        auto two = pom2::resolveMediaSource((dir / "game2.zip").string(), cache);
+        CHECK(two.ok && endsWith(fs::path(two.localPath).filename().string(), "Game Side B.dsk"));
+        CHECK(two.note.find("2 disks") != std::string::npos);
+        const auto set = pom2::mediaSetOf(two.localPath, cache);
+        CHECK(set.size() == 2);
+        if (set.size() == 2) {
+            CHECK(pom2::mediaDisplayName(set[0]) == "Game Side A.dsk" && get(set[0]) == disk);
+            CHECK(pom2::mediaDisplayName(set[1]) == "Game Side B.dsk" && get(set[1]) == sideB);
+        }
+        // A disk outside the cache is a set of one, and keeps its name.
+        CHECK(pom2::mediaSetOf((dir / "raw.image").string(), cache).size() == 1);
+        CHECK(pom2::mediaDisplayName((dir / "raw.image").string()) == "raw.image");
+    }
+
     fs::remove_all(dir, ec);
     if (g_fail) {
         std::fprintf(stderr, "media_source: %d failure(s)\n", g_fail);

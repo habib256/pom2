@@ -18,6 +18,8 @@
 
 #include "MediaSource.h"
 
+#include "ExchangeMedia.h"
+
 #include "AtomicFileReplace.h"
 #include "ChildProcess.h"
 #include "ResourcePaths.h"
@@ -207,25 +209,36 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
 #endif
 }
 
-// The first member of a zip whose name a drive takes.
-bool pickZipImage(const std::vector<uint8_t>& zip, std::string& member, std::string& err)
+// A file name a drive takes, or an exchange file that becomes one. By name
+// only: a zip member is not a file yet, and the size half of
+// classifyDiskForSlot needs one. The drive classifies it once out.
+bool mountableName(const std::string& base)
+{
+    std::string ext = lower(base);
+    ext = ext.substr(std::min(ext.size(), ext.find_last_of('.')));
+    for (const char* e : { ".dsk", ".do", ".po", ".nib", ".nb2", ".woz", ".moof", ".2mg",
+                           ".hdv", ".d13", ".image" })
+        if (ext == e) return true;
+    return exchange::hasExchangeExtension(base);
+}
+
+// Every member of a zip whose name a drive takes, in the zip's order.
+bool zipImages(const std::vector<uint8_t>& zip, std::vector<std::string>& members, std::string& err)
 {
     std::vector<std::string> names;
     if (!listZipMembers(zip, names, err)) return false;
+    members.clear();
     for (const auto& n : names) {
         if (n.empty() || n.back() == '/') continue;
         const std::string base = safeName(n);
         if (base.rfind("._", 0) == 0) continue;            // macOS resource forks
-        // By name only: the member is not a file yet, and the size half of
-        // classifyDiskForSlot needs one. The drive classifies it once out.
-        std::string ext = lower(base);
-        ext = ext.substr(std::min(ext.size(), ext.find_last_of('.')));
-        for (const char* e : { ".dsk", ".do", ".po", ".nib", ".nb2", ".woz", ".moof", ".2mg",
-                               ".hdv", ".d13", ".image" })
-            if (ext == e) { member = n; return true; }
+        if (mountableName(base)) members.push_back(n);
     }
-    err = "the archive holds no disk image POM2 can mount";
-    return false;
+    if (members.empty()) {
+        err = "the archive holds no disk image POM2 can mount";
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -234,6 +247,15 @@ bool isHttpUrl(const std::string& source)
 {
     const std::string l = lower(source);
     return l.rfind("http://", 0) == 0 || l.rfind("https://", 0) == 0;
+}
+
+bool isExchangeMedia(const std::string& source)
+{
+    if (isHttpUrl(source)) return false;   // a download is looked at once it is a file
+    if (exchange::hasExchangeExtension(source)) return true;
+    std::string l = lower(source);
+    if (!endsWith(l, ".image")) return false;
+    return exchange::isExchangeFile(source, head(source));
 }
 
 bool isCompressedImage(const std::string& source)
@@ -274,8 +296,43 @@ std::string explainMediaSourceRefusal(const std::string& archive, const std::str
     return "\"" + name + "\" could not be opened as a disk: " + error + ".\n\n"
            "POM2 opens a .zip (stored or deflated members) and a .gz itself, and takes "
            "the first .dsk, .do, .po, .nib, .nb2, .woz, .moof, .2mg, .hdv, .d13 or .image "
-           "inside. A damaged archive has to be downloaded again; a .7z, .shk or an "
+           "inside; it also opens ShrinkIt archives (.shk, .sdk, .bxy), DiskCopy 4.2 "
+           "images (.dc, .dc42) and Applesauce flux captures (.a2r). A damaged archive has to be downloaded again; a .7z or an "
            "encrypted zip has to be unpacked first.";
+}
+
+std::vector<std::string> mediaSetOf(const std::string& image, const fs::path& cacheDir)
+{
+    std::vector<std::string> set;
+    std::error_code ec;
+    const fs::path p = fs::u8path(image);
+    const std::string name = p.filename().u8string();
+    // A name this file gave a cached image: 32 hex digits of key, then '-'.
+    const bool keyed = name.size() > 33 && name[32] == '-'
+        && std::all_of(name.begin(), name.begin() + 32, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+    if (!keyed || !fs::equivalent(p.parent_path(), cacheDir, ec)) return {image};
+    const std::string prefix = name.substr(0, 33);
+    for (fs::directory_iterator it(cacheDir, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string other = it->path().filename().u8string();
+        if (other.rfind(prefix, 0) != 0 || !it->is_regular_file(ec)) continue;
+        // A converted archive's own copy, and the copies a commit set aside
+        // (MediaFileStamp: `.guest-`, `.recovered.woz`), are not disks of the set.
+        if (other.find(".guest-") != std::string::npos || other.find(".recovered.") != std::string::npos)
+            continue;
+        if (!mountableName(other) || isCompressedImage(other) || exchange::hasExchangeExtension(other)) continue;
+        set.push_back(it->path().u8string());
+    }
+    std::sort(set.begin(), set.end());
+    if (std::find(set.begin(), set.end(), p.u8string()) == set.end()) set.insert(set.begin(), image);
+    return set;
+}
+
+std::string mediaDisplayName(const std::string& image)
+{
+    const std::string name = fs::u8path(image).filename().u8string();
+    const bool keyed = name.size() > 33 && name[32] == '-'
+        && std::all_of(name.begin(), name.begin() + 32, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+    return keyed ? name.substr(33) : name;
 }
 
 fs::path mediaCacheDir()
@@ -283,8 +340,72 @@ fs::path mediaCacheDir()
     return userDataDir() / "media_cache";
 }
 
+namespace {
+
+// The cache key of a local file: its canonical path, size and date, so a
+// newer file is converted afresh and an unchanged one keeps the guest's writes.
+std::string fileKey(const std::string& path)
+{
+    std::error_code ec;
+    const auto size = fs::file_size(path, ec);
+    const long long when = static_cast<long long>(fs::last_write_time(path, ec).time_since_epoch().count());
+    // The FILE, not the spelling: through a symlinked folder (macOS's
+    // /tmp is /private/tmp) or another case, `absolute` named a second
+    // cache copy and the guest's writes seemed gone.
+    fs::path canon = fs::weakly_canonical(path, ec);
+    if (ec || canon.empty()) { ec.clear(); canon = fs::absolute(path, ec).lexically_normal(); }
+    return canon.string() + "|" + std::to_string(size) + "|" + std::to_string(when);
+}
+
+// A ShrinkIt archive or a DiskCopy image: its disks into the cache, once per
+// file version; the first is the one mounted.
+void resolveExchange(MediaSourceResult& r, const fs::path& cacheDir)
+{
+    const std::string path = r.localPath;
+    const std::string k = key(fileKey(path));
+    std::vector<uint8_t> bytes;
+    if (!readFile(path, bytes, r.error)) { r.ok = false; return; }
+    std::vector<exchange::Image> images;
+    std::string note;
+    if (!exchange::convert(fs::path(path).filename().string(), bytes, images, note, r.error)) {
+        r.ok = false;
+        return;
+    }
+    std::error_code ec;
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        const fs::path dest = cacheDir / (k + "-" + safeName(images[i].name));
+        // An image already unpacked holds the guest's writes: keep it.
+        if (!fs::is_regular_file(dest, ec) && !writeFile(dest, images[i].bytes, r.error)) {
+            r.ok = false;
+            return;
+        }
+        if (i == 0) r.localPath = dest.string();
+    }
+    if (images.size() > 1)
+        note += "; the first of " + std::to_string(images.size())
+              + " disks is mounted: change disk from the drive's menu";
+    r.note += std::string(r.note.empty() ? "" : ", ") + note;
+}
+
+MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path& cacheDir,
+                                      const std::atomic<bool>* abort);
+
+} // namespace
+
 MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& cacheDir,
                                      const std::atomic<bool>* abort)
+{
+    MediaSourceResult r = resolveArchiveOrUrl(source, cacheDir, abort);
+    // What a URL or an archive gave, or the file itself, may still be an
+    // exchange file: converted last.
+    if (r.ok && isExchangeMedia(r.localPath)) resolveExchange(r, cacheDir);
+    return r;
+}
+
+namespace {
+
+MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path& cacheDir,
+                                      const std::atomic<bool>* abort)
 {
     MediaSourceResult r;
     std::string path = source;
@@ -323,21 +444,28 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
     //    unpacked afresh and an unchanged one keeps the guest's writes).
     if (isCompressedImage(path)) {
         std::error_code ec;
-        const auto size = fs::file_size(path, ec);
-        const long long when = static_cast<long long>(fs::last_write_time(path, ec).time_since_epoch().count());
-        // The FILE, not the spelling: through a symlinked folder (macOS's
-        // /tmp is /private/tmp) or another case, `absolute` named a second
-        // cache copy and the guest's writes seemed gone.
-        fs::path canon = fs::weakly_canonical(path, ec);
-        if (ec || canon.empty()) { ec.clear(); canon = fs::absolute(path, ec).lexically_normal(); }
-        const std::string id = canon.string() + "|" + std::to_string(size)
-                               + "|" + std::to_string(when);
+        const std::string id = fileKey(path);
         const std::string k = key(id);
         std::vector<uint8_t> packed, image;
         if (!readFile(path, packed, r.error)) return r;
         std::string member;
         if (endsWith(lower(path), ".zip")) {
-            if (!pickZipImage(packed, member, r.error)) return r;
+            std::vector<std::string> members;
+            if (!zipImages(packed, members, r.error)) return r;
+            member = members.front();
+            // The other disks of the set land beside the first, under the same
+            // key, so mediaSetOf() finds them and the drive can change to them.
+            for (std::size_t i = 1; i < members.size(); ++i) {
+                const fs::path other = cacheDir / (k + "-" + safeName(members[i]));
+                std::vector<uint8_t> bytes;
+                std::string ignored;
+                if (!fs::is_regular_file(other, ec)
+                        && readZipMember(packed, members[i], bytes, ignored, kMaxImageBytes))
+                    writeFile(other, bytes, ignored);
+            }
+            if (members.size() > 1)
+                r.note += std::string(r.note.empty() ? "" : ", ") + std::to_string(members.size())
+                        + " disks in the zip: change disk from the drive's menu";
             const fs::path dest = cacheDir / (k + "-" + safeName(member));
             adoptLegacyCopy(cacheDir / (legacyKey(id) + "-" + safeName(member)), dest);
             if (fs::is_regular_file(dest, ec)) {
@@ -377,5 +505,7 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
     r.localPath = path;
     return r;
 }
+
+} // namespace
 
 } // namespace pom2

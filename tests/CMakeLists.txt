@@ -2802,6 +2802,31 @@ target_include_directories(test_apple_single PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME apple_single COMMAND test_apple_single)
 set_tests_properties(apple_single PROPERTIES TIMEOUT 20)
 
+# ─── A program tape's records, read as the Monitor's READ reads them ─────
+add_executable(test_cassette_records
+    cassette_records_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/CassetteRecords.cpp
+)
+target_include_directories(test_cassette_records PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME cassette_records COMMAND test_cassette_records)
+set_tests_properties(cassette_records PROPERTIES TIMEOUT 20)
+
+# ─── ShrinkIt archives and DiskCopy 4.2 images as disks (ExchangeMedia.h) ──
+# Fixtures written by NuLib2 from POM2's own content (fixtures/nufx/
+# make_fixtures.sh); the decode is checked against the bytes that went in.
+add_executable(test_exchange_media
+    exchange_media_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ExchangeMedia.cpp ${CMAKE_SOURCE_DIR}/src/A2rFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/NuFxArchive.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskCopy42.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
+)
+target_include_directories(test_exchange_media PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME exchange_media COMMAND test_exchange_media
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(exchange_media PROPERTIES TIMEOUT 20)
+
 # ─── What a host file becomes on an Apple volume (HostFileImport.h) ───────
 # One decision for pom2_dos33 and pom2_prodos: an AppleSingle wrapper states
 # the type itself, else the host name does, and an Applesoft file that is a
@@ -7952,6 +7977,11 @@ set_tests_properties(cpm_disk_fs PROPERTIES TIMEOUT 15)
 add_executable(test_media_source
     media_source_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp
+    ${CMAKE_SOURCE_DIR}/src/ExchangeMedia.cpp ${CMAKE_SOURCE_DIR}/src/A2rFlux.cpp
+    ${CMAKE_SOURCE_DIR}/src/NuFxArchive.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskCopy42.cpp
+    ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+    ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
@@ -7968,7 +7998,8 @@ endif()
 if(WIN32)
     target_link_libraries(test_media_source PRIVATE winmm ws2_32)
 endif()
-add_test(NAME media_source COMMAND test_media_source)
+add_test(NAME media_source COMMAND test_media_source
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(media_source PROPERTIES TIMEOUT 60)
 
 # ─── Integer BASIC listing (the ][ Original's BASIC) ──────────────────────
@@ -12046,6 +12077,9 @@ pom2_add_headless_test(test_drive_rack_mount
     NAME drive_rack_mount TIMEOUT 20
     SOURCES drive_rack_mount_test.cpp ${CMAKE_SOURCE_DIR}/src/DriveRackMount.cpp
             ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+            ${CMAKE_SOURCE_DIR}/src/ExchangeMedia.cpp ${CMAKE_SOURCE_DIR}/src/A2rFlux.cpp ${CMAKE_SOURCE_DIR}/src/NuFxArchive.cpp
+            ${CMAKE_SOURCE_DIR}/src/DiskCopy42.cpp ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
+            ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
     LINK_LIBRARIES pom2_core_test)
 
 pom2_add_headless_test(test_boot_configuration

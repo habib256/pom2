@@ -16,6 +16,7 @@
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
 #include "program_file.hpp"
+#include "tape_content.hpp"
 #include "pom2/core.hpp"
 
 #include <algorithm>
@@ -1137,6 +1138,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
 
     DiskState state;
     std::optional<pom2::libretro::ProgramImage> program;
+    std::optional<pom2::libretro::TapePlan> tape;
     state.firmware = std::filesystem::u8path(systemDirectory) / "pom2";
     state.appleDiskFirmware = option("pom2_disk2_firmware") != "pom2";
     state.slotUsed[3] = true;   // the //e's 80 columns are internal; keep the slot clear
@@ -1157,6 +1159,8 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
         }
         if (pom2::libretro::isProgramFile(state.content))
             program = pom2::libretro::loadProgram(state.content);
+        else if (pom2::libretro::isTapeFile(state.content))
+            tape = pom2::libretro::planTape(state.content);
         else
             state.images = pom2::libretro::loadDiskList(state.content);
     }
@@ -1170,6 +1174,10 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     if (!state.images.empty()) {
         request.firstDisk = state.images.front().path;
         request.firstDiskIs35 = state.images.front().smartPort();
+    }
+    if (tape) {
+        request.prefer = tape->prefer;
+        request.needsCassette = true;
     }
     std::string error;
     if (!pom2::libretro::chooseMachine(request, machine, error)) {
@@ -1204,7 +1212,8 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     applyRuntimeOptions();   // the write-protect setting is needed before the first mount
 
     state.drives[1].ejected = true;   // drive 2 starts empty
-    if (game && !program) {
+    std::string tapeNote;
+    if (game && !program && !tape) {
         unsigned first = 0;
         std::error_code pathError;
         if (requestedDisk && requestedDisk->index < state.images.size()
@@ -1264,6 +1273,25 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             }
             target->pasteText(program->command);
         }
+        if (tape) {
+            // At the power-on prompt: the tape in the deck, the command that
+            // loads and starts it typed, PLAY pressed. The deck starts when
+            // the ROM's READ first polls $C060.
+            target->runVideo(static_cast<int>(machineTiming.cpuClockHz * 2));
+            if (!target->loadCassette(disks.content.u8string())) {   // `state` moved into `disks` above
+                reportError("Cannot load the tape: " + target->lastError());
+                return false;
+            }
+            const auto command = pom2::libretro::tapeCommand(*tape, machine.kind, tapeNote);
+            // pasteText drops control keys (a clipboard paste); a leading one
+            // (the ]['s Ctrl-B) is typed first, and the paste queues behind it.
+            std::size_t typed = 0;
+            while (typed < command.size() && command[typed] != '\r'
+                   && static_cast<unsigned char>(command[typed]) < 0x20)
+                target->queueKey(static_cast<std::uint8_t>(command[typed++]));
+            if (typed < command.size()) target->pasteText(command.substr(typed));
+            target->playCassette();
+        }
     }
 
     // The ABI buffer may never grow after a content load. A state carries
@@ -1297,6 +1325,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, &keyboard);
     environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, inputDescriptors);
     if (!core->supportsState()) summary += " · no save states";
+    if (!tapeNote.empty()) summary += " · " + tapeNote;
     notify(summary);
     return true;
 }
@@ -1544,7 +1573,7 @@ unsigned retro_api_version() { return RETRO_API_VERSION; }
 void retro_get_system_info(retro_system_info* info)
 {
     static const std::string version = pom2::Core::sdkInfo().version;
-    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u|zip|gz|bin|bas", true, true};
+    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u|zip|gz|bin|bas|shk|sdk|bxy|sea|dc|dc42|image|a2r|wav|aci", true, true};
 }
 
 void retro_get_system_av_info(retro_system_av_info* info)

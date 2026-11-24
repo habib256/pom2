@@ -131,6 +131,12 @@ bool chooseMachine(const MachineRequest& request, MachineChoice& choice, std::st
             if (request.machine == entry.option) picked = &entry;
         if (!picked) picked = &kFirmware[0];
     } else {
+        for (MachineKind kind : request.prefer) {
+            if (available(request.firmware, firmwareFor(kind))) {
+                picked = &firmwareFor(kind);
+                break;
+            }
+        }
         // A WOZ that names its machines picks the first of them we can run.
         const auto bits = request.firstDisk.empty() ? 0 : wozCompatibleHardware(request.firstDisk);
         for (MachineKind kind : {MachineKind::IIeEnhanced, MachineKind::IIe, MachineKind::IIPlus,
@@ -144,12 +150,18 @@ bool chooseMachine(const MachineRequest& request, MachineChoice& choice, std::st
         for (MachineKind kind : {MachineKind::IIeEnhanced, MachineKind::IIe, MachineKind::IIc,
                                  MachineKind::IIPlus, MachineKind::IIcPlus, MachineKind::II}) {
             if (picked) break;
+            if (request.needsCassette && !hasCassette(kind)) continue;
             if (available(request.firmware, firmwareFor(kind))) picked = &firmwareFor(kind);
         }
         if (!picked) {
             error = "No Apple II firmware found. " + missingMessage(kFirmware[0]);
             return false;
         }
+    }
+    if (request.needsCassette && !hasCassette(picked->kind)) {
+        // [B] The //c and //c Plus have no cassette port.
+        error = picked->name + std::string(" has no cassette port: choose another machine to play a tape");
+        return false;
     }
     if (!available(request.firmware, *picked)) {
         error = missingMessage(*picked);

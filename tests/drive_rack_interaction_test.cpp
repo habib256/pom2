@@ -13,6 +13,7 @@ FileDialogResult nativeFileDialog(bool, const std::string&, const std::string&,
 }
 }
 #include "imgui.h"
+#include "imgui_internal.h"
 #include <cassert>
 #include <vector>
 
@@ -104,6 +105,39 @@ int main() {
     assert(pickerFrame());
     picker.complete(false, "Invalid image"); assert(pickerFrame());
     picker.complete(true, ""); assert(!pickerFrame());
+    frame(); frame();
+    // A disk from a two-disk archive offers the other one: find the change
+    // button by clicking along the drive's row until its list opens, then
+    // pick the first entry (side A; side B is in the drive).
+    drives.assign(1, drive);
+    drives[0].loaded = true;
+    drives[0].path = "/cache/k-Game Side B.dsk";
+    drives[0].diskSet = {"/cache/k-Game Side A.dsk", "/cache/k-Game Side B.dsk"};
+    drives[0].diskSetNames = {"Game Side A.dsk", "Game Side B.dsk"};
+    frame(); frame();
+    bool listed = false;
+    for (float y = 120; y < 420 && !listed; y += 4) {
+        for (float x = 6; x < 140 && !listed; x += 4) {
+            io.AddMousePosEvent(x, y); frame();
+            io.AddMouseButtonEvent(0, true); frame();
+            io.AddMouseButtonEvent(0, false); frame();
+            listed = GImGui->OpenPopupStack.Size > 0;
+        }
+    }
+    assert(listed && "a drive whose archive holds two disks must offer the other one");
+    frame();
+    // Its first row: side A (side B, in the drive, is greyed out).
+    const ImGuiWindow* list = GImGui->OpenPopupStack.back().Window;
+    assert(list);
+    io.AddMousePosEvent(list->Pos.x + 20, list->Pos.y + ImGui::GetStyle().WindowPadding.y + ImGui::GetTextLineHeight() / 2);
+    frame();
+    std::vector<pom2::DriveRackAction> swaps;
+    io.AddMouseButtonEvent(0, true); result = frame();
+    io.AddMouseButtonEvent(0, false); release = frame();
+    for (const auto& r : {result, release})
+        for (const auto& a : r.actions)
+            if (a.type == pom2::DriveRackAction::Type::Swap) swaps.push_back(a);
+    assert(swaps.size() == 1 && swaps[0].path == "/cache/k-Game Side A.dsk" && swaps[0].driveIndex == 0);
     frame(); frame();
     modal = true; frame(); result = frame();
     assert(result.hits.empty() && "a modal dialog blocks drive drop targets");

@@ -15,10 +15,14 @@ struct DrivePicture {
     bool writeProtected = false;
     unsigned int texture = 0;
     float pictureAspect = 0.62f;
+    /// The disks of the archive the loaded one came from (MediaSource's
+    /// mediaSetOf), itself included, with the names to show; empty or one
+    /// entry when there is nothing to change to.
+    std::vector<std::string> diskSet, diskSetNames;
 };
 // Value-only renderer: no machine access, file I/O or texture ownership.
 struct DriveRackAction {
-    enum class Type { Eject, ToggleWrite, Insert, Mount };
+    enum class Type { Eject, ToggleWrite, Insert, Mount, Swap };
     Type type;
     std::size_t driveIndex;
     std::string path;

@@ -4,6 +4,7 @@
 
 #include "archive_content.hpp"
 
+#include "ExchangeMedia.h"
 #include "ZipMember.h"
 #include "pom2/core.hpp"
 
@@ -52,6 +53,33 @@ void writeIfChanged(const std::filesystem::path& path, const std::vector<std::ui
     if (!out) throw std::runtime_error("Cannot unpack to " + path.u8string());
 }
 
+// A ShrinkIt archive, a DiskCopy image or a .image: the disks it holds,
+// written into `folder`. A .image that is not DiskCopy 4.2 is a raw block
+// image, which the drives take as a .po.
+std::vector<std::filesystem::path> convertExchange(const std::string& name, const std::vector<std::uint8_t>& bytes,
+                                                   const std::filesystem::path& folder)
+{
+    std::vector<pom2::exchange::Image> images;
+    std::string note, error;
+    if (!pom2::exchange::convert(name, bytes, images, note, error)) {
+        const bool rawImage = lower(std::filesystem::path(name).extension().string()) == ".image"
+            && !bytes.empty() && bytes.size() % 512 == 0 && bytes.size() <= kMaxMember;
+        if (!rawImage) throw std::runtime_error(name + ": " + error);
+        images.push_back({std::filesystem::path(name).stem().u8string() + ".po", bytes});
+    }
+    std::vector<std::filesystem::path> paths;
+    for (const auto& image : images) {
+        writeIfChanged(folder / image.name, image.bytes);
+        paths.push_back(folder / image.name);
+    }
+    return paths;
+}
+
+bool exchangeName(const std::string& leaf)
+{
+    return pom2::exchange::hasExchangeExtension(leaf) || lower(std::filesystem::path(leaf).extension().string()) == ".image";
+}
+
 // A member name as a safe leaf: no folders, no parent references.
 std::string leafName(const std::string& member)
 {
@@ -66,7 +94,7 @@ std::string leafName(const std::string& member)
 bool isArchive(const std::filesystem::path& path)
 {
     const auto suffix = lower(path.extension().string());
-    return suffix == ".zip" || suffix == ".gz";
+    return suffix == ".zip" || suffix == ".gz" || exchangeName(path.filename().u8string());
 }
 
 std::filesystem::path unpackArchive(const std::filesystem::path& archive, const std::filesystem::path& cacheRoot)
@@ -78,31 +106,41 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
     const auto bytes = readAll(archive);
     std::string error;
 
-    if (lower(archive.extension().string()) == ".gz") {
+    std::vector<std::filesystem::path> disks, playlists;
+    if (exchangeName(archive.filename().u8string())) {
+        disks = convertExchange(archive.filename().u8string(), bytes, folder);
+    } else if (lower(archive.extension().string()) == ".gz") {
         std::vector<std::uint8_t> out;
         std::string name;
         if (!pom2::gunzip(bytes, out, error, kMaxMember, &name))
             throw std::runtime_error(archive.filename().u8string() + ": " + error);
         auto leaf = leafName(name);
         if (leaf.empty()) leaf = archive.stem().u8string();   // "Game.dsk.gz" -> "Game.dsk"
-        if (!loadable(leaf)) throw std::runtime_error(archive.filename().u8string() + " holds no Apple II disk image");
-        writeIfChanged(folder / leaf, out);
-        return folder / leaf;
-    }
-
-    std::vector<pom2::ZipEntry> entries;
-    if (!pom2::listZipEntries(bytes, entries, error))
-        throw std::runtime_error(archive.filename().u8string() + ": " + error);
-    std::vector<std::filesystem::path> disks, playlists;
-    for (const auto& entry : entries) {
-        const auto leaf = leafName(entry.name);
-        if (leaf.empty() || leaf.front() == '.' || !loadable(leaf)) continue;
-        std::vector<std::uint8_t> out;
-        if (!pom2::readZipEntry(bytes, entry, out, error, kMaxMember))
-            throw std::runtime_error(archive.filename().u8string() + ": " + entry.name + ": " + error);
-        writeIfChanged(folder / leaf, out);
-        (lower(std::filesystem::path(leaf).extension().string()) == ".m3u" ? playlists : disks)
-            .push_back(folder / leaf);
+        if (exchangeName(leaf)) {
+            disks = convertExchange(leaf, out, folder);   // "Game.shk.gz"
+        } else {
+            if (!loadable(leaf)) throw std::runtime_error(archive.filename().u8string() + " holds no Apple II disk image");
+            writeIfChanged(folder / leaf, out);
+            return folder / leaf;
+        }
+    } else {
+        std::vector<pom2::ZipEntry> entries;
+        if (!pom2::listZipEntries(bytes, entries, error))
+            throw std::runtime_error(archive.filename().u8string() + ": " + error);
+        for (const auto& entry : entries) {
+            const auto leaf = leafName(entry.name);
+            if (leaf.empty() || leaf.front() == '.' || !(loadable(leaf) || exchangeName(leaf))) continue;
+            std::vector<std::uint8_t> out;
+            if (!pom2::readZipEntry(bytes, entry, out, error, kMaxMember))
+                throw std::runtime_error(archive.filename().u8string() + ": " + entry.name + ": " + error);
+            if (exchangeName(leaf)) {
+                for (auto& disk : convertExchange(leaf, out, folder)) disks.push_back(std::move(disk));
+                continue;
+            }
+            writeIfChanged(folder / leaf, out);
+            (lower(std::filesystem::path(leaf).extension().string()) == ".m3u" ? playlists : disks)
+                .push_back(folder / leaf);
+        }
     }
     if (!playlists.empty()) return playlists.front();
     if (disks.empty()) throw std::runtime_error(archive.filename().u8string() + " holds no Apple II disk image");

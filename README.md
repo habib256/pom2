@@ -114,7 +114,11 @@ allow POM2.
 
 POM2 reads `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.nb2`, `.woz`, `.moof`, `.2mg`,
 `.hdv` and `.image` (a raw 400K/800K/1.44 MB 3.5" image). The desktop version also takes a `.zip`, a `.gz`, an http(s) URL or a
-`tnfs://` URL, and keeps the guest's writes in a local copy.
+`tnfs://` URL, a ShrinkIt archive (`.shk`, `.sdk`, `.bxy`), a DiskCopy 4.2 image
+(`.dc`, `.dc42`) or an Applesauce flux capture (`.a2r`), and keeps the guest's
+writes in a local copy: the original file is never written. An archive of several
+disks (a game's sides) mounts the first; the drive's change button in
+**Drives**, or its entry in the **File** menu, swaps in the others.
 
 New to the Apple II? With no disk inserted the machine keeps trying to boot, so
 press **F11** to reach the BASIC prompt, type `PRINT "HELLO, APPLE II!"` and

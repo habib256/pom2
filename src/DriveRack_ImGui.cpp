@@ -101,12 +101,32 @@ DriveRackResult renderDriveRack(bool& open, const std::vector<DrivePicture>& dri
             result.actions.push_back({DriveRackAction::Type::ToggleWrite, index, {}});
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(drive.writeProtected
             ? "Allow writing to disk" : "Protect disk from writing");
+        if (drive.diskSet.size() > 1) {
+            // The other disks of its archive: a game's sides, a set's volumes.
+            ImGui::SameLine(0.0f, 3.0f);
+            if (ImGui::SmallButton(ICON_FA_SHUFFLE)) ImGui::OpenPopup("##disk-set");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Change disk: %zu in this archive", drive.diskSet.size());
+            if (ImGui::BeginPopup("##disk-set")) {
+                for (std::size_t i = 0; i < drive.diskSet.size(); ++i) {
+                    const bool current = drive.diskSet[i] == drive.path;
+                    if (ImGui::MenuItem(drive.diskSetNames[i].c_str(), nullptr, current, !current))
+                        result.actions.push_back({DriveRackAction::Type::Swap, index, drive.diskSet[i]});
+                }
+                ImGui::EndPopup();
+            }
+        }
         ImGui::PopStyleVar();
         ImGui::EndDisabled();
         ImGui::SameLine();
         if (drive.loaded) {
-            const auto filename = drive.path.find_last_of("/\\");
-            ImGui::TextWrapped("%s", drive.path.c_str() + (filename == std::string::npos ? 0 : filename + 1));
+            const auto current = std::find(drive.diskSet.begin(), drive.diskSet.end(), drive.path);
+            if (current != drive.diskSet.end()) {
+                ImGui::TextWrapped("%s", drive.diskSetNames[std::size_t(current - drive.diskSet.begin())].c_str());
+            } else {
+                const auto filename = drive.path.find_last_of("/\\");
+                ImGui::TextWrapped("%s", drive.path.c_str() + (filename == std::string::npos ? 0 : filename + 1));
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", drive.path.c_str());
         } else ImGui::TextDisabled("Empty");
         ImGui::PopID(); ImGui::PopID();

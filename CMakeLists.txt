@@ -439,6 +439,7 @@ set(SOURCES
     # package is exported below as POM2::core by the pom2_core_sdk install
     # component; the source tree and installed consumer use the same facade.
     src/Pom2Core.cpp
+    src/CassetteRecords.cpp
     src/Pom2Core_Snapshot.cpp
     src/Pom2Core_Machine.cpp
     src/W5100HostSockets.cpp
@@ -559,6 +560,10 @@ set(SOURCES
     src/TnfsClient.cpp
     src/TnfsMedia.cpp
     src/MediaSource.cpp
+    src/ExchangeMedia.cpp
+    src/A2rFlux.cpp
+    src/NuFxArchive.cpp
+    src/DiskCopy42.cpp
     src/SpeakerDevice.cpp
     src/SuperSerialCard.cpp
     src/SuperSerialTcpTransport.cpp
@@ -1071,6 +1076,10 @@ set(POM2_RUNTIME_SOURCES
     src/TnfsClient.cpp
     src/TnfsMedia.cpp
     src/MediaSource.cpp
+    src/ExchangeMedia.cpp
+    src/A2rFlux.cpp
+    src/NuFxArchive.cpp
+    src/DiskCopy42.cpp
     src/Apple2Display.cpp
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
@@ -1091,6 +1100,7 @@ set(POM2_RUNTIME_SOURCES
     src/ImageWriterPdf.cpp
     src/MachineSnapshot.cpp
     src/Pom2Core.cpp
+    src/CassetteRecords.cpp
     src/Pom2Core_Snapshot.cpp
     src/Pom2Core_Machine.cpp
     src/PrinterHistory.cpp
@@ -1190,6 +1200,11 @@ set(HEADERS
     src/RomImport.h
     src/ProfileSwitch.h
     src/ZipMember.h
+    src/ExchangeMedia.h
+    src/A2rFlux.h
+    src/CassetteRecords.h
+    src/NuFxArchive.h
+    src/DiskCopy42.h
     src/CliDispatcher.h
     src/ClockCard.h
     src/Disassembler6502.h
@@ -1827,6 +1842,7 @@ set(POM2_CORE_SOURCES
     src/W5100HostSockets.cpp
     src/W5100NameResolver.cpp
     src/Pom2Core.cpp
+    src/CassetteRecords.cpp
     src/Pom2Core_Snapshot.cpp
     src/Pom2Core_Machine.cpp
     src/Apple2Display.cpp
@@ -2314,6 +2330,12 @@ add_executable(pom2_headless
     src/NoSlotClock.cpp
     # --disk takes a .zip, a .gz or an http(s) URL like the GUI positional.
     src/MediaSource.cpp
+    src/ExchangeMedia.cpp
+    src/A2rFlux.cpp
+    src/NuFxArchive.cpp
+    src/DiskCopy42.cpp
+    src/ProDOSDiskFs.cpp
+    src/DiskBuilder.cpp
     src/ZipMember.cpp
     src/ChildProcess.cpp
     src/ResourcePaths.cpp

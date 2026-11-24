@@ -223,6 +223,14 @@ struct SdkInfo {
     std::vector<std::string> capabilities;
 };
 
+/// One data record of a program tape, as the Monitor's READ ($FEFD) reads
+/// it: the bytes after the sync cycle, the trailing checksum byte checked
+/// and removed.
+struct CassetteRecord {
+    std::vector<std::uint8_t> bytes;
+    bool checksumOk = false;
+};
+
 /// Host-visible cassette transport state. Program tapes remain armed after
 /// PLAY until the guest first polls $C060, matching the physical interface.
 struct CassetteState {
@@ -417,6 +425,15 @@ public:
     void armCassetteRecording();
     void clearCassetteRecording();
     CassetteState cassetteState() const;
+    /// The data records of the loaded program tape, decoded from its pulse
+    /// train before the guest reads it: a 2-byte first record is an Integer
+    /// BASIC SAVE, a 3-byte one an Applesoft SAVE, a single record a Monitor
+    /// memory dump. Empty with no tape or an audio-stream tape.
+    std::vector<CassetteRecord> cassetteRecords() const;
+    /// The same, read from a tape file with no machine: to pick the machine
+    /// a tape needs before building it. False with the reason in `error`.
+    static bool readCassetteRecords(std::string_view path, std::vector<CassetteRecord>& records,
+                                    std::string& error);
     /// Cassette monitor gain in [0, 2]. Values outside the range are clamped.
     void setCassetteVolume(float volume);
 

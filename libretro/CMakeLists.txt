@@ -8,11 +8,15 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
-    core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp)
+    core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp
+    tape_content.cpp)
 target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cpp
     # Host formats the SDK does not take: archives and programs.
     ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
-    ../src/HostFileTag.cpp ../src/AppleSingle.cpp)
+    ../src/HostFileTag.cpp ../src/AppleSingle.cpp
+    # ShrinkIt archives, DiskCopy 4.2 images and A2R flux captures, as the desktop opens them.
+    ../src/ExchangeMedia.cpp ../src/A2rFlux.cpp ../src/NuFxArchive.cpp ../src/DiskCopy42.cpp ../src/ProDOSDiskFs.cpp
+    ../src/DiskBuilder.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)
 target_include_directories(pom2_libretro PRIVATE

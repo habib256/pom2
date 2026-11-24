@@ -14,8 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// MediaSource — a disk given as an http(s) URL, a .gz or a .zip, turned into
-// a plain local image the rest of POM2 mounts as it mounts any file.
+// MediaSource — a disk given as an http(s) URL, a .gz, a .zip or an exchange
+// file (a ShrinkIt archive, a DiskCopy 4.2 image, an A2R flux capture:
+// ExchangeMedia.h), turned
+// into a plain local image the rest of POM2 mounts as it mounts any file.
 //
 // The TNFS shape (TnfsMedia.h), for the same reasons: no second mount path,
 // and writes go somewhere honest. A URL is downloaded with the host's curl
@@ -42,14 +44,26 @@ namespace pom2 {
 bool isHttpUrl(const std::string& source);
 /// Ends in .gz or .zip (case-insensitive).
 bool isCompressedImage(const std::string& source);
-/// Either: a source resolveMediaSource has work to do on.
+/// A local exchange file a drive cannot take as it is (ExchangeMedia.h):
+/// ShrinkIt .shk/.sdk/.bxy/.sea, DiskCopy .dc/.dc42, Applesauce .a2r, and a
+/// .image whose header is DiskCopy 4.2's (read from the file).
+bool isExchangeMedia(const std::string& source);
+/// Any of them: a source resolveMediaSource has work to do on.
 inline bool needsMediaResolve(const std::string& source)
 {
-    return isHttpUrl(source) || isCompressedImage(source);
+    return isHttpUrl(source) || isCompressedImage(source) || isExchangeMedia(source);
 }
 
 /// `<user data>/media_cache`.
 std::filesystem::path mediaCacheDir();
+
+/// The disks unpacked from the same source as `image`, itself included, in
+/// name order: what a drive holding `image` can change to. An image this
+/// module did not put in `cacheDir` is a set of one.
+std::vector<std::string> mediaSetOf(const std::string& image, const std::filesystem::path& cacheDir);
+/// The name to show for a disk: a cached image's file name without the key
+/// MediaSource put in front of it.
+std::string mediaDisplayName(const std::string& image);
 
 /// Where a URL's download is cached (before any archive extension the
 /// download adds: a zip or gzip served under a name without one).

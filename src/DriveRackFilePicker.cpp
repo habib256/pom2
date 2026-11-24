@@ -33,7 +33,8 @@ void DriveRackFilePicker::browse(const std::string& directory) {
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
             if (ext != ".dsk" && ext != ".do" && ext != ".po" && ext != ".nib" && ext != ".nb2" &&
                 ext != ".woz" && ext != ".moof" && ext != ".2mg" && ext != ".hdv" && ext != ".d13" && ext != ".image" &&
-                ext != ".zip" && ext != ".gz") continue;
+                ext != ".zip" && ext != ".gz" && ext != ".shk" && ext != ".sdk" && ext != ".bxy" &&
+                ext != ".sea" && ext != ".dc" && ext != ".dc42" && ext != ".a2r") continue;
         }
         entries.push_back({name, item.path().string(), folder});
     }

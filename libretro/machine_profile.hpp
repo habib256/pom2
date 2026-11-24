@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -23,6 +24,8 @@ struct MachineRequest {
     std::filesystem::path firmware;       // system/pom2
     std::filesystem::path firstDisk;      // empty without content
     bool firstDiskIs35 = false;
+    std::vector<MachineKind> prefer;      // Automatic tries these first (a tape's)
+    bool needsCassette = false;           // a //c has no cassette port
 };
 
 struct MachineChoice {
@@ -45,6 +48,13 @@ std::uint16_t wozCompatibleHardware(const std::filesystem::path& path);
 bool isDixImage(const std::filesystem::path& path);
 
 constexpr bool hasSlots(MachineKind kind)
+{
+    return kind != MachineKind::IIc && kind != MachineKind::IIcPlus;
+}
+
+// [B] Every Apple II before the //c has a cassette port; the //c and the
+//     //c Plus have none.
+constexpr bool hasCassette(MachineKind kind)
 {
     return kind != MachineKind::IIc && kind != MachineKind::IIcPlus;
 }

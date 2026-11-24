@@ -20,7 +20,7 @@ an explicit request before scheduling.
 | [STORAGE-010](#storage-010) | 🧊 | Frozen — deliberate limit | A `.nib` track is not normalised to one 200 ms revolution |
 | [STORAGE-007](#storage-007) | 🧊 | Frozen | Half-tracked NIB (88) |
 | [STORAGE-008](#storage-008) | 🧊 | Frozen | Floppy Emu Dual-5.25" + Smartport-Unit-2 modes |
-| [STORAGE-017](#storage-017) | 🟢 | Ready | A2R 3.x flux import, ShrinkIt archives, multi-disk archives |
+| [STORAGE-017](#storage-017) | 🟢 | Partial: A2R 3 on a real capture | A2R 3.x flux import, ShrinkIt archives, multi-disk archives |
 | [STORAGE-018](#storage-018) | 🧊 | Frozen: the speed drift shipped 2026-11-24; the clock half waits for a title | 5.25" timeline on the true LSS clock |
 
 <a id="storage-014"></a>
@@ -221,21 +221,22 @@ Shipped 2026-11-18: see the CHANGELOG entry of that date. The anchor stays for i
 
 ## STORAGE-017 — A2R 3.x flux import, ShrinkIt archives, multi-disk archives
 
-**Priority:** 🟢 · **State:** Ready (research of 2026-11-18).
+**Priority:** 🟢 · **State:** Partial — A2R 2/3, ShrinkIt and desktop multi-disk archives shipped 2026-11-24 (CHANGELOG of that date); one item left.
 
-Three exchange formats other emulators read and POM2 does not:
-- **A2R 3.x** (Applesauce raw flux, [spec](https://applesaucefdc.com/a2r/)):
-  read-only, feeding the existing FLUX-track engine (`DiskImageWozFlux.cpp`);
-  Apple2TS and izapple2 import it.
-- **ShrinkIt** `.shk` / `.sdk` / `.bxy` (NuFX): a disk image inside a NuFX
-  archive, through the same `MediaSource.h` cache the `.zip`/`.gz` path uses.
-- **Multi-disk archives**: a `.zip` holding several images (Second Reality's
-  two disks, a game's sides) mounts the first and offers the others as a
-  per-drive swap list, instead of only the first image today.
+Shipped, through `ExchangeMedia.h` (desktop `MediaSource` and the libretro
+core alike): ShrinkIt `.shk`/`.sdk`/`.bxy`/`.sea` (uncompressed, LZW/1,
+LZW/2; identical to NuLib2 on the 82 local archives), DiskCopy 4.2, and A2R 2
+and 3 captures of 5.25" disks as WOZ 2.1 flux. A real A2R 2 capture
+(Wilderness side B) boots to a screen identical to the WOZ Applesauce made
+of it. A zip or ShrinkIt archive of several disks offers the others on the
+drive that holds one (desktop), as a playlist (libretro).
 
-**Acceptance criterion:** an A2R 3.x capture of a title already in the corpus
-boots to the same checked frame as its WOZ; a NuFX `.sdk` and a two-image zip
-mount through `MediaSource` with the archive never written.
+Left:
+- **A2R 3 on a real capture.** The A2R 3 path (RWCP resolution, index
+  signals, SLVD) is pinned on synthetic files only. Acceptance: an A2R 3
+  capture of a corpus title boots to the same checked frame as its WOZ.
+
+3.5" A2R captures and A2R's legacy "bits" captures are refused by name.
 
 <a id="storage-018"></a>
 

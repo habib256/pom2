@@ -59,7 +59,9 @@ std::string explainUnknownDisk(const std::string& path)
            "Apple II disk images end in .dsk, .do, .po, .nib, .nb2 or .woz (5.25-inch "
            "floppies), .po, .2mg or .woz (3.5-inch disks), or .hdv / .2mg (hard "
            "disks) — or be one of those inside a .zip or a .gz, which POM2 opens "
-           "itself. A .7z or .shk archive has to be unpacked first.";
+           "itself, as it opens ShrinkIt archives (.shk, .sdk, .bxy), DiskCopy "
+           "4.2 images (.dc, .dc42) and Applesauce flux captures (.a2r). A .7z "
+           "archive has to be unpacked first.";
 }
 
 bool mountEmptyDrive(EmulationController& controller, Settings& settings,

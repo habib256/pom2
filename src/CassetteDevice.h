@@ -216,6 +216,10 @@ public:
         return audioStreamMode ? static_cast<size_t>(audioStreamTotalFrames) : loadedDurations.size();
     }
     size_t getRecordedTransitionCount() const { return recordedDurations.size(); }
+    /// The loaded program tape's half-cycle durations, in cycles of the
+    /// file timebase (kTapeFileTimebaseHz); empty for an audio stream.
+    const std::vector<uint32_t>& getLoadedDurations() const { return loadedDurations; }
+    static constexpr double tapeFileTimebaseHz() { return kTapeFileTimebaseHz; }
     const std::string& getLoadedTapePath() const { return loadedTapePath; }
     const std::string& getLoadInfo()       const { return loadInfo; }
     const std::string& getLastError()      const { return lastError; }

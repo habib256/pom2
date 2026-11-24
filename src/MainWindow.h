@@ -52,6 +52,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <utility>
 #include <string>
@@ -1523,6 +1524,12 @@ private:
     /// file picker passes false — it shows the reason in its own window.
     bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path,
                               bool explain = true);
+    /// Change a loaded drive to another disk of the same archive (its
+    /// DrivePicture::diskSet). False with the reason shown when refused.
+    bool swapDriveDisk(const pom2::DrivePicture& drive, const std::string& path);
+    /// mediaSetOf() per loaded image, read once: the set of a cached image
+    /// never changes, and collectDrivePictures() runs every frame.
+    std::unordered_map<std::string, std::vector<std::string>> diskSetCache_;
     /// A disk the user tried to insert was refused. Shown in a dialog in the
     /// middle of the screen until OK — a few seconds of status-bar text was
     /// easy to miss, and said what failed without saying why.

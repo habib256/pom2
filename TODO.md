@@ -47,7 +47,7 @@ expression conditions / access counters / code-data log, and
 |---|---|
 | [AUDIO-009](docs/backlog/audio.md#audio-009) | Passport MIDI is implemented: run Ultima V with the card in slot 2 and record a song; then run the WinMM and ALSA backends (both compile in CI). |
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
-| [STORAGE-017](docs/backlog/storage.md#storage-017) | A2R 3.x import into the FLUX engine; ShrinkIt; multi-disk zips as a swap list. |
+| [STORAGE-017](docs/backlog/storage.md#storage-017) | Left: A2R 3 checked on a real capture (A2R 2/3, ShrinkIt, DiskCopy and multi-disk archives shipped 2026-11-24). |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
 

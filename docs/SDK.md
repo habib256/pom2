@@ -503,6 +503,15 @@ Sound II; the desktop card catalogue is not the facade's attachment API.
 WAV and other suffixes select ACI. It does not append a suffix as the desktop
 CLI does. Supply `.aci` or `.wav` explicitly when saving through the SDK.
 
+`cassetteRecords()` reads the loaded program tape the way the Monitor's READ
+does, before the guest touches it: each record's bytes and whether its
+checksum holds. A 2-byte first record is an Integer BASIC `SAVE`, a 3-byte one
+an Applesoft `SAVE`, a single record a Monitor `W` dump. The static
+`Core::readCassetteRecords(path, records, error)` does the same from a file
+with no machine built, to choose the machine a tape needs (the libretro core
+does). An audio-stream tape (`.mp3`, `.ogg`, `.flac`) has no pulse train to
+read and gives none.
+
 `attachDriveSounds(folder)` adds the drives' mechanical sounds, from MAME's
 floppy samples (POM2's `roms/floppy_samples/`): the 5.25" set for the Disk II,
 attached now or later, and the `35_` set for the //c+'s 3.5" drives. They are
@@ -624,6 +633,7 @@ checkout. A capability name is added with its API and never reused:
 | Capability | API |
 |---|---|
 | `cassette` | `loadCassette` and the transport |
+| `cassette.records` | `cassetteRecords`, `readCassetteRecords` |
 | `accelerator` | `setAccelerator`, `runVideo`, `cpuSpeedMultiplier` |
 | `disk2` | `attachDiskII`, `insertDisk`, `bootDisk` |
 | `drive.sounds` | `attachDriveSounds`, `setDriveSoundVolume` |

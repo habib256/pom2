@@ -10,6 +10,76 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — ShrinkIt, DiskCopy, A2R flux, multi-disk archives and tapes that load themselves
+
+Four exchange formats the Apple II world uses and POM2 did not read, on the
+desktop (drop, picker, CLI, headless, all through `MediaSource`) and in the
+libretro core alike: both go through one converter, `ExchangeMedia.h`, so the
+two cannot read a file two ways. The result lands in the media cache like a
+`.zip`'s; the original is never written.
+
+- **ShrinkIt** (`NuFxArchive.h`): `.shk`, `.sdk`, `.bxy` (Binary II) and
+  `.sea`; stored, LZW/1 and LZW/2 threads — the only three in the 82 local
+  archives (724 LZW/1, 168 LZW/2, 356 stored). Written from Apple's File
+  Type Note $E0/$8002; what the note does not say is taken from NufxLib and
+  marked [D]: ShrinkIt's LZW layout and its two quirks (the code width rises
+  one code early; an LZW/2 chunk that ends on a table clear), the disk EOF
+  old ShrinkIt versions wrote wrong, and the "bad Mac" archives whose LZW/2
+  chunk lengths are garbage. Checked against NuLib2's own extraction of all
+  82 archives: identical, resource forks included. A disk record is its
+  disk; file records become files on a new ProDOS volume with their types,
+  the smallest of 140 KB, 800 KB or a hard disk, in one folder when the top
+  level has more than the volume directory's 51 entries. The volume carries
+  no boot code (POM2 ships none of Apple's); a 140 KB one gets POM2's "NOT A
+  STARTUP DISK" sector.
+- **DiskCopy 4.2** (`DiskCopy42.h`, [B] File Type Note $E0/$0005): `.dc`,
+  `.dc42`, and a `.image` whose header is DiskCopy's (a raw `.image` still
+  mounts as it is). Both checksums are checked, the tag one without its
+  first 12 bytes, which DiskCopy 4.0 left out; an Apple developer disk of
+  1991 passed both.
+- **A2R** (`A2rFlux.h`): Applesauce captures of 5.25" disks, A2R 2 and 3,
+  become WOZ 2.1 files with FLUX tracks, which POM2 already plays. A capture
+  is more than one revolution and a WOZ flux track is exactly one, looped:
+  Applesauce's solved loop (SLVD) when the file has one, otherwise a first
+  guess (index signal, A2R 2's loop point, 200 ms) refined to where the flux
+  repeats, so the loop joins without a seam ([F], what would settle it is in
+  the header). The two local A2R 2 captures convert in 3.4 s; the Wilderness
+  side B one boots to a screen identical, pixel for pixel, to the WOZ
+  Applesauce made of the same capture (same `image_date`). A2R 3 is pinned on
+  synthetic captures only (STORAGE-017).
+- **Cassette tapes** in the libretro core (`.wav`, `.aci`). The SDK gains
+  `cassetteRecords()` and the static `readCassetteRecords(path)`
+  (`CassetteRecords.h`): the records read off the pulse train as the
+  Monitor's READ reads them, before the guest does. A 2-byte header record is
+  an Integer BASIC SAVE, a 3-byte one Applesoft's, one record a memory dump.
+  So the core picks the machine (Integer BASIC: the original ][, the only ROM
+  with it; Applesoft: ][+ or //e; never a //c, which has no cassette port)
+  and types `LOAD` and `RUN` — after Ctrl-B on the ][, sent with `queueKey`
+  because `pasteText` drops control keys by design. Proven both ways with the
+  real ROMs: a //e `SAVE`d an Applesoft program and an Apple ][ an Integer
+  BASIC one (as WAV); both decode with good checksums, and both run as
+  libretro content. A synthetic tape needs a ~10 s header: READ waits about
+  3.5 s after the first edge before it looks for the sync, and a 2.6 s
+  header was missed.
+
+- **Several disks in one archive, on the desktop.** A `.zip` used to give
+  up its first disk image and keep the rest; a ShrinkIt archive of several
+  disks did the same. Every disk now lands in the media cache under the
+  archive's key, and `mediaSetOf()` reads the set back from the cache — no
+  state is kept anywhere else, so it survives a restart. A drive holding one
+  of them shows a change button in Drives (and a "Change disk" list in its
+  File-menu entry): the outgoing disk is flushed as for any replacement,
+  through `mountIntoDrive`, and the //c Plus's own 3.5" bays, which have no
+  slot, eject then insert. The libretro core already made such archives a
+  playlist.
+
+Tests: `exchange_media` (NuLib2-made fixtures from POM2's own content, an
+LZW/1 thread re-framed from LZW/2, synthetic DiskCopy and A2R 2/3 files),
+`cassette_records` (±15 % jitter on every half), new cases in `media_source`
+(a two-disk zip's set), `drive_rack_interaction` (the change list yields a
+swap to the other side) and in the libretro `formats` scenario (Dirtbike inside a ShrinkIt archive
+boots; an Applesoft tape loads and runs).
+
 ## 2026-11-24 — The desktop's CRT pass in RetroArch
 
 The libretro core draws its picture on the CPU, and the desktop's look came

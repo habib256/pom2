@@ -103,6 +103,17 @@ std::vector<pom2::DrivePicture> MainWindow::collectDrivePictures() {
         if (a.slot != b.slot) return a.slot > b.slot;
         return a.bay < b.bay;
     });
+    // The other disks of a loaded disk's archive (a game's sides). Read once
+    // per image: this list is rebuilt every frame and the set never changes.
+    for (auto& drive : drives) {
+        if (!drive.loaded || drive.path.empty()) continue;
+        auto it = diskSetCache_.find(drive.path);
+        if (it == diskSetCache_.end())
+            it = diskSetCache_.emplace(drive.path, pom2::mediaSetOf(drive.path, pom2::mediaCacheDir())).first;
+        if (it->second.size() < 2) continue;
+        drive.diskSet = it->second;
+        for (const auto& disk : drive.diskSet) drive.diskSetNames.push_back(pom2::mediaDisplayName(disk));
+    }
     return drives;
 }
 
@@ -161,6 +172,16 @@ void MainWindow::renderFileMenuDrives() {
                 runDriveRackAction(drive, pom2::DriveRackAction::Type::Eject);
             if (ImGui::MenuItem(ICON_FA_LOCK "  Write-protected", nullptr, drive.writeProtected))
                 runDriveRackAction(drive, pom2::DriveRackAction::Type::ToggleWrite);
+            if (drive.diskSet.size() > 1) {
+                ImGui::Separator();
+                ImGui::TextDisabled(ICON_FA_SHUFFLE "  Change disk");
+                for (std::size_t i = 0; i < drive.diskSet.size(); ++i) {
+                    const bool current = drive.diskSet[i] == drive.path;
+                    const std::string item = "    " + drive.diskSetNames[i] + "##set" + std::to_string(i);
+                    if (ImGui::MenuItem(item.c_str(), nullptr, current, !current))
+                        runDriveRackAction(drive, pom2::DriveRackAction::Type::Swap, drive.diskSet[i]);
+                }
+            }
             ImGui::EndMenu();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", drive.path.c_str());
@@ -186,6 +207,10 @@ void MainWindow::runDriveRackAction(const pom2::DrivePicture& drive,
         insertDriveRackImage(drive, path);
         return;
     }
+    if (type == pom2::DriveRackAction::Type::Swap) {
+        swapDriveDisk(drive, path);
+        return;
+    }
     pom2::StorageCoordinator::MediaCommandResult command;
     if (type == pom2::DriveRackAction::Type::ToggleWrite)
         command = storageCoordinator_->setMediaNotch(*controller, drive.path, !drive.writeProtected);
@@ -208,6 +233,32 @@ bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const st
     tapeStatusMessage = ok ? "Inserted into " + target.label + ": " + path : error;
     tapeStatusUntil = lastFrameTime + 5.0;
     if (!ok && explain) showDiskRefusal(path, error);
+    return ok;
+}
+
+// Another disk of the same archive into a loaded drive: the outgoing disk is
+// flushed first, as for any replacement. A slotted drive replaces in place
+// (mountIntoDrive); the //c+'s own 3.5" mechanisms have no slot, so theirs is
+// ejected, then the new one inserted.
+bool MainWindow::swapDriveDisk(const pom2::DrivePicture& drive, const std::string& path)
+{
+    std::string error;
+    bool ok = false;
+    if (drive.slot >= 0) {
+        ok = mountIntoDrive(drive.slot, drive.bay, path, error, std::string());
+    } else {
+        const auto ejected = storageCoordinator_->ejectDisk35(*controller, *settings, drive.bay, true);
+        if (!ejected.ok) {
+            error = ejected.error;
+        } else {
+            pom2::DrivePicture empty = drive;
+            empty.loaded = false;
+            ok = pom2::mountEmptyDrive(*controller, *settings, *storageCoordinator_, empty, path, error);
+        }
+    }
+    tapeStatusMessage = ok ? drive.label + ": " + pom2::mediaDisplayName(path) : error;
+    tapeStatusUntil = lastFrameTime + 5.0;
+    if (!ok) showDiskRefusal(path, error);
     return ok;
 }
 

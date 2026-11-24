@@ -19,6 +19,7 @@
 #include "Apple2Display.h"
 #include "AudioMix.h"
 #include "CassetteDevice.h"
+#include "CassetteRecords.h"
 #include "CpuClock.h"
 #include "DiskIICard.h"
 #include "EzColorCard.h"
@@ -1101,6 +1102,30 @@ bool Core::saveCassette(std::string_view path)
     return saved;
 }
 
+bool Core::readCassetteRecords(std::string_view path, std::vector<CassetteRecord>& records,
+                               std::string& error)
+{
+    records.clear();
+    CassetteDevice deck;
+    if (!deck.loadTape(std::string(path))) {
+        error = deck.getLastError();
+        return false;
+    }
+    for (auto& r : pom2::cassette::decodeRecords(deck.getLoadedDurations(), CassetteDevice::tapeFileTimebaseHz()))
+        records.push_back({std::move(r.bytes), r.checksumOk});
+    error.clear();
+    return true;
+}
+
+std::vector<CassetteRecord> Core::cassetteRecords() const
+{
+    std::vector<CassetteRecord> out;
+    for (auto& r : pom2::cassette::decodeRecords(impl_->cassette.getLoadedDurations(),
+                                                 CassetteDevice::tapeFileTimebaseHz()))
+        out.push_back({std::move(r.bytes), r.checksumOk});
+    return out;
+}
+
 void Core::playCassette()
 {
     impl_->cassette.playTape();
@@ -1616,6 +1641,7 @@ SdkInfo Core::sdkInfo()
     info.capabilities = {
         "accelerator",
         "cassette",
+        "cassette.records",
         "disk2",
         "drive.sounds",
         "ezcolor",

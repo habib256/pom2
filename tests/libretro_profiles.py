@@ -191,6 +191,8 @@ def check_formats(module, system, root, disk):
     (content / "hello.bas").write_text('10 HOME\n20 PRINT "POM2 BAS OK"\n30 END\n')
     # LDA #$A5 / STA $0350 / RTS at $0300, the address in its name.
     (content / "MARK#060300.bin").write_bytes(bytes([0xA9, 0xA5, 0x8D, 0x50, 0x03, 0x60]))
+    (content / "dirtbike.sdk").write_bytes(shrinkit_disk(disk.read_bytes()))
+    (content / "hello.aci").write_bytes(applesoft_tape())
 
     def boot(name, frames):
         host = Host(module, system, root / "saves", {})
@@ -210,6 +212,73 @@ def check_formats(module, system, root, disk):
     require("POM2 BAS OK" in text, "the Applesoft listing did not RUN")
     _, marker, text = boot("MARK#060300.bin", 240)
     require(marker == 0xA5 and "CALL 768" in text, "the binary was not loaded at $0300 and called")
+    count, _, text = boot("dirtbike.sdk", 300)
+    require(count == 1 and "DIRTBIKE" in text, "the ShrinkIt disk archive did not boot Dirtbike")
+    _, _, text = boot("hello.aci", 60 * 45)
+    require("POM2 TAPE OK" in text and "LOAD" in text, "the Applesoft tape was not LOADed and RUN")
+
+
+def crc16(data, crc=0):
+    """CRC-16/XMODEM, the NuFX CRC."""
+    for x in data:
+        crc ^= x << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def shrinkit_disk(dsk):
+    """A ShrinkIt archive holding a 140 KB disk, stored ([B] File Type Note
+    $E0/$8002). ShrinkIt keeps disks in ProDOS block order: a DOS-ordered
+    .dsk is reordered first ([B] Beneath Apple ProDOS: block n of track t is
+    DOS sectors 0/E, D/C, B/A, 9/8, 7/6, 5/4, 3/2, 1/F for n = 0..7)."""
+    import struct
+    order = [0x0, 0xE, 0xD, 0xC, 0xB, 0xA, 0x9, 0x8, 0x7, 0x6, 0x5, 0x4, 0x3, 0x2, 0x1, 0xF]
+    blocks = b"".join(dsk[(t * 16 + order[s]) * 256:(t * 16 + order[s] + 1) * 256]
+                      for t in range(35) for s in range(16))
+    name = b"DIRTBIKE"
+    header = (b"NuFX\0\0" + struct.pack("<HHIHHIIIH", 58, 0, 1, 1, ord("/"), 0xE3, 0, 280, 512)
+              + bytes(24) + struct.pack("<H", len(name)) + name
+              + struct.pack("<HHHHII", 2, 0, 1, 0, 0, len(blocks)))
+    crc = crc16(header[6:])
+    header = header[:4] + struct.pack("<H", crc) + header[6:]
+    master = b"N\xf5F\xe9l\xe5" + b"\0\0" + struct.pack("<I", 1) + bytes(36)
+    header = b"N\xf5F\xd8" + header[4:]
+    return master + header + blocks
+
+
+def applesoft_tape():
+    """`10 PRINT "POM2 TAPE OK"` as the Applesoft SAVE writes it, in POM2's
+    .aci pulse format: a 3-byte header record (length, then $55), then the
+    program ([C] Monitor WRITE: 770 Hz header, a 200/250 us sync cycle, bits
+    as two 250 us or two 500 us halves, MSB first, an $FF-seeded XOR
+    checksum)."""
+    import struct
+    line = b"\x0a\x00\xba\"POM2 TAPE OK\"\x00"   # line 10, PRINT, the string
+    link = 0x0801 + 2 + len(line)
+    program = struct.pack("<H", link) + line + b"\x00\x00"
+    records = [struct.pack("<HB", len(program) + 1, 0x55), program + b"\x00\x00"]
+    hz = 1022727.0
+    halves = []
+    def half(us):
+        halves.append(max(1, round(us * hz / 1e6)))
+    for record in records:
+        for _ in range(16000):   # ~10 s: READ waits ~3.5 s after the first edge ([C] HEADR)
+            half(649.0)
+        half(200.0)
+        half(250.0)
+        check = 0xFF
+        for byte in list(record) + [None]:
+            value = check if byte is None else byte
+            if byte is not None:
+                check ^= byte
+            for bit in range(7, -1, -1):
+                us = 500.0 if (value >> bit) & 1 else 250.0
+                half(us)
+                half(us)
+        half(500.0)
+        half(400000.0)
+    return b"POM1ACI1" + bytes([1, 0, 0, 0]) + struct.pack("<I", len(halves)) + struct.pack(f"<{len(halves)}I", *halves)
 
 
 def main():
