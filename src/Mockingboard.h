@@ -107,6 +107,8 @@ class M6502;
 class MockingboardCard : public SlotPeripheral
 {
 public:
+    double busClockFraction() const override { std::lock_guard<std::mutex> lk(mtx); return busClock_.fraction(); }
+    void setBusClockFraction(double f) override { std::lock_guard<std::mutex> lk(mtx); busClock_.setFraction(f); }
     static constexpr int kDefaultSlot = 4;
 
     /// Hardware variant:

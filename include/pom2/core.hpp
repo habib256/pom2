@@ -465,6 +465,19 @@ public:
     /// synthesis picks up from them after a restore.
     bool attachPhasor(int slot = 4);
     bool phasorAttached() const;
+    /// A Passport MIDI Interface in an empty slot (2 by convention): an
+    /// MC6840 timer and an MC6850 ACIA at 31 250 baud, no ROM. A //c refuses
+    /// it. Snapshots carry its registers; bytes already sent stay sent.
+    bool attachPassportMidi(int slot = 2);
+    bool passportMidiAttached() const;
+    struct MidiByte {
+        std::uint64_t cycle;   ///< CPU cycle the stop bit ended on
+        std::uint8_t byte;
+    };
+    /// The bytes the guest sent since the last call, oldest first. A
+    /// restore drops the ones not drained yet: they belong to a timeline
+    /// that was left.
+    void drainMidi(std::vector<MidiByte>& out);
 
     /// The drives' mechanical sounds — motor, head steps, the track-0 rattle,
     /// the door — from MAME's floppy sample set in `sampleDirectory` (POM2
@@ -652,6 +665,8 @@ public:
     /// Tokens in 0..511 distinguish simultaneous host keys. queueKey still
     /// supplies character/repeat events; these calls do not inject a byte.
     void setKeyHeld(std::uint16_t token, bool down);
+    /// Whether `token` is held, as setKeyHeld left it (saved in the state).
+    bool keyHeld(std::uint16_t token) const;
     void releaseHeldKeys();
     /// Queue clipboard text, normalizing line endings to CR and filtering
     /// controls except CR/HT. Well-formed UTF-8 uses best-effort ASCII

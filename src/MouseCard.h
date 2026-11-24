@@ -91,6 +91,8 @@
 class MouseCard : public SlotPeripheral
 {
 public:
+    double busClockFraction() const override { return busClock_.fraction(); }
+    void setBusClockFraction(double f) override { busClock_.setFraction(f); }
     static constexpr int kDefaultSlot = 4;
 
     /// Construct in `slot` (default 4). Call `loadRoms()` before plugging

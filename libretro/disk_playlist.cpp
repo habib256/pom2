@@ -3,14 +3,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "disk_playlist.hpp"
+#include "MediaAutosave.h"
 #include "TwoImgHeader.h"
 
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace pom2::libretro {
 namespace {
@@ -56,9 +59,10 @@ DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
             && suffix != ".hdv" && suffix != ".d13")
         throw std::runtime_error(location + ": unsupported disk image: " + path.u8string());
 
-    openFile(path, location);
+    auto stream = openFile(path, location);
+    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(stream), {}};
     std::string name = label.empty() ? path.stem().u8string() : std::string(label);
-    return {std::move(path), std::move(name)};
+    return {std::move(path), std::move(name), pom2::hashMediaBytes(bytes.data(), bytes.size())};
 }
 
 // Namespace scope, not locals: MSVC will not let the lambda below read a

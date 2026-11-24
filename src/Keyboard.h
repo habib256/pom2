@@ -129,6 +129,11 @@ public:
         hostKeysTracked_ = true;
         heldKeys_.reset();
     }
+    bool keyHeld(uint16_t token) const {
+        if (token >= heldKeys_.size()) return false;
+        std::lock_guard<std::mutex> lk(mtx_);
+        return heldKeys_.test(token);
+    }
     // $C010 read: acknowledge without losing a physically held key.
     // Stream-only hosts retain their existing one-shot AKD approximation.
     uint8_t readStrobe(bool iie) {

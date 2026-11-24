@@ -7,6 +7,8 @@
 #include "WozCompat.h"
 
 #include <array>
+#include <string>
+#include <utility>
 #include <vector>
 #include <cstring>
 #include <fstream>
@@ -95,19 +97,71 @@ Machine namedMachine(MachineKind kind)
 
 } // namespace
 
+namespace {
+
+// [B] WOZ 2.1 reference, META chunk: tab-separated key / value lines, and
+// requires_machine lists 2|2+|2e|2c|2e+|2gs|2c+|3|3+.
+std::uint16_t metaRequiredMachines(std::ifstream& file)
+{
+    static const std::pair<const char*, std::uint16_t> kNames[] = {
+        {"2", woz::kAppleII},         {"2+", woz::kAppleIIPlus},  {"2e", woz::kAppleIIe},
+        {"2c", woz::kAppleIIc},       {"2e+", woz::kAppleIIeEnhanced}, {"2gs", woz::kAppleIIgs},
+        {"2c+", woz::kAppleIIcPlus},  {"3", woz::kAppleIII},      {"3+", woz::kAppleIIIPlus}};
+    file.clear();
+    std::streamoff at = 12;
+    for (int chunks = 0; chunks < 64; ++chunks) {
+        unsigned char head[8];
+        file.seekg(at);
+        if (!file.read(reinterpret_cast<char*>(head), 8)) return 0;
+        const std::uint32_t size = head[4] | (head[5] << 8) | (head[6] << 16) | (std::uint32_t(head[7]) << 24);
+        if (std::memcmp(head, "META", 4) == 0) {
+            if (size > (1u << 20)) return 0;
+            std::string meta(size, '\0');
+            if (!file.read(meta.data(), size)) return 0;
+            const auto key = meta.find("requires_machine\t");
+            if (key == std::string::npos) return 0;
+            const auto from = key + 17;
+            const auto end = meta.find('\n', from);
+            const std::string list = meta.substr(from, end == std::string::npos ? std::string::npos : end - from);
+            std::uint16_t bits = 0;
+            std::size_t start = 0;
+            while (start <= list.size()) {
+                auto bar = list.find('|', start);
+                if (bar == std::string::npos) bar = list.size();
+                std::string name = list.substr(start, bar - start);
+                while (!name.empty() && (name.back() == '\r' || name.back() == ' ')) name.pop_back();
+                for (const auto& [text, bit] : kNames)
+                    if (name == text) bits |= bit;
+                start = bar + 1;
+            }
+            return bits;
+        }
+        at += 8 + static_cast<std::streamoff>(size);
+    }
+    return 0;
+}
+
+}  // namespace
+
 std::uint16_t wozCompatibleHardware(const std::filesystem::path& path)
 {
     // [B] WOZ 2.1 specification, applesaucefdc.com/woz/reference2/: the INFO
     // chunk sits at offset 12; its data's version is byte 0 and the
     // compatible-hardware word (little-endian) bytes 40-41 from version 2.
+    // A WOZ written with INFO version 1 (or a zero word) may still name its
+    // machines in META: Genetic Drift and Pest Patrol say ][ and ][+ only
+    // there, and failed on the //e Enhanced Automatic otherwise picked.
     std::array<unsigned char, 64> head{};
     std::ifstream file(path, std::ios::binary);
     if (!file.read(reinterpret_cast<char*>(head.data()), head.size())) return 0;
-    if (std::memcmp(head.data(), "WOZ2", 4) != 0 || std::memcmp(head.data() + 12, "INFO", 4) != 0)
+    const bool woz2 = std::memcmp(head.data(), "WOZ2", 4) == 0;
+    if ((!woz2 && std::memcmp(head.data(), "WOZ1", 4) != 0) || std::memcmp(head.data() + 12, "INFO", 4) != 0)
         return 0;
+    // WOZ 1 has the same META chunk and no hardware word (Genetic Drift).
     const unsigned char* info = head.data() + 20;
-    if (info[0] < 2) return 0;
-    return static_cast<std::uint16_t>((info[40] | (info[41] << 8)) & woz::kKnownHardware);
+    const std::uint16_t bits = woz2 && info[0] >= 2
+        ? static_cast<std::uint16_t>((info[40] | (info[41] << 8)) & woz::kKnownHardware) : 0;
+    return bits ? bits : static_cast<std::uint16_t>(metaRequiredMachines(file) & woz::kKnownHardware);
 }
 
 bool wozBoots13Sector(const std::filesystem::path& path)

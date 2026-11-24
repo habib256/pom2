@@ -69,6 +69,12 @@ if(TARGET pom2_libretro)
             "${CMAKE_SOURCE_DIR}/roms" "${scenario}" ${media})
         set_tests_properties(pom2_libretro_${scenario} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     endforeach()
+    # Netplay: two processes, rollback and a joining client must keep the same
+    # state byte for byte (tools/libretro_netplay.py).
+    add_test(NAME pom2_libretro_netplay COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_SOURCE_DIR}/tools/libretro_netplay.py" "$<TARGET_FILE:pom2_libretro>"
+        "${CMAKE_SOURCE_DIR}/roms" --suite)
+    set_tests_properties(pom2_libretro_netplay PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 endif()
 
 # Select a self-contained native core subset without configuring/downloading

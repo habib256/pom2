@@ -611,6 +611,11 @@ int64_t DiskImage::getNextTransition(int qt, int64_t fromLssCycle,
     for (int guard = 0; guard < 8; ++guard) {
         const int64_t at = nextTransitionRaw(qt, from, revolutionStart, rev, index, angle);
         if (at == kFluxNever) return at;
+        // A weak zone's fake bits do NOT drift with the surface: they are the
+        // read amplifier's noise, not flux, and served undrifted they land a
+        // few cycles either side of the 3rd zero, as noise would. Drifted
+        // with the surface (2026-11-24, briefly) they sat on the cell grid,
+        // and Fighter Command's loader hung where it boots this way.
         const int64_t t = index < 0 ? at : at + drift(at);
         if (t >= fromLssCycle) return t;
         from = at + 1;

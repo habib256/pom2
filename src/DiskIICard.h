@@ -90,6 +90,8 @@ namespace pom2 { class IWMDevice; }
 class DiskIICard : public SlotPeripheral
 {
 public:
+    double busClockFraction() const override { return motorClock_.fraction(); }
+    void setBusClockFraction(double f) override { motorClock_.setFraction(f); }
     static constexpr int kDefaultSlot = 6;
 
     /// Construct with the slot number this card will be plugged into.

@@ -134,14 +134,14 @@ jobs:
           cmake -E rename "$MODULE_PATH" "$MODULE_PATH.unpacked-build"
           cmake -E copy "build/libretro-install/cores/$(basename "$MODULE_PATH")" "$MODULE_PATH"
 
-      - name: Require all seven packaged-core regressions
+      - name: Require all eight packaged-core regressions
         run: |
           ctest --test-dir build -C Release -R '^pom2_libretro_' --no-tests=error \
             --output-on-failure --output-junit "$PWD/dist/libretro-results/ctest.xml" \
             | tee dist/libretro-results/ctest.log
           python - <<'PY'
           import xml.etree.ElementTree as ET
-          expected = {"abi", "media", "disk_persistence", "keyboard", "dix", "desktop", "formats"}
+          expected = {"abi", "media", "disk_persistence", "keyboard", "dix", "desktop", "formats", "netplay"}
           expected = {"pom2_libretro_" + name for name in expected}
           cases = ET.parse("dist/libretro-results/ctest.xml").findall(".//testcase")
           names = {case.get("name") for case in cases}

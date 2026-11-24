@@ -79,6 +79,11 @@ public:
 
     /// Bus ticks per CPU cycle (<= 1 under an accelerator).
     double ratio() const { return ratio_; }
+    /// The carried remainder: machine state under an accelerator. A restore
+    /// that kept the live one ran a 6522 timer one tick off the timeline it
+    /// restored (a netplay rollback on a //c Plus at 4 MHz, 2026-11-24).
+    double fraction() const { return frac_; }
+    void setFraction(double f) { frac_ = (ratio_ == 1.0 || !(f >= 0.0 && f < 1.0)) ? 0.0 : f; }
     /// The bus clock in Hz (the CPU clock while no bus clock was given).
     double busHz() const { return busHz_ > 0.0 ? busHz_ : cpuHz_; }
 

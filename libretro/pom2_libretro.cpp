@@ -15,6 +15,7 @@
 #include "disk_storage.hpp"
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
+#include "polled_keyboard.hpp"
 #include "program_file.hpp"
 #include "tape_content.hpp"
 #include "pom2/core.hpp"
@@ -152,7 +153,7 @@ struct RuntimeOptions {
 RuntimeOptions settings;
 bool rgbWarning = false;
 
-std::array<unsigned, 2> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD};
+std::array<unsigned, 3> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE};
 bool openApple = false;
 bool solidApple = false;
 bool startHeld = false;
@@ -201,11 +202,18 @@ const retro_controller_description port2Types[] = {
     {"Second joystick (paddles 2 and 3)", RETRO_DEVICE_JOYPAD},
     {"None", RETRO_DEVICE_NONE},
 };
+// Netplay carries a keyboard only as a port's device (see polled_keyboard.hpp).
+const retro_controller_description port3Types[] = {
+    {"None (keyboard typed directly)", RETRO_DEVICE_NONE},
+    {"Keyboard (for netplay)", RETRO_DEVICE_KEYBOARD},
+};
 const retro_controller_info controllerInfo[] = {
     {port1Types, 5},
     {port2Types, 2},
+    {port3Types, 2},
     {nullptr, 0},
 };
+constexpr unsigned kKeyboardPort = 2;
 
 std::string_view option(const char* key)
 {
@@ -261,6 +269,61 @@ pom2::DisplayMode displayModeFor(std::string_view value)
     return DisplayMode::Composite;
 }
 
+// ---- Frameskip: drop the drawing, never the emulation -------------------
+
+enum class Frameskip { Off, Auto, Threshold };
+Frameskip frameskip = Frameskip::Off;
+unsigned frameskipThreshold = 33;
+bool audioBufferActive = false;
+unsigned audioBufferOccupancy = 0;
+bool audioUnderrunLikely = false;
+unsigned framesSkipped = 0;
+bool canDupe = false;
+
+void RETRO_CALLCONV audioBufferStatus(bool active, unsigned occupancy, bool underrunLikely)
+{
+    audioBufferActive = active;
+    audioBufferOccupancy = occupancy;
+    audioUnderrunLikely = underrunLikely;
+}
+
+// RetroArch calls back with its audio buffer's fill; while frameskip is on
+// it also keeps a few frames of audio latency to have something to skip on.
+// Skipping draws nothing: the frame's emulation, sound and state are the same
+// (a netplay peer that skips stays in step; libretro_netplay.py checks it).
+void configureFrameskip(Frameskip wanted)
+{
+    if (wanted == frameskip || !environment) return;
+    retro_audio_buffer_status_callback callback{audioBufferStatus};
+    const bool registered = wanted != Frameskip::Off &&
+        environment(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, &callback);
+    if (!registered) {
+        environment(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, nullptr);
+        audioBufferActive = false;
+        wanted = Frameskip::Off;
+    }
+    const double fps = double(machineTiming.cpuClockHz) / machineTiming.cyclesPerFrame;
+    // Six frames, rounded up to a multiple of 32 ms as the API asks.
+    unsigned latency = wanted == Frameskip::Off ? 0
+        : static_cast<unsigned>(std::ceil(6.0 * 1000.0 / fps / 32.0)) * 32;
+    environment(RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY, &latency);
+    frameskip = wanted;
+    framesSkipped = 0;
+}
+
+bool skipThisFrame()
+{
+    if (frameskip == Frameskip::Off || !audioBufferActive || !canDupe) return false;
+    const bool low = frameskip == Frameskip::Auto ? audioUnderrunLikely
+                                                  : audioBufferOccupancy < frameskipThreshold;
+    if (!low || framesSkipped >= 3) {   // never more than three in a row
+        framesSkipped = 0;
+        return false;
+    }
+    ++framesSkipped;
+    return true;
+}
+
 void applyRuntimeOptions()
 {
     settings.paddleDeadZone = static_cast<int>(32768.0f * percentOption("pom2_paddle_deadzone"));
@@ -294,6 +357,10 @@ void applyRuntimeOptions()
         if (!rgbWarning) reportError("The RGB display needs the Le Chat Mauve RGB card (Core Options, restart).");
         rgbWarning = true;
     }
+    const auto skip = option("pom2_frameskip");
+    try { frameskipThreshold = static_cast<unsigned>(std::stoul(std::string(option("pom2_frameskip_threshold")))); }
+    catch (const std::exception&) { frameskipThreshold = 33; }
+    configureFrameskip(skip == "auto" ? Frameskip::Auto : skip == "manual" ? Frameskip::Threshold : Frameskip::Off);
     pom2::libretro::updateOptionVisibility(environment);
 }
 
@@ -330,10 +397,48 @@ unsigned appleKey(unsigned keycode, std::uint32_t character, std::uint16_t modif
     return 0;
 }
 
+// ---- MIDI out: the Passport card's bytes to RetroArch's MIDI driver ------
+
+retro_midi_interface midiOut{};
+bool midiOutAvailable = false;
+std::uint64_t lastMidiCycle = 0;
+bool midiCycleKnown = false;
+std::vector<pom2::Core::MidiByte> midiBytes;
+
+// After the frame: each byte with the microseconds since the one before,
+// from the CPU cycles its stop bit ended on. Frames RetroArch runs with the
+// audio off (run-ahead, a netplay rollback replaying) would send their notes
+// a second time: those are dropped. The card itself is in the state.
+void sendMidi(bool audible)
+{
+    if (!core || !core->passportMidiAttached()) return;
+    core->drainMidi(midiBytes);
+    if (!audible || !midiOutAvailable || midiBytes.empty() || !midiOut.output_enabled || !midiOut.write ||
+        !midiOut.output_enabled())
+        return;
+    const double cyclesPerMicrosecond = machineTiming.cpuClockHz * core->cpuSpeedMultiplier() / 1e6;
+    for (const auto& b : midiBytes) {
+        double delta = 0;
+        if (midiCycleKnown && b.cycle > lastMidiCycle)
+            delta = static_cast<double>(b.cycle - lastMidiCycle) / cyclesPerMicrosecond;
+        lastMidiCycle = b.cycle;
+        midiCycleKnown = true;
+        midiOut.write(b.byte, static_cast<std::uint32_t>(std::min(delta, 4.0e9)));
+    }
+    if (midiOut.flush) midiOut.flush();
+}
+
+bool keyboardPolled()
+{
+    return (portDevice[kKeyboardPort] & RETRO_DEVICE_MASK) == RETRO_DEVICE_KEYBOARD;
+}
+
 void RETRO_CALLCONV keyboardEvent(bool down, unsigned keycode,
                                  std::uint32_t character, std::uint16_t modifiers)
 {
-    if (!core) return;
+    // A keyboard read as a device takes its keys from input_state alone: an
+    // event here as well would type every key twice.
+    if (!core || keyboardPolled()) return;
     if (settings.altAppleKeys) {
         if (keycode == RETROK_LALT) openApple = down;
         if (keycode == RETROK_RALT) solidApple = down;
@@ -439,8 +544,62 @@ void releaseKeyPad()
     repeatFrames = 0;
 }
 
+// The keyboard as a device, every frame (polled_keyboard.hpp). A press is a
+// key down that the machine does not hold yet: the held keys are part of the
+// saved state, so a rollback replays the same presses from the same inputs.
+void applyPolledKeyboard()
+{
+    if (!inputState || !keyboardPolled()) return;
+    const auto down = [](unsigned key) {
+        return inputState(kKeyboardPort, RETRO_DEVICE_KEYBOARD, 0, key) != 0;
+    };
+    const bool shift = down(RETROK_LSHIFT) || down(RETROK_RSHIFT);
+    std::uint16_t modifiers = 0;
+    if (shift) modifiers |= RETROKMOD_SHIFT;
+    if (down(RETROK_LCTRL) || down(RETROK_RCTRL)) modifiers |= RETROKMOD_CTRL;
+    if (settings.altAppleKeys) {
+        openApple = down(RETROK_LALT);
+        solidApple = down(RETROK_RALT);
+    }
+    // The RetroPad's keyboard modes hold some of the same keys.
+    const bool padTyping = keyPadHeld != 0;
+    std::size_t count = 0;
+    const unsigned* keys = pom2::libretro::polledKeys(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const unsigned key = keys[i];
+        const bool pressed = down(key);
+        const auto token = static_cast<std::uint16_t>(key);
+        if (pressed == core->keyHeld(token)) continue;
+        if (!pressed && padTyping) continue;
+        const unsigned ascii = appleKey(key, pom2::libretro::usCharacter(key, shift), modifiers);
+        if (ascii != 0 || !pressed) core->setKeyHeld(token, pressed);
+        if (pressed && ascii != 0) {
+            core->queueKey(typed(static_cast<std::uint8_t>(ascii)));
+            if (!padTyping) {
+                repeatKey = static_cast<std::uint8_t>(ascii);
+                repeatFrames = 0;
+            }
+        }
+    }
+    // No host auto-repeat reaches a device read: the last key typed repeats
+    // while it is held, at the RetroPad keyboard's pace (both are saved).
+    if (padTyping || repeatKey == 0) return;
+    bool held = false;
+    for (std::size_t i = 0; i < count && !held; ++i)
+        held = core->keyHeld(static_cast<std::uint16_t>(keys[i]))
+            && appleKey(keys[i], pom2::libretro::usCharacter(keys[i], shift), modifiers) == repeatKey;
+    if (!held) {
+        repeatKey = 0;
+        repeatFrames = 0;
+        return;
+    }
+    if (++repeatFrames >= 30 && (repeatFrames - 30) % 4 == 0) core->queueKey(typed(repeatKey));
+    if (repeatFrames > 60) repeatFrames = 34;
+}
+
 void applyInput()
 {
+    applyPolledKeyboard();
     const unsigned device = portDevice[0];
     const bool padEnabled = (device & RETRO_DEVICE_MASK) == RETRO_DEVICE_JOYPAD;
     padButtons = padEnabled ? readPad(0) : 0;
@@ -1074,6 +1233,17 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
             reportError("Mockingboard: " + target.lastError());
         }
     }
+    if (option("pom2_midi") == "passport" && slotted) {
+        const int slot = freeSlot(state, {2, 1, 3, 5, 7, 4});
+        if (!slot) {
+            reportError("MIDI card: no free slot; the card was left out.");
+        } else if (target.attachPassportMidi(slot)) {
+            state.slotUsed[slot] = true;
+            summary += " · Passport MIDI slot " + std::to_string(slot);
+        } else {
+            reportError("MIDI card: " + target.lastError());
+        }
+    }
     const auto accel = option("pom2_accelerator");
     const bool plus = machine.kind == pom2::libretro::MachineKind::IIcPlus;
     const auto model = accel == "zip" || (accel == "auto" && plus) ? pom2::Accelerator::ZipChip
@@ -1351,7 +1521,20 @@ std::uint64_t pathIdentity(const std::filesystem::path& path, std::uint64_t hash
                                 utf8.size() + 1, hash);
 }
 
+// A state names its disks by what they hold (DiskEntry::identity), so it
+// loads on another machine with the same content where the paths differ: a
+// netplay client is sent the host's state and must take it. States written
+// before 2026-11-24 named them by path; those still load where they were made.
 std::uint64_t playlistIdentity()
+{
+    std::uint64_t hash = 0x504f4d324e455431ull;   // "POM2NET1"
+    for (const auto& image : disks.images)
+        hash = pom2::hashMediaBytes(reinterpret_cast<const std::uint8_t*>(&image.identity),
+                                    sizeof(image.identity), hash);
+    return hash;
+}
+
+std::uint64_t legacyPlaylistIdentity()
 {
     auto hash = pathIdentity(disks.content);
     for (const auto& image : disks.images) hash = pathIdentity(image.path, hash);
@@ -1382,7 +1565,9 @@ bool saveRetroState(void* data, std::size_t size)
     putU64(header, playlistIdentity());
     for (const auto& slot : disks.drives) {
         const bool writable = slot.mounted && slot.mounted->writable;
-        putU64(header, writable ? pathIdentity(slot.mounted->path) : 0);
+        // A private copy is named by the original it copies, which both
+        // netplay peers have, and not by where this machine keeps it.
+        putU64(header, writable && slot.index ? disks.images[*slot.index].identity : 0);
         putU32(header, slot.index.value_or(kNoDisk));
         putU32(header, slot.framesSinceFlush);
         putU8(header, (slot.ejected ? 1 : 0) | (slot.mounted ? 2 : 0) | (writable ? 4 : 0));
@@ -1416,7 +1601,9 @@ bool restoreRetroState(const void* data, std::size_t size)
     pom2::byteio::Reader reader(bytes, size);
     reader.pos = sizeof(kRetroStateMagic);
     const auto length = reader.u32();
-    if (reader.u64() != playlistIdentity()) return false;
+    const auto playlist = reader.u64();
+    const bool legacy = playlist != playlistIdentity();
+    if (legacy && playlist != legacyPlaylistIdentity()) return false;
     struct SavedDrive {
         std::uint64_t backing;
         std::uint32_t index, framesSinceFlush;
@@ -1462,7 +1649,8 @@ bool restoreRetroState(const void* data, std::size_t size)
         if (s.writable) {
             const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path,
                 pom2::libretro::DiskStorageAccess::ExistingOnly);
-            if (!storage.privateCopy || pathIdentity(storage.path) != s.backing) return false;
+            if (!storage.privateCopy ||
+                s.backing != (legacy ? pathIdentity(storage.path) : image.identity)) return false;
             path = storage.path;
             for (const auto& live : disks.drives)
                 if (live.mounted && live.mounted->path == path && live.mounted->lease) lease = live.mounted->lease;
@@ -1513,6 +1701,7 @@ bool restoreRetroState(const void* data, std::size_t size)
     repeatKey = keyRepeated;
     repeatFrames = repeatCount;
     showDiskRead((flags & 16) != 0);
+    midiCycleKnown = false;   // the next byte starts a new time line
     // A state the player loaded (or a rewind step) moves the drives; the
     // run-ahead's own restores replay a timeline the sounds already played.
     int context = RETRO_SAVESTATE_CONTEXT_NORMAL;
@@ -1555,12 +1744,15 @@ void retro_init()
     supportsExecutionPhase = environment && environment(RETRO_ENVIRONMENT_GET_EXECUTION_PHASE, nullptr);
     if (environment)
         environment(RETRO_ENVIRONMENT_GET_LED_INTERFACE, &driveLed);
+    midiOutAvailable = environment && environment(RETRO_ENVIRONMENT_GET_MIDI_INTERFACE, &midiOut);
+    canDupe = false;
+    if (environment) environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &canDupe);
     retro_log_callback callback{};
     if (environment && environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &callback))
         logMessage = callback.log;
     if (logMessage) pom2::log().setSink(forwardLog, nullptr);
     if (environment) registerDiskControl();
-    portDevice = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD};
+    portDevice = {RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE};
 }
 
 void retro_deinit()
@@ -1637,8 +1829,12 @@ void retro_run()
         frames = runFrame();
         keepLoading = core->diskReadRecently(frameCpuCycles);
     }
-    renderVideo();
+    if (skipThisFrame()) video(nullptr, 0, 0, 0);
+    else renderVideo();
     outputAudio(frames);
+    int avEnable = 3;
+    const bool avKnown = environment(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &avEnable);
+    sendMidi(!avKnown || (avEnable & RETRO_AV_ENABLE_AUDIO) != 0);
     autosaveMountedDisk();
 }
 
@@ -1673,7 +1869,9 @@ void retro_unload_game()
     machineAudioRemainder = 0;
     frontendAudioRemainder = 0;
     stateCapacity = 0;
+    midiCycleKnown = false;
     stateCapacityWarning = false;
+    configureFrameskip(Frameskip::Off);
     rgbWarning = false;
 }
 

@@ -344,6 +344,7 @@ pom2_libretro_dix
 pom2_libretro_formats
 pom2_libretro_keyboard
 pom2_libretro_media
+pom2_libretro_netplay
 porte_parole_card
 porte_parole_reference
 postscript_render

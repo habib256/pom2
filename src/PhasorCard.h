@@ -139,6 +139,8 @@ class M6502;
 class PhasorCard : public SlotPeripheral
 {
 public:
+    double busClockFraction() const override { return busClock_.fraction(); }
+    void setBusClockFraction(double f) override { busClock_.setFraction(f); }
     static constexpr int kDefaultSlot = 4;     // same as Mockingboard
 
     enum Mode : uint8_t {

@@ -151,6 +151,20 @@ const std::vector<Option>& options()
          "la double haute résolution sans franges de couleur.",
          {{"auto", "Automatic (DIX)", "Automatique (DIX)"}, {"disabled", "Absent", "Absente"},
           {"enabled", "Installed", "Installée"}}},
+        {"pom2_frameskip", "video", "Frameskip", "Saut d'images",
+         "Skip drawing a frame when RetroArch's audio buffer runs low, so a slow device (a Raspberry Pi, a "
+         "phone) keeps the sound whole. The machine runs every frame either way. Threshold skips below the "
+         "level set next.",
+         "Ne dessine pas une image quand le tampon audio de RetroArch se vide, pour qu'un appareil lent "
+         "(Raspberry Pi, téléphone) garde un son continu. La machine exécute toutes les images dans tous les "
+         "cas. Seuil saute en dessous du niveau réglé ci-dessous.",
+         {{"disabled", "Off", "Désactivé"}, {"auto", "Automatic", "Automatique"},
+          {"manual", "Threshold", "Seuil"}}},
+        {"pom2_frameskip_threshold", "video", "Frameskip threshold (%)", "Seuil du saut d'images (%)",
+         "Audio buffer level under which a frame is not drawn.",
+         "Niveau du tampon audio sous lequel une image n'est pas dessinée.",
+         {{"33", "33", "33"}, {"15", "15", "15"}, {"20", "20", "20"}, {"25", "25", "25"}, {"30", "30", "30"},
+          {"40", "40", "40"}, {"50", "50", "50"}, {"60", "60", "60"}}},
 
         // ---- Audio -----------------------------------------------------
         {"pom2_mockingboard", "audio", "Sound card (restart)", "Carte son (redémarrage)",
@@ -170,6 +184,12 @@ const std::vector<Option>& options()
          "ou DIX occupe le slot 4.",
          {{"auto", "Automatic", "Automatique"}, {"4", "Slot 4", "Slot 4"}, {"5", "Slot 5", "Slot 5"},
           {"2", "Slot 2", "Slot 2"}, {"1", "Slot 1", "Slot 1"}, {"7", "Slot 7", "Slot 7"}}},
+        {"pom2_midi", "audio", "MIDI card (restart)", "Carte MIDI (redémarrage)",
+         "A Passport MIDI Interface in a free slot (2 first): what a program plays on it goes to "
+         "RetroArch's MIDI output (Settings > Audio > MIDI). Not on a //c.",
+         "Une Passport MIDI Interface dans un slot libre (le 2 d'abord) : ce qu'un programme y joue va à la "
+         "sortie MIDI de RetroArch (Réglages > Audio > MIDI). Pas sur un //c.",
+         {{"disabled", "Absent", "Absente"}, {"passport", "Passport MIDI Interface", "Passport MIDI Interface"}}},
         {"pom2_speaker_volume", "audio", "Speaker volume", "Volume du haut-parleur",
          "The Apple II's built-in speaker.", "Le haut-parleur intégré de l'Apple II.",
          percent(0, 200, 10, 100)},
@@ -359,11 +379,15 @@ bool updateOptionVisibility(retro_environment_t environment)
     static int lastMouse = -1;
     static int lastBoard = -1;
     static int lastDrive = -1;
+    static int lastSkip = -1;
     const bool mouse = coreOption(environment, "pom2_mouse") == "enabled"
                     || coreOption(environment, "pom2_machine").substr(0, 3) == "iic";
     const bool board = coreOption(environment, "pom2_mockingboard") != "disabled";
     const bool drive = coreOption(environment, "pom2_drive_sounds") == "enabled";
-    if (int(mouse) == lastMouse && int(board) == lastBoard && int(drive) == lastDrive) return false;
+    const bool threshold = coreOption(environment, "pom2_frameskip") == "manual";
+    if (int(mouse) == lastMouse && int(board) == lastBoard && int(drive) == lastDrive &&
+        int(threshold) == lastSkip) return false;
+    lastSkip = threshold;
     lastMouse = mouse;
     lastBoard = board;
     lastDrive = drive;
@@ -376,6 +400,7 @@ bool updateOptionVisibility(retro_environment_t environment)
     show("pom2_mockingboard_slot", board);
     show("pom2_mockingboard_volume", board);
     show("pom2_drive_sound_volume", coreOption(environment, "pom2_drive_sounds") == "enabled");
+    show("pom2_frameskip_threshold", threshold);
     return true;
 }
 

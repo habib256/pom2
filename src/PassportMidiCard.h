@@ -68,6 +68,8 @@ struct MidiOutByte {
 class PassportMidiCard : public SlotPeripheral
 {
 public:
+    double busClockFraction() const override { return busClock_.fraction(); }
+    void setBusClockFraction(double f) override { busClock_.setFraction(f); }
     /// [D] MAME a2midi.cpp: CLOCK(config, "acia_clock", 31250*16).
     static constexpr double kAciaClockHz = 31250.0 * 16.0;
     /// Bytes kept for the host before the oldest are dropped (a frozen UI).

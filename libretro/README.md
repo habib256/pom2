@@ -60,8 +60,9 @@ of this table.
 | Apple //c Plus | `apple2cp.rom` | `apple2e_char.rom` |
 | Apple ][ (1977) | `apple2o.rom` | `apple2_char.rom` |
 
-A WOZ 2 disk names the machines it runs on. With Automatic, the core starts
-the first of them whose ROMs are present; a 13-sector (DOS 3.2) WOZ that runs
+A WOZ disk names the machines it runs on (INFO, or META's `requires_machine`
+in an older image). With Automatic, the core starts the first of them whose
+ROMs are present; a 13-sector (DOS 3.2) WOZ that runs
 on the original Apple ][ starts that one first, because its programs are
 mostly Integer BASIC, which a ][+ lacks. The original Apple ][ has no
 autostart ROM: it powers on to garbage and the monitor's `*`, as the real
@@ -142,8 +143,11 @@ Options marked *(restart)* take effect at the next **Load Content** or
 | | DIX preset *(restart)* | Automatic, Always, Never |
 | Video | Display | Automatic, three composite colour tables, OpenEmulator composite signal, AppleWin NTSC monitor, TV or idealized, monochrome white, green or amber, RGB |
 | | Le Chat Mauve RGB card *(restart)* | Automatic (DIX), Absent, Installed |
+| | Frameskip | Off, Automatic, Threshold (skip drawing when RetroArch's audio buffer runs low) |
+| | Frameskip threshold (%) | 15 to 60 (shown with Threshold) |
 | Audio | Sound card *(restart)* | Mockingboard A/C, Mockingboard with SSI263 speech, Phasor, Absent |
 | | Mockingboard slot *(restart)* | Automatic (4, or 2 beside the mouse), 4, 5, 2, 1, 7 (the Phasor's too) |
+| | MIDI card *(restart)* | Absent, Passport MIDI Interface (slot 2 first; to RetroArch's MIDI output) |
 | | Speaker volume, Mockingboard volume | 0 to 200 % |
 | | Disk drive sounds *(restart)* | Off, On |
 | | Disk drive sound volume | 0 to 200 % |
@@ -223,6 +227,31 @@ In every mode Start types Return, Select types Escape, L3 opens the
 on-screen keyboard and R3 inserts the next disk of a playlist. Port 2's
 joystick drives paddles 2 and 3 and push button 2, for two-player paddle
 games.
+
+Port 3 is the keyboard **for netplay**. RetroArch's netplay sends each
+player's joypad and, from a port set to the keyboard device, its keys; it
+never sends the keys a core receives as typed characters. With **Port 3
+Controls → Device Type → Keyboard (for netplay)**, the core reads the
+keyboard as a device every frame, on a US layout, and ignores typed
+characters, so both machines see the same keys and a rollback replays them.
+Leave it on None to play alone: typed characters follow your own layout.
+
+## Netplay
+
+Every frame of the core is deterministic: two machines given the same
+content and inputs keep the same state byte for byte, a rollback replays
+exactly, and a player who joins takes the host's state and stays in step —
+on every machine, the //c Plus at 4 MHz included, with a .dsk, a WOZ (weak
+bits and the platter's drift are functions of the emulated time), a 3.5-inch
+or a hard disk. A state names its disks by their content, not by where each
+player keeps them. `tools/libretro_netplay.py` checks all of it, and CI runs
+it on every package (`pom2_libretro_netplay`).
+
+Both players need the same content and the same core options. Set Port 3 to
+the keyboard for games played at the keyboard. The No-Slot Clock starts at
+the host's date; the joining player gets it with the host's state. The
+AppleMouse is not carried: RetroArch's netplay sends a mouse only from a
+port set to the mouse device, and the core reads it beside the joystick.
 
 ## Achievements and cheats
 

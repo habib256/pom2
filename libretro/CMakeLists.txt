@@ -10,7 +10,7 @@ endif()
 add_library(pom2_libretro MODULE pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
     core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp
     tape_content.cpp)
-target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cpp
+target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp ../src/hgrpaint/HgrFont.cpp
     # Host formats the SDK does not take: archives and programs.
     ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
     ../src/HostFileTag.cpp ../src/AppleSingle.cpp
@@ -19,6 +19,11 @@ target_sources(pom2_libretro PRIVATE pad_keyboard.cpp ../src/hgrpaint/HgrFont.cp
     ../src/DiskBuilder.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)
+# As pom2_core: no FMA contraction, so netplay peers on ARM64 and x86-64
+# compute the same doubles (see the root CMakeLists).
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(pom2_libretro PRIVATE -ffp-contract=off)
+endif()
 target_include_directories(pom2_libretro PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_include_directories(pom2_libretro SYSTEM PRIVATE

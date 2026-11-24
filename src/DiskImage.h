@@ -192,8 +192,8 @@ public:
     /// paths MAME takes over unmagnetised media — `getNextTransition`
     /// answers `kFluxNever` and `DiskIICard::advanceNoise` serves
     /// read-amplifier noise, or, once a format has written part of the
-    /// track, the weak-zone pulse train (`kWeakGapLss`, MAME's
-    /// `m_amplifier_freakout_time`) fills what is still blank. RWTS answers
+    /// track, the weak-zone pulse train (`kWeakGapLss`, the WOZ reference's
+    /// 4-cell window) fills what is still blank. RWTS answers
     /// I/O ERROR to every read, and a real format writes the address fields
     /// through `writeFlux` exactly as it would on iron.
     ///

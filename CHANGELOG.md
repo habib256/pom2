@@ -12,6 +12,92 @@ marker and the previous one.
 
 **v1.2.3 marker** — 2026-11-24. Release notes: [v1.2.3](docs/releases/v1.2.3.md).
 
+## 2026-11-24 — Netplay: the libretro core keeps two machines in step
+
+RetroArch's netplay runs a copy of the core on each machine, feeds both the
+same inputs, compares the CRC of a serialized state, rolls back on a late
+input and sends a joining player the host's state. `tools/libretro_netplay.py`
+does all four — two processes in two directories, a rollback every 97
+frames, a client joining halfway, a peer that skips drawing — and CI runs it
+on every package (`pom2_libretro_netplay`: BASIC typed at the keyboard, a
+.dsk, a WOZ, a 3.5-inch disk on the //c Plus). It found five things:
+
+- **The keyboard never reached the other machine.** Netplay carries a port's
+  RETRO_DEVICE_KEYBOARD state, read with input_state each frame (RetroArch
+  `netplay_frontend.c` @ v1.22.2); the core took its keys from the keyboard
+  callback, whose events netplay neither sends nor replays. Port 3 now has a
+  "Keyboard (for netplay)" device: the core then reads the keys as a device,
+  on a US layout, with the presses detected against the held keys the state
+  already carries (`polled_keyboard.*`, `Core::keyHeld`).
+- **A state named its disks by path.** The playlist, a private copy and the
+  SmartPort units were hashed from where this machine keeps them, so another
+  player's core refused the host's state, or diverged from frame 0. A state
+  now names a disk by the original's bytes (`DiskEntry::identity`); the SDK
+  writes the SmartPort identities as zeros, since a load rewrites them from
+  the media it rebuilds. States written before still load where they were made.
+- **A restore re-based the speaker's clock on an accelerated machine.** The
+  SDK told the devices the restored CPU speed at the next slice; that
+  re-based the speaker's stamp clock at a cycle the original timeline never
+  re-based at. The speed is now applied before the devices' own state goes
+  back over it.
+- **A slot card's fractional bus tick was not saved.** Under an accelerator
+  a Mockingboard's 6522 counts bus ticks with a carried remainder
+  (`SlotBusClock`); a rollback kept the live one and ran a timer a tick off.
+  The SDK state (version 4) carries each slot's remainder.
+- **ARM64 and x86-64 rounded differently.** Clang fuses a*b+c into an FMA on
+  ARM64 and not on x86-64; the state holds doubles. `pom2_core` and the
+  module build with `-ffp-contract=off`.
+
+Two more libretro interfaces came with it: a **Passport MIDI** card
+(`pom2_midi`; SDK `attachPassportMidi`, `drainMidi`, in the v4 state) whose
+bytes go to RetroArch's MIDI output with their timing, never twice from a
+replayed frame; and **frameskip** (`pom2_frameskip`) on RetroArch's audio
+buffer status, which draws fewer frames on a slow device and never changes
+the emulation (the netplay check runs a skipping peer).
+
+## 2026-11-24 — Weak bits where the WOZ reference puts them; an old WOZ's META names its machine
+
+Two findings from the woz-a-day run, after the 13-sector PROM below.
+
+*Decimal and Percent Word Problems* was the one title POM2 failed and
+another emulator (AppleWin) booted; MAME failed it too. Its loader looks
+for `BF DA EF AF` on track 0, behind runs of four zero bits. The disk holds
+`D2 FC DA EF AF`: the same bits read `BF` only when the sequencer frames
+them two cells later, which happens when a run of zeros reads differently
+from one turn to the next. [B] The WOZ 2.1 reference makes a 4-cell window
+of zeros random — from the 3rd zero, 12 µs after the last transition. POM2 kept MAME's walk (16 µs, candidates at 18 µs + 4k, in the
+middle of their intervals), so a 4-zero run had one candidate half a cell
+before the real pulse and always framed alike. It was graded [F] with "a
+flux capture" to settle it; the reference is the primary document, and
+AppleWin, which follows it, boots the disk. POM2 now does too
+(`kWeakGapLss`, `kWeakFirstLss`, DiskImage.cpp; DEV § Storage). The fake
+bits are amplifier noise, not flux: each lands within ±1.5 µs of its cell
+(`kWeakJitterLss`) and off the platter's drift. Drifted onto the cell grid
+they hung Fighter Command's loader; on the grid and undrifted, a title's
+luck depended on the drift alone. Checked for robustness, not one lucky
+draw: the 107 woz-a-day titles with the most weak bits, plus the ones these
+fixes were for, boot under three different hash salts each (a test-only
+build), 321 boots of 321. The 30 %
+density, the per-revolution draw and the titles the earlier fixes brought
+back (SSI's RDOS check, Glutton, Mr. Do, the Anti-M prompt) are unchanged.
+
+A WOZ written with INFO version 1 (or a WOZ 1) has no compatible-hardware
+word, and the libretro core's Automatic machine fell back to the //e
+Enhanced; 4am's older images name their machines in META's
+`requires_machine` instead. Genetic Drift and Pest Patrol say `2|2+` there
+and run only on a ][+ (black screen, or the banner, on a //e).
+`wozCompatibleHardware` (libretro/machine_profile.cpp) now reads META when
+INFO says nothing, WOZ 1 included.
+
+The corpus witness changed with it, for all three emulators alike: the same
+META rule; a black picture or the bare banner gets a look at 50 s and at
+100 s (Thexder, Maniac Mansion and Street Sports load for over 45 s at the
+drive's real speed); a message on the text page counts only when the
+picture is a text screen (Lock 'N' Chase plays over a stale `UNABLE TO`);
+and the report lists what no emulator boots with the disk's own META note
+(the Nibbles Away data disks, the Wizimore scenarios, Animal Facts — each
+"requires" another disk).
+
 ## 2026-11-24 — POM2's own 13-sector boot PROM: DOS 3.2 disks boot with no Apple ROM
 
 19 woz-a-day titles (VisiCalc 1.37, Apple Bowl, the Programma catalogue…)

@@ -2018,6 +2018,14 @@ add_library(POM2::core ALIAS pom2_core)
 set_target_properties(pom2_core PROPERTIES
     EXPORT_NAME core
     POSITION_INDEPENDENT_CODE ON)
+# The same floating-point results on every platform: a netplay pair (an
+# ARM64 Mac against an x86-64 PC) compares the serialized state, which holds
+# doubles — the speaker's stamp clock, a slot card's bus-tick fraction. Clang
+# fuses a*b+c into one FMA on ARM64 and not on x86-64 unless told otherwise,
+# and the two round differently. MSVC contracts only under /fp:contract.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(pom2_core PRIVATE -ffp-contract=off)
+endif()
 
 option(POM2_BUILD_LIBRETRO "Build the native POM2 libretro module" OFF)
 if(POM2_BUILD_LIBRETRO OR POM2_LIBRETRO_ONLY)

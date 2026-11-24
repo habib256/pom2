@@ -10,6 +10,15 @@ AUDIO_BATCH = C.CFUNCTYPE(C.c_size_t, C.POINTER(C.c_int16), C.c_size_t)
 INPUT_POLL = C.CFUNCTYPE(None)
 INPUT_STATE = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 KEYBOARD = C.CFUNCTYPE(None, C.c_bool, C.c_uint, C.c_uint32, C.c_uint16)
+AUDIO_STATUS = C.CFUNCTYPE(None, C.c_bool, C.c_uint, C.c_bool)
+MIDI_ENABLED = C.CFUNCTYPE(C.c_bool)
+MIDI_READ = C.CFUNCTYPE(C.c_bool, C.POINTER(C.c_uint8))
+MIDI_WRITE = C.CFUNCTYPE(C.c_bool, C.c_uint8, C.c_uint32)
+
+
+class MidiInterface(C.Structure):
+    _fields_ = [("input_enabled", MIDI_ENABLED), ("output_enabled", MIDI_ENABLED),
+                ("read", MIDI_READ), ("write", MIDI_WRITE), ("flush", MIDI_ENABLED)]
 PAD = {"B": 0, "Y": 1, "SELECT": 2, "START": 3, "UP": 4, "DOWN": 5,
        "LEFT": 6, "RIGHT": 7, "A": 8, "X": 9, "L": 10, "R": 11,
        "L2": 12, "R2": 13, "L3": 14, "R3": 15}
@@ -58,6 +67,8 @@ class Frontend:
         self.frames = 0
         self.audio_frames = 0
         self.polls = 0
+        self.midi = []            # (byte, microseconds since the previous one)
+        self.audio_status = None  # the core's audio buffer status callback, if set
         self.pad = set()
         self.analog = (0, 0)
         self.core = C.CDLL(str(binary))
@@ -116,6 +127,21 @@ class Frontend:
             C.cast(data, C.POINTER(C.c_bool))[0] = False
         elif command in (52, 57):  # GET_CORE_OPTIONS_VERSION / GET_DISK_CONTROL_INTERFACE_VERSION
             C.cast(data, C.POINTER(C.c_uint))[0] = int(command == 57)
+        elif command == 3:  # GET_CAN_DUPE
+            C.cast(data, C.POINTER(C.c_bool))[0] = True
+        elif command == 62:  # SET_AUDIO_BUFFER_STATUS_CALLBACK
+            self.audio_status = AUDIO_STATUS(C.cast(data, C.POINTER(C.c_void_p))[0]) if data else None
+        elif command == 63:  # SET_MINIMUM_AUDIO_LATENCY
+            pass
+        elif command == 48 | 0x10000:  # GET_MIDI_INTERFACE
+            if not hasattr(self, "_midi"):
+                def record(byte, delta):
+                    self.midi.append((byte, delta))
+                    return True
+                self._midi = MidiInterface(MIDI_ENABLED(lambda: False), MIDI_ENABLED(lambda: True),
+                                           MIDI_READ(lambda byte: False), MIDI_WRITE(record),
+                                           MIDI_ENABLED(lambda: True))
+            C.memmove(data, C.byref(self._midi), C.sizeof(MidiInterface))
         elif command not in (6, 11, 13, 18, 35, 58, 60):  # notifications unused by this workload
             return False
         return True

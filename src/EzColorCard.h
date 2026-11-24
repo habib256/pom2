@@ -91,6 +91,8 @@ class M6502;
 class EzColorCard : public SlotPeripheral, public pom2::CardVideoSource
 {
 public:
+    double busClockFraction() const override { return clk_.fraction(); }
+    void setBusClockFraction(double f) override { clk_.setFraction(f); }
     EzColorCard();
 
     void setCpu(M6502* cpu) { cpu_ = cpu; }

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -17,6 +18,9 @@ enum class MediaKind { DiskII, SmartPort, HardDisk };
 struct DiskEntry {
     std::filesystem::path path;
     std::string label;
+    /// The image's bytes when the entry was made, hashed: what a save state
+    /// names the disk by. Not the path, which differs on each netplay peer.
+    std::uint64_t identity = 0;
     MediaKind kind() const;
     bool smartPort() const { return kind() == MediaKind::SmartPort; }
 };

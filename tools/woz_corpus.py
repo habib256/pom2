@@ -71,17 +71,51 @@ def out_of_scope(woz):
     return ""
 
 
-def machine_for(woz):
-    """[B] WOZ 2 INFO +40: compatible hardware, bit 0 ][, 1 ][+, 2 //e,
-    3 //c, 4 //e Enhanced. 0, or a WOZ 1, says nothing."""
+# [B] WOZ 2.1 reference, META chunk: tab-separated key / value lines;
+# requires_machine lists 2|2+|2e|2c|2e+|2gs|2c+|3|3+.
+META_MACHINE_BITS = {"2": 0x01, "2+": 0x02, "2e": 0x04, "2c": 0x08, "2e+": 0x10,
+                     "2gs": 0x20, "2c+": 0x40, "3": 0x80, "3+": 0x100}
+
+
+def woz_meta(woz):
+    """The META chunk's fields, {} when there is none."""
+    data = woz.read_bytes()
+    at, meta = 12, {}
+    while at + 8 <= len(data):
+        size = int.from_bytes(data[at + 4:at + 8], "little")
+        if data[at:at + 4] == b"META":
+            for line in data[at + 8:at + 8 + size].decode("utf-8", "replace").splitlines():
+                key, _, value = line.partition("\t")
+                meta[key] = value
+            break
+        at += 8 + size
+    return meta
+
+
+def compatible_hardware(woz):
+    """INFO +40 (WOZ 2, INFO version 2), else META requires_machine: a WOZ
+    written with INFO version 1 names its machines only there (Genetic
+    Drift, Pest Patrol: ][ and ][+)."""
     data = woz.read_bytes()[:80]
-    if data[:4] != b"WOZ2" or data[12:16] != b"INFO" or data[20] < 2:
-        return "iie-enhanced"
-    bits = data[60] | (data[61] << 8)
+    if data[:4] == b"WOZ2" and data[12:16] == b"INFO" and data[20] >= 2:
+        bits = data[60] | (data[61] << 8)
+        if bits:
+            return bits
+    bits = 0
+    for name in woz_meta(woz).get("requires_machine", "").split("|"):
+        bits |= META_MACHINE_BITS.get(name.strip(), 0)
+    return bits
+
+
+def machine_for(woz):
+    """[B] WOZ 2 INFO +40 (or META): compatible hardware, bit 0 ][, 1 ][+,
+    2 //e, 3 //c, 4 //e Enhanced. Nothing named: the enhanced //e."""
+    data = woz.read_bytes()[:80]
+    bits = compatible_hardware(woz)
     # INFO +38, the boot sector format: 2 = 13-sector, 3 = both. A DOS 3.2
     # disk that runs on the original ][ wants it: its programs are mostly
     # Integer BASIC, which a ][+ only has on a language card.
-    if bits & 1 and data[58] in (2, 3):
+    if bits & 1 and data[20] >= 2 and data[58] in (2, 3):
         return "ii"
     for bit, name in ((4, "iie-enhanced"), (2, "iie"), (1, "iiplus"), (0, "ii")):
         if bits & (1 << bit):
@@ -105,15 +139,34 @@ def text_rows(page):
     return rows
 
 
+def text_picture(image):
+    """True when something is lit and under 5 % of it is coloured: a text
+    screen. A black picture is not one, however stale the text page."""
+    small = image.convert("RGB").resize((280, 192))
+    lit = coloured = 0
+    for r, g, b in small.getdata():
+        if max(r, g, b) < 48:
+            continue
+        lit += 1
+        if max(r, g, b) - min(r, g, b) > 64:
+            coloured += 1
+    return lit > 0 and coloured * 20 < lit   # black is not a message: "blank"
+
+
 def judge(page, image):
     """The verdict from the text page (1 KiB) and the picture (PIL image)."""
     rows = text_rows(page)
     upper = "\n".join(rows).upper()
-    for needle in ERRORS:
-        if needle in upper:
-            return "error", needle
-    if MONITOR.search(upper):
-        return "crash", MONITOR.search(upper).group(0)
+    # The text page is read from memory whatever is on screen: a game in
+    # graphics mode can leave a loader's old message there (Lock 'N' Chase
+    # plays over a stale "UNABLE TO"). A message counts only when the
+    # picture is a text screen, light on black with no colour to speak of.
+    if text_picture(image):
+        for needle in ERRORS:
+            if needle in upper:
+                return "error", needle
+        if MONITOR.search(upper):
+            return "crash", MONITOR.search(upper).group(0)
     grey = image.convert("L").resize((280, 192))
     if grey.getextrema()[1] < 16:
         return "blank", ""
@@ -256,19 +309,26 @@ def one(args, emulator, binary, entry, corpus, out):
             return {"verdict": "reject", "detail": f"runner: {error}"[:200]}
 
     result = run(args.seconds)
-    if result["verdict"] == "blank":
+    if result["verdict"] in ("blank", "noboot"):
         # One instant can fall in a title's fade or between two screens
         # (Dawn Patrol, Carmen USA: a picture at 30 s and 60 s, black at
-        # 45 s). Every emulator gets the same second look, 5 s later; only
-        # a screen that stays empty is a failure.
-        result = run(args.seconds + 5)
-        if result["verdict"] == "screen":
-            result["detail"] = f"blank at {args.seconds:g} s, a picture at {args.seconds + 5:g} s"
+        # 45 s), and a long load at the real drive's speed is not over at
+        # 45 s (Thexder, Maniac Mansion, Street Sports). Every emulator gets
+        # the same looks, 5 s later and at 100 s; only a screen that stays
+        # empty is a failure.
+        first = result["verdict"]
+        for later in (args.seconds + 5, 100):
+            if later <= args.seconds:
+                continue
+            result = run(later)
+            if result["verdict"] == "screen":
+                result["detail"] = f"{first} at {args.seconds:g} s, a picture at {later:g} s"
+                break
     return dict(result, identifier=entry["identifier"], title=entry.get("title", ""), emulator=emulator,
                 machine=machine, sha256=entry["sha256"])
 
 
-def report(results, emulators, out):
+def report(results, emulators, out, corpus=None, files=None):
     verdicts = ("screen", "noboot", "blank", "error", "crash", "reject")
     table = {}
     for r in results:
@@ -299,6 +359,16 @@ def report(results, emulators, out):
                         and any(row[o]["verdict"] == "screen" for o in others))
         lines += ["", f"## {emulator}: fails where another passes ({len(behind)})", ""]
         lines += [f"- {title}: {verdict}" + (f" ({detail})" if detail else "") for title, verdict, detail in behind]
+    # What no emulator boots, with what the disk's own META says about it
+    # (a data disk for another program, a card it needs).
+    none = sorted((row[emulators[0]]["title"] or ident, ident) for ident, row in table.items()
+                  if row in complete and not any(row[e]["verdict"] == "screen" for e in emulators))
+    lines += ["", f"## No emulator boots it ({len(none)})", ""]
+    for title, ident in none:
+        note = ""
+        if corpus and files and ident in files and (corpus / files[ident]).exists():
+            note = woz_meta(corpus / files[ident]).get("notes", "")
+        lines.append(f"- {title}" + (f": {note}" if note else ""))
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return "\n".join(lines[:4 + len(emulators)])
 
@@ -357,7 +427,8 @@ def main():
             sink.flush()
             if n % 50 == 0:
                 print(f"{n}/{len(todo)}", flush=True)
-    print(report(results, [e for e, _ in emulators], args.out))
+    files = {e["identifier"]: e["file"] for e in entries if e.get("file")}
+    print(report(results, [e for e, _ in emulators], args.out, args.corpus, files))
     return 0
 
 

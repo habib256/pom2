@@ -248,6 +248,12 @@ public:
     /// tempo. Default: no-op; implemented by LironCard (its Sony
     /// mechanisms), MockingboardCard and PhasorCard.
     virtual void setStandardClock(double /*hz*/) {}
+    /// The fractional bus tick a card's SlotBusClock carries under an
+    /// accelerator: saved beside the card's state by the SDK (a restore must
+    /// put it back, or the timeline it replays drifts by a tick). Default:
+    /// a card with no bus clock carries none.
+    virtual double busClockFraction() const { return 0.0; }
+    virtual void setBusClockFraction(double /*fraction*/) {}
 
     virtual void appendSnapshotState(std::vector<uint8_t>& /*out*/) const {}
     virtual void loadSnapshotState(const uint8_t* /*data*/, std::size_t /*len*/) {}

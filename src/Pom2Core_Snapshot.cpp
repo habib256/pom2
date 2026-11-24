@@ -26,6 +26,7 @@
 #include "MouseCardAppleWin.h"
 #include "NoSlotClock.h"
 #include "PhasorCard.h"
+#include "PassportMidiCard.h"
 #include "ProDOSHardDiskCard.h"
 #include "SessionIIc.h"
 #include <fstream>
@@ -59,8 +60,10 @@ bool Core::Impl::canSnapshot() const
 namespace {
 // Version 3 appends the No-Slot Clock, the socket accelerator, the //c+'s
 // 3.5" media, a hard disk's changed blocks and the Phasors' registers;
-// version 2 (without them) still loads.
-constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 3};
+// version 4 the fractional bus tick each slot card carries under an
+// accelerator (SlotPeripheral::busClockFraction) and the Passport MIDI card. Versions 2 and 3 still
+// load, keeping the live fractions as they always did.
+constexpr uint8_t kSdkStateMagic[] = {'P', '2', 'S', 'D', 'K', 4};
 constexpr std::size_t kSdkMagicPrefix = sizeof(kSdkStateMagic) - 1;
 constexpr size_t kMaxSdkStateBytes = 40u << 20;
 }
@@ -103,6 +106,14 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
         }
         unit.clear();
         state.smartPort->appendSnapshotState(unit);
+        // The runtime tail ends with each unit's medium identity, a hash of
+        // its PATH: here the private copy, which sits in another directory
+        // on every machine. A load rewrites it from the media it rebuilds
+        // (below), so the state carries zeros: two netplay peers, or two runs
+        // of the same session, then serialize the same bytes.
+        constexpr auto identitySize = 8 * SmartPortCard::kMaxUnits;
+        if (unit.size() >= identitySize)
+            std::fill(unit.end() - identitySize, unit.end(), uint8_t{0});
         sessionio::blob(smartPort, unit);
     }
     if (state.rgbCard) {
@@ -191,8 +202,22 @@ bool Core::saveState(std::vector<std::uint8_t>& out)
     byteio::putU32(out, state.audioSampleRate);
     const auto paddles = state.memory.sdkPaddleState();
     out.insert(out.end(), paddles.begin(), paddles.end());
+    std::vector<uint8_t> busFractions;
+    for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
+        const SlotPeripheral* card = state.memory.slotBus().peripheral(slot);
+        const double fraction = card ? card->busClockFraction() : 0.0;
+        uint64_t bits;
+        std::memcpy(&bits, &fraction, sizeof(bits));
+        byteio::putU64(busFractions, bits);
+    }
+    std::vector<uint8_t> midi;
+    if (state.passportMidi) {
+        midi.push_back(static_cast<uint8_t>(state.passportMidiSlot));
+        state.passportMidi->appendSnapshotState(midi);
+    }
     for (const auto* blob : {&machine, &speaker, &keyboard, &video, &diskIdentity,
-                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse, &clock, &accel, &sony, &hdv, &phasor})
+                             &disk, &diskTiming, &smartPort, &rgb, &mb, &mouse, &clock, &accel, &sony, &hdv, &phasor,
+                             &busFractions, &midi})
         sessionio::blob(out, *blob);
     state.error.clear();
     return true;
@@ -220,7 +245,7 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         std::memcmp(data, kSdkStateMagic, kSdkMagicPrefix) != 0)
         return fail("Invalid SDK snapshot header");
     const uint8_t version = static_cast<const uint8_t*>(data)[kSdkMagicPrefix];
-    if (version != 2 && version != 3) return fail("Unsupported SDK snapshot version");
+    if (version < 2 || version > 4) return fail("Unsupported SDK snapshot version");
     if (!state.canSnapshot())
         return fail("SDK snapshots do not cover this peripheral configuration");
 
@@ -232,7 +257,7 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
     const auto* paddles = reader.data + reader.pos;
     reader.pos += 6;
     std::vector<uint8_t> machine, speaker, keyboard, video, diskIdentity, disk, diskTiming, smartPort, rgb, mb, mouse,
-                         clock, accel, sony, hdv, phasor;
+                         clock, accel, sony, hdv, phasor, busFractions, midi;
     // The machine section carries every RamWorks bank: 128 of them, 80 KiB
     // each with its language card, on top of the base 2 MiB budget.
     constexpr size_t kMaxMachineBytes = (2u << 20) + 128u * 0x14000u;
@@ -246,6 +271,9 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         (version >= 3 && (!reader.blob(clock, 4096) || !reader.blob(accel, 4096) ||
                           !reader.blob(sony, 40u << 20) || !reader.blob(hdv, 36u << 20) ||
                           !reader.blob(phasor, 64u << 10))) ||
+        (version >= 4 && (!reader.blob(busFractions, 8 * SlotBus::kSlotCount) ||
+                          busFractions.size() != 8 * SlotBus::kSlotCount ||
+                          !reader.blob(midi, 64u << 10))) ||
         !reader.done())
         return fail("Invalid SDK snapshot section lengths");
     if (!state.speaker.loadSdkState(speaker.data(), speaker.size(), false) ||
@@ -410,6 +438,10 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         if (!valid) return fail("Invalid SDK accelerator state");
     }
 
+    if ((version >= 4 || state.passportMidi) &&
+        (bool(state.passportMidi) != !midi.empty() ||
+         (!midi.empty() && midi[0] != static_cast<uint8_t>(state.passportMidiSlot))))
+        return fail("SDK snapshot MIDI card differs");
     if (bool(state.plus) != !sony.empty()) return fail("SDK snapshot //c+ drive configuration differs");
     SessionSonyMedia sonyMedia;
     if (state.plus) {
@@ -510,6 +542,20 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
             state.smartPort->setUnit(i, preparedSmartPort->setUnit(i, nullptr));
         state.smartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());
     }
+    if (!accel.empty()) {
+        if (state.acceleratorModel == Accelerator::ZipChip)
+            state.zipChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
+        else
+            state.fastChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
+        // Tell the devices the restored speed NOW, before their own saved
+        // state goes back over it. Deferred to the next slice, applySpeed
+        // re-based the speaker's stamp clock at that cycle, which the
+        // original timeline never did: the same state and inputs then gave
+        // another state, and a netplay rollback or a joining client fell out
+        // of step on every accelerated machine (the //c Plus at 4 MHz).
+        state.appliedSpeed = -1.0;
+        state.applySpeed(std::max(1e-3, state.memory.cpuSpeedMultiplier()));
+    }
     if (state.rgbCard) state.rgbCard->loadSnapshotState(rgb.data() + 2, rgb.size() - 2);
     for (size_t i = 0; i < boardStates.size(); ++i) {
         const auto& board = boardStates[i];
@@ -520,13 +566,6 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
     if (state.noSlotClock) {
         state.clockStartEpoch = clockStart;
         state.noSlotClock->loadSnapshotState(clock.data() + 8, clock.size() - 8, true);
-    }
-    if (!accel.empty()) {
-        if (state.acceleratorModel == Accelerator::ZipChip)
-            state.zipChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
-        else
-            state.fastChip.loadSnapshotState(accel.data() + 1, accel.size() - 1);
-        state.appliedSpeed = -1.0;   // tell the devices the restored speed at the next slice
     }
     state.memory.loadSdkKeyboard(keyboard.data(), keyboard.size(), true);
     state.memory.loadSdkPaddles(paddles, 6, true);
@@ -547,6 +586,22 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         state.mouseHle->loadSdkInput(mouseInput.data(), mouseInput.size(), true);
     } else if (state.mouseIic) {
         state.mouseIic->restoreSdkInput(rawX, rawY, mouseInput[0] != 0);
+    }
+    if (state.passportMidi && !midi.empty()) {
+        state.passportMidi->loadSnapshotState(midi.data() + 1, midi.size() - 1);
+        std::vector<MidiOutByte> dropped;   // sent on the timeline that was left
+        state.passportMidi->drainMidiOut(dropped);
+    }
+    // Last, over whatever the cards' own restores and the speed reset left.
+    if (!busFractions.empty()) {
+        byteio::Reader fractions(busFractions.data(), busFractions.size());
+        for (int slot = 0; slot < SlotBus::kSlotCount; ++slot) {
+            const uint64_t bits = fractions.u64();
+            double fraction;
+            std::memcpy(&fraction, &bits, sizeof(fraction));
+            if (SlotPeripheral* card = state.memory.slotBus().peripheral(slot))
+                card->setBusClockFraction(fraction);
+        }
     }
     state.error.clear();
     return true;

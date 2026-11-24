@@ -216,6 +216,29 @@ def check_formats(module, system, root, disk):
     require(count == 1 and "DIRTBIKE" in text, "the ShrinkIt disk archive did not boot Dirtbike")
     _, _, text = boot("hello.aci", 60 * 45)
     require("POM2 TAPE OK" in text and "LOAD" in text, "the Applesoft tape was not LOADed and RUN")
+    # The Passport MIDI card (pom2_midi): a note-on through its ACIA in slot
+    # 2 reaches the frontend's MIDI interface, after the first byte timed in
+    # microseconds (a byte is 320 us at 31 250 baud).
+    note = bytes([0xA9, 0x03, 0x8D, 0xA8, 0xC0,   # LDA #$03 / STA $C0A8  master reset
+                  0xA9, 0x15, 0x8D, 0xA8, 0xC0,   # LDA #$15 / STA $C0A8  8N1, /16
+                  0xA2, 0x00,                     # LDX #0
+                  0xAD, 0xA8, 0xC0, 0x29, 0x02,   # LDA $C0A8 / AND #2    transmit empty?
+                  0xF0, 0xF9,                     # BEQ back
+                  0xBD, 0x1F, 0x03, 0x8D, 0xA9, 0xC0,   # LDA $031F,X / STA $C0A9
+                  0xE8, 0xE0, 0x03, 0xD0, 0xEE,   # INX / CPX #3 / BNE back
+                  0x60,                           # RTS
+                  0x90, 0x3C, 0x64])              # note on, middle C, velocity 100
+    (content / "MIDI#060300.bin").write_bytes(note)
+    host = Host(module, system, root / "saves", {"pom2_midi": "passport"})
+    try:
+        host.load(content / "MIDI#060300.bin")
+        host.frame(240)
+        sent = [byte for byte, _ in host.midi]
+        require(sent == [0x90, 0x3C, 0x64], f"the MIDI card's note did not reach the frontend: {sent}")
+        require(all(250 <= delta <= 2000 for _, delta in host.midi[1:]),
+                f"MIDI bytes are not timed a byte apart: {host.midi}")
+    finally:
+        host.close()
     # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
     # boots DOS 3.2's System Master to its greeting (its Integer BASIC
     # HELLO is not available under Applesoft, and DOS says so).

@@ -39,6 +39,7 @@ class IIcMouse;
 class LeChatMauveCard;
 class MockingboardCard;
 class PhasorCard;
+namespace pom2 { class PassportMidiCard; }
 class MouseCard;
 class MouseCardAppleWin;
 namespace pom2 { class NoSlotClock; }
@@ -114,6 +115,8 @@ public:
     // while the mixer consumed 48 000.
     std::vector<MockingboardCard*> mockingboards;
     std::vector<PhasorCard*> phasors;   // non-owning; their slots own them
+    pom2::PassportMidiCard* passportMidi = nullptr;   // non-owning; its slot owns it
+    int passportMidiSlot = 0;
     // Non-owning; the slot owns the card. One of the two, or neither.
     MouseCard*         mouseMcu = nullptr;
     MouseCardAppleWin* mouseHle = nullptr;

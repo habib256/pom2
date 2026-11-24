@@ -349,6 +349,47 @@ void testShortGapHasCleanRevolutions() {
     std::error_code ec; fs::remove(p, ec);
 }
 
+void testFourZeroRunIsWeakAtTheThirdZero() {
+    std::printf("\n-- weak zone: a 4-zero run (WOZ reference placement) --\n");
+    // [B] WOZ 2.1 reference: while the head's 4-cell window is all zeros,
+    // the bit is random. $84 = 1 0000 1 00: the 3rd zero (cell 3, 12 us
+    // after the first one) is the run's one random cell. Decimal and
+    // Percent Word Problems needs a run like this to frame differently from
+    // one turn to the next; MAME's walk (18 us) never placed a bit there.
+    std::vector<uint8_t> nb(6000, 0xFF);
+    const int at = 3000;
+    nb[at] = 0x84;
+    const std::string p = writeWoz1("pom2_fourzero.woz", {{0, nb}});
+    DiskImage img;
+    check(img.loadFile(p), "4-zero WOZ loads");
+    const int64_t period = img.trackPeriod(0);
+    const int revolutions = 2000;
+    int atThird = 0, clean = 0, elsewhere = 0;
+    for (int r = 0; r < revolutions; ++r) {
+        // The sync around it is 8 cycles a cell; the run is the one gap
+        // past 16 (the platter's drift moves both ends alike).
+        const int64_t byteStart = r * period + int64_t{at} * 64;
+        int64_t prev = img.getNextTransition(0, byteStart - 40, 0), gap = 0;
+        for (int k = 0; k < 8 && gap <= 16; ++k) {
+            const int64_t next = img.getNextTransition(0, prev + 1, 0);
+            gap = next - prev;
+            prev = next;
+        }
+        // The fake bit is noise: ±3 cycles around its cell and off the
+        // platter's drift (8 cycles), so within 11 cycles of the 3rd zero.
+        if (gap >= 13 && gap <= 35) ++atThird;
+        else if (gap >= 39 && gap <= 41) ++clean;
+        else ++elsewhere;
+    }
+    const double share = 100.0 * atThird / revolutions;
+    char msg[160];
+    std::snprintf(msg, sizeof(msg), "%.1f %% of revolutions put a bit near the 3rd zero (want 27-33)", share);
+    check(share > 27.0 && share < 33.0, msg);
+    std::snprintf(msg, sizeof(msg), "the others read the run clean: %d clean, %d elsewhere (want 0)", clean, elsewhere);
+    check(elsewhere == 0 && clean + atThird == revolutions, msg);
+    std::error_code ec; fs::remove(p, ec);
+}
+
 void testAngleCarriesAcrossAStep() {
     std::printf("\n-- cross-track angle: tracks of unequal length --\n");
     std::vector<uint8_t> t0 = trackNibbles(0), t1 = trackNibbles(1);
@@ -463,6 +504,7 @@ int main() {
     testHeadReachesTrack39();
     testWeakZoneIsNoisyAndVaries();
     testShortGapHasCleanRevolutions();
+    testFourZeroRunIsWeakAtTheThirdZero();
     testAngleCarriesAcrossAStep();
     testTrackZeroStopIsReported();
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "OK",

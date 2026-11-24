@@ -5508,7 +5508,7 @@ to CREATE rather than overwrite.
 cell is a 0 and the track carries zero flux events. Reads then take the
 two paths MAME takes over unmagnetised surface — `kFluxNever` +
 `DiskIICard::advanceNoise` while a track is wholly blank, and the
-weak-zone pulse train (`kWeakGapLss`, MAME `m_amplifier_freakout_time`)
+weak-zone pulse train (`kWeakGapLss`, the WOZ reference's 4-cell window)
 over whatever is still blank once a format has started on it. The noise
 shortcut applies in READ mode only (Q6 low): with Q6 high the guest is
 sensing write-protect, and noise — bit 7 always set — made a writable blank
@@ -5587,21 +5587,32 @@ does POM2 now. The substitution is in the **controller**, not the image:
 `kFluxNever` — **read mode only**, because a
 write must not be fed invented transitions.
 
-**Weak bits are a 30 % draw** *(density 2026-11-06; it was 50 %)*. Past
-MAME's amplifier-freakout time (16 µs, `m_amplifier_freakout_time` →
-`kWeakGapLss = 32` LSS cycles) the read channel emits pulses that differ per
-revolution — which is exactly what a weak-bit copy protection measures.
-`getNextTransition` keeps **MAME's walk** inside such a gap — fixed 4 µs
-intervals (8 LSS cycles, candidate in the middle of each), re-drawn per
-revolution — and takes the **density** from the one primary statement of
-one: [B] WOZ 2.1 reference, "Freaking Out Like a MC3470", *"roughly 30%"* of
-the fake bits are 1 (`kWeakOnes`). [D] MAME @ `mame0287` draws 50 %
-(`floppy.cpp:1132-1152`) and has changed the figure twice since with no
-source; AppleWin and Casso use 30 %. [B] The MC3470 data sheet shows a
-fixed-gain amplifier — no AGC — so the usual "the amplifier hunts" story is
-not supported by the chip. [A] No measurement found, and no known protection
-counts the ones. [F] Not taken: the reference's *placement* (first fake bit
-12 µs after the last transition, on a cell boundary; POM2 starts at 18 µs).
+**Weak bits are a 30 % draw, placed as the WOZ reference says** *(density
+2026-11-06, it was 50 %; placement 2026-11-24, it was MAME's)*. [B] WOZ 2.1
+reference, "Freaking Out Like a MC3470": while the head's 4-cell window is
+all zeros, the read channel outputs a random bit, *"roughly 30%"* of them 1
+(`kWeakOnes`). So a run of 4 zeros (20 µs between transitions,
+`kWeakGapLss = 36` LSS cycles to tolerate drift) is already weak, and the
+fake bits fall from the 3rd zero (12 µs, `kWeakFirstLss`) to the cell
+before the next transition, one candidate a cell re-drawn per revolution,
+each within ±1.5 µs of its cell (`kWeakJitterLss`) and off the platter's
+drift: they are amplifier noise, not flux. Put on the cell grid and drifted
+with the surface, Fighter Command's loader hung; on the grid and undrifted,
+the variation came only from the drift. With the jitter, 107 weak-bit
+titles of the woz-a-day corpus boot under three different hash salts each
+(2026-11-24) — which is
+exactly what a weak-bit copy protection measures. [D] MAME @ `mame0287`
+waits 16 µs (`m_amplifier_freakout_time`) and puts its candidates in the
+middle of 4 µs intervals from there (18 µs, 22 µs…), at 50 %
+(`floppy.cpp:1132-1152`); POM2 followed that walk until 2026-11-24, and a
+4-zero run then had one candidate half a cell before the real pulse, so it
+always framed the same way. *Decimal and Percent Word Problems* looks for
+`BF DA EF AF` behind such runs and finds it only on a turn that frames them
+differently: it booted in AppleWin (which follows the reference, @ 6e6df2cb
+`Disk.cpp` `DataLatchReadWriteWOZ`), not in MAME or POM2. [B] The MC3470
+data sheet shows a fixed-gain amplifier — no AGC — so the usual "the
+amplifier hunts" story is not supported by the chip. [A] No measurement
+found, and no known protection counts the ones.
 The blank-TRACK path (`advanceNoise`) is still a byte-level stand-in, about
 56 % ones.
 The revolution term is `base / period`, not `fullRevs`, because

@@ -1993,9 +1993,11 @@ namespace {
 //     `cache_weakness_setup` (:1110-1125), the walk below (:1132-1152) at
 //     50 %. AppleWin @ 4a43bcdb and Casso @ 2d899adf use 30 %.
 // [A] None found; no known protection counts the ones.
-// [F] Not taken: the reference's PLACEMENT (first fake bit 12 µs after the
-//     last transition; this walk starts at 18 µs). Settled by: a flux
-//     capture of a real drive over a weak-bit track.
+// [B] And its PLACEMENT (2026-11-24): a 4-cell window, so a 4-zero run
+//     (20 µs) is weak from its 3rd zero, 12 µs after the last transition.
+//     MAME's 16 µs walk never let Decimal and Percent Word Problems frame
+//     its runs differently from turn to turn (DEV § Storage). Each fake
+//     bit is placed within ±1.5 µs of its cell: noise, not flux.
 //
 // MAME's walk: any gap between two consecutive transitions at or beyond the
 // threshold makes the zone "weak", and `get_next_transition` then serves
@@ -2022,17 +2024,17 @@ namespace {
 // not the image's optimal_bit_timing). A normal GCR surface never gets
 // here: the widest legal run is a sync $FF's two pad cells, 3 cells =
 // 24 LSS cycles at the standard 4 µs cell.
-constexpr int64_t kWeakGapLss  = 32;   // 16 µs — m_amplifier_freakout_time
-/// MAME walks the weak zone in FIXED 4 µs steps regardless of the image's
-/// optimal_bit_timing (`attotime::from_usec(4)` / `as_ticks(250000)`), and
-/// places each candidate in the MIDDLE of its interval
-/// (`from_ticks(index*2+1, 500000)` = index·4 µs + 2 µs). 4 µs = 8 LSS
-/// cycles here, so the midpoint offset is 4.
-constexpr int64_t kWeakCellLss = 8;    // 4 µs
-constexpr int64_t kWeakHalfLss = 4;    // 2 µs
+constexpr int64_t kWeakGapLss  = 36;   // 4.5 cells: a 4-zero run (20 µs) is weak
+/// The walk steps one 4 µs cell at a time (8 LSS cycles), as MAME's does
+/// whatever the image's optimal_bit_timing; the first candidate is the 3rd
+/// zero cell and the last the cell before the next transition (the
+/// reference's 4-cell window).
+constexpr int64_t kWeakCellLss  = 8;   // 4 µs
+constexpr int64_t kWeakFirstLss = 24;  // 12 µs: the 3rd zero
+constexpr int64_t kWeakJitterLss = 3;  // ±1.5 µs around the cell
 
-/// The share of 4 µs intervals of a weak zone that carry a pulse: 30 % of
-/// 2^32, against the hash's upper half. See the block above for its source.
+/// 30 % of 2^32: a weak cell's pulse, against the hash's upper half (its low
+/// bits place the pulse in the cell). Source in the block above.
 constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
 
 /// After MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
@@ -2040,7 +2042,8 @@ constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
 /// Steele, Lea, Flood 2014) before the next is folded in, so the draws are
 /// independent — 30.0 % ones, 11.8 % clean six-interval runs, as a 30 % coin
 /// gives; SSI's RDOS check needs those (CHANGELOG 2026-11-24). Deterministic
-/// in (revolution, zone, interval): a rewind re-reads the same surface.
+/// in (revolution, zone, interval): a rewind, or a netplay peer, re-reads the
+/// same surface.
 inline uint64_t splitMix(uint64_t x)
 {
     x += 0x9E3779B97F4A7C15ull;
@@ -2054,11 +2057,6 @@ inline uint64_t weakHash(int64_t revolution, int64_t zone, int64_t interval)
     uint64_t h = splitMix(static_cast<uint64_t>(revolution) ^ 0x4242ull);
     h = splitMix(h ^ static_cast<uint64_t>(zone));
     return splitMix(h ^ static_cast<uint64_t>(interval));
-}
-
-inline bool weakPulse(int64_t revolution, int64_t zone, int64_t interval)
-{
-    return (weakHash(revolution, zone, interval) >> 32) < kWeakOnes;
 }
 
 }  // namespace
@@ -2156,8 +2154,8 @@ int64_t DiskImage::nextTransitionRaw(int qt, int64_t fromLssCycle, int64_t revol
     // flux at all).
     if (nextPos - prevPos >= kWeakGapLss) {
         const int64_t base      = origin + fullRevs * period;
-        const int64_t weakStart = base + prevPos + kWeakGapLss;
-        const int64_t endTime   = base + nextPos;
+        const int64_t weakStart = base + prevPos + kWeakFirstLss;
+        const int64_t endTime   = base + nextPos - kWeakCellLss - kWeakCellLss / 2;
         // MAME's first hash input is `m_revolution_count`, which advances
         // once per revolution. `fullRevs` cannot serve: `DiskIICard::lssSync`
         // re-bases the drive's anchor forward by whole periods every
@@ -2168,16 +2166,18 @@ int64_t DiskImage::nextTransitionRaw(int qt, int64_t fromLssCycle, int64_t revol
         // cycle this revolution started at under BOTH anchoring modes, so
         // `base / period` is the revolution counter.
         const int64_t revIndex = base / period;
+        // One candidate a cell, 30 % of them, ±1.5 µs off the grid; start a
+        // cell early, as its jittered point may still lie ahead.
         int64_t interval = (fromLssCycle < weakStart)
                              ? int64_t{0}
                              : (fromLssCycle - weakStart) / kWeakCellLss;
-        int64_t weakTime = weakStart + interval * kWeakCellLss + kWeakHalfLss;
-        while (weakTime < endTime) {
-            if (weakTime > fromLssCycle
-                && weakPulse(revIndex, prevPos, interval))
+        if (interval > 0) --interval;
+        for (int64_t cell = weakStart + interval * kWeakCellLss; cell <= endTime;
+             cell += kWeakCellLss, ++interval) {
+            const uint64_t h = weakHash(revIndex, prevPos, interval);
+            const int64_t weakTime = cell + static_cast<int64_t>(h % (2 * kWeakJitterLss + 1)) - kWeakJitterLss;
+            if (weakTime > fromLssCycle && (h >> 32) < kWeakOnes)
                 return weakTime;
-            weakTime += kWeakCellLss;
-            ++interval;
         }
     }
     const int64_t base = origin + fullRevs * period;

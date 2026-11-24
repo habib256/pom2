@@ -37,6 +37,7 @@
 #include "Mockingboard.h"
 #include "NoSlotClock.h"   // Core::Impl owns one: its destructor needs the type
 #include "PhasorCard.h"
+#include "PassportMidiCard.h"
 #include "Sha256.h"
 #include "Version.h"
 #include "MountableMediaCard.h"
@@ -1252,6 +1253,41 @@ bool Core::phasorAttached() const
     return !impl_->phasors.empty();
 }
 
+bool Core::attachPassportMidi(int slot)
+{
+    if (impl_->iicClass()) {
+        impl_->error = "The Passport MIDI Interface is a slot card; a //c has no slots";
+        return false;
+    }
+    if (impl_->passportMidi || slot < 1 || slot > 7 || impl_->memory.slotBus().isPlugged(slot)) {
+        impl_->error = "The Passport MIDI Interface needs an empty slot between 1 and 7, once";
+        return false;
+    }
+    auto card = std::make_unique<PassportMidiCard>(slot);
+    card->setCpuClock(impl_->cpuClockHz * impl_->appliedSpeed);
+    card->setStandardClock(impl_->cpuClockHz);   // the ACIA's crystal is the card's own
+    impl_->passportMidi = card.get();
+    impl_->passportMidiSlot = slot;
+    impl_->memory.slotBus().plug(slot, std::move(card));
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::passportMidiAttached() const
+{
+    return impl_->passportMidi != nullptr;
+}
+
+void Core::drainMidi(std::vector<MidiByte>& out)
+{
+    out.clear();
+    if (!impl_->passportMidi) return;
+    std::vector<MidiOutByte> bytes;
+    impl_->passportMidi->drainMidiOut(bytes);
+    out.reserve(bytes.size());
+    for (const auto& b : bytes) out.push_back({b.cycle, b.byte});
+}
+
 bool Core::mockingboardAttached() const
 {
     return !impl_->mockingboards.empty();
@@ -1539,6 +1575,11 @@ void Core::write(std::uint16_t address, std::uint8_t value)
 void Core::setKeyHeld(std::uint16_t token, bool down)
 {
     impl_->memory.setKeyHeld(token, down);
+}
+
+bool Core::keyHeld(std::uint16_t token) const
+{
+    return impl_->memory.keyHeld(token);
 }
 
 void Core::releaseHeldKeys()

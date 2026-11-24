@@ -875,6 +875,7 @@ public:
     /// What a $C000 read would answer, without promoting a queued key.
     uint8_t keyLatchPeek() const  { return keyboard_.latchMirror(); }
     void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
+    bool keyHeld(uint16_t token) const { return keyboard_.keyHeld(token); }
     void appendSdkKeyboard(std::vector<uint8_t>& out) const { keyboard_.appendSdkState(out); }
     bool loadSdkKeyboard(const uint8_t* data, size_t size, bool apply)
     {
