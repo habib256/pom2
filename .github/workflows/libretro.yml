@@ -294,6 +294,10 @@ jobs:
       actions: read
       contents: write
     steps:
+      # Only the release notes are read from the tree.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          sparse-checkout: docs/releases
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           pattern: pom2-libretro-*
@@ -319,7 +323,16 @@ jobs:
           python3 -m zipfile -c release/pom2-libretro-verification.zip "${results[@]}"
           (cd release && sha256sum ./*.zip > SHA256SUMS)
 
-          cat > release-notes.md <<'EOF'
+          # Hand-written notes for this tag first (docs/releases/libretro-vX.Y.Z.md),
+          # then the standing text on what the packages are and how they were checked.
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            sed '1{/^# POM2 /d;}' "$notes" > release-notes.md
+            printf '\n---\n\n' >> release-notes.md
+          else
+            : > release-notes.md
+          fi
+          cat >> release-notes.md <<'EOF'
           Native POM2 Libretro core packages tested with RetroArch on Linux x64, Linux arm64, macOS arm64, and Windows x64, plus an Android arm64 core built with the NDK (not run in CI).
 
           Install the core and its info file in the directories listed by RetroArch under Settings → Directory. Supply your Apple //e firmware in `system/pom2/`. Each ZIP includes the user guide and compatibility report. The verification ZIP contains native test results, RetroArch logs and screenshots of a resumed Dirtbike session for all three platforms.
