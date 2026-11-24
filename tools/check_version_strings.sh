@@ -8,6 +8,7 @@
 # at "0.8" through three releases, and README carries the version in every
 # package filename a user copies. So, for version V:
 #   · vcpkg.json            "version-string": "V"
+#   · libretro/pom2_libretro.info  display_version = "V"
 #   · CLAUDE.md             Current release: **vV**
 #   · README.md             the title (`POM2 vV`), every package filename
 #                           (`POM2-vV-…`, `POM2-<Platform>-vV.…`) and the
@@ -93,6 +94,12 @@ mismatch() { echo "STALE  $1: says $2, CMakeLists.txt says $V"; bad=1; }
 
 got=$(sed -n 's/.*"version-string"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vcpkg.json)
 [ "$got" = "$V" ] || mismatch vcpkg.json "${got:-nothing}"
+# The libretro core's info file: its display_version is what RetroArch and
+# the buildbot show (checked when the file exists; the self-test tree has none).
+if [ -f libretro/pom2_libretro.info ]; then
+    got=$(sed -n 's/^display_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' libretro/pom2_libretro.info)
+    [ "$got" = "$V" ] || mismatch libretro/pom2_libretro.info "${got:-nothing}"
+fi
 
 got=$(sed -n 's/.*Current release: \*\*v\([0-9.]*\)\*\*.*/\1/p' CLAUDE.md)
 [ "$got" = "$V" ] || mismatch CLAUDE.md "${got:-nothing}"

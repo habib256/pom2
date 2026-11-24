@@ -10,6 +10,24 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — Ready for the libretro buildbot
+
+Before asking libretro to build the core, its toolchains were rebuilt from
+public images (`libretro-toolchains.yml`, manual): their Linux x64 image is
+Ubuntu 16.04 with GCC 9, their Windows one MXE MinGW, and their registry
+answers only their own runners. Linux built as it is and needs only glibc
+2.17. Windows built, but the DLL imported `libstdc++-6.dll`,
+`libgcc_s_seh-1.dll` and `libwinpthread-1.dll`, which a RetroArch install
+does not ship: the core now links those runtimes in itself under MinGW
+(libretro/CMakeLists.txt) and imports only system DLLs.
+
+`pom2_libretro.info` says what the core now is: `display_version` (checked
+by `check_version_strings.sh`), `savestate_features = "deterministic"`
+(netplay is checked frame by frame), no longer experimental.
+`tools/libretro_docs_page.py` writes the docs.libretro.com page from the
+core itself — its options, controllers, input descriptors and firmware — so
+the page cannot drift from the core.
+
 ## 2026-11-24 — What the first users stumbled on
 
 The Apple II Enthusiasts thread of 2026-10-20 and the GitHub issues showed

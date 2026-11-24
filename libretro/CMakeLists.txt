@@ -19,6 +19,13 @@ target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp ../src
     ../src/DiskBuilder.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)
+# MinGW: link the C++ and GCC runtimes into the core. A core that imports
+# libstdc++-6.dll, libgcc_s_seh-1.dll or libwinpthread-1.dll does not load
+# in a RetroArch that does not ship them (MXE's static target does this by
+# default; a plain MinGW-w64 did not, 2026-11-24).
+if(MINGW)
+    target_link_options(pom2_libretro PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
 # As pom2_core: no FMA contraction, so netplay peers on ARM64 and x86-64
 # compute the same doubles (see the root CMakeLists).
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

@@ -1,0 +1,111 @@
+# The libretro buildbot's toolchains, before asking it to build POM2.
+#
+# git.libretro.com builds the core from `.gitlab-ci.yml`, which only names
+# libretro's CMake templates (libretro-infrastructure/ci-templates): Linux
+# x64 in their `libretro-build-amd64-ubuntu:xenial-gcc9` image (Ubuntu 16.04,
+# GCC 9 from the ubuntu-toolchain-r PPA, CMake 3.31), Windows in MXE MinGW.
+# None of that is what our own CI compiles with (Ubuntu 24.04, MSVC, Xcode),
+# and their registry (git.libretro.com:5050) only answers their own runners
+# (it timed out from GitHub, 2026-11-24). So this rebuilds the same thing
+# from public images: Ubuntu 16.04 with that PPA's GCC 9 and CMake 3.31.7,
+# and MinGW-w64 for Windows (the core links its runtimes in itself). Each
+# job also reports what the binary needs: the newest glibc symbol, the DLLs.
+# Android and Linux arm64 are built by the libretro release workflow.
+#
+# Manual: Actions > Libretro buildbot toolchains > Run workflow.
+
+name: Libretro buildbot toolchains
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CORE_ARGS: -DPOM2_LIBRETRO_ONLY=ON -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
+
+jobs:
+  linux-x64-xenial-gcc9:
+    name: Linux x64 (Ubuntu 16.04, GCC 9)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
+    steps:
+      - name: Install the xenial-gcc9 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq software-properties-common ca-certificates curl git make
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update -qq
+          apt-get install -y -qq gcc-9 g++-9
+          cd /tmp
+          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.31.7/cmake-3.31.7-linux-x86_64.tar.gz
+          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.31.7/cmake-3.31.7-SHA-256.txt
+          grep ' cmake-3.31.7-linux-x86_64.tar.gz$' cmake-3.31.7-SHA-256.txt | sha256sum -c -
+          tar -xzf cmake-3.31.7-linux-x86_64.tar.gz -C /opt
+          ln -sf /opt/cmake-3.31.7-linux-x86_64/bin/cmake /usr/local/bin/cmake
+          g++-9 --version | sed -n 1p; cmake --version | sed -n 1p; ldd --version | sed -n 1p
+
+      # No checkout action: xenial's glibc is too old for the action's Node.
+      - name: Fetch the source
+        shell: bash
+        run: git clone --depth 1 --branch "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" src
+
+      - name: Build as libretro's linux-cmake template does
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          CC=gcc-9 CXX=g++-9 cmake -DCMAKE_BUILD_TYPE=Release $CORE_ARGS . -Bbuild/linux-x86_64
+          cmake --build build/linux-x86_64 --target pom2_libretro --config Release -- -j 2
+          mv build/linux-x86_64/pom2_libretro.so pom2_libretro.so
+          strip --strip-unneeded pom2_libretro.so
+          ls -l pom2_libretro.so
+          echo "Newest glibc symbol needed:"
+          objdump -T pom2_libretro.so | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1
+          echo "Newest libstdc++ symbol needed:"
+          objdump -T pom2_libretro.so | grep -o 'GLIBCXX_[0-9.]*' | sort -Vu | tail -1
+
+  windows-x64-mingw:
+    name: Windows x64 (MinGW-w64, static)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b
+    steps:
+      - name: Install MinGW-w64
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq ca-certificates git make cmake g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          x86_64-w64-mingw32-g++-posix --version | sed -n 1p; cmake --version | sed -n 1p
+
+      - name: Fetch the source
+        shell: bash
+        run: git clone --depth 1 --branch "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" src
+
+      - name: Build as libretro's windows-cmake-mingw template does
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          cmake -DCMAKE_BUILD_TYPE=Release $CORE_ARGS -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc-posix -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++-posix \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            . -Bbuild/windows-x86_64
+          cmake --build build/windows-x86_64 --target pom2_libretro --config Release -- -j 2
+          mv build/windows-x86_64/pom2_libretro.dll pom2_libretro.dll
+          x86_64-w64-mingw32-strip --strip-unneeded pom2_libretro.dll
+          ls -l pom2_libretro.dll
+          echo "DLLs it imports (system DLLs only, as a static MXE build):"
+          x86_64-w64-mingw32-objdump -p pom2_libretro.dll | grep 'DLL Name' | sort -u | tee dlls.txt
+          if grep -qiE 'libstdc|libgcc|libwinpthread' dlls.txt; then
+            echo "::error::the core imports a MinGW runtime DLL"; exit 1
+          fi
