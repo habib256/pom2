@@ -240,6 +240,21 @@ on-screen keyboard and R3 inserts the next disk of a playlist. Port 2's
 joystick drives paddles 2 and 3 and push button 2, for two-player paddle
 games.
 
+### Game pad profiles
+
+A known game gets its keys on the RetroPad by itself, and **Quick Menu →
+Controls** names them ("Key U: Dig left"). The game is found by the title on
+a WOZ disk, or by the file name without its (year)(publisher) tags. A game
+that plays with an Apple II joystick keeps the D-pad on the joystick and B/A
+on its buttons; its profile only adds its other keys (pause, start, the
+second player). A game played at the keyboard gets its movement keys on the
+D-pad and its actions on the buttons. Every profile was read off the game's
+manual or reference card. Turn them off with **Game pad profiles → Off**;
+they apply while port 1 is the Apple II joystick.
+
+- Keyboard games: Apple Panic, Aztec, Gorgon, Snake Byte, Sneakers, Swashbuckler, Ultima II, Ultima III: Exodus, Ultima IV: Quest of the Avatar, Ultima V: Warriors of Destiny, Wizardry: Proving Grounds of the Mad Overlord.
+- Joystick games, with their extra keys: Airheart, Archon, Archon II: Adept, Arkanoid, Beyond Castle Wolfenstein, Bruce Lee, Bubble Bobble, Cannonball Blitz, Captain Goodnight and the Islands of Fear, Castle Wolfenstein, Championship Lode Runner, Choplifter, Crisis Mountain, Dig Dug, Galaxian, Gauntlet, Hard Hat Mack, Jumpman, Karateka, Lode Runner, Miner 2049er, Ms. Pac-Man, Pac-Man, Paperboy, Serpentine, Spy's Demise, Star Blazer, Tetris.
+
 Port 4 is the same for the mouse: **Mouse (for netplay)**.
 
 Port 3 is the keyboard **for netplay**. RetroArch's netplay sends each

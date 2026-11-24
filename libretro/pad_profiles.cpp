@@ -96,7 +96,10 @@ bool parseKey(std::string_view name, PadAssign& out)
 
 bool PadProfile::dpadKeys() const
 {
-    return buttons[RETRO_DEVICE_ID_JOYPAD_UP].action == PadAction::Key;
+    for (unsigned id : {RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+                        RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT})
+        if (buttons[id].action == PadAction::Key) return true;
+    return false;
 }
 
 bool parsePadSpec(std::string_view spec, PadProfile& out, std::string& error)
@@ -131,12 +134,18 @@ bool parsePadSpec(std::string_view spec, PadProfile& out, std::string& error)
         else { error = "unknown key \"" + std::string(value) + "\" for " + button; return false; }
         out.buttons[which->id] = assign;
     }
-    // The D-pad moves the joystick or types four keys, not a mixture.
-    int keys = 0;
+    // The D-pad moves the joystick or types keys, not a mixture; a direction
+    // the game has no key for says `none` (Wizardry cannot step back).
+    int keys = 0, nones = 0;
     for (unsigned id : {RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
-                        RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT})
+                        RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT}) {
         keys += out.buttons[id].action == PadAction::Key;
-    if (keys != 0 && keys != 4) { error = "the D-pad needs four keys or none"; return false; }
+        nones += out.buttons[id].action == PadAction::None;
+    }
+    if (keys != 0 && keys + nones != 4) {
+        error = "a D-pad that types keys gives each direction a key or none";
+        return false;
+    }
     return true;
 }
 

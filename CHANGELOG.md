@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — Per-game RetroPad profiles
+
+An Apple II game is often a keyboard game, and a RetroPad has no keyboard:
+the core now knows 39 games and puts their keys on the pad
+(`libretro/pad_profiles.*`, the table in `pad_profiles_data.inc`). A game is
+found by a WOZ disk's META title, else by the file name with its tags
+dropped; on woz-a-day, 38 of the profiles match a disk by its title.
+
+The rule, the user's: a game that plays with a joystick keeps the D-pad on
+the joystick and B/A on its buttons, and its profile only adds keys on the
+other buttons; a keyboard-only game gets its movement keys on the D-pad.
+`libretro_pad_profiles` checks it for every row, with the line's syntax, a
+cited source per row and unique titles. The keys were read off the games'
+manuals and reference cards (archive.org scans, mocagh.org); seven entries
+that only an unofficial transcription backed were left out, and the paddle
+games (Raster Blaster, David's Midnight Magic) need none.
+
+RetroArch's controls menu names each key ("Key Ctrl-J: Joystick control"),
+including on L, R, L2 and R2, which the standard list did not carry; a
+control character is named from the key held, since Ctrl-J is also the
+//e's down arrow. Option `pom2_pad_profile` (Automatic / Off). The presses
+go through the same saved-state bindings as the pad keyboard modes, so a
+profile is netplay- and rollback-safe. Pinned end to end in
+`pom2_libretro_formats`: "Snake Byte" on the D-pad types I.
+
 ## 2026-11-24 — The libretro core builds for iOS and tvOS
 
 Built with the arguments of libretro's `ios-cmake.yml` and `tvos-cmake.yml`

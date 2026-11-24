@@ -260,6 +260,43 @@ def check_formats(module, system, root, disk):
             require("DIRTBIKE" in text, f"{name} did not boot Dirtbike through the VFS")
         finally:
             host.close()
+    # A per-game pad profile, found by the content's name: "Snake Byte" is a
+    # keyboard game, so its D-pad types I/M/J/K. A BASIC program under that
+    # name prints the keys it gets; the controls menu names the keys.
+    (content / "Snake Byte.bas").write_text('10 GET A$: PRINT "KEY=";A$: GOTO 10\n')
+    class ProfileHost(Host):
+        descriptors = []
+        def environment(self, command, data):
+            if command == 11:   # SET_INPUT_DESCRIPTORS
+                class Descriptor(ctypes.Structure):
+                    _fields_ = [("port", ctypes.c_uint), ("device", ctypes.c_uint), ("index", ctypes.c_uint),
+                                ("id", ctypes.c_uint), ("description", ctypes.c_char_p)]
+                items = ctypes.cast(data, ctypes.POINTER(Descriptor))
+                self.descriptors = []
+                i = 0
+                while items[i].description:
+                    self.descriptors.append(items[i].description.decode())
+                    i += 1
+                return True
+            return super().environment(command, data)
+    for options, expect in (({}, True), ({"pom2_pad_profile": "disabled"}, False)):
+        host = ProfileHost(module, system, root / "saves", options)
+        try:
+            host.load(content / "Snake Byte.bas")
+            host.frame(240)
+            host.pad.add(4)       # D-pad up
+            host.frame(4)
+            host.pad.discard(4)
+            host.frame(30)
+            _, text = text_page(host)
+            labelled = "Key I: Up" in host.descriptors
+            if expect:
+                require(labelled, f"the Snake Byte profile does not name its keys: {host.descriptors}")
+                require("KEY=I" in text, "the D-pad did not type Snake Byte's up key")
+            else:
+                require(not labelled and "KEY=I" not in text, "the pad profile applied while switched off")
+        finally:
+            host.close()
     # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
     # boots DOS 3.2's System Master to its greeting (its Integer BASIC
     # HELLO is not available under Applesoft, and DOS says so).

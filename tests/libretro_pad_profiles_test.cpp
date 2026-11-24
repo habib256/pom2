@@ -46,6 +46,9 @@ int main()
           q.buttons[RETRO_DEVICE_ID_JOYPAD_A].label == "Jump", "':' as a key, with a label");
     PadProfile bad;
     check(!parsePadSpec("up=I;down=M", bad, error), "half a D-pad is refused");
+    PadProfile three;
+    check(parsePadSpec("up=F;down=none;left=L;right=R", three, error) && three.dpadKeys(),
+          "a direction with no key says none");
     check(!parsePadSpec("b=F13", bad, error), "an unknown key is refused");
     check(!parsePadSpec("z=A", bad, error), "an unknown button is refused");
     PadProfile joy;

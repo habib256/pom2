@@ -636,8 +636,12 @@ void applyProfile()
 std::vector<retro_input_descriptor> profileDescriptors;
 std::vector<std::string> profileDescriptorText;
 
-std::string keyName(std::uint8_t ascii)
+std::string keyName(std::uint8_t ascii, std::uint16_t token)
 {
+    // Ctrl-J is $0A, the //e's down arrow, Ctrl-H its left arrow, Ctrl-M
+    // Return: the key held tells them apart, the code does not.
+    if (ascii < 0x20 && token >= RETROK_a && token <= RETROK_z)
+        return std::string("Ctrl-") + static_cast<char>('A' + (token - RETROK_a));
     switch (ascii) {
     case 0x0d: return "Return";
     case 0x1b: return "Escape";
@@ -672,7 +676,7 @@ void installDescriptors()
             const auto assign = profileAssign(d.id);
             using pom2::libretro::PadAction;
             if (assign.action == PadAction::Key)
-                text = "Key " + keyName(assign.ascii) + (assign.label.empty() ? "" : ": " + assign.label);
+                text = "Key " + keyName(assign.ascii, assign.token) + (assign.label.empty() ? "" : ": " + assign.label);
             else if (assign.action == PadAction::None)
                 continue;
             else if (!assign.label.empty())
@@ -680,6 +684,20 @@ void installDescriptors()
         }
         profileDescriptorText.push_back(text);
         profileDescriptors.push_back(d);
+    }
+    // Buttons the standard list leaves out (L, R, L2, R2) when the profile
+    // gives them a key.
+    for (unsigned id : kProfileOrder) {
+        const auto assign = profileAssign(id);
+        if (assign.action != pom2::libretro::PadAction::Key) continue;
+        const bool listed = std::any_of(profileDescriptors.begin(), profileDescriptors.end(),
+            [id](const retro_input_descriptor& d) {
+                return d.port == 0 && d.device == RETRO_DEVICE_JOYPAD && d.id == id;
+            });
+        if (listed) continue;
+        profileDescriptorText.push_back("Key " + keyName(assign.ascii, assign.token) +
+                                        (assign.label.empty() ? "" : ": " + assign.label));
+        profileDescriptors.push_back({0, RETRO_DEVICE_JOYPAD, 0, id, nullptr});
     }
     for (std::size_t i = 0; i < profileDescriptors.size(); ++i)
         profileDescriptors[i].description = profileDescriptorText[i].c_str();
