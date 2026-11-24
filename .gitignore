@@ -100,3 +100,6 @@ imgui.ini
 /cassettes/
 /pic/Apple II Diskware - DOS v3.3 Basics*
 /tests/data/cpm/BTERM.COM
+
+# Python bytecode, left by tools/*.py importing one another
+__pycache__/
