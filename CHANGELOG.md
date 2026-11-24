@@ -10,6 +10,31 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — An empty drive's register stands still: Anti-M asks for its disk
+
+The woz-a-day corpus run (POM2, AppleWin, MAME) found titles black in POM2
+and AppleWin and showing a screen in MAME. Their `00playable.woz` is 4am's
+Anti-M loader, which turns drive 2 on and `EOR`s its data register 256
+times: 0 means nothing is turning there, and it asks for the original in
+drive 1. POM2 served an empty drive a fresh random byte every 32 µs
+(`advanceNoise`, 2026-09-07, for Ultima V's `LDA $C08C,X / BPL` hang), so
+the XOR was never 0 and Anti-M waited for a `$D5` that never came.
+
+An empty drive now runs the sequencer with no read pulse
+(`DiskIICard::stepEmptyDrive`; the P6 PROM or POM2's own sequencer, nothing
+written). Run that way, the real P6 PROM settles on a constant register,
+bit 7 set from any byte in progress: Anti-M reads "no disk", and Ultima V's
+loop still exits, because its hang came from a register FROZEN mid-byte,
+not from one the sequencer keeps shifting. Evidence: [C] Anti-M, written
+for machines with an empty drive 2; [D] MAME, whose empty drive has no
+transitions; the P6 dump run with no pulse. A loaded disk's blank track
+keeps the noise, as the WOZ reference's random bits prescribe.
+`diskii_empty_drive` adds Anti-M's probe on both gates.
+
+arekkusu42's two disks are back on this machine (Accurapple, source and
+SHA-256 in `docs/test_corpus.md`): `arekkusu_disks` runs its twelve cases
+again instead of skipping.
+
 ## 2026-11-24 — ShrinkIt, DiskCopy, A2R flux, multi-disk archives and tapes that load themselves
 
 Four exchange formats the Apple II world uses and POM2 did not read, on the

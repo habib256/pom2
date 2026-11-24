@@ -927,12 +927,18 @@ private:
         return static_cast<uint8_t>(wpt | (motorOn ? 0x20 : 0x00) | (iwmMode & 0x1F));
     }
 
-    /// Read-amplifier noise for a head over a surface that modulates
-    /// nothing: an empty drive, or a loaded disk on a quarter-track with no
-    /// flux (WOZ TMAP $FF, tracks past 34). Advances `lssCycle` to the
+    /// Read-amplifier noise for a head over a spinning surface that
+    /// modulates nothing: a loaded disk on a quarter-track with no flux
+    /// (WOZ TMAP $FF, tracks past 34). An EMPTY drive is not noise:
+    /// stepEmptyDrive. Advances `lssCycle` to the
     /// caller's target and re-hashes `lssData` once per 8 bit cells with
     /// bit 7 set, so a "wait for a nibble" loop always terminates.
     void advanceNoise(uint64_t extraCycles);
+    /// A drive with no disk: the sequencer stepped with no read pulse up to
+    /// the caller's target (see the definition for the evidence).
+    void stepEmptyDrive(uint64_t extraCycles);
+    /// One P6 PROM op applied to `address` and `lssData`.
+    void applyLssOp(uint8_t op);
     /// The legacy 32-cycle gate's equivalent: what the read amplifier makes
     /// of unmagnetised surface. See the call site in `legacyAdvance`.
     uint8_t legacyNoiseNibble() const;

@@ -236,7 +236,13 @@ built image.
 
 `disks_5.4/arekkusu/FloatBus_260213.po` and `VidModes_260421.po` are OPTIONAL
 local references: not in git, not in the test-media archive, and
-`arekkusu_disks` skips without them (an allowed skip). No licence on the disks
+`arekkusu_disks` skips without them (an allowed skip). They come from
+Stéphane Champailler's Accurapple repository (gitlab.com/wiz21/accurapple:
+`composite/video_scanner/FloatBus_260213.po`, SHA-256
+`20be8ece80bf425da8548813d1a6ae221402f88ec8633987bc8f8c0840f4ac54`;
+`composite/tests/others/VidModes_260421.po`, SHA-256
+`c71c5e0cff2708c804580404ab6b1b981b90f91c4b0d107f54544a138a844bba`; fetched
+again on 2026-11-24, when the twelve runs passed). No licence on the disks
 beyond "AREKKUSU 2025-2026", and they carry Apple's ProDOS 8 2.4.3 and
 BASIC.SYSTEM. Where present, two of their programs print their
 own verdict and are run by `arekkusu_disks` on six machines (//e unenhanced and

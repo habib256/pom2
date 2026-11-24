@@ -285,6 +285,48 @@ int testOddReadsFloat(const std::string& p6Rom, const std::string& nib)
     return failures;
 }
 
+// [C] 4am's Anti-M ($20E3 of woz-a-day's `00playable.woz` loader): motor
+// on, drive 2 selected, a short spin-up wait, then `EOR $C0EC` 256 times. A
+// result of 0 means "nothing turning in drive 2"; any other value sends it
+// to read that drive for a $D5 it never finds. Written for, and used on,
+// real machines with an empty drive 2. Returns the accumulated EOR, or -1.
+int antiMProbe(bool useBitLss, const std::string& p6Rom, const std::string& nib, bool bothEmpty)
+{
+    Memory mem;
+    auto card = std::make_unique<DiskIICard>();
+    if (useBitLss && !card->loadLssRom(p6Rom)) return -1;
+    if (!card->insertDisk(0, nib)) return -1;
+    if (bothEmpty) card->ejectDisk(0);
+    mem.slotBus().plug(6, std::move(card));
+    M6502 cpu(&mem);
+    mem.setCpu(&cpu);
+    mem.clearRam();
+    mem.resetSoftSwitches();
+    mem.slotBus().reset();
+    cpu.hardReset();
+    const uint8_t prog[] = {
+        0xAD, 0xE9, 0xC0,            // LDA $C0E9   motor on
+        0xAD, 0xEB, 0xC0,            // LDA $C0EB   drive 2
+        0xA0, 0x06,                  // LDY #6      Anti-M's spin-up wait
+        0xA2, 0x11,                  // LDX #$11
+        0xCA, 0xD0, 0xFD,            // DEX / BNE
+        0x38, 0xE9, 0x01,            // SEC / SBC #1
+        0xD0, 0xF6,                  // BNE (to LDX)
+        0x88, 0x10, 0xF3,            // DEY / BPL (to LDX)
+        0xA9, 0x00, 0xA0, 0x00,      // LDA #0 / LDY #0
+        0x4D, 0xEC, 0xC0,            // EOR $C0EC
+        0x88, 0xD0, 0xFA,            // DEY / BNE
+        0x8D, 0x00, 0x20,            // STA $2000
+        0x4C, 0x22, 0x03,            // JMP *  (at $0322)
+    };
+    for (size_t i = 0; i < sizeof(prog); ++i)
+        mem.memWrite(static_cast<uint16_t>(0x0300 + i), prog[i]);
+    cpu.setProgramCounter(0x0300);
+    for (long spent = 0; spent < 1'022'727; spent += cpu.run(1024))
+        if (cpu.getProgramCounter() == 0x0322) return mem.data()[0x2000];
+    return -1;
+}
+
 struct Case {
     bool        bitLss;
     int         emptyDrive;      // 0 = drive 1, 1 = drive 2
@@ -332,6 +374,23 @@ int main()
         } else {
             std::printf("[ OK ] %-44s byte ready after %6ld cycles\n",
                         c.what, cycles);
+        }
+    }
+
+    // Anti-M's "is anything turning in drive 2?": an empty drive's data
+    // register must not change across its 256 reads.
+    for (bool bitLss : { true, false }) {
+        for (bool bothEmpty : { false, true }) {
+            const int eor = antiMProbe(bitLss, p6, nib, bothEmpty);
+            const char* what = bitLss ? (bothEmpty ? "bit-LSS, both drives empty" : "bit-LSS, media in drive 1")
+                                      : (bothEmpty ? "legacy gate, both drives empty" : "legacy gate, media in drive 1");
+            if (eor != 0) {
+                std::fprintf(stderr, "FAIL: Anti-M probe, %s — 256 reads of the empty drive 2 "
+                             "EOR to %d, so it waits for a disk that is not there.\n", what, eor);
+                ++failures;
+            } else {
+                std::printf("[ OK ] Anti-M probe, %-34s no disk turning\n", what);
+            }
         }
     }
 
