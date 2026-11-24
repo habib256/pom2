@@ -375,9 +375,9 @@ void testFourZeroRunIsWeakAtTheThirdZero() {
             gap = next - prev;
             prev = next;
         }
-        // The fake bit is noise: ±3 cycles around its cell and off the
-        // platter's drift (8 cycles), so within 11 cycles of the 3rd zero.
-        if (gap >= 13 && gap <= 35) ++atThird;
+        // The fake bit is on the cell grid but off the platter's drift
+        // (8 cycles), so within 8 cycles of the 3rd zero.
+        if (gap >= 15 && gap <= 33) ++atThird;
         else if (gap >= 39 && gap <= 41) ++clean;
         else ++elsewhere;
     }

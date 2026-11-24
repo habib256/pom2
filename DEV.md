@@ -5593,14 +5593,15 @@ reference, "Freaking Out Like a MC3470": while the head's 4-cell window is
 all zeros, the read channel outputs a random bit, *"roughly 30%"* of them 1
 (`kWeakOnes`). So a run of 4 zeros (20 µs between transitions,
 `kWeakGapLss = 36` LSS cycles to tolerate drift) is already weak, and the
-fake bits fall from the 3rd zero (12 µs, `kWeakFirstLss`) to the cell
-before the next transition, one candidate a cell re-drawn per revolution,
-each within ±1.5 µs of its cell (`kWeakJitterLss`) and off the platter's
-drift: they are amplifier noise, not flux. Put on the cell grid and drifted
-with the surface, Fighter Command's loader hung; on the grid and undrifted,
-the variation came only from the drift. With the jitter, 107 weak-bit
-titles of the woz-a-day corpus boot under three different hash salts each
-(2026-11-24) — which is
+fake bits fall on the cell grid from the 3rd zero (12 µs, `kWeakFirstLss`)
+to the cell before the next transition, one candidate a cell re-drawn per
+revolution, and off the platter's drift. Three placements were measured on
+the woz-a-day corpus (2026-11-24), each title under several hash salts (a
+test-only build): drifted with the surface, Fighter Command's loader hung;
+jittered ±1.5 µs around the cell, Vortex failed under 2 salts of 6 (a fake
+bit too near a real one broke an ordinary sector); on the grid and
+undrifted, the 107 most weak-bit-heavy titles and Vortex booted under every
+salt — which is
 exactly what a weak-bit copy protection measures. [D] MAME @ `mame0287`
 waits 16 µs (`m_amplifier_freakout_time`) and puts its candidates in the
 middle of 4 µs intervals from there (18 µs, 22 µs…), at 50 %

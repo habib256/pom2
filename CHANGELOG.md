@@ -71,13 +71,13 @@ before the real pulse and always framed alike. It was graded [F] with "a
 flux capture" to settle it; the reference is the primary document, and
 AppleWin, which follows it, boots the disk. POM2 now does too
 (`kWeakGapLss`, `kWeakFirstLss`, DiskImage.cpp; DEV § Storage). The fake
-bits are amplifier noise, not flux: each lands within ±1.5 µs of its cell
-(`kWeakJitterLss`) and off the platter's drift. Drifted onto the cell grid
-they hung Fighter Command's loader; on the grid and undrifted, a title's
-luck depended on the drift alone. Checked for robustness, not one lucky
-draw: the 107 woz-a-day titles with the most weak bits, plus the ones these
-fixes were for, boot under three different hash salts each (a test-only
-build), 321 boots of 321. The 30 %
+bits sit on the cell grid and off the platter's drift. That placement was
+chosen by measuring robustness, not one lucky draw: each candidate model
+ran woz-a-day titles under several hash salts (a test-only build). Drifted
+with the surface, Fighter Command's loader hung; jittered ±1.5 µs around
+the cell, Vortex failed 2 salts in 6; on the grid and undrifted, the 107
+titles with the most weak bits (plus the ones these fixes were for) and
+Vortex boot under every salt. The 30 %
 density, the per-revolution draw and the titles the earlier fixes brought
 back (SSI's RDOS check, Glutton, Mr. Do, the Anti-M prompt) are unchanged.
 

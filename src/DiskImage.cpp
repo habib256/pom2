@@ -1996,8 +1996,8 @@ namespace {
 // [B] And its PLACEMENT (2026-11-24): a 4-cell window, so a 4-zero run
 //     (20 µs) is weak from its 3rd zero, 12 µs after the last transition.
 //     MAME's 16 µs walk never let Decimal and Percent Word Problems frame
-//     its runs differently from turn to turn (DEV § Storage). Each fake
-//     bit is placed within ±1.5 µs of its cell: noise, not flux.
+//     its runs differently from turn to turn (DEV § Storage). On the
+//     cell grid, off the platter's drift (measured the sturdiest, DEV).
 //
 // MAME's walk: any gap between two consecutive transitions at or beyond the
 // threshold makes the zone "weak", and `get_next_transition` then serves
@@ -2031,10 +2031,9 @@ constexpr int64_t kWeakGapLss  = 36;   // 4.5 cells: a 4-zero run (20 µs) is we
 /// reference's 4-cell window).
 constexpr int64_t kWeakCellLss  = 8;   // 4 µs
 constexpr int64_t kWeakFirstLss = 24;  // 12 µs: the 3rd zero
-constexpr int64_t kWeakJitterLss = 3;  // ±1.5 µs around the cell
 
-/// 30 % of 2^32: a weak cell's pulse, against the hash's upper half (its low
-/// bits place the pulse in the cell). Source in the block above.
+/// 30 % of 2^32: a weak cell's pulse, against the hash's upper half.
+/// Source in the block above.
 constexpr uint64_t kWeakOnes = 0x4CCCCCCDull;
 
 /// After MAME's `hash32(hash32(hash32(hash32(rev) ^ 0x4242) + cache_index)
@@ -2166,19 +2165,14 @@ int64_t DiskImage::nextTransitionRaw(int qt, int64_t fromLssCycle, int64_t revol
         // cycle this revolution started at under BOTH anchoring modes, so
         // `base / period` is the revolution counter.
         const int64_t revIndex = base / period;
-        // One candidate a cell, 30 % of them, ±1.5 µs off the grid; start a
-        // cell early, as its jittered point may still lie ahead.
+        // One candidate a cell, on the grid, 30 % of them drawn.
         int64_t interval = (fromLssCycle < weakStart)
                              ? int64_t{0}
                              : (fromLssCycle - weakStart) / kWeakCellLss;
-        if (interval > 0) --interval;
-        for (int64_t cell = weakStart + interval * kWeakCellLss; cell <= endTime;
-             cell += kWeakCellLss, ++interval) {
-            const uint64_t h = weakHash(revIndex, prevPos, interval);
-            const int64_t weakTime = cell + static_cast<int64_t>(h % (2 * kWeakJitterLss + 1)) - kWeakJitterLss;
-            if (weakTime > fromLssCycle && (h >> 32) < kWeakOnes)
+        for (int64_t weakTime = weakStart + interval * kWeakCellLss; weakTime <= endTime;
+             weakTime += kWeakCellLss, ++interval)
+            if (weakTime > fromLssCycle && (weakHash(revIndex, prevPos, interval) >> 32) < kWeakOnes)
                 return weakTime;
-        }
     }
     const int64_t base = origin + fullRevs * period;
     rev   = base / period + (idx == n ? 1 : 0);
