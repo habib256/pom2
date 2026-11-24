@@ -27,6 +27,12 @@ def main():
     for sample in sorted((ROOT / "roms/floppy_samples").iterdir()):
         if sample.suffix in (".wav", ".txt"):
             files[f"system/pom2/floppy_samples/{sample.name}"] = sample
+    # The desktop's CRT glass pass as slang presets, laid out as RetroArch's
+    # Shaders directory: shaders_slang/pom2/ and the core preset RetroArch
+    # loads by itself for POM2, presets/POM2/POM2.slangp.
+    shaders = ROOT / "libretro/shaders"
+    for shader in sorted(p for p in shaders.rglob("*") if p.is_file()):
+        files[f"shaders/{shader.relative_to(shaders).as_posix()}"] = shader
     args.output.parent.mkdir(exist_ok=True, parents=True)
     checksums = []
     with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED) as archive:

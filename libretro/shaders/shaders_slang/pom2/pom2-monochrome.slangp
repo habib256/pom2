@@ -1,0 +1,39 @@
+# POM2 for RetroArch — green or amber monochrome monitor: the desktop's preset for both (lit text glows)
+# The desktop's CRT glass pass (src/CrtEffectStack.cpp), ported to slang.
+# Every value below is adjustable live in Quick Menu > Shaders > Shader Parameters.
+
+shaders = 5
+
+shader0 = shaders/pom2-cable.slang
+alias0 = POM2Cable
+filter_linear0 = true
+wrap_mode0 = clamp_to_edge
+scale_type0 = source
+scale0 = 1.0
+
+shader1 = shaders/pom2-bloom-h.slang
+filter_linear1 = true
+wrap_mode1 = clamp_to_edge
+scale_type1 = source
+scale1 = 1.0
+
+shader2 = shaders/pom2-bloom-v.slang
+filter_linear2 = true
+wrap_mode2 = clamp_to_edge
+scale_type2 = source
+scale2 = 1.0
+
+shader3 = shaders/pom2-glass.slang
+alias3 = POM2Glass
+filter_linear3 = true
+wrap_mode3 = clamp_to_edge
+scale_type3 = viewport
+scale3 = 1.0
+
+shader4 = shaders/pom2-present.slang
+filter_linear4 = false
+scale_type4 = viewport
+scale4 = 1.0
+
+parameters = "POM2_BLOOM"
+POM2_BLOOM = 0.30

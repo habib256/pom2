@@ -10,6 +10,49 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-24 — The desktop's CRT pass in RetroArch
+
+The libretro core draws its picture on the CPU, and the desktop's look came
+from a GPU pass the core does not have: `CrtEffectStack`, the glass that
+runs over every display mode. That pass is now RetroArch slang shaders,
+`libretro/shaders/`, shipped in each release ZIP as RetroArch's Shaders
+directory, with the same code, defaults and per-monitor presets
+(`CrtPresets.h`): colour, monochrome green/amber (bloom 0.30), monochrome
+white (bloom 0.20), plus Le Chat Mauve through its Péritel socket (a 5.5 MHz
+cable, graded F like the header's ~5-6 MHz figure).
+
+Three things the port had to change, and why:
+
+- **The pass reads its own last frame** for the phosphor persistence
+  (`POM2GlassFeedback`). RetroArch keeps a feedback texture only for a pass
+  that is not the last one, so a fifth pass, `pom2-present`, copies the
+  glass to the screen.
+- **Persistence is used as is, per frame.** The desktop raises it to the
+  emulated frames one host present spans (`crtRetention`); RetroArch presents
+  once per emulated frame.
+- **Every pass is in every preset**, the cable and the two bloom legs
+  included, and they pass through when their knob is 0: slang cannot drop a
+  pass at run time, and keeping them lets every desktop knob be turned live
+  in RetroArch's Shader Parameters.
+
+`presets/POM2/POM2.slangp` is a core preset: RetroArch loads it by itself
+whenever it starts POM2, from the `presets` folder under the Shaders
+directory, the oldest of the three places it searches (RetroArch
+`gfx/video_shader_parse.c`, `video_shader_load_auto_shader_preset` @
+v1.22.2). A core or global preset the user saves sits in a place searched
+first, so it wins. RetroArch still leaves shaders off on a computer
+(`DEFAULT_SHADER_ENABLE false` outside consoles): the README says to turn
+them on once. `tools/check_libretro_package.py` renders every preset in
+RetroArch and fails when one does not compile or leaves the picture as it is
+without shaders. Checked locally in RetroArch 1.22.2 for macOS under Vulkan
+(its default there), Metal and GL core: every pass compiles, and the colour
+preset gives the same picture under all three.
+
+The same script stopped its first session at frame 300 to catch Dirtbike
+still loading. The pom2games build bundled on 2026-11-23 (1c09f625) reaches
+its title before that, so the check failed on its first step: the cut is now
+frame 150.
+
 ## 2026-11-24 — The platter's speed drifts: Glutton boots
 
 Glutton was the one protected disk of the 2026-11-23 round that POM2 alone

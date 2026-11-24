@@ -148,6 +148,37 @@ its rear port is the exception. RetroArch
 says so in the notification it shows when the content starts, which also
 names the machine and its cards.
 
+## The picture: POM2's CRT shaders
+
+The release ZIP carries the CRT pass of the POM2 desktop as RetroArch slang
+shaders: scanlines drawn on the beam, a slight curvature, phosphor afterglow,
+optional shadow mask, glow and analog RGB cable. It is the same shader code,
+with the same defaults and the same per-monitor presets as the desktop.
+
+1. Copy the ZIP's `shaders` folder into RetroArch's **Shaders** directory
+   (**Settings → Directory → Video Shaders**). This adds
+   `shaders_slang/pom2/` and `presets/POM2/POM2.slangp`.
+2. Turn on **Settings → Video → Shaders → Video Shaders** once. RetroArch
+   leaves shaders off by default on computers.
+
+That is all: RetroArch loads `presets/POM2/POM2.slangp` by itself every time
+it starts POM2, and only for POM2. It is the colour monitor's look. For
+another monitor, choose a preset in **Quick Menu → Shaders → Load Shader
+Preset → shaders_slang → pom2**, then **Save → Save Core Preset** to keep it:
+
+| Preset | For the display |
+|---|---|
+| `pom2-composite.slangp` | The composite and AppleWin colour modes, and RGB |
+| `pom2-monochrome.slangp` | Monochrome green or amber (text glows) |
+| `pom2-monochrome-white.slangp` | Monochrome white |
+| `pom2-rgb-peritel.slangp` | RGB through Le Chat Mauve's Péritel (SCART) socket: a 5.5 MHz analog cable softens 560-dot detail |
+
+Every setting can be changed during play in **Quick Menu → Shaders → Shader
+Parameters** (brightness, contrast, saturation, hue, sharpness, persistence,
+phosphor gamma, scanlines, curvature, centre lighting, mask type and
+strength, luminance gain, bloom, analog bandwidth). The shaders run with the
+Vulkan, Metal, Direct3D 11/12 and GL core video drivers.
+
 ## Controllers
 
 Choose the controller type in **Quick Menu → Controls → Port 1 Controls →

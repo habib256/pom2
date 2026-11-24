@@ -481,13 +481,14 @@ recipe (`.gitlab-ci.yml`) is ready. Public steps, each the owner's decision:
 - a RetroAchievements hardcore approval request, with the rcheevos memory
   map already proven (main RAM at 0, aux at `$10000`).
 
-Not public, doable now: **RetroArch shader presets** (`.slangp`) tuned for
-POM2's picture (composite, RGB, monochrome), shipped in the release zip. The
-core draws a CPU composite. The desktop's GPU CRT pass is not in it.
+- [x] **RetroArch shader presets** (2026-11-24): the desktop's CRT glass
+  pass ported to slang, `libretro/shaders/`, four presets plus the core
+  preset RetroArch loads by itself, shipped in the release ZIP, named in
+  `libretro/README.md` and rendered by `tools/check_libretro_package.py`
+  on the three desktop runners (CHANGELOG 2026-11-24).
 
-**Acceptance criterion:** the presets load in RetroArch on the three desktop
-OSes and are named in `libretro/README.md`. The two public steps are done,
-or recorded as declined.
+**Acceptance criterion:** the two public steps are done, or recorded as
+declined.
 
 <a id="release-015"></a>
 

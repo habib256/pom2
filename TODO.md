@@ -92,7 +92,7 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 | Task | What is needed |
 |---|---|
 | [RELEASE-012](docs/backlog/release.md#release-012) | POM2's own archives serve the corrected `apple2p.rom` since 2026-11-19; only the RetroBIOS report remains, deferred by the owner. |
-| [RELEASE-016](docs/backlog/release.md#release-016) | libretro buildbot PR and RetroAchievements hardcore request (public steps). The RetroArch shader presets in it can be done now. |
+| [RELEASE-016](docs/backlog/release.md#release-016) | libretro buildbot PR and RetroAchievements hardcore request (public steps); the shader presets are done. |
 
 **Decisions:**
 

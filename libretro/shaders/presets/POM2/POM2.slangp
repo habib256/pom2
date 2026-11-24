@@ -1,0 +1,6 @@
+# POM2 for RetroArch — the core preset RetroArch loads by itself for POM2
+# (Settings > Video > Shaders on, "Auto-load presets" on, the defaults).
+# It points at the colour monitor's look. For a monochrome monitor choose
+# shaders_slang/pom2/pom2-monochrome.slangp instead, or save your own core
+# preset from Quick Menu > Shaders, which takes precedence over this one.
+#reference "../../shaders_slang/pom2/pom2-composite.slangp"
