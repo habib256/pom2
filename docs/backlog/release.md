@@ -477,7 +477,15 @@ download from their own host. Until then, not scheduled.
 
 The core ships from `.github/workflows/libretro.yml`. The libretro GitLab
 recipe (`.gitlab-ci.yml`) is ready. Public steps, each the owner's decision:
-- a PR to `libretro/libretro-super` (core info + recipe);
+- the core info, as a PR to `libretro/libretro-super` `dist/info`
+  (libretro/libretro-super#2223, open). `libretro/libretro-core-info` is a
+  mirror — its description reads "Submit changes to libretro-super instead"
+  (checked 2026-11-25);
+- the build: libretro's guide (docs `development/cores/developing-cores.md`)
+  asks for the `.gitlab-ci.yml` at the repository root and no recipe line;
+  the team then mirrors the repository on its GitLab. Asked in
+  libretro/libretro-super#2224 (open, no answer yet). The two armhf recipe
+  lines in #2223 are an extra, not the route;
 - a RetroAchievements hardcore approval request, with the rcheevos memory
   map already proven (main RAM at 0, aux at `$10000`).
 
