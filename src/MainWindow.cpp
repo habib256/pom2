@@ -1502,6 +1502,15 @@ void MainWindow::render()
                 toolbarClockPeakUntil_ = lastFrameTime + 1.0;
             }
             tb.machineCpuHz = toolbarClockPeakHz_;
+            // Kept only while the machine still has an accelerator: one
+            // unplugged in Slot Config left "1.02 MHz" there for good.
+            bool accelerator = false;
+            for (const auto& card : slotCards) accelerator = accelerator || card == "transwarp";
+            {
+                auto state = controller->lockState();
+                accelerator = accelerator || state.memory().cpuSocketAccelerator() != nullptr;
+            }
+            if (!accelerator) toolbarClockKept_ = false;
             tb.keepMachineClock = toolbarClockKept_;
         }
         tb.videoStandard      = controller->getVideoStandard();

@@ -14,10 +14,10 @@ marker and the previous one.
 
 ## 2026-11-25 — Bug hunt before v1.2.4
 
-Four rounds — four reviewers over everything since v1.2.3, four over the
+Five rounds — four reviewers over everything since v1.2.3, four over the
 first round's fixes, the core's state and media lifecycle and portability,
-a round fixing everything left that could be, then eight reviewers over
-the result. 110 findings fixed, the list in
+a round fixing everything left that could be, eight reviewers over the
+result, then six more over that. 144 findings fixed, the list in
 [docs/audits/bug-hunt-2026-11-25.md](docs/audits/bug-hunt-2026-11-25.md).
 The ones a player meets:
 

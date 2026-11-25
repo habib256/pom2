@@ -277,6 +277,40 @@ int main()
         unprotect(p);
     }
 
+    // 5. An image another program replaced while mounted (a sync tool) is
+    //    never patched: the first save is refused, the next one goes to a
+    //    copy beside it, whole, and the mount can then be saved and ejected
+    //    (bug hunt 2026-11-25; before, the guest's blocks were merged into
+    //    the foreign volume).
+    {
+        const fs::path p = dir / "synced.hdv";
+        writeRaw(p, 16, 0x11);
+        pom2::Block512Backing b;
+        b.setWriteBackEnabled(true);
+        check(b.loadImage(p.string()), "the image mounts");
+        // Its own saves are recognised, save after save.
+        std::vector<uint8_t> blk(kBlk, 0xA1);
+        check(b.writeBlock(2, blk.data()) && b.saveDirty() && firstByteOfBlock(p, 2) == 0xA1, "a first save lands");
+        blk.assign(kBlk, 0xA2);
+        check(b.writeBlock(3, blk.data()) && b.saveDirty() && firstByteOfBlock(p, 3) == 0xA2, "and a second");
+        // Another program replaces the file (other bytes, another size).
+        writeRaw(p, 32, 0x77);
+        blk.assign(kBlk, 0xB1);
+        check(b.writeBlock(4, blk.data()), "the guest writes on");
+        check(!b.saveDirty() && b.hasUnsavedChanges(), "the save into the foreign file is refused");
+        check(firstByteOfBlock(p, 4) == 0x77 && fs::file_size(p) == 32 * kBlk, "the foreign file is untouched");
+        check(b.saveDirty() && !b.hasUnsavedChanges(), "the next save lands, in a copy");
+        const fs::path copy = b.path();
+        check(copy != p && copy.filename().string().find("synced.guest-") == 0 && fs::file_size(copy) == 16 * kBlk,
+              "the copy sits beside the image, the whole volume");
+        check(firstByteOfBlock(copy, 2) == 0xA1 && firstByteOfBlock(copy, 4) == 0xB1 && firstByteOfBlock(copy, 5) == 0x11,
+              "it holds the guest's disk");
+        blk.assign(kBlk, 0xB2);
+        check(b.writeBlock(5, blk.data()) && b.saveDirty() && firstByteOfBlock(copy, 5) == 0xB2,
+              "later saves patch the copy");
+        check(firstByteOfBlock(p, 5) == 0x77, "and never the foreign file");
+    }
+
     std::error_code ec;
     fs::remove_all(dir, ec);
 

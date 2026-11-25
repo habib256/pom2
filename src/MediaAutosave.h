@@ -72,6 +72,7 @@
 #include <string>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace pom2 {
@@ -187,6 +188,10 @@ struct MediaCommitOrder {
     /// made it: two drives holding one image must not take each other's
     /// saves for a stranger's.
     std::unordered_map<std::string, MediaFileStamp> own;     ///< path
+    /// Hard-disk images (by the path their mount holds, as given): the ones
+    /// a commit found replaced by another program, and the sibling copies a
+    /// later commit created for them (Block512Backing.cpp).
+    std::unordered_set<std::string> foreignBlockFiles, divertedBlockFiles;
     static MediaCommitOrder& instance() {
         // Leaked: a commit may still be finishing while statics are torn down.
         static MediaCommitOrder* o = new MediaCommitOrder;
@@ -259,8 +264,10 @@ using MediaCommitWrite =
 inline std::string mediaPathKey(const std::string& path)
 {
     std::error_code ec;
-    std::string key = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec).string();
-    return ec || key.empty() ? path : key;
+    const auto absolute = std::filesystem::absolute(path, ec);
+    if (ec) return path;
+    std::string key = std::filesystem::weakly_canonical(absolute, ec).string();
+    return ec || key.empty() ? absolute.lexically_normal().string() : key;
 }
 
 /// Whether the file at `path` is still the one a mount read (`mounted`) or
@@ -284,11 +291,12 @@ inline bool mediaFileIsOurs(const std::string& path, const MediaFileStamp& mount
     return (mounted.hash != 0 && now.hash == mounted.hash) || (own.known && own.hash != 0 && now.hash == own.hash);
 }
 
-/// After a commit this process made outside commitMediaInOrder (a hard disk).
-inline void noteOwnMediaWrite(const std::string& path)
+/// After a commit this process made outside commitMediaInOrder (a hard
+/// disk), with the bytes it wrote: the file is not read back.
+inline void noteOwnMediaWrite(const std::string& path, const std::uint8_t* data, std::size_t n)
 {
     auto& order = detail::MediaCommitOrder::instance();
-    const auto stamp = stampMediaFile(path, /*withHash=*/true);
+    const auto stamp = stampMediaFile(path, data, n);
     std::lock_guard<std::mutex> lk(order.m);
     order.own[mediaPathKey(path)] = stamp;
 }

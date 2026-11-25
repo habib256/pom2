@@ -27,6 +27,12 @@ std::string portableExtension(const std::string& utf8Extension);
 /// No folder, no drive letter ("D:x.dsk" is "D_x.dsk [...]"), no device name.
 std::string hostLeafName(const std::string& raw);
 
+/// The same for a file of an archive's cache: the raw name kept whenever
+/// every host takes it as it is (valid UTF-8, no reserved character, no
+/// device name, no leading or trailing blank or dot, 180 bytes at most),
+/// else hostLeafName.
+std::string hostSafeLeaf(const std::string& raw);
+
 /// The UTF-8 text with its accents composed as NFC composes them (Latin,
 /// Cyrillic, Greek, Vietnamese, kana, Hangul): what two spellings of one
 /// name are compared by.

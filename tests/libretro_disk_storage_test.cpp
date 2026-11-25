@@ -5,6 +5,7 @@
 // second game whose names match gets its own copy, and a copy an older core
 // named by hashes moves to its new name with the player's progress.
 #include "disk_storage.hpp"
+#include "portable_name.hpp"
 #include "pom2/core.hpp"
 
 #include <chrono>
@@ -184,6 +185,92 @@ int main()
     const auto freshCopy = openDiskStorage(saves, fresh, fresh);   // new, unplayed
     check(read(openDiskStorage(saves, played, played).path) == "choplifter, 64 hostages saved" &&
               freshCopy.path == disks / "Choplifter" / "Choplifter.dsk", "played progress beats a fresh copy");
+
+    // Bug hunt 2026-11-25, pass 2 of round 5. Three same-named disks, one of
+    // other bytes opened first: the two identical ones each keep a copy.
+    {
+        const auto list = work / "h" / "Heroes.m3u";
+        const auto master = work / "h" / "Master" / "SLOT.DSK";
+        const auto h1 = work / "h" / "Hero 1" / "SLOT.DSK", h2 = work / "h" / "Hero 2" / "SLOT.DSK";
+        write(master, "formatted");
+        write(h1, "blank");
+        write(h2, "blank");
+        const auto m = openDiskStorage(saves, list, master).path;
+        const auto a = openDiskStorage(saves, list, h1).path, b = openDiskStorage(saves, list, h2).path;
+        check(m != a && a != b && m != b, "three same-named disks, three copies");
+        check(openDiskStorage(saves, list, h2).path == b && openDiskStorage(saves, list, h1).path == a,
+              "each finds its own again");
+        // The middle copy deleted (to restart that disk): the others keep theirs.
+        write(b, "hero 2 progress");
+        fs::remove(a);
+        fs::remove(fs::path(a.string() + ".source"));
+        check(openDiskStorage(saves, list, h2).path == b && read(b) == "hero 2 progress",
+              "a deleted neighbour does not strand a copy");
+    }
+    // Disks outside the playlist's folder are still two disks.
+    {
+        const auto list = work / "o" / "playlists" / "Quest.m3u";
+        const auto q1 = work / "o" / "roms" / "Hero 1" / "SAVE.DSK", q2 = work / "o" / "roms" / "Hero 2" / "SAVE.DSK";
+        write(q1, "blank");
+        write(q2, "blank");
+        check(openDiskStorage(saves, list, q1).path != openDiskStorage(saves, list, q2).path,
+              "two disks outside the playlist's folder keep two copies");
+    }
+    // A very long place still matches its record, session after session.
+    {
+        fs::path deep = work / "d";
+        for (int i = 0; i < 6; ++i) deep /= std::string(80, static_cast<char>('a' + i));
+        const auto disk = deep / "Side A.dsk";
+        write(disk, "deep");
+        const auto list = work / "d" / "Deep.m3u";
+        const auto once = openDiskStorage(saves, list, disk).path;
+        check(openDiskStorage(saves, list, disk).path == once, "a long place matches its record");
+    }
+    // A disk moved inside its game (the playlist reorganised) keeps its copy.
+    {
+        const auto list = work / "mv" / "Game.m3u";
+        const auto before = work / "mv" / "Side A.dsk", after = work / "mv" / "disks" / "Side A.dsk";
+        write(before, "side a");
+        const auto copy = openDiskStorage(saves, list, before).path;
+        write(copy, "side a, played");
+        fs::create_directories(after.parent_path());
+        fs::rename(before, after);
+        check(openDiskStorage(saves, list, after).path == copy, "a moved disk keeps its copy");
+    }
+    // A v1.2.3 copy of a disk an archive now unpacks under another name
+    // (StorageNames::legacy*): found by where v1.2.3 had it.
+    {
+        const auto folder = work / "arc";
+        const auto now = folder / "Jeu [0a0b0c0d].dsk", was = folder / "Jeu original.dsk";
+        write(now, "jeu");
+        const auto old = disks / sha(fs::weakly_canonical(was).u8string()) /
+                         (sha((fs::canonical(folder) / was.filename()).u8string() + "\n" + sha("jeu")) + ".dsk");
+        write(old, "jeu, sauvegarde 1.2.3");
+        pom2::libretro::StorageNames names;
+        names.title = work / "Jeu.zip";
+        names.legacyContent = was;
+        names.legacyOriginal = was;
+        const auto found = pom2::libretro::openDiskStorage(saves, now, now, lastError,
+                                                          DiskStorageAccess::CreateIfMissing, names);
+        check(read(found.path) == "jeu, sauvegarde 1.2.3" && !fs::exists(old),
+              "a v1.2.3 save of a renamed archive member is found");
+    }
+
+    // The naming itself: applied twice it changes nothing; every spelling
+    // Unicode calls equivalent gives one name.
+    {
+        using pom2::libretro::portableName;
+        const std::string longName(90, 'x');
+        check(portableName(portableName(longName)) == portableName(longName), "a long name is named once");
+        check(portableName(portableName("\xc3\x89t\xc3\xa9")) == portableName("\xc3\x89t\xc3\xa9"),
+              "an accented name is named once");
+        check(portableName("\xe2\x84\xab") == portableName("\xc3\x85") &&            // Angstrom sign, A-ring
+                  portableName("A\xcc\x8a") == portableName("\xc3\x85"),              // A + ring above
+              "the Angstrom sign, A-ring and A + ring are one name");
+        check(portableName("e\xcc\xa9\xcc\x81") == portableName("\xc3\xa9\xcc\xa9"),   // e + dot below + acute
+              "marks in another order are one name");
+        check(portableName("CONIN$") != "CONIN$" && portableName("Karateka") == "Karateka", "devices and plain names");
+    }
 
     fs::remove_all(work);
     if (failures) return 1;

@@ -250,7 +250,7 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
                          // The machine-clock label, when it is drawn: the
                          // group stays centred with it (its widest form).
                          + (snap.keepMachineClock || snap.activeProfile == SystemProfile::AppleIIcPlus
-                                ? ImGui::CalcTextSize(ICON_FA_BOLT " 4.09 MHz").x + ImGui::GetStyle().ItemSpacing.x
+                                ? ImGui::CalcTextSize(ICON_FA_BOLT " 16.60 MHz").x + ImGui::GetStyle().ItemSpacing.x
                                 : 0.0f);
     const float contentCenter = (ImGui::GetWindowContentRegionMin().x +
                                  ImGui::GetWindowContentRegionMax().x) * 0.5f;

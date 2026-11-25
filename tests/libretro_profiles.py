@@ -210,6 +210,16 @@ def check_formats(module, system, root, disk):
         z.write(disk, "#2 Data.dsk")
     with zipfile.ZipFile(content / "drive.zip", "w", zipfile.ZIP_DEFLATED) as z:
         z.write(disk, "D:x.dsk")
+    # A zip with its own playlist (disks in a subfolder, labels), and a zip of
+    # long TOSEC-style names: the same disk list at every load, in order.
+    with zipfile.ZipFile(content / "own.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(disk, "disks/Side A.dsk")
+        z.write(disk, "disks/Side B.dsk")
+        z.writestr("Game.m3u", "disks/Side B.dsk|B\ndisks/Side A.dsk|A\n")
+    tosec = "Ultima V - Warriors of Destiny (1988)(Origin Systems, Inc.)(US)(Disk %d of 3)(Side A).dsk"
+    with zipfile.ZipFile(content / "tosec.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for n in (3, 1, 2):
+            z.write(disk, tosec % n)
     (content / "game.dsk.gz").write_bytes(gzip.compress(disk.read_bytes()))
     (content / "hello.bas").write_text('10 HOME\n20 PRINT "POM2 BAS OK"\n30 END\n')
     # LDA #$A5 / STA $0350 / RTS at $0300, the address in its name.
@@ -232,6 +242,17 @@ def check_formats(module, system, root, disk):
         count, _, text = boot(name, 300)
         require(count == images, f"{name} should hold {images} disk(s), not {count}")
         require("DIRTBIKE" in text, f"{name} did not boot Dirtbike")
+    def unpacked(name):
+        found = sorted((root / "saves" / "pom2" / "archives").glob("*/" + name))
+        require(len(found) == 1, f"{name} was not unpacked once: {found}")
+        return found[0].read_text()
+    for attempt in range(2):
+        count, _, _ = boot("own.zip", 120)
+        require(count == 2 and unpacked("Game.m3u") == "./Side B.dsk|B\n./Side A.dsk|A\n",
+                f"a zip's own playlist changed at load {attempt + 1}: {unpacked('Game.m3u')!r}")
+        count, _, _ = boot("tosec.zip", 120)
+        require(count == 3 and unpacked("tosec.m3u") == "".join("./" + tosec % n + "\n" for n in (1, 2, 3)),
+                f"long names lost their order or their text at load {attempt + 1}: {unpacked('tosec.m3u')!r}")
     _, _, text = boot("hello.bas", 240)
     require("POM2 BAS OK" in text, "the Applesoft listing did not RUN")
     _, marker, text = boot("MARK#060300.bin", 240)
@@ -377,6 +398,29 @@ def check_formats(module, system, root, disk):
         require(text.lower().count("x") >= 5, f"a held netplay-keyboard key did not repeat: {text!r}")
     finally:
         host.close()
+    # A restore of the machine's own state changes nothing in it, with the
+    # default ports (typed keyboard, port 3 on None) as with any: save, load,
+    # save gives the same bytes. Netplay and run-ahead compare them (bug hunt
+    # 2026-11-25: a restore rebuilt the held keys and flipped keyboard flags).
+    for device, pad in ((1, ()), (0x101, (4,))):   # joystick; "Keyboard: arrows" with Up held
+        host = Host(module, system, root / "saves", {})
+        try:
+            host.load(None)
+            host.core.retro_set_controller_port_device(0, device)
+            host.frame(120)
+            for button in pad:
+                host.pad.add(button)
+            host.frame(5)
+            host.core.retro_serialize_size.restype = ctypes.c_size_t
+            host.core.retro_serialize.argtypes = host.core.retro_unserialize.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            host.core.retro_serialize.restype = host.core.retro_unserialize.restype = ctypes.c_bool
+            size = host.core.retro_serialize_size()
+            first, second = ctypes.create_string_buffer(size), ctypes.create_string_buffer(size)
+            require(host.core.retro_serialize(first, size) and host.core.retro_unserialize(first, size)
+                    and host.core.retro_serialize(second, size), "could not save, load and save")
+            require(first.raw == second.raw, f"a restore changed the state it restored (port 1 device {device:#x})")
+        finally:
+            host.close()
     # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
     # boots DOS 3.2's System Master to its greeting (its Integer BASIC
     # HELLO is not available under Applesoft, and DOS says so).

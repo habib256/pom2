@@ -381,7 +381,8 @@ bool readArchive(const std::vector<uint8_t>& bytes, std::vector<Record>& out,
             const uint8_t* h = b + threadsAt + t * kThreadHeaderBytes;
             const uint16_t cls = rd16(h), format = rd16(h + 2), kind = rd16(h + 4), crc = rd16(h + 6);
             const uint32_t eof = rd32(h + 8), compEof = rd32(h + 12);
-            if (data + compEof > size) { error = where + ": thread data truncated"; return false; }
+            // By subtraction: on a 32-bit size_t the sum wrapped past the check.
+            if (data > size || compEof > size - data) { error = where + ": thread data truncated"; return false; }
             const uint8_t* payload = b + data;
             data += compEof;
 

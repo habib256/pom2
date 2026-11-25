@@ -4671,12 +4671,17 @@ drives.
   writes are on disk, but not in the file the caller is about to read. A 3.5"
   image is stamped by contents only (its bytes may come from phase 1 of a
   two-phase mount, and no stat belongs under the machine lock). Block
-  devices (HDV, 2IMG hard disks) are guarded since 2026-11-25 but not
-  diverted: their commit patches the dirty blocks into the file as it is, so
-  a file another program replaced is REFUSED (`mediaFileIsOurs`, the same
-  mount stamp and process-wide `own` stamps), the blocks stay dirty and the
-  message says why — merging them into a foreign ProDOS volume cross-linked
-  it. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
+  devices (HDV, 2IMG hard disks) are guarded since 2026-11-25 in two steps,
+  because their commit patches dirty blocks into the file as it is and holds
+  no whole volume: the commit that finds the file replaced
+  (`mediaFileIsOurs`, the same mount stamp and process-wide `own` stamps)
+  REFUSES and flags the path; the next `takeWriteBack` — under the lock, a
+  set lookup and no I/O — moves the mount to `<stem>.guest-<time>-<mount><ext>`
+  (the bare volume, `.hdv` for a 2IMG) and carries the whole volume until a
+  commit has created that copy. So the guest's blocks are never merged into
+  a foreign ProDOS volume, and the mount can always be saved and ejected
+  (the second attempt of an eject succeeds). Pinned `block512_notch_flush`
+  case 5. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
   D); the mechanism is POM2's — no directory watcher, the check is made at the
   one moment it matters.
 - **Dirty state.** Kept until the commit lands. It is retired only if the

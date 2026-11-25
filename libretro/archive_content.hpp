@@ -5,6 +5,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <string>
 
 namespace pom2::libretro {
@@ -22,7 +23,16 @@ bool isArchive(const std::filesystem::path& path);
 // `cacheRoot`: the disk to load, or a playlist of them. Never throws: a
 // failure leaves `error` set and returns an empty path (RetroArch's web build
 // links with exception catching off, where a throw ends the page).
+struct ArchiveNotes {
+    /// For each file written under another name than libretro v1.2.3 gave
+    /// it: where v1.2.3 put it. Its disk saves are named from that path.
+    std::map<std::filesystem::path, std::filesystem::path> legacy;
+    /// Something left out that the player should know (a disk past the
+    /// 64th, a member that could not be read), when the load succeeds.
+    std::string notice;
+};
 std::filesystem::path unpackArchive(const std::filesystem::path& archive,
-                                    const std::filesystem::path& cacheRoot, std::string& error);
+                                    const std::filesystem::path& cacheRoot, std::string& error,
+                                    ArchiveNotes* notes = nullptr);
 
 } // namespace pom2::libretro

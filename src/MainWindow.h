@@ -1525,8 +1525,8 @@ private:
     void renderDiskLibraryWindow();
     void renderDisk35PanelWindow();
     void renderDriveRackWindow();
-    /// `explain`: a refusal opens the disk-refusal dialog. The rack's own
-    /// file picker passes false — it shows the reason in its own window.
+    /// `explain`: a refusal opens the disk-refusal dialog (a drop and the
+    /// rack's file picker both do).
     bool insertDriveRackImage(const pom2::DrivePicture& target, const std::string& path,
                               bool explain = true);
     /// Change a loaded drive to another disk of the same archive (its

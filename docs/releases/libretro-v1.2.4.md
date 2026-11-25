@@ -46,8 +46,8 @@ Built from the same emulator as POM2 v1.2.4.
   netplay carries a mouse only from a port set to a mouse device. Checked
   with Apple II DeskTop, at 150 % mouse speed.
 
-Before this release, four rounds of review over everything since v1.2.3
-fixed 110 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
+Before this release, five rounds of review over everything since v1.2.3
+fixed 144 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
 
 The core also builds for iOS, tvOS, RetroArch's web player and 32-bit ARM
 Linux. Each build is checked in CI, the web one by booting a game under

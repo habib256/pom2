@@ -77,6 +77,7 @@
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
 #include "ChildProcess.h"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <sys/syscall.h>
@@ -91,21 +92,32 @@ namespace {
 // browser would keep the AI-control (6503) and FujiNet (1985) listeners
 // bound after POM2 quits (ChildProcess.cpp, trap 2). ChildProcess itself
 // does not fit: it ends its child's process group, the browser with it.
-void openUrlDetached(const std::string& url)
+// False when nothing could be started (no xdg-open, no fork).
+bool openUrlDetached(const std::string& url)
 {
     // Everything the children use is made before fork: after it, only
     // async-signal-safe calls (execve on a path resolved here, not execvp).
     const std::string opener = pom2::ChildProcess::findOnPath("xdg-open");
-    if (opener.empty()) return;   // the link is on the clipboard already
+    if (opener.empty()) return false;   // the link is on the clipboard already
     const char* argv[] = {opener.c_str(), url.c_str(), nullptr};
     // The host's environment for the browser: inside the AppImage,
     // LD_LIBRARY_PATH names the bundle's libraries first, which the host's
     // xdg-open, gio and browser must not load (AppRun keeps the caller's).
     std::vector<std::string> environment;
     const char* hostLibraries = std::getenv("POM2_HOST_LD_LIBRARY_PATH");
-    const bool inBundle = std::getenv("APPIMAGE") != nullptr && hostLibraries != nullptr;
+    // Only AppRun exports that variable: its presence is the bundle (the
+    // AppImage runtime's own APPIMAGE is absent when AppRun is run from an
+    // extracted tree). The bundle's own variables stay out of a browser
+    // that may live on as the user's.
+    const bool inBundle = hostLibraries != nullptr;
     for (char** entry = environ; entry && *entry; ++entry) {
-        if (inBundle && std::strncmp(*entry, "LD_LIBRARY_PATH=", 16) == 0) continue;
+        if (inBundle) {
+            bool ours = false;
+            for (const char* name : {"LD_LIBRARY_PATH=", "POM2_HOST_LD_LIBRARY_PATH=",
+                                     "POM2_HOST_LD_LIBRARY_PATH_SET=", "APPIMAGE=", "APPDIR=", "OWD=", "ARGV0="})
+                ours = ours || std::strncmp(*entry, name, std::strlen(name)) == 0;
+            if (ours) continue;
+        }
         environment.emplace_back(*entry);
     }
     if (inBundle && std::getenv("POM2_HOST_LD_LIBRARY_PATH_SET") && *std::getenv("POM2_HOST_LD_LIBRARY_PATH_SET"))
@@ -116,7 +128,7 @@ void openUrlDetached(const std::string& url)
     const long openMax = ::sysconf(_SC_OPEN_MAX);
     const int maxFd = openMax > 0 && openMax < 65536 ? static_cast<int>(openMax) : 65536;
     const pid_t child = ::fork();
-    if (child < 0) return;
+    if (child < 0) return false;
     if (child == 0) {
         ::setsid();
         if (::fork() != 0) ::_exit(0);   // the grandchild is adopted by init
@@ -129,7 +141,8 @@ void openUrlDetached(const std::string& url)
         ::_exit(127);
     }
     int status = 0;
-    ::waitpid(child, &status, 0);   // the first child exits at once
+    while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}   // the first child exits at once
+    return true;
 }
 } // namespace
 #endif
@@ -1210,8 +1223,9 @@ void MainWindow::openBugReport()
     // painting until the browser closes. Detached instead, with the link on
     // the clipboard in case nothing opens (bug hunt 2026-11-25).
     ImGui::SetClipboardText(url.c_str());
-    openUrlDetached(url);
-    tapeStatusMessage = "Opening the issue page in your browser; the link is also on the clipboard.";
+    tapeStatusMessage = openUrlDetached(url)
+        ? "Opening the issue page in your browser; the link is also on the clipboard."
+        : "No browser could be opened: the issue link is on the clipboard.";
     tapeStatusUntil = lastFrameTime + 8.0;
 #else
     ImGuiPlatformIO& io = ImGui::GetPlatformIO();

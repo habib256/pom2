@@ -220,6 +220,9 @@ public:
         bool                  valid      = false;  ///< false → phase 2 no-ops
         bool                  synth      = false;
         pom2::MediaFileStamp  mounted;            ///< file case: the file as the mount read it
+        /// File case, a diverted mount whose copy does not exist yet: the
+        /// whole volume, to create it (see takeWriteBack).
+        std::vector<uint8_t>  wholeVolume;
         std::string           path;               ///< file case
         std::string           hostFolder;         ///< synth case
         size_t                dataOffset = 0;
@@ -477,6 +480,7 @@ private:
     std::string hostFolder_;
     std::string path_;
     pom2::MediaFileStamp mountStamp_;   // the file as the mount read it ({} for a folder)
+    bool awaitingDivert_ = false;       // path_ is a diverted copy not created yet
     std::string lastError_;
     bool    loaded_ = false;
     bool    detachedSession_ = false;

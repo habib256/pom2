@@ -8,7 +8,9 @@
 #include "portable_name.hpp"
 #include "pom2/core.hpp"
 
+#include <chrono>
 #include <fstream>
+#include <thread>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -168,7 +170,9 @@ fs::path sourceRecord(const fs::path& backing)
 // hundred bytes: a planted link (to /dev/zero, to a FIFO, to a file elsewhere)
 // is neither followed nor read.
 struct Record {
-    std::string hash, place;
+    std::string hash;    // the original's SHA-256
+    std::string key;     // SHA-256 of the place: any length of path fits the record
+    std::string place;   // the place itself, when short: to see whether the disk moved
     bool present = false;
 };
 
@@ -185,35 +189,49 @@ Record recordedSource(const fs::path& backing)
     const auto path = sourceRecord(backing);
     if (!privateFile(path)) return record;
     std::ifstream input(path, std::ios::binary);
-    char buffer[512] = {};
+    char buffer[1024] = {};
     input.read(buffer, sizeof buffer - 1);
     const std::string text(buffer, static_cast<std::size_t>(input.gcount()));
-    const auto trim = [](std::string line) {
+    std::vector<std::string> lines;
+    for (std::size_t at = 0; at <= text.size() && lines.size() < 3;) {
+        auto end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        auto line = text.substr(at, end - at);
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
-        return line;
-    };
-    const auto newline = text.find('\n');
-    record.hash = trim(text.substr(0, newline));
-    if (newline != std::string::npos) {
-        const auto end = text.find('\n', newline + 1);
-        record.place = trim(text.substr(newline + 1, end == std::string::npos ? std::string::npos : end - newline - 1));
+        lines.push_back(line);
+        at = end + 1;
     }
-    record.present = true;
+    lines.resize(3);
+    record.hash = lines[0];
+    record.key = lines[1];
+    record.place = lines[2];
+    record.present = !record.hash.empty();
     return record;
 }
 
-void recordSource(const fs::path& backing, const std::string& sourceHash, const std::string& place)
+// False when the record could not be written (a full disk): the caller
+// must not rely on it, and nothing empty is left in its place.
+bool recordSource(const fs::path& backing, const std::string& sourceHash, const std::string& placeKey,
+                  const std::string& place)
 {
     const auto path = sourceRecord(backing);
     const auto temporary = tempSiblingPath(path);
     std::error_code status;
-    if (!prepareTempPath(temporary, status)) return;
+    if (!prepareTempPath(temporary, status)) return false;
+    bool written = false;
     {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        output << sourceHash << '\n' << place << '\n';
+        output << sourceHash << '\n' << placeKey << '\n';
+        if (place.size() <= 600 && place.find('\n') == std::string::npos) output << place << '\n';
+        output.close();
+        written = static_cast<bool>(output);
     }
-    fs::rename(temporary, path, status);   // replaces a planted link, never follows it
-    if (status) fs::remove(temporary, status);
+    if (written) fs::rename(temporary, path, status);   // replaces a planted link, never follows it
+    if (!written || status) {
+        fs::remove(temporary, status);
+        return false;
+    }
+    return true;
 }
 
 bool renameWithRecord(const fs::path& from, const fs::path& to, std::error_code& status)
@@ -227,25 +245,36 @@ bool renameWithRecord(const fs::path& from, const fs::path& to, std::error_code&
 
 // Before 2026-11-25 a copy was named by hashes alone:
 // pom2/disks/<sha256(content path)>/<sha256(disk path, disk hash)><ext>.
+// `names.legacy*`: where v1.2.3 had the content and the disk, when it
+// unpacked them from an archive under other names than today's.
 fs::path legacyBacking(const fs::path& disks, const fs::path& content, const fs::path& original,
-                       const std::string& sourceHash)
+                       const std::string& sourceHash, const StorageNames& names)
 {
     std::error_code status;
-    const auto sourceIdentity = fs::canonical(original, status).u8string();
+    std::string sourceIdentity;
+    fs::path was = original;
+    if (!names.legacyOriginal.empty()) {
+        // The file is no longer there under that name: its folder is.
+        was = names.legacyOriginal;
+        sourceIdentity = (fs::canonical(was.parent_path(), status) / was.filename()).u8string();
+    } else {
+        sourceIdentity = fs::canonical(original, status).u8string();
+    }
     if (status) return {};
-    const auto title = content.empty() ? std::string{} : fs::weakly_canonical(content, status).u8string();
+    const auto& wasContent = names.legacyContent.empty() ? content : names.legacyContent;
+    const auto title = wasContent.empty() ? std::string{} : fs::weakly_canonical(wasContent, status).u8string();
     if (status) return {};
-    return disks / digest(title) /
-           (digest(sourceIdentity + "\n" + sourceHash) + original.extension().u8string());
+    return disks / digest(title) / (digest(sourceIdentity + "\n" + sourceHash) + was.extension().u8string());
 }
 
 } // namespace
 
 DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                             const fs::path& original, std::string& error,
-                            DiskStorageAccess access, const fs::path& title)
+                            DiskStorageAccess access, const StorageNames& names)
 {
     error.clear();
+    const auto& title = names.title;
     const auto fail = [&error](std::string message) {
         if (error.empty()) error = std::move(message);
         return DiskStorage{};
@@ -277,67 +306,105 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     auto gameName = (!title.empty() ? title : content.empty() ? original : content).stem().u8string();
     if (gameName.empty() || gameName == "." || gameName == "..") gameName = "disk";
     const auto directory = disks / fs::u8path(portableName(gameName));
-    const auto legacy = legacyBacking(disks, content, original, sourceHash);
+    const auto legacy = legacyBacking(disks, content, original, sourceHash, names);
     std::error_code probe;
     const bool hasLegacy = !legacy.empty() && fs::is_regular_file(fs::symlink_status(legacy, probe));
     // A restore (ExistingOnly) still makes the folder a legacy copy moves to.
     if (!ensureDirectory(directory, hasLegacy ? DiskStorageAccess::CreateIfMissing : access, error)) return {};
 
-    // Where the original sits, relative to the content's folder: the same
-    // image in two places of one playlist is two disks.
-    std::string place = original.filename().generic_u8string();
-    if (!content.empty()) {
-        const auto relative = original.lexically_normal().lexically_relative(content.parent_path().lexically_normal());
-        const auto text = relative.generic_u8string();
-        if (!text.empty() && text.compare(0, 2, "..") != 0) place = text;
+    // One process at a time chooses and creates a copy in this game's
+    // folder: two RetroArch opening two same-image disks at the same instant
+    // would otherwise both take the same free name. Waited for briefly; a
+    // lock that cannot be had (a read-only folder) does not stop the open.
+    std::shared_ptr<DiskSaveLock> choosing;
+    for (int attempt = 0; attempt < 40 && !choosing; ++attempt) {
+        choosing = lockDiskStorage(directory / ".choosing");
+        if (!choosing) std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    place = composedUtf8(place);   // the same name stored decomposed is the same place
 
-    // Which copy is this disk's: one recorded for this image at this place
-    // (or, for a record from before places were kept, this image), under the
-    // plain name or a numbered one, else the "[hash]" copy kept for another
-    // revision of the image. A new disk takes the plain name when it is free,
-    // the next number when the plain name holds the same image from another
-    // place, and "[hash]" when it holds another image.
+    // Where the original sits, relative to the content's folder: the same
+    // image in two places of one playlist is two disks. A disk outside that
+    // folder keeps its "../" path (stable when the whole tree moves); with
+    // no relative path at all (another drive), its folder's name and its own.
+    std::string place;
+    if (!content.empty())
+        place = original.lexically_normal().lexically_relative(content.parent_path().lexically_normal())
+                    .generic_u8string();
+    if (place.empty() || place == ".")
+        place = (original.parent_path().filename() / original.filename()).generic_u8string();
+    // The key is composed and case-folded, so one disk has one key on every
+    // host; the readable place keeps its case (it is looked up on disk).
+    std::string folded = composedUtf8(place);
+    for (auto& c : folded)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+    const auto placeKey = digest(folded);
+
+    // Which copy is this disk's. The candidates: "<disk>", "<disk> (2)" …
+    // for this image as the first one opened under the name, and
+    // "<disk> [hash]", "<disk> [hash] (2)" … when the name already holds
+    // another image. Every existing one is looked at, in this order:
+    //   1. recorded for this image at this place;
+    //   2. recorded for this image with no place (a record of before places
+    //      were kept): taken, and its place written;
+    //   3. recorded for this image at a place that no longer exists under
+    //      the content's folder, when it is the only such copy: the disk was
+    //      moved or the playlist reorganised;
+    //   4. the plain name with no record at all (lost): this image's.
+    // Else a new copy, under the first free name of its family.
     const auto diskStem = portableName(original.stem().u8string());
     const auto diskExtension = portableExtension(original.extension().u8string());
-    const auto named = [&](unsigned number) {
-        return directory / fs::u8path(number <= 1 ? diskStem + diskExtension
-                                                  : diskStem + " (" + std::to_string(number) + ")" + diskExtension);
+    const auto hashTag = " [" + sourceHash.substr(0, 8) + "]";
+    const auto named = [&](bool hashed, unsigned number) {
+        return directory / fs::u8path(diskStem + (hashed ? hashTag : std::string()) +
+                                      (number <= 1 ? std::string() : " (" + std::to_string(number) + ")") +
+                                      diskExtension);
     };
-    const auto hashed = directory / fs::u8path(diskStem + " [" + sourceHash.substr(0, 8) + "]" + diskExtension);
-    fs::path backing, firstFree;
-    bool plainHoldsThisImage = false;
-    for (unsigned number = 1; number <= 32 && backing.empty(); ++number) {
-        const auto candidate = named(number);
-        const bool usable = usableBacking(candidate, error);
-        if (!error.empty()) return {};
-        if (!usable) {
-            if (firstFree.empty()) firstFree = candidate;
-            if (number > 1) break;   // numbers are taken in order: none after a free one
-            continue;
-        }
-        const auto record = recordedSource(candidate);
-        if (number == 1 && record.hash.empty()) {   // a copy that lost its record: this image's
-            recordSource(candidate, sourceHash, place);
-            backing = candidate;
-        } else if (record.hash == sourceHash && (record.place.empty() || record.place == place)) {
-            if (record.place.empty()) recordSource(candidate, sourceHash, place);
-            backing = candidate;
-        } else if (number == 1) {
-            plainHoldsThisImage = record.hash == sourceHash;
+    constexpr unsigned kMaxNumber = 32;
+    fs::path backing, placeless, moved, firstFreePlain, firstFreeHashed;
+    unsigned movedCount = 0;
+    bool plainTaken = false, plainHoldsThisImage = false, plainRecordless = false;
+    for (int family = 0; family < 2 && backing.empty(); ++family) {
+        for (unsigned number = 1; number <= kMaxNumber && backing.empty(); ++number) {
+            const auto candidate = named(family == 1, number);
+            const bool usable = usableBacking(candidate, error);
+            if (!error.empty()) return {};
+            if (!usable) {
+                auto& free = family == 1 ? firstFreeHashed : firstFreePlain;
+                if (free.empty()) free = candidate;
+                continue;
+            }
+            const auto record = recordedSource(candidate);
+            if (family == 0 && number == 1) {
+                plainTaken = true;
+                plainRecordless = !record.present;
+                plainHoldsThisImage = record.present && record.hash == sourceHash;
+            }
+            if (!record.present || record.hash != sourceHash) continue;
+            if (record.key == placeKey) {
+                backing = candidate;
+            } else if (record.key.empty()) {
+                if (placeless.empty()) placeless = candidate;
+            } else if (!record.place.empty() && !content.empty()) {
+                // Its disk is no longer where the record says: a move.
+                std::error_code gone;
+                if (!fs::exists((content.parent_path() / fs::u8path(record.place)).lexically_normal(), gone)) {
+                    if (moved.empty()) moved = candidate;
+                    ++movedCount;
+                }
+            }
         }
     }
+    bool adopt = false;   // the record is (re)written for this disk
+    if (backing.empty() && !placeless.empty()) { backing = placeless; adopt = true; }
+    if (backing.empty() && movedCount == 1) { backing = moved; adopt = true; }
+    if (backing.empty() && plainRecordless) { backing = named(false, 1); adopt = true; }
+    if (adopt && !recordSource(backing, sourceHash, placeKey, place))
+        return fail("Cannot record the disk save " + backing.u8string());
     if (backing.empty()) {
-        const bool hashedUsable = usableBacking(hashed, error);
-        if (!error.empty()) return {};
-        if (hashedUsable && recordedSource(hashed).hash == sourceHash) backing = hashed;
-    }
-    if (backing.empty()) {
-        if (!usableBacking(named(1), error) && error.empty()) backing = named(1);
-        else if (!error.empty()) return {};
-        else if (plainHoldsThisImage && !firstFree.empty()) backing = firstFree;
-        else backing = hashed;
+        if (!plainTaken) backing = named(false, 1);
+        else if (plainHoldsThisImage && !firstFreePlain.empty()) backing = firstFreePlain;
+        else if (!firstFreeHashed.empty()) backing = firstFreeHashed;
+        else return fail("Too many disk saves named " + diskStem + " in " + directory.u8string());
     }
 
     const auto moveLegacy = [&] {
@@ -386,11 +453,11 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
             if (legacyWins) {
                 if (!renameWithRecord(backing, kept, status) || (fs::rename(legacy, backing, status), status))
                     return fail("Cannot move disk save " + legacy.u8string() + ": " + status.message());
-                recordSource(backing, sourceHash, place);
+                recordSource(backing, sourceHash, placeKey, place);
             } else {
                 if (fs::rename(legacy, kept, status), status)
                     return fail("Cannot move disk save " + legacy.u8string() + ": " + status.message());
-                recordSource(kept, sourceHash, place);
+                recordSource(kept, sourceHash, placeKey, place);
             }
             moveLegacy();
         }
@@ -404,7 +471,7 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                 return fail("Cannot move disk save " + legacy.u8string() + " to " + backing.u8string() + ": " +
                             status.message());
             moveLegacy();
-            recordSource(backing, sourceHash, place);
+            recordSource(backing, sourceHash, placeKey, place);
         } else if (!error.empty()) {
             return {};
         } else if (access == DiskStorageAccess::ExistingOnly) {
@@ -412,7 +479,8 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
         } else {
             // The record first: an instance that finds the copy then finds
             // what it was made from, never an empty record to adopt.
-            recordSource(backing, sourceHash, place);
+            if (!recordSource(backing, sourceHash, placeKey, place))
+                return fail("Cannot record the disk save " + backing.u8string());
             if (!createBacking(backing, bytes, error)) return {};
         }
     }
@@ -422,7 +490,8 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     return {backing, true};
 }
 
-fs::path legacyStoragePath(const fs::path& saves, const fs::path& content, const fs::path& original)
+fs::path legacyStoragePath(const fs::path& saves, const fs::path& content, const fs::path& original,
+                           const StorageNames& names)
 {
     if (saves.empty()) return {};
     std::vector<std::uint8_t> bytes;
@@ -431,7 +500,7 @@ fs::path legacyStoragePath(const fs::path& saves, const fs::path& content, const
     std::error_code status;
     const auto root = fs::weakly_canonical(fs::absolute(saves, status), status);
     if (status) return {};
-    return legacyBacking(root / "pom2" / "disks", content, original, Core::sha256(bytes.data(), bytes.size()));
+    return legacyBacking(root / "pom2" / "disks", content, original, Core::sha256(bytes.data(), bytes.size()), names);
 }
 
 } // namespace pom2::libretro

@@ -23,6 +23,7 @@
 #include "PersistentFs.h"
 #include "TwoImg.h"
 #include "ProDOSVolume.h"
+#include <cctype>
 
 #include <algorithm>
 #include <cstring>
@@ -51,6 +52,7 @@ bool Block512Backing::readImageFile(const std::string& path, PreparedImage& out,
 {
     out = PreparedImage{};
 
+    const pom2::MediaFileStamp statBefore = pom2::stampMediaFile(path, /*withHash=*/false);
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         error = "Cannot open HDV image: " + path;
@@ -93,7 +95,10 @@ bool Block512Backing::readImageFile(const std::string& path, PreparedImage& out,
     // like a locked floppy.
     out.hostWritable = !pom2::mediaFileIsReadOnly(path);   // MediaNotch.h
 
-    out.stamp = pom2::stampMediaFile(path, out.bytes.data(), out.bytes.size());
+    // The stat taken BEFORE the read (`statBefore`): a writer that slips in
+    // during a long read is then seen as a change at the first commit.
+    out.stamp = statBefore;
+    if (out.stamp.known) out.stamp.hash = pom2::hashMediaBytes(out.bytes.data(), out.bytes.size());
     out.path  = path;
     out.valid = true;
     error.clear();
@@ -305,6 +310,7 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     anyDirty_ = false;
     path_     = path;
     mountStamp_ = prepared.stamp;
+    awaitingDivert_ = false;
     loaded_   = true;
 
     pom2::log().info("HDV", "Loaded " + path + " (" +
@@ -359,6 +365,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     anyDirty_ = false;
     path_     = label;
     mountStamp_ = {};
+    awaitingDivert_ = false;
     loaded_   = true;
     pom2::log().info("HDV", "Loaded synthesised volume: " + label +
                             " (" + std::to_string(blockCount()) + " blocks)");
@@ -379,6 +386,7 @@ void Block512Backing::eject()
     dataLength_ = 0;
     path_.clear();
     mountStamp_ = {};
+    awaitingDivert_ = false;
     hostFolder_.clear();
     detachedSession_ = false;
     loaded_ = false;
@@ -479,10 +487,35 @@ Block512Backing::takeWriteBack(std::vector<uint8_t> scratch)
         out.commitTicket->barrier = writeBackExecutor_->reserve(commitTail_);
         commitTail_ = out.commitTicket->barrier;
     }
+    // The image file was replaced by another program (a commit found out,
+    // off the lock): from here the mount saves to a copy beside it, as a
+    // floppy's does, so the guest's volume is neither merged into a foreign
+    // one nor trapped in RAM — an eject or a replace must be able to commit
+    // (bug hunt 2026-11-25). The whole volume travels until the copy exists.
+    if (!synth_) {
+        auto& order = pom2::detail::MediaCommitOrder::instance();
+        std::lock_guard<std::mutex> lk(order.m);
+        if (order.foreignBlockFiles.count(path_)) {
+            const std::filesystem::path was(path_);
+            std::string ext = was.extension().string();
+            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".2mg" || ext == ".2img" || ext.empty()) ext = ".hdv";   // the copy is the bare volume
+            const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            path_ = (was.parent_path() / (was.stem().string() + ".guest-" + std::to_string(now) + "-" +
+                                          std::to_string(mountId_) + ext)).string();
+            mountStamp_ = {};
+            dataOffset_ = 0;
+            dataLength_ = image_.size();
+            awaitingDivert_ = true;
+            pom2::log().warn("HDV", "The image was changed by another program: this disk now saves to " + path_);
+        }
+        if (awaitingDivert_ && order.divertedBlockFiles.count(path_)) awaitingDivert_ = false;
+    }
     out.captureReservation = pendingWrites_;
     out.valid      = true;
     out.synth      = synth_;
     out.path       = path_;
+    if (awaitingDivert_ && !synth_) out.wholeVolume = image_;
     out.mounted    = mountStamp_;
     out.hostFolder = hostFolder_;
     out.dataOffset = dataOffset_;
@@ -644,11 +677,49 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     // sibling in commitMediaInOrder). The blocks stay dirty in the machine,
     // as after any failed commit, and the message says why.
     if (!pom2::mediaFileIsOurs(pending.path, pending.mounted)) {
+        {
+            auto& order = pom2::detail::MediaCommitOrder::instance();
+            std::lock_guard<std::mutex> lk(order.m);
+            order.foreignBlockFiles.insert(pending.path);
+        }
         error = pending.path + " was changed by another program since it was mounted; "
-                "POM2 did not write into it. Eject and remount it to take that version, "
-                "or keep playing: your changes stay in the machine.";
+                "POM2 did not write into it. Your disk goes to a copy beside it "
+                "(.guest-…) at the next save.";
         pom2::log().warn("HDV", error);
         return false;
+    }
+    // A diverted mount whose copy is not there yet: the whole volume makes it.
+    if (!pending.wholeVolume.empty()) {
+        std::error_code probe;
+        if (!std::filesystem::exists(std::filesystem::symlink_status(pending.path, probe))) {
+            const std::filesystem::path tmp = tempSiblingPath(pending.path);
+            std::error_code ec;
+            bool ok = prepareTempPath(tmp, ec);
+            if (ok) {
+                std::ofstream sink(tmp, std::ios::binary | std::ios::trunc);
+                sink.write(reinterpret_cast<const char*>(pending.wholeVolume.data()),
+                           static_cast<std::streamsize>(pending.wholeVolume.size()));
+                sink.close();
+                ok = static_cast<bool>(sink) && publishNewFileAtomic(tmp, pending.path, ec);
+            }
+            if (!ok) {
+                error = "Cannot create the copy " + pending.path + (ec ? ": " + ec.message() : "");
+                std::error_code ignored;
+                std::filesystem::remove(tmp, ignored);
+                pom2::log().warn("HDV", error);
+                return false;
+            }
+            {
+                auto& order = pom2::detail::MediaCommitOrder::instance();
+                std::lock_guard<std::mutex> lk(order.m);
+                order.divertedBlockFiles.insert(pending.path);
+            }
+            pom2::noteOwnMediaWrite(pending.path, pending.wholeVolume.data(), pending.wholeVolume.size());
+            markPersistentStateDirty();
+            if (notice) *notice = "saved to a copy: " + pending.path;
+            pom2::log().info("HDV", "Saved the whole volume to the copy " + pending.path);
+            return true;
+        }
     }
     // Rewrite a complete sibling copy, preserving the 2IMG envelope and any
     // trailer.  An in-place series of 512-byte writes could leave the user's
@@ -734,7 +805,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     // IDBFS flush. Uploaded /uploads images remain in MEMFS; preserving
     // those requires a session or Automatic resume. No-op natively.
     markPersistentStateDirty();
-    pom2::noteOwnMediaWrite(pending.path);   // ours: the next commit recognises it
+    pom2::noteOwnMediaWrite(pending.path, output.data(), output.size());   // ours: the next commit recognises it
     pom2::log().info("HDV", "Saved " + std::to_string(written) +
                             " modified block(s) to " + pending.path);
     return true;

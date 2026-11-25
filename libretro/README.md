@@ -325,26 +325,34 @@ with `+`.
 
 Save normally inside the game. POM2 stores each writable side in its own
 private copy in RetroArch's **Save Files** directory, at
-`pom2/disks/<game>/<disk file>`: `<game>` is the name of what you opened
-(`Ultima IV` for `Ultima IV.m3u`, `Karateka` for `Karateka.woz`) and the
-disk keeps its file name. A `.source` file beside each copy records the
-original's SHA-256; a second game with the same names, or a new revision of
-the image, gets its own copy, named `<disk> [<first 8 hex digits>]`. The
-names are the same on every platform, so a save folder synced between a PC
-and a phone matches (a name macOS's HFS+ stores decomposed gives the same
-copy as its composed twin): printable ASCII only, with no `<>:"/\|?*`, no trailing
-dot or space and no Windows device name (`CON`, `NUL`, …), at most 64
-characters; Latin letters lose their accents (`Énigme` → `Enigme`), any other
-non-ASCII character becomes `_`, and a name that had to change is followed by
-`[<8 hex digits>]` to stay unique. Copies named by hashes by earlier versions
-move to the new name the first time their game is opened. Those versions
-kept one copy per folder the game was opened from: when the new name is
-already taken, the copy that holds progress is played (the newer one if both
-do) and the other is kept beside it as `<disk> [old <8 hex> <8 hex>]`. The original images retain their original
-bytes. Reopen the same image or playlist to resume using those disks. Two
-disks of one playlist with the same file name in different folders (two
-blank `SAVE.DSK`) keep a copy each: the later ones are `SAVE (2).DSK`, …, in
-playlist order. A locked image
+`pom2/disks/<game>/<disk file>`. `<game>` is the name of what you opened
+(`Ultima IV` for `Ultima IV.m3u`, `Karateka` for `Karateka.woz` or
+`Karateka.zip`, `Game` for `Game.dsk.gz`: an archive names the folder, not the
+disk inside it) and the disk keeps its file name. The original images retain
+their original bytes; reopen the same image, playlist or archive to resume.
+
+- **Names.** The same on every platform, so a save folder synced between a
+  PC and a phone matches: printable ASCII only, with no `<>:"/\|?*`, no
+  trailing dot or space and no Windows device name (`CON`, `NUL`, …), at
+  most 64 characters. Latin letters lose their accents (`Énigme` → `Enigme`),
+  any other non-ASCII character becomes `_`, and a name that had to change is
+  followed by `[<8 hex digits>]`; a name macOS stores decomposed gives the
+  same copy as its composed twin.
+- **Which copy is a disk's.** A `.source` file beside each copy records the
+  original's SHA-256 and where the original sits in the game's folder. The
+  first disk opened under a name takes it. The same image at another place
+  of the game (two blank `SAVE.DSK` in two folders of one playlist) gets
+  `SAVE (2).DSK`, `SAVE (3).DSK`, …; another image under that name (a second
+  game with the same names, a new revision) gets `<disk> [<8 hex digits>]`.
+  Each disk finds its own copy again whatever the playlist's order, and a
+  disk moved inside its game's folder keeps its copy.
+- **Copies of libretro v1.2.3**, which were named by hashes, move to the new
+  name the first time their game is opened. v1.2.3 kept one copy per folder
+  the game was opened from: when the new name is already taken, the copy
+  that holds progress is played (the newer one if both do) and the other is
+  kept beside it as `<disk> [old <8 hex> <8 hex>]`.
+
+A locked image
 or read-only file reports write protection to the guest.
 
 **Quick Menu → Save State / Load State** captures the running machine,
