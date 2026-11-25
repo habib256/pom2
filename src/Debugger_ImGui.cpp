@@ -184,7 +184,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     drawBeamAndCycles(snap);
     ImGui::Separator();
     // Disassembly left, breakpoints right.
-    const float rightWidth = 270.0f;
+    const float rightWidth = 232.0f;
     // NoScrollWithMouse + NoScrollbar: the listing is not a scrolled region
     // (it is laid out from viewAddr_ each frame), so the wheel must neither
     // scroll it nor fall through to the Debugger window. drawDisassembly
@@ -818,7 +818,7 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
         char line[192];
         const std::string label = symbols_.label(addr,location.bank);
         const std::string note  = operandNote(snap, addr, len);
-        std::snprintf(line, sizeof(line), "%-11s %-9s %-15s %s%s%s%s", location.text().c_str(), bytes,
+        std::snprintf(line, sizeof(line), "%-11s %-9s %-12s %s%s%s%s", location.text().c_str(), bytes,
                       mnem.c_str(), label.c_str(), label.empty() || note.empty() ? "" : "  ",
                       note.empty() ? "" : "; ", note.c_str());
 

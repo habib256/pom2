@@ -297,7 +297,6 @@ void MainWindow::renderCommandPalette()
     add("layout.reset",     "Layout", "Reset to default layout");
     add("layout.emulation", "Layout", "Emulation layout");
     add("layout.debug",     "Layout", "Debug layout");
-    add("layout.audio",     "Layout", "Audio layout");
     {
         std::size_t n = 0;
         const pom2::UiAccent* accents = pom2::allAccents(n);
@@ -397,7 +396,6 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "layout.reset")     { pendingDockLayout_ = DockLayout::Reset;     dockLayoutRequested_ = true; return; }
     if (id == "layout.emulation") { pendingDockLayout_ = DockLayout::Emulation; dockLayoutRequested_ = true; return; }
     if (id == "layout.debug")     { pendingDockLayout_ = DockLayout::Debug;     dockLayoutRequested_ = true; return; }
-    if (id == "layout.audio")     { pendingDockLayout_ = DockLayout::Audio;     dockLayoutRequested_ = true; return; }
     if (id.rfind("accent.", 0) == 0) {
         uiAccent_ = pom2::accentFromKey(id.c_str() + 7);
         applyUiTheme();
@@ -471,9 +469,6 @@ void MainWindow::renderMenuBar()
     if (!ImGui::BeginMainMenuBar()) return;
 
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
-        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
-        renderBrowserSessionMenu();
 #ifdef __EMSCRIPTEN__
         if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
         if (ImGui::MenuItem("Copy link to this setup")) copyBrowserSetupLink();
@@ -496,13 +491,6 @@ void MainWindow::renderMenuBar()
                               "media cache, then booted. What the guest writes stays in the\n"
                               "cached copy; the server is never written to.");
 #endif
-        if (ImGui::MenuItem("Save BASIC listing")) saveBasicListing();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("The Applesoft program in memory as text, in the listings\n"
-                              "folder and on the clipboard. To move files to and from a\n"
-                              "DOS 3.3 disk, see the pom2_dos33 tool.");
-        if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
-        ImGui::Separator();
         panelMenuItem(pom2::PanelId::DiskLibrary);
 #ifdef __EMSCRIPTEN__
         if (ImGui::MenuItem("Boot A2FileCmd") &&
@@ -530,79 +518,20 @@ void MainWindow::renderMenuBar()
             bootHdvImage();
         }
         ImGui::EndDisabled();
+        // What you keep of the machine goes at the bottom, just above Quit:
+        // the BASIC listing, then the session.
         ImGui::Separator();
-        if (ImGui::MenuItem("Copy screen text")) {
-            pom2::CapturedScreenText captured;
-            {
-                auto st = controller->lockState();
-                captured = pom2::captureTextScreen(st.memory());
-            }
-            // Clipboard I/O must not hold the machine lock.
-            if (captured.rows > 0) ImGui::SetClipboardText(captured.text.c_str());
-            tapeStatusMessage = captured.rows > 0 ? "Screen text copied"
-                : "No Apple text rows in the current graphics mode";
-            tapeStatusUntil = lastFrameTime + 3.0;
-        }
+        if (ImGui::MenuItem("Save BASIC listing")) saveBasicListing();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The Applesoft program in memory as text, in the listings\n"
+                              "folder and on the clipboard. To move files to and from a\n"
+                              "DOS 3.3 disk, see the pom2_dos33 tool.");
+        if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
+        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        renderBrowserSessionMenu();
 #ifndef __EMSCRIPTEN__
-        // Reload ROM re-reads the ROM file from disk. Useful on native (swap
-        // a roms/ file, reload without restarting); pointless under WASM,
-        // where the ROM is baked into POM2.data and cannot be replaced — so
-        // it is hidden in the browser build.
-        ImGui::Separator();
-        if (ImGui::MenuItem("Reload ROM")) {
-            bool ok = false;
-            std::string err;
-            // Read the file with NO lock held first. The install below still
-            // opens it by path (that is Memory's only entry point), but this
-            // pass turns that open into a warm-cache memcpy and catches an
-            // unreadable dump — a ROM on a slow or vanished network share —
-            // before anything is blocked behind `stateMutex`.
-            bool readable = false;
-            {
-                std::ifstream probe(romPath, std::ios::binary);
-                if (probe) {
-                    probe.seekg(0, std::ios::end);
-                    readable = probe.tellg() > 0;
-                }
-            }
-            if (!readable) {
-                err = "cannot read " + romPath;
-            } else {
-                // Must hold the emulation lock: loadAppleIIRom rewrites
-                // $D000-$FFFF and can race with the CPU thread otherwise.
-                //
-                // A documented exception to "never hold stateMutex across
-                // file I/O" (CLAUDE.md): `Memory`'s only entry point takes a
-                // PATH, so the open happens inside the lock. What bounds it
-                // is the probe above — the file has just been read to its end
-                // with no lock held, so this is a warm-cache copy of at most
-                // 32 KB (a //e ROM), tens of microseconds, and an unreadable
-                // or vanished dump has already been rejected before anything
-                // blocks. Nothing here scales with a disk image's size, which
-                // is the case the rule exists for.
-                auto st = controller->lockState();
-                // A //c-class 32 KB dump is two firmware BANKS, bank 0 in the
-                // lower half; a //e 32 KB dump keeps its firmware in the upper
-                // half. Reload ROM used the //e slicing unconditionally, so on
-                // //c / //c+ / //c PAL it made bank 1 the active ROM, killed
-                // the $C028 toggle, and then hardReset() into it (bug hunt #10).
-                ok = st.memory().loadAppleIIRom(
-                    romPath.c_str(), pom2::profileUsesLowerRomHalf(activeProfile));
-                if (!ok) err = st.memory().getLastError();
-            }
-            // hardReset() re-acquires stateMutex internally, so it MUST run
-            // outside the lock_guard scope above — calling it while the lock
-            // is held self-deadlocks the non-recursive mutex (mirrors the
-            // coldBoot/bootFromSlot call sites elsewhere in this file).
-            if (ok) {
-                controller->hardReset();
-                romStatus = std::string("loaded: ") + romPath;
-                romLoaded_ = true;
-            } else {
-                romStatus = err;
-                romLoaded_ = false;
-            }
-        }
         // Quit is a no-op in the browser: the frame loop is driven by
         // emscripten_set_main_loop_arg (main.cpp), which ignores
         // glfwWindowShouldClose, and a canvas cannot close its own tab.
@@ -616,6 +545,20 @@ void MainWindow::renderMenuBar()
     }
 
     if (ImGui::BeginMenu("Edit")) {
+        // Copy first, then the pastes: the order every Edit menu has.
+        if (ImGui::MenuItem("Copy screen text")) {
+            pom2::CapturedScreenText captured;
+            {
+                auto st = controller->lockState();
+                captured = pom2::captureTextScreen(st.memory());
+            }
+            // Clipboard I/O must not hold the machine lock.
+            if (captured.rows > 0) ImGui::SetClipboardText(captured.text.c_str());
+            tapeStatusMessage = captured.rows > 0 ? "Screen text copied"
+                : "No Apple text rows in the current graphics mode";
+            tapeStatusUntil = lastFrameTime + 3.0;
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Paste from clipboard", "Ctrl+V"))
             pasteFromClipboard();
         if (ImGui::MenuItem("Paste from file..."))
@@ -647,6 +590,8 @@ void MainWindow::renderMenuBar()
             controller->setMode(EmulationController::Mode::Stopped);
         }
         if (ImGui::MenuItem("Step (one instr)")) controller->requestStep();
+        // Rewind sits with the transport: run, pause, step, go back.
+        panelMenuItem(pom2::PanelId::Rewind);
         ImGui::Separator();
         if (ImGui::MenuItem("Reset (Ctrl-Reset)",     "F11")) controller->softReset();
         if (ImGui::MenuItem("Hard reset",             "F12")) controller->hardReset();
@@ -940,9 +885,6 @@ void MainWindow::renderMenuBar()
                     "extended 80-column card's 64 KB, shared with a 6 MHz Z80 for\n"
                     "CP/M. //e-class machines with slots only. Boot its CP/M disk.");
         }
-        ImGui::Separator();
-        panelMenuItem(pom2::PanelId::SlotConfig);
-        panelMenuItem(pom2::PanelId::Rewind);
         ImGui::EndMenu();
     }
 
@@ -958,6 +900,8 @@ void MainWindow::renderMenuBar()
         // Grouped by what the device IS to the user (2026-10-16): storage,
         // sound, input, printing/serial, network, then the cards that fit
         // none of those. Rewind is not a device — it moved to Machine.
+        // Slot Configuration comes first: it decides what the rest contains.
+        panelMenuItem(pom2::PanelId::SlotConfig);
         ImGui::SeparatorText("Storage");
         panelMenuGroup(pom2::PanelGroup::DevStorage);
         ImGui::SeparatorText("Sound");
@@ -1097,9 +1041,6 @@ void MainWindow::renderMenuBar()
                        "Screen Inspector on the left (a tab beside the screen),\n"
                        "Debugger on the right; memory viewer, maps and the other\n"
                        "inspectors as tabs behind it.");
-            layoutItem("Audio", DockLayout::Audio,
-                       "Mockingboard / Phasor / Echo+ right, mixer and tape\n"
-                       "bottom-right.");
             ImGui::Separator();
             ImGui::TextDisabled("Drag any tab to re-dock; layout is saved.");
             if (ImGui::IsItemHovered())

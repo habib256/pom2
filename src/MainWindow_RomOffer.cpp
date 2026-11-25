@@ -168,7 +168,7 @@ void MainWindow::reloadMissingFirmware()
             if (profileRomLoads(p)) target = p;
         }
         // A profile other than the ROM-less fallback was put there on
-        // purpose (a session, a failed File ▸ Reload ROM): keep it if it can
+        // purpose (a session, a failed Reload ROM): keep it if it can
         // be loaded now.
         if (!target && !launchProfile_ &&
             activeProfile != pom2::SystemProfile::AppleIIPlus &&

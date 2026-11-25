@@ -165,8 +165,14 @@ void ScreenInspector_ImGui::render(EmulationController& ctrl, Apple2Display& dis
         ImGui::SetTooltip("The tube at THIS cycle: the frame in progress above the beam,\n"
                           "the previous frame from the beam down. Off: the last completed frame.");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(140);
+    ImGui::Checkbox("Fit", &fit_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Size the picture to the panel, like the Apple II Screen.\nUntick to choose the zoom.");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(fit_);
+    ImGui::SetNextItemWidth(120);
     ImGui::SliderFloat("Zoom", &zoom_, 1.0f, 6.0f, "x%.1f");
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Save PNG") && savePng) savePng();
     ImGui::SameLine();
@@ -203,9 +209,14 @@ void ScreenInspector_ImGui::render(EmulationController& ctrl, Apple2Display& dis
 
     // ── The picture, with the mode gutter on its left ────────────────────
     // 280 x 192 Apple pixels at zoom 1, whatever the framebuffer's width.
-    const ImVec2 size(280.0f * zoom_, 192.0f * zoom_);
     const float gutterW = 30.0f, bandH = 30.0f;
     ImGui::BeginChild("##picture", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    if (fit_) {
+        // The largest picture the panel holds, edges included.
+        const ImVec2 room = ImGui::GetContentRegionAvail();
+        zoom_ = std::clamp(std::min((room.x - gutterW) / 280.0f, (room.y - bandH) / 192.0f), 1.0f, 12.0f);
+    }
+    const ImVec2 size(280.0f * zoom_, 192.0f * zoom_);
     const ImVec2 corner = ImGui::GetCursorScreenPos();
     const ImVec2 origin(corner.x, corner.y + bandH);
     const ImVec2 at(origin.x + gutterW, origin.y);
@@ -324,14 +335,19 @@ void ScreenInspector_ImGui::render(EmulationController& ctrl, Apple2Display& dis
             ImGui::TextDisabled("Memory  the byte the beam read there, and its address");
         }
     }
-    // Legend of the two edges.
+    // Legend of the two edges, on two short lines so it fits a half window.
+    const char* const edges =
+        "Left edge: every line - its mode, its page, and a white mark when a\n"
+        "switch is thrown inside the line.\n"
+        "Top edge: ONE line read byte by byte - the line last under the mouse.";
     for (const ModeColour& m : kModeColours) legendSwatch(m.colour, m.mode);
+    ImGui::NewLine();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", edges);
     legendSwatch(kPage1Colour, "page 1");
     legendSwatch(kPage2Colour, "page 2");
     legendSwatch(kSplitColour, "switch inside a line");
-    ImGui::NewLine();
-    ImGui::TextDisabled("Left edge: every line (mode, page, split or not).   "
-                        "Top edge: line %d byte by byte (the line last under the mouse).", bandLine_);
+    ImGui::TextDisabled("  top edge: line %d", bandLine_);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", edges);
     ImGui::SetCursorPos(afterPicture);
     ImGui::Dummy(ImVec2(0.0f, 0.0f));   // an item, so the cursor move is legal
     ImGui::End();

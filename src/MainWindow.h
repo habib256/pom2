@@ -669,15 +669,14 @@ private:
     // the docks into `imgui.ini` by itself; we only seed a curated starting
     // layout and offer task-oriented presets.
     //
-    // Presets dock by *literal window title*, so only panels whose title is a
-    // fixed string can be placed. Slot-numbered panels (Disk II, 3.5", HDV,
-    // SmartPort, Printer) build their title at runtime and are left floating
-    // on first open — the user can dock them once and ImGui remembers.
+    // Presets dock by *literal window title*. A panel a preset does not name
+    // — one with a title built at run time (Disk II, 3.5", HDV, SmartPort,
+    // Printer), or simply open when the preset is applied — becomes a tab of
+    // the side group: applyDockLayout leaves nothing floating.
     enum class DockLayout {
         Reset,        ///< Screen + Disk Library + an inspector tab group.
         Emulation,    ///< Screen wide, storage panels right. No debug tools.
-        Debug,        ///< Screen left, memory/CPU inspectors right + bottom.
-        Audio,        ///< Screen left, Mockingboard/Phasor/mixer right.
+        Debug,        ///< Screen Inspector left, Debugger right.
     };
     ImGuiID    dockspaceId_        = 0;
     DockLayout pendingDockLayout_  = DockLayout::Reset;
@@ -759,6 +758,8 @@ private:
     /// Open the palette (Ctrl+Shift+P, or Tools ▸ Command palette).
     void openCommandPalette();
     void applyDockLayout(DockLayout preset);
+    void selectDebugTabs();
+    int  debugTabsFrames_ = 0;   ///< frames left to front the Debug layout's tabs
 
     // ── Interface appearance (View ▸ Interface) ──────────────────────────
     // Accent hue + user zoom, both persisted (`ui_accent` / `ui_scale`).

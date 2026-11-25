@@ -59,11 +59,13 @@ public:
                 const std::function<void()>& savePng,
                 const std::function<void()>& refreshDisplay);
 
+
 private:
     unsigned texture_ = 0;
     int      texW_ = 0, texH_ = 0;
     std::vector<uint32_t> pixels_;
-    float    zoom_ = 2.5f;      ///< screen pixels per Apple line
+    float    zoom_ = 2.5f;
+    bool     fit_  = true;      ///< size the picture to the panel      ///< screen pixels per Apple line
     std::string status_;
     /// The line the band on top reads byte by byte: the last one under the
     /// mouse.

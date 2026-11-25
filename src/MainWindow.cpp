@@ -94,6 +94,7 @@
 #endif
 
 #include <algorithm>
+#include <initializer_list>
 #include <vector>
 #include <chrono>
 #include <cmath>
@@ -1212,10 +1213,27 @@ void MainWindow::renderDockSpace()
         dockLayoutRequested_ = true;
         pendingDockLayout_   = DockLayout::Reset;
     }
+    selectDebugTabs();
     if (dockLayoutRequested_) {
         dockLayoutRequested_ = false;
         applyDockLayout(pendingDockLayout_);
     }
+}
+
+void MainWindow::selectDebugTabs()
+{
+    if (debugTabsFrames_ <= 0) return;
+    --debugTabsFrames_;
+    // What ImGui::FocusWindow does for a docked window, without moving the
+    // keyboard focus: ask the window's tab bar to show its tab.
+    for (const char* name : {"Screen Inspector", "Debugger"})
+        if (ImGuiWindow* w = ImGui::FindWindowByName(name))
+            if (w->DockNode && w->DockNode->TabBar)
+                w->DockNode->TabBar->NextSelectedTabId = w->TabId;
+    // The inspector shares its group with the Apple II Screen, which takes
+    // its tab back unless the inspector also holds the focus. (The keyboard
+    // still reaches the Apple II: the inspector does not capture it.)
+    ImGui::SetWindowFocus("Screen Inspector");
 }
 
 void MainWindow::applyDockLayout(DockLayout preset)
@@ -1237,9 +1255,24 @@ void MainWindow::applyDockLayout(DockLayout preset)
     ImGuiID centre = dockspaceId_;
     ImGuiID right = 0, rightLower = 0, bottom = 0;
 
+    // A layout is a set of panels as much as a place for them: choosing one
+    // shows ITS panels and closes every other, so no stray tab crowds it
+    // (a dozen tabs beside the Debugger is not a debug layout). Any panel
+    // is one menu click away again. Two are never closed: the card monitor
+    // opens itself when a card has a picture, and the welcome page is the
+    // first-run guide.
+    using P = pom2::PanelId;
+    const auto showOnly = [this](std::initializer_list<P> keep) {
+        for (const pom2::PanelInfo& info : pom2::kPanelCatalog) {
+            if (info.id == P::CardMonitor || info.id == P::Welcome) continue;
+            show(info.id) = std::find(keep.begin(), keep.end(), info.id) != keep.end();
+        }
+    };
+
     switch (preset) {
         case DockLayout::Reset:
             focusDefaultDrives_ = true;
+            showOnly({P::Drives, P::DiskLibrary, P::SlotConfig, P::Keyboard});
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
                                                      0.34f, nullptr, &centre);
             bottom     = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down,
@@ -1251,6 +1284,7 @@ void MainWindow::applyDockLayout(DockLayout preset)
             right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
                                                 0.32f, nullptr, &centre);
             rightLower = right;
+            showOnly({P::Drives, P::DiskLibrary, P::SlotConfig});
             break;
         case DockLayout::Debug:
             // Two halves: the picture on the left (the Screen Inspector, a
@@ -1260,14 +1294,7 @@ void MainWindow::applyDockLayout(DockLayout preset)
                                                      0.50f, nullptr, &centre);
             rightLower = right;
             bottom     = right;
-            show(pom2::PanelId::Debugger)        = true;
-            show(pom2::PanelId::ScreenInspector) = true;
-            break;
-        case DockLayout::Audio:
-            right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
-                                                     0.40f, nullptr, &centre);
-            rightLower = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down,
-                                                     0.35f, nullptr, &right);
+            showOnly({P::Debugger, P::ScreenInspector});
             break;
     }
     if (rightLower == 0) rightLower = right;
@@ -1320,6 +1347,10 @@ void MainWindow::applyDockLayout(DockLayout preset)
             dock("Internal Disks & Media", right);
             dock("Slot Configuration", right);
             dock("Rewind", right);
+            // Opened from the View menu, the two debugging panels become
+            // tabs — never windows floating over the screen.
+            dock("Debugger", right);
+            dock("Screen Inspector", centre);
             break;
 
         case DockLayout::Debug:
@@ -1334,21 +1365,32 @@ void MainWindow::applyDockLayout(DockLayout preset)
             dock("Memory Map Bar (Horizontal)", bottom);
             break;
 
-        case DockLayout::Audio:
-            dock("Mockingboard (VIA + AY state)", right);
-            dock("Phasor (mode + 2×VIA + 4×AY)", right);
-            dock("Echo+ (SSI263 speech)", right);
-            dock("Audio Mixer", rightLower);
-            dock("Cassette Deck", rightLower);
-            break;
+    }
+
+    // Nothing may be left floating over a freshly applied layout. The preset
+    // names its own panels; every OTHER panel window ImGui knows — one the
+    // user had open, a slot-numbered one whose title is built at run time —
+    // becomes a tab of the side group instead. Dialogs are not panels: no
+    // title bar, auto-sized, a popup or declared NoDocking, and left alone.
+    {
+        const ImGuiID fallback = rightLower ? rightLower : centre;
+        const ImGuiWindowFlags notAPanel =
+            ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Modal |
+            ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings;
+        for (ImGuiWindow* w : GImGui->Windows) {
+            if (!w || (w->Flags & notAPanel) || w->DockId != 0 || w->DockNode) continue;
+            if (w->Name[0] == '#' || std::strncmp(w->Name, "Debug##", 7) == 0) continue;
+            ImGui::DockBuilderDockWindow(w->Name, fallback);
+        }
     }
 
     ImGui::DockBuilderFinish(dockspaceId_);
-    if (preset == DockLayout::Debug) {
-        // Bring the two working tabs to the front of their groups.
-        ImGui::SetWindowFocus("Screen Inspector");
-        ImGui::SetWindowFocus("Debugger");
-    }
+    // The Debug layout's two working tabs go to the front of their groups.
+    // Not here: the tab bars of the nodes just built only exist a frame or
+    // two from now (selectDebugTabs, called each frame while this counts).
+    debugTabsFrames_ = preset == DockLayout::Debug ? 6 : 0;
 }
 
 // ─── Interface appearance ────────────────────────────────────────────────

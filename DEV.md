@@ -12957,12 +12957,27 @@ itself is UI and has no test.
   entries are descriptions of the action (a developer names switches their
   own way); the monitor names were cross-checked against AppleWin's
   `APPLE2E.SYM`. A symbol file is the program's own vocabulary and wins.
-- **Docking.** The Debug layout preset is two halves: Screen Inspector on
-  the left (a tab beside the Apple II Screen), Debugger on the right, the
-  other inspectors as tabs behind it; it opens both. The display is now
+- **Docking.** Three layout presets remain (Reset, Emulation, Debug; the
+  Audio one is gone, nobody used it). **Debug** is two halves and nothing
+  else: Screen Inspector on the left (a tab beside the Apple II Screen),
+  Debugger on the right — it opens those two, CLOSES every other panel and
+  brings both tabs to the front (`MainWindow::selectDebugTabs`, over a few
+  frames: the tab bars of freshly built nodes do not exist yet). **Every
+  preset shows its own panels and closes all the others** (`showOnly`):
+  Emulation keeps Drives, Disk Library and Slot Configuration; Reset adds
+  the keyboard. Any panel is one menu click away again. **No preset leaves a window
+  floating**: after its own assignments, `applyDockLayout` docks every
+  other panel window ImGui knows into the side group (dialogs — no title
+  bar, auto-sized, popups, NoDocking — are left alone). The display is
   rendered once per UI frame by whoever shows it first
   (`MainWindow::uploadScreenTexture`): with the inspector's tab in front
-  the Apple II Screen window is hidden, and the picture froze.
+  the Apple II Screen window is hidden, and the picture froze. The
+  inspector's picture fits its panel by default ("Fit").
+- **Menus.** File ends with what you keep of the machine — Save BASIC
+  listing, then Save / Open session — just above Quit; Copy screen text
+  moved to Edit, above the pastes; Slot Configuration opens the Devices
+  menu; Rewind sits under Step in Machine. File ▸ Reload ROM is gone: the
+  ROM Status panel and the welcome page keep their own Reload ROM button.
 - **Scripting the window** for a check by eye: `$POM2_UI_COMMANDS` runs
   command-palette ids once after start-up (`layout.debug`, `speed.slow.1`),
   the companion of `$POM2_WINDOW_SHOT`.

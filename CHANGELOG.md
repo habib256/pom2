@@ -55,6 +55,14 @@ Inspector on the left and the Debugger on the right. One bug found on the
 way: with the inspector's tab in front of the Apple II Screen, nobody
 rendered the display and the picture froze.
 
+**Layouts and menus, cleaned up.** The Audio layout is removed. The Debug
+layout shows its two panels and closes every other one; so do Emulation
+and Reset with theirs. No layout leaves a window floating: whatever a
+preset does not name becomes a tab. In the File menu, Save BASIC listing
+and the session items sit at the bottom, above Quit; Copy screen text is
+in Edit; Slot Configuration opens the Devices menu; Rewind is under Step;
+File ▸ Reload ROM is removed (the ROM panels keep the button).
+
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
 ## 2026-11-25 — Bug hunt before v1.2.4
