@@ -12916,17 +12916,61 @@ itself is UI and has no test.
   instructions — at 0.1 % a tick is about 20 cycles, a few instructions.
 - **Screen Inspector** (`ScreenInspector_ImGui.*`, View menu): the
   display's own picture, zoomed, with the beam drawn on it under the beam
-  view. Under the mouse (`ScreenProbe.*`, pure): position in the line's own
-  grid, mode and page OF THAT LINE (`Memory::displayStatePerLine`), byte,
-  bit, address (aux half named) and its current value. Two saves: the PNG
-  screenshot, and **the hi-res screen as fetched**
-  (`Memory::captureFetchedHiRes`) — an 8 KB page whose every line comes from
-  the page that line displayed, holding what RAM held when the beam read
-  it; written as `SCREEN-<stamp>#062000` (HostFileTag) in `screenshots/`,
-  it opens in the Paint editor. Main RAM only (no DHGR aux half).
+  view. **The state is per BYTE, not per line** (`Memory::displayFrame`,
+  `DisplayFrame::at(y, column)`): French Touch's DIX flips TEXT, PAGE2 and
+  HIRES inside scanlines and mixes text, lo-res, hi-res and the double
+  modes in one frame (CC_2015 alone throws TEXT 198 times and PAGE2 150),
+  so a hi-res-only, per-line reading explained none of it. Two edges make
+  the frame legible at a glance: the LEFT one gives every line its mode,
+  its page and a mark when a switch is thrown inside it; the TOP one reads
+  one line byte by byte (the line last under the mouse, or the first split
+  line) with a mark on each byte where a switch lands. Under the mouse
+  (`ScreenProbe.*`, pure): position in that byte's own grid, mode and page
+  of THAT byte, byte, bit or text cell, address (aux half named) and the
+  value **the beam fetched** (`Memory::fetchedVideoByte`), as a character
+  in text. Two saves: the PNG screenshot, and **the pages as fetched**
+  (`Memory::captureFetchedPages`, written by `FetchedPagesFile.*`): every
+  byte from the page its screen position displayed, holding what RAM held
+  when the beam read it — `SCREEN-<stamp>-HGR#062000`, `-HGRAUX#062000`,
+  `-TEXT#060400`, `-TEXTAUX#060400` in `screenshots/`, one per page the
+  frame used, loadable by the Paint editor and any Apple II tool.
+- **AppleWin's keys** in the Debugger, while it has the focus (and the
+  keys are then kept from the Apple II): [D] AppleWin @ 7fd7fd7c,
+  `Debug.cpp` `DebuggerProcessKey` — Space step, Ctrl+Space over,
+  Shift+Space out; Up / Down move the cursor (Shift: one byte); Ctrl+Down
+  run to cursor; Right follows the operand's target, Ctrl+Right sets PC to
+  the cursor, Shift+Right and Tab return to the PC; Shift+Left jumps to the
+  caller. The listing comes first in the panel and takes its height; the
+  tools (assembler, symbols, source, profiler, OS calls) fold below it.
+- **The header is five aligned rows** — CPU, Video, Memory, Beam, Cycles —
+  each behind the same 8-character label. *Video* spells the live switches
+  (GRAPHICS/TEXT, HIRES/LORES, PAGE1/PAGE2, MIXED, 80COL, DHGR, 80STORE,
+  ALTCHAR), bright when on; *Memory* gives the bank the CPU reads at ZP,
+  $0200, $0400, $2000, $C300, $D000 and $E000, yellow when it is not plain
+  main RAM or ROM.
+- **The machine's own addresses are named with no file loaded**
+  (`AppleIoNames.h`): an absolute operand gets a note — `LDA $C055 ; PAGE2
+  on (page 2)`, `JSR $FDED ; COUT`, `STA $C404 ; Mockingboard slot 4: VIA 1
+  T1C-L` — for the soft switches, the language card, the monitor's entry
+  points and vectors, ProDOS's MLI, and the registers of a Mockingboard /
+  Phasor or Disk II in the slot they are actually plugged in. The I/O
+  entries are descriptions of the action (a developer names switches their
+  own way); the monitor names were cross-checked against AppleWin's
+  `APPLE2E.SYM`. A symbol file is the program's own vocabulary and wins.
+- **Docking.** The Debug layout preset is two halves: Screen Inspector on
+  the left (a tab beside the Apple II Screen), Debugger on the right, the
+  other inspectors as tabs behind it; it opens both. The display is now
+  rendered once per UI frame by whoever shows it first
+  (`MainWindow::uploadScreenTexture`): with the inspector's tab in front
+  the Apple II Screen window is hidden, and the picture froze.
+- **Scripting the window** for a check by eye: `$POM2_UI_COMMANDS` runs
+  command-palette ids once after start-up (`layout.debug`, `speed.slow.1`),
+  the companion of `$POM2_WINDOW_SHOT`.
 
-Pinned by `beam_view` (soft switches, video RAM, VBL, the fetched page, the
-probe, the slow budgets). `--beam-view` turns the view on from the command
+Pinned by `beam_view` (soft switches, video RAM, VBL, a switch inside a
+line, the fetched pages and their files, the probe, the slow budgets). The
+keys and the panels' layout are UI: checked by eye on DIX (menu, Unlimited
+Bobs, Crazy Cycles 1 and 2) through `$POM2_WINDOW_SHOT`, not by a test. `--beam-view` turns the view on from the command
 line (pinned `cli_kiosk`).
 
 **Seeing POM2's own window** (`WindowCapture.*`). A development aid: with

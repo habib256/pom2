@@ -43,6 +43,8 @@
 
 #include "Memory.h"
 
+#include "CpuClock.h"
+
 #include <cstring>
 
 
@@ -136,47 +138,122 @@ std::vector<Memory::VideoEvent> Memory::beamViewEventsLocked() const
     return out;
 }
 
-std::array<Memory::DisplayState, 192> Memory::displayStatePerLine()
+namespace {
+// Byte column from which an event shows on its line: a switch at horizontal
+// cycle h governs column h - kVideoAccessColumnOffset onward (CpuClock.h),
+// the whole line when thrown in horizontal blanking.
+int eventColumn(const Memory::VideoEvent& e)
 {
-    std::array<DisplayState, 192> lines;
-    if (legacyEventBracket_) {       // tests: taking the events would steal them
-        lines.fill(getDisplayState());
-        return lines;
+    const int c = static_cast<int>(e.emuCycle % kLineCycles) - kVideoAccessColumnOffset;
+    return c < 0 ? 0 : (c > 40 ? 40 : c);
+}
+}  // namespace
+
+Memory::DisplayState Memory::DisplayFrame::at(int y, int column) const
+{
+    DisplayState state = start;
+    for (const VideoEvent& e : events) {
+        if (e.scanline > y || (e.scanline == y && eventColumn(e) > column)) break;
+        foldVideoEvent(state, e.kind, e.value);
     }
-    DisplayState state = getDisplayStateAtFrameStart();
-    const std::vector<VideoEvent> events = takeVideoEvents();
+    return state;
+}
+
+bool Memory::DisplayFrame::splitInside(int y) const
+{
+    for (const VideoEvent& e : events) {
+        if (e.scanline > y) break;
+        if (e.scanline == y && e.kind != VideoEventKind::Cut) {
+            const int c = eventColumn(e);
+            if (c > 0 && c < 40) return true;
+        }
+    }
+    return false;
+}
+
+std::array<bool, 40> Memory::DisplayFrame::splitColumns(int y) const
+{
+    std::array<bool, 40> columns{};
+    for (const VideoEvent& e : events) {
+        if (e.kind == VideoEventKind::Cut || e.scanline >= kVisibleLines) continue;
+        if (y >= 0 && e.scanline != y) continue;
+        const int c = eventColumn(e);
+        if (c > 0 && c < 40) columns[static_cast<std::size_t>(c)] = true;
+    }
+    return columns;
+}
+
+Memory::DisplayFrame Memory::displayFrame()
+{
+    DisplayFrame frame;
+    if (legacyEventBracket_) {       // tests: taking the events would steal them
+        frame.start = getDisplayState();
+        return frame;
+    }
+    frame.start  = getDisplayStateAtFrameStart();
+    frame.events = takeVideoEvents();
     // Before the first frame closes there is no frame-start snapshot worth
     // the name: the live state is the only description of the screen.
-    if (events.empty() && videoPublishedStart_ == 0 && lastVideoFrameStart_ == 0)
-        state = getDisplayState();
-    std::size_t next = 0;
-    for (uint16_t y = 0; y < kVisibleLines; ++y) {
-        // An event in horizontal blanking governs the whole line; one inside
-        // the window splits it, and this reports the line's first byte.
-        while (next < events.size() &&
-               (events[next].scanline < y ||
-                (events[next].scanline == y &&
-                 events[next].emuCycle % kLineCycles < kLineCycles - 40))) {
-            foldVideoEvent(state, events[next].kind, events[next].value);
-            ++next;
-        }
-        lines[y] = state;
-    }
+    if (frame.events.empty() && videoPublishedStart_ == 0 && lastVideoFrameStart_ == 0)
+        frame.start = getDisplayState();
+    return frame;
+}
+
+std::array<Memory::DisplayState, 192> Memory::displayStatePerLine()
+{
+    const DisplayFrame frame = displayFrame();
+    std::array<DisplayState, 192> lines;
+    for (int y = 0; y < static_cast<int>(kVisibleLines); ++y)
+        lines[static_cast<std::size_t>(y)] = frame.at(y, 0);
     return lines;
 }
 
-void Memory::captureFetchedHiRes(uint8_t* out8k)
+void Memory::captureFetchedPages(FetchedPages& out)
 {
-    const std::array<DisplayState, 192> lines = displayStatePerLine();
-    std::memcpy(out8k, data() + 0x2000, 0x2000);       // the holes, and a base
+    const DisplayFrame frame = displayFrame();
+    const uint8_t* const mainRam = data();
+    const uint8_t* const auxRam  = iieMode ? videoAuxData() : nullptr;
+    std::memcpy(out.textMain.data(),  mainRam + 0x0400, 0x0400);
+    std::memcpy(out.hiResMain.data(), mainRam + 0x2000, 0x2000);
+    if (auxRam) {
+        std::memcpy(out.textAux.data(),  auxRam + 0x0400, 0x0400);
+        std::memcpy(out.hiResAux.data(), auxRam + 0x2000, 0x2000);
+    }
+    out.usedText = out.usedTextAux = out.usedHiRes = out.usedHiResAux = false;
+
     const bool rewound = videoRewindBegin();
     for (int y = 0; y < static_cast<int>(kVisibleLines); ++y) {
         if (rewound) videoRewindTo(y);
-        const DisplayState& st = lines[static_cast<std::size_t>(y)];
-        // 80STORE turns PAGE2 into a bank switch: the scanner stays on page 1.
-        const uint16_t page = (st.page2 && !st.eightyStore) ? 0x4000 : 0x2000;
-        const uint16_t off  = hiResLineOffset(y);
-        std::memcpy(out8k + off, data() + page + off, 40);
+        for (int c = 0; c < 40; ++c) {
+            const DisplayState st = frame.at(y, c);
+            // 80STORE turns PAGE2 into a bank switch: the scanner stays on page 1.
+            const bool page2 = st.page2 && !st.eightyStore;
+            const bool text  = st.textMode || (st.mixedMode && y >= 160);
+            const bool wide  = st.eightyCol && (text || st.dhgr);
+            if (text || !st.hiRes) {
+                const uint16_t off = static_cast<uint16_t>(textRowOffset(y >> 3) + c);
+                const uint16_t src = static_cast<uint16_t>((page2 ? 0x0800 : 0x0400) + off);
+                out.textMain[off] = mainRam[src];
+                out.usedText = true;
+                if (wide && auxRam) { out.textAux[off] = auxRam[src]; out.usedTextAux = true; }
+            } else {
+                const uint16_t off = static_cast<uint16_t>(hiResLineOffset(y) + c);
+                const uint16_t src = static_cast<uint16_t>((page2 ? 0x4000 : 0x2000) + off);
+                out.hiResMain[off] = mainRam[src];
+                out.usedHiRes = true;
+                if (wide && auxRam) { out.hiResAux[off] = auxRam[src]; out.usedHiResAux = true; }
+            }
+        }
     }
     if (rewound) videoRewindEnd();
+}
+
+uint8_t Memory::fetchedVideoByte(int y, uint16_t address, bool aux)
+{
+    const uint8_t* const auxRam = iieMode ? videoAuxData() : nullptr;
+    const bool rewound = videoRewindBegin();
+    if (rewound) videoRewindTo(y);
+    const uint8_t value = (aux && auxRam) ? auxRam[address] : data()[address];
+    if (rewound) videoRewindEnd();
+    return value;
 }

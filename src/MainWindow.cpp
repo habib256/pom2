@@ -1253,12 +1253,15 @@ void MainWindow::applyDockLayout(DockLayout preset)
             rightLower = right;
             break;
         case DockLayout::Debug:
+            // Two halves: the picture on the left (the Screen Inspector, a
+            // tab beside the Apple II Screen), the Debugger on the right.
+            // The other inspectors are tabs behind the Debugger.
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
-                                                     0.38f, nullptr, &centre);
-            bottom     = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down,
-                                                     0.30f, nullptr, &centre);
-            rightLower = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down,
-                                                     0.50f, nullptr, &right);
+                                                     0.50f, nullptr, &centre);
+            rightLower = right;
+            bottom     = right;
+            show(pom2::PanelId::Debugger)        = true;
+            show(pom2::PanelId::ScreenInspector) = true;
             break;
         case DockLayout::Audio:
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
@@ -1304,6 +1307,8 @@ void MainWindow::applyDockLayout(DockLayout preset)
             dock("Audio Mixer", rightLower);
             dock("Joystick", rightLower);
             dock("Rewind", rightLower);
+            dock("Debugger", rightLower);
+            dock("Screen Inspector", centre);
             break;
 
         case DockLayout::Emulation:
@@ -1318,6 +1323,8 @@ void MainWindow::applyDockLayout(DockLayout preset)
             break;
 
         case DockLayout::Debug:
+            dock("Screen Inspector", centre);
+            dock("Debugger", right);
             dock("Memory viewer", right);
             dock("Memory Map Grid", right);
             dock("Memory Map Bar", right);
@@ -1337,6 +1344,11 @@ void MainWindow::applyDockLayout(DockLayout preset)
     }
 
     ImGui::DockBuilderFinish(dockspaceId_);
+    if (preset == DockLayout::Debug) {
+        // Bring the two working tabs to the front of their groups.
+        ImGui::SetWindowFocus("Screen Inspector");
+        ImGui::SetWindowFocus("Debugger");
+    }
 }
 
 // ─── Interface appearance ────────────────────────────────────────────────
@@ -1401,6 +1413,27 @@ void MainWindow::setDpiScale(float s)
 void MainWindow::render()
 {
     if (auto queue = controller->sessionLoadQueue()) queue->process();
+    // $POM2_UI_COMMANDS: command-palette ids, ';'-separated, run once a
+    // little after start-up — the companion of $POM2_WINDOW_SHOT
+    // (WindowCapture.h), so a script can lay the window out before asking
+    // for its picture. Frame 30: the dock space exists and has its size.
+    {
+        static int frame = 0;
+        if (++frame == 30) {
+            if (const char* list = std::getenv("POM2_UI_COMMANDS")) {
+                std::string id;
+                for (const char* p = list; ; ++p) {
+                    if (*p == ';' || *p == '\0') {
+                        if (!id.empty()) runCommand(id);
+                        id.clear();
+                        if (*p == '\0') break;
+                    } else {
+                        id.push_back(*p);
+                    }
+                }
+            }
+        }
+    }
     // Track wallclock between frames so the deck counter / armed pulse /
     // status overlay can age correctly.
     using clock = std::chrono::steady_clock;

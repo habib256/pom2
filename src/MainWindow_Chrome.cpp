@@ -1094,8 +1094,9 @@ void MainWindow::renderMenuBar()
                        "Widest screen. Disk Library / Cassette / Floppy Emu\n"
                        "and Slot Config in one right column.");
             layoutItem("Debug", DockLayout::Debug,
-                       "Memory viewer + maps right, horizontal map along the\n"
-                       "bottom, inspectors bottom-right.");
+                       "Screen Inspector on the left (a tab beside the screen),\n"
+                       "Debugger on the right; memory viewer, maps and the other\n"
+                       "inspectors as tabs behind it.");
             layoutItem("Audio", DockLayout::Audio,
                        "Mockingboard / Phasor / Echo+ right, mixer and tape\n"
                        "bottom-right.");

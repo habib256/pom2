@@ -17,6 +17,9 @@
 // Debugger_ImGui — see the header for the design and the locking rule.
 
 #include "Debugger_ImGui.h"
+#include "AppleIoNames.h"
+#include "SlotBus.h"
+#include "SlotPeripheral.h"
 #include "BeamPosition.h"
 #include "DisasmNavigation.h"
 #include "Pom2Theme.h"
@@ -74,7 +77,10 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
 {
     if (open && !*open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
+    // Docked by the layout presets (MainWindow::applyDockLayout: the Debug
+    // preset puts it on the right, the Screen Inspector on the left). This
+    // size only serves a window the user has pulled out to float.
+    ImGui::SetNextWindowSize(ImVec2(860, 760), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Debugger", open)) { ImGui::End(); return; }
 
     // ── One snapshot, one lock, then draw ────────────────────────────────
@@ -136,6 +142,14 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.videoCycle = mem.videoNow();
         snap.standard   = mem.videoStandard();
         snap.beamView   = mem.beamView();
+        snap.iicClass   = mem.isIIcClass();
+        snap.video      = mem.getDisplayState();
+        for (int slot = 1; slot <= 7; ++slot) {
+            const SlotPeripheral* card = mem.slotBus().peripheral(slot);
+            const std::string_view name = card ? card->name() : std::string_view{};
+            snap.slotKind[slot] = (name == "Mockingboard" || name == "Phasor") ? 1
+                                : name == "Disk II" ? 2 : 0;
+        }
     }
     snap.running = ctrl.getMode() == EmulationController::Mode::Running;
 
@@ -151,6 +165,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     // to this panel and should not fire when it is closed, and MainWindow is
     // the god-object the file-size ratchet is holding still — a feature that
     // can keep its own keys out of it should.
+    handleKeys(ctrl, snap);
     if (!ImGui::GetIO().WantCaptureKeyboard || ImGui::IsWindowFocused()) {
         if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false)) {
             followPc_ = true;
@@ -163,14 +178,49 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
 
     drawStopBanner(snap);
     drawControls(ctrl, snap);
-    drawNavigation(snap);
+    drawNavigation(ctrl, snap);
     ImGui::Separator();
     drawRegisters(snap);
     drawBeamAndCycles(snap);
     ImGui::Separator();
+    // Disassembly left, breakpoints right.
+    const float rightWidth = 270.0f;
+    // NoScrollWithMouse + NoScrollbar: the listing is not a scrolled region
+    // (it is laid out from viewAddr_ each frame), so the wheel must neither
+    // scroll it nor fall through to the Debugger window. drawDisassembly
+    // reads the wheel itself and moves viewAddr_ by instructions.
+    // The listing is what the panel is FOR: it comes first and takes the
+    // height, leaving room for the five tool headers below it (closed). An
+    // open tool grows downward and the window scrolls.
+    const float mainHeight = std::max(260.0f,
+        ImGui::GetContentRegionAvail().y - 5.0f * ImGui::GetFrameHeightWithSpacing() - 6.0f);
+    ImGui::BeginChild("##disasm",
+                      ImVec2(ImGui::GetContentRegionAvail().x - rightWidth - 8.0f, mainHeight),
+                      true, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+    {
+        ScopedMonoFont mono;
+        drawDisassembly(ctrl, snap);
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginChild("##bplist", ImVec2(rightWidth, mainHeight), true);
+    {
+        ScopedMonoFont mono;
+        drawBreakpointList(ctrl, snap);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        drawWatchpointList(ctrl, snap);
+    }
+    ImGui::EndChild();
+
     drawAssembler(ctrl, snap);
 
-    if (ImGui::CollapsingHeader("Symbols")) {
+    if (ImGui::CollapsingHeader("Your program's symbols (optional file)")) {
+        ImGui::Checkbox("Name the machine's own addresses in the listing", &ioNames_);
+        ImGui::TextWrapped("Built in, no file needed: soft switches, language card, monitor ROM entry points, "
+                           "ProDOS MLI, vectors, Mockingboard and Disk II registers. A symbol file adds YOUR "
+                           "program's labels, and its names win.");
         ImGui::SetNextItemWidth(420);
         ImGui::InputText("File##symbols", symbolPath_, sizeof(symbolPath_));
         ImGui::SameLine();
@@ -273,32 +323,6 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     }
 
     drawOsCalls(ctrl, snap);
-
-    // Disassembly left, breakpoints right.
-    const float rightWidth = 270.0f;
-    // NoScrollWithMouse + NoScrollbar: the listing is not a scrolled region
-    // (it is laid out from viewAddr_ each frame), so the wheel must neither
-    // scroll it nor fall through to the Debugger window. drawDisassembly
-    // reads the wheel itself and moves viewAddr_ by instructions.
-    ImGui::BeginChild("##disasm",
-                      ImVec2(ImGui::GetContentRegionAvail().x - rightWidth - 8.0f, 0),
-                      true, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
-    {
-        ScopedMonoFont mono;
-        drawDisassembly(ctrl, snap);
-    }
-    ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("##bplist", ImVec2(rightWidth, 0), true);
-    {
-        ScopedMonoFont mono;
-        drawBreakpointList(ctrl, snap);
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        drawWatchpointList(ctrl, snap);
-    }
-    ImGui::EndChild();
 
     ImGui::End();
 }
@@ -451,31 +475,79 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
 
     ImGui::SameLine();
     ImGui::Checkbox("Follow PC", &followPc_);
-    ImGui::SameLine();
-    bool beamView = snap.beamView;
-    if (ImGui::Checkbox("Beam view", &beamView)) {
-        auto st = ctrl.lockState();
-        st.memory().setBeamView(beamView);
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Show the screen as the tube has it at THIS cycle: the frame in\n"
-                          "progress above the beam, the previous frame from the beam down.\n"
-                          "Off: the last completed frame. Use it when stopped in the middle\n"
-                          "of a frame, or in slow motion (speed menu).");
 }
 
 // ── Registers ────────────────────────────────────────────────────────────
 
+namespace {
+// Every header row starts with the same 8-character label, so the values of
+// CPU / Video / Memory / Beam / Cycles line up in one column.
+void rowLabel(const char* label)
+{
+    ImGui::TextColored(kDimColour, "%-8s", label);
+    ImGui::SameLine(0.0f, 0.0f);
+}
+// A switch shown by name: bright when on, dim when off, always the same
+// width so the row does not move when the program flips it.
+void switchToken(const char* name, bool on)
+{
+    if (on) ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.50f, 1.0f), "%-9s", name);
+    else    ImGui::TextColored(kDimColour, "%-9s", name);
+    ImGui::SameLine(0.0f, 0.0f);
+}
+}  // namespace
+
 void Debugger_ImGui::drawRegisters(const Snapshot& snap)
 {
     ScopedMonoFont mono;
-    ImGui::Text("PC $%04X    A $%02X   X $%02X   Y $%02X   SP $%02X   P $%02X  [%s]",
-                snap.pc, snap.a, snap.x, snap.y, snap.sp, snap.p,
-                flagsText(snap.p).c_str());
-    ImGui::TextColored(kDimColour, "%s",
-                       snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR) decoding" :
-                       snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC) decoding" :
-                                                               "6502 (NMOS) decoding");
+    rowLabel("CPU");
+    ImGui::Text("PC $%04X  A $%02X  X $%02X  Y $%02X  SP $%02X  P $%02X [%s]",
+                snap.pc, snap.a, snap.x, snap.y, snap.sp, snap.p, flagsText(snap.p).c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(kDimColour, "  %s",
+                       snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR)" :
+                       snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC)" : "6502 (NMOS)");
+
+    // The video switches as they stand NOW (the live latches, not a frame).
+    const Memory::DisplayState& v = snap.video;
+    rowLabel("Video");
+    switchToken(v.textMode ? "TEXT" : "GRAPHICS", true);
+    switchToken(v.hiRes ? "HIRES" : "LORES", !v.textMode);
+    switchToken(v.page2 ? "PAGE2" : "PAGE1", true);
+    switchToken("MIXED", v.mixedMode);
+    switchToken("80COL", v.eightyCol);
+    switchToken("DHGR", v.dhgr);
+    switchToken("80STORE", v.eightyStore);
+    switchToken("ALTCHAR", v.altChar);
+    ImGui::NewLine();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The video soft switches right now: bright = on.\n"
+                          "The Screen Inspector shows what each line of the frame used.");
+
+    // What the CPU reads where: the bank mapped at each region.
+    rowLabel("Memory");
+    const auto region = [&](const char* name, uint16_t at) {
+        const DebugBank bank = snap.banks[at];
+        const bool plain = bank.kind == DebugBank::Main || bank.kind == DebugBank::Rom ||
+                           bank.kind == DebugBank::Io;
+        char text[40];
+        std::snprintf(text, sizeof text, "%s %s", name, bank.text().c_str());
+        // Anything but plain main RAM / ROM is paging at work: make it stand out.
+        if (plain) ImGui::TextColored(kDimColour, "%-11s", text);
+        else       ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.35f, 1.0f), "%-11s", text);
+        ImGui::SameLine(0.0f, 0.0f);
+    };
+    region("ZP", 0x0000);
+    region("$0200", 0x0200);
+    region("$0400", 0x0400);
+    region("$2000", 0x2000);
+    region("$C300", 0xC300);
+    region("$D000", 0xD000);
+    region("$E000", 0xE000);
+    ImGui::NewLine();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The bank the CPU READS at each region: main, aux0 (RAMRD / 80STORE),\n"
+                          "lc1 / lc2 (language card RAM), rom. Yellow = not plain main RAM or ROM.");
 }
 
 // ── Beam position and cycle counter ─────────────────────────────────────
@@ -501,37 +573,40 @@ void Debugger_ImGui::drawBeamAndCycles(const Snapshot& snap)
 
     ScopedMonoFont mono;
     const BeamPosition b = beamPositionAt(snap.videoCycle, snap.standard);
-    char where[32];
-    if (b.vbl)       std::snprintf(where, sizeof where, "VBL");
-    else if (b.hbl)  std::snprintf(where, sizeof where, "HBL");
-    else             std::snprintf(where, sizeof where, "byte %2d", b.column);
-    ImGui::Text("Beam  V %3d ($%03X)  H %2d ($%02X)  %-8s  frame cycle %5u (%s)",
-                b.line, b.line, b.h, b.h, where, b.frameCycle,
-                snap.standard == VideoStandard::PAL ? "PAL, 312 lines" : "NTSC, 262 lines");
+    char where[40];
+    if (b.vbl)       std::snprintf(where, sizeof where, "vertical blanking");
+    else if (b.hbl)  std::snprintf(where, sizeof where, "horizontal blanking");
+    else             std::snprintf(where, sizeof where, "on byte %d of the line", b.column);
+    // Green while the beam draws, yellow in blanking — AppleWin's colours.
+    const ImVec4 beamColour = (b.vbl || b.hbl) ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
+                                               : ImVec4(0.45f, 0.90f, 0.50f, 1.0f);
+    rowLabel("Beam");
+    ImGui::TextColored(beamColour, "V %3d ($%03X)  H %2d ($%02X)  %s", b.line, b.line, b.h, b.h, where);
+    ImGui::SameLine();
+    ImGui::TextColored(kDimColour, "  cycle %u of the %s frame", b.frameCycle,
+                       snap.standard == VideoStandard::PAL ? "PAL" : "NTSC");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("V = line in the frame (0-191 visible, then vertical blanking).\n"
                           "H = cycle in the 65-cycle line (0-24 horizontal blanking,\n"
                           "25-64 the 40 bytes of the line).\n"
-                          "The same beam clock POM2 stamps every video soft switch with,\n"
-                          "numbered like AppleWin's v: and h: (its default, not its \"real\" H).");
+                          "Numbered like AppleWin's v: and h: (its default, not its \"real\" H).");
 
     const bool wentBack = snap.cycles < cycleMark_;
+    rowLabel("Cycles");
     if (wentBack)
-        ImGui::Text("Cycles %llu  since mark: -- (clock went back)",
-                    static_cast<unsigned long long>(snap.cycles));
+        ImGui::Text("since mark --  (the clock went back)");
     else
-        ImGui::Text("Cycles %llu  since mark: %llu",
-                    static_cast<unsigned long long>(snap.cycles),
-                    static_cast<unsigned long long>(snap.cycles - cycleMark_));
+        ImGui::Text("since mark %llu", static_cast<unsigned long long>(snap.cycles - cycleMark_));
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset mark")) cycleMark_ = snap.cycles;
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Count from here: stop at the start of the code to time,\n"
                           "Reset mark, then run to its end.");
-    if (haveLastRun_) {
-        ImGui::SameLine();
-        ImGui::Text("  last run/step: %llu", static_cast<unsigned long long>(lastRunCycles_));
-    }
+    ImGui::SameLine();
+    if (haveLastRun_) ImGui::Text("  last run or step %llu", static_cast<unsigned long long>(lastRunCycles_));
+    else              ImGui::TextColored(kDimColour, "  last run or step --");
+    ImGui::SameLine();
+    ImGui::TextColored(kDimColour, "  total %llu", static_cast<unsigned long long>(snap.cycles));
 }
 
 // ── Navigation: wheel, Page Up/Down, Go to ──────────────────────────────
@@ -543,7 +618,7 @@ void Debugger_ImGui::scrollView(const Snapshot& snap, int instructions)
     viewAddr_ = disasmStep(snap.memory.data(), viewAddr_, instructions, snap.isa);
 }
 
-void Debugger_ImGui::drawNavigation(const Snapshot& snap)
+void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& snap)
 {
     ImGui::SetNextItemWidth(160);
     const bool entered = ImGui::InputTextWithHint("##goto", "$C600 or label", gotoEntry_,
@@ -563,8 +638,112 @@ void Debugger_ImGui::drawNavigation(const Snapshot& snap)
         }
     }
     ImGui::SameLine();
+    bool beamView = snap.beamView;
+    if (ImGui::Checkbox("Beam view", &beamView)) {
+        auto st = ctrl.lockState();
+        st.memory().setBeamView(beamView);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Show the screen as the tube has it at THIS cycle: the frame in\n"
+                          "progress above the beam, the previous frame from the beam down.\n"
+                          "Off: the last completed frame. Use it when stopped in the middle\n"
+                          "of a frame, or in slow motion (speed menu).");
+    ImGui::SameLine();
     if (gotoFailed_) ImGui::TextColored(kBreakColour, "unknown address or label");
-    else             ImGui::TextColored(kDimColour, "wheel / Page Up / Page Down scroll the listing");
+    else {
+        ImGui::TextColored(kDimColour, "Keys (?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("AppleWin's keys, while this panel has the focus:\n"
+                              "  Space            step\n"
+                              "  Ctrl+Space       step over\n"
+                              "  Shift+Space      step out\n"
+                              "  Up / Down        move the cursor (Shift: by one byte)\n"
+                              "  Page Up / Down   a screenful; the wheel scrolls too\n"
+                              "  Ctrl+Down        run to the cursor\n"
+                              "  Right            follow the operand's target\n"
+                              "  Ctrl+Right       set PC to the cursor\n"
+                              "  Shift+Left       jump to the caller\n"
+                              "  Tab              back to the PC\n"
+                              "Click the Apple II screen to type into the machine again.");
+    }
+}
+
+// ── Keyboard, with AppleWin's reflexes ──────────────────────────────────
+// [D] AppleWin @ 7fd7fd7c, Debug.cpp DebuggerProcessKey: Space = trace,
+// Ctrl+Space = step over, Shift+Space = step out; Up / Down move the cursor,
+// with Shift by one byte; Ctrl+Down = run until the cursor; Page Up / Down;
+// Right = follow the operand's target, Ctrl+Right = set PC to the cursor,
+// Shift+Right and Tab = back to the PC; Shift+Left = jump to the caller.
+// Only while this window has the focus, and the keys are then kept from the
+// Apple II (in AppleWin the debugger owns the keyboard too).
+
+void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
+{
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextFrameWantCaptureKeyboard(true);
+    if (io.WantTextInput || snap.memory.size() < 0x10000) return;
+    const uint8_t* mem = snap.memory.data();
+    const auto moveCursor = [&](uint16_t to) {
+        cursorAddr_ = to; cursorBank_ = snap.banks[to]; cursorValid_ = true;
+    };
+    const auto show = [&](uint16_t to) { viewAddr_ = to; followPc_ = false; moveCursor(to); };
+    const uint16_t cursor = cursorValid_ ? cursorAddr_ : snap.pc;
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, /*repeat=*/true)) {
+        followPc_ = true;
+        if (io.KeyShift)     ctrl.debugStepOut();
+        else if (io.KeyCtrl) ctrl.debugStepOver();
+        else                 ctrl.debugStepInstruction();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) { followPc_ = true; moveCursor(snap.pc); }
+
+    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow), down = ImGui::IsKeyPressed(ImGuiKey_DownArrow);
+    if (down && io.KeyCtrl) {
+        if (cursorValid_) ctrl.debugRunToCursor(cursorAddr_, cursorBank_);
+    } else if (up || down) {
+        const int dir = down ? 1 : -1;
+        if (io.KeyShift) {            // one BYTE: resynchronise a listing by hand
+            viewAddr_ = static_cast<uint16_t>(viewAddr_ + dir);
+            followPc_ = false;
+        } else {
+            const uint16_t to = disasmStep(mem, cursor, dir, snap.isa);
+            moveCursor(to);
+            // Keep the cursor on screen: scroll when it leaves the lines drawn.
+            if (std::find(listed_.begin(), listed_.end(), to) == listed_.end())
+                scrollView(snap, dir);
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+        if (io.KeyCtrl) {
+            if (cursorValid_ && !snap.running) {
+                auto st = ctrl.lockState();
+                st.cpu().setProgramCounter(cursorAddr_);
+            }
+        } else if (io.KeyShift || io.KeyAlt) {
+            followPc_ = true; moveCursor(snap.pc);
+        } else {
+            // The operand's target: an absolute address, or a branch's.
+            int len = 1;
+            (void)disassemble6502(mem, cursor, len, snap.isa);
+            const uint8_t op = mem[cursor];
+            const uint8_t b1 = mem[(cursor + 1) & 0xFFFF], b2 = mem[(cursor + 2) & 0xFFFF];
+            const bool branch = (op & 0x1F) == 0x10 ||
+                                (op == 0x80 && snap.isa != Cpu6502Set::Nmos6502);
+            if (len == 3 && (op & 0x0F) == 0x0F && snap.isa == Cpu6502Set::Superset65C02)
+                show(static_cast<uint16_t>(cursor + 3 + static_cast<int8_t>(b2)));   // BBR / BBS
+            else if (len == 3)
+                show(static_cast<uint16_t>(b1 | (b2 << 8)));
+            else if (len == 2 && branch)
+                show(static_cast<uint16_t>(cursor + 2 + static_cast<int8_t>(b1)));
+        }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) && io.KeyShift) {
+        // The caller: the return address on top of the stack, plus one.
+        const uint16_t lo = mem[0x0100 + ((snap.sp + 1) & 0xFF)];
+        const uint16_t hi = mem[0x0100 + ((snap.sp + 2) & 0xFF)];
+        show(static_cast<uint16_t>((lo | (hi << 8)) + 1));
+    }
 }
 
 // ── Disassembly, with a clickable breakpoint gutter ─────────────────────
@@ -601,11 +780,13 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
     // length code is a vote (DisasmNavigation.h): exact on real code, a guess
     // on data.
     uint16_t addr = disasmStep(snap.memory.data(), viewAddr_, -3, snap.isa);
+    listed_.clear();
 
     for (int i = 0; i < rows; ++i) {
         int len = 1;
         const std::string mnem =
             disassemble6502(snap.memory.data(), addr, len, snap.isa);
+        listed_.push_back(addr);
         const bool isPc = (addr == snap.pc);
         const DebugAddress location{addr,snap.banks[addr]};
         const bool wildcard = std::binary_search(snap.breakpoints.begin(),snap.breakpoints.end(),DebugAddress{addr,{}});
@@ -633,9 +814,13 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
             std::snprintf(bytes + b * 3, sizeof(bytes) - static_cast<std::size_t>(b) * 3,
                           "%02X ", snap.memory[(addr + b) & 0xFFFF]);
 
-        char line[96];
+        // address  bytes  mnemonic   [own label]   ; what the operand is
+        char line[192];
         const std::string label = symbols_.label(addr,location.bank);
-        std::snprintf(line, sizeof(line), "%s  %-9s %s %s", location.text().c_str(), bytes, mnem.c_str(), label.c_str());
+        const std::string note  = operandNote(snap, addr, len);
+        std::snprintf(line, sizeof(line), "%-11s %-9s %-15s %s%s%s%s", location.text().c_str(), bytes,
+                      mnem.c_str(), label.c_str(), label.empty() || note.empty() ? "" : "  ",
+                      note.empty() ? "" : "; ", note.c_str());
 
         if (isPc)      ImGui::PushStyleColor(ImGuiCol_Text, kPcColour);
         else if (isBp) ImGui::PushStyleColor(ImGuiCol_Text, kBreakColour);
@@ -650,18 +835,52 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
     }
 }
 
+// ── What the operand is ─────────────────────────────────────────────────
+
+std::string Debugger_ImGui::operandNote(const Snapshot& snap, uint16_t addr, int len) const
+{
+    if (len != 3) return {};
+    const uint8_t op = snap.memory[addr];
+    // BBR / BBS are zero page + relative: no absolute operand.
+    if ((op & 0x0F) == 0x0F && snap.isa == Cpu6502Set::Superset65C02) return {};
+    const uint16_t target = static_cast<uint16_t>(snap.memory[(addr + 1) & 0xFFFF] |
+                                                  (snap.memory[(addr + 2) & 0xFFFF] << 8));
+    // The program's own name for it first: a symbol file is its vocabulary.
+    std::string own = symbols_.label(target, snap.banks[target]);
+    if (!own.empty() || !ioNames_) return own;
+    if (const char* rom = monitorEntryName(target)) return rom;
+    if (target < 0xC000 || target > 0xC7FF) return {};
+    if (target < 0xC090) {
+        const char* name = motherboardIoName(target, snap.iicClass);
+        return name ? name : std::string{};
+    }
+    char text[64];
+    if (target < 0xC100) {                       // $C0nX: slot n-8's switches
+        const int slot = ((target >> 4) & 0x0F) - 8;
+        if (snap.slotKind[slot] != 2) return {};
+        std::snprintf(text, sizeof text, "Disk II slot %d: %s", slot, diskIISwitchName(target & 0x0F));
+        return text;
+    }
+    const int slot = (target >> 8) & 0x07;        // $Cn00-$CnFF: slot n's page
+    if (snap.slotKind[slot] != 1) return {};
+    std::snprintf(text, sizeof text, "Mockingboard slot %d: VIA %d %s", slot,
+                  (target & 0x80) ? 2 : 1, via6522RegisterName(target & 0x0F));
+    return text;
+}
+
 // ── Breakpoint list ──────────────────────────────────────────────────────
 
 void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
                                         const Snapshot& snap)
 {
     ImGui::TextUnformatted("Breakpoints");
-    ImGui::TextWrapped("bank:address or address for all banks (aux0:0800, lc2:D000).");
-    ImGui::Separator();
-
-    ImGui::SetNextItemWidth(150);
-    const bool entered = ImGui::InputText("##bpaddr", bpEntry_, sizeof(bpEntry_),
-                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SetNextItemWidth(170);
+    const bool entered = ImGui::InputTextWithHint("##bpaddr", "0800 or aux0:0800", bpEntry_,
+                                                  sizeof(bpEntry_), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("An address or a label breaks in every bank;\n"
+                          "bank:address in one (aux0:0800, lc2:D000).\n"
+                          "Or click the gutter of a line in the listing.");
     ImGui::SameLine();
     const bool add = ImGui::Button("Add") || entered;
     if (add && bpEntry_[0]) {

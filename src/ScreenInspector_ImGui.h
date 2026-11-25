@@ -23,9 +23,13 @@
 // the pixel under the mouse: its coordinates, the line's video mode and page,
 // the byte and bit, the address that byte was fetched from and its value.
 // With the beam view on (Memory.h) the picture is the tube at this cycle and
-// the beam is drawn on it. Two saves: the picture as a PNG, and the hi-res
-// screen "as fetched" as an 8 KB page (`Memory::captureFetchedHiRes`), which
-// the Paint editor and any Apple II tool can open.
+// the beam is drawn on it. The state is PER BYTE, not per line: French Touch's
+// demos flip TEXT, PAGE2 and HIRES inside scanlines and mix text, lo-res,
+// hi-res and the double modes in one frame, so a gutter on the left shows
+// each line's mode and page and marks the lines split inside. Two saves: the
+// picture as a PNG, and the video pages "as fetched"
+// (`Memory::captureFetchedPages`: hi-res, text / lo-res, and their aux
+// halves), which the Paint editor and any Apple II tool can open.
 //
 // Locking: one short `lockState()` per frame for the per-line states and the
 // byte under the mouse; the picture is the display's framebuffer, copied on
@@ -49,15 +53,22 @@ class ScreenInspector_ImGui
 public:
     ~ScreenInspector_ImGui();
     /// `savePng` is the application's screenshot action.
+    /// `refreshDisplay` renders the display for this UI frame when nobody has
+    /// yet (the Apple II Screen window may be hidden behind this panel's tab).
     void render(EmulationController& ctrl, Apple2Display& display, bool* open,
-                const std::function<void()>& savePng);
+                const std::function<void()>& savePng,
+                const std::function<void()>& refreshDisplay);
 
 private:
     unsigned texture_ = 0;
     int      texW_ = 0, texH_ = 0;
     std::vector<uint32_t> pixels_;
-    float    zoom_ = 3.0f;      ///< screen pixels per Apple line
+    float    zoom_ = 2.5f;      ///< screen pixels per Apple line
     std::string status_;
+    /// The line the band on top reads byte by byte: the last one under the
+    /// mouse.
+    int      bandLine_ = 0;
+    bool     bandChosen_ = false;
 };
 
 } // namespace pom2

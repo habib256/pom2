@@ -38,6 +38,7 @@
 #define POM2_DEBUGGER_IMGUI_H
 
 #include "Debugger.h"
+#include "Memory.h"
 #include "DebuggerSymbols.h"
 #include "DebuggerSourceMap.h"
 #include "InstructionTrace.h"
@@ -99,7 +100,17 @@ private:
         uint64_t videoCycle = 0;
         VideoStandard standard = VideoStandard::NTSC;
         bool beamView = false;
+        /// For the listing's built-in I/O names (AppleIoNames.h): what sits
+        /// in each slot (0 nothing known, 1 a 6522 sound card, 2 a Disk II),
+        /// and whether this is a //c-class machine.
+        Memory::DisplayState video;      ///< the live video switches
+        uint8_t slotKind[8] = {};
+        bool iicClass = false;
     };
+    /// "; PAGE2 on (page 2)" for the instruction at `addr`: the operand's
+    /// label from the loaded symbols, else the machine's own I/O name.
+    std::string operandNote(const Snapshot& snap, uint16_t addr, int len) const;
+    bool ioNames_ = true;
 
     void drawControls(EmulationController& ctrl, const Snapshot& snap);
     void drawRegisters(const Snapshot& snap);
@@ -123,7 +134,12 @@ private:
     bool      wasRunning_  = false;
     /// "Go to" box: a hex address, or a label from the loaded symbols.
     char      gotoEntry_[64] = {0};
-    void drawNavigation(const Snapshot& snap);
+    void drawNavigation(EmulationController& ctrl, const Snapshot& snap);
+    /// AppleWin's debugger keys, while this window has the focus.
+    void handleKeys(EmulationController& ctrl, const Snapshot& snap);
+    /// Addresses of the lines the listing drew last frame (cursor keys keep
+    /// the cursor among them).
+    std::vector<uint16_t> listed_;
     /// Scroll the listing by `instructions` (negative = up) and stop
     /// following the PC.
     void scrollView(const Snapshot& snap, int instructions);

@@ -38,6 +38,7 @@ src/Cs8900aDevice.cpp
 src/Debugger.cpp
 src/Disassembler6502.cpp
 src/DisasmNavigation.cpp
+src/FetchedPagesFile.cpp
 src/Disk35Image.cpp
 src/DiskIICard.cpp
 src/DiskImage.cpp

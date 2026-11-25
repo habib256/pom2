@@ -394,6 +394,7 @@ set(SOURCES
     src/ScreenInspector_ImGui.cpp
     src/WindowCapture.cpp
     src/ScreenProbe.cpp
+    src/FetchedPagesFile.cpp
     src/Assembler6502.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
@@ -801,6 +802,8 @@ set(POM2_FRONTEND_HEADERS
     src/ScreenInspector_ImGui.h
     src/WindowCapture.h
     src/ScreenProbe.h
+    src/AppleIoNames.h
+    src/FetchedPagesFile.h
     src/SlowMotion.h
     src/NativeFileDialog.h
     src/FilePathPicker.h
@@ -845,6 +848,7 @@ set(POM2_FRONTEND_SOURCES
     src/ScreenInspector_ImGui.cpp
     src/WindowCapture.cpp
     src/ScreenProbe.cpp
+    src/FetchedPagesFile.cpp
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_Midi.cpp
@@ -1227,6 +1231,8 @@ set(HEADERS
     src/ScreenInspector_ImGui.h
     src/WindowCapture.h
     src/ScreenProbe.h
+    src/AppleIoNames.h
+    src/FetchedPagesFile.h
     src/SlowMotion.h
     src/MediaMount.h
     src/MemoryProfile.h

@@ -115,6 +115,12 @@ void MainWindow::saveScreenshot()
 
 void MainWindow::uploadScreenTexture()
 {
+    // Once per UI frame, whoever asks first. The Apple II Screen window asks
+    // when it is visible; the Screen Inspector asks too, because docked as a
+    // tab in the SAME group it hides that window, and a display nobody
+    // renders is a frozen picture (seen 2026-11-25, the Debug layout).
+    if (screenRenderedFrame_ == ImGui::GetFrameCount()) return;
+    screenRenderedFrame_ = ImGui::GetFrameCount();
     if (screenTexture == 0) {
         glGenTextures(1, &screenTexture);
         glBindTexture(GL_TEXTURE_2D, screenTexture);

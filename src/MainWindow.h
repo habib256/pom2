@@ -418,6 +418,7 @@ private:
     /// makes live in Debugger_ImGui — MainWindow only owns it and shows it.
     std::unique_ptr<pom2::Debugger_ImGui>        debuggerPanel;
     std::unique_ptr<pom2::ScreenInspector_ImGui> screenInspector_;
+    int screenRenderedFrame_ = -1;   ///< ImGui frame of the last display render
     std::unique_ptr<pom2::Settings>               settings;
     std::unique_ptr<pom2::CassetteDeck_ImGui>     cassetteDeck;
     std::unique_ptr<pom2::Rewind_ImGui>           rewindPanel_;

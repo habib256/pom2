@@ -871,17 +871,48 @@ public:
     /// Fold one event into a display state — the rule both the display's
     /// replay and the beam view's composite use.
     static void foldVideoEvent(DisplayState& state, VideoEventKind kind, bool value);
-    /// The display state the beam is painting each visible line with, at the
-    /// line's first byte: the same {start state, events} the display paints
-    /// from (the beam view's composite when it is active). For inspectors.
+    /// The frame the display paints, as its switches: the state at the top
+    /// and every soft-switch event, in beam order (the beam view's composite
+    /// when it is active). For inspectors: a program that changes mode or
+    /// page inside a line has no per-line state, only a state per byte.
+    struct DisplayFrame {
+        DisplayState start;
+        std::vector<VideoEvent> events;
+        /// The switches governing byte `column` (0-39) of line `y` (0-191).
+        DisplayState at(int y, int column) const;
+        /// True when a switch is thrown inside line `y`'s 40 bytes.
+        bool splitInside(int y) const;
+        /// The byte columns (1-39) at which a switch is thrown inside a
+        /// line: of line `y`, or of any line when `y` is negative.
+        std::array<bool, 40> splitColumns(int y) const;
+    };
+    DisplayFrame displayFrame();
+    /// displayFrame().at(y, 0) for every line.
     std::array<DisplayState, 192> displayStatePerLine();
-    /// The hi-res picture AS THE BEAM FETCHED IT, as one 8 KB page image:
-    /// each line's 40 bytes come from the page that line displayed (1 or 2),
-    /// holding what RAM held when the beam read them. A program that flips
-    /// pages or redraws during the frame has no single page that looks like
-    /// its screen; this is that page. Main RAM only (no DHGR aux half); the
-    /// screen holes are page 1's. RAM is exactly live again on return.
-    void captureFetchedHiRes(uint8_t* out8k);
+
+    /// The video pages AS THE BEAM FETCHED THEM. Every byte comes from the
+    /// page its screen position displayed (1 or 2), holding what RAM held
+    /// when the beam read it, under the mode that position was in: text and
+    /// lo-res bytes land in the 1 KB text images, hi-res bytes in the 8 KB
+    /// ones, and the AUX images take the aux half of 80 columns and of the
+    /// double modes. A program that flips pages or modes during the frame
+    /// has no page in RAM that looks like its screen; these are those pages.
+    /// Bytes the frame never displayed are page 1's. RAM is live on return.
+    struct FetchedPages {
+        std::array<uint8_t, 0x0400> textMain{}, textAux{};
+        std::array<uint8_t, 0x2000> hiResMain{}, hiResAux{};
+        bool usedText = false, usedTextAux = false;
+        bool usedHiRes = false, usedHiResAux = false;
+    };
+    void captureFetchedPages(FetchedPages& out);
+    /// One video byte as the beam fetched it on line `y` (live RAM when the
+    /// write log does not cover the frame).
+    uint8_t fetchedVideoByte(int y, uint16_t address, bool aux);
+    /// Offset of text / lo-res row `row` (0-23) inside its 1 KB page.
+    static constexpr uint16_t textRowOffset(int row)
+    {
+        return static_cast<uint16_t>(((row & 7) << 7) + (row >> 3) * 40);
+    }
     /// Offset of hi-res line `y` (0-191) inside its 8 KB page.
     static constexpr uint16_t hiResLineOffset(int y)
     {

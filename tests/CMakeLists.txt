@@ -4724,6 +4724,8 @@ set_tests_properties(drol_pageflip_render PROPERTIES TIMEOUT 5)
 add_executable(test_beam_view
     beam_view_test.cpp
     ${CMAKE_SOURCE_DIR}/src/ScreenProbe.cpp
+    ${CMAKE_SOURCE_DIR}/src/FetchedPagesFile.cpp
+    ${CMAKE_SOURCE_DIR}/src/HostFileTag.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp

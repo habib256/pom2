@@ -244,7 +244,9 @@ void printUsage()
         "  POM2_MOUSE_TRACE, POM2_DEBUG_DISK, POM2_DEBUG_DISK_READS,\n"
         "  POM2_DUMP_SLOT_ROM.\n"
         "  POM2_WINDOW_SHOT=<file.png>: creating <file.png>.request makes POM2 save a\n"
-        "  picture of its own window, panels included, to that file.\n");
+        "  picture of its own window, panels included, to that file.\n"
+        "  POM2_UI_COMMANDS=<id;id>: command-palette ids run once after start-up\n"
+        "  (layout.debug, speed.slow.1, ...).\n");
 }
 
 } // namespace

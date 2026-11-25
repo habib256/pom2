@@ -38,6 +38,23 @@ opens. Pinned by `beam_view`. `--beam-view` on the command line.
 `$POM2_WINDOW_SHOT` lets a script ask POM2 for a PNG of its own window,
 panels included (DEV § Debugger).
 
+**The same day, after reading DIX's sources.** French Touch does not work
+in hi-res only: text, lo-res, 80 columns and the double modes, with TEXT
+and PAGE2 thrown inside scanlines. So the Screen Inspector reads the frame
+per byte: a left edge with every line's mode and page, a top edge reading
+one line byte by byte, the fetched byte under the mouse, and "Save pages
+as fetched" writes hi-res, text / lo-res and their aux halves. The
+Debugger puts its listing first and takes AppleWin's keys (Space, Ctrl /
+Shift+Space, arrows, Ctrl+Down, Right, Tab) so its users keep their
+reflexes. Checked on DIX's menu, Unlimited Bobs and both Crazy Cycles.
+Its header is five aligned rows (CPU, Video switches, Memory banks, Beam,
+Cycles), and the listing names the machine's own addresses with no symbol
+file: soft switches, language card, monitor entry points, ProDOS MLI,
+Mockingboard and Disk II registers. The Debug layout docks the Screen
+Inspector on the left and the Debugger on the right. One bug found on the
+way: with the inspector's tab in front of the Apple II Screen, nobody
+rendered the display and the picture froze.
+
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
 ## 2026-11-25 — Bug hunt before v1.2.4

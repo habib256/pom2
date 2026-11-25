@@ -248,7 +248,8 @@ void MainWindow::registerPanelDraws()
                                                          &show(P::Debugger)); });
     draw(P::ScreenInspector, [this] {
         screenInspector_->render(*controller, *display, &show(P::ScreenInspector),
-                                 [this] { saveScreenshot(); }); });
+                                 [this] { saveScreenshot(); },
+                                 [this] { syncCrtMonitor(); uploadScreenTexture(); }); });
     draw(P::MemBar,       [this] { renderMemoryBarWindow(); });
     draw(P::MemBarH,      [this] { renderMemoryBarHorizontalWindow(); });
     draw(P::MemGrid,      [this] { renderMemoryGridWindow(); });
