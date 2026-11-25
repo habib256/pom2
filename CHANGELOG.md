@@ -88,7 +88,9 @@ so the first reply to an issue is no longer a list of questions.
 The Speaker SFX editor comes over from POM1 (Tools ▸ Sound): design a
 sound effect for the 1-bit speaker, hear it, export the assembler table.
 The machine now powers on once: it used to boot, then boot again when the
-saved profile was restored, which cut the start-up beep. "Download missing
+saved profile was restored, which cut the start-up beep. It also waits for
+the window's first frames to be done before it starts, so the beep is no
+longer broken by the start-up stall. "Download missing
 ROMs" no longer fails for ever on a wrong dump sitting in a folder searched
 first: it replaces it there and keeps the old file. The credits name
 Apple's early people and give each person's role, from a sourced pass.

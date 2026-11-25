@@ -767,6 +767,16 @@ private:
     void openCommandPalette();
     void applyDockLayout(DockLayout preset);
     void selectDebugTabs();
+    /// Power-on, deferred to the window's first quiet frames (MainWindow.cpp
+    /// § "The machine starts once the window can keep up with it").
+    void powerOnWhenReady();
+    bool powerOnPending_ = false;
+    int  powerOnFrames_ = 0, powerOnQuietFrames_ = 0;
+public:
+    /// Start the machine now if it has not started yet. main.cpp calls it
+    /// before running command-line actions that drive the machine.
+    void powerOnNow();
+private:
     /// The layout about to be applied was CHOSEN (menu, palette) and not
     /// applied by POM2 itself on a first run: only a chosen layout opens
     /// and closes panels. See applyDockLayout.

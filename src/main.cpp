@@ -1082,6 +1082,9 @@ int main(int argc, char* argv[])
 #ifndef __EMSCRIPTEN__
     std::thread        deferredThread;
     if (!plan->deferredActions.empty()) {
+        // These actions drive the machine (--load, --run, --step, tapes):
+        // it starts now, not after the window's first quiet frames.
+        mainWindow.powerOnNow();
         // guardedThread, not a bare std::thread: an exception escaping a
         // thread callable calls std::terminate() — the process dies with no
         // log line. The barrier used to wrap only runDeferredActions, leaving

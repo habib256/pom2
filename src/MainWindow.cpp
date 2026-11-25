@@ -992,10 +992,37 @@ MainWindow::MainWindow(bool forceIIPlus)
     // report the wrong machine (e.g. "Apple ][+" while running a //e).
     aiServer->setProfileLabel(std::string(pom2::profileConfig(activeProfile).displayName));
 
-    // Power on, once, with the profile, its clock and its cards settled
-    // (see the cold boot above). start() sets the mode to Running and spawns
-    // the worker.
-    controller->start();
+    // Power on once, with the profile, its clock and its cards settled (see
+    // the cold boot above) — and NOT YET: render() does it after the window's
+    // first frames (powerOnWhenReady).
+    powerOnPending_ = true;
+}
+
+// The machine starts once the window can keep up with it.
+//
+// The speaker (and every cycle-stamped audio source) plays the guest's
+// toggles 100 ms behind the audio clock (SpeakerDevice::kCatchUpSecs). The
+// window's first frames compile shaders and upload the screen, keyboard and
+// drive textures, some of it under the state lock: the CPU worker stalled
+// for longer than that lead, the audio cursor overtook the toggles, and the
+// start-up beep was purged or re-anchored in the middle — "the sound is
+// wrong at the very beginning". So power-on waits for two frames in a row
+// that took under 50 ms (the one-time work is done), or thirty frames at
+// most. A command-line action that drives the machine starts it at once
+// (powerOnNow, called by main.cpp before its deferred actions).
+void MainWindow::powerOnWhenReady()
+{
+    if (!powerOnPending_) return;
+    ++powerOnFrames_;
+    powerOnQuietFrames_ = ImGui::GetIO().DeltaTime < 0.05f ? powerOnQuietFrames_ + 1 : 0;
+    if ((powerOnFrames_ >= 3 && powerOnQuietFrames_ >= 2) || powerOnFrames_ >= 30) powerOnNow();
+}
+
+void MainWindow::powerOnNow()
+{
+    if (!powerOnPending_) return;
+    powerOnPending_ = false;
+    controller->start();      // sets the mode to Running and spawns the worker
 }
 
 // Out-of-line accessor bodies — these need EmulationController and
@@ -1490,6 +1517,7 @@ void MainWindow::setDpiScale(float s)
 
 void MainWindow::render()
 {
+    powerOnWhenReady();
     if (auto queue = controller->sessionLoadQueue()) queue->process();
     // $POM2_UI_COMMANDS: command-palette ids, ';'-separated, run once a
     // little after start-up — the companion of $POM2_WINDOW_SHOT

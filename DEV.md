@@ -12987,6 +12987,13 @@ itself is UI and has no test.
   milliseconds after the first, which had already begun its beep at the
   NTSC clock: "the sound skips at start-up, sometimes". The worker now
   starts once, at the end of the constructor, on the settled machine.
+  And it starts only once the window keeps up
+  (`MainWindow::powerOnWhenReady`): the first frames compile shaders and
+  upload textures, partly under the state lock, and a worker stalled for
+  longer than the speaker's 100 ms lead (`kCatchUpSecs`) let the audio
+  cursor overtake the toggles — the beep was purged or re-anchored
+  mid-way. Power-on waits for two frames in a row under 50 ms, thirty
+  frames at most; command-line actions start it at once.
   [F] Diagnosed from the code and the log (one cold boot instead of two);
   not confirmed by ear. Settled by: listening to ten cold starts.
 - **Slot Configuration follows the machine**: closed by a switch to a //c
