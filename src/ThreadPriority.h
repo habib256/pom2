@@ -57,11 +57,12 @@ inline std::string raiseCurrentThreadPriority()
         return "normal priority (to let POM2 raise it, allow a nice of -10 for this user: "
                "'<user> - nice -10' in /etc/security/limits.conf, then log in again)";
     const auto tid = static_cast<id_t>(syscall(SYS_gettid));
-    // Never lower a priority the user gave (`nice -n -15 POM2`): the thread
-    // inherits it, and -10 would undo it (bug hunt 2026-11-25).
+    // The user's own nice wins either way: never lower one they raised
+    // (`nice -n -15 POM2`, which -10 would undo), never raise one they
+    // lowered on purpose (`nice -n 5 POM2`) (bug hunt 2026-11-25).
     errno = 0;
     const int current = getpriority(PRIO_PROCESS, tid);
-    if (errno == 0 && current <= target)
+    if (errno == 0 && (current <= target || current > 0))
         return "kept at nice " + std::to_string(current);
     if (setpriority(PRIO_PROCESS, tid, target) != 0)
         return "normal priority (setpriority refused nice " + std::to_string(target) + ")";

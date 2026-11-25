@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -113,6 +114,11 @@ struct DiskState {
     std::filesystem::path firmware;
     std::filesystem::path saves;
     std::filesystem::path content;
+    // The private copy each image resolved to, by its identity: a restore
+    // (every frame under run-ahead, every netplay rollback) reuses it instead
+    // of reading and hashing the original again (bug hunt 2026-11-25).
+    // Keyed by identity, checked against the original's path.
+    std::map<std::uint64_t, std::pair<std::filesystem::path, std::filesystem::path>> copies;
 };
 
 struct InitialDisk {
@@ -548,7 +554,7 @@ void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directio
 }
 
 // The RetroPad as a keyboard (port 1's three keyboard types).
-void applyKeyPad(unsigned device)
+std::array<KeyBinding, 6> keyPadBindings(unsigned device)
 {
     const KeyBinding arrows[] = {
         {RETRO_DEVICE_ID_JOYPAD_UP, 0x0b, RETROK_UP}, {RETRO_DEVICE_ID_JOYPAD_DOWN, 0x0a, RETROK_DOWN},
@@ -563,6 +569,12 @@ void applyKeyPad(unsigned device)
     const std::array<KeyBinding, 6> bindings{directions[0], directions[1], directions[2], directions[3],
         KeyBinding{RETRO_DEVICE_ID_JOYPAD_B, ' ', RETROK_SPACE},
         KeyBinding{RETRO_DEVICE_ID_JOYPAD_A, 0x0d, RETROK_RETURN}};
+    return bindings;
+}
+
+void applyKeyPad(unsigned device)
+{
+    const auto bindings = keyPadBindings(device);
     applyBindings(bindings.data(), static_cast<unsigned>(bindings.size()), 4);
 }
 
@@ -834,13 +846,22 @@ void applyInput()
     if (key) core->queueKey(typed(key));
     if (wasOpen || padKeyboard.open) {
         releaseKeyPad();
-        // A profile button still down as the keyboard closes (the Start that
-        // closed it) was pressed for the keyboard: mark it held, so the
-        // profile types it only once it is released and pressed again.
-        if (profileActive()) {
+        // On the frame the keyboard closes, a button still down (the Start
+        // that closed it, a direction) was pressed for the keyboard: mark it
+        // held, so the pad types it only once released and pressed again.
+        // Only on that frame: marked while open, releaseKeyPad would release
+        // the host keyboard's keys every frame (bug hunt 2026-11-25).
+        if (wasOpen && !padKeyboard.open) {
             std::array<KeyBinding, 14> bindings{};
-            unsigned directions = 0;
-            const unsigned count = profileBindings(bindings, directions);
+            unsigned count = 0;
+            if (profileActive()) {
+                unsigned directions = 0;
+                count = profileBindings(bindings, directions);
+            } else if (device == kPadArrows || device == kPadIjkm || device == kPadWasd) {
+                const auto pad = keyPadBindings(device);
+                std::copy(pad.begin(), pad.end(), bindings.begin());
+                count = static_cast<unsigned>(pad.size());
+            }
             for (unsigned i = 0; i < count; ++i)
                 if (padPressed(bindings[i].button)) keyPadHeld = static_cast<std::uint16_t>(keyPadHeld | (1u << i));
         }
@@ -1162,14 +1183,22 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     if (!settings.writeProtectAll) {
         try {
             storage = pom2::libretro::openDiskStorage(state.saves, state.content, image.path);
-            if (storage.privateCopy) lease = pom2::libretro::lockDiskStorage(storage.path);
+            if (storage.privateCopy) {
+                lease = pom2::libretro::lockDiskStorage(storage.path);
+                state.copies[image.identity] = {image.path, storage.path};
+            }
         } catch (const std::exception& error) {
             storage = {image.path};
-            if (logMessage) logMessage(RETRO_LOG_WARN, "POM2: Disk mounted read-only: %s\n", error.what());
+            // The player would otherwise lose every save of the session
+            // without a word (a path too long, a folder that cannot be made).
+            reportError(image.label + " is read-only this session: its save copy cannot be made (" +
+                        error.what() + ").");
         }
+        // Held by another instance (RetroArch's second run-ahead instance
+        // always meets the first one's lock): a log line, not a message.
         if (storage.privateCopy && !lease && logMessage)
             logMessage(RETRO_LOG_WARN, "POM2: Disk copy is locked or cannot be locked, mounting read-only: %s\n",
-                       storage.path.string().c_str());
+                       storage.path.u8string().c_str());
     }
     if (!attachController(target, state, kind)) return false;
 
@@ -1321,10 +1350,13 @@ void nextDisk()
 bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
 {
     if (!controlled().ejected || index >= getDiskCount()) return false;
+    // Never the disk the other drive is playing: its slot would name an image
+    // it does not hold, and a state would bind that disk to the new image's
+    // copy (bug hunt 2026-11-25).
+    for (auto& slot : disks.drives)
+        if (slot.index == index && slot.mounted) return false;   // in the other drive
+    disks.copies.erase(disks.images[index].identity);
     if (!game) {
-        for (auto& slot : disks.drives) {
-            if (slot.index == index && slot.mounted) return false;   // in the other drive
-        }
         disks.images.erase(disks.images.begin() + index);
         for (auto& slot : disks.drives) {
             if (slot.index == index) slot.index.reset();
@@ -1908,19 +1940,37 @@ bool restoreRetroState(const void* data, std::size_t size)
         if (drive == 1 && image.kind() != MediaKind::DiskII) return false;
         std::filesystem::path path = image.path;
         std::shared_ptr<pom2::libretro::DiskSaveLock> lease;
-        if (s.writable) {
-            const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path,
-                pom2::libretro::DiskStorageAccess::ExistingOnly);
-            if (!storage.privateCopy ||
-                s.backing != (legacy ? pathIdentity(storage.path) : image.identity)) return false;
-            path = storage.path;
+        bool writable = s.writable && !settings.writeProtectAll;
+        if (s.writable && !legacy && s.backing != image.identity) return false;
+        if (writable) {
+            // The copy this image resolved to before, else resolve it now. A
+            // copy the state needs and this player never made (a netplay
+            // join after the host changed disks) is made from the original:
+            // the state's disk replaces it at the next flush.
+            const auto cached = disks.copies.find(image.identity);
+            if (cached != disks.copies.end() && cached->second.first == image.path && !legacy) {
+                path = cached->second.second;
+            } else {
+                const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path,
+                    legacy ? pom2::libretro::DiskStorageAccess::ExistingOnly
+                           : pom2::libretro::DiskStorageAccess::CreateIfMissing);
+                if (!storage.privateCopy || (legacy && s.backing != pathIdentity(storage.path))) return false;
+                path = storage.path;
+                if (!legacy) disks.copies[image.identity] = {image.path, path};
+            }
             for (const auto& live : disks.drives)
                 if (live.mounted && live.mounted->path == path && live.mounted->lease) lease = live.mounted->lease;
             if (!lease) lease = pom2::libretro::lockDiskStorage(path);
-            if (!lease) return false;
-            backing[drive] = path.string();
+            // Held elsewhere (RetroArch's second run-ahead instance, another
+            // RetroArch on the same saves): restore the disk detached rather
+            // than refuse the state; it simply does not save from here.
+            if (!lease) {
+                writable = false;
+                path = image.path;
+            }
         }
-        restored[drive] = MountedDisk{std::move(path), image.kind(), s.writable, std::move(lease)};
+        if (writable) backing[drive] = path.string();
+        restored[drive] = MountedDisk{std::move(path), image.kind(), writable, std::move(lease)};
     }
     pom2::Core::StateBackings backings;
     // A hard disk is restored in place, block by block, so it takes no backing.

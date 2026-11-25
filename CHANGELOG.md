@@ -14,9 +14,18 @@ marker and the previous one.
 
 ## 2026-11-25 — Bug hunt before v1.2.4
 
-Four reviewers over everything since v1.2.3; 29 findings fixed, the list in
+Two rounds of four reviewers: the first over everything since v1.2.3, the
+second over the first round's fixes, the core's state and media lifecycle,
+and portability. 46 findings fixed, the list in
 [docs/audits/bug-hunt-2026-11-25.md](docs/audits/bug-hunt-2026-11-25.md).
 The ones a player meets:
+
+- **Run-ahead and rewind with a disk.** Every restore read and hashed the
+  original image again — 12 ms a frame for a 3.5" disk, 188 ms for a hard
+  disk — and RetroArch's "second instance" run-ahead failed outright, since
+  the second instance cannot lock the first one's save copy. The copy is now
+  resolved once per image, and one held elsewhere is restored detached.
+  A netplay join no longer fails on a disk the client never mounted.
 
 - **The Windows libretro core needed the VC++ runtime.** libretro-v1.2.3's
   DLL imports `MSVCP140`/`VCRUNTIME140`, which RetroArch (a MinGW build)

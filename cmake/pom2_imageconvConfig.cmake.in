@@ -1,5 +1,17 @@
 @PACKAGE_INIT@
 
+# The MSVC runtime the SDK was built with: a consumer that chose none gets
+# the same, or /MT and /MD meet at link (LNK2038). It applies to the targets
+# the consumer creates after find_package (CMP0091, CMake 3.15+).
+if(MSVC AND NOT "@POM2_SDK_MSVC_RUNTIME@" STREQUAL "")
+    if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "@POM2_SDK_MSVC_RUNTIME@")
+    elseif(NOT CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "@POM2_SDK_MSVC_RUNTIME@")
+        message(WARNING "This POM2 SDK was built with the MSVC runtime @POM2_SDK_MSVC_RUNTIME@; "
+                        "CMAKE_MSVC_RUNTIME_LIBRARY is ${CMAKE_MSVC_RUNTIME_LIBRARY}: expect LNK2038.")
+    endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/pom2_imageconvTargets.cmake")
 
 check_required_components(pom2_imageconv)

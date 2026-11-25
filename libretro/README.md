@@ -291,7 +291,9 @@ Both players need the same content and the same core options. A game pad
 profile is found from the WOZ title, else from the **file name**: with a
 `.dsk`, `.po` or `.nib`, give both players the same file name, or set **Game
 pad profiles → Off** on both, or one player's buttons type keys the other's
-do not. Set Port 3 to
+do not. Joining a game writes the host's disks into your own save copies of
+that game (`pom2/disks/<game>/`): copy the folder aside first if you want to
+keep your own progress. Set Port 3 to
 the keyboard for games played at the keyboard. The No-Slot Clock starts at
 the host's date; the joining player gets it with the host's state. For the
 AppleMouse (Apple II DeskTop, MousePaint), set **Port 4 → Mouse (for
@@ -331,8 +333,9 @@ disk keeps its file name. A `.source` file beside each copy records the
 original's SHA-256; a second game with the same names, or a new revision of
 the image, gets its own copy, named `<disk> [<first 8 hex digits>]`. The
 names are the same on every platform, so a save folder synced between a PC
-and a phone matches: printable ASCII only, with no `<>:"/\|?*`, no trailing
-dot or space and no Windows device name (`CON`, `NUL`, …), at most 96
+and a phone matches (an accented name excepted when one side stores it
+decomposed, as macOS's older HFS+ disks do): printable ASCII only, with no `<>:"/\|?*`, no trailing
+dot or space and no Windows device name (`CON`, `NUL`, …), at most 64
 characters; a name that had to change (`Énigme` → `__nigme`, one `_` a byte) is followed by
 `[<8 hex digits>]` to stay unique. Copies named by hashes by earlier versions
 move to the new name the first time their game is opened. Those versions

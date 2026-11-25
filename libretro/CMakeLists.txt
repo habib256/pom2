@@ -13,6 +13,14 @@ set(pom2_libretro_sources pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
 if(LIBRETRO_STATIC)
     # A frontend that links its core statically (RetroArch's web build) takes
     # ONE archive: this one, with pom2_core's objects added after the build.
+    # The merge is an MRI script (merge_static.cmake): GNU ar, llvm-ar and
+    # emar read one; Apple's cctools ar and MSVC's lib.exe do not.
+    get_filename_component(pom2_ar_name "${CMAKE_AR}" NAME)
+    if(MSVC OR (NOT pom2_ar_name MATCHES "llvm-ar|emar|^ar$|-ar$|^ar\\.exe$|-ar\\.exe$") OR
+       (CMAKE_HOST_APPLE AND NOT EMSCRIPTEN AND NOT pom2_ar_name MATCHES "llvm-ar"))
+        message(FATAL_ERROR "LIBRETRO_STATIC merges archives with an MRI script: it needs GNU ar, "
+                            "llvm-ar or emar, not ${CMAKE_AR}")
+    endif()
     add_library(pom2_libretro STATIC ${pom2_libretro_sources})
 else()
     add_library(pom2_libretro MODULE ${pom2_libretro_sources})

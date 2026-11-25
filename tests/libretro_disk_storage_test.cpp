@@ -142,6 +142,19 @@ int main()
     check(keptOlder, "the other copy is kept beside it");
     check(!fs::exists(againLegacy), "the second legacy copy stayed behind");
 
+    // A copy made just now and never played does not beat older progress.
+    const auto fresh = work / "b" / "Choplifter.dsk";
+    const auto played = work / "a" / "Choplifter.dsk";
+    write(fresh, "choplifter");
+    write(played, "choplifter");
+    const auto playedLegacy = disks / sha(fs::weakly_canonical(played).u8string()) /
+                              (sha(fs::canonical(played).u8string() + "\n" + sha("choplifter")) + ".dsk");
+    write(playedLegacy, "choplifter, 64 hostages saved");
+    fs::last_write_time(playedLegacy, fs::file_time_type::clock::now() - std::chrono::hours(24));
+    const auto freshCopy = openDiskStorage(saves, fresh, fresh);   // new, unplayed
+    check(read(openDiskStorage(saves, played, played).path) == "choplifter, 64 hostages saved" &&
+              freshCopy.path == disks / "Choplifter" / "Choplifter.dsk", "played progress beats a fresh copy");
+
     fs::remove_all(work);
     if (failures) return 1;
     std::puts("libretro_disk_storage: ok");

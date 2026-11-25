@@ -153,7 +153,7 @@ void recordSource(const fs::path& backing, const std::string& sourceHash)
 // A name every file system and every frontend takes alike, and the same on
 // every platform, so a save folder synced between a PC and a phone matches:
 // printable ASCII, none of <>:"/\|?*, no trailing dot or space (Windows
-// trims those), no device name (CON, NUL, COM1...), at most 96 bytes. The
+// trims those), no device name (CON, NUL, COM1...), at most 64 bytes. The
 // copy's path also reaches narrow std::string APIs, which on Windows take
 // only the ANSI code page (bug hunt 2026-11-25). A name that had to change
 // keeps its uniqueness with the start of its own hash.
@@ -166,7 +166,7 @@ std::string portableName(const std::string& name)
         while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
     };
     trimEnd();
-    if (out.size() > 96) out.resize(96);
+    if (out.size() > 64) out.resize(64);
     trimEnd();
     std::string device = out.substr(0, out.find('.'));
     for (auto& c : device) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -269,27 +269,40 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
         // v1.2.3 kept one copy per content LOCATION; the new name has one per
         // game. When a copy of this game already took the name (the same
         // image opened from another folder or another playlist), neither is
-        // lost: the newer one plays, the other is kept beside it as
-        // "<disk> [old <location hash>]" (bug hunt 2026-11-25).
+        // lost: the one with progress plays, the other is kept beside it as
+        // "<disk> [old <location hash> <image hash>]" (bug hunt 2026-11-25).
         const auto kept = directory / fs::u8path(diskStem + " [old " +
-            legacy.parent_path().filename().u8string().substr(0, 8) + "]" + diskExtension);
-        std::error_code error;
-        const bool legacyNewer = fs::last_write_time(legacy, error) > fs::last_write_time(backing, error);
-        try {
-            if (usableBacking(kept)) {
-                // Moved once before; nothing to decide twice.
-            } else if (legacyNewer) {
-                renameWithRecord(backing, kept);
-                fs::rename(legacy, backing);
-                recordSource(backing, sourceHash);
-            } else {
-                fs::rename(legacy, kept);
-                recordSource(kept, sourceHash);
+            legacy.parent_path().filename().u8string().substr(0, 8) + " " + sourceHash.substr(0, 8) + "]" +
+            diskExtension);
+        // Never under a copy in use (another drive, another RetroArch): its
+        // next save would land on whatever was moved to its name. Left for
+        // a later open.
+        const auto lease = usableBacking(kept) ? nullptr : lockDiskStorage(backing);
+        if (lease) {
+            // Progress first: a copy still holding the original's bytes (made
+            // at first boot, never played) loses to one that was played,
+            // whatever their times; between two played copies, the newer.
+            const bool legacyPlayed = readOriginal(legacy) != bytes;
+            const bool backingPlayed = readOriginal(backing) != bytes;
+            std::error_code legacyTime, backingTime;
+            const bool legacyNewer =
+                fs::last_write_time(legacy, legacyTime) > fs::last_write_time(backing, backingTime) &&
+                !legacyTime && !backingTime;
+            const bool legacyWins = legacyPlayed && (!backingPlayed || legacyNewer);
+            try {
+                if (legacyWins) {
+                    renameWithRecord(backing, kept);
+                    fs::rename(legacy, backing);
+                    recordSource(backing, sourceHash);
+                } else {
+                    fs::rename(legacy, kept);
+                    recordSource(kept, sourceHash);
+                }
+            } catch (const fs::filesystem_error& failure) {
+                throw std::runtime_error("Cannot move disk save " + legacy.u8string() + ": " + failure.what());
             }
-        } catch (const fs::filesystem_error& failure) {
-            throw std::runtime_error("Cannot move disk save " + legacy.u8string() + ": " + failure.what());
+            moveLegacy();
         }
-        moveLegacy();
     }
     if (!usableBacking(backing)) {
         if (hasLegacy && usableBacking(legacy)) {

@@ -1490,6 +1490,12 @@ void MainWindow::render()
         // stays lower (Esc at reset) shows once the second has passed.
         {
             const double hz = controller->machineCpuClockHz();
+            // A new machine starts afresh: a //c Plus's 4 MHz must not linger
+            // on the //e it was switched to.
+            if (activeProfile != toolbarClockProfile_) {
+                toolbarClockProfile_ = activeProfile;
+                toolbarClockPeakHz_ = 0.0;
+            }
             if (hz >= toolbarClockPeakHz_ || lastFrameTime >= toolbarClockPeakUntil_) {
                 toolbarClockPeakHz_ = hz;
                 toolbarClockPeakUntil_ = lastFrameTime + 1.0;

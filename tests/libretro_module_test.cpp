@@ -1398,6 +1398,14 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     run(competing, 160);
     require(visibleText(characters).find("WRITE PROTECTED") != std::string::npos,
             "two independent instances could write the same backing");
+    // RetroArch's second run-ahead instance restores the first one's states
+    // every frame; the copy is the first one's, so the disk comes back
+    // detached instead of failing the restore (bug hunt 2026-11-25).
+    waitForDos(core);
+    const auto primaryState = saveState(core);
+    require(competing.retro_unserialize(primaryState.data(), primaryState.size()),
+            "a state naming a copy another instance holds was refused");
+    run(competing, 60);
     competing.retro_unload_game();
     core.retro_unload_game();
     require(competing.retro_load_game(&game), "could not reopen the now-unlocked face");

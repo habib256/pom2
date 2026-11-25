@@ -10,10 +10,16 @@ endif()
 get_filename_component(dir "${OUT}" DIRECTORY)
 set(merged "${OUT}.merged")
 set(script "${dir}/pom2_libretro_merge.mri")
-# An MRI script has no quoting: GNU ar splits a path at a space, llvm-ar ends
-# a line at ';' or '*'. Say so, rather than merge something else.
+# An MRI script has no quoting: GNU ar splits a path at a space, llvm-ar (and
+# emar, which wraps it) ends a line at ';' or '*' but takes a space. Say so,
+# rather than merge something else.
+get_filename_component(ar_name "${AR}" NAME)
+set(refused "[ ;*]")
+if(ar_name MATCHES "llvm-ar|emar")
+    set(refused "[;*]")
+endif()
 foreach(path IN ITEMS "${merged}" "${OUT}" "${CORE}")
-    if(path MATCHES "[ ;*]")
+    if(path MATCHES "${refused}")
         file(REMOVE "${OUT}")
         message(FATAL_ERROR "the static core cannot be merged from a path with a space, ';' or '*': ${path}")
     endif()

@@ -19,8 +19,10 @@ project(pom2_imgui VERSION 1.2.4 LANGUAGES CXX)
 # (LNK2038). Requires a static-CRT vcpkg triplet (x64-windows-static), which
 # every Windows job uses.
 option(POM2_WIN_STATIC_RUNTIME "Link the MSVC runtime statically (/MT)" ON)
+set(POM2_SDK_MSVC_RUNTIME "")   # handed to SDK consumers by cmake/pom2_*Config.cmake.in
 if(MSVC AND POM2_WIN_STATIC_RUNTIME)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set(POM2_SDK_MSVC_RUNTIME "${CMAKE_MSVC_RUNTIME_LIBRARY}")
 endif()
 option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SDK" OFF)
 # RetroArch's web build links one core statically: libretro's emscripten

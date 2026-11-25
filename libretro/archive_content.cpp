@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace pom2::libretro {
@@ -127,8 +129,12 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
         std::vector<pom2::ZipEntry> entries;
         if (!pom2::listZipEntries(bytes, entries, error))
             throw std::runtime_error(archive.filename().u8string() + ": " + error);
+        // Two members with one leaf name ("Side A/GAME.DSK", "Side B/GAME.DSK",
+        // or GAME.DSK and game.dsk on a case-blind disk) would overwrite each
+        // other in the flat folder: the second becomes "GAME (2).DSK".
+        std::set<std::string> taken;
         for (const auto& entry : entries) {
-            const auto leaf = leafName(entry.name);
+            auto leaf = leafName(entry.name);
             if (leaf.empty() || leaf.front() == '.' || !(loadable(leaf) || exchangeName(leaf))) continue;
             std::vector<std::uint8_t> out;
             if (!pom2::readZipEntry(bytes, entry, out, error, kMaxMember))
@@ -137,9 +143,12 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
                 for (auto& disk : convertExchange(leaf, out, folder)) disks.push_back(std::move(disk));
                 continue;
             }
-            writeIfChanged(folder / leaf, out);
+            const auto base = std::filesystem::u8path(leaf);
+            for (int n = 2; !taken.insert(lower(leaf)).second; ++n)
+                leaf = base.stem().u8string() + " (" + std::to_string(n) + ")" + base.extension().u8string();
+            writeIfChanged(folder / std::filesystem::u8path(leaf), out);
             (lower(std::filesystem::path(leaf).extension().string()) == ".m3u" ? playlists : disks)
-                .push_back(folder / leaf);
+                .push_back(folder / std::filesystem::u8path(leaf));
         }
     }
     if (!playlists.empty()) return playlists.front();

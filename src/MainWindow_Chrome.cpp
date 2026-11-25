@@ -53,7 +53,6 @@
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
 #include "Settings.h"
-#include "ThreadGuard.h"
 #include "StatusLed.h"
 #include "BugReportUrl.h"
 #if defined(__EMSCRIPTEN__)
@@ -75,6 +74,45 @@
 #include <mutex>
 #include <string>
 #include <vector>
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace {
+// xdg-open, detached: a double fork, so nothing waits for the browser, in a
+// new session, with every descriptor above stdio closed. ImGui's opener
+// closes none, and nothing in POM2 opens its sockets with SOCK_CLOEXEC: the
+// browser would keep the AI-control (6503) and FujiNet (1985) listeners
+// bound after POM2 quits (ChildProcess.cpp, trap 2). ChildProcess itself
+// does not fit: it ends its child's process group, the browser with it.
+void openUrlDetached(const std::string& url)
+{
+    // Everything the children use is made before fork: after it, only
+    // async-signal-safe calls.
+    const char* argv[] = {"xdg-open", url.c_str(), nullptr};
+    const long openMax = ::sysconf(_SC_OPEN_MAX);
+    const int maxFd = openMax > 0 && openMax < 65536 ? static_cast<int>(openMax) : 65536;
+    const pid_t child = ::fork();
+    if (child < 0) return;
+    if (child == 0) {
+        ::setsid();
+        if (::fork() != 0) ::_exit(0);   // the grandchild is adopted by init
+        bool closed = false;
+#if defined(SYS_close_range)
+        closed = ::syscall(SYS_close_range, 3u, ~0u, 0u) == 0;
+#endif
+        for (int fd = 3; !closed && fd < maxFd; ++fd) ::close(fd);
+        ::execvp(argv[0], const_cast<char* const*>(argv));
+        ::_exit(127);
+    }
+    int status = 0;
+    ::waitpid(child, &status, 0);   // the first child exits at once
+}
+} // namespace
+#endif
+
 
 namespace {
 
@@ -1144,11 +1182,10 @@ void MainWindow::openBugReport()
 #elif defined(__linux__)
     // ImGui's opener waits for xdg-open, and xdg-open's generic mode runs the
     // browser in the foreground (Raspberry Pi OS): the window would stop
-    // painting until the browser closes. Open it off the UI thread, with the
-    // link on the clipboard in case nothing opens (bug hunt 2026-11-25).
+    // painting until the browser closes. Detached instead, with the link on
+    // the clipboard in case nothing opens (bug hunt 2026-11-25).
     ImGui::SetClipboardText(url.c_str());
-    if (auto open = ImGui::GetPlatformIO().Platform_OpenInShellFn)
-        pom2::guardedThread("BugReport", [open, url] { open(nullptr, url.c_str()); }).detach();
+    openUrlDetached(url);
     tapeStatusMessage = "Opening the issue page in your browser; the link is also on the clipboard.";
     tapeStatusUntil = lastFrameTime + 8.0;
 #else
