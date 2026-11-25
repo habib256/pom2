@@ -49,6 +49,7 @@ expression conditions / access counters / code-data log, and
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | Left: A2R 3 checked on a real capture (A2R 2/3, ShrinkIt, DiskCopy and multi-disk archives shipped 2026-11-24). |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
+| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Decided 2026-11-25: hover preview from libretro's Apple II thumbnails. First the woz-a-day DAT (libretro-database), then the thumbnail set; the fallback (POM2's own title-screen capture) can be built now. |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
 
 **ROMs MAME has and POM2 lacks** ([audit](docs/audits/rom-gaps-vs-mame-2026-11-23.md)), each from
@@ -100,7 +101,6 @@ stays open: reproduce at normal/x2/x4 before proposing a fix.
 |---|---|
 | [RELEASE-011](docs/backlog/release.md#release-011) | Windows signing: **SignPath Foundation** (free for open source) is the recommended route. macOS notarisation stays deferred. |
 | [RELEASE-014](docs/backlog/release.md#release-014) | Whether POM2 offers third-party disks (Total Replay) by download at all. |
-| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Captured screen vs cover art. Recommendation: saved screenshots, text fallback, lazy load; WASM-004's catalogue would reuse it. |
 | [STORAGE-002](docs/backlog/storage.md#storage-002) | Whether a slot+bay `/media` API is needed (fold into UI-015's verbs if so). Secondary-bay boot refusal is a safeguard, not a bug. |
 | [ARCH-011](docs/backlog/architecture-tooling.md#arch-011) | Close Apply's lock as intentional unless ARCH-003 finds a concrete problem. |
 | [NETWORK-001](docs/backlog/network.md#network-001), [NETWORK-007](docs/backlog/network.md#network-007) | Name a use case for native FujiNet phases 2–4 or //c support, or freeze them. |

@@ -148,11 +148,26 @@ preserving saved layouts. It is not a request to introduce docking.
 
 ## UI-009 — Disk Library miniatures
 
-**Priority:** 🟢 · **State:** Needs decision ([triage 2026-10-28](../audits/backlog-triage-2026-10-28.md)): cover art or captured screen. The prerequisite (search/sort, "All media") exists. The earlier thumbnail-first order was superseded on 2026-11-17 by the explicit request for UI-010 followed by UI-002; thumbnails are not scheduled.
+**Priority:** 🟡 · **State:** Decided 2026-11-25 (owner): a preview **on hover**, from libretro's thumbnails. Waits for an Apple II thumbnail set at libretro (none exists; the woz-a-day DAT for libretro-database comes first, `tools/wozaday_dat.py`, because a thumbnail is named after the database's game name).
 
-**Acceptance criterion:** Decide whether a thumbnail is user-supplied cover art
-or a captured guest screen, then display it without loading every disk or
-blocking the library's scan. Missing art must leave a readable text row.
+**Decision (2026-11-25).** Hovering a row of the Disk Library shows the
+game's picture. The disk is identified by its CRC-32 against the libretro
+"Apple - II" names (TOSEC plus the woz-a-day DAT), or by a WOZ's META title;
+the name gives `thumbnails.libretro.com/Apple - II/Named_Titles/<name>.png`
+(libretro's character substitution: `&*/:`<>?\|` become `_`), fetched on
+first hover through the curl path `MediaSource` already uses and cached in
+the user data folder. Nothing is packaged: no picture of a third-party game
+enters the tree or a package (the 2026-10-29 rule); whether the name table
+may ship depends on libretro-database's licence, else it is fetched too. A
+disk with no entry falls back to a capture POM2 takes of the title screen
+the first time the disk boots. The browser build is not promised: the
+thumbnail server must allow it (CORS), not checked.
+
+**Acceptance criterion:** hovering a known disk shows its title picture
+within a frame of the download finishing, without loading the disk or
+blocking the library's scan; an unknown disk shows its own capture or
+nothing, and the row stays readable; no network request happens until a
+row is hovered.
 
 <a id="ui-010"></a>
 
