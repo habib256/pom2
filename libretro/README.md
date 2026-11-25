@@ -339,8 +339,8 @@ non-ASCII character becomes `_`, and a name that had to change is followed by
 `[<8 hex digits>]` to stay unique. Copies named by hashes by earlier versions
 move to the new name the first time their game is opened. Those versions
 kept one copy per folder the game was opened from: when the new name is
-already taken, the newer copy is played and the other is kept beside it as
-`<disk> [old <8 hex digits>]`. The original images retain their original
+already taken, the copy that holds progress is played (the newer one if both
+do) and the other is kept beside it as `<disk> [old <8 hex> <8 hex>]`. The original images retain their original
 bytes. Reopen the same image or playlist to resume using those disks. Two
 disks of one playlist with the same file name in different folders (two
 blank `SAVE.DSK`) keep a copy each: the later ones are `SAVE (2).DSK`, …, in

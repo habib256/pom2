@@ -61,6 +61,13 @@ DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
         error = location + ": unsupported disk image: " + path.u8string();
         return {};
     }
+    // No Apple II medium is bigger: a multi-gigabyte file named .dsk is not
+    // read whole to be hashed (the web build aborts on running out).
+    std::error_code size;
+    if (std::filesystem::file_size(path, size) > (64ull << 20) && !size) {
+        error = location + ": too large for an Apple II disk image: " + path.u8string();
+        return {};
+    }
     auto stream = openFile(path, location, error);
     if (!error.empty()) return {};
     const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(stream), {}};
@@ -169,6 +176,10 @@ std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content, std::s
             path = source.parent_path() / path;
         if (!path.is_absolute()) {
             error = entryLocation + ": cannot resolve disk image path";
+            return {};
+        }
+        if (disks.size() >= 256) {
+            error = location + ": more than 256 disk images";
             return {};
         }
         auto disk = diskEntry(std::move(path), label, entryLocation, error);

@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <map>
 #include <cmath>
 #include <cstdint>
@@ -118,8 +119,12 @@ struct DiskState {
     // The private copy each image resolved to, by its identity: a restore
     // (every frame under run-ahead, every netplay rollback) reuses it instead
     // of reading and hashing the original again (bug hunt 2026-11-25).
-    // Keyed by identity, checked against the original's path.
-    std::map<std::uint64_t, std::pair<std::filesystem::path, std::filesystem::path>> copies;
+    // Keyed by the image's bytes and its original's path: two identical
+    // blank disks of one playlist each keep their entry.
+    std::map<std::pair<std::uint64_t, std::string>, std::filesystem::path> copies;
+    // The name the content was opened under, when the disks come from an
+    // archive: the game's save folder and its pad profile follow it.
+    std::filesystem::path title;
 };
 
 struct InitialDisk {
@@ -165,10 +170,16 @@ bool rgbWarning = false;
 std::array<unsigned, 4> portDevice{RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_NONE, RETRO_DEVICE_NONE};
 const pom2::libretro::PadProfile* padProfile = nullptr;   // the content's game profile, if any
 bool padProfileEnabled = true;                            // pom2_pad_profile
+int padProfileOption = -1;   // the option's last value: -1 until read
 void releaseKeyPad();
 void installDescriptors();
 bool openApple = false;
 bool solidApple = false;
+// The host keyboard as its events left it (callback mode): edges only, so a
+// key released during a rewind never sends its release to the restored
+// machine. Not saved: it is the player's hands, not the machine's state.
+std::bitset<512> hostKeysHeld;
+bool hostOpenApple = false, hostSolidApple = false;
 bool startHeld = false;
 bool selectHeld = false;
 pom2::libretro::PadKeyboard padKeyboard;
@@ -251,9 +262,11 @@ long numberOption(const char* key, long fallback)
     return end && end != text.c_str() && *end == '\0' ? value : fallback;
 }
 
-float percentOption(const char* key)
+// "12.5%": the dead zone, the volumes, the speeds (core_options.cpp). A
+// value that is not one keeps the option's own default.
+float percentOption(const char* key, float fallback)
 {
-    return static_cast<float>(numberOption(key, 100)) / 100.0f;
+    return pom2::libretro::percentValue(option(key), fallback);
 }
 
 void reportError(const std::string& detail)
@@ -352,8 +365,8 @@ bool skipThisFrame()
 
 void applyRuntimeOptions()
 {
-    settings.paddleDeadZone = static_cast<int>(32768.0f * percentOption("pom2_paddle_deadzone"));
-    settings.paddleSensitivity = percentOption("pom2_paddle_sensitivity");
+    settings.paddleDeadZone = static_cast<int>(32768.0f * percentOption("pom2_paddle_deadzone", 0.125f));
+    settings.paddleSensitivity = percentOption("pom2_paddle_sensitivity", 1.0f);
     const auto axes = option("pom2_joystick_axes");
     settings.invertX = axes == "invert-x" || axes == "invert-both";
     settings.invertY = axes == "invert-y" || axes == "invert-both";
@@ -364,7 +377,7 @@ void applyRuntimeOptions()
     settings.uppercase = upper == "enabled"
         || (upper == "auto" && (machine.kind == pom2::libretro::MachineKind::IIPlus
                                 || machine.kind == pom2::libretro::MachineKind::II));
-    settings.mouseSpeed = percentOption("pom2_mouse_speed");
+    settings.mouseSpeed = percentOption("pom2_mouse_speed", 1.0f);
     settings.fastDiskLoading = option("pom2_fast_disk_loading") != "disabled";
     settings.writeProtectAll = option("pom2_write_protect") == "enabled";
     controlDrive = option("pom2_disk_control_drive") == "2" ? 1 : 0;
@@ -372,20 +385,26 @@ void applyRuntimeOptions()
     const auto seconds = static_cast<unsigned>(std::max(0L, numberOption("pom2_autosave_interval", 5)));
     settings.autosaveFrames = std::max(1u, static_cast<unsigned>(std::lround(seconds * fps)));
     if (!core) return;
-    core->setSpeakerVolume(percentOption("pom2_speaker_volume"));
-    core->setMockingboardVolume(percentOption("pom2_mockingboard_volume"));
-    core->setDriveSoundVolume(percentOption("pom2_drive_sound_volume"));
+    core->setSpeakerVolume(percentOption("pom2_speaker_volume", 1.0f));
+    core->setMockingboardVolume(percentOption("pom2_mockingboard_volume", 1.0f));
+    core->setDriveSoundVolume(percentOption("pom2_drive_sound_volume", 1.0f));
     settings.display = option("pom2_display");
     if (!core->setDisplayMode(displayModeFor(settings.display))) {
         core->setDisplayMode(pom2::DisplayMode::Composite);
         if (!rgbWarning) reportError("The RGB display needs the Le Chat Mauve RGB card (Core Options, restart).");
         rgbWarning = true;
     }
-    const bool profileWanted = option("pom2_pad_profile") != "disabled";
-    if (profileWanted != padProfileEnabled) {
-        releaseKeyPad();
-        padProfileEnabled = profileWanted;
-        if (core) installDescriptors();
+    // Acted on when the OPTION changes, not when it differs from the flag: a
+    // state sets the flag (the host's profile, for a netplay client), and
+    // an unrelated option change (a volume) must not undo it on one peer.
+    const int profileWanted = option("pom2_pad_profile") != "disabled" ? 1 : 0;
+    if (profileWanted != padProfileOption) {
+        padProfileOption = profileWanted;
+        if ((profileWanted != 0) != padProfileEnabled) {
+            releaseKeyPad();
+            padProfileEnabled = profileWanted != 0;
+            if (core) installDescriptors();
+        }
     }
     const auto skip = option("pom2_frameskip");
     frameskipThreshold = static_cast<unsigned>(std::max(0L, numberOption("pom2_frameskip_threshold", 33)));
@@ -462,11 +481,27 @@ bool keyboardPolled()
     return (portDevice[kKeyboardPort] & RETRO_DEVICE_MASK) == RETRO_DEVICE_KEYBOARD;
 }
 
+// A key the netplay keyboard (port 3) holds this frame: the pad releasing
+// the same key (its A is Return too) must leave it down, or the keyboard
+// would see it released and type it again (bug hunt 2026-11-25).
+bool keyboardHolds(std::uint16_t token)
+{
+    return keyboardPolled() && inputState && inputState(kKeyboardPort, RETRO_DEVICE_KEYBOARD, 0, token) != 0;
+}
+
+void releasePadKey(std::uint16_t token)
+{
+    if (core && !keyboardHolds(token)) core->setKeyHeld(token, false);
+}
+
 void RETRO_CALLCONV keyboardEvent(bool down, unsigned keycode,
                                  std::uint32_t character, std::uint16_t modifiers)
 {
     // A keyboard read as a device takes its keys from input_state alone: an
     // event here as well would type every key twice.
+    if (keycode == RETROK_LALT) hostOpenApple = down;
+    if (keycode == RETROK_RALT) hostSolidApple = down;
+    if (!down && keycode < hostKeysHeld.size()) hostKeysHeld[keycode] = false;
     if (!core || keyboardPolled()) return;
     if (settings.altAppleKeys) {
         if (keycode == RETROK_LALT) openApple = down;
@@ -475,8 +510,10 @@ void RETRO_CALLCONV keyboardEvent(bool down, unsigned keycode,
 
     const unsigned ascii = appleKey(keycode, character, modifiers);
     // The libretro keyboard keycodes fit in the SDK's 512 physical key tokens.
-    if (keycode != RETROK_UNKNOWN && keycode < 512 && (ascii != 0 || !down))
+    if (keycode != RETROK_UNKNOWN && keycode < 512 && (ascii != 0 || !down)) {
         core->setKeyHeld(static_cast<std::uint16_t>(keycode), down);
+        hostKeysHeld[keycode] = down;   // what a restore puts back (restoreRetroState)
+    }
     if (down && ascii != 0)
         core->queueKey(typed(static_cast<std::uint8_t>(ascii)));
 }
@@ -534,7 +571,8 @@ void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directio
         bool shared = false;
         for (unsigned j = 0; j < count && !down; ++j)
             shared |= j != i && bindings[j].token == bindings[i].token && padPressed(bindings[j].button);
-        if (down != was && (down || !shared)) core->setKeyHeld(bindings[i].token, down);
+        if (down != was && down) core->setKeyHeld(bindings[i].token, true);
+        else if (down != was && !shared) releasePadKey(bindings[i].token);
         if (down && !was) {
             core->queueKey(typed(bindings[i].ascii));
             if (i < directions) {
@@ -738,12 +776,12 @@ void releaseKeyPad()
                                     RETROK_i, RETROK_m, RETROK_j, RETROK_k,
                                     RETROK_w, RETROK_s, RETROK_a, RETROK_d, RETROK_SPACE, RETROK_RETURN};
     if (keyPadHeld && core) {
-        for (auto token : tokens) core->setKeyHeld(token, false);
+        for (auto token : tokens) releasePadKey(token);
         if (padProfile) {
             std::array<KeyBinding, 14> bindings{};
             unsigned directions = 0;
             const unsigned count = profileBindings(bindings, directions);
-            for (unsigned i = 0; i < count; ++i) core->setKeyHeld(bindings[i].token, false);
+            for (unsigned i = 0; i < count; ++i) releasePadKey(bindings[i].token);
         }
     }
     // The pad's own repeat; a key the netplay keyboard repeats is its own.
@@ -1181,26 +1219,6 @@ bool ejectMedia(pom2::Core& target, MediaKind kind, int drive)
     return false;
 }
 
-// Two disks of one playlist with the same file name in two folders (two
-// blank SAVE.DSK) are two disks: the later ones get a numbered copy of their
-// own, in playlist order, so the numbering is the same every session.
-unsigned nameVariant(const DiskState& state, const pom2::libretro::DiskEntry& image)
-{
-    const auto lowered = [](std::string text) {
-        for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return text;
-    };
-    const auto name = lowered(image.path.filename().u8string());
-    std::vector<std::filesystem::path> seen;
-    for (const auto& other : state.images) {
-        if (other.path == image.path) break;
-        if (lowered(other.path.filename().u8string()) == name &&
-            std::find(seen.begin(), seen.end(), other.path) == seen.end())
-            seen.push_back(other.path);
-    }
-    return static_cast<unsigned>(seen.size());
-}
-
 bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskEntry& image, int drive)
 {
     const auto kind = image.kind();
@@ -1219,8 +1237,7 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     if (!settings.writeProtectAll) {
         std::string error;
         storage = pom2::libretro::openDiskStorage(state.saves, state.content, image.path, error,
-                                                  pom2::libretro::DiskStorageAccess::CreateIfMissing,
-                                                  nameVariant(state, image));
+                                                  pom2::libretro::DiskStorageAccess::CreateIfMissing, state.title);
         if (!error.empty()) {
             storage = {image.path};
             // The player would otherwise lose every save of the session
@@ -1228,7 +1245,7 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
             reportError(image.label + " is read-only this session: its save copy cannot be made (" + error + ").");
         } else if (storage.privateCopy) {
             lease = pom2::libretro::lockDiskStorage(storage.path);
-            state.copies[image.identity] = {image.path, storage.path};
+            state.copies[{image.identity, image.path.u8string()}] = storage.path;
         }
         // Held by another instance (RetroArch's second run-ahead instance
         // always meets the first one's lock): a log line, not a message.
@@ -1300,17 +1317,21 @@ bool keepDiskEffects()
 {
     if (!supportsExecutionPhase) return true;
     auto phase = RETRO_EXECUTION_PHASE_RETAINED;
+    // A REPLAY frame is kept in place of the earlier run's (libretro.h):
+    // only a SPECULATIVE one is thrown away (bug hunt 2026-11-25).
     return !environment(RETRO_ENVIRONMENT_GET_EXECUTION_PHASE, &phase)
-        || phase == RETRO_EXECUTION_PHASE_RETAINED;
+        || phase != RETRO_EXECUTION_PHASE_SPECULATIVE;
 }
 
 void autosaveMountedDisk()
 {
-    if (!keepDiskEffects()) return;
+    // Counted on every frame whatever its phase: the count is in the state,
+    // and two netplay peers must hold the same one after a rollback.
+    const bool keep = keepDiskEffects();
     for (int drive = 0; drive < 2; ++drive) {
         auto& slot = disks.drives[drive];
         if (!slot.mounted || !slot.mounted->writable) continue;
-        if (++slot.framesSinceFlush < settings.autosaveFrames) continue;
+        if (++slot.framesSinceFlush < settings.autosaveFrames || !keep) continue;
         slot.framesSinceFlush = 0;
         try {
             if (flushMountedDisk(*core, disks, drive)) {
@@ -1388,7 +1409,22 @@ void nextDisk()
     environment(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
 }
 
+bool replaceDiskUnguarded(unsigned index, const retro_game_info* game);
+
+// Called from RetroArch's C code: nothing may unwind into it. The libretro
+// layer throws nothing for bad content; this catches what is left
+// (allocation) on a native build.
 bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
+{
+    try {
+        return replaceDiskUnguarded(index, game);
+    } catch (const std::exception& error) {
+        reportError(error.what());
+        return false;
+    }
+}
+
+bool replaceDiskUnguarded(unsigned index, const retro_game_info* game)
 {
     if (!controlled().ejected || index >= getDiskCount()) return false;
     // Never the disk the other drive is playing: its slot would name an image
@@ -1396,7 +1432,7 @@ bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
     // copy (bug hunt 2026-11-25).
     for (auto& slot : disks.drives)
         if (slot.index == index && slot.mounted) return false;   // in the other drive
-    disks.copies.erase(disks.images[index].identity);
+    disks.copies.erase({disks.images[index].identity, disks.images[index].path.u8string()});
     if (!game) {
         disks.images.erase(disks.images.begin() + index);
         for (auto& slot : disks.drives) {
@@ -1662,6 +1698,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
         // keep them from one session to the next.
         if (error.empty() && pom2::libretro::isArchive(state.content)) {
             const auto cache = (state.saves.empty() ? state.firmware : state.saves / "pom2") / "archives";
+            state.title = state.content;   // "Karateka (1984).zip", not the disk inside it
             state.content = pom2::libretro::unpackArchive(state.content, cache, error);
         }
         // Nothing here throws on bad content (a zip with no disk, a broken
@@ -1690,6 +1727,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             names.push_back(state.images.front().path.u8string());
         }
         if (!state.content.empty()) names.push_back(state.content.u8string());
+        if (!state.title.empty()) names.push_back(state.title.u8string());
         padProfile = pom2::libretro::findPadProfile(names);
     }
 
@@ -1806,7 +1844,7 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             // loads and starts it typed, PLAY pressed. The deck starts when
             // the ROM's READ first polls $C060.
             target->runVideo(static_cast<int>(machineTiming.cpuClockHz * 2));
-            if (!target->loadCassette(disks.content.u8string())) {   // `state` moved into `disks` above
+            if (!target->loadCassette(pom2::libretro::sdkPath(disks.content))) {   // `state` moved into `disks` above
                 reportError("Cannot load the tape: " + target->lastError());
                 return false;
             }
@@ -1864,11 +1902,39 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
 constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 5};
 // Magic, then: length, playlist, 2 x (backing identity, index, frames since
 // flush, flags), overshoot, two audio remainders, input flags, pad keyboard,
-// held keys, repeat, pad profile (version 5), checksum.
+// held keys, repeat, then (version 5) the pad profile, the port-1 key table
+// the held keys index, the mouse's two fractions; checksum.
 constexpr std::size_t kRetroStateHeader =
-    sizeof(kRetroStateMagic) + 4 + 8 + 2 * (8 + 4 + 4 + 1) + 4 * 3 + 1 + 2 + 2 + 2 + 2 + 2 + 8;
-// Version 4 (libretro v1.2.3): the same without the pad profile.
+    sizeof(kRetroStateMagic) + 4 + 8 + 2 * (8 + 4 + 4 + 1) + 4 * 3 + 1 + 2 + 2 + 2 + 2 + 2 + 1 + 4 + 4 + 8;
+// Version 4 (libretro v1.2.3): the same without the version-5 fields.
 constexpr std::uint8_t kRetroStateVersion4 = 4;
+constexpr std::size_t kRetroStateHeader4 = kRetroStateHeader - (2 + 1 + 4 + 4);
+
+// Which table `keyPadHeld`'s bits index: they mean different keys under the
+// joystick's profile and under each keyboard type of port 1.
+std::uint8_t keyTableId()
+{
+    if (profileActive()) return 4;
+    const unsigned device = portDevice[0];
+    return device == kPadArrows ? 1 : device == kPadIjkm ? 2 : device == kPadWasd ? 3 : 0;
+}
+
+// Every key a pad table can hold, released: what a state held under
+// another table cannot be told apart from (deterministic on both peers).
+void releaseEveryPadKey()
+{
+    if (!core) return;
+    const std::uint16_t tokens[] = {RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
+                                    RETROK_i, RETROK_m, RETROK_j, RETROK_k,
+                                    RETROK_w, RETROK_s, RETROK_a, RETROK_d, RETROK_SPACE, RETROK_RETURN};
+    for (auto token : tokens) releasePadKey(token);
+    for (const auto& profile : pom2::libretro::padProfiles())
+        for (const auto& button : profile.buttons)
+            if (button.action == pom2::libretro::PadAction::Key) releasePadKey(button.token);
+    keyPadHeld = 0;
+    repeatKey = 0;
+    repeatFrames = 0;
+}
 constexpr unsigned kNoDisk = UINT32_MAX;
 
 std::uint64_t pathIdentity(const std::filesystem::path& path, std::uint64_t hash = 0xcbf29ce484222325ull)
@@ -1946,6 +2012,11 @@ bool saveRetroState(void* data, std::size_t size)
     const auto& profiles = pom2::libretro::padProfiles();
     putU16(header, padProfile && padProfileEnabled
                        ? static_cast<std::uint16_t>(padProfile - profiles.data() + 1) : 0);
+    putU8(header, keyTableId());
+    // The mouse's fraction between frames (a speed off 100 %): run-ahead
+    // replays the same frames, and lost it on every restore.
+    putU32(header, static_cast<std::uint32_t>(static_cast<std::int32_t>(std::lround(mouseRemainderX * 65536.0f))));
+    putU32(header, static_cast<std::uint32_t>(static_cast<std::int32_t>(std::lround(mouseRemainderY * 65536.0f))));
     const auto headerHash = pom2::hashMediaBytes(header.data(), header.size());
     putU64(header, pom2::hashMediaBytes(stateScratch.data(), stateScratch.size(), headerHash));
     auto* bytes = static_cast<std::uint8_t*>(data);
@@ -1958,10 +2029,12 @@ bool saveRetroState(void* data, std::size_t size)
 
 bool restoreRetroState(const void* data, std::size_t size)
 {
-    if (!core || !data || size < kRetroStateHeader - 2 ||
+    if (!core || !data || size < kRetroStateHeader4 ||
         std::memcmp(data, kRetroStateMagic, sizeof(kRetroStateMagic) - 1)) return false;
     const auto version = static_cast<const std::uint8_t*>(data)[sizeof(kRetroStateMagic) - 1];
     if (version != kRetroStateMagic[sizeof(kRetroStateMagic) - 1] && version != kRetroStateVersion4) return false;
+    // Every header byte inside the buffer before any is read.
+    if (size < (version == kRetroStateVersion4 ? kRetroStateHeader4 : kRetroStateHeader)) return false;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     pom2::byteio::Reader reader(bytes, size);
     reader.pos = sizeof(kRetroStateMagic);
@@ -1993,14 +2066,18 @@ bool restoreRetroState(const void* data, std::size_t size)
     const auto keyRepeated = reader.u8(), repeatCount = reader.u8();
     const bool carriesProfile = version != kRetroStateVersion4;
     const unsigned profileId = carriesProfile ? reader.u16() : 0u;
+    const unsigned keyTable = carriesProfile ? reader.u8() : 0u;
+    const auto mouseX = carriesProfile ? static_cast<std::int32_t>(reader.u32()) : 0;
+    const auto mouseY = carriesProfile ? static_cast<std::int32_t>(reader.u32()) : 0;
     const auto headerHash = pom2::hashMediaBytes(bytes, reader.pos);
     const auto checksum = reader.u64();
     if (stateCapacity < reader.pos || length > stateCapacity - reader.pos || !reader.has(length) ||
         checksum != pom2::hashMediaBytes(bytes + reader.pos, length, headerHash) ||
-        overshoot > 16 || machineRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
+        overshoot > 256 || machineRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
         frontendRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) || flags > 31 ||
         column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= (1u << 14) ||
-        profileId > pom2::libretro::padProfiles().size()) return false;
+        profileId > pom2::libretro::padProfiles().size() || keyTable > 4 ||
+        std::abs(mouseX) > (1 << 16) || std::abs(mouseY) > (1 << 16)) return false;
 
     std::array<std::optional<MountedDisk>, 2> restored;
     std::array<std::string, 2> backing;
@@ -2021,25 +2098,32 @@ bool restoreRetroState(const void* data, std::size_t size)
             // copy the state needs and this player never made (a netplay
             // join after the host changed disks) is made from the original:
             // the state's disk replaces it at the next flush.
-            const auto cached = disks.copies.find(image.identity);
-            if (cached != disks.copies.end() && cached->second.first == image.path && !legacy) {
-                path = cached->second.second;
+            const auto cached = disks.copies.find({image.identity, image.path.u8string()});
+            if (cached != disks.copies.end() && !legacy) {
+                path = cached->second;
             } else {
                 std::string error;
                 const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path, error,
                     legacy ? pom2::libretro::DiskStorageAccess::ExistingOnly
                            : pom2::libretro::DiskStorageAccess::CreateIfMissing,
-                    nameVariant(disks, image));
-                if (!error.empty() || !storage.privateCopy) return false;
+                    disks.title);
+                if (!error.empty() || (legacy && !storage.privateCopy)) return false;
                 // A state of the older format names its copy by path: the
                 // name of that time (hashes, before 2026-11-25) or today's.
                 if (legacy && s.backing != pathIdentity(storage.path) &&
                     s.backing != pathIdentity(pom2::libretro::legacyStoragePath(disks.saves, disks.content,
                                                                                 image.path)))
                     return false;
+                // No copy can be made here (no save folder, the original
+                // write-protected): the disk comes back detached, as the
+                // option "write-protect every disk" brings it, instead of the
+                // state being refused — a netplay join included.
+                if (!storage.privateCopy) writable = false;
                 path = storage.path;
-                if (!legacy) disks.copies[image.identity] = {image.path, path};
+                if (!legacy && storage.privateCopy) disks.copies[{image.identity, image.path.u8string()}] = path;
             }
+        }
+        if (writable) {
             for (const auto& live : disks.drives)
                 if (live.mounted && live.mounted->path == path && live.mounted->lease) lease = live.mounted->lease;
             if (!lease) lease = pom2::libretro::lockDiskStorage(path);
@@ -2110,8 +2194,38 @@ bool restoreRetroState(const void* data, std::size_t size)
             }
             installDescriptors();
         }
+        mouseRemainderX = static_cast<float>(mouseX) / 65536.0f;
+        mouseRemainderY = static_cast<float>(mouseY) / 65536.0f;
     }
     repeatFrames = repeatCount;
+    // Held keys saved under another port-1 table (WASD then arrows, a
+    // profile then a keyboard type): their bits mean other keys here.
+    if (carriesProfile ? keyTable != keyTableId() : keyPadHeld >= (1u << 6) && !profileActive())
+        releaseEveryPadKey();
+    // The host keyboard sends edges only: a key released while the state was
+    // being restored (a rewind) would stay down in the machine forever. Its
+    // keys are what the player holds now, plus what the pad holds.
+    if (!keyboardPolled()) {
+        core->releaseHeldKeys();
+        std::array<KeyBinding, 14> bindings{};
+        unsigned count = 0;
+        if (profileActive()) {
+            unsigned directions = 0;
+            count = profileBindings(bindings, directions);
+        } else if (portDevice[0] == kPadArrows || portDevice[0] == kPadIjkm || portDevice[0] == kPadWasd) {
+            const auto pad = keyPadBindings(portDevice[0]);
+            std::copy(pad.begin(), pad.end(), bindings.begin());
+            count = static_cast<unsigned>(pad.size());
+        }
+        for (unsigned i = 0; i < count; ++i)
+            if (keyPadHeld & (1u << i)) core->setKeyHeld(bindings[i].token, true);
+        for (std::size_t key = 0; key < hostKeysHeld.size(); ++key)
+            if (hostKeysHeld[key]) core->setKeyHeld(static_cast<std::uint16_t>(key), true);
+        if (settings.altAppleKeys) {
+            openApple = hostOpenApple;
+            solidApple = hostSolidApple;
+        }
+    }
     showDiskRead((flags & 16) != 0);
     midiCycleKnown = false;   // the next byte starts a new time line
     // A state the player loaded (or a rewind step) moves the drives; the
@@ -2287,6 +2401,7 @@ void retro_unload_game()
     midiCycleKnown = false;
     stateCapacityWarning = false;
     padProfile = nullptr;
+    padProfileOption = -1;   // the next game reads the option afresh
     configureFrameskip(Frameskip::Off);
     rgbWarning = false;
 }

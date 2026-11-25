@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "content_vfs.hpp"
 
+#include "AtomicFileReplace.h"
+
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +36,38 @@ std::string parentOf(const std::string& path)
     return slash == std::string::npos ? std::string() : path.substr(0, slash);
 }
 
+// `entry` relative to `folder`, "." and ".." resolved, never above the
+// tree the frontend granted ("saf://tree/<id>" stays): the VFS resolves
+// nothing itself.
+std::string resolveVfsPath(const std::string& folder, const std::string& entry)
+{
+    std::string combined = folder + "/" + entry;
+    for (auto& c : combined)
+        if (c == '\\') c = '/';
+    const auto scheme = combined.find("://");
+    const std::size_t rootEnd = scheme == std::string::npos ? 0 : scheme + 3;
+    // The tree the frontend granted ("saf://<tree>/") is not a path component.
+    std::size_t fixed = rootEnd;
+    if (fixed < combined.size()) {
+        const auto slash = combined.find('/', fixed);
+        fixed = slash == std::string::npos ? combined.size() : slash + 1;
+    }
+    std::vector<std::string> parts;
+    std::string piece;
+    for (std::size_t i = fixed; i <= combined.size(); ++i) {
+        if (i == combined.size() || combined[i] == '/') {
+            if (piece == "..") { if (!parts.empty()) parts.pop_back(); }
+            else if (!piece.empty() && piece != ".") parts.push_back(piece);
+            piece.clear();
+        } else {
+            piece += combined[i];
+        }
+    }
+    std::string out = combined.substr(0, fixed);
+    for (std::size_t i = 0; i < parts.size(); ++i) out += (i ? "/" : "") + parts[i];
+    return out;
+}
+
 bool hasExtension(const std::string& path, const char* ext)
 {
     const auto dot = path.find_last_of('.');
@@ -58,8 +92,15 @@ bool copyThroughVfs(const std::string& source, const std::filesystem::path& targ
     }
     std::error_code ec;
     std::filesystem::create_directories(target.parent_path(), ec);
-    const auto partial = target.u8string() + ".part";
-    std::ofstream out(std::filesystem::u8path(partial), std::ios::binary | std::ios::trunc);
+    // A fresh temporary beside the target, never a planted link: the cache
+    // sits in the save folder, which a downloaded "save pack" can fill.
+    const auto partial = pom2::tempSiblingPath(target);
+    if (!pom2::prepareTempPath(partial, ec)) {
+        vfs->close(handle);
+        error = "Cannot copy " + source + ": " + ec.message();
+        return false;
+    }
+    std::ofstream out(partial, std::ios::binary | std::ios::trunc);
     std::vector<char> buffer(1 << 16);
     bool ok = static_cast<bool>(out);
     std::uint64_t total = 0;
@@ -74,11 +115,11 @@ bool copyThroughVfs(const std::string& source, const std::filesystem::path& targ
     vfs->close(handle);
     out.close();
     if (!ok || !out) {
-        std::filesystem::remove(std::filesystem::u8path(partial), ec);
+        std::filesystem::remove(partial, ec);
         error = "Could not copy " + source + " through the frontend";
         return false;
     }
-    std::filesystem::rename(std::filesystem::u8path(partial), target, ec);
+    std::filesystem::rename(partial, target, ec);
     if (ec) {
         error = "Could not keep the copy of " + source + ": " + ec.message();
         return false;
@@ -142,8 +183,10 @@ std::string localizeContent(const std::string& path, const std::filesystem::path
             error = "A playlist cannot list another playlist: " + entry;
             return {};
         }
+        // A relative entry, resolved by hand: the frontend's VFS (Android's
+        // saf://) takes the path as it is, "./" and "../" included.
         const std::string source = isLocalPath(entry) && entry[0] != '/'
-            ? parentOf(path) + "/" + entry : entry;
+            ? resolveVfsPath(parentOf(path), entry) : entry;
         const auto copy = isLocalPath(source) ? source : localizeContent(source, cacheRoot, error);
         if (copy.empty()) return {};
         rewritten << copy << label << '\n';

@@ -22,7 +22,7 @@ struct TapePlan {
     std::vector<MachineKind> prefer;     // machines whose ROM loads it, best first
 };
 
-// Throws std::runtime_error with the reason: no tape, no record on it.
+// A failure (no tape, no record on it) is a message, never an exception.
 /// Never throws: a failure leaves `failure` set (disk_playlist.hpp says why).
 TapePlan planTape(const std::filesystem::path& path, std::string& failure);
 

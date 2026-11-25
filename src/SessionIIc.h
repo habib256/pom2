@@ -18,10 +18,13 @@ struct SessionSonyMedia {
     auto& operator[](size_t index) { return images[index]; }
 };
 bool captureSessionSonyMedia(Memory& memory, SessionArchive::Slot& record, size_t& mediaBytes, std::string& error);
+/// `replaceUnsaved`: an SDK restore, whose host flushed what it keeps (see
+/// SessionIIc.cpp); a session file never replaces unsaved writes.
 bool prepareSessionSonyMedia(Memory& memory, const SessionArchive::Slot& record, SessionSonyMedia& out,
-                             size_t& mediaBytes, std::string& error, bool allowWritable);
+                             size_t& mediaBytes, std::string& error, bool allowWritable,
+                             bool replaceUnsaved = false);
 void applySessionSonyMedia(Memory& memory, SessionSonyMedia& prepared);
-/// The stamp a mounted //c+ 3.5" medium holds for `path`, or nullptr: the
-/// baseline a restore onto that same copy keeps (Disk35Image::bindSnapshotBacking).
-const MediaFileStamp* liveSonyStamp(Memory& memory, const std::string& path);
+/// The mounted //c+ 3.5" medium that holds `path`, or nullptr: a restore
+/// onto that same copy keeps its stamp and lineage (Disk35Image::bindSnapshotBacking).
+const Disk35Image* liveSonyImage(Memory& memory, const std::string& path);
 }

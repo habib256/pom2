@@ -187,6 +187,29 @@ def check_formats(module, system, root, disk):
         z.write(disk, "Game (Disk 1).dsk")
         z.write(disk, "Game (Disk 2).dsk")
         z.writestr("readme.txt", "not a disk")
+    # Hostile and awkward archives (bug hunt 2026-11-25): names in CP437 with
+    # the UTF-8 flag clear (Windows' own zipper), a program beside the disk,
+    # disks named "#1 ..." (a playlist line starting with '#'), a member
+    # named with a drive letter (outside the cache folder on Windows).
+    def cp437_zip(path, members):
+        # zipfile writes non-ASCII names as UTF-8 with the flag set: write an
+        # ASCII stand-in of the same length, then put the CP437 bytes in.
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+            for raw, data in members:
+                z.writestr(raw.decode("cp437").encode("ascii", "replace").decode().replace("?", "_"), data)
+        blob = path.read_bytes()
+        for raw, _ in members:
+            stand_in = raw.decode("cp437").encode("ascii", "replace").replace(b"?", b"_")
+            blob = blob.replace(stand_in, raw)
+        path.write_bytes(blob)
+    cp437_zip(content / "mixed.zip", [(b"Jeu \x82t\x82.dsk", disk.read_bytes()),
+                                      (b"Notice R\x8agles.txt", b"not a disk"),
+                                      (b"GAME.BIN", bytes([0x60]))])
+    with zipfile.ZipFile(content / "numbered.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(disk, "#1 Boot.dsk")
+        z.write(disk, "#2 Data.dsk")
+    with zipfile.ZipFile(content / "drive.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(disk, "D:x.dsk")
     (content / "game.dsk.gz").write_bytes(gzip.compress(disk.read_bytes()))
     (content / "hello.bas").write_text('10 HOME\n20 PRINT "POM2 BAS OK"\n30 END\n')
     # LDA #$A5 / STA $0350 / RTS at $0300, the address in its name.
@@ -204,7 +227,8 @@ def check_formats(module, system, root, disk):
         finally:
             host.close()
 
-    for name, images in (("game.zip", 1), ("two disks.zip", 2), ("game.dsk.gz", 1)):
+    for name, images in (("game.zip", 1), ("two disks.zip", 2), ("game.dsk.gz", 1),
+                         ("mixed.zip", 1), ("numbered.zip", 2), ("drive.zip", 1)):
         count, _, text = boot(name, 300)
         require(count == images, f"{name} should hold {images} disk(s), not {count}")
         require("DIRTBIKE" in text, f"{name} did not boot Dirtbike")

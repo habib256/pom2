@@ -36,11 +36,11 @@ Sony35Drive* sony(Memory& memory, int index) {
 }
 } // namespace
 
-const MediaFileStamp* liveSonyStamp(Memory& memory, const std::string& path) {
+const Disk35Image* liveSonyImage(Memory& memory, const std::string& path) {
     for (int i = 0; i < 3; ++i)
         if (auto* drive = sony(memory, i); drive && drive->image() && drive->image()->isLoaded() &&
             drive->image()->path() == path)
-            return &drive->image()->fileStamp();
+            return drive->image();
     return nullptr;
 }
 
@@ -244,7 +244,7 @@ bool captureSessionSonyMedia(Memory& memory, SessionArchive::Slot& record, size_
     return true;
 }
 bool prepareSessionSonyMedia(Memory& memory, const SessionArchive::Slot& record, SessionSonyMedia& out,
-                             size_t& mediaBytes, std::string& error, bool allowWritable) {
+                             size_t& mediaBytes, std::string& error, bool allowWritable, bool replaceUnsaved) {
     if (record.kind != Card::SonyMedia || record.identity.size() != 3 || record.state.size() > kMaxSessionCardBytes) {
         error = "invalid session motherboard media"; return false;
     }
@@ -254,7 +254,13 @@ bool prepareSessionSonyMedia(Memory& memory, const SessionArchive::Slot& record,
         auto* image = drive ? drive->image() : nullptr;
         Blob media;
         if (record.identity[size_t(i)] != uint8_t(image != nullptr) || !sonyReady(drive, error) ||
-            (image && !image->sessionReplaceable()) ||
+            // An SDK restore (replaceUnsaved) may replace a medium with unsaved
+            // writes: its host flushes the disks the state does not hold
+            // before the commit (beforeRestore), and the one it holds goes
+            // back to the state's timeline. Refusing made every restore fail
+            // for up to the autosave interval after a write (bug hunt
+            // 2026-11-25). A session file keeps the strict rule.
+            (image && !(replaceUnsaved ? image->sessionCaptureReady() : image->sessionReplaceable())) ||
             !r.blob(media, (16u << 20) + 32) || (!image && !media.empty())) {
             error = "session motherboard drive configuration differs or has pending writes"; return false;
         }

@@ -24,4 +24,13 @@ std::string_view coreOption(retro_environment_t environment, const char* key);
 // when a visibility changed.
 bool updateOptionVisibility(retro_environment_t environment);
 
+/// A percentage option's value ("12.5%", "100%", or a bare number from an
+/// older configuration) as a fraction, or `fallback` when it is not one.
+/// Never throws (RetroArch's web build cannot catch).
+float percentValue(std::string_view text, float fallback);
+
+/// Every value every option offers, for the test that feeds each through
+/// the parsers: {key, value}.
+void forEachOptionValue(void (*visit)(const char* key, const char* value, void* context), void* context);
+
 } // namespace pom2::libretro

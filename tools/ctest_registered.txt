@@ -281,6 +281,7 @@ language_card_smoke
 le_chat_mauve_smoke
 libretro_disk_storage
 libretro_pad_profiles
+libretro_core_options
 liron_boot35
 liron_chain
 liron_smartport_dispatch

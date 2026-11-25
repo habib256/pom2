@@ -1495,12 +1495,14 @@ void MainWindow::render()
             if (activeProfile != toolbarClockProfile_) {
                 toolbarClockProfile_ = activeProfile;
                 toolbarClockPeakHz_ = 0.0;
+                toolbarClockKept_ = false;
             }
             if (hz >= toolbarClockPeakHz_ || lastFrameTime >= toolbarClockPeakUntil_) {
                 toolbarClockPeakHz_ = hz;
                 toolbarClockPeakUntil_ = lastFrameTime + 1.0;
             }
             tb.machineCpuHz = toolbarClockPeakHz_;
+            tb.keepMachineClock = toolbarClockKept_;
         }
         tb.videoStandard      = controller->getVideoStandard();
         tb.activeProfile      = activeProfile;
@@ -1518,6 +1520,7 @@ void MainWindow::render()
         }
 
         const auto tr = toolbar->render(tb);
+        toolbarClockKept_ = toolbarClockKept_ || tr.machineClockShown;
 #ifdef __EMSCRIPTEN__
         auto browserResetBoot = [&]() -> bool {
             if (browserResetBootImage_.empty()) return false;

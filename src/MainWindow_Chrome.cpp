@@ -76,9 +76,13 @@
 #include <vector>
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include "ChildProcess.h"
+#include <cstdlib>
+#include <cstring>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
+extern char** environ;
 
 namespace {
 // xdg-open, detached: a double fork, so nothing waits for the browser, in a
@@ -90,8 +94,25 @@ namespace {
 void openUrlDetached(const std::string& url)
 {
     // Everything the children use is made before fork: after it, only
-    // async-signal-safe calls.
-    const char* argv[] = {"xdg-open", url.c_str(), nullptr};
+    // async-signal-safe calls (execve on a path resolved here, not execvp).
+    const std::string opener = pom2::ChildProcess::findOnPath("xdg-open");
+    if (opener.empty()) return;   // the link is on the clipboard already
+    const char* argv[] = {opener.c_str(), url.c_str(), nullptr};
+    // The host's environment for the browser: inside the AppImage,
+    // LD_LIBRARY_PATH names the bundle's libraries first, which the host's
+    // xdg-open, gio and browser must not load (AppRun keeps the caller's).
+    std::vector<std::string> environment;
+    const char* hostLibraries = std::getenv("POM2_HOST_LD_LIBRARY_PATH");
+    const bool inBundle = std::getenv("APPIMAGE") != nullptr && hostLibraries != nullptr;
+    for (char** entry = environ; entry && *entry; ++entry) {
+        if (inBundle && std::strncmp(*entry, "LD_LIBRARY_PATH=", 16) == 0) continue;
+        environment.emplace_back(*entry);
+    }
+    if (inBundle && std::getenv("POM2_HOST_LD_LIBRARY_PATH_SET") && *std::getenv("POM2_HOST_LD_LIBRARY_PATH_SET"))
+        environment.push_back(std::string("LD_LIBRARY_PATH=") + hostLibraries);
+    std::vector<char*> envp;
+    for (auto& entry : environment) envp.push_back(entry.data());
+    envp.push_back(nullptr);
     const long openMax = ::sysconf(_SC_OPEN_MAX);
     const int maxFd = openMax > 0 && openMax < 65536 ? static_cast<int>(openMax) : 65536;
     const pid_t child = ::fork();
@@ -104,7 +125,7 @@ void openUrlDetached(const std::string& url)
         closed = ::syscall(SYS_close_range, 3u, ~0u, 0u) == 0;
 #endif
         for (int fd = 3; !closed && fd < maxFd; ++fd) ::close(fd);
-        ::execvp(argv[0], const_cast<char* const*>(argv));
+        ::execve(argv[0], const_cast<char* const*>(argv), envp.data());
         ::_exit(127);
     }
     int status = 0;
@@ -1178,6 +1199,11 @@ void MainWindow::openBugReport()
 #if defined(__EMSCRIPTEN__)
     const std::string script = "window.open('" + url + "', '_blank', 'noopener')";
     emscripten_run_script(script.c_str());
+    // A pop-up blocker can refuse it silently (noopener hides the result):
+    // the link is on the clipboard too.
+    ImGui::SetClipboardText(url.c_str());
+    tapeStatusMessage = "Opening the issue page; the link is also on the clipboard.";
+    tapeStatusUntil = lastFrameTime + 8.0;
 #elif defined(__linux__)
     // ImGui's opener waits for xdg-open, and xdg-open's generic mode runs the
     // browser in the foreground (Raspberry Pi OS): the window would stop

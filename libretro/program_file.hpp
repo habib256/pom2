@@ -24,8 +24,7 @@ struct ProgramImage {
 
 // A .bas is an Applesoft listing, tokenized as the ROM's PARSE would. A .bin
 // loads where its name says (CiderPress's NAME#06AAAA), where its AppleSingle
-// or DOS 3.3 header says, or at $0803 (cc65's start address). Throws
-// std::runtime_error with the reason.
+// or DOS 3.3 header says, or at $0803 (cc65's start address).
 /// Never throws: a failure leaves `failure` set (disk_playlist.hpp says why).
 ProgramImage loadProgram(const std::filesystem::path& path, std::string& failure);
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 
 namespace pom2::nufx {
@@ -392,7 +393,10 @@ bool readArchive(const std::vector<uint8_t>& bytes, std::vector<Record>& out,
             if (cls == kClassMessage || cls != kClassData) continue;
             if (kind != kKindDataFork && kind != kKindDiskImage && kind != kKindRsrcFork) continue;
 
-            std::size_t length = eof;
+            // In 64 bits whatever size_t is: on wasm32 and armhf the product
+            // and the sum wrapped, passed the limit, and reserve() threw —
+            // which ends the page in RetroArch's web build (bug hunt 2026-11-25).
+            std::uint64_t wide = eof;
             if (kind == kKindDiskImage) {
                 rec.isDisk = true;
                 // [D] NufxLib Thread.c: ShrinkIt 3.0.1 stored a wrong EOF for
@@ -401,11 +405,14 @@ bool readArchive(const std::vector<uint8_t>& bytes, std::vector<Record>& out,
                 //     "256-byte blocks" on a 280-block DOS 3.3 disk too.
                 if (rec.storageType <= 13
                         || (rec.storageType == 256 && rec.auxType == 280 && rec.fileSysId == kFileSysDos33))
-                    length = std::size_t(rec.auxType) * 512;
+                    wide = std::uint64_t(rec.auxType) * 512;
                 else
-                    length = std::size_t(rec.auxType) * rec.storageType;
+                    wide = std::uint64_t(rec.auxType) * rec.storageType;
             }
-            if (total + length > maxBytes) { error = "the archive expands past the size limit"; return false; }
+            if (total > maxBytes || wide > std::uint64_t(maxBytes - total)) {
+                error = "the archive expands past the size limit"; return false;
+            }
+            const std::size_t length = static_cast<std::size_t>(wide);
 
             std::vector<uint8_t> expanded;
             if (format == kFormatStored) {

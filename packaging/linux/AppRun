@@ -39,6 +39,11 @@ fi
 # Do not leave a trailing `:` when the caller had no LD_LIBRARY_PATH: the ELF
 # loader interprets an empty component as the current working directory,
 # allowing an unrelated/libGL.so.1 beside a disk image to hijack startup.
+# The caller's value, kept for the programs POM2 starts on the host (the web
+# browser of Help > Report a bug): they must load the host's libraries, not
+# the bundle's (a bundled glib broke the host's gio, bug hunt 2026-11-25).
+export POM2_HOST_LD_LIBRARY_PATH_SET="${LD_LIBRARY_PATH+1}"
+export POM2_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 exec "${HERE}/usr/bin/POM2" "$@"

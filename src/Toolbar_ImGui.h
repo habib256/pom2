@@ -66,6 +66,10 @@ public:
         // menu's pacing (EmulationController::machineCpuClockHz): what a
         // //c Plus actually runs at, 4 MHz or 1 MHz after Esc at reset.
         double        machineCpuHz        = 0.0;
+        // Keep the clock label once it has shown on this machine: a //e
+        // accelerator at 1 MHz through a long disk load hid it, and the
+        // toolbar shifted at every load (bug hunt 2026-11-25).
+        bool          keepMachineClock    = false;
     };
 
     struct Result {
@@ -82,6 +86,7 @@ public:
         bool requestKioskToggle      = false;
         bool requestAbout            = false;   // open the About dialog
         bool requestMonoColorToggle  = false;   // flip color ↔ monochrome
+        bool machineClockShown       = false;   // the clock label was drawn this frame
         // -1 = no change. Set to the new cyclesPerFrame on speed dropdown
         // click; the host applies it via `EmulationController::setCyclesPerFrame`.
         int           setCyclesPerFrame   = -1;

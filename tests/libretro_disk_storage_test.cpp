@@ -22,10 +22,9 @@ using pom2::libretro::DiskStorageAccess;
 // openDiskStorage never throws; a failure is an empty path and a message.
 std::string lastError;
 pom2::libretro::DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content, const fs::path& original,
-                                            DiskStorageAccess access = DiskStorageAccess::CreateIfMissing,
-                                            unsigned variant = 0)
+                                            DiskStorageAccess access = DiskStorageAccess::CreateIfMissing)
 {
-    return pom2::libretro::openDiskStorage(saves, content, original, lastError, access, variant);
+    return pom2::libretro::openDiskStorage(saves, content, original, lastError, access);
 }
 
 namespace {
@@ -119,14 +118,24 @@ int main()
     write(hero1, "blank");
     write(hero2, "blank");
     const auto playlist = work / "pl" / "Heroes.m3u";
-    const auto one = openDiskStorage(saves, playlist, hero1, DiskStorageAccess::CreateIfMissing, 0);
-    const auto two = openDiskStorage(saves, playlist, hero2, DiskStorageAccess::CreateIfMissing, 1);
+    const auto one = openDiskStorage(saves, playlist, hero1);
+    const auto two = openDiskStorage(saves, playlist, hero2);
     check(one.path != two.path && two.path.filename().u8string() == "SAVE (2).DSK",
           "a playlist's second SAVE.DSK has a copy of its own");
+    // Bound to the disk, not to its place in the playlist: opened in the
+    // other order, each finds its own copy again.
+    check(openDiskStorage(saves, playlist, hero2).path == two.path &&
+              openDiskStorage(saves, playlist, hero1).path == one.path,
+          "a playlist's SAVE.DSK copies follow their disks, not their order");
+    // The plain copy gone (deleted to restart that game), another image's
+    // "[hash]" copy is still found.
+    fs::remove(first.path);
+    fs::remove(fs::path(first.path.string() + ".source"));
+    check(openDiskStorage(saves, other, other).path == second.path, "a [hash] copy is found without the plain one");
 #ifndef _WIN32   // Windows cannot create the original either
     const auto device = work / "dev" / "CON.dsk";
     write(device, "con");
-    check(openDiskStorage(saves, device, device).path.filename().u8string().rfind("CON [", 0) == 0,
+    check(openDiskStorage(saves, device, device).path.filename().u8string().rfind("CON_ [", 0) == 0,
           "a device name is never a file name");
 #endif
     const auto dotted = work / "dot" / "Game..dsk";

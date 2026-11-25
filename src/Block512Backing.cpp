@@ -93,6 +93,7 @@ bool Block512Backing::readImageFile(const std::string& path, PreparedImage& out,
     // like a locked floppy.
     out.hostWritable = !pom2::mediaFileIsReadOnly(path);   // MediaNotch.h
 
+    out.stamp = pom2::stampMediaFile(path, out.bytes.data(), out.bytes.size());
     out.path  = path;
     out.valid = true;
     error.clear();
@@ -303,6 +304,7 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     nextWriteBack_ = {};
     anyDirty_ = false;
     path_     = path;
+    mountStamp_ = prepared.stamp;
     loaded_   = true;
 
     pom2::log().info("HDV", "Loaded " + path + " (" +
@@ -356,6 +358,7 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     nextWriteBack_ = {};
     anyDirty_ = false;
     path_     = label;
+    mountStamp_ = {};
     loaded_   = true;
     pom2::log().info("HDV", "Loaded synthesised volume: " + label +
                             " (" + std::to_string(blockCount()) + " blocks)");
@@ -375,6 +378,7 @@ void Block512Backing::eject()
     dataOffset_ = 0;
     dataLength_ = 0;
     path_.clear();
+    mountStamp_ = {};
     hostFolder_.clear();
     detachedSession_ = false;
     loaded_ = false;
@@ -479,6 +483,7 @@ Block512Backing::takeWriteBack(std::vector<uint8_t> scratch)
     out.valid      = true;
     out.synth      = synth_;
     out.path       = path_;
+    out.mounted    = mountStamp_;
     out.hostFolder = hostFolder_;
     out.dataOffset = dataOffset_;
     out.dataLength = dataLength_;
@@ -633,6 +638,18 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
         return true;
     }
 
+    // A file another program replaced since the mount (a sync tool, a disk
+    // editor) is never patched: the guest's blocks merged into a foreign
+    // ProDOS volume cross-link it (bug hunt 2026-11-25; floppies divert to a
+    // sibling in commitMediaInOrder). The blocks stay dirty in the machine,
+    // as after any failed commit, and the message says why.
+    if (!pom2::mediaFileIsOurs(pending.path, pending.mounted)) {
+        error = pending.path + " was changed by another program since it was mounted; "
+                "POM2 did not write into it. Eject and remount it to take that version, "
+                "or keep playing: your changes stay in the machine.";
+        pom2::log().warn("HDV", error);
+        return false;
+    }
     // Rewrite a complete sibling copy, preserving the 2IMG envelope and any
     // trailer.  An in-place series of 512-byte writes could leave the user's
     // only image half-updated when a later write/flush failed.
@@ -717,6 +734,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     // IDBFS flush. Uploaded /uploads images remain in MEMFS; preserving
     // those requires a session or Automatic resume. No-op natively.
     markPersistentStateDirty();
+    pom2::noteOwnMediaWrite(pending.path);   // ours: the next commit recognises it
     pom2::log().info("HDV", "Saved " + std::to_string(written) +
                             " modified block(s) to " + pending.path);
     return true;

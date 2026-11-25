@@ -4,6 +4,8 @@
 
 #include "core_options.hpp"
 
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <string>
@@ -332,6 +334,24 @@ const Option* findOption(std::string_view key)
 bool hasOptionVersion2 = false;
 
 } // namespace
+
+float percentValue(std::string_view text, float fallback)
+{
+    const std::string value(text);
+    char* end = nullptr;
+    const double number = std::strtod(value.c_str(), &end);
+    if (!end || end == value.c_str() || !std::isfinite(number)) return fallback;
+    if (*end == '%') ++end;
+    // 0 % to 1000 %: a hostile configuration cannot make the dead zone's
+    // float-to-int conversion undefined.
+    return *end == '\0' && number >= 0.0 && number <= 1000.0 ? static_cast<float>(number / 100.0) : fallback;
+}
+
+void forEachOptionValue(void (*visit)(const char* key, const char* value, void* context), void* context)
+{
+    for (const auto& option : options())
+        for (const auto& choice : option.choices) visit(option.key, choice.value, context);
+}
 
 void registerCoreOptions(retro_environment_t environment)
 {

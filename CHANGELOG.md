@@ -14,10 +14,10 @@ marker and the previous one.
 
 ## 2026-11-25 — Bug hunt before v1.2.4
 
-Two rounds of four reviewers — the first over everything since v1.2.3, the
-second over the first round's fixes, the core's state and media lifecycle,
-and portability — then a third round fixing everything left that could be.
-58 findings fixed, the list in
+Four rounds — four reviewers over everything since v1.2.3, four over the
+first round's fixes, the core's state and media lifecycle and portability,
+a round fixing everything left that could be, then eight reviewers over
+the result. 110 findings fixed, the list in
 [docs/audits/bug-hunt-2026-11-25.md](docs/audits/bug-hunt-2026-11-25.md).
 The ones a player meets:
 
@@ -43,7 +43,7 @@ The ones a player meets:
   `.source` record written on Windows never matched on a phone. Names are
   now printable ASCII everywhere (a changed name keeps `[<hash>]`), the
   record is binary. A v1.2.3 copy whose new name a copy from another folder
-  already took is kept beside it, the newer one playing.
+  already took is kept beside it, the one with progress playing.
 - **Pad profiles**: closing the on-screen keyboard with Start no longer
   presses the game's Start key; L3 and R3 keep their names in the controls
   menu; a key held by two buttons stays down until both are released.
@@ -76,7 +76,7 @@ already lists is left out, so the DAT never renames an entry.
 
 ## 2026-11-25 — Libretro disk saves named for a frontend to find
 
-RetroBat asked (emulatorlauncher#1498) for disk saves a frontend can locate.
+RetroBat asked (RetroBat-Official/emulatorlauncher#1498) for disk saves a frontend can locate.
 The private copy of a disk was `pom2/disks/<sha256 of the content
 path>/<sha256 of the disk path and bytes><ext>`: safe, and opaque. It is now
 `pom2/disks/<content name>/<disk file name>` — `Ultima IV/Ultima IV side

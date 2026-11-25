@@ -18,7 +18,6 @@ bool isArchive(const std::filesystem::path& path);
 // content to load: the archive's own .m3u, a playlist written for several
 // disk images (in name order), or its single disk image or program. A
 // ShrinkIt archive of files becomes a ProDOS data volume (ExchangeMedia.h).
-// Throws std::runtime_error with the reason.
 // A zip, a .gz, a ShrinkIt archive or a DiskCopy image unpacked into
 // `cacheRoot`: the disk to load, or a playlist of them. Never throws: a
 // failure leaves `error` set and returns an empty path (RetroArch's web build

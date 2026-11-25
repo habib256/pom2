@@ -5,8 +5,11 @@
 #include <memory>
 #include <utility>
 
-bool DiskImage::bindSnapshotBacking(const std::string& backing, const pom2::MediaFileStamp* live)
+bool DiskImage::bindSnapshotBacking(const std::string& backing, const DiskImage* live)
 {
+    if (live && !(live->loaded && live->path == backing && live->writeBackEnabled &&
+                  !live->isFileWriteProtected() && live->fileStamp_.known))
+        live = nullptr;
     if (!loaded || !detachedSession_ || isFileWriteProtected() || !writeBackEnabled)
         return false;
     auto baseline = std::make_unique<DiskImage>();
@@ -16,7 +19,8 @@ bool DiskImage::bindSnapshotBacking(const std::string& backing, const pom2::Medi
         (!wozFormat && sectorOrder != baseline->sectorOrder))
         return false;
     path = backing;
-    fileStamp_ = live && live->known ? *live : baseline->fileStamp_;
+    fileStamp_ = live ? live->fileStamp_ : baseline->fileStamp_;
+    if (live && live->lineage_ != 0) lineage_ = live->lineage_;
     detachedSession_ = false;
     cnib2Format = baseline->cnib2Format;
     twoImgFormat = baseline->twoImgFormat;

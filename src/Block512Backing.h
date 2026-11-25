@@ -33,6 +33,7 @@
 #ifndef POM2_BLOCK512_BACKING_H
 #define POM2_BLOCK512_BACKING_H
 
+#include "MediaAutosave.h"
 #include "MediaWritePolicy.h"
 
 #include <atomic>
@@ -121,6 +122,9 @@ public:
         /// writes and fail at flush time.
         bool                 hostWritable = true;
         bool                 valid        = false;
+        /// The file as it was read: a commit refuses to write into a file
+        /// another program replaced since (Block512Backing.cpp).
+        pom2::MediaFileStamp stamp;
     };
 
     /// Two host paths name the same file or folder: equal strings, or
@@ -215,6 +219,7 @@ public:
         std::shared_ptr<const int> captureReservation;
         bool                  valid      = false;  ///< false → phase 2 no-ops
         bool                  synth      = false;
+        pom2::MediaFileStamp  mounted;            ///< file case: the file as the mount read it
         std::string           path;               ///< file case
         std::string           hostFolder;         ///< synth case
         size_t                dataOffset = 0;
@@ -471,6 +476,7 @@ private:
     std::shared_ptr<const HostNameMap> nameMap_;   // synth: takeFolderNameMap
     std::string hostFolder_;
     std::string path_;
+    pom2::MediaFileStamp mountStamp_;   // the file as the mount read it ({} for a folder)
     std::string lastError_;
     bool    loaded_ = false;
     bool    detachedSession_ = false;

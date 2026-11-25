@@ -315,15 +315,22 @@ void MainWindow::renderDiskRefusal()
     ImGui::Spacing();
     const float w = ImGui::GetFontSize() * 6;
     bool insertElsewhere = false;
+    // Enter takes the offer only once the dialog has been on screen a moment,
+    // and only a fresh press: in the browser the refusal arrives when the
+    // upload ends, maybe while the player is typing RETURN into the Apple
+    // (bug hunt 2026-11-25).
+    if (ImGui::IsWindowAppearing()) diskRefusalShownAt_ = ImGui::GetTime();
+    const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, /*repeat=*/false) &&
+                       ImGui::GetTime() - diskRefusalShownAt_ > 0.5;
     if (diskRefusalAlternative_) {
         const std::string label = ICON_FA_ARROW_RIGHT "  Insert into " + diskRefusalAlternative_->label;
-        if (ImGui::Button(label.c_str()) || ImGui::IsKeyPressed(ImGuiKey_Enter)) insertElsewhere = true;
+        if (ImGui::Button(label.c_str()) || enter) insertElsewhere = true;
         ImGui::SameLine();
     }
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - w - ImGui::GetStyle().WindowPadding.x);
     if (insertElsewhere || ImGui::Button(diskRefusalAlternative_ ? "Cancel" : "OK", ImVec2(w, 0)) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-        (!diskRefusalAlternative_ && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+        (!diskRefusalAlternative_ && enter))
         ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
     if (insertElsewhere) {
@@ -346,8 +353,11 @@ void MainWindow::processDriveRackFileDrop() {
             tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
             driveRackFilePicker_.complete(ok, error);
         } else {
-            const bool ok = insertDriveRackImage(selected->target, selected->path, /*explain=*/false);
-            driveRackFilePicker_.complete(ok, ok ? "" : tapeStatusMessage);
+            // Explained like a drop: a file of the wrong kind gets the offer
+            // of the drive that takes it, which the picker alone never made.
+            (void)insertDriveRackImage(selected->target, selected->path, /*explain=*/true);
+            // The refusal dialog explains a failure: the picker closes behind it.
+            driveRackFilePicker_.complete(true, "");
         }
     }
     if (driveRackPendingDrop_.empty()) return;

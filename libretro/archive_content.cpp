@@ -4,22 +4,39 @@
 
 #include "archive_content.hpp"
 
+#include "AtomicFileReplace.h"
 #include "ExchangeMedia.h"
 #include "ZipMember.h"
+#include "portable_name.hpp"
 #include "pom2/core.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iterator>
-#include <set>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
+// Nothing here throws (archive_content.hpp): every failure leaves `error`.
+// And nothing here trusts the archive (bug hunt 2026-11-25): its names become
+// portable leaves before they touch the file system (no folder, no drive
+// letter, no device name, CP437 read as CP437), its sizes are capped in
+// total, a member that cannot be used is skipped rather than failing the
+// disks beside it, and the cache folder is written as the save folder is:
+// no planted link is followed.
+
 namespace pom2::libretro {
 namespace {
+namespace fs = std::filesystem;
 
-constexpr std::size_t kMaxMember = 40u << 20;   // a 32 MiB hard disk and its 2IMG header
+constexpr std::size_t kMaxMember = 40u << 20;      // a 32 MiB hard disk and its 2IMG header
+constexpr std::size_t kMaxArchive = 256u << 20;    // the archive, read whole
+constexpr std::size_t kMaxUnpacked = 256u << 20;   // every member, unpacked
+constexpr std::size_t kMaxEntries = 4096;          // central-directory names looked at
+constexpr std::size_t kMaxDisks = 64;              // disks kept from one archive
+constexpr std::size_t kMaxPlaylistLines = 1024;
 
 std::string lower(std::string text)
 {
@@ -28,72 +45,29 @@ std::string lower(std::string text)
     return text;
 }
 
-bool loadable(const std::filesystem::path& name)
+// The extension of a raw name, lowercased, from the bytes: no path is built
+// from a name that may not be UTF-8.
+std::string suffixOf(const std::string& name)
 {
-    static const char* const kExtensions[] = {".dsk", ".do", ".po", ".nib", ".woz", ".d13", ".2mg",
-                                              ".2img", ".hdv", ".m3u", ".bin", ".bas"};
-    const auto suffix = lower(name.extension().u8string());
-    return std::find(std::begin(kExtensions), std::end(kExtensions), suffix) != std::end(kExtensions);
+    const auto dot = name.find_last_of('.');
+    return dot == std::string::npos ? std::string() : lower(name.substr(dot));
 }
 
-// Nothing here throws (archive_content.hpp): every failure leaves `error`.
-std::vector<std::uint8_t> readAll(const std::filesystem::path& path, std::string& error)
+enum class Kind { None, Disk, Playlist, Program, Tape, Exchange };
+
+Kind kindOf(const std::string& name)
 {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        error = "Cannot read archive " + path.u8string();
-        return {};
-    }
-    return {std::istreambuf_iterator<char>(file), {}};
+    static const char* const kDisks[] = {".dsk", ".do", ".po", ".nib", ".woz", ".d13", ".2mg", ".2img", ".hdv"};
+    const auto suffix = suffixOf(name);
+    if (std::find(std::begin(kDisks), std::end(kDisks), suffix) != std::end(kDisks)) return Kind::Disk;
+    if (suffix == ".m3u") return Kind::Playlist;
+    if (suffix == ".bin" || suffix == ".bas") return Kind::Program;
+    if (suffix == ".wav" || suffix == ".aci") return Kind::Tape;
+    if (suffix == ".image" || pom2::exchange::hasExchangeExtension(name)) return Kind::Exchange;
+    return Kind::None;
 }
 
-void writeIfChanged(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes, std::string& error)
-{
-    // The extracted file is the "original" a private copy is made from:
-    // leave it alone when it already holds these bytes.
-    std::error_code status;
-    if (std::filesystem::file_size(path, status) == bytes.size() && !status) {
-        std::string unread;
-        if (readAll(path, unread) == bytes && unread.empty()) return;
-    }
-    std::filesystem::create_directories(path.parent_path(), status);
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    if (!out) error = "Cannot unpack to " + path.u8string();
-}
-
-// A ShrinkIt archive, a DiskCopy image or a .image: the disks it holds,
-// written into `folder`. A .image that is not DiskCopy 4.2 is a raw block
-// image, which the drives take as a .po.
-std::vector<std::filesystem::path> convertExchange(const std::string& name, const std::vector<std::uint8_t>& bytes,
-                                                   const std::filesystem::path& folder, std::string& error)
-{
-    std::vector<pom2::exchange::Image> images;
-    std::string note, failure;
-    if (!pom2::exchange::convert(name, bytes, images, note, failure)) {
-        const bool rawImage = lower(std::filesystem::u8path(name).extension().u8string()) == ".image"
-            && !bytes.empty() && bytes.size() % 512 == 0 && bytes.size() <= kMaxMember;
-        if (!rawImage) {
-            error = name + ": " + failure;
-            return {};
-        }
-        images.push_back({std::filesystem::u8path(name).stem().u8string() + ".po", bytes});
-    }
-    std::vector<std::filesystem::path> paths;
-    for (const auto& image : images) {
-        writeIfChanged(folder / std::filesystem::u8path(image.name), image.bytes, error);
-        if (!error.empty()) return {};
-        paths.push_back(folder / std::filesystem::u8path(image.name));
-    }
-    return paths;
-}
-
-bool exchangeName(const std::string& leaf)
-{
-    return pom2::exchange::hasExchangeExtension(leaf) || lower(std::filesystem::u8path(leaf).extension().u8string()) == ".image";
-}
-
-// A member name as a safe leaf: no folders, no parent references.
+// A member name's last component, raw: no folders, no parent references.
 std::string leafName(const std::string& member)
 {
     const auto slash = member.find_last_of("/\\");
@@ -126,12 +100,167 @@ std::string trimmed(const std::string& text)
     return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
 }
 
+// Case-blind, numbers by value: "Disk 2" before "Disk 10", "boot" before "Data".
+bool naturalLess(const std::string& a, const std::string& b)
+{
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        const auto ca = static_cast<unsigned char>(a[i]), cb = static_cast<unsigned char>(b[j]);
+        if (std::isdigit(ca) && std::isdigit(cb)) {
+            std::size_t ei = i, ej = j;
+            while (ei < a.size() && std::isdigit(static_cast<unsigned char>(a[ei]))) ++ei;
+            while (ej < b.size() && std::isdigit(static_cast<unsigned char>(b[ej]))) ++ej;
+            auto na = a.substr(i, ei - i), nb = b.substr(j, ej - j);
+            na.erase(0, std::min(na.find_first_not_of('0'), na.size() - 1));
+            nb.erase(0, std::min(nb.find_first_not_of('0'), nb.size() - 1));
+            if (na.size() != nb.size()) return na.size() < nb.size();
+            if (na != nb) return na < nb;
+            i = ei;
+            j = ej;
+            continue;
+        }
+        const auto la = std::tolower(ca), lb = std::tolower(cb);
+        if (la != lb) return la < lb;
+        ++i;
+        ++j;
+    }
+    return a.size() - i < b.size() - j;
+}
+
+std::vector<std::uint8_t> readAll(const fs::path& path, std::string& error)
+{
+    std::error_code status;
+    const auto size = fs::file_size(path, status);
+    if (status || size > kMaxArchive) {
+        error = status ? "Cannot read archive " + path.u8string() : path.filename().u8string() + " is too large";
+        return {};
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        error = "Cannot read archive " + path.u8string();
+        return {};
+    }
+    return {std::istreambuf_iterator<char>(file), {}};
+}
+
+// A directory of the cache, never a planted link (as disk_storage.cpp checks
+// the save folder: a link would send the unpacked bytes anywhere).
+bool safeDirectory(const fs::path& directory, std::string& error)
+{
+    std::error_code status;
+    fs::create_directories(directory, status);
+    const auto type = fs::symlink_status(directory, status);
+    if (status || !fs::is_directory(type)) {
+        error = "Cannot use the archive cache " + directory.u8string();
+        return false;
+    }
+    return true;
+}
+
+// The unpacked file, as the archive's: a temporary beside it renamed over it,
+// so a planted link at the name is replaced, never followed.
+bool writeMember(const fs::path& path, const std::vector<std::uint8_t>& bytes, bool keepExisting,
+                 std::string& error)
+{
+    std::error_code status;
+    const auto type = fs::symlink_status(path, status);
+    if (keepExisting && fs::is_regular_file(type)) {
+        std::error_code links;
+        if (fs::hard_link_count(path, links) == 1 && !links) return true;
+    }
+    const auto temporary = tempSiblingPath(path);
+    if (!prepareTempPath(temporary, status)) {
+        error = "Cannot unpack to " + path.u8string() + ": " + status.message();
+        return false;
+    }
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (!out) {
+            error = "Cannot unpack to " + path.u8string();
+            fs::remove(temporary, status);
+            return false;
+        }
+    }
+    fs::rename(temporary, path, status);
+    if (status) {
+        error = "Cannot unpack to " + path.u8string() + ": " + status.message();
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        return false;
+    }
+    return true;
+}
+
+// One archive's unpacking: the names it claims, what it wrote, the totals.
+struct Unpack {
+    fs::path folder;
+    bool unchanged = false;                 // the archive is the one unpacked here before
+    std::map<std::string, unsigned> next;   // lowercased leaf -> next number
+    std::set<std::string> taken;            // lowercased leaves written
+    std::size_t unpacked = 0;
+    std::string firstFailure;
+
+    // A unique leaf: "GAME.DSK", then "GAME (2).DSK", "GAME (3).DSK"...
+    std::string claim(const std::string& leaf)
+    {
+        const auto dot = leaf.find_last_of('.');
+        const auto stem = dot == std::string::npos || dot == 0 ? leaf : leaf.substr(0, dot);
+        const auto extension = dot == std::string::npos || dot == 0 ? std::string() : leaf.substr(dot);
+        auto& n = next[lower(leaf)];
+        std::string name = leaf;
+        while (!taken.insert(lower(name)).second)
+            name = stem + " (" + std::to_string(++n + 1) + ")" + extension;
+        return name;
+    }
+
+    bool write(const std::string& leaf, const std::vector<std::uint8_t>& bytes, std::string& error)
+    {
+        unpacked += bytes.size();
+        if (unpacked > kMaxUnpacked) {
+            error = "the archive unpacks to more than 256 MiB";
+            return false;
+        }
+        // An archive unpacked here before keeps its files: with no save
+        // folder a disk is played in place, and its progress is there.
+        return writeMember(folder / fs::u8path(leaf), bytes, unchanged, error);
+    }
+};
+
+// A ShrinkIt archive, a DiskCopy image or a .image: the disks it holds,
+// written into the folder. A .image that is not DiskCopy 4.2 is a raw block
+// image, which the drives take as a .po.
+std::vector<fs::path> convertExchange(Unpack& unpack, const std::string& name, const std::vector<std::uint8_t>& bytes,
+                                      std::string& error)
+{
+    std::vector<pom2::exchange::Image> images;
+    std::string note, failure;
+    if (!pom2::exchange::convert(name, bytes, images, note, failure)) {
+        const bool rawImage = suffixOf(name) == ".image" && !bytes.empty() && bytes.size() % 512 == 0 &&
+                              bytes.size() <= kMaxMember;
+        if (!rawImage) {
+            error = hostLeafName(name) + ": " + failure;
+            return {};
+        }
+        const auto dot = name.find_last_of('.');
+        images.push_back({name.substr(0, dot) + ".po", bytes});
+    }
+    std::vector<fs::path> paths;
+    for (const auto& image : images) {
+        const auto leaf = unpack.claim(hostLeafName(image.name));
+        if (!unpack.write(leaf, image.bytes, error)) return {};
+        paths.push_back(unpack.folder / fs::u8path(leaf));
+    }
+    return paths;
+}
+
 } // namespace
 
 bool isArchive(const std::filesystem::path& path)
 {
-    const auto suffix = lower(path.extension().u8string());
-    return suffix == ".zip" || suffix == ".gz" || exchangeName(path.filename().u8string());
+    const auto name = path.filename().u8string();
+    const auto suffix = suffixOf(name);
+    return suffix == ".zip" || suffix == ".gz" || kindOf(name) == Kind::Exchange;
 }
 
 std::filesystem::path unpackArchive(const std::filesystem::path& archive, const std::filesystem::path& cacheRoot,
@@ -139,109 +268,184 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
 {
     error.clear();
     std::error_code status;
-    const auto absolute = std::filesystem::absolute(archive, status).u8string();
+    const auto absolute = fs::absolute(archive, status).u8string();
     const auto digest = pom2::Core::sha256(reinterpret_cast<const std::uint8_t*>(absolute.data()),
                                            absolute.size());
-    const auto folder = cacheRoot / digest.substr(0, 24);
     const auto bytes = readAll(archive, error);
     if (!error.empty()) return {};
-    const auto noDisk = [&] {
-        error = archive.filename().u8string() + " holds no Apple II disk image";
-        return std::filesystem::path{};
+
+    Unpack unpack;
+    unpack.folder = cacheRoot / digest.substr(0, 24);
+    if (!safeDirectory(cacheRoot.parent_path(), error) || !safeDirectory(cacheRoot, error) ||
+        !safeDirectory(unpack.folder, error))
+        return {};
+    // Which archive was unpacked here: the same bytes keep their files (and
+    // any progress made in them), new bytes unpack afresh.
+    const auto archiveHash = pom2::Core::sha256(bytes.data(), bytes.size());
+    const auto marker = unpack.folder / ".archive";
+    {
+        std::ifstream in(marker, std::ios::binary);
+        std::string recorded;
+        std::getline(in, recorded);
+        unpack.unchanged = recorded == archiveHash && fs::is_regular_file(fs::symlink_status(marker, status));
+    }
+
+    std::vector<fs::path> disks, programs, tapes;
+    std::vector<std::pair<fs::path, std::string>> playlists;   // written copy, member path
+    std::map<std::string, std::string> written;                // member key -> leaf written
+    const auto skip = [&unpack](const std::string& failure) {
+        if (unpack.firstFailure.empty()) unpack.firstFailure = failure;
+    };
+    const auto keep = [&](Kind kind, const fs::path& path, const std::string& member) {
+        if (kind == Kind::Disk) disks.push_back(path);
+        else if (kind == Kind::Playlist) playlists.emplace_back(path, member);
+        else if (kind == Kind::Program) programs.push_back(path);
+        else if (kind == Kind::Tape) tapes.push_back(path);
     };
 
-    std::vector<std::filesystem::path> disks;
-    std::vector<std::pair<std::filesystem::path, std::string>> playlists;   // written copy, member path
-    std::map<std::string, std::string> written;                             // member key -> leaf written
-    if (exchangeName(archive.filename().u8string())) {
-        disks = convertExchange(archive.filename().u8string(), bytes, folder, error);
+    const auto archiveName = archive.filename().u8string();
+    if (kindOf(archiveName) == Kind::Exchange) {
+        disks = convertExchange(unpack, archiveName, bytes, error);
         if (!error.empty()) return {};
-    } else if (lower(archive.extension().u8string()) == ".gz") {
+    } else if (suffixOf(archiveName) == ".gz") {
         std::vector<std::uint8_t> out;
         std::string name, failure;
         if (!pom2::gunzip(bytes, out, failure, kMaxMember, &name)) {
-            error = archive.filename().u8string() + ": " + failure;
+            error = hostLeafName(archiveName) + ": " + failure;
             return {};
         }
-        auto leaf = leafName(name);
-        if (leaf.empty()) leaf = archive.stem().u8string();   // "Game.dsk.gz" -> "Game.dsk"
-        if (exchangeName(leaf)) {
-            disks = convertExchange(leaf, out, folder, error);   // "Game.shk.gz"
+        // The archive's own name first ("Game.dsk.gz" is Game.dsk, renamed or
+        // not), then the name stored inside it.
+        auto leaf = archive.stem().u8string();
+        if (kindOf(leaf) == Kind::None) leaf = leafName(name);
+        const auto kind = kindOf(leaf);
+        if (kind == Kind::Exchange) {
+            disks = convertExchange(unpack, leaf, out, error);   // "Game.shk.gz"
             if (!error.empty()) return {};
+        } else if (kind == Kind::None || kind == Kind::Playlist) {
+            error = hostLeafName(archiveName) + " holds no Apple II disk image";
+            return {};
         } else {
-            if (!loadable(std::filesystem::u8path(leaf))) return noDisk();
-            writeIfChanged(folder / std::filesystem::u8path(leaf), out, error);
-            if (!error.empty()) return {};
-            return folder / std::filesystem::u8path(leaf);
+            const auto stored = unpack.claim(hostLeafName(leaf));
+            if (!unpack.write(stored, out, error)) return {};
+            keep(kind, unpack.folder / fs::u8path(stored), leaf);
         }
     } else {
         std::vector<pom2::ZipEntry> entries;
         std::string failure;
         if (!pom2::listZipEntries(bytes, entries, failure)) {
-            error = archive.filename().u8string() + ": " + failure;
+            error = hostLeafName(archiveName) + ": " + failure;
             return {};
         }
-        // Two members with one leaf name ("Side A/GAME.DSK", "Side B/GAME.DSK",
-        // or GAME.DSK and game.dsk on a case-blind disk) would overwrite each
-        // other in the flat folder: the second becomes "GAME (2).DSK".
-        std::set<std::string> taken;
+        if (entries.size() > kMaxEntries) {
+            error = hostLeafName(archiveName) + " holds too many files";
+            return {};
+        }
+        // By path, so the same members give the same names however the zip
+        // orders them ("GAME.DSK" and "GAME (2).DSK" do not swap on a repack).
+        std::stable_sort(entries.begin(), entries.end(), [](const pom2::ZipEntry& a, const pom2::ZipEntry& b) {
+            return memberKey(a.name) < memberKey(b.name);
+        });
         for (const auto& entry : entries) {
-            auto leaf = leafName(entry.name);
-            if (leaf.empty() || leaf.front() == '.' || !(loadable(std::filesystem::u8path(leaf)) || exchangeName(leaf)))
-                continue;
+            const auto leaf = leafName(entry.name);
+            const auto kind = kindOf(leaf);
+            if (leaf.empty() || leaf.front() == '.' || kind == Kind::None) continue;
+            if ((kind == Kind::Disk || kind == Kind::Exchange) && disks.size() >= kMaxDisks) continue;
             std::vector<std::uint8_t> out;
             if (!pom2::readZipEntry(bytes, entry, out, failure, kMaxMember)) {
-                error = archive.filename().u8string() + ": " + entry.name + ": " + failure;
-                return {};
-            }
-            if (exchangeName(leaf)) {
-                auto converted = convertExchange(leaf, out, folder, error);
-                if (!error.empty()) return {};
-                for (auto& disk : converted) disks.push_back(std::move(disk));
+                skip(hostLeafName(leaf) + ": " + failure);   // an extra that cannot be read: the disks still load
                 continue;
             }
-            const auto base = std::filesystem::u8path(leaf);
-            for (int n = 2; !taken.insert(lower(leaf)).second; ++n)
-                leaf = base.stem().u8string() + " (" + std::to_string(n) + ")" + base.extension().u8string();
-            const auto path = folder / std::filesystem::u8path(leaf);
-            writeIfChanged(path, out, error);
-            if (!error.empty()) return {};
-            written[memberKey(entry.name)] = leaf;
-            if (lower(base.extension().u8string()) == ".m3u") playlists.emplace_back(path, entry.name);
-            else disks.push_back(path);
+            if (kind == Kind::Exchange) {
+                std::string converted;
+                auto paths = convertExchange(unpack, leaf, out, converted);
+                if (!converted.empty()) {
+                    if (unpack.unpacked > kMaxUnpacked) { error = converted; return {}; }
+                    skip(converted);
+                    continue;
+                }
+                if (!paths.empty()) written[memberKey(entry.name)] = paths.front().filename().u8string();
+                for (auto& path : paths) disks.push_back(std::move(path));
+                continue;
+            }
+            const auto name = unpack.claim(hostLeafName(leaf));
+            if (!unpack.write(name, out, error)) return {};
+            written[memberKey(entry.name)] = name;
+            keep(kind, unpack.folder / fs::u8path(name), entry.name);
         }
     }
+
+    // Files a previous archive at this path left, which this one did not write.
+    for (const auto& entry : fs::directory_iterator(unpack.folder, status)) {
+        const auto name = entry.path().filename().u8string();
+        std::error_code ignored;
+        if (name != ".archive" && !unpack.taken.count(lower(name)) && fs::is_regular_file(entry.symlink_status(ignored)))
+            fs::remove(entry.path(), ignored);
+    }
+    if (!unpack.unchanged) {
+        std::vector<std::uint8_t> record(archiveHash.begin(), archiveHash.end());
+        record.push_back('\n');
+        writeMember(marker, record, false, error);
+        error.clear();   // only an optimisation: a missing marker unpacks again next time
+    }
+
+    // The zip's own playlist, when it names disks the zip holds: its entries
+    // become the names they were written under, "./" first so that a name
+    // starting with '#' or a blank is a disk, not a comment.
     if (!playlists.empty()) {
-        // The zip's own playlist names its disks by their place in the zip
-        // ("disks/A.dsk"); the folder is flat, so name them as written.
         const auto& [path, member] = playlists.front();
         const auto slash = member.find_last_of("/\\");
         const std::string base = slash == std::string::npos ? std::string() : member.substr(0, slash + 1);
         std::ifstream in(path, std::ios::binary);
-        std::string line, rewritten;
-        for (bool first = true; std::getline(in, line); first = false) {
+        std::string line, rewritten, pendingInfo;
+        std::size_t mapped = 0, lines = 0;
+        for (bool first = true; std::getline(in, line) && ++lines <= kMaxPlaylistLines; first = false) {
             if (first && line.compare(0, 3, "\xef\xbb\xbf") == 0) line.erase(0, 3);
             const auto bar = line.find('|');
             const auto entry = trimmed(line.substr(0, bar));
-            if (entry.empty() || entry[0] == '#') { rewritten += line + "\n"; continue; }
+            if (entry.empty()) continue;
+            if (entry.compare(0, 8, "#EXTINF:") == 0) { pendingInfo = trimmed(line) + "\n"; continue; }
+            if (entry[0] == '#') { rewritten += trimmed(line) + "\n"; continue; }
             const auto found = written.find(memberKey(base + entry));
-            const auto name = found != written.end() ? found->second : leafName(entry);
-            rewritten += name + (bar == std::string::npos ? std::string() : line.substr(bar)) + "\n";
+            if (found == written.end() || kindOf(found->second) != Kind::Disk) {
+                pendingInfo.clear();   // a disk the zip does not hold: left out, with its label
+                continue;
+            }
+            rewritten += pendingInfo + "./" + found->second +
+                         (bar == std::string::npos ? std::string() : trimmed(line.substr(bar))) + "\n";
+            pendingInfo.clear();
+            ++mapped;
         }
         in.close();
-        writeIfChanged(path, std::vector<std::uint8_t>(rewritten.begin(), rewritten.end()), error);
-        if (!error.empty()) return {};
-        return path;
+        if (mapped) {
+            if (!writeMember(path, std::vector<std::uint8_t>(rewritten.begin(), rewritten.end()), false, error))
+                return {};
+            return path;
+        }
+        // A playlist that names nothing the zip holds: the disks themselves.
     }
-    if (disks.empty()) return noDisk();
+    if (disks.empty()) {
+        if (!programs.empty() || !tapes.empty()) {
+            auto& found = programs.empty() ? tapes : programs;
+            std::sort(found.begin(), found.end(), [](const fs::path& a, const fs::path& b) {
+                return naturalLess(a.filename().u8string(), b.filename().u8string());
+            });
+            return found.front();
+        }
+        error = unpack.firstFailure.empty() ? hostLeafName(archiveName) + " holds no Apple II disk image"
+                                            : unpack.firstFailure;
+        return {};
+    }
     if (disks.size() == 1) return disks.front();
-    // Several disks: a playlist in name order, so Disc Control can swap them.
-    std::sort(disks.begin(), disks.end());
+    // Several disks: a playlist in natural order, so Disc Control can swap them.
+    std::sort(disks.begin(), disks.end(), [](const fs::path& a, const fs::path& b) {
+        return naturalLess(a.filename().u8string(), b.filename().u8string());
+    });
+    disks.erase(std::unique(disks.begin(), disks.end()), disks.end());
     std::string playlist;
-    for (const auto& disk : disks) playlist += disk.filename().u8string() + "\n";
-    const auto path = folder / std::filesystem::u8path(archive.stem().u8string() + ".m3u");
-    writeIfChanged(path, std::vector<std::uint8_t>(playlist.begin(), playlist.end()), error);
-    if (!error.empty()) return {};
+    for (const auto& disk : disks) playlist += "./" + disk.filename().u8string() + "\n";
+    const auto path = unpack.folder / fs::u8path(unpack.claim(hostLeafName(archive.stem().u8string() + ".m3u")));
+    if (!writeMember(path, std::vector<std::uint8_t>(playlist.begin(), playlist.end()), false, error)) return {};
     return path;
 }
 

@@ -10,7 +10,7 @@ Built from the same emulator as POM2 v1.2.4.
   did not open on a PC without the VC++ redistributable, which RetroArch
   does not install. The runtime is now built in, and CI refuses a core that
   needs it.
-- **Disk saves a frontend can find** (RetroBat, emulatorlauncher#1498). The
+- **Disk saves a frontend can find** (RetroBat, RetroBat-Official/emulatorlauncher#1498). The
   private copy of a disk is now `saves/pom2/disks/<game>/<disk file>`, for
   example `Ultima IV/Ultima IV side B.dsk` for a disk of `Ultima IV.m3u`.
   Names are plain ASCII, the same on every platform, so a save folder synced
@@ -46,8 +46,8 @@ Built from the same emulator as POM2 v1.2.4.
   netplay carries a mouse only from a port set to a mouse device. Checked
   with Apple II DeskTop, at 150 % mouse speed.
 
-Before this release, two rounds of review over everything since v1.2.3
-fixed 58 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
+Before this release, four rounds of review over everything since v1.2.3
+fixed 110 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
 
 The core also builds for iOS, tvOS, RetroArch's web player and 32-bit ARM
 Linux. Each build is checked in CI, the web one by booting a game under

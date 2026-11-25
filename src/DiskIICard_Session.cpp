@@ -203,7 +203,7 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
 }
 
 bool DiskIICard::bindSdkBacking(SessionRestore& prepared, const std::string& backing, int drive,
-                                const pom2::MediaFileStamp* live)
+                                const DiskImage* live)
 {
     if (drive < 0 || drive >= kDriveCount) return false;
     if (!prepared.media[drive]->bindSnapshotBacking(backing, live))

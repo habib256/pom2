@@ -270,7 +270,11 @@ public:
     // one, so a copy another program replaced meanwhile is still diverted at
     // the next commit, not taken as the baseline and overwritten — a restore
     // runs every frame under run-ahead (bug hunt 2026-11-25).
-    bool bindSnapshotBacking(const std::string& backing, const pom2::MediaFileStamp* live = nullptr);
+    // Its lineage too, so the mount keeps its place in the commit order and
+    // a diversion already made: a fresh lineage diverted again on every
+    // restore, a new sibling each flush. Only a writable mount of the same
+    // copy counts (a read-only one never wrote it).
+    bool bindSnapshotBacking(const std::string& backing, const DiskImage* live = nullptr);
     const pom2::MediaFileStamp& fileStamp() const { return fileStamp_; }
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }

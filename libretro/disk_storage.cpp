@@ -159,22 +159,61 @@ fs::path sourceRecord(const fs::path& backing)
     return record;
 }
 
-// Binary, and read without trailing blanks: a record written on Windows
-// ("hash\r\n") must match on Linux or Android, or a save synced between them
-// would be taken for another image (bug hunt 2026-11-25).
-std::string recordedSource(const fs::path& backing)
+// A copy's record: the original's SHA-256, then where the original sits
+// relative to the content's folder ("Hero 2/SAVE.DSK"), so two disks of one
+// playlist with the same file name and the same bytes keep their own copies
+// whatever the playlist's order (bug hunt 2026-11-25). Binary, and read
+// without trailing blanks: a record written on Windows ("hash\r\n") matches on
+// Linux or Android. Read and written as a private regular file, at most a few
+// hundred bytes: a planted link (to /dev/zero, to a FIFO, to a file elsewhere)
+// is neither followed nor read.
+struct Record {
+    std::string hash, place;
+    bool present = false;
+};
+
+bool privateFile(const fs::path& path)
 {
-    std::ifstream input(sourceRecord(backing), std::ios::binary);
-    std::string line;
-    std::getline(input, line);
-    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
-    return line;
+    std::error_code status, links;
+    const auto type = fs::symlink_status(path, status);
+    return !status && fs::is_regular_file(type) && fs::hard_link_count(path, links) == 1 && !links;
 }
 
-void recordSource(const fs::path& backing, const std::string& sourceHash)
+Record recordedSource(const fs::path& backing)
 {
-    std::ofstream output(sourceRecord(backing), std::ios::binary | std::ios::trunc);
-    output << sourceHash << '\n';
+    Record record;
+    const auto path = sourceRecord(backing);
+    if (!privateFile(path)) return record;
+    std::ifstream input(path, std::ios::binary);
+    char buffer[512] = {};
+    input.read(buffer, sizeof buffer - 1);
+    const std::string text(buffer, static_cast<std::size_t>(input.gcount()));
+    const auto trim = [](std::string line) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        return line;
+    };
+    const auto newline = text.find('\n');
+    record.hash = trim(text.substr(0, newline));
+    if (newline != std::string::npos) {
+        const auto end = text.find('\n', newline + 1);
+        record.place = trim(text.substr(newline + 1, end == std::string::npos ? std::string::npos : end - newline - 1));
+    }
+    record.present = true;
+    return record;
+}
+
+void recordSource(const fs::path& backing, const std::string& sourceHash, const std::string& place)
+{
+    const auto path = sourceRecord(backing);
+    const auto temporary = tempSiblingPath(path);
+    std::error_code status;
+    if (!prepareTempPath(temporary, status)) return;
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << sourceHash << '\n' << place << '\n';
+    }
+    fs::rename(temporary, path, status);   // replaces a planted link, never follows it
+    if (status) fs::remove(temporary, status);
 }
 
 bool renameWithRecord(const fs::path& from, const fs::path& to, std::error_code& status)
@@ -204,7 +243,7 @@ fs::path legacyBacking(const fs::path& disks, const fs::path& content, const fs:
 
 DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                             const fs::path& original, std::string& error,
-                            DiskStorageAccess access, unsigned variant)
+                            DiskStorageAccess access, const fs::path& title)
 {
     error.clear();
     const auto fail = [&error](std::string message) {
@@ -224,7 +263,8 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
 
     // pom2/disks/<game>/<disk file name>: a frontend finds a game's saves by
     // name (RetroBat asked, emulatorlauncher#1498). <game> is the content's
-    // name — "Ultima IV" for Ultima IV.m3u, "Karateka" for Karateka.woz.
+    // name — "Ultima IV" for Ultima IV.m3u, "Karateka" for Karateka.woz, the
+    // archive's for a disk unpacked from one (`title`).
     const auto absolute = fs::absolute(saves, status);
     if (status) return fail("Cannot use disk save directory " + saves.u8string() + ": " + status.message());
     const auto root = fs::weakly_canonical(absolute, status);
@@ -234,7 +274,7 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     if (!ensureDirectory(disks, access, error)) return {};
     disks /= "disks";
     if (!ensureDirectory(disks, access, error)) return {};
-    auto gameName = (content.empty() ? original : content).stem().u8string();
+    auto gameName = (!title.empty() ? title : content.empty() ? original : content).stem().u8string();
     if (gameName.empty() || gameName == "." || gameName == "..") gameName = "disk";
     const auto directory = disks / fs::u8path(portableName(gameName));
     const auto legacy = legacyBacking(disks, content, original, sourceHash);
@@ -243,21 +283,63 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     // A restore (ExistingOnly) still makes the folder a legacy copy moves to.
     if (!ensureDirectory(directory, hasLegacy ? DiskStorageAccess::CreateIfMissing : access, error)) return {};
 
-    // The .source record keeps two games whose names match from sharing one
-    // copy: the second one, or a new revision of the image, gets its own,
-    // named with the start of its hash. `variant` keeps apart two disks of ONE
-    // playlist with the same file name (two blank SAVE.DSK in two folders).
-    const auto diskStem = portableName(original.stem().u8string()) +
-                          (variant ? " (" + std::to_string(variant + 1) + ")" : std::string());
-    const auto diskExtension = portableExtension(original.extension().u8string());
-    auto backing = directory / fs::u8path(diskStem + diskExtension);
-    if (usableBacking(backing, error)) {
-        const auto recorded = recordedSource(backing);
-        if (recorded.empty()) recordSource(backing, sourceHash);   // a copy that lost its record
-        else if (recorded != sourceHash)
-            backing = directory / fs::u8path(diskStem + " [" + sourceHash.substr(0, 8) + "]" + diskExtension);
+    // Where the original sits, relative to the content's folder: the same
+    // image in two places of one playlist is two disks.
+    std::string place = original.filename().generic_u8string();
+    if (!content.empty()) {
+        const auto relative = original.lexically_normal().lexically_relative(content.parent_path().lexically_normal());
+        const auto text = relative.generic_u8string();
+        if (!text.empty() && text.compare(0, 2, "..") != 0) place = text;
     }
-    if (!error.empty()) return {};
+    place = composedUtf8(place);   // the same name stored decomposed is the same place
+
+    // Which copy is this disk's: one recorded for this image at this place
+    // (or, for a record from before places were kept, this image), under the
+    // plain name or a numbered one, else the "[hash]" copy kept for another
+    // revision of the image. A new disk takes the plain name when it is free,
+    // the next number when the plain name holds the same image from another
+    // place, and "[hash]" when it holds another image.
+    const auto diskStem = portableName(original.stem().u8string());
+    const auto diskExtension = portableExtension(original.extension().u8string());
+    const auto named = [&](unsigned number) {
+        return directory / fs::u8path(number <= 1 ? diskStem + diskExtension
+                                                  : diskStem + " (" + std::to_string(number) + ")" + diskExtension);
+    };
+    const auto hashed = directory / fs::u8path(diskStem + " [" + sourceHash.substr(0, 8) + "]" + diskExtension);
+    fs::path backing, firstFree;
+    bool plainHoldsThisImage = false;
+    for (unsigned number = 1; number <= 32 && backing.empty(); ++number) {
+        const auto candidate = named(number);
+        const bool usable = usableBacking(candidate, error);
+        if (!error.empty()) return {};
+        if (!usable) {
+            if (firstFree.empty()) firstFree = candidate;
+            if (number > 1) break;   // numbers are taken in order: none after a free one
+            continue;
+        }
+        const auto record = recordedSource(candidate);
+        if (number == 1 && record.hash.empty()) {   // a copy that lost its record: this image's
+            recordSource(candidate, sourceHash, place);
+            backing = candidate;
+        } else if (record.hash == sourceHash && (record.place.empty() || record.place == place)) {
+            if (record.place.empty()) recordSource(candidate, sourceHash, place);
+            backing = candidate;
+        } else if (number == 1) {
+            plainHoldsThisImage = record.hash == sourceHash;
+        }
+    }
+    if (backing.empty()) {
+        const bool hashedUsable = usableBacking(hashed, error);
+        if (!error.empty()) return {};
+        if (hashedUsable && recordedSource(hashed).hash == sourceHash) backing = hashed;
+    }
+    if (backing.empty()) {
+        if (!usableBacking(named(1), error) && error.empty()) backing = named(1);
+        else if (!error.empty()) return {};
+        else if (plainHoldsThisImage && !firstFree.empty()) backing = firstFree;
+        else backing = hashed;
+    }
+
     const auto moveLegacy = [&] {
         std::error_code ignored;
         auto lock = legacy;
@@ -284,14 +366,18 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
         // next save would land on whatever was moved to its name. Left for
         // a later open.
         const auto lease = keptExists ? nullptr : lockDiskStorage(backing);
-        if (lease) {
+        std::vector<std::uint8_t> legacyBytes, backingBytes;
+        std::string unread;
+        // A copy that cannot be read is not ranked: nothing moves (it is no
+        // proof of progress, and the old code refused it the same way).
+        const bool readable = lease && readOriginal(legacy, legacyBytes, unread) &&
+                              readOriginal(backing, backingBytes, unread);
+        if (readable) {
             // Progress first: a copy still holding the original's bytes (made
             // at first boot, never played) loses to one that was played,
             // whatever their times; between two played copies, the newer.
-            std::vector<std::uint8_t> legacyBytes, backingBytes;
-            std::string unread;
-            const bool legacyPlayed = !readOriginal(legacy, legacyBytes, unread) || legacyBytes != bytes;
-            const bool backingPlayed = !readOriginal(backing, backingBytes, unread) || backingBytes != bytes;
+            const bool legacyPlayed = legacyBytes != bytes;
+            const bool backingPlayed = backingBytes != bytes;
             std::error_code legacyTime, backingTime;
             const bool legacyNewer =
                 fs::last_write_time(legacy, legacyTime) > fs::last_write_time(backing, backingTime) &&
@@ -300,11 +386,11 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
             if (legacyWins) {
                 if (!renameWithRecord(backing, kept, status) || (fs::rename(legacy, backing, status), status))
                     return fail("Cannot move disk save " + legacy.u8string() + ": " + status.message());
-                recordSource(backing, sourceHash);
+                recordSource(backing, sourceHash, place);
             } else {
                 if (fs::rename(legacy, kept, status), status)
                     return fail("Cannot move disk save " + legacy.u8string() + ": " + status.message());
-                recordSource(kept, sourceHash);
+                recordSource(kept, sourceHash, place);
             }
             moveLegacy();
         }
@@ -318,7 +404,7 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                 return fail("Cannot move disk save " + legacy.u8string() + " to " + backing.u8string() + ": " +
                             status.message());
             moveLegacy();
-            recordSource(backing, sourceHash);
+            recordSource(backing, sourceHash, place);
         } else if (!error.empty()) {
             return {};
         } else if (access == DiskStorageAccess::ExistingOnly) {
@@ -326,7 +412,7 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
         } else {
             // The record first: an instance that finds the copy then finds
             // what it was made from, never an empty record to adopt.
-            recordSource(backing, sourceHash);
+            recordSource(backing, sourceHash, place);
             if (!createBacking(backing, bytes, error)) return {};
         }
     }

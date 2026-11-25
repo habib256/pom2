@@ -307,11 +307,12 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
             return false;
         for (int drive = 0; drive < 2; ++drive) {
             if (backings.disk[drive].empty()) continue;
-            // The live drive holding the same copy: its stamp is the baseline.
-            const pom2::MediaFileStamp* live = nullptr;
-            for (int d = 0; d < 2; ++d) {
+            // The live drive holding the same copy, the same drive first: its
+            // stamp and lineage carry over (DiskImage.h).
+            const DiskImage* live = nullptr;
+            for (int d : {drive, 1 - drive}) {
                 const auto& current = state.diskII->driveImage(d);
-                if (current.isLoaded() && current.getPath() == backings.disk[drive]) live = &current.fileStamp();
+                if (!live && current.isLoaded() && current.getPath() == backings.disk[drive]) live = &current;
             }
             if (!mediaWritableByDefault() ||
                 !DiskIICard::bindSdkBacking(prepared, std::string(backings.disk[drive]), drive, live))
@@ -334,10 +335,10 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
                 return false;
             // The live unit's stamp, when it holds the same copy: the
             // baseline a restore keeps (DiskImage.h, bindSnapshotBacking).
-            const pom2::MediaFileStamp* live = nullptr;
+            const pom2::Disk35Image* live = nullptr;
             if (i == 0 && state.smartPort->unit(0)) {
                 const auto& current = static_cast<const SmartPort35Unit*>(state.smartPort->unit(0))->image();
-                if (current.isLoaded() && current.path() == smartPortBacking) live = &current.fileStamp();
+                if (current.isLoaded() && current.path() == smartPortBacking) live = &current;
             }
             if (i == 0 && !smartPortBacking.empty() &&
                 (!mediaWritableByDefault() ||
@@ -434,6 +435,9 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
     // resumes from yesterday's state).
     int64_t clockStart = -1;
     if (state.noSlotClock) {
+        // Its start date (8 bytes) before anything is read: a hostile state
+        // with a shorter section read past it (bug hunt 2026-11-25).
+        if (clock.size() < 8) return fail("Invalid SDK No-Slot Clock state");
         byteio::Reader clockReader(clock.data(), clock.size());
         clockStart = static_cast<int64_t>(clockReader.u64());
         if (clockStart < -1 ||
@@ -464,12 +468,13 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         if (!sonyReader.blob(record.identity, 16) || !sonyReader.blob(record.state, 40u << 20) || !sonyReader.done())
             return fail("Invalid SDK //c+ drive state");
         size_t mediaBytes = 0;
-        if (!prepareSessionSonyMedia(state.memory, record, sonyMedia, mediaBytes, state.error, /*allowWritable=*/true))
+        if (!prepareSessionSonyMedia(state.memory, record, sonyMedia, mediaBytes, state.error, /*allowWritable=*/true,
+                                     /*replaceUnsaved=*/true))
             return false;
         if (!smartPortBacking.empty() &&
             (!sonyMedia[0] || !mediaWritableByDefault() ||
              !sonyMedia[0]->bindSnapshotBacking(std::string(smartPortBacking),
-                                                pom2::liveSonyStamp(state.memory, std::string(smartPortBacking)))))
+                                                pom2::liveSonyImage(state.memory, std::string(smartPortBacking)))))
             return fail("Cannot bind restored 3.5\" medium to its working copy");
     }
 
@@ -552,6 +557,14 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
         state.diskII->loadSdkTiming(diskTiming.data(), diskTiming.size(), true);
     }
     if (preparedSmartPort) {
+        // The outgoing unit 0 holds the copy the restored one now binds: its
+        // unsaved writes belong to the abandoned timeline, and its
+        // destructor would commit them under the restored disk (bug hunt
+        // 2026-11-25). Unit 1, or another copy, keeps its writes.
+        if (!smartPortBacking.empty() && state.smartPort->unit(0)) {
+            auto& outgoing = static_cast<SmartPort35Unit*>(state.smartPort->unit(0))->image();
+            if (outgoing.isLoaded() && outgoing.path() == smartPortBacking) outgoing.discardDirty();
+        }
         for (size_t i = 0; i < 2; ++i)
             state.smartPort->setUnit(i, preparedSmartPort->setUnit(i, nullptr));
         state.smartPort->loadSnapshotState(smartPortRuntime.data(), smartPortRuntime.size());

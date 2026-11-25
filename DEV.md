@@ -4670,9 +4670,13 @@ drives.
   say `(saved to a copy)`, and `syncFloppyMedia` FAILS with that sentence: the
   writes are on disk, but not in the file the caller is about to read. A 3.5"
   image is stamped by contents only (its bytes may come from phase 1 of a
-  two-phase mount, and no stat belongs under the machine lock). Not covered:
-  block devices, which write blocks in place and have no whole-file commit to
-  guard. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
+  two-phase mount, and no stat belongs under the machine lock). Block
+  devices (HDV, 2IMG hard disks) are guarded since 2026-11-25 but not
+  diverted: their commit patches the dirty blocks into the file as it is, so
+  a file another program replaced is REFUSED (`mediaFileIsOurs`, the same
+  mount stamp and process-wide `own` stamps), the blocks stay dirty and the
+  message says why — merging them into a foreign ProDOS volume cross-linked
+  it. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
   D); the mechanism is POM2's — no directory watcher, the check is made at the
   one moment it matters.
 - **Dirty state.** Kept until the commit lands. It is retired only if the

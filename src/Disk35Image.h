@@ -107,7 +107,7 @@ public:
     // one, so a copy another program replaced meanwhile is still diverted at
     // the next commit, not taken as the baseline and overwritten — a restore
     // runs every frame under run-ahead (bug hunt 2026-11-25).
-    bool bindSnapshotBacking(const std::string& backing, const MediaFileStamp* live = nullptr);
+    bool bindSnapshotBacking(const std::string& backing, const Disk35Image* live = nullptr);
     const MediaFileStamp& fileStamp() const { return fileStamp_; }
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool sessionReplaceable() const { return (!dirty_ || detachedSession_) && !autosave_.inFlight(); }
@@ -205,6 +205,9 @@ public:
     /// it. Unlike the block backing there is no per-block set to merge — the
     /// payload is the whole image — so this is one flag.
     void restoreDirty() { if (loaded_) { dirty_ = true; autosave_.noteWrite(); } }
+    /// A state restore onto this same copy abandons this timeline: its
+    /// unsaved writes must not reach the file when the medium is retired.
+    void discardDirty() { dirty_ = false; }
     /// The same undo, only when this is still the mount a capture came from
     /// (`PendingWriteBack::lineage`; a load or an eject resets it). False —
     /// and nothing touched — when another disk has been mounted since.

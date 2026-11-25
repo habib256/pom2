@@ -930,6 +930,8 @@ private:
     double      toolbarClockPeakHz_ = 0.0;     ///< the toolbar's clock label, held (MainWindow.cpp)
     double      toolbarClockPeakUntil_ = 0.0;
     pom2::SystemProfile toolbarClockProfile_ = pom2::SystemProfile::AppleIIPlus;
+    bool        toolbarClockKept_ = false;   ///< the label stays once shown on this machine
+    double      diskRefusalShownAt_ = 0.0;   ///< when the refusal dialog appeared (Enter waits)
     int         pendingFujiNetBootSlot_ = 0;
     double      pendingFujiNetBootUntil_ = 0.0;
 

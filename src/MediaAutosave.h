@@ -251,6 +251,48 @@ using MediaCommitWrite =
 /// file is neither that nor what a commit of this process left there, the
 /// mount is diverted — see the file comment — and `divertedTo`, when given,
 /// receives the sibling's path (also on every later commit of that mount).
+/// One key per FILE, whatever its spelling: a symlink, "a/../b", a relative
+/// path. What this process wrote (`own`) is found again under another
+/// spelling of the same copy (bug hunt 2026-11-25). A relative path still
+/// resolves against the working directory of the moment: an SDK host passes
+/// absolute paths (docs/SDK.md).
+inline std::string mediaPathKey(const std::string& path)
+{
+    std::error_code ec;
+    std::string key = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec).string();
+    return ec || key.empty() ? path : key;
+}
+
+/// Whether the file at `path` is still the one a mount read (`mounted`) or
+/// the one this process last wrote there: false means another program
+/// replaced it. A hard disk's commit asks this (Block512Backing.cpp); a
+/// floppy's is inside commitMediaInOrder.
+inline bool mediaFileIsOurs(const std::string& path, const MediaFileStamp& mounted)
+{
+    if (!mounted.known) return true;
+    MediaFileStamp now = stampMediaFile(path, /*withHash=*/false);
+    if (!now.known || now.sameTimeAndSize(mounted)) return true;
+    auto& order = detail::MediaCommitOrder::instance();
+    MediaFileStamp own;
+    {
+        std::lock_guard<std::mutex> lk(order.m);
+        const auto it = order.own.find(mediaPathKey(path));
+        if (it != order.own.end()) own = it->second;
+    }
+    if (own.known && now.sameTimeAndSize(own)) return true;
+    now = stampMediaFile(path, /*withHash=*/true);
+    return (mounted.hash != 0 && now.hash == mounted.hash) || (own.known && own.hash != 0 && now.hash == own.hash);
+}
+
+/// After a commit this process made outside commitMediaInOrder (a hard disk).
+inline void noteOwnMediaWrite(const std::string& path)
+{
+    auto& order = detail::MediaCommitOrder::instance();
+    const auto stamp = stampMediaFile(path, /*withHash=*/true);
+    std::lock_guard<std::mutex> lk(order.m);
+    order.own[mediaPathKey(path)] = stamp;
+}
+
 inline bool commitMediaInOrder(const std::string& path, uint64_t lineage,
                                uint64_t seq, const MediaFileStamp& mounted,
                                std::string& error, std::string* divertedTo,
@@ -258,9 +300,7 @@ inline bool commitMediaInOrder(const std::string& path, uint64_t lineage,
 {
     if (seq == 0) seq = nextMediaCaptureSeq();
     if (divertedTo) divertedTo->clear();
-    std::error_code ec;
-    std::string pathKey = std::filesystem::absolute(path, ec).lexically_normal().string();
-    if (ec || pathKey.empty()) pathKey = path;
+    const std::string pathKey = mediaPathKey(path);   // one key per file
     const std::string key = pathKey + '\n' + std::to_string(lineage);
     auto& order = detail::MediaCommitOrder::instance();
     std::lock_guard<std::mutex> lk(order.m);

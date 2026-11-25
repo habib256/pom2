@@ -28,14 +28,17 @@ std::shared_ptr<DiskSaveLock> lockDiskStorage(const std::filesystem::path& backi
 // when no save directory is available or the source is notched. Never
 // throws: a failure returns an empty path with `error` set (RetroArch's web
 // build links with exception catching off, where a throw ends the page).
-// `variant` > 0 names the copy "<disk> (<variant + 1>)": a playlist's second
-// disk of the same file name keeps a copy of its own.
+// A copy is found by the image and by where it sits in the content's folder
+// (its .source record), so a playlist's two blank SAVE.DSK keep two copies,
+// "SAVE.DSK" and "SAVE (2).DSK", whatever the playlist's order. `title`
+// names the game's folder when it is not the content's (an archive's name
+// for the disks unpacked from it).
 DiskStorage openDiskStorage(const std::filesystem::path& saves,
                             const std::filesystem::path& content,
                             const std::filesystem::path& original,
                             std::string& error,
                             DiskStorageAccess access = DiskStorageAccess::CreateIfMissing,
-                            unsigned variant = 0);
+                            const std::filesystem::path& title = {});
 
 // Where a core before 2026-11-25 kept this disk's copy (hashes for names):
 // what a save state of that time names its disk by. Empty when unknown.

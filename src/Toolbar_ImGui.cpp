@@ -246,7 +246,12 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
                                                       : ICON_FA_CIRCLE_PLAY)
                          + buttonWidth(ICON_FA_FORWARD_STEP)
                          + comboWidth(ICON_FA_BOLT " MAX")
-                         + 6.0f * ImGui::GetStyle().ItemSpacing.x;
+                         + 6.0f * ImGui::GetStyle().ItemSpacing.x
+                         // The machine-clock label, when it is drawn: the
+                         // group stays centred with it (its widest form).
+                         + (snap.keepMachineClock || snap.activeProfile == SystemProfile::AppleIIcPlus
+                                ? ImGui::CalcTextSize(ICON_FA_BOLT " 4.09 MHz").x + ImGui::GetStyle().ItemSpacing.x
+                                : 0.0f);
     const float contentCenter = (ImGui::GetWindowContentRegionMin().x +
                                  ImGui::GetWindowContentRegionMax().x) * 0.5f;
     ImGui::SameLine();
@@ -374,7 +379,9 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
     {
         const double stockHz = vt.cpuClockHz;
         const bool plus = snap.activeProfile == SystemProfile::AppleIIcPlus;
-        if (snap.machineCpuHz > 0.0 && (plus || std::abs(snap.machineCpuHz - stockHz) > stockHz * 0.02)) {
+        if (snap.machineCpuHz > 0.0 &&
+            (plus || snap.keepMachineClock || std::abs(snap.machineCpuHz - stockHz) > stockHz * 0.02)) {
+            r.machineClockShown = true;
             ImGui::SameLine();
             const bool fast = snap.machineCpuHz > stockHz * 1.02;
             ImGui::AlignTextToFramePadding();

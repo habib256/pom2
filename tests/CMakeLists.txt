@@ -75,6 +75,12 @@ if(TARGET pom2_libretro)
     target_include_directories(test_libretro_pad_profiles PRIVATE "${CMAKE_SOURCE_DIR}/libretro")
     target_include_directories(test_libretro_pad_profiles SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/third_party/libretro")
     add_test(NAME libretro_pad_profiles COMMAND test_libretro_pad_profiles)
+    # Every core option value through the parser the core reads it with.
+    add_executable(test_libretro_core_options libretro_core_options_test.cpp
+        "${CMAKE_SOURCE_DIR}/libretro/core_options.cpp")
+    target_include_directories(test_libretro_core_options PRIVATE "${CMAKE_SOURCE_DIR}/libretro")
+    target_include_directories(test_libretro_core_options SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/third_party/libretro")
+    add_test(NAME libretro_core_options COMMAND test_libretro_core_options)
     # The private disk copies' names: game/disk, a clash, a legacy copy.
     add_executable(test_libretro_disk_storage libretro_disk_storage_test.cpp
         "${CMAKE_SOURCE_DIR}/libretro/disk_storage.cpp" "${CMAKE_SOURCE_DIR}/libretro/portable_name.cpp")

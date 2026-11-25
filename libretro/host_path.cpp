@@ -45,19 +45,45 @@ bool toAnsi(const std::wstring& wide, std::string& out)
 std::string sdkPath(const std::filesystem::path& path)
 {
 #ifdef _WIN32
+    // The SDK reads a narrow path twice: the C runtime (fopen, ifstream)
+    // takes it in the ANSI code page, and std::filesystem::path(std::string)
+    // too under MSVC — but as UTF-8 under MinGW's libstdc++, which throws on
+    // ANSI bytes. So under MinGW only a path both readings agree on will do:
+    // plain ASCII, or anything when the process code page is UTF-8 (bug hunt
+    // 2026-11-25).
+    const auto usable = [](const std::string& narrow) {
+#if defined(__GLIBCXX__)
+        if (GetACP() == CP_UTF8) return true;
+        for (const unsigned char c : narrow)
+            if (c >= 0x80) return false;
+#else
+        (void)narrow;
+#endif
+        return true;
+    };
     std::string narrow;
-    if (toAnsi(path.native(), narrow)) return narrow;
-    // The 8.3 short name: plain ASCII where the volume generates them (the
-    // system drive does by default). The file must exist.
-    const DWORD length = GetShortPathNameW(path.c_str(), nullptr, 0);
-    if (length > 0) {
-        std::wstring shortPath(length, L'\0');
-        const DWORD written = GetShortPathNameW(path.c_str(), shortPath.data(), length);
-        if (written > 0 && written < length) {
-            shortPath.resize(written);
-            if (toAnsi(shortPath, narrow)) return narrow;
-        }
+    if (toAnsi(path.native(), narrow) && usable(narrow)) return narrow;
+    // The 8.3 short name of the FOLDER, the file's own name kept when it is
+    // ASCII (every private copy's is): a short name for the file itself
+    // ("ENIGME~1.DSK") would be what the SDK renames its saves onto.
+    const auto shortOf = [](const std::wstring& wide, std::wstring& out) {
+        const DWORD length = GetShortPathNameW(wide.c_str(), nullptr, 0);
+        if (length == 0) return false;
+        out.assign(length, L'\0');
+        const DWORD written = GetShortPathNameW(wide.c_str(), out.data(), length);
+        if (written == 0 || written >= length) return false;
+        out.resize(written);
+        return true;
+    };
+    std::wstring shortened;
+    const auto leaf = path.filename().native();
+    std::string leafNarrow;
+    if (toAnsi(leaf, leafNarrow) && usable(leafNarrow) && shortOf(path.parent_path().native(), shortened)) {
+        shortened += L"\\";
+        shortened += leaf;
+        if (toAnsi(shortened, narrow) && usable(narrow)) return narrow;
     }
+    if (shortOf(path.native(), shortened) && toAnsi(shortened, narrow) && usable(narrow)) return narrow;
     return {};
 #else
     return path.u8string();

@@ -667,6 +667,10 @@ AudioUnit and CoreFoundation on macOS, or libdl, pthread and libm on Linux.
 `find_package(pom2_core)` finds Threads and, when the archive carries it,
 libslirp; the system libraries come with the link interface. miniaudio opens no device on a headless run.
 
+**Paths**: give the SDK absolute paths for media and their working copies.
+A write-back recognises the file it wrote last by its path; a relative path
+resolved after the host changed its working directory names another file.
+
 **MSVC runtime**: the SDK is built with the static runtime (`/MT`,
 `POM2_WIN_STATIC_RUNTIME`, ON by default). `find_package(pom2_core)` sets
 `CMAKE_MSVC_RUNTIME_LIBRARY` to match for the targets created after it, unless
