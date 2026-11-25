@@ -148,6 +148,34 @@ void verticalRule(float padX = 6.0f);
 void indicatorDot(bool on, ImU32 onColor, float radius = 4.0f,
                   float lineHeight = 0.0f);
 
+// ── Fixed-pitch font ──────────────────────────────────────────────────────
+// The UI font (DejaVu Sans) is proportional, so a debugger line laid out as
+// "address  bytes  mnemonic" lost its columns: `$2000  A9 01` and
+// `$2002  8D 00 C0` started their opcodes at different x. A 6502 developer
+// reads those columns, not the words (French Touch's request, 2026-11-25).
+// main.cpp loads DejaVu Sans Mono next to the UI font and registers it here.
+
+/// Register the fixed-pitch font (null = none was found: callers then keep
+/// the UI font, misaligned but legible).
+void setMonoFont(ImFont* font);
+/// The fixed-pitch font, or null when none was loaded.
+ImFont* monoFont();
+
+/// Draw with the fixed-pitch font for this scope, at the CURRENT size so the
+/// user zoom and DPI factors still apply. A no-op when no mono font exists.
+class ScopedMonoFont {
+public:
+    ScopedMonoFont() : pushed_(monoFont() != nullptr)
+    {
+        if (pushed_) ImGui::PushFont(monoFont(), 0.0f);
+    }
+    ~ScopedMonoFont() { if (pushed_) ImGui::PopFont(); }
+    ScopedMonoFont(const ScopedMonoFont&) = delete;
+    ScopedMonoFont& operator=(const ScopedMonoFont&) = delete;
+private:
+    bool pushed_;
+};
+
 /// Clamp bounds for the user zoom control — shared by the menu widget and the
 /// settings loader so a hand-edited `state.cfg` can't produce an unusable UI.
 inline constexpr float kUiScaleMin  = 0.75f;

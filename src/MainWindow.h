@@ -139,6 +139,7 @@ namespace pom2 {
 }
 class MemoryViewer_ImGui;
 namespace pom2 { class Debugger_ImGui; }
+namespace pom2 { class ScreenInspector_ImGui; }
 class Pom2HgrPaintHost;
 namespace hgrpaint { class HgrPaintEditor; }
 namespace hgrsprite { class HgrSpriteEditor; }
@@ -416,6 +417,7 @@ private:
     /// Run-control debugger panel. All of its state and every decision it
     /// makes live in Debugger_ImGui — MainWindow only owns it and shows it.
     std::unique_ptr<pom2::Debugger_ImGui>        debuggerPanel;
+    std::unique_ptr<pom2::ScreenInspector_ImGui> screenInspector_;
     std::unique_ptr<pom2::Settings>               settings;
     std::unique_ptr<pom2::CassetteDeck_ImGui>     cassetteDeck;
     std::unique_ptr<pom2::Rewind_ImGui>           rewindPanel_;

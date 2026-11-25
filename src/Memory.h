@@ -849,7 +849,43 @@ public:
     /// (or of the legacy bracket when one is open — tests).
     DisplayState getDisplayStateAtFrameStart() const {
         std::lock_guard<std::mutex> lk(stateMutex);
+        if (beamViewActive()) return displayAtFrameStart_;
         return legacyEventBracket_ ? displayAtFrameStart_ : publishedFrameStart_;
+    }
+
+    // ── Beam view (MemoryBeamView.cpp) ───────────────────────────────────
+    // What the tube shows at THIS cycle rather than the last completed
+    // frame: above the beam the frame in progress, from the beam down the
+    // previous frame. While it is on, the three things the display reads —
+    // getDisplayStateAtFrameStart(), takeVideoEvents() and the video write
+    // log's rewind — describe that composite, so every painter and pipeline
+    // follows without knowing. For the debugger and slow motion (French
+    // Touch's request, 2026-11-25); off by default, and with it off nothing
+    // here changes.
+    void setBeamView(bool on);
+    bool beamView() const { return beamView_; }
+    /// On, and the published frame is the one right before the frame in
+    /// progress (false across a clock jump, in the legacy bracket, and
+    /// before the first frame closes): only then is there a composite.
+    bool beamViewActive() const;
+    /// Fold one event into a display state — the rule both the display's
+    /// replay and the beam view's composite use.
+    static void foldVideoEvent(DisplayState& state, VideoEventKind kind, bool value);
+    /// The display state the beam is painting each visible line with, at the
+    /// line's first byte: the same {start state, events} the display paints
+    /// from (the beam view's composite when it is active). For inspectors.
+    std::array<DisplayState, 192> displayStatePerLine();
+    /// The hi-res picture AS THE BEAM FETCHED IT, as one 8 KB page image:
+    /// each line's 40 bytes come from the page that line displayed (1 or 2),
+    /// holding what RAM held when the beam read them. A program that flips
+    /// pages or redraws during the frame has no single page that looks like
+    /// its screen; this is that page. Main RAM only (no DHGR aux half); the
+    /// screen holes are page 1's. RAM is exactly live again on return.
+    void captureFetchedHiRes(uint8_t* out8k);
+    /// Offset of hi-res line `y` (0-191) inside its 8 KB page.
+    static constexpr uint16_t hiResLineOffset(int y)
+    {
+        return static_cast<uint16_t>(((y & 7) << 10) | (((y >> 3) & 7) << 7) | ((y >> 6) * 40));
     }
 
     /// Video events of the last published frame, as a COPY — the UI may
@@ -1232,6 +1268,11 @@ private:
     std::size_t           vrApplied_ = 0;
     std::vector<uint16_t> vrCuts_;
     std::vector<uint8_t>  vrSeen_;
+    /// Beam view: the beam's line (0..192) the rewind in flight is rolled
+    /// around, -1 for the plain published-frame rewind.
+    int                   vrRollBase_ = -1;
+    bool                  beamView_   = false;
+    std::vector<VideoEvent> beamViewEventsLocked() const;
     // Read-watchpoint table, same lifetime rule. `readDivert_` is
     // `readWatchCount_ != 0`; memRead never tests it directly — it is folded
     // into the three derived fast-path bytes below by refreshReadFastFlags().

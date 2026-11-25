@@ -209,6 +209,9 @@ void printUsage()
         "  --paste <file>             Feed file contents to keyboard (<=4096)\n"
         "  --step <N>                 Queue N single steps; does not wait before next action\n"
         "  --trace-brk                log CPU state + PC trace on every BRK\n"
+        "  --beam-view                show the screen as the tube has it at this cycle (the frame in\n"
+        "                             progress above the beam, the previous one below), for the\n"
+        "                             debugger and slow motion; the Debugger's \"Beam view\" box\n"
         "  --play / --rec / --rewind  Cassette transport\n"
         "  --snapshot-save <path>     Write snapshot\n"
         "  --snapshot-load <path>     Restore CPU/RAM on the matching machine\n"
@@ -239,7 +242,9 @@ void printUsage()
         "  POM2_TRACE_WRITEFLUX, POM2_TRACE_IWM_SENSE, POM2_TRACE_SMARTPORT_BUS,\n"
         "  POM2_TRACE_HDV, POM2_TRACE_CFFA, POM2_TRACE_FUJINET, POM2_SP_TRACE,\n"
         "  POM2_MOUSE_TRACE, POM2_DEBUG_DISK, POM2_DEBUG_DISK_READS,\n"
-        "  POM2_DUMP_SLOT_ROM.\n");
+        "  POM2_DUMP_SLOT_ROM.\n"
+        "  POM2_WINDOW_SHOT=<file.png>: creating <file.png>.request makes POM2 save a\n"
+        "  picture of its own window, panels included, to that file.\n");
 }
 
 } // namespace
@@ -688,6 +693,10 @@ std::optional<CliPlan> parseCli(int argc, char* argv[], bool& helpRequestedOut)
         }
         else if (a == "--trace-brk") {
             CliAction act{}; act.kind = CliAction::Kind::TraceBrk;
+            plan.deferredActions.push_back(std::move(act));
+        }
+        else if (a == "--beam-view") {
+            CliAction act{}; act.kind = CliAction::Kind::BeamView;
             plan.deferredActions.push_back(std::move(act));
         }
         else if (a == "--play") {

@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "Toolbar_ImGui.h"
+#include "SlowMotion.h"
 
 #include <cmath>
 
@@ -348,8 +349,14 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
     else if (snap.cyclesPerFrame == kSpeed4x)  speedLabel = ICON_FA_GAUGE_HIGH " 4×";
     else if (snap.cyclesPerFrame == kSpeedMax) speedLabel = ICON_FA_BOLT       " MAX";
     else                                        speedLabel = ICON_FA_GAUGE      " …";
+    char slowLabel[32];
+    for (const pom2::SlowSpeed& slow : pom2::kSlowSpeeds)
+        if (snap.cyclesPerFrame == pom2::slowSpeedBudget(kSpeed1x, slow.factor)) {
+            std::snprintf(slowLabel, sizeof slowLabel, ICON_FA_HOURGLASS_HALF " %s", slow.label);
+            speedLabel = slowLabel;
+        }
     // Widest collapsed label is the icon + "MAX".
-    ImGui::SetNextItemWidth(comboWidth(ICON_FA_BOLT " MAX"));
+    ImGui::SetNextItemWidth(comboWidth(ICON_FA_HOURGLASS_HALF " 0.25 %"));
     if (ImGui::BeginCombo("##POM2ToolbarSpeed", speedLabel)) {
         char lbl[64];
         std::snprintf(lbl, sizeof lbl,
@@ -367,6 +374,14 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
         if (ImGui::Selectable(ICON_FA_BOLT       " MAX (uncapped)",
                               snap.cyclesPerFrame == kSpeedMax))
             r.setCyclesPerFrame = kSpeedMax;
+        // Slow motion, to watch an effect being drawn (SlowMotion.h).
+        ImGui::Separator();
+        for (const pom2::SlowSpeed& slow : pom2::kSlowSpeeds) {
+            const int budget = pom2::slowSpeedBudget(kSpeed1x, slow.factor);
+            std::snprintf(lbl, sizeof lbl, ICON_FA_HOURGLASS_HALF " %s", slow.label);
+            if (ImGui::Selectable(lbl, snap.cyclesPerFrame == budget))
+                r.setCyclesPerFrame = budget;
+        }
         ImGui::EndCombo();
     }
     // Before the clock label: SetTooltip overrides the previous one, and the

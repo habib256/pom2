@@ -12851,6 +12851,93 @@ overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
 
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
 
+**A 6502 developer's panel** *(2026-11-25, French Touch's requests)*. Four
+additions, asked for by Grouik while writing his own demos in POM2:
+
+- **Fixed-pitch columns.** The UI font is proportional, so `address  bytes
+  mnemonic` lost its alignment. `main.cpp` loads `fonts/DejaVuSansMono.ttf`
+  (DejaVu 2.37, same licence as DejaVu Sans) and registers it with
+  `pom2::setMonoFont`; the listing, registers, breakpoint and watch lists,
+  OS-call trace, source lines and profile table draw inside
+  `ScopedMonoFont` (`Pom2Theme.h`) at the current size, so zoom and DPI
+  still apply. No mono font found → the UI font, as before.
+- **Scrolling.** The wheel moves the listing three instructions a notch,
+  Page Up / Page Down a screenful, a "Go to" box takes a hex address or a
+  symbol. Any of them stops "Follow PC"; a step or a stop turns it back on.
+  Walking BACK through variable-length code is a vote
+  (`DisasmNavigation.h`): every start in the 16 bytes before the target is
+  decoded forward, and the predecessor most landing chains agree on wins —
+  exact on code, a guess on data. The listing now starts three
+  instructions above its anchor by the same walk, instead of 6 raw bytes
+  above it (which could start inside an operand).
+- **Beam H/V.** `BeamPosition.h` reads the beam clock (`Memory::videoNow`)
+  through the SAME arithmetic `pushVideoEventLocked` stamps soft switches
+  with: V = line (0-191 visible, then VBL to 262/312), H = cycle in the
+  65-cycle line (0-24 HBL, then bytes 0-39). It is not a second video model.
+  [D] AppleWin @ 7fd7fd7c numbers its debugger's `v:` / `h:` the same way
+  by default (hex there; POM2 shows both), and its "abs / rel / part" cycle
+  modes are POM2's total / last run / since mark.
+- **Cycle counter.** CPU cycles since power-on, "since mark" with a Reset
+  button, and the cycles of the last run or step (the counter where the
+  machine last stood still, against where it stands now — break at A, Run,
+  break at B reads B - A with no click). A counter that went back (rewind,
+  snapshot, cold boot) restarts the measure.
+
+Pinned by `disasm_navigation` (the walk and the beam arithmetic); the panel
+itself is UI and has no test.
+
+**Beam view, slow motion, Screen Inspector** *(2026-11-25, same requests)*.
+
+- **Beam view** (`Memory::setBeamView`, `MemoryBeamView.cpp`; a checkbox in
+  the Debugger and the Screen Inspector, off by default, not persisted). The
+  display normally paints the last PUBLISHED frame, which lags by up to a
+  frame — invisible at full speed, twenty seconds at 0.1 %, and wrong for
+  someone stopped mid-frame. With the beam view on, Memory describes the
+  tube at this cycle instead, as one synthetic frame in the display's own
+  vocabulary: the frame in progress's start state and events; at the beam,
+  the switches that turn the current state into what the previous frame had
+  at that position; then the previous frame's remaining events. The video
+  write log is rolled around the beam's line the same way (a cut becomes a
+  key in scan order; a write the beam has not reached is kept out). The
+  three accessors the display reads (`getDisplayStateAtFrameStart`,
+  `takeVideoEvents`, `videoRewindBegin/To`) return the composite, so no
+  painter or pipeline changed. While on, the write log stays armed, the
+  idle soft-switch override is skipped and a single step keeps beam-time
+  RAM. [F] Two approximations at the beam itself, both below one
+  instruction: "now" is an instruction boundary, and RAM changes hands at
+  the start of the beam's line rather than at its byte. Settled by a
+  cycle-stepped core.
+- **Slow motion** (`SlowMotion.h`): 50 %, 25 %, 10 %, 1 %, 0.25 %, 0.1 % in
+  the toolbar's speed menu and the palette. A speed is a cycle budget per
+  worker tick, so these are the 1x budget scaled, never below one cycle.
+  **POM2 is cycle-exact per instruction, not cycle-stepped**: each
+  instruction costs its exact cycles and a video soft-switch access lands on
+  its own cycle inside the instruction, but the machine advances by whole
+  instructions — at 0.1 % a tick is about 20 cycles, a few instructions.
+- **Screen Inspector** (`ScreenInspector_ImGui.*`, View menu): the
+  display's own picture, zoomed, with the beam drawn on it under the beam
+  view. Under the mouse (`ScreenProbe.*`, pure): position in the line's own
+  grid, mode and page OF THAT LINE (`Memory::displayStatePerLine`), byte,
+  bit, address (aux half named) and its current value. Two saves: the PNG
+  screenshot, and **the hi-res screen as fetched**
+  (`Memory::captureFetchedHiRes`) — an 8 KB page whose every line comes from
+  the page that line displayed, holding what RAM held when the beam read
+  it; written as `SCREEN-<stamp>#062000` (HostFileTag) in `screenshots/`,
+  it opens in the Paint editor. Main RAM only (no DHGR aux half).
+
+Pinned by `beam_view` (soft switches, video RAM, VBL, the fetched page, the
+probe, the slow budgets). `--beam-view` turns the view on from the command
+line (pinned `cli_kiosk`).
+
+**Seeing POM2's own window** (`WindowCapture.*`). A development aid: with
+`$POM2_WINDOW_SHOT=/path/shot.png` set, creating `/path/shot.png.request`
+makes POM2 write the frame it just drew — every panel included — to the PNG
+and remove the request file. It reads the frame back from OpenGL, so it
+needs no operating-system capture permission (macOS Screen Recording is
+not granted to an automated session). Open panels through their
+`show_*` keys in a scratch `state.cfg` (`HOME=<scratch>`). Off and free
+when the variable is not set; not built for the browser.
+
 **The listing follows the CPU's instruction set** *(2026-11-01)*. Apple's
 65C02 is the NCR part: [B] //c Technical Reference, Appendix A (NCR 65C02
 data sheet), the `$x3/$x7/$xB/$xF` opcodes are "NOPs (reserved for future

@@ -42,6 +42,7 @@
 #include "DebuggerSourceMap.h"
 #include "InstructionTrace.h"
 #include "Opcode6502.h"
+#include "CpuClock.h"
 
 #include <cstdint>
 #include <memory>
@@ -91,6 +92,13 @@ private:
         /// 64 KiB of main RAM, copied so the disassembly can be laid out
         /// after the lock is released.
         std::vector<uint8_t> memory;
+        /// CPU cycles since power-on (`Memory::getCycleCounter`) — the
+        /// cycle counter's clock — and the BEAM's clock (`videoNow`), which
+        /// an accelerator leaves at the stock rate, for the H/V readout.
+        uint64_t cycles = 0;
+        uint64_t videoCycle = 0;
+        VideoStandard standard = VideoStandard::NTSC;
+        bool beamView = false;
     };
 
     void drawControls(EmulationController& ctrl, const Snapshot& snap);
@@ -110,6 +118,29 @@ private:
     /// Disassembly origin. Follows the PC unless the user has scrolled away.
     uint16_t  viewAddr_    = 0;
     bool      followPc_    = true;
+    /// The machine was running at the previous frame: a stop then brings the
+    /// view back to the PC even after the user scrolled away.
+    bool      wasRunning_  = false;
+    /// "Go to" box: a hex address, or a label from the loaded symbols.
+    char      gotoEntry_[64] = {0};
+    void drawNavigation(const Snapshot& snap);
+    /// Scroll the listing by `instructions` (negative = up) and stop
+    /// following the PC.
+    void scrollView(const Snapshot& snap, int instructions);
+
+    bool      gotoFailed_  = false;
+    /// Fractional wheel travel (trackpads send fractions of a notch).
+    float     wheelAccum_  = 0.0f;
+
+    /// The resettable cycle counter: cycles counted from `cycleMark_`.
+    uint64_t  cycleMark_ = 0;
+    /// Cycles of the last run or step: the counter where the machine last
+    /// stood still, and how far it moved before standing still again —
+    /// "break at A, Run, break at B" reads B - A with no click.
+    uint64_t  stopCycles_   = 0;
+    uint64_t  lastRunCycles_ = 0;
+    bool      haveStop_ = false, haveLastRun_ = false;
+    void drawBeamAndCycles(const Snapshot& snap);
     /// Address typed into the "add breakpoint" box, as text so a half-typed
     /// value does not jump the view.
     char      bpEntry_[256]  = {0};

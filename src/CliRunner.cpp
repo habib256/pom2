@@ -211,6 +211,12 @@ void runDeferredActions(const std::vector<CliAction>& actions,
                 pom2::log().info("CLI", "--trace-brk: BRK trace enabled");
                 break;
             }
+            case CliAction::Kind::BeamView: {
+                auto st = emu.lockState();
+                st.memory().setBeamView(true);
+                pom2::log().info("CLI", "--beam-view: the screen shows the frame in progress");
+                break;
+            }
             case CliAction::Kind::PlayTape: {
                 bool loaded = false;
                 {

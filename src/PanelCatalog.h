@@ -86,7 +86,7 @@ enum class PanelId : std::size_t {
     Ssc, Ethernet, Printer, ImageWriter, ChatMauve, Joystick, Keyboard,
     Rewind, Mouse, NoSlotClock,
     Crt, CardMonitor, Voxel, VoxelSettings,
-    MemViewer, Debugger, MemBar, MemBarH, MemGrid,
+    MemViewer, Debugger, ScreenInspector, MemBar, MemBarH, MemGrid,
     HgrPaint, HgrSprite, AiControl,
     Welcome, RomStatus, Abstraction,
     Count,
@@ -249,6 +249,10 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "show_debugger", nullptr,
   "Registers, disassembly, breakpoints, write watchpoints, and step /\n"
   "step-over / run-to-cursor." },
+{ PanelId::ScreenInspector, "panel.screeninspector", "Screen Inspector", PanelGroup::View,
+  "show_screen_inspector", nullptr,
+  "The screen as really displayed: coordinates, mode, byte and address\n"
+  "under the mouse, the beam, and a hi-res page saved as the beam read it." },
 { PanelId::MemBar, "panel.membar", "Memory Map Bar", PanelGroup::View,
   "show_membar", nullptr,
   "A one-strip map of what is paged where right now." },

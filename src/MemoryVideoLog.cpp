@@ -260,7 +260,7 @@ void Memory::resetVideoWriteLogForClockJump()
 void Memory::onVideoFramePublished(uint64_t frameStart, bool hadEvents)
 {
     videoPublishedStart_ = frameStart;
-    if (hadEvents) {
+    if (hadEvents || beamView_) {      // the beam view needs beam-time RAM
         videoQuietFrames_ = 0;
         setVideoWriteLog(true);
     } else if (videoLogArmed_ && ++videoQuietFrames_ > kVideoLogQuietFrames) {
@@ -305,13 +305,30 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
         return false;
     }
 
+    // Beam view: the picture is rolled around the beam's line B — lines
+    // B..191 were scanned in the published frame, lines 0..B-1 in the frame
+    // in progress — so a cut becomes a KEY in scan order: key(y) = y - B for
+    // the old lines, y + 192 - B for the new ones (rollKey). A write the beam
+    // has not reached yet gets kNever and stays out of the picture.
+    const bool rolling = beamViewActive();
+    const uint64_t frameLen = kLineCycles * static_cast<uint64_t>(
+        pom2VideoTiming(videoStandard_.load(std::memory_order_relaxed)).scanlinesPerFrame);
+    constexpr uint16_t kNever = 0x7FFF;
+    uint16_t beam = 0;
+    if (rolling)
+        beam = static_cast<uint16_t>(std::min<uint64_t>(
+            kVisibleLines, (videoNow() - lastVideoFrameStart_) / kLineCycles));
+    vrRollBase_ = rolling ? static_cast<int>(beam) : -1;
+
     // The line from which the beam shows each write. A write during line L's
     // fetch shows on L only if its byte had not been fetched yet.
     const std::size_t n = videoLog_.size();
     vrCutOf_.resize(n);
     for (std::size_t i = 0; i < n; ++i) {
         const VideoWrite& w = videoLog_[i];
-        const uint64_t rel  = w.cycle - frameStart;   // trimmed: cycle >= start
+        uint64_t rel = w.cycle - frameStart;          // trimmed: cycle >= start
+        const bool inProgress = rolling && rel >= frameLen;
+        if (inProgress) rel -= frameLen;
         const uint64_t line = rel / kLineCycles;
         const uint64_t h    = rel % kLineCycles;
         uint16_t cut = kVisibleLines;
@@ -322,6 +339,12 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
             if (fetchColumn(w.addr) < static_cast<int>(h) - kVideoAccessColumnOffset)
                 ++cut;
         }
+        if (rolling) {
+            if (inProgress)
+                cut = cut < beam ? static_cast<uint16_t>(cut + kVisibleLines - beam) : kNever;
+            else
+                cut = cut < beam ? uint16_t{0} : static_cast<uint16_t>(cut - beam);
+        }
         vrCutOf_[i] = cut;
     }
     // Stable by cut: one address's writes keep their log order, because its
@@ -331,11 +354,21 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
     std::stable_sort(vrOrder_.begin(), vrOrder_.end(),
         [this](uint32_t a, uint32_t b) { return vrCutOf_[a] < vrCutOf_[b]; });
     for (uint32_t i : vrOrder_) {
-        const uint16_t c = vrCutOf_[i];
-        if (c < 1 || c >= kVisibleLines || (!vrCuts_.empty() && vrCuts_.back() == c))
-            continue;
+        uint16_t c = vrCutOf_[i];
+        if (c < 1 || c >= kVisibleLines) continue;
+        if (rolling)      // key back to the line it starts on
+            c = c < kVisibleLines - beam ? static_cast<uint16_t>(c + beam)
+                                         : static_cast<uint16_t>(c - (kVisibleLines - beam));
+        if (c < 1 || (!rolling && !vrCuts_.empty() && vrCuts_.back() == c)) continue;
         if (cutFilter && !(*cutFilter)(videoLog_[i].addr, videoLog_[i].toAux)) continue;
         vrCuts_.push_back(c);
+    }
+    if (rolling) {
+        // RAM also changes hands AT the beam: the line above it is the newest
+        // on the tube, the beam's own line the oldest.
+        if (n && beam >= 1 && beam < kVisibleLines) vrCuts_.push_back(beam);
+        std::sort(vrCuts_.begin(), vrCuts_.end());
+        vrCuts_.erase(std::unique(vrCuts_.begin(), vrCuts_.end()), vrCuts_.end());
     }
     // Back to the frame start: undo newest first.
     for (auto it = videoLog_.rbegin(); it != videoLog_.rend(); ++it)
@@ -348,6 +381,11 @@ bool Memory::videoRewindBegin(const std::function<bool(uint16_t, bool)>* cutFilt
 void Memory::videoRewindTo(int line)
 {
     if (!vrActive_) return;
+    if (vrRollBase_ >= 0 && line != INT_MAX) {     // line → scan-order key
+        line = std::clamp(line, 0, static_cast<int>(kVisibleLines) - 1);
+        line = line >= vrRollBase_ ? line - vrRollBase_
+                                   : line + static_cast<int>(kVisibleLines) - vrRollBase_;
+    }
     const std::size_t n = vrOrder_.size();
     while (vrApplied_ < n && vrCutOf_[vrOrder_[vrApplied_]] <= line) {
         const VideoWrite& w = videoLog_[vrOrder_[vrApplied_++]];
@@ -363,6 +401,7 @@ void Memory::videoRewindEnd()
 {
     videoRewindTo(INT_MAX);
     vrActive_ = false;
+    vrRollBase_ = -1;
 }
 
 // ─── //c VBLINT, read inside the instruction ────────────────────────────

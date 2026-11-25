@@ -96,6 +96,7 @@ crt_glass_resample
 crt_presets
 d13_roundtrip_smoke
 dan2_card
+beam_view
 debugger
 decimal_sbc_cmos
 device_clock_fanout
@@ -105,6 +106,7 @@ dhgr_paint_model
 dhgr_phase_signal
 dhgr_render_smoke
 disasm_cmos
+disasm_navigation
 disk_2mg_smoke
 disk_2mg_writeback_smoke
 disk_boot_smoke

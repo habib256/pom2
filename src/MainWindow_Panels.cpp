@@ -49,6 +49,7 @@
 #include "ProDOSHardDiskCard.h"
 #include "Settings.h"
 #include "Debugger_ImGui.h"
+#include "ScreenInspector_ImGui.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
 #include "UthernetCard.h"
@@ -245,6 +246,9 @@ void MainWindow::registerPanelDraws()
     draw(P::MemViewer,    [this] { renderMemoryViewerWindow(); });
     draw(P::Debugger,     [this] { debuggerPanel->render(*controller,
                                                          &show(P::Debugger)); });
+    draw(P::ScreenInspector, [this] {
+        screenInspector_->render(*controller, *display, &show(P::ScreenInspector),
+                                 [this] { saveScreenshot(); }); });
     draw(P::MemBar,       [this] { renderMemoryBarWindow(); });
     draw(P::MemBarH,      [this] { renderMemoryBarHorizontalWindow(); });
     draw(P::MemGrid,      [this] { renderMemoryGridWindow(); });
@@ -308,6 +312,7 @@ const char* panelIcon(pom2::PanelId id)
     case P::VoxelSettings: return ICON_FA_CUBE;
     case P::MemViewer:     return ICON_FA_MEMORY;
     case P::Debugger:      return ICON_FA_BUG;
+    case P::ScreenInspector: return ICON_FA_MAGNIFYING_GLASS;
     case P::MemBar:        return ICON_FA_CHART_SIMPLE;
     case P::MemBarH:       return ICON_FA_CHART_BAR;
     case P::MemGrid:       return ICON_FA_TABLE_CELLS;

@@ -53,6 +53,7 @@
 #include "JoystickPanel_ImGui.h"
 #include "Logger.h"
 #include "Debugger_ImGui.h"
+#include "ScreenInspector_ImGui.h"
 #include "HgrPaintEditor.h"     // portable hgrpaint/ editor (shared with POM1)
 #include "HgrSpriteEditor.h"    // portable hgrsprite/ editor (same host seam)
 #include "Pom2HgrPaintHost.h"
@@ -125,6 +126,7 @@ MainWindow::MainWindow(bool forceIIPlus)
       display        (std::make_unique<Apple2Display>()),
       debugCoordinator_(std::make_unique<pom2::DebugCoordinator>(*controller)),
       debuggerPanel  (std::make_unique<pom2::Debugger_ImGui>()),
+      screenInspector_(std::make_unique<pom2::ScreenInspector_ImGui>()),
       settings       (std::make_unique<pom2::Settings>()),
       cassetteDeck   (std::make_unique<pom2::CassetteDeck_ImGui>()),
       rewindPanel_   (std::make_unique<pom2::Rewind_ImGui>()),

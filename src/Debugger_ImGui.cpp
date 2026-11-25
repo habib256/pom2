@@ -17,6 +17,9 @@
 // Debugger_ImGui — see the header for the design and the locking rule.
 
 #include "Debugger_ImGui.h"
+#include "BeamPosition.h"
+#include "DisasmNavigation.h"
+#include "Pom2Theme.h"
 
 #include "BrowserFiles.h"
 #include "Cc65DebugInfo.h"
@@ -129,9 +132,18 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         mem.snapshotCpuView(snap.memory.data());
         snap.banks.resize(0x10000);
         for (unsigned a=0; a<0x10000; ++a) snap.banks[a]=mem.debugBank(static_cast<uint16_t>(a));
+        snap.cycles     = mem.getCycleCounter();
+        snap.videoCycle = mem.videoNow();
+        snap.standard   = mem.videoStandard();
+        snap.beamView   = mem.beamView();
     }
     snap.running = ctrl.getMode() == EmulationController::Mode::Running;
 
+    // A stop brings the listing back to the PC, even after the user scrolled
+    // away: the wheel is for looking around, and the machine stopping is the
+    // event the user was waiting for.
+    if (wasRunning_ && !snap.running) followPc_ = true;
+    wasRunning_ = snap.running;
     if (followPc_) viewAddr_ = snap.pc;
 
     // F7 / F8 while the window is open. Handled HERE rather than in
@@ -140,16 +152,21 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     // the god-object the file-size ratchet is holding still — a feature that
     // can keep its own keys out of it should.
     if (!ImGui::GetIO().WantCaptureKeyboard || ImGui::IsWindowFocused()) {
-        if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false))
+        if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false)) {
+            followPc_ = true;
             ctrl.debugStepInstruction();
-        else if (ImGui::IsKeyPressed(ImGuiKey_F8, /*repeat=*/false))
+        } else if (ImGui::IsKeyPressed(ImGuiKey_F8, /*repeat=*/false)) {
+            followPc_ = true;
             ctrl.debugStepOver();
+        }
     }
 
     drawStopBanner(snap);
     drawControls(ctrl, snap);
+    drawNavigation(snap);
     ImGui::Separator();
     drawRegisters(snap);
+    drawBeamAndCycles(snap);
     ImGui::Separator();
     drawAssembler(ctrl, snap);
 
@@ -233,6 +250,8 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
                                      ImVec2(-1.0f, 60.0f));
         }
         ImGui::BeginChild("##measurements", ImVec2(0, 140), true);
+        {
+        ScopedMonoFont mono;
         if (ImGui::BeginTable("##profile", 4)) {
             ImGui::TableSetupColumn("Address"); ImGui::TableSetupColumn("Symbol");
             ImGui::TableSetupColumn("Visits"); ImGui::TableSetupColumn("Cycles");
@@ -249,6 +268,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         for (const auto& entry : snap.history)
             ImGui::Text("%s -> $%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X (%d cycles)",
                 DebugAddress{entry.pc,entry.bank}.text().c_str(), entry.nextPc, entry.a, entry.x, entry.y, entry.p, entry.sp, entry.cycles);
+        }
         ImGui::EndChild();
     }
 
@@ -256,18 +276,28 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
 
     // Disassembly left, breakpoints right.
     const float rightWidth = 270.0f;
+    // NoScrollWithMouse + NoScrollbar: the listing is not a scrolled region
+    // (it is laid out from viewAddr_ each frame), so the wheel must neither
+    // scroll it nor fall through to the Debugger window. drawDisassembly
+    // reads the wheel itself and moves viewAddr_ by instructions.
     ImGui::BeginChild("##disasm",
                       ImVec2(ImGui::GetContentRegionAvail().x - rightWidth - 8.0f, 0),
-                      true);
-    drawDisassembly(ctrl, snap);
+                      true, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+    {
+        ScopedMonoFont mono;
+        drawDisassembly(ctrl, snap);
+    }
     ImGui::EndChild();
     ImGui::SameLine();
     ImGui::BeginChild("##bplist", ImVec2(rightWidth, 0), true);
-    drawBreakpointList(ctrl, snap);
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    drawWatchpointList(ctrl, snap);
+    {
+        ScopedMonoFont mono;
+        drawBreakpointList(ctrl, snap);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        drawWatchpointList(ctrl, snap);
+    }
     ImGui::EndChild();
 
     ImGui::End();
@@ -310,12 +340,15 @@ void Debugger_ImGui::drawOsCalls(EmulationController& ctrl, Snapshot& snap)
     }
     ImGui::TextWrapped("Each call with its result, at its caller's address (Pascal: the BIOS entry only — it returns through the p-machine). The 6502 traces run the CPU on its debugged loop while one is on.");
     ImGui::BeginChild("##oscalls", ImVec2(0, 160), true, ImGuiWindowFlags_HorizontalScrollbar);
-    ImGuiListClipper clip;
-    clip.Begin(static_cast<int>(osLines_.size()));
-    while (clip.Step())
-        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
-            ImGui::TextUnformatted(osLines_[static_cast<std::size_t>(i)].c_str());
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) ImGui::SetScrollHereY(1.0f);
+    {
+        ScopedMonoFont mono;
+        ImGuiListClipper clip;
+        clip.Begin(static_cast<int>(osLines_.size()));
+        while (clip.Step())
+            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
+                ImGui::TextUnformatted(osLines_[static_cast<std::size_t>(i)].c_str());
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) ImGui::SetScrollHereY(1.0f);
+    }
     ImGui::EndChild();
 }
 
@@ -399,15 +432,15 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Step", ImVec2(90, 0)))     ctrl.debugStepInstruction();
+    if (ImGui::Button("Step", ImVec2(90, 0)))     { followPc_ = true; ctrl.debugStepInstruction(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Execute one instruction (F7)");
     ImGui::SameLine();
-    if (ImGui::Button("Step Over", ImVec2(90, 0))) ctrl.debugStepOver();
+    if (ImGui::Button("Step Over", ImVec2(90, 0))) { followPc_ = true; ctrl.debugStepOver(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (F8)");
     ImGui::SameLine();
-    if (ImGui::Button("Step Out")) ctrl.debugStepOut();
+    if (ImGui::Button("Step Out")) { followPc_ = true; ctrl.debugStepOut(); }
     ImGui::SameLine();
     ImGui::BeginDisabled(!cursorValid_);
     if (ImGui::Button("Run To Cursor", ImVec2(120, 0)))
@@ -418,12 +451,24 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
 
     ImGui::SameLine();
     ImGui::Checkbox("Follow PC", &followPc_);
+    ImGui::SameLine();
+    bool beamView = snap.beamView;
+    if (ImGui::Checkbox("Beam view", &beamView)) {
+        auto st = ctrl.lockState();
+        st.memory().setBeamView(beamView);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Show the screen as the tube has it at THIS cycle: the frame in\n"
+                          "progress above the beam, the previous frame from the beam down.\n"
+                          "Off: the last completed frame. Use it when stopped in the middle\n"
+                          "of a frame, or in slow motion (speed menu).");
 }
 
 // ── Registers ────────────────────────────────────────────────────────────
 
 void Debugger_ImGui::drawRegisters(const Snapshot& snap)
 {
+    ScopedMonoFont mono;
     ImGui::Text("PC $%04X    A $%02X   X $%02X   Y $%02X   SP $%02X   P $%02X  [%s]",
                 snap.pc, snap.a, snap.x, snap.y, snap.sp, snap.p,
                 flagsText(snap.p).c_str());
@@ -431,6 +476,95 @@ void Debugger_ImGui::drawRegisters(const Snapshot& snap)
                        snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR) decoding" :
                        snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC) decoding" :
                                                                "6502 (NMOS) decoding");
+}
+
+// ── Beam position and cycle counter ─────────────────────────────────────
+// French Touch's request (2026-11-25): where the beam is at instant T, and a
+// counter to read the cycles spent between two points of the code.
+
+void Debugger_ImGui::drawBeamAndCycles(const Snapshot& snap)
+{
+    // The last run or step. Measured only while stopped: the counter where
+    // the machine stands is compared with where it stood the previous time.
+    // A counter that went BACK (rewind, snapshot load, cold boot) starts the
+    // measure over rather than printing a wrapped 64-bit number.
+    if (!snap.running) {
+        if (haveStop_ && snap.cycles > stopCycles_) {
+            lastRunCycles_ = snap.cycles - stopCycles_;
+            haveLastRun_ = true;
+        } else if (haveStop_ && snap.cycles < stopCycles_) {
+            haveLastRun_ = false;
+        }
+        stopCycles_ = snap.cycles;
+        haveStop_ = true;
+    }
+
+    ScopedMonoFont mono;
+    const BeamPosition b = beamPositionAt(snap.videoCycle, snap.standard);
+    char where[32];
+    if (b.vbl)       std::snprintf(where, sizeof where, "VBL");
+    else if (b.hbl)  std::snprintf(where, sizeof where, "HBL");
+    else             std::snprintf(where, sizeof where, "byte %2d", b.column);
+    ImGui::Text("Beam  V %3d ($%03X)  H %2d ($%02X)  %-8s  frame cycle %5u (%s)",
+                b.line, b.line, b.h, b.h, where, b.frameCycle,
+                snap.standard == VideoStandard::PAL ? "PAL, 312 lines" : "NTSC, 262 lines");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("V = line in the frame (0-191 visible, then vertical blanking).\n"
+                          "H = cycle in the 65-cycle line (0-24 horizontal blanking,\n"
+                          "25-64 the 40 bytes of the line).\n"
+                          "The same beam clock POM2 stamps every video soft switch with,\n"
+                          "numbered like AppleWin's v: and h: (its default, not its \"real\" H).");
+
+    const bool wentBack = snap.cycles < cycleMark_;
+    if (wentBack)
+        ImGui::Text("Cycles %llu  since mark: -- (clock went back)",
+                    static_cast<unsigned long long>(snap.cycles));
+    else
+        ImGui::Text("Cycles %llu  since mark: %llu",
+                    static_cast<unsigned long long>(snap.cycles),
+                    static_cast<unsigned long long>(snap.cycles - cycleMark_));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset mark")) cycleMark_ = snap.cycles;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Count from here: stop at the start of the code to time,\n"
+                          "Reset mark, then run to its end.");
+    if (haveLastRun_) {
+        ImGui::SameLine();
+        ImGui::Text("  last run/step: %llu", static_cast<unsigned long long>(lastRunCycles_));
+    }
+}
+
+// ── Navigation: wheel, Page Up/Down, Go to ──────────────────────────────
+
+void Debugger_ImGui::scrollView(const Snapshot& snap, int instructions)
+{
+    if (snap.memory.size() < 0x10000 || instructions == 0) return;
+    followPc_ = false;
+    viewAddr_ = disasmStep(snap.memory.data(), viewAddr_, instructions, snap.isa);
+}
+
+void Debugger_ImGui::drawNavigation(const Snapshot& snap)
+{
+    ImGui::SetNextItemWidth(160);
+    const bool entered = ImGui::InputTextWithHint("##goto", "$C600 or label", gotoEntry_,
+                                                  sizeof(gotoEntry_),
+                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if ((ImGui::Button("Go to") || entered) && gotoEntry_[0]) {
+        DebugAddress location;
+        gotoFailed_ = !symbols_.resolveLocation(gotoEntry_, location);
+        if (!gotoFailed_) {
+            viewAddr_    = location.addr;
+            followPc_    = false;
+            cursorAddr_  = location.addr;
+            cursorBank_  = location.bank.kind == DebugBank::Any ? snap.banks[location.addr]
+                                                                : location.bank;
+            cursorValid_ = true;
+        }
+    }
+    ImGui::SameLine();
+    if (gotoFailed_) ImGui::TextColored(kBreakColour, "unknown address or label");
+    else             ImGui::TextColored(kDimColour, "wheel / Page Up / Page Down scroll the listing");
 }
 
 // ── Disassembly, with a clickable breakpoint gutter ─────────────────────
@@ -442,13 +576,31 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
         return;
     }
 
-    // Start a couple of instructions above the PC so the user sees where the
-    // machine came from, not just where it is. 6502 instructions are variable
-    // length and cannot be walked backwards reliably, so this is an honest
-    // approximation rather than a claim.
-    uint16_t addr = static_cast<uint16_t>(viewAddr_ - 6);
     const int rows = std::max(8, static_cast<int>(
         ImGui::GetContentRegionAvail().y / ImGui::GetTextLineHeightWithSpacing()) - 1);
+
+    // The wheel moves the listing by instructions (three a notch, as a text
+    // editor scrolls three lines); Page Up / Page Down by a screenful. Ctrl +
+    // wheel is left alone: it is POM2's interface zoom.
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f && !io.KeyCtrl) {
+        wheelAccum_ -= io.MouseWheel * 3.0f;
+        const int whole = static_cast<int>(wheelAccum_);   // toward zero
+        if (whole != 0) {
+            wheelAccum_ -= static_cast<float>(whole);
+            scrollView(snap, whole);
+        }
+    }
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) scrollView(snap, rows - 4);
+        if (ImGui::IsKeyPressed(ImGuiKey_PageUp))   scrollView(snap, -(rows - 4));
+    }
+
+    // Start three instructions above the anchor so the user sees where the
+    // machine came from, not just where it is. Walking back through variable-
+    // length code is a vote (DisasmNavigation.h): exact on real code, a guess
+    // on data.
+    uint16_t addr = disasmStep(snap.memory.data(), viewAddr_, -3, snap.isa);
 
     for (int i = 0; i < rows; ++i) {
         int len = 1;
@@ -732,14 +884,17 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
     if (ImGui::Button("Reload source")) loadSource();
     if (!sourceLoaded_) { ImGui::TextDisabled("Cannot read source (maximum 4 MiB)."); return; }
     ImGui::BeginChild("##sourceLines",ImVec2(0,125),true,ImGuiWindowFlags_HorizontalScrollbar);
-    const unsigned first=entry->line > 4 ? entry->line-4 : 1;
-    const unsigned last=std::min(entry->line+4,static_cast<unsigned>(sourceLines_.size()));
-    for (unsigned number=first; number<=last; ++number) {
-        if (number==entry->line) ImGui::PushStyleColor(ImGuiCol_Text,kPcColour);
-        ImGui::Text("%c %5u  %s",number==entry->line ? '>' : ' ',number,sourceLines_[number-1].c_str());
-        if (number==entry->line) ImGui::PopStyleColor();
+    {
+        ScopedMonoFont mono;
+        const unsigned first=entry->line > 4 ? entry->line-4 : 1;
+        const unsigned last=std::min(entry->line+4,static_cast<unsigned>(sourceLines_.size()));
+        for (unsigned number=first; number<=last; ++number) {
+            if (number==entry->line) ImGui::PushStyleColor(ImGuiCol_Text,kPcColour);
+            ImGui::Text("%c %5u  %s",number==entry->line ? '>' : ' ',number,sourceLines_[number-1].c_str());
+            if (number==entry->line) ImGui::PopStyleColor();
+        }
+        if (sourceLines_.size()<entry->line) ImGui::TextDisabled("Source line is beyond end of file.");
     }
-    if (sourceLines_.size()<entry->line) ImGui::TextDisabled("Source line is beyond end of file.");
     ImGui::EndChild();
 }
 

@@ -91,6 +91,7 @@ struct CliAction {
         Paste,         // pathS             : feed file content as keystrokes (≤ 4096)
         Step,          // countI            : single-step countI times
         TraceBrk,      // (no args)         : enable BRK trace dump
+        BeamView,      // (no args)         : show the tube at this cycle (Memory.h)
         PlayTape,      // (no args)         : cassette PLAY
         RecTape,       // (no args)         : cassette REC arm
         RewindTape,    // (no args)         : cassette REW

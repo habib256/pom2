@@ -156,6 +156,15 @@ const Palette& palette()
     return g_palette;
 }
 
+namespace {
+// UI thread only, like every other ImGui object: set once at start-up by
+// main.cpp, read while drawing.
+ImFont* g_monoFont = nullptr;
+}
+
+void setMonoFont(ImFont* font) { g_monoFont = font; }
+ImFont* monoFont() { return g_monoFont; }
+
 void verticalRule(float padX)
 {
     const float scaled = padX * g_scale;

@@ -10,6 +10,34 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-25 — The debugger, for writing 6502 code
+
+Requests from Grouik (French Touch), who now develops his Apple II
+productions in POM2 too. The listing, registers and lists use a
+fixed-pitch font (DejaVu Sans Mono, added to `fonts/`), so addresses, bytes
+and mnemonics line up. The listing scrolls with the wheel and Page Up/Down,
+and a "Go to" box takes an address or a label; stepping or stopping brings
+it back to the PC. Under the registers: the beam's V and H in the frame, and
+a cycle counter with a resettable mark plus the cycles of the last run or
+step. Walking back through 6502 code is a vote over the chains that land on
+the target, because the bytes before an address do not say where their
+instruction began. → DEV § Debugger. Pinned by `disasm_navigation`.
+
+**Beam view, slow motion, Screen Inspector.** The display paints the last
+completed frame, so a machine stopped mid-frame or run very slowly showed a
+picture up to a frame old. The beam view (Debugger checkbox) shows the tube
+at this cycle: the frame in progress above the beam, the previous one from
+the beam down — soft switches and video RAM alike. It is built inside
+Memory as one synthetic frame, which is why no painter changed. The speed
+menu gains 50 % to 0.1 %; POM2 still advances by whole instructions, each
+with its exact cycles, so slow motion moves by instructions, not by cycles.
+The Screen Inspector (View menu) reads the real picture under the mouse —
+coordinates, the line's mode and page, byte, bit, address — and saves the
+hi-res screen as the beam fetched it, as an 8 KB page the Paint editor
+opens. Pinned by `beam_view`. `--beam-view` on the command line.
+`$POM2_WINDOW_SHOT` lets a script ask POM2 for a PNG of its own window,
+panels included (DEV § Debugger).
+
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
 ## 2026-11-25 — Bug hunt before v1.2.4

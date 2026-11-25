@@ -37,6 +37,7 @@ src/CrtEffectStack.cpp
 src/Cs8900aDevice.cpp
 src/Debugger.cpp
 src/Disassembler6502.cpp
+src/DisasmNavigation.cpp
 src/Disk35Image.cpp
 src/DiskIICard.cpp
 src/DiskImage.cpp
@@ -74,7 +75,9 @@ src/MediaMount.cpp
 src/Memory.cpp
 src/MemoryGamePort.cpp
 src/MemoryProfile_IIcClass.cpp
+src/MemoryBeamView.cpp
 src/MemoryVideoLog.cpp
+src/ScreenProbe.cpp
 src/MemoryViewer_ImGui.cpp
 src/MemoryWatch.cpp
 src/Mockingboard.cpp

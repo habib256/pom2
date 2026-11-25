@@ -24,6 +24,7 @@
 // panels itself, which is what stopped the two drifting apart.
 
 #include "MainWindow.h"
+#include "SlowMotion.h"
 #include "BrowserFiles.h"
 #include "TextScreenCapture.h"
 
@@ -245,6 +246,11 @@ void MainWindow::renderCommandPalette()
         add("speed.4x", "Machine", buf, "", true, cur == vt.cyclesPerFrame * 4);
         add("speed.max", "Machine", "Speed MAX (uncapped)", "", true,
             cur == 1'000'000);
+        for (const pom2::SlowSpeed& slow : pom2::kSlowSpeeds) {
+            std::snprintf(buf, sizeof buf, "Speed %s (slow motion)", slow.label);
+            add((std::string("speed.slow.") + slow.id).c_str(), "Machine", buf, "", true,
+                cur == pom2::slowSpeedBudget(vt.cyclesPerFrame, slow.factor));
+        }
     }
 
     // ── Profiles ─────────────────────────────────────────────────────────
@@ -351,6 +357,10 @@ void MainWindow::runCommand(const std::string& id)
         else if (id == "speed.2x")  controller->setCyclesPerFrame(vt.cyclesPerFrame * 2);
         else if (id == "speed.4x")  controller->setCyclesPerFrame(vt.cyclesPerFrame * 4);
         else if (id == "speed.max") controller->setCyclesPerFrame(1'000'000);
+        else for (const pom2::SlowSpeed& slow : pom2::kSlowSpeeds)
+            if (id == std::string("speed.slow.") + slow.id)
+                controller->setCyclesPerFrame(
+                    pom2::slowSpeedBudget(vt.cyclesPerFrame, slow.factor));
         return;
     }
 
@@ -1161,6 +1171,7 @@ void MainWindow::renderMenuBar()
 
         panelMenuItem(pom2::PanelId::MemViewer);
         panelMenuItem(pom2::PanelId::Debugger);
+        panelMenuItem(pom2::PanelId::ScreenInspector);
         ImGui::Separator();
         panelMenuItem(pom2::PanelId::MemBar);
         panelMenuItem(pom2::PanelId::MemBarH);

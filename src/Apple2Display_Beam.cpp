@@ -52,6 +52,10 @@ bool Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
                                             Memory& mem) const
 {
     if (!cpuIdle_) return false;
+    // Beam view: the picture IS the machine at this cycle. A switch thrown
+    // while stopped is already in the frame in progress's events, at the
+    // beam, and shows from there down as the beam moves on.
+    if (mem.beamViewActive()) return false;
     bool changed = false;
     const Memory::DisplayState live = mem.getDisplayState();
     const Memory::DisplayState& was = liveStateAtRun_;
@@ -72,7 +76,10 @@ bool Apple2Display::applyIdleSwitchOverride(Memory::DisplayState& s,
 void Apple2Display::updateIdleVideoRam(Memory& mem, bool cycleMoved)
 {
     constexpr size_t bytesPerBank = 0x0800 + 0x4000;
-    if (!cpuIdle_) {
+    // Beam view: a single step is the machine moving, not a host edit — the
+    // picture stays beam-timed and the reference copy is taken again.
+    const bool capture = !cpuIdle_ || (cycleMoved && mem.beamViewActive());
+    if (capture) {
         // Only a frame with beam-time RAM needs an input copy for pause.
         if (!mem.videoWriteLogArmed()) {
             liveVideoRamAtRun_.clear();
@@ -91,7 +98,7 @@ void Apple2Display::updateIdleVideoRam(Memory& mem, bool cycleMoved)
     for (const uint8_t* bank : {mem.data(), mem.videoAuxData()}) {
         const auto checkOrCopy = [&](size_t address, size_t count) {
             auto* saved = liveVideoRamAtRun_.data() + offset;
-            if (cpuIdle_) {
+            if (!capture) {
                 if (std::memcmp(saved, bank + address, count) != 0)
                     idleVideoRamEdited_ = true;
             } else {

@@ -105,19 +105,7 @@ uint16_t Apple2Display::hgrRowAddress(int y, bool page2)
 void Apple2Display::applyVideoEvent(Memory::DisplayState& state,
                                     Memory::VideoEventKind kind, bool value)
 {
-    switch (kind) {
-        case Memory::VideoEventKind::TextMode:  state.textMode  = value; break;
-        case Memory::VideoEventKind::MixedMode: state.mixedMode = value; break;
-        case Memory::VideoEventKind::Page2:     state.page2     = value; break;
-        case Memory::VideoEventKind::HiRes:     state.hiRes     = value; break;
-        case Memory::VideoEventKind::EightyCol: state.eightyCol = value; break;
-        case Memory::VideoEventKind::Dhgr:      state.dhgr      = value; break;
-        case Memory::VideoEventKind::An3:       state.an3       = value; break;
-        case Memory::VideoEventKind::EightyStore: state.eightyStore = value; break;
-        case Memory::VideoEventKind::AltChar:   state.altChar   = value; break;
-        case Memory::VideoEventKind::An2:       state.an2       = value; break;
-        case Memory::VideoEventKind::Cut:       break;   // a band edge only
-    }
+    Memory::foldVideoEvent(state, kind, value);   // one rule, shared with the beam view
 }
 
 // See the TextFrameKey comment in Apple2Display.h for why this is limited to

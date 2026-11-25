@@ -30,6 +30,7 @@
 #include "SlotBus.h"
 #include "HostOpenFiles.h"
 #include "Pom2Theme.h"
+#include "WindowCapture.h"
 #include "Version.h"
 // MainWindow.h now forward-declares EmulationController and Apple2Display
 // to keep its include cone lean. main.cpp dereferences both via
@@ -681,6 +682,38 @@ int main(int argc, char* argv[])
             std::fprintf(stderr,
                 "POM2: fa-solid-900.ttf not found in fonts/ — deck icons will render as '?'\n");
         }
+    }
+    // The fixed-pitch font for the debugger's columns (address, bytes,
+    // mnemonic). Added AFTER the icon merge so the merge lands in the UI
+    // font, and registered with Pom2Theme so a panel reaches it through
+    // ScopedMonoFont. Missing → null, and those panels keep the UI font.
+    {
+        const char* monoCandidates[] = {
+            "fonts/DejaVuSansMono.ttf",
+            "../fonts/DejaVuSansMono.ttf",
+            "../../fonts/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        };
+        std::string monoPath;
+        for (const char* c : monoCandidates) {
+            std::string r = pom2::findResource(c);
+            if (!r.empty()) { monoPath = r; break; }
+        }
+        ImFont* mono = nullptr;
+        if (!monoPath.empty()) {
+            ImFontConfig monoCfg;
+            monoCfg.SizePixels  = 14.0f;
+            monoCfg.OversampleH = 2;
+            monoCfg.OversampleV = 2;
+            mono = io.Fonts->AddFontFromFileTTF(monoPath.c_str(), 14.0f, &monoCfg);
+        }
+        if (!mono)
+            std::fprintf(stderr,
+                "POM2: DejaVuSansMono.ttf not found in fonts/ — the debugger's "
+                "columns will not line up\n");
+        pom2::setMonoFont(mono);
     }
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -1334,6 +1367,7 @@ int main(int argc, char* argv[])
         glClearColor(0.10f, 0.10f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        pom2::captureWindowIfRequested(dw, dh);   // $POM2_WINDOW_SHOT, WindowCapture.h
         glfwSwapBuffers(c.window);
 #ifdef __EMSCRIPTEN__
         // The layout, then everything durable. ImGui raises the flag at most

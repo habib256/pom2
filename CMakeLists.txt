@@ -343,6 +343,7 @@ set(SOURCES
     src/MemoryLanguageCard.cpp
     src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
+    src/MemoryBeamView.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/MachineSnapshot.cpp
@@ -389,6 +390,10 @@ set(SOURCES
     src/OsCallTrace_Guest.cpp
     src/Debugger_ImGui.cpp
     src/Debugger_Assembler.cpp
+    src/DisasmNavigation.cpp
+    src/ScreenInspector_ImGui.cpp
+    src/WindowCapture.cpp
+    src/ScreenProbe.cpp
     src/Assembler6502.cpp
     src/MediaMount.cpp
     src/MediaBoot.cpp
@@ -791,6 +796,12 @@ set(POM2_FRONTEND_HEADERS
     src/AudioCoordinator.h
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
+    src/DisasmNavigation.h
+    src/BeamPosition.h
+    src/ScreenInspector_ImGui.h
+    src/WindowCapture.h
+    src/ScreenProbe.h
+    src/SlowMotion.h
     src/NativeFileDialog.h
     src/FilePathPicker.h
     src/SessionFilePicker.h
@@ -830,6 +841,10 @@ set(POM2_FRONTEND_SOURCES
     src/AudioCoordinator.cpp
     src/Debugger_ImGui.cpp
     src/Debugger_Assembler.cpp
+    src/DisasmNavigation.cpp
+    src/ScreenInspector_ImGui.cpp
+    src/WindowCapture.cpp
+    src/ScreenProbe.cpp
     src/PanelRegistry.cpp
     src/MainWindow_AudioPanels.cpp
     src/MainWindow_Midi.cpp
@@ -962,6 +977,7 @@ set(POM2_MACHINE_SOURCES
     src/MemoryLanguageCard.cpp
     src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
+    src/MemoryBeamView.cpp
     src/M6502.cpp
     src/M6502_Undoc.cpp
     src/Z80.cpp
@@ -1206,6 +1222,12 @@ set(HEADERS
     src/Debugger.h
     src/InterruptLoad.h
     src/Debugger_ImGui.h
+    src/DisasmNavigation.h
+    src/BeamPosition.h
+    src/ScreenInspector_ImGui.h
+    src/WindowCapture.h
+    src/ScreenProbe.h
+    src/SlowMotion.h
     src/MediaMount.h
     src/MemoryProfile.h
     src/MemoryProfile_IIcClass.h
@@ -1861,6 +1883,7 @@ set(POM2_CORE_SOURCES
     src/MemoryLanguageCard.cpp
     src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
+    src/MemoryBeamView.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/MachineSnapshot.cpp
@@ -2371,6 +2394,7 @@ add_executable(pom2_headless
     src/MemoryLanguageCard.cpp
     src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
+    src/MemoryBeamView.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/Mockingboard.cpp
@@ -2572,6 +2596,7 @@ add_executable(pom2_bench
     src/MemoryLanguageCard.cpp
     src/MemoryPaste.cpp
     src/MemoryVideoLog.cpp
+    src/MemoryBeamView.cpp
     src/Keyboard.cpp
     src/MemoryProfile_IIcClass.cpp
     src/NoSlotClock.cpp

@@ -618,6 +618,7 @@ std::vector<Memory::VideoEvent> Memory::takeVideoEvents()
         videoEventFrameOpen_ = false;
         return std::move(videoEvents_);
     }
+    if (beamViewActive()) return beamViewEventsLocked();
     // Published mode: COPY, not move — the UI re-renders the same frame
     // when no new one has been published (60 Hz vsync over 50 Hz content).
     return publishedEvents_;

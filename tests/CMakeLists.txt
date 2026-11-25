@@ -172,6 +172,7 @@ set(POM2_TEST_CORE_SOURCES
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -2696,6 +2697,7 @@ add_executable(test_diskii_lss
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -4718,6 +4720,32 @@ endif()
 add_test(NAME drol_pageflip_render COMMAND test_drol_pageflip_render)
 set_tests_properties(drol_pageflip_render PROPERTIES TIMEOUT 5)
 
+# ─── Beam view: the tube at THIS cycle (French Touch, 2026-11-25) ────────────
+add_executable(test_beam_view
+    beam_view_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/ScreenProbe.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
+    ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_beam_view PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_beam_view PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_beam_view PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_beam_view PRIVATE winmm)
+endif()
+add_test(NAME beam_view COMMAND test_beam_view)
+set_tests_properties(beam_view PROPERTIES TIMEOUT 5)
+
 # DROL page-flip probe (diagnostic executable, no add_test): boots the real
 # Drol.dsk and reports where its $C054/$C055 flips land in the video frame.
 add_executable(test_drol_probe
@@ -5922,6 +5950,16 @@ target_include_directories(test_disasm_cmos PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME disasm_cmos COMMAND test_disasm_cmos)
 set_tests_properties(disasm_cmos PROPERTIES TIMEOUT 5)
 
+# ─── Debugger listing walk + beam H/V readout (French Touch, 2026-11-25) ─────
+add_executable(test_disasm_navigation
+    disasm_navigation_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/DisasmNavigation.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
+)
+target_include_directories(test_disasm_navigation PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME disasm_navigation COMMAND test_disasm_navigation)
+set_tests_properties(disasm_navigation PROPERTIES TIMEOUT 5)
+
 # ─── Character-ROM loader hardening (size gate) ───────────────────────────
 add_executable(test_char_rom
     char_rom_test.cpp
@@ -6713,6 +6751,7 @@ add_executable(test_ay_music_export
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -6768,6 +6807,7 @@ add_executable(test_mockingboard
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -6828,6 +6868,7 @@ add_executable(test_mockingboard_audio_quality
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -6892,6 +6933,7 @@ add_executable(test_mockingboard_sync
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -6954,6 +6996,7 @@ add_executable(test_mockingboard_4am_detect
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -7017,6 +7060,7 @@ add_executable(test_mockingboard_irq_delivery
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -7080,6 +7124,7 @@ add_executable(test_mockingboard_iie_irq
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -9346,6 +9391,7 @@ add_executable(test_mockingboard_timeline
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
@@ -11163,6 +11209,7 @@ add_executable(test_mockingboard_t1_irq_phase
     ${CMAKE_SOURCE_DIR}/src/MemoryLanguageCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryPaste.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryVideoLog.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryBeamView.cpp
     ${CMAKE_SOURCE_DIR}/src/Keyboard.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryProfile_IIcClass.cpp
     ${CMAKE_SOURCE_DIR}/src/NoSlotClock.cpp
