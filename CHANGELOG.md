@@ -10,6 +10,26 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-25 — A woz-a-day DAT for libretro-database
+
+RetroArch names a scanned Apple II disk from libretro-database's
+`Apple - II.rdb`, built from TOSEC's DAT alone: it knew 594 of the 2833
+woz-a-day boot disks. `tools/wozaday_dat.py` writes a clrmamepro DAT of the
+collection's disks TOSEC does not list — every `.woz` of every disk zip
+(2843 zips, 754 MB, MD5-checked against archive.org), named
+"Title (Year)(Publisher)(Disk 1)(Side A)" from each WOZ's own META chunk,
+3.5" editions marked "(800K)", archive.org's `00playable.woz` listed as an
+alternate "[a]" when it differs from the zip's disk, IIgs-only titles left
+out. Compiled with TOSEC's by RetroArch's own `c_converter`, as the buildbot
+does, the scan of the corpus names 2616 of the 2833 disks; the other 217
+are IIgs titles.
+
+Two things learned on the way. `c_converter` indexes only the LAST rom of a
+multi-rom game, so the DAT has one entry per disk; RetroArch still finds one
+thumbnail for all of a title's disks, because it falls back to the label up
+to its first " (" (`gfx_thumbnail_fill_content_img`). And a disk TOSEC
+already lists is left out, so the DAT never renames an entry.
+
 ## 2026-11-25 — Libretro disk saves named for a frontend to find
 
 RetroBat asked (emulatorlauncher#1498) for disk saves a frontend can locate.
