@@ -13004,6 +13004,12 @@ itself is UI and has no test.
   winning `findResource`, so "Download missing ROMs" reported "saved 0,
   failed 1" for ever. When that root is writable the dump is replaced
   THERE, the previous file kept as a backup (`RomFetch.cpp`).
+- **Follow PC holds.** The box is the user's switch and only the user
+  writes it. The wheel, Page Up / Down, Go to, a breakpoint jump and the
+  operand's target SUSPEND following (`lookingAround_`) until the next
+  step, stop, run or Tab, and the panel says so beside the box; they used
+  to untick it. While the machine runs and follows, the wheel is ignored
+  (a stray trackpad event froze the listing).
 - **Keys.** F8 joins F10 and Ctrl+Alt+F as a window ⇄ kiosk toggle (it
   was the Debugger's step-over, which is Ctrl+Space as in AppleWin);
   Alt+Enter already did it with the pointer captured.

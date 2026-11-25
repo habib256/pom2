@@ -128,7 +128,9 @@ private:
 
     /// Disassembly origin. Follows the PC unless the user has scrolled away.
     uint16_t  viewAddr_    = 0;
-    bool      followPc_    = true;
+    bool      followPc_    = true;     ///< the checkbox; only the user writes it
+    bool      lookingAround_ = false;  ///< following suspended by a scroll / Go to
+    bool      following() const { return followPc_ && !lookingAround_; }
     /// The machine was running at the previous frame: a stop then brings the
     /// view back to the PC even after the user scrolled away.
     bool      wasRunning_  = false;

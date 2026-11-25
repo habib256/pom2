@@ -157,9 +157,17 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     // A stop brings the listing back to the PC, even after the user scrolled
     // away: the wheel is for looking around, and the machine stopping is the
     // event the user was waiting for.
-    if (wasRunning_ && !snap.running) followPc_ = true;
+    // "Follow PC" is the user's switch and nothing else writes it: the wheel,
+    // Go to and the other ways of looking elsewhere only SUSPEND it
+    // (lookingAround_), until the next step, stop, run or Tab. They used to
+    // untick the box — one brush of a trackpad and it was off ("Follow PC
+    // does not hold", 2026-11-25).
+    if (wasRunning_ != snap.running) {
+        lookingAround_ = false;
+        if (!snap.running) viewAddr_ = snap.pc;
+    }
     wasRunning_ = snap.running;
-    if (followPc_) viewAddr_ = snap.pc;
+    if (following()) viewAddr_ = snap.pc;
 
     // F7 steps while the window is open. Handled HERE rather than in
     // MainWindow's global key routing: the shortcut belongs to this panel and
@@ -169,7 +177,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     handleKeys(ctrl, snap);
     if (!ImGui::GetIO().WantCaptureKeyboard || ImGui::IsWindowFocused()) {
         if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false)) {
-            followPc_ = true;
+            lookingAround_ = false;
             ctrl.debugStepInstruction();
         }
     }
@@ -466,15 +474,15 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
             ImGui::NewLine();
     };
     next(76.0f);
-    if (ImGui::Button("Step", ImVec2(76, 0)))     { followPc_ = true; ctrl.debugStepInstruction(); }
+    if (ImGui::Button("Step", ImVec2(76, 0)))     { lookingAround_ = false; ctrl.debugStepInstruction(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Execute one instruction (Space, F7)");
     next(90.0f);
-    if (ImGui::Button("Step Over", ImVec2(90, 0))) { followPc_ = true; ctrl.debugStepOver(); }
+    if (ImGui::Button("Step Over", ImVec2(90, 0))) { lookingAround_ = false; ctrl.debugStepOver(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (Ctrl+Space)");
     next(82.0f);
-    if (ImGui::Button("Step Out", ImVec2(82, 0))) { followPc_ = true; ctrl.debugStepOut(); }
+    if (ImGui::Button("Step Out", ImVec2(82, 0))) { lookingAround_ = false; ctrl.debugStepOut(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Run until the current routine returns (Shift+Space)");
     next(118.0f);
@@ -485,7 +493,11 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     if (!cursorValid_ && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Click a line in the disassembly first (then Ctrl+Down)");
     next(110.0f);
-    ImGui::Checkbox("Follow PC", &followPc_);
+    if (ImGui::Checkbox("Follow PC", &followPc_)) lookingAround_ = false;
+    if (followPc_ && lookingAround_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(looking elsewhere: Tab = back to PC)");
+    }
 }
 
 // ── Registers ────────────────────────────────────────────────────────────
@@ -642,7 +654,10 @@ void Debugger_ImGui::drawBeamAndCycles(const Snapshot& snap)
 void Debugger_ImGui::scrollView(const Snapshot& snap, int instructions)
 {
     if (snap.memory.size() < 0x10000 || instructions == 0) return;
-    followPc_ = false;
+    // Running and following: the listing is pinned to a moving PC, and a
+    // stray wheel event must not freeze it. Untick the box to look around.
+    if (snap.running && following()) return;
+    lookingAround_ = true;
     viewAddr_ = disasmStep(snap.memory.data(), viewAddr_, instructions, snap.isa);
 }
 
@@ -658,7 +673,7 @@ void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& s
         gotoFailed_ = !symbols_.resolveLocation(gotoEntry_, location);
         if (!gotoFailed_) {
             viewAddr_    = location.addr;
-            followPc_    = false;
+            lookingAround_ = true;
             cursorAddr_  = location.addr;
             cursorBank_  = location.bank.kind == DebugBank::Any ? snap.banks[location.addr]
                                                                 : location.bank;
@@ -715,16 +730,16 @@ void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
     const auto moveCursor = [&](uint16_t to) {
         cursorAddr_ = to; cursorBank_ = snap.banks[to]; cursorValid_ = true;
     };
-    const auto show = [&](uint16_t to) { viewAddr_ = to; followPc_ = false; moveCursor(to); };
+    const auto show = [&](uint16_t to) { viewAddr_ = to; lookingAround_ = true; moveCursor(to); };
     const uint16_t cursor = cursorValid_ ? cursorAddr_ : snap.pc;
 
     if (ImGui::IsKeyPressed(ImGuiKey_Space, /*repeat=*/true)) {
-        followPc_ = true;
+        lookingAround_ = false;
         if (io.KeyShift)     ctrl.debugStepOut();
         else if (io.KeyCtrl) ctrl.debugStepOver();
         else                 ctrl.debugStepInstruction();
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) { followPc_ = true; moveCursor(snap.pc); }
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) { lookingAround_ = false; moveCursor(snap.pc); }
 
     const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow), down = ImGui::IsKeyPressed(ImGuiKey_DownArrow);
     if (down && io.KeyCtrl) {
@@ -733,7 +748,7 @@ void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
         const int dir = down ? 1 : -1;
         if (io.KeyShift) {            // one BYTE: resynchronise a listing by hand
             viewAddr_ = static_cast<uint16_t>(viewAddr_ + dir);
-            followPc_ = false;
+            lookingAround_ = true;
         } else {
             const uint16_t to = disasmStep(mem, cursor, dir, snap.isa);
             moveCursor(to);
@@ -749,7 +764,7 @@ void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
                 st.cpu().setProgramCounter(cursorAddr_);
             }
         } else if (io.KeyShift || io.KeyAlt) {
-            followPc_ = true; moveCursor(snap.pc);
+            lookingAround_ = false; moveCursor(snap.pc);
         } else {
             // The operand's target: an absolute address, or a branch's.
             int len = 1;
@@ -961,7 +976,7 @@ void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
                 viewAddr_ = bp;
                 cursorAddr_ = bp; cursorBank_ = location.bank.kind == DebugBank::Any ? snap.banks[bp] : location.bank;
                 cursorValid_ = true;
-                followPc_ = false;      // jumping to a breakpoint means "look here"
+                lookingAround_ = true;      // jumping to a breakpoint means "look here"
             }
             ImGui::PopID();
             const auto condition = snap.conditions.find(location);
@@ -1045,7 +1060,7 @@ void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
             viewAddr_ = w.addr;
             cursorAddr_ = w.addr; cursorBank_ = w.bank.kind == DebugBank::Any ? snap.banks[w.addr] : w.bank;
             cursorValid_ = true;
-            followPc_ = false;
+            lookingAround_ = true;
         }
         ImGui::PopID();
     }
@@ -1104,8 +1119,8 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
     }
     ImGui::TextWrapped("A .p2map, or a cc65 .dbg (ld65 --dbgfile, assembled with -g). Map rows: aux0:$0800-$0802 \"src/main.s\" 42. Paths are relative to the map. Ranges use inclusive hexadecimal addresses; lines start at 1.");
     ImGui::TextWrapped("%s",sourceStatus_.c_str());
-    const DebugAddress location{followPc_ || !cursorValid_ ? snap.pc : cursorAddr_,
-        followPc_ || !cursorValid_ ? snap.pcBank : cursorBank_};
+    const DebugAddress location{following() || !cursorValid_ ? snap.pc : cursorAddr_,
+        following() || !cursorValid_ ? snap.pcBank : cursorBank_};
     const auto* entry=sourceMap_.lookup(location);
     if (!entry) { ImGui::TextDisabled("No source mapping for %s",location.text().c_str()); return; }
     ImGui::Text("%s -> %s:%u",location.text().c_str(),entry->file.c_str(),entry->line);

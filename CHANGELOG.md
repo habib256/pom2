@@ -85,6 +85,9 @@ issue with the machine's state — cards, disks by file name, CPU, video
 switches, memory map, GPU — and copies the full report to the clipboard,
 so the first reply to an issue is no longer a list of questions.
 
+The Debugger's "Follow PC" box no longer unticks itself: scrolling or Go to
+only suspends it until the next step or stop.
+
 The Speaker SFX editor comes over from POM1 (Tools ▸ Sound): design a
 sound effect for the 1-bit speaker, hear it, export the assembler table.
 The machine now powers on once: it used to boot, then boot again when the
