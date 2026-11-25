@@ -303,9 +303,11 @@ in auxiliary RAM from `$10000` — AppleWin's arrangement, which RAppleWin
 gives RetroAchievements. Every piece is a power of two long, so RetroArch's
 cheat search accepts the map too.
 
-RetroAchievements finds a game by the MD5 of the whole disk file (`.dsk`,
-`.nib`, `.woz`, or the first disk of an `.m3u`); `.po`, `.do` and `.2mg` are
-not hashed by rcheevos. The core never writes the original file — a guest's
+RetroAchievements finds a game by the MD5 of the whole disk file, or of the
+first disk of an `.m3u`. rcheevos maps `.dsk`, `.nib` and `.woz` to the
+Apple II and hashes any other extension (`.po`, `.do`, `.2mg`) the same way,
+whole file, so every format the core opens can be identified — the hash
+just has to be linked to the game on RetroAchievements. The core never writes the original file — a guest's
 writes go to a private copy in the saves folder — so a disk keeps its hash
 after a game saves to it. The default machine is NTSC, as RAppleWin's is:
 a timed leaderboard counts 60 frames a second.
