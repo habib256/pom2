@@ -49,7 +49,7 @@ expression conditions / access counters / code-data log, and
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | Left: A2R 3 checked on a real capture (A2R 2/3, ShrinkIt, DiskCopy and multi-disk archives shipped 2026-11-24). |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
-| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Decided 2026-11-25: hover preview from libretro's Apple II thumbnails. First the woz-a-day DAT (libretro-database), then the thumbnail set; the fallback (POM2's own title-screen capture) can be built now. |
+| [UI-009](docs/backlog/ui-debugger.md#ui-009) | Decided 2026-11-25: hover preview from libretro's Apple II thumbnails. First the woz-a-day DAT (libretro-database), then the thumbnail set; a disk with no picture shows nothing (no fallback capture). |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
 
 **ROMs MAME has and POM2 lacks** ([audit](docs/audits/rom-gaps-vs-mame-2026-11-23.md)), each from

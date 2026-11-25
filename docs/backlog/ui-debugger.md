@@ -159,15 +159,14 @@ first hover through the curl path `MediaSource` already uses and cached in
 the user data folder. Nothing is packaged: no picture of a third-party game
 enters the tree or a package (the 2026-10-29 rule); whether the name table
 may ship depends on libretro-database's licence, else it is fetched too. A
-disk with no entry falls back to a capture POM2 takes of the title screen
-the first time the disk boots. The browser build is not promised: the
+disk libretro has no picture for shows nothing, for now (owner, 2026-11-25:
+no capture of POM2's own as a fallback). The browser build is not promised: the
 thumbnail server must allow it (CORS), not checked.
 
 **Acceptance criterion:** hovering a known disk shows its title picture
 within a frame of the download finishing, without loading the disk or
-blocking the library's scan; an unknown disk shows its own capture or
-nothing, and the row stays readable; no network request happens until a
-row is hovered.
+blocking the library's scan; a disk with no picture shows nothing and its
+row stays readable; no network request happens until a row is hovered.
 
 <a id="ui-010"></a>
 
