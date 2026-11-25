@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 1.2.4 LANGUAGES CXX)
+project(pom2_imgui VERSION 1.2.5 LANGUAGES CXX)
 
 # The MSVC runtime, linked statically into EVERY target (/MT), before any is
 # created: the desktop exe, pom2_core, the tests that link it, and the libretro
@@ -440,6 +440,8 @@ set(SOURCES
     src/MainWindow_SettingsPanels.cpp
     src/MainWindow_CrtPanel.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_Thanks.cpp
+    src/MainWindow_BugReport.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
     src/MainWindow_OpenUrl.cpp
@@ -803,6 +805,7 @@ set(POM2_FRONTEND_HEADERS
     src/WindowCapture.h
     src/ScreenProbe.h
     src/AppleIoNames.h
+    src/ThanksCredits.h
     src/FetchedPagesFile.h
     src/SlowMotion.h
     src/NativeFileDialog.h
@@ -854,6 +857,8 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_Midi.cpp
     src/MainWindow_Recording.cpp
     src/MainWindow_MiscPanels.cpp
+    src/MainWindow_Thanks.cpp
+    src/MainWindow_BugReport.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
     src/MainWindow_OpenUrl.cpp
@@ -1232,6 +1237,7 @@ set(HEADERS
     src/WindowCapture.h
     src/ScreenProbe.h
     src/AppleIoNames.h
+    src/ThanksCredits.h
     src/FetchedPagesFile.h
     src/SlowMotion.h
     src/MediaMount.h

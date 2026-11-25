@@ -73,6 +73,18 @@ moved from View to Tools, which is now three families (debugging, graphics,
 AI control). The "Printer" panel is named "Parallel printer". The Debug
 layout keeps the Disk Library as a tab behind the Debugger.
 
+**v1.2.5 marker** — 2026-11-25. Release notes: [v1.2.5](docs/releases/v1.2.5.md). No libretro release with it: the core has nothing new for a frontend.
+
+## 2026-11-25 — Help: Welcome, About, Thank you, and a bug report that says what the machine was
+
+*Welcome* is rewritten as three steps. *About* states how POM2 decides
+what is true and names the emulators it stands on; *Thank you* rolls every
+name like the end credits of a film (the list published with POM2 1.0 on
+Applefritter, completed from the repository). *Report a bug* now fills the
+issue with the machine's state — cards, disks by file name, CPU, video
+switches, memory map, GPU — and copies the full report to the clipboard,
+so the first reply to an issue is no longer a list of questions.
+
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
 ## 2026-11-25 — Bug hunt before v1.2.4

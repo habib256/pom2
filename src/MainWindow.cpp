@@ -1262,10 +1262,15 @@ void MainWindow::applyDockLayout(DockLayout preset)
     // opens itself when a card has a picture, and the welcome page is the
     // first-run guide.
     using P = pom2::PanelId;
-    const auto showOnly = [this](std::initializer_list<P> keep) {
+    // Slot Configuration is offered by a layout only on a machine that HAS
+    // slots: a //c or a //c Plus has ports, and a tab about slots there is a
+    // tab about nothing (it stays reachable from the Devices menu).
+    const bool hasSlots = !pom2::profileConfig(activeProfile).noPhysicalSlots;
+    const auto showOnly = [this, hasSlots](std::initializer_list<P> keep) {
         for (const pom2::PanelInfo& info : pom2::kPanelCatalog) {
             if (info.id == P::CardMonitor || info.id == P::Welcome) continue;
-            show(info.id) = std::find(keep.begin(), keep.end(), info.id) != keep.end();
+            show(info.id) = std::find(keep.begin(), keep.end(), info.id) != keep.end() &&
+                            (info.id != P::SlotConfig || hasSlots);
         }
     };
 
@@ -1273,6 +1278,9 @@ void MainWindow::applyDockLayout(DockLayout preset)
         case DockLayout::Reset:
             focusDefaultDrives_ = true;
             showOnly({P::Drives, P::DiskLibrary, P::SlotConfig, P::Keyboard});
+            // Mini-Apple II is the machine on a desk: its monitor has its
+            // frame (Display > Monitor II frame turns it off again).
+            monitorArtworkEnabled = true;
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
                                                      0.34f, nullptr, &centre);
             bottom     = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down,
@@ -1752,6 +1760,7 @@ void MainWindow::render()
     renderDiskFileDialog();
     renderDisk35FileDialog();
     renderAboutDialog();
+    renderThanksWindow();
     renderStatusBar();
     // Last: the palette is an overlay and must draw above every panel.
     renderCommandPalette();

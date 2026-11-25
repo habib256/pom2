@@ -1552,8 +1552,15 @@ private:
     /// Every drive of the machine as plain values, in the rack's order — the
     /// one list the Drives window and the File menu both draw from.
     std::vector<pom2::DrivePicture> collectDrivePictures();
-    /// Help > Report a bug: a prefilled GitHub issue (BugReportUrl.h).
+    /// Help > Report a bug: a prefilled GitHub issue (BugReportUrl.h), with
+    /// what the session can say by itself (MainWindow_BugReport.cpp).
     void openBugReport();
+    std::vector<std::pair<std::string, std::string>> bugReportFacts();
+    /// Help > Thank you: the credits, rolled like a film's (MainWindow_Thanks.cpp).
+    void renderThanksWindow();
+    bool  showThanks_   = false;
+    bool  thanksPaused_ = false;
+    float thanksScroll_ = -1.0f;   ///< < 0: start from the top at the next open
     bool isCompactDriveProfile() const;
     /// Eject / write-protect / insert (opens the rack's picker) / mount one
     /// drive — the rack's actions, callable from any menu.

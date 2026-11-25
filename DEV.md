@@ -12958,7 +12958,7 @@ itself is UI and has no test.
   own way); the monitor names were cross-checked against AppleWin's
   `APPLE2E.SYM`. A symbol file is the program's own vocabulary and wins.
 - **Docking.** Three layout presets: Emulation, **Mini-Apple II** (the
-  screen above its keyboard, storage on the right — the former "Reset to
+  screen in its Monitor II frame above its keyboard, storage on the right — the former "Reset to
   default", still `DockLayout::Reset` and `layout.reset`) and Debug; the
   Audio one is gone, nobody used it. **Debug** is two halves and nothing
   else: Screen Inspector on the left (a tab beside the Apple II Screen),
@@ -12992,6 +12992,24 @@ itself is UI and has no test.
   Premium SoftCard, hardware that is in no slot and used to sit in Machine. File ▸ Reload ROM is gone: the
   ROM Status panel and the welcome page keep their own Reload ROM button.
   File ▸ Boot HDV is gone too: it duplicated the Disk Library's Boot.
+- **Help.** *Welcome* is three steps (put a disk in, the keys that are
+  not obvious, where things are) instead of an inventory. *About* states
+  the project's rule — the silicon is the reference, every claim graded —
+  and names the emulators POM2 stands on (MAME, AppleWin, OpenEmulator,
+  AccurApple, apple2js, web-a2e, izapple2, Casso, Virtual ][, MicroM8); it
+  used to say accuracy came from "verbatim ports of MAME", which the
+  project's own convention contradicts. *Thank you* (`ThanksCredits.h`,
+  `MainWindow_Thanks.cpp`) rolls every name like a film's end credits: the
+  author's list published with POM2 1.0 on Applefritter, plus the credits
+  the repository has gained since. A name is in it because a file here
+  says why; an author is named only where a source names them.
+- **Report a bug** (`BugReportUrl.h`, `MainWindow_BugReport.cpp`) now
+  fills the issue with what the session can say by itself: speed, running
+  or stopped, the cards by slot, the disks (file names only, never a
+  path), the registers and the bank at the PC, the video switches, the
+  memory map, the beam, the GPU and OpenGL version, the window and its
+  scales. The URL carries what fits in 2000 characters, most useful
+  first; the FULL report is copied to the clipboard on every platform.
 - **The Debugger fits half a window.** Its header rows are runs of tokens
   that wrap under their values, its buttons wrap, the listing takes the
   whole width (an operand's note needs it), and breakpoints and watches

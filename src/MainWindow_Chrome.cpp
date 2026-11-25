@@ -294,6 +294,9 @@ void MainWindow::renderCommandPalette()
     }
 
     // ── Layout + interface ───────────────────────────────────────────────
+    add("help.about",  "Help", "About POM2");
+    add("help.thanks", "Help", "Thank you (credits)");
+    add("help.bug",    "Help", "Report a bug");
     add("layout.emulation", "Layout", "Emulation layout");
     add("layout.reset",     "Layout", "Mini-Apple II layout");
     add("layout.debug",     "Layout", "Debug layout");
@@ -393,6 +396,9 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "disp.monitor")        { toggle(monitorArtworkEnabled);    return; }
 
     // Layout + interface
+    if (id == "help.about")  { showAbout = true; return; }
+    if (id == "help.thanks") { showThanks_ = true; return; }
+    if (id == "help.bug")    { openBugReport(); return; }
     if (id == "layout.reset")     { pendingDockLayout_ = DockLayout::Reset;     dockLayoutRequested_ = true; return; }
     if (id == "layout.emulation") { pendingDockLayout_ = DockLayout::Emulation; dockLayoutRequested_ = true; return; }
     if (id == "layout.debug")     { pendingDockLayout_ = DockLayout::Debug;     dockLayoutRequested_ = true; return; }
@@ -1159,7 +1165,11 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem(ICON_FA_BUG "  Report a bug..."))
             openBugReport();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Opens a new GitHub issue with this version, edition and machine filled in.");
+            ImGui::SetTooltip("Opens a new GitHub issue already holding the version, the machine,\n"
+                              "its cards and disks, the CPU and the video state. The same report\n"
+                              "is copied to the clipboard.");
+        ImGui::Separator();
+        if (ImGui::MenuItem(ICON_FA_HEART "  Thank you...")) showThanks_ = true;
         if (ImGui::MenuItem("About POM2")) showAbout = true;
         ImGui::EndMenu();
     }
@@ -1173,33 +1183,39 @@ void MainWindow::openBugReport()
 {
     const auto& profile = pom2::profileConfig(activeProfile);
     const std::string mode = display ? Apple2Display::hiResModeName(display->getHiResMode()) : "?";
+    const std::vector<pom2::BugReportFact> facts = bugReportFacts();
     const std::string url = pom2::bugReportUrl(POM2_VERSION_STRING, pom2::bugReportEdition(),
-                                               std::string(profile.displayName), mode);
+                                               std::string(profile.displayName), mode, facts);
+    // The FULL report goes on the clipboard on every platform: the URL only
+    // carries what fits in one, and pasting is the fallback when no browser
+    // opens.
+    const std::string fullReport = pom2::bugReportBody(POM2_VERSION_STRING, pom2::bugReportEdition(),
+                                                       std::string(profile.displayName), mode, facts);
+    ImGui::SetClipboardText(fullReport.c_str());
 #if defined(__EMSCRIPTEN__)
     const std::string script = "window.open('" + url + "', '_blank', 'noopener')";
     emscripten_run_script(script.c_str());
     // A pop-up blocker can refuse it silently (noopener hides the result):
     // the link is on the clipboard too.
-    ImGui::SetClipboardText(url.c_str());
-    tapeStatusMessage = "Opening the issue page; the link is also on the clipboard.";
+    tapeStatusMessage = "Opening the issue page; the full report is on the clipboard.";
     tapeStatusUntil = lastFrameTime + 8.0;
 #elif defined(__linux__)
     // ImGui's opener waits for xdg-open, and xdg-open's generic mode runs the
     // browser in the foreground (Raspberry Pi OS): the window would stop
     // painting until the browser closes. Detached instead, with the link on
     // the clipboard in case nothing opens (bug hunt 2026-11-25).
-    ImGui::SetClipboardText(url.c_str());
     tapeStatusMessage = openUrlDetached(url)
-        ? "Opening the issue page in your browser; the link is also on the clipboard."
-        : "No browser could be opened: the issue link is on the clipboard.";
+        ? "Opening the issue page in your browser; the full report is on the clipboard."
+        : "No browser could be opened: the report is on the clipboard, paste it in a new issue at github.com/habib256/pom2.";
     tapeStatusUntil = lastFrameTime + 8.0;
 #else
     ImGuiPlatformIO& io = ImGui::GetPlatformIO();
-    if (!io.Platform_OpenInShellFn || !io.Platform_OpenInShellFn(ImGui::GetCurrentContext(), url.c_str())) {
-        ImGui::SetClipboardText(url.c_str());
-        tapeStatusMessage = "No browser could be opened: the issue link is on the clipboard.";
-        tapeStatusUntil = lastFrameTime + 8.0;
-    }
+    const bool opened = io.Platform_OpenInShellFn &&
+                        io.Platform_OpenInShellFn(ImGui::GetCurrentContext(), url.c_str());
+    tapeStatusMessage = opened
+        ? "Opening the issue page in your browser; the full report is on the clipboard."
+        : "No browser could be opened: the report is on the clipboard, paste it in a new issue at github.com/habib256/pom2.";
+    tapeStatusUntil = lastFrameTime + 8.0;
 #endif
 }
 

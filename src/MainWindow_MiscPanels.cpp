@@ -881,43 +881,46 @@ void MainWindow::renderWelcomePanelWindow()
         ImGui::Spacing();
     }
 
-    // ── Loading software ─────────────────────────────────────────────
-    ImGui::SeparatorText("Loading a disk");
+    // ── Three steps, then where things are ───────────────────────────
+    // A newcomer needs an order, not an inventory: get a disk in, know the
+    // few keys that are not obvious, then find the rest by its menu.
+    ImGui::SeparatorText("1. Put a disk in");
 #ifdef __EMSCRIPTEN__
-    ImGui::BulletText("File → Disk Library opens bundled images.");
-    ImGui::BulletText("File → Open session... imports a supported machine and its disks.");
-    ImGui::BulletText("File → Import disk and boot... opens a disk image from your computer.");
-    ImGui::BulletText("Click an empty drive to import a disk without rebooting.");
-    ImGui::TextDisabled("Save a session or enable Automatic resume to keep imported disks and changes.");
+    ImGui::BulletText("File \xe2\x96\xb8 Disk Library opens the bundled images.");
+    ImGui::BulletText("File \xe2\x96\xb8 Import disk and boot... takes a disk image from your computer.");
+    ImGui::BulletText("Click an empty drive to insert a disk without rebooting.");
+    ImGui::TextDisabled("File \xe2\x96\xb8 Automatic resume keeps your disks and changes between visits.");
 #else
-    ImGui::BulletText("Drag a .woz / .moof / .dsk / .po / .nib / .nb2 / .hdv / .2mg onto this window.");
-    ImGui::BulletText("Or File → Disk Library to browse bundled images.");
-    ImGui::BulletText("Or launch from a terminal: POM2 path/to/game.woz");
-    ImGui::TextDisabled("POM2 auto-routes each image to Disk II, SmartPort 3.5\" or ProDOS HDV.");
+    ImGui::BulletText("Drop a disk image on this window: .woz .dsk .do .po .nib .2mg .hdv, or a .zip.");
+    ImGui::BulletText("Or File \xe2\x96\xb8 Disk Library, File \xe2\x96\xb8 Open disk from URL...");
+    ImGui::BulletText("Or from a terminal: POM2 path/to/game.woz");
+    ImGui::TextDisabled("POM2 sends each image to the right drive: Disk II, 3.5\", or hard disk.");
+    ImGui::TextDisabled("Disks save by themselves; the write-protect tab is on each drive.");
 #endif
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Suggested media folders");
-    ImGui::BulletText("roms/        Apple II firmware dumps");
-    ImGui::BulletText("disks_5.4/   5.25\" disk images (.dsk/.woz/.nib)");
-    ImGui::BulletText("disks_3.5/   400K/800K images; 1.44 MB requires SuperDrive");
-    ImGui::BulletText("hdv/         ProDOS hard-disk images (.hdv/.2mg)");
-
-    // ── Keys & signature features ────────────────────────────────────
-    ImGui::Spacing();
-    ImGui::SeparatorText("Keys");
-    ImGui::BulletText("F11  Reset (Ctrl-Reset)        F12  Hard reset");
-    ImGui::BulletText("F9   Screenshot                F6   Hold to rewind");
-    ImGui::BulletText("Left Alt = Open-Apple          Right Alt = Solid-Apple");
-    ImGui::BulletText("Ctrl+Alt+F  Full screen (kiosk) \xe2\x87\x84 windowed  (F10 too)");
-    ImGui::BulletText("Ctrl+V pastes clipboard text as keystrokes");
+    ImGui::SeparatorText("2. The keys that are not obvious");
+    ImGui::BulletText("F11  Reset (Ctrl-Reset)          F12  Hard reset");
+    ImGui::BulletText("Left Alt  Open-Apple            Right Alt  Solid-Apple");
+    ImGui::BulletText("Ctrl+V  paste text as keystrokes    F9  screenshot");
+    ImGui::BulletText("F6  hold to rewind (Machine \xe2\x96\xb8 Rewind, Record first)");
+    ImGui::BulletText("F10 or Ctrl+Alt+F  full screen    Ctrl+Shift+P  every command");
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Try these");
-    ImGui::BulletText("Display → 3D voxel view  — MicroM8-style cube renderer.");
-    ImGui::BulletText("Machine → Rewind        — enable Record, then hold F6 to rewind.");
-    ImGui::BulletText("Display → CRT Settings   — scanlines, phosphor, NTSC look.");
-    ImGui::BulletText("Machine → Profile        — switch between ][ / ][+ / //e / //c / //c+.");
+    ImGui::SeparatorText("3. Where things are");
+    ImGui::BulletText("Machine   run, pause, reset, the profile (][ to //c Plus, NTSC or PAL)");
+    ImGui::BulletText("Devices   Slot Configuration first, then every card by kind");
+    ImGui::BulletText("Display   colour pipeline, CRT settings, the 3D voxel view");
+    ImGui::BulletText("View      three layouts: Emulation, Mini-Apple II, Debug");
+    ImGui::BulletText("Tools     Debugger, Screen Inspector, memory viewer, paint editors");
+    ImGui::BulletText("Help      ROM Status, Report a bug, Thank you");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Writing your own software?");
+    ImGui::TextWrapped(
+        "View \xe2\x96\xb8 Layout \xe2\x96\xb8 Debug puts the Screen Inspector beside the "
+        "Debugger. Tick Beam view and pick a slow speed (down to 0.1 %%) in the toolbar to "
+        "watch a frame being drawn; the debugger takes AppleWin's keys.");
 
     ImGui::PopTextWrapPos();
 
@@ -926,6 +929,8 @@ void MainWindow::renderWelcomePanelWindow()
     if (ImGui::Button("Close")) show(pom2::PanelId::Welcome) = false;
     ImGui::SameLine();
     if (ImGui::Button("About POM2...")) { showAbout = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("Thank you...")) { showThanks_ = true; }
     ImGui::End();
 }
 
@@ -957,45 +962,51 @@ void MainWindow::renderAboutDialog()
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textColumnW);
 
         ImGui::Text("POM2 " POM2_VERSION_STRING);
-        ImGui::Text("Apple II / II+ / //e / //c / //c+ emulator");
-        ImGui::Text("MOS 6502 / 65C02 / Rockwell / WDC, Dear ImGui frontend");
+        ImGui::TextUnformatted("An Apple II family emulator");
+        ImGui::TextDisabled("Apple ][, ][+, //e, //c and //c Plus - NTSC and PAL");
         ImGui::Spacing();
         // The author, as the packaging already names him (Info.plist,
         // the Pi scripts): the About box is the one place a user looks.
-        ImGui::Text("(c) 2026 Arnaud Verhille (habib256) - GPL-3.0");
+        ImGui::TextUnformatted("(c) 2026 Arnaud Verhille (habib256)");
+        ImGui::TextDisabled("Free software, GPL-3.0 - github.com/habib256/pom2");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
+        // What POM2 is FOR, and how it decides what is true: the project's
+        // rule (CLAUDE.md), not a list of chips.
         ImGui::TextWrapped(
-            "Hardware accuracy comes from verbatim ports of MAME's "
-            "device models. Wherever POM2 emulates a chip or a "
-            "peripheral, the implementation cites the MAME source "
-            "file and line range it follows.");
+            "POM2 aims to behave exactly like the real machine. The silicon is "
+            "the reference: every claim about the hardware in the source is "
+            "graded by its evidence, from a measurement on a real machine down "
+            "to an admitted unknown, and a lower grade never overrules a higher "
+            "one.");
         ImGui::Spacing();
-        ImGui::TextWrapped("Subsystems ported from MAME include:");
-        ImGui::BulletText("M6502 / 65C02 dispatch table and timing");
-        ImGui::BulletText("IWM (Apple Integrated Woz Machine) for //c+ and 3.5\" SmartPort");
-        ImGui::BulletText("AY-3-8910 PSG + 6522 VIA (Mockingboard)");
-        ImGui::BulletText("uPD1990AC RTC (ThunderClock+)");
-        ImGui::BulletText("M68705P3 + MC6821 PIA (Mouse Card)");
-        ImGui::BulletText("WozFDC / Disk II LSS + flux event model");
-        ImGui::BulletText("Sony 3.5\" zoned GCR encoder / decoder");
-        ImGui::BulletText("RamWorks III aux-slot expander");
-        ImGui::BulletText("Floppy mechanical sound samples + cadence");
+        ImGui::TextWrapped(
+            "It is also a tool for writing new Apple II software: a debugger "
+            "with AppleWin's keys, a beam view, slow motion, a screen "
+            "inspector, paint and sprite editors, and host tools for disk "
+            "images.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
 
-        ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::TextUnformatted("It stands on the work of other emulators:");
+        ImGui::BulletText("MAME - the hardware models POM2 ports and cites");
+        ImGui::BulletText("AppleWin - Uthernet II, mouse card, NTSC colours, its debugger's habits");
+        ImGui::BulletText("OpenEmulator - the composite NTSC shader");
+        ImGui::BulletText("AccurApple - logic-analyser traces of a real PAL //e");
+        ImGui::BulletText("apple2js, web-a2e, izapple2, Casso, Virtual ][, MicroM8");
         ImGui::Spacing();
         ImGui::TextWrapped(
-            "Thanks to the MAME team for the meticulous reverse "
-            "engineering work that makes POM2's parity possible. "
-            "MAME is GPL-2.0 / BSD-3-Clause; POM2 is GPL-3.0.");
+            "and on Jim Sather's books, the test suites of Tom Harte and Klaus "
+            "Dormann, and the demos French Touch tuned on real machines.");
+        ImGui::Spacing();
+        if (ImGui::Button("Thank you: everyone, by name...")) showThanks_ = true;
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        ImGui::Text("F11 = Reset (Ctrl-Reset)   F12 = Hard reset");
-        ImGui::Text("ESC, arrows, Ctrl-A..Z map straight to the keyboard");
+        ImGui::TextDisabled("F11 Reset   F12 Hard reset   F9 Screenshot   Ctrl+Shift+P Commands");
 
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
