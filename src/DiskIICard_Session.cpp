@@ -202,9 +202,11 @@ bool DiskIICard::prepareSessionState(const uint8_t* data, size_t len,
     return true;
 }
 
-bool DiskIICard::bindSdkBacking(SessionRestore& prepared, const std::string& backing, int drive)
+bool DiskIICard::bindSdkBacking(SessionRestore& prepared, const std::string& backing, int drive,
+                                const pom2::MediaFileStamp* live)
 {
-    if (drive < 0 || drive >= kDriveCount || !prepared.media[drive]->bindSnapshotBacking(backing))
+    if (drive < 0 || drive >= kDriveCount) return false;
+    if (!prepared.media[drive]->bindSnapshotBacking(backing, live))
         return false;
     // The prepared capture was validated in its detached form. Update the
     // identity of the writable nibble surface to match its new backing. The

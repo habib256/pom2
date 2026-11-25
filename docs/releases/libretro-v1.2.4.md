@@ -21,6 +21,8 @@ Built from the same emulator as POM2 v1.2.4.
   saved by v1.2.3 moves to its new name, progress included, the first time
   its game is opened; if two v1.2.3 copies claim one name, the one with
   progress plays and the other is kept beside it as `[old …]`.
+- **The web core shows a message instead of ending the page** on a zip with
+  no disk or a broken playlist (RetroArch's web build cannot catch errors).
 - **Run-ahead with a disk.** A restore no longer reads and hashes the disk
   image again (it cost 12 ms a frame for a 3.5" disk, 188 ms for a hard
   disk), and "Run-Ahead: use second instance" no longer turns itself off
@@ -31,8 +33,8 @@ Built from the same emulator as POM2 v1.2.4.
   D-pad and B/A on the joystick and gets its keys on the other buttons; a
   keyboard-only game gets its movement keys on the D-pad. RetroArch's
   controls menu names each key. Core option *Game pad profiles*; it applies
-  when port 1 is the Apple II joystick. For netplay, both players need the
-  same file name (or the option Off): a `.dsk` is recognised by its name.
+  when port 1 is the Apple II joystick. In netplay the profile travels with
+  the state, so a player who joins takes the host's.
 - **A memory map RetroArch reads in full.** The 48 KB below the language
   card was one block, which RetroArch's map preprocessing refuses, so its
   cheat search saw nothing. It is now two blocks, in main and aux RAM.
@@ -45,7 +47,7 @@ Built from the same emulator as POM2 v1.2.4.
   with Apple II DeskTop, at 150 % mouse speed.
 
 Before this release, two rounds of review over everything since v1.2.3
-fixed 46 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
+fixed 58 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
 
 The core also builds for iOS, tvOS, RetroArch's web player and 32-bit ARM
 Linux. Each build is checked in CI, the web one by booting a game under

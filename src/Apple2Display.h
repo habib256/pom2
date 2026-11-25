@@ -221,6 +221,24 @@ public:
         setHiResMode(m);
     }
     HiResMode getHiResMode() const { return hiResMode; }
+    /// The mode's stable name: the `hi_res_mode` setting, and what a bug
+    /// report names (an enum index changes meaning when the enum is reordered).
+    static const char* hiResModeName(HiResMode m)
+    {
+        switch (m) {
+            case HiResMode::ColorNTSC:           return "ColorNTSC";
+            case HiResMode::ColorCompMedium:     return "ColorCompMedium";
+            case HiResMode::ColorComp4Bit:       return "ColorComp4Bit";
+            case HiResMode::ChatMauveRGB:        return "ChatMauveRGB";
+            case HiResMode::ColorCompositeOE:    return "ColorCompositeOE";
+            case HiResMode::ColorCompositeOECpu: return "ColorCompositeOECpu";
+            case HiResMode::MonoWhite:           return "MonoWhite";
+            case HiResMode::MonoGreen:           return "MonoGreen";
+            case HiResMode::MonoAmber:           return "MonoAmber";
+            case HiResMode::ColorAppleWin:       return "ColorAppleWin";
+        }
+        return "ColorNTSC";
+    }
 
     /// What a PROFILE SWITCH does to the render path, and what it has to
     /// remember to undo it. Pure, because the decision used to be two lines

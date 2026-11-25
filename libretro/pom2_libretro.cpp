@@ -13,6 +13,7 @@
 #include "core_options.hpp"
 #include "disk_playlist.hpp"
 #include "disk_storage.hpp"
+#include "host_path.hpp"
 #include "machine_profile.hpp"
 #include "pad_keyboard.hpp"
 #include "polled_keyboard.hpp"
@@ -239,14 +240,20 @@ std::string_view option(const char* key)
     return coreOption(environment, key);
 }
 
+// A number from a core option, or `fallback`. No std::stoi: a malformed value
+// in a hand-edited configuration would throw, and RetroArch's web build
+// cannot catch (bug hunt 2026-11-25).
+long numberOption(const char* key, long fallback)
+{
+    const std::string text(option(key));
+    char* end = nullptr;
+    const long value = std::strtol(text.c_str(), &end, 10);
+    return end && end != text.c_str() && *end == '\0' ? value : fallback;
+}
+
 float percentOption(const char* key)
 {
-    const auto text = option(key);
-    try {
-        return std::stof(std::string(text)) / 100.0f;
-    } catch (const std::exception&) {
-        return 1.0f;
-    }
+    return static_cast<float>(numberOption(key, 100)) / 100.0f;
 }
 
 void reportError(const std::string& detail)
@@ -362,9 +369,7 @@ void applyRuntimeOptions()
     settings.writeProtectAll = option("pom2_write_protect") == "enabled";
     controlDrive = option("pom2_disk_control_drive") == "2" ? 1 : 0;
     const double fps = double(machineTiming.cpuClockHz) / machineTiming.cyclesPerFrame;
-    unsigned seconds = 5;
-    try { seconds = static_cast<unsigned>(std::stoul(std::string(option("pom2_autosave_interval")))); }
-    catch (const std::exception&) {}
+    const auto seconds = static_cast<unsigned>(std::max(0L, numberOption("pom2_autosave_interval", 5)));
     settings.autosaveFrames = std::max(1u, static_cast<unsigned>(std::lround(seconds * fps)));
     if (!core) return;
     core->setSpeakerVolume(percentOption("pom2_speaker_volume"));
@@ -383,8 +388,7 @@ void applyRuntimeOptions()
         if (core) installDescriptors();
     }
     const auto skip = option("pom2_frameskip");
-    try { frameskipThreshold = static_cast<unsigned>(std::stoul(std::string(option("pom2_frameskip_threshold")))); }
-    catch (const std::exception&) { frameskipThreshold = 33; }
+    frameskipThreshold = static_cast<unsigned>(std::max(0L, numberOption("pom2_frameskip_threshold", 33)));
     configureFrameskip(skip == "auto" ? Frameskip::Auto : skip == "manual" ? Frameskip::Threshold : Frameskip::Off);
     pom2::libretro::updateOptionVisibility(environment);
 }
@@ -517,6 +521,10 @@ struct KeyBinding { unsigned button; std::uint8_t ascii; std::uint16_t token; };
 
 void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directions)
 {
+    // The repeat belongs to the pad only while one of its directions was
+    // down: otherwise it is the netplay keyboard's (port 3), which repeats on
+    // its own (bug hunt 2026-11-25).
+    const bool directionWasHeld = directions && (keyPadHeld & ((1u << directions) - 1)) != 0;
     std::uint8_t pressedKey = 0;
     for (unsigned i = 0; i < count; ++i) {
         const bool down = padPressed(bindings[i].button);
@@ -545,8 +553,10 @@ void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directio
     for (unsigned i = 0; i < directions; ++i)
         held |= (keyPadHeld & (1u << i)) && bindings[i].ascii == repeatKey;
     if (!held) {
-        repeatKey = 0;
-        repeatFrames = 0;
+        if (directionWasHeld) {
+            repeatKey = 0;
+            repeatFrames = 0;
+        }
         return;
     }
     if (++repeatFrames >= 30 && (repeatFrames - 30) % 4 == 0) core->queueKey(typed(repeatKey));
@@ -727,7 +737,7 @@ void releaseKeyPad()
     const std::uint16_t tokens[] = {RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
                                     RETROK_i, RETROK_m, RETROK_j, RETROK_k,
                                     RETROK_w, RETROK_s, RETROK_a, RETROK_d, RETROK_SPACE, RETROK_RETURN};
-    if (core && keyPadHeld) {
+    if (keyPadHeld && core) {
         for (auto token : tokens) core->setKeyHeld(token, false);
         if (padProfile) {
             std::array<KeyBinding, 14> bindings{};
@@ -736,9 +746,12 @@ void releaseKeyPad()
             for (unsigned i = 0; i < count; ++i) core->setKeyHeld(bindings[i].token, false);
         }
     }
+    // The pad's own repeat; a key the netplay keyboard repeats is its own.
+    if (keyPadHeld) {
+        repeatKey = 0;
+        repeatFrames = 0;
+    }
     keyPadHeld = 0;
-    repeatKey = 0;
-    repeatFrames = 0;
 }
 
 // The keyboard as a device, every frame (polled_keyboard.hpp). A press is a
@@ -917,6 +930,8 @@ void clearInput()
     startHeld = false;
     selectHeld = false;
     mouseRemainderX = mouseRemainderY = 0;
+    repeatKey = 0;
+    repeatFrames = 0;
     if (core) core->releaseHeldKeys();
 }
 
@@ -1067,7 +1082,8 @@ std::string optionalRom(const DiskState& state, const char* name)
 {
     if (!state.appleDiskFirmware) return {};
     const auto path = state.firmware / name;
-    return std::filesystem::exists(path) ? path.string() : std::string{};
+    std::error_code missing;
+    return std::filesystem::exists(path, missing) ? pom2::libretro::sdkPath(path) : std::string{};
 }
 
 int freeSlot(const DiskState& state, std::initializer_list<int> preferred)
@@ -1165,6 +1181,26 @@ bool ejectMedia(pom2::Core& target, MediaKind kind, int drive)
     return false;
 }
 
+// Two disks of one playlist with the same file name in two folders (two
+// blank SAVE.DSK) are two disks: the later ones get a numbered copy of their
+// own, in playlist order, so the numbering is the same every session.
+unsigned nameVariant(const DiskState& state, const pom2::libretro::DiskEntry& image)
+{
+    const auto lowered = [](std::string text) {
+        for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return text;
+    };
+    const auto name = lowered(image.path.filename().u8string());
+    std::vector<std::filesystem::path> seen;
+    for (const auto& other : state.images) {
+        if (other.path == image.path) break;
+        if (lowered(other.path.filename().u8string()) == name &&
+            std::find(seen.begin(), seen.end(), other.path) == seen.end())
+            seen.push_back(other.path);
+    }
+    return static_cast<unsigned>(seen.size());
+}
+
 bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskEntry& image, int drive)
 {
     const auto kind = image.kind();
@@ -1181,18 +1217,18 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     pom2::libretro::DiskStorage storage{image.path};
     std::shared_ptr<pom2::libretro::DiskSaveLock> lease;
     if (!settings.writeProtectAll) {
-        try {
-            storage = pom2::libretro::openDiskStorage(state.saves, state.content, image.path);
-            if (storage.privateCopy) {
-                lease = pom2::libretro::lockDiskStorage(storage.path);
-                state.copies[image.identity] = {image.path, storage.path};
-            }
-        } catch (const std::exception& error) {
+        std::string error;
+        storage = pom2::libretro::openDiskStorage(state.saves, state.content, image.path, error,
+                                                  pom2::libretro::DiskStorageAccess::CreateIfMissing,
+                                                  nameVariant(state, image));
+        if (!error.empty()) {
             storage = {image.path};
             // The player would otherwise lose every save of the session
             // without a word (a path too long, a folder that cannot be made).
-            reportError(image.label + " is read-only this session: its save copy cannot be made (" +
-                        error.what() + ").");
+            reportError(image.label + " is read-only this session: its save copy cannot be made (" + error + ").");
+        } else if (storage.privateCopy) {
+            lease = pom2::libretro::lockDiskStorage(storage.path);
+            state.copies[image.identity] = {image.path, storage.path};
         }
         // Held by another instance (RetroArch's second run-ahead instance
         // always meets the first one's lock): a log line, not a message.
@@ -1202,9 +1238,14 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     }
     if (!attachController(target, state, kind)) return false;
 
-    const auto path = storage.path.string();
+    const auto path = pom2::libretro::sdkPath(storage.path);
+    if (path.empty()) {
+        reportError("Windows cannot open " + storage.path.u8string() +
+                    " by a narrow path: rename the file or its folder with characters of your system's language.");
+        return false;
+    }
     if (!insertMedia(target, kind, drive, path)) {
-        reportError("Cannot insert disk " + image.path.string() + ": " + target.lastError());
+        reportError("Cannot insert disk " + image.path.u8string() + ": " + target.lastError());
         return false;
     }
     // Only a private copy with a write lease may accept guest writes.
@@ -1217,7 +1258,7 @@ bool mountDisk(pom2::Core& target, DiskState& state, const pom2::libretro::DiskE
     const bool protectedDisk = mediaProtected(target, kind, drive);
     if (protectedDisk) lease.reset();
     // A hard disk's save states carry the blocks it changed from the original.
-    if (kind == MediaKind::HardDisk && !target.setHardDiskStateBase(image.path.string()) && logMessage)
+    if (kind == MediaKind::HardDisk && !target.setHardDiskStateBase(pom2::libretro::sdkPath(image.path)) && logMessage)
         logMessage(RETRO_LOG_WARN, "POM2: no save states for this hard disk: %s\n", target.lastError().c_str());
     auto& slot = state.drives[drive];
     slot.mounted = MountedDisk{storage.path, kind, !protectedDisk, std::move(lease)};
@@ -1365,27 +1406,33 @@ bool RETRO_CALLCONV replaceDisk(unsigned index, const retro_game_info* game)
         return true;
     }
     if (!game->path || !*game->path) return false;
-    try {
-        std::string vfsError;
-        const auto contentCache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "content";
-        const auto reachable = pom2::libretro::localizeContent(game->path, contentCache, vfsError);
-        if (reachable.empty()) throw std::runtime_error(vfsError);
-        auto path = std::filesystem::u8path(reachable);
-        if (pom2::libretro::isArchive(path)) {
-            // An archive's first disk, from the same cache as content.
-            const auto cache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "archives";
-            path = pom2::libretro::unpackArchive(path, cache);
-            if (pom2::libretro::isProgramFile(path))
-                throw std::runtime_error(path.filename().u8string() + " is a program, not a disk");
-            disks.images[index] = pom2::libretro::loadDiskList(path).front();
-            return true;
-        }
-        disks.images[index] = pom2::libretro::loadDiskImage(path);
-        return true;
-    } catch (const std::exception& error) {
-        reportError(error.what());
+    std::string error;
+    const auto contentCache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "content";
+    const auto reachable = pom2::libretro::localizeContent(game->path, contentCache, error);
+    if (reachable.empty()) {
+        reportError(error);
         return false;
     }
+    auto path = std::filesystem::u8path(reachable);
+    if (pom2::libretro::isArchive(path)) {
+        // An archive's first disk, from the same cache as content.
+        const auto cache = (disks.saves.empty() ? disks.firmware : disks.saves / "pom2") / "archives";
+        path = pom2::libretro::unpackArchive(path, cache, error);
+        if (error.empty() && pom2::libretro::isProgramFile(path))
+            error = path.filename().u8string() + " is a program, not a disk";
+        if (error.empty()) {
+            auto list = pom2::libretro::loadDiskList(path, error);
+            if (error.empty()) disks.images[index] = std::move(list.front());
+        }
+    } else {
+        auto image = pom2::libretro::loadDiskImage(path, error);
+        if (error.empty()) disks.images[index] = std::move(image);
+    }
+    if (!error.empty()) {
+        reportError(error);
+        return false;
+    }
+    return true;
 }
 
 bool RETRO_CALLCONV addDisk()
@@ -1404,13 +1451,14 @@ bool RETRO_CALLCONV setInitialDisk(unsigned index, const char* path)
 {
     initialDisk.reset();
     if (!path || !*path) return false;
-    try {
-        initialDisk = InitialDisk{index, std::filesystem::absolute(std::filesystem::u8path(path))};
-        return true;
-    } catch (const std::exception& error) {
-        reportError(error.what());
+    std::error_code error;
+    auto absolute = std::filesystem::absolute(std::filesystem::u8path(path), error);
+    if (error) {
+        reportError(std::string("Cannot resolve ") + path + ": " + error.message());
         return false;
     }
+    initialDisk = InitialDisk{index, std::move(absolute)};
+    return true;
 }
 
 bool copyDiskField(const std::string& value, char* buffer, std::size_t length)
@@ -1472,10 +1520,11 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
     }
     if (slotted && option("pom2_mouse") == "enabled") {
         const auto modelOption = option("pom2_mouse_model");
+        std::error_code mcuProbe;
         const bool mcu = modelOption == "mcu"
-            || (modelOption == "auto" && std::filesystem::exists(state.firmware / "mouse_341-0269.bin"));
+            || (modelOption == "auto" && std::filesystem::exists(state.firmware / "mouse_341-0269.bin", mcuProbe));
         if (!target.attachMouse(4, mcu ? pom2::MouseModel::AppleMouse : pom2::MouseModel::AppleMouseAppleWin,
-                                state.firmware.string())) {
+                                pom2::libretro::sdkPath(state.firmware))) {
             reportError("AppleMouse needs mouse_341-0270-c.bin in the pom2 firmware folder: " + target.lastError());
             return false;
         }
@@ -1487,7 +1536,7 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
         const auto model = board == "sound2" ? pom2::MockingboardModel::SoundII : pom2::MockingboardModel::AC;
         int slot = 4;
         const auto slotOption = option("pom2_mockingboard_slot");
-        if (slotOption != "auto") slot = std::stoi(std::string(slotOption));
+        if (slotOption != "auto") slot = static_cast<int>(std::clamp(numberOption("pom2_mockingboard_slot", 4), 1L, 7L));
         else if (machine.dix || state.slotUsed[4]) slot = 2;
         if (slotted && state.slotUsed[slot]) {
             reportError("Sound card: slot " + std::to_string(slot) + " is taken; the card was left out.");
@@ -1535,8 +1584,8 @@ bool installCards(pom2::Core& target, DiskState& state, std::string& summary)
     }
     if (option("pom2_drive_sounds") == "enabled") {
         const auto samples = state.firmware / "floppy_samples";
-        if (target.attachDriveSounds(samples.string())) summary += " · drive sounds";
-        else reportError("Disk drive sounds need MAME's samples in " + samples.string());
+        if (target.attachDriveSounds(pom2::libretro::sdkPath(samples))) summary += " · drive sounds";
+        else reportError("Disk drive sounds need MAME's samples in " + samples.u8string());
     }
     return true;
 }
@@ -1605,19 +1654,31 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
             reportError(vfsError);
             return false;
         }
-        state.content = std::filesystem::absolute(std::filesystem::u8path(reachable));
+        std::error_code absolute;
+        state.content = std::filesystem::absolute(std::filesystem::u8path(reachable), absolute);
+        std::string error;
+        if (absolute) error = "Cannot resolve " + reachable + ": " + absolute.message();
         // An archive unpacks beside the private disk copies, so its disks
         // keep them from one session to the next.
-        if (pom2::libretro::isArchive(state.content)) {
+        if (error.empty() && pom2::libretro::isArchive(state.content)) {
             const auto cache = (state.saves.empty() ? state.firmware : state.saves / "pom2") / "archives";
-            state.content = pom2::libretro::unpackArchive(state.content, cache);
+            state.content = pom2::libretro::unpackArchive(state.content, cache, error);
         }
-        if (pom2::libretro::isProgramFile(state.content))
-            program = pom2::libretro::loadProgram(state.content);
-        else if (pom2::libretro::isTapeFile(state.content))
-            tape = pom2::libretro::planTape(state.content);
-        else
-            state.images = pom2::libretro::loadDiskList(state.content);
+        // Nothing here throws on bad content (a zip with no disk, a broken
+        // M3U): RetroArch's web build cannot catch, and a throw would end the
+        // page instead of showing this message (bug hunt 2026-11-25).
+        if (error.empty()) {
+            if (pom2::libretro::isProgramFile(state.content))
+                program = pom2::libretro::loadProgram(state.content, error);
+            else if (pom2::libretro::isTapeFile(state.content))
+                tape = pom2::libretro::planTape(state.content, error);
+            else
+                state.images = pom2::libretro::loadDiskList(state.content, error);
+        }
+        if (!error.empty()) {
+            reportError(error);
+            return false;
+        }
     }
 
     // The game's pad profile, by the disk's own title, then its file names.
@@ -1660,13 +1721,13 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
     const bool ramWorksFits = banks > 1 && pom2::libretro::hasSlots(machine.kind)
         && machine.kind != pom2::libretro::MachineKind::IIPlus && machine.kind != pom2::libretro::MachineKind::II;
     if (ramWorksFits && !target->setRamWorksBanks(banks)) reportError("RamWorks: " + target->lastError());
-    if (!target->loadRom(machine.rom.string(), machine.lowerBank)) {
-        reportError("Cannot load the " + machine.name + " firmware at " + machine.rom.string() + ": "
+    if (!target->loadRom(pom2::libretro::sdkPath(machine.rom), machine.lowerBank)) {
+        reportError("Cannot load the " + machine.name + " firmware at " + machine.rom.u8string() + ": "
                     + target->lastError());
         return false;
     }
-    if (!target->loadCharacterRom(machine.characterRom.string())) {
-        reportError("Cannot load the character ROM at " + machine.characterRom.string() + ": "
+    if (!target->loadCharacterRom(pom2::libretro::sdkPath(machine.characterRom))) {
+        reportError("Cannot load the character ROM at " + machine.characterRom.u8string() + ": "
                     + target->lastError());
         return false;
     }
@@ -1800,12 +1861,14 @@ bool loadGame(const retro_game_info* game, const std::optional<InitialDisk>& req
 
 // ---- Save states --------------------------------------------------------------
 
-constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 4};
+constexpr std::uint8_t kRetroStateMagic[] = {'P', '2', 'L', 'R', 5};
 // Magic, then: length, playlist, 2 x (backing identity, index, frames since
 // flush, flags), overshoot, two audio remainders, input flags, pad keyboard,
-// held keys, repeat, checksum.
+// held keys, repeat, pad profile (version 5), checksum.
 constexpr std::size_t kRetroStateHeader =
-    sizeof(kRetroStateMagic) + 4 + 8 + 2 * (8 + 4 + 4 + 1) + 4 * 3 + 1 + 2 + 2 + 2 + 2 + 8;
+    sizeof(kRetroStateMagic) + 4 + 8 + 2 * (8 + 4 + 4 + 1) + 4 * 3 + 1 + 2 + 2 + 2 + 2 + 2 + 8;
+// Version 4 (libretro v1.2.3): the same without the pad profile.
+constexpr std::uint8_t kRetroStateVersion4 = 4;
 constexpr unsigned kNoDisk = UINT32_MAX;
 
 std::uint64_t pathIdentity(const std::filesystem::path& path, std::uint64_t hash = 0xcbf29ce484222325ull)
@@ -1877,6 +1940,12 @@ bool saveRetroState(void* data, std::size_t size)
     putU16(header, keyPadHeld);
     putU8(header, repeatKey);
     putU8(header, repeatFrames);
+    // The pad profile in play: a netplay client takes the host's with its
+    // state, so a .dsk named differently on the two machines still maps the
+    // same buttons to the same keys (bug hunt 2026-11-25). 0 = none.
+    const auto& profiles = pom2::libretro::padProfiles();
+    putU16(header, padProfile && padProfileEnabled
+                       ? static_cast<std::uint16_t>(padProfile - profiles.data() + 1) : 0);
     const auto headerHash = pom2::hashMediaBytes(header.data(), header.size());
     putU64(header, pom2::hashMediaBytes(stateScratch.data(), stateScratch.size(), headerHash));
     auto* bytes = static_cast<std::uint8_t*>(data);
@@ -1889,8 +1958,10 @@ bool saveRetroState(void* data, std::size_t size)
 
 bool restoreRetroState(const void* data, std::size_t size)
 {
-    if (!core || !data || size < kRetroStateHeader ||
-        std::memcmp(data, kRetroStateMagic, sizeof(kRetroStateMagic))) return false;
+    if (!core || !data || size < kRetroStateHeader - 2 ||
+        std::memcmp(data, kRetroStateMagic, sizeof(kRetroStateMagic) - 1)) return false;
+    const auto version = static_cast<const std::uint8_t*>(data)[sizeof(kRetroStateMagic) - 1];
+    if (version != kRetroStateMagic[sizeof(kRetroStateMagic) - 1] && version != kRetroStateVersion4) return false;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     pom2::byteio::Reader reader(bytes, size);
     reader.pos = sizeof(kRetroStateMagic);
@@ -1920,13 +1991,16 @@ bool restoreRetroState(const void* data, std::size_t size)
     const auto held = reader.u16();
     const auto keysHeld = reader.u16();
     const auto keyRepeated = reader.u8(), repeatCount = reader.u8();
+    const bool carriesProfile = version != kRetroStateVersion4;
+    const unsigned profileId = carriesProfile ? reader.u16() : 0u;
     const auto headerHash = pom2::hashMediaBytes(bytes, reader.pos);
     const auto checksum = reader.u64();
     if (stateCapacity < reader.pos || length > stateCapacity - reader.pos || !reader.has(length) ||
         checksum != pom2::hashMediaBytes(bytes + reader.pos, length, headerHash) ||
         overshoot > 16 || machineRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) ||
         frontendRemainder >= static_cast<unsigned>(machineTiming.cpuClockHz) || flags > 31 ||
-        column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= (1u << 14)) return false;
+        column >= 12 || (rowFlags & 15) >= 4 || (rowFlags & 192) || keysHeld >= (1u << 14) ||
+        profileId > pom2::libretro::padProfiles().size()) return false;
 
     std::array<std::optional<MountedDisk>, 2> restored;
     std::array<std::string, 2> backing;
@@ -1951,10 +2025,18 @@ bool restoreRetroState(const void* data, std::size_t size)
             if (cached != disks.copies.end() && cached->second.first == image.path && !legacy) {
                 path = cached->second.second;
             } else {
-                const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path,
+                std::string error;
+                const auto storage = pom2::libretro::openDiskStorage(disks.saves, disks.content, image.path, error,
                     legacy ? pom2::libretro::DiskStorageAccess::ExistingOnly
-                           : pom2::libretro::DiskStorageAccess::CreateIfMissing);
-                if (!storage.privateCopy || (legacy && s.backing != pathIdentity(storage.path))) return false;
+                           : pom2::libretro::DiskStorageAccess::CreateIfMissing,
+                    nameVariant(disks, image));
+                if (!error.empty() || !storage.privateCopy) return false;
+                // A state of the older format names its copy by path: the
+                // name of that time (hashes, before 2026-11-25) or today's.
+                if (legacy && s.backing != pathIdentity(storage.path) &&
+                    s.backing != pathIdentity(pom2::libretro::legacyStoragePath(disks.saves, disks.content,
+                                                                                image.path)))
+                    return false;
                 path = storage.path;
                 if (!legacy) disks.copies[image.identity] = {image.path, path};
             }
@@ -1969,7 +2051,10 @@ bool restoreRetroState(const void* data, std::size_t size)
                 path = image.path;
             }
         }
-        if (writable) backing[drive] = path.string();
+        if (writable) {
+            backing[drive] = pom2::libretro::sdkPath(path);
+            if (backing[drive].empty()) return false;
+        }
         restored[drive] = MountedDisk{std::move(path), image.kind(), writable, std::move(lease)};
     }
     pom2::Core::StateBackings backings;
@@ -2011,6 +2096,21 @@ bool restoreRetroState(const void* data, std::size_t size)
                    (rowFlags & 16) != 0, (rowFlags & 32) != 0};
     keyPadHeld = keysHeld;
     repeatKey = keyRepeated;
+    if (carriesProfile) {
+        // The profile the state was played with (the host's, for a netplay
+        // client): the same buttons type the same keys on both machines.
+        const auto* profile = profileId ? &pom2::libretro::padProfiles()[profileId - 1u] : nullptr;
+        const auto* active = padProfile && padProfileEnabled ? padProfile : nullptr;
+        if (profile != active) {
+            if (profile) {
+                padProfile = profile;
+                padProfileEnabled = true;
+            } else {
+                padProfileEnabled = false;   // the state played without one
+            }
+            installDescriptors();
+        }
+    }
     repeatFrames = repeatCount;
     showDiskRead((flags & 16) != 0);
     midiCycleKnown = false;   // the next byte starts a new time line

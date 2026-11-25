@@ -4,11 +4,14 @@
 // The static web core (LIBRETRO_STATIC, RetroArch's web build) run under
 // Node, as RetroArch links it: boot a disk, check the picture, and check that
 // a restored state replays the same frames. Built and run by the libretro
-// workflow's web job; it links the archive, so it is not a ctest.
+// workflow's web job; it links the archive, so it is not a ctest. Bad
+// content first: RetroArch's web build cannot catch an exception, so a load
+// that fails must fail by returning false, not by ending the page.
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 #include "libretro.h"
@@ -50,6 +53,16 @@ int main(int argc, char** argv) {
     retro_init();
     retro_system_info si{}; retro_get_system_info(&si);
     std::printf("core %s %s\n", si.library_name, si.library_version);
+    // A zip holding no disk (an empty archive: its end record alone) and a
+    // playlist naming a disk that is not there.
+    const std::string emptyZip = savedir + "/nothing.zip", badList = savedir + "/broken.m3u";
+    { std::ofstream z(emptyZip, std::ios::binary); const char eocd[22] = {'P', 'K', 5, 6}; z.write(eocd, sizeof eocd); }
+    { std::ofstream m(badList, std::ios::binary); m << "no such disk.dsk\n"; }
+    for (const auto& bad : {emptyZip, badList}) {
+        retro_game_info badGame{bad.c_str(), nullptr, 0, nullptr};
+        if (retro_load_game(&badGame)) { std::printf("FAIL: %s loaded\n", bad.c_str()); return 1; }
+        std::printf("refused %s, page alive\n", bad.c_str());
+    }
     retro_game_info gi{argv[3], nullptr, 0, nullptr};
     if (!retro_load_game(&gi)) { std::puts("FAIL: load"); return 1; }
     for (int i = 0; i < 600; ++i) retro_run();

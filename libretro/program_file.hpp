@@ -26,6 +26,7 @@ struct ProgramImage {
 // loads where its name says (CiderPress's NAME#06AAAA), where its AppleSingle
 // or DOS 3.3 header says, or at $0803 (cc65's start address). Throws
 // std::runtime_error with the reason.
-ProgramImage loadProgram(const std::filesystem::path& path);
+/// Never throws: a failure leaves `failure` set (disk_playlist.hpp says why).
+ProgramImage loadProgram(const std::filesystem::path& path, std::string& failure);
 
 } // namespace pom2::libretro

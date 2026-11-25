@@ -193,7 +193,9 @@ public:
                              SessionRestore& out, std::string& error, bool allowWoz = false,
                              bool allowWritable = false) const;
     void applySessionState(SessionRestore&& prepared);
-    static bool bindSdkBacking(SessionRestore& prepared, const std::string& backing, int drive = 0);
+    /// `live`: the stamp of the drive that holds the same copy now (DiskImage.h).
+    static bool bindSdkBacking(SessionRestore& prepared, const std::string& backing, int drive = 0,
+                               const pom2::MediaFileStamp* live = nullptr);
     /// Is the bit-level LSS actually driving the head right now? Distinct
     /// from `hasLssRom()`: a mounted WOZ forces the bit-level path (through
     /// POM2's own sequencer when there is no `diskii_p6.rom`), and with

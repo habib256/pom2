@@ -5,6 +5,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 namespace pom2::libretro {
 
@@ -18,7 +19,11 @@ bool isArchive(const std::filesystem::path& path);
 // disk images (in name order), or its single disk image or program. A
 // ShrinkIt archive of files becomes a ProDOS data volume (ExchangeMedia.h).
 // Throws std::runtime_error with the reason.
+// A zip, a .gz, a ShrinkIt archive or a DiskCopy image unpacked into
+// `cacheRoot`: the disk to load, or a playlist of them. Never throws: a
+// failure leaves `error` set and returns an empty path (RetroArch's web build
+// links with exception catching off, where a throw ends the page).
 std::filesystem::path unpackArchive(const std::filesystem::path& archive,
-                                    const std::filesystem::path& cacheRoot);
+                                    const std::filesystem::path& cacheRoot, std::string& error);
 
 } // namespace pom2::libretro

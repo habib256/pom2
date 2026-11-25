@@ -23,7 +23,8 @@ struct TapePlan {
 };
 
 // Throws std::runtime_error with the reason: no tape, no record on it.
-TapePlan planTape(const std::filesystem::path& path);
+/// Never throws: a failure leaves `failure` set (disk_playlist.hpp says why).
+TapePlan planTape(const std::filesystem::path& path, std::string& failure);
 
 // The keys that load and start it at the machine's power-on prompt, or an
 // empty string when it cannot be done for the user (a memory dump: the

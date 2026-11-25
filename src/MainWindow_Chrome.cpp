@@ -1172,8 +1172,7 @@ void MainWindow::renderMenuBar()
 void MainWindow::openBugReport()
 {
     const auto& profile = pom2::profileConfig(activeProfile);
-    const std::string mode = display
-        ? "mode " + std::to_string(static_cast<int>(display->getHiResMode())) : std::string("?");
+    const std::string mode = display ? Apple2Display::hiResModeName(display->getHiResMode()) : "?";
     const std::string url = pom2::bugReportUrl(POM2_VERSION_STRING, pom2::bugReportEdition(),
                                                std::string(profile.displayName), mode);
 #if defined(__EMSCRIPTEN__)

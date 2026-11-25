@@ -21,4 +21,7 @@ bool captureSessionSonyMedia(Memory& memory, SessionArchive::Slot& record, size_
 bool prepareSessionSonyMedia(Memory& memory, const SessionArchive::Slot& record, SessionSonyMedia& out,
                              size_t& mediaBytes, std::string& error, bool allowWritable);
 void applySessionSonyMedia(Memory& memory, SessionSonyMedia& prepared);
+/// The stamp a mounted //c+ 3.5" medium holds for `path`, or nullptr: the
+/// baseline a restore onto that same copy keeps (Disk35Image::bindSnapshotBacking).
+const MediaFileStamp* liveSonyStamp(Memory& memory, const std::string& path);
 }

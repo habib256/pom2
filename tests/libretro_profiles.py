@@ -297,6 +297,62 @@ def check_formats(module, system, root, disk):
                 require(not labelled and "KEY=I" not in text, "the pad profile applied while switched off")
         finally:
             host.close()
+    # The profile travels with the state: a netplay client keeping the same
+    # program under another name (no profile of its own) takes the host's.
+    (content / "SB.bas").write_text((content / "Snake Byte.bas").read_text())
+    def capture(host):
+        host.core.retro_serialize_size.restype = ctypes.c_size_t
+        host.core.retro_serialize.argtypes = host.core.retro_unserialize.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        host.core.retro_serialize.restype = host.core.retro_unserialize.restype = ctypes.c_bool
+        return host.core.retro_serialize_size()
+    host = ProfileHost(module, system, root / "saves", {})
+    try:
+        host.load(content / "Snake Byte.bas")
+        host.frame(240)
+        size = capture(host)
+        state = ctypes.create_string_buffer(size)
+        require(host.core.retro_serialize(state, size), "could not capture the profiled machine")
+    finally:
+        host.close()
+    host = ProfileHost(module, system, root / "saves", {})
+    try:
+        host.load(content / "SB.bas")
+        host.frame(10)
+        require("Key I: Up" not in host.descriptors, "SB.bas found a profile by itself")
+        size = capture(host)
+        require(host.core.retro_unserialize(state, size), "the client refused the host's state")
+        require("Key I: Up" in host.descriptors, "the host's profile did not come with its state")
+        host.pad.add(4)
+        host.frame(4)
+        host.pad.discard(4)
+        host.frame(30)
+        _, text = text_page(host)
+        require("KEY=I" in text, "the client's D-pad did not type the host's profile key")
+    finally:
+        host.close()
+    # The netplay keyboard (port 3) repeats a held key while port 1 is the
+    # joystick: the joystick path used to reset the repeat every frame, so a
+    # held key typed once (bug hunt 2026-11-25).
+    (content / "echo.bas").write_text('10 GET A$: PRINT A$;: GOTO 10\n')
+    class KeyboardHost(Host):
+        held = set()
+        def input_state(self, port, device, index, button):
+            if port == 2 and device == 3:   # RETRO_DEVICE_KEYBOARD
+                return int(button in self.held)
+            return super().input_state(port, device, index, button)
+    host = KeyboardHost(module, system, root / "saves", {})
+    try:
+        host.load(content / "echo.bas")
+        host.core.retro_set_controller_port_device(2, 3)
+        host.frame(240)
+        host.held.add(120)   # RETROK_x
+        host.frame(90)
+        host.held.clear()
+        host.frame(10)
+        _, text = text_page(host)
+        require(text.lower().count("x") >= 5, f"a held netplay-keyboard key did not repeat: {text!r}")
+    finally:
+        host.close()
     # A 13-sector disk with no Apple 13-sector PROM in system/: POM2's own
     # boots DOS 3.2's System Master to its greeting (its Integer BASIC
     # HELLO is not available under Applesoft, and DOS says so).

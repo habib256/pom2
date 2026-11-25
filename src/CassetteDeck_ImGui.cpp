@@ -423,10 +423,14 @@ CassetteDeck_ImGui::render(const char* title,
     // reels pick up speed: 30x at first, 240x after about three seconds
     // (a ten-minute side used to take twenty seconds at a flat 30x).
     const double scrubSpeedX = std::min(240.0, 30.0 * (1.0 + 2.5 * windHeldSeconds_));
+    // One frame's worth at most: a UI stall (a file dialog, a slow frame)
+    // must not turn into a jump of minutes of tape at 240x, nor into a
+    // ramp that skips ahead (bug hunt 2026-11-25).
+    const float windSeconds = std::min(deltaSeconds, 0.1f);
     if (rewHeld && snap.audioStreamMode && snap.loadedTape) {
         if (emulation) {
             emulation->stopTape();
-            emulation->seekTapeRelative(-static_cast<double>(deltaSeconds) * scrubSpeedX);
+            emulation->seekTapeRelative(-static_cast<double>(windSeconds) * scrubSpeedX);
         }
         transport_ = Transport::Rewinding;
         paused_    = false;
@@ -442,13 +446,13 @@ CassetteDeck_ImGui::render(const char* title,
     if (ffHeld && snap.audioStreamMode && snap.loadedTape) {
         if (emulation) {
             emulation->stopTape();
-            emulation->seekTapeRelative(+static_cast<double>(deltaSeconds) * scrubSpeedX);
+            emulation->seekTapeRelative(+static_cast<double>(windSeconds) * scrubSpeedX);
         }
         transport_ = Transport::FastForwarding;
         paused_    = false;
         rewEndsAt_ = wallClock_ + 0.25;
     }
-    if (rewHeld || ffHeld) windHeldSeconds_ += deltaSeconds;
+    if (rewHeld || ffHeld) windHeldSeconds_ += windSeconds;
     else windHeldSeconds_ = 0.0;
 
     if (drawPianoKey(dl, p0, s, kKeyCenterXs[4], kKeysTop + kKeyH * 0.5f,

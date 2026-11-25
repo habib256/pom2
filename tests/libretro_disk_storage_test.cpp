@@ -18,7 +18,15 @@
 
 namespace fs = std::filesystem;
 using pom2::libretro::DiskStorageAccess;
-using pom2::libretro::openDiskStorage;
+
+// openDiskStorage never throws; a failure is an empty path and a message.
+std::string lastError;
+pom2::libretro::DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content, const fs::path& original,
+                                            DiskStorageAccess access = DiskStorageAccess::CreateIfMissing,
+                                            unsigned variant = 0)
+{
+    return pom2::libretro::openDiskStorage(saves, content, original, lastError, access, variant);
+}
 
 namespace {
 
@@ -81,11 +89,9 @@ int main()
     // ExistingOnly finds a copy and refuses to make one, in a game folder
     // that exists (so it is the copy that is refused, not the folder).
     fs::create_directories(disks / "nothing");
-    bool refused = false;
-    try {
-        openDiskStorage(saves, work / "nothing.woz", karateka, DiskStorageAccess::ExistingOnly);
-    } catch (const std::exception& e) { refused = std::string(e.what()).find("does not exist") != std::string::npos; }
-    check(refused, "ExistingOnly made a copy");
+    const auto refusedCopy = openDiskStorage(saves, work / "nothing.woz", karateka, DiskStorageAccess::ExistingOnly);
+    check(refusedCopy.path.empty() && lastError.find("does not exist") != std::string::npos,
+          "ExistingOnly made a copy");
     check(!fs::exists(disks / "nothing" / "Karateka.woz"), "ExistingOnly left a copy");
 
     // A record written on Windows (CRLF) still names the same image.
@@ -100,8 +106,23 @@ int main()
     const auto name = portable.path.filename().u8string();
     bool ascii = true;
     for (unsigned char c : portable.path.lexically_relative(disks).u8string()) ascii &= c >= 0x20 && c < 0x7f && c != ':';
-    check(ascii && name.rfind("__nigme le retour [", 0) == 0 && name.size() > 4 &&
+    check(ascii && name.rfind("Enigme le retour [", 0) == 0 && name.size() > 4 &&
               name.compare(name.size() - 4, 4, ".dsk") == 0, "an accented name becomes portable ASCII");
+    // The same name decomposed (macOS HFS+: "E" + U+0301) is the same copy.
+    const auto decomposed = work / "nfd" / fs::u8path("E\xcc\x81nigme le retour.dsk");
+    write(decomposed, "enigme");
+    check(openDiskStorage(saves, decomposed, decomposed).path.filename() == portable.path.filename(),
+          "a decomposed accent names the same copy as a composed one");
+    // Two disks of one playlist with one file name keep two copies.
+    const auto hero1 = work / "pl" / "Hero 1" / "SAVE.DSK";
+    const auto hero2 = work / "pl" / "Hero 2" / "SAVE.DSK";
+    write(hero1, "blank");
+    write(hero2, "blank");
+    const auto playlist = work / "pl" / "Heroes.m3u";
+    const auto one = openDiskStorage(saves, playlist, hero1, DiskStorageAccess::CreateIfMissing, 0);
+    const auto two = openDiskStorage(saves, playlist, hero2, DiskStorageAccess::CreateIfMissing, 1);
+    check(one.path != two.path && two.path.filename().u8string() == "SAVE (2).DSK",
+          "a playlist's second SAVE.DSK has a copy of its own");
 #ifndef _WIN32   // Windows cannot create the original either
     const auto device = work / "dev" / "CON.dsk";
     write(device, "con");

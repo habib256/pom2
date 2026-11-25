@@ -307,8 +307,14 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
             return false;
         for (int drive = 0; drive < 2; ++drive) {
             if (backings.disk[drive].empty()) continue;
+            // The live drive holding the same copy: its stamp is the baseline.
+            const pom2::MediaFileStamp* live = nullptr;
+            for (int d = 0; d < 2; ++d) {
+                const auto& current = state.diskII->driveImage(d);
+                if (current.isLoaded() && current.getPath() == backings.disk[drive]) live = &current.fileStamp();
+            }
             if (!mediaWritableByDefault() ||
-                !DiskIICard::bindSdkBacking(prepared, std::string(backings.disk[drive]), drive))
+                !DiskIICard::bindSdkBacking(prepared, std::string(backings.disk[drive]), drive, live))
                 return fail("Cannot bind restored Disk II medium to its working copy");
         }
     }
@@ -326,9 +332,16 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
             auto unit = std::make_unique<SmartPort35Unit>();
             if (!unit->image().loadSessionMedia(payload.data(), payload.size(), state.error, true))
                 return false;
+            // The live unit's stamp, when it holds the same copy: the
+            // baseline a restore keeps (DiskImage.h, bindSnapshotBacking).
+            const pom2::MediaFileStamp* live = nullptr;
+            if (i == 0 && state.smartPort->unit(0)) {
+                const auto& current = static_cast<const SmartPort35Unit*>(state.smartPort->unit(0))->image();
+                if (current.isLoaded() && current.path() == smartPortBacking) live = &current.fileStamp();
+            }
             if (i == 0 && !smartPortBacking.empty() &&
                 (!mediaWritableByDefault() ||
-                 !unit->image().bindSnapshotBacking(std::string(smartPortBacking))))
+                 !unit->image().bindSnapshotBacking(std::string(smartPortBacking), live)))
                 return fail("Cannot bind restored SmartPort medium to its working copy");
             preparedSmartPort->setUnit(i, std::move(unit));
         }
@@ -455,7 +468,8 @@ bool Core::loadState(const void* data, std::size_t size, const StateBackings& ba
             return false;
         if (!smartPortBacking.empty() &&
             (!sonyMedia[0] || !mediaWritableByDefault() ||
-             !sonyMedia[0]->bindSnapshotBacking(std::string(smartPortBacking))))
+             !sonyMedia[0]->bindSnapshotBacking(std::string(smartPortBacking),
+                                                pom2::liveSonyStamp(state.memory, std::string(smartPortBacking)))))
             return fail("Cannot bind restored 3.5\" medium to its working copy");
     }
 

@@ -265,7 +265,13 @@ public:
     bool loadSessionMedia(const uint8_t* data, size_t len, std::string& error, bool allowWritable);
     // SDK restore can bind the prepared snapshot to a host-selected working
     // copy. A snapshot's own bytes never provide the write-back path.
-    bool bindSnapshotBacking(const std::string& backing);
+    // `live`: what the mount being replaced knew of that same file (the
+    // stamp of its last read or write). Kept instead of the file's current
+    // one, so a copy another program replaced meanwhile is still diverted at
+    // the next commit, not taken as the baseline and overwritten — a restore
+    // runs every frame under run-ahead (bug hunt 2026-11-25).
+    bool bindSnapshotBacking(const std::string& backing, const pom2::MediaFileStamp* live = nullptr);
+    const pom2::MediaFileStamp& fileStamp() const { return fileStamp_; }
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }
     size_t sessionStorageBytes() const;

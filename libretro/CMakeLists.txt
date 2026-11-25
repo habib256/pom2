@@ -7,7 +7,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(pom2_core CONFIG REQUIRED)
 endif()
 
-set(pom2_libretro_sources pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp
+set(pom2_libretro_sources pom2_libretro.cpp disk_playlist.cpp disk_storage.cpp host_path.cpp portable_name.cpp
     core_options.cpp machine_profile.cpp cheats.cpp archive_content.cpp program_file.cpp
     tape_content.cpp)
 if(LIBRETRO_STATIC)

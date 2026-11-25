@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 
-bool DiskImage::bindSnapshotBacking(const std::string& backing)
+bool DiskImage::bindSnapshotBacking(const std::string& backing, const pom2::MediaFileStamp* live)
 {
     if (!loaded || !detachedSession_ || isFileWriteProtected() || !writeBackEnabled)
         return false;
@@ -16,7 +16,7 @@ bool DiskImage::bindSnapshotBacking(const std::string& backing)
         (!wozFormat && sectorOrder != baseline->sectorOrder))
         return false;
     path = backing;
-    fileStamp_ = baseline->fileStamp_;
+    fileStamp_ = live && live->known ? *live : baseline->fileStamp_;
     detachedSession_ = false;
     cnib2Format = baseline->cnib2Format;
     twoImgFormat = baseline->twoImgFormat;

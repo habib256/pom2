@@ -7,7 +7,7 @@
 #include <utility>
 
 namespace pom2 {
-bool Disk35Image::bindSnapshotBacking(const std::string& backing)
+bool Disk35Image::bindSnapshotBacking(const std::string& backing, const MediaFileStamp* live)
 {
     if (!loaded_ || !detachedSession_ || bitstream_ || isFileWriteProtected() || !writeBackEnabled_)
         return false;
@@ -16,7 +16,7 @@ bool Disk35Image::bindSnapshotBacking(const std::string& backing)
         baseline.isFileWriteProtected() || baseline.blocks_.size() != blocks_.size())
         return false;
     path_ = backing;
-    fileStamp_ = baseline.fileStamp_;
+    fileStamp_ = live && live->known ? *live : baseline.fileStamp_;
     kind_ = baseline.kind_;
     twoImgHeaderRaw_ = std::move(baseline.twoImgHeaderRaw_);
     twoImgTrailerRaw_ = std::move(baseline.twoImgTrailerRaw_);

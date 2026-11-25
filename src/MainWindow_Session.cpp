@@ -283,22 +283,7 @@ void MainWindow::persistSession(bool flushMedia)
         }
     }
 
-    auto modeName = [](Apple2Display::HiResMode m) -> const char* {
-        switch (m) {
-            case Apple2Display::HiResMode::ColorNTSC:        return "ColorNTSC";
-            case Apple2Display::HiResMode::ColorCompMedium:  return "ColorCompMedium";
-            case Apple2Display::HiResMode::ColorComp4Bit:    return "ColorComp4Bit";
-            case Apple2Display::HiResMode::ChatMauveRGB:     return "ChatMauveRGB";
-            case Apple2Display::HiResMode::ColorCompositeOE: return "ColorCompositeOE";
-            case Apple2Display::HiResMode::ColorCompositeOECpu: return "ColorCompositeOECpu";
-            case Apple2Display::HiResMode::MonoWhite:        return "MonoWhite";
-            case Apple2Display::HiResMode::MonoGreen:        return "MonoGreen";
-            case Apple2Display::HiResMode::MonoAmber:        return "MonoAmber";
-            case Apple2Display::HiResMode::ColorAppleWin:    return "ColorAppleWin";
-        }
-        return "ColorNTSC";
-    };
-    settings->setString("hi_res_mode", modeName(display->getHiResMode()));
+    settings->setString("hi_res_mode", Apple2Display::hiResModeName(display->getHiResMode()));
     // No `applewin_submode`: the loader forces the TV sub-mode whatever the
     // file says (MainWindow.cpp), so this write was read by nothing.
     savePanelVisibility();

@@ -25,10 +25,13 @@ struct DiskEntry {
     bool smartPort() const { return kind() == MediaKind::SmartPort; }
 };
 
-DiskEntry loadDiskImage(const std::filesystem::path& path);
+// Nothing here throws for content a player hands the core: a failure leaves
+// `error` set and returns an empty result. RetroArch's web build links with
+// exception catching off, where a throw ends the page (bug hunt 2026-11-25).
+DiskEntry loadDiskImage(const std::filesystem::path& path, std::string& error);
 
 // Returns an image or the entries of an M3U playlist in order. Paths are
 // absolute, and an unreadable or unsupported entry fails the entire list.
-std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content);
+std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content, std::string& error);
 
 } // namespace pom2::libretro

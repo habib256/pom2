@@ -1341,6 +1341,33 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
                 fs::is_regular_file(storage / "Two sides" / "Face B.dsk.source"),
             "the private copies are not pom2/disks/Two sides/Face A.dsk and Face B.dsk");
 
+    // A copy another program replaced (a sync tool bringing another
+    // device's save) while the game runs is never overwritten, even across a
+    // state restore — which RetroArch's run-ahead makes every frame: the
+    // guest's disk goes to a sibling instead (bug hunt 2026-11-25).
+    {
+        const auto copyB = storage / "Two sides" / "Face B.dsk";
+        require(core.retro_load_game(&game), "could not reload the two-sided game");
+        require(disk.set_eject_state(true) && disk.set_image_index(1) && disk.set_eject_state(false),
+                "could not insert face B again");
+        run(core, 60);
+        const auto inPlay = saveState(core);
+        const Bytes before = readFile(copyB);
+        Bytes external = before;
+        external[0x1000] ^= 0xFF;   // another device's version of the save
+        writeFile(copyB, external);
+        require(core.retro_unserialize(inPlay.data(), inPlay.size()), "could not restore over the replaced copy");
+        core.retro_unload_game();
+        require(readFile(copyB) == external, "a restore made the core overwrite a copy another program replaced");
+        bool diverted = false;
+        for (const auto& entry : fs::directory_iterator(storage / "Two sides"))
+            diverted |= entry.path().filename().string().find("Face B.guest-") == 0;
+        require(diverted, "the guest's disk was not kept beside the replaced copy");
+        for (const auto& entry : fs::directory_iterator(storage / "Two sides"))
+            if (entry.path().filename().string().find("Face B.guest-") == 0) fs::remove(entry.path());
+        writeFile(copyB, before);   // the later checks relaunch from this copy
+    }
+
     core.retro_deinit();
     core.retro_init();
     require(disk.set_initial_image(1, sideB.string().c_str()) && core.retro_load_game(&game)

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "machine_profile.hpp"
+#include "host_path.hpp"
 
 #include "WozCompat.h"
 
@@ -200,7 +201,7 @@ bool wozBoots13Sector(const std::filesystem::path& path)
 bool isDixImage(const std::filesystem::path& path)
 {
     // The bundled DIX-fix and the reference corpus image have distinct hashes.
-    const auto hash = pom2::Core::sha256File(path.string());
+    const auto hash = pom2::Core::sha256File(pom2::libretro::sdkPath(path));
     return hash == "e28da6f871e9564fca0665f69d4806b258d0bbaef73ba1f9679a53c56eac9dc4"
         || hash == "e375db9d722454ec1c75dff32386c5d92f15847f8390552acd081a69991e18df";
 }

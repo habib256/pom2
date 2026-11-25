@@ -102,7 +102,13 @@ public:
     bool loadReadOnlySession(const uint8_t* data, size_t size, std::string& error);
     bool appendSessionMedia(std::vector<uint8_t>& out, std::string& error) const;
     bool loadSessionMedia(const uint8_t* data, size_t size, std::string& error, bool allowWritable);
-    bool bindSnapshotBacking(const std::string& backing);
+    // `live`: what the mount being replaced knew of that same file (the
+    // stamp of its last read or write). Kept instead of the file's current
+    // one, so a copy another program replaced meanwhile is still diverted at
+    // the next commit, not taken as the baseline and overwritten — a restore
+    // runs every frame under run-ahead (bug hunt 2026-11-25).
+    bool bindSnapshotBacking(const std::string& backing, const MediaFileStamp* live = nullptr);
+    const MediaFileStamp& fileStamp() const { return fileStamp_; }
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool sessionReplaceable() const { return (!dirty_ || detachedSession_) && !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }

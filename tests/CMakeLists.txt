@@ -77,7 +77,7 @@ if(TARGET pom2_libretro)
     add_test(NAME libretro_pad_profiles COMMAND test_libretro_pad_profiles)
     # The private disk copies' names: game/disk, a clash, a legacy copy.
     add_executable(test_libretro_disk_storage libretro_disk_storage_test.cpp
-        "${CMAKE_SOURCE_DIR}/libretro/disk_storage.cpp")
+        "${CMAKE_SOURCE_DIR}/libretro/disk_storage.cpp" "${CMAKE_SOURCE_DIR}/libretro/portable_name.cpp")
     target_include_directories(test_libretro_disk_storage PRIVATE "${CMAKE_SOURCE_DIR}/libretro" "${CMAKE_SOURCE_DIR}/src")
     target_link_libraries(test_libretro_disk_storage PRIVATE POM2::core)
     add_test(NAME libretro_disk_storage COMMAND test_libretro_disk_storage)

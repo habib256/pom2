@@ -10,7 +10,6 @@
 
 #include <fstream>
 #include <iterator>
-#include <stdexcept>
 
 namespace pom2::libretro {
 namespace {
@@ -29,23 +28,28 @@ constexpr std::uint32_t kRamTop = 0xC000;
 
 bool isProgramFile(const std::filesystem::path& path)
 {
-    const auto suffix = lower(path.extension().string());
+    const auto suffix = lower(path.extension().u8string());
     return suffix == ".bin" || suffix == ".bas";
 }
 
-ProgramImage loadProgram(const std::filesystem::path& path)
+ProgramImage loadProgram(const std::filesystem::path& path, std::string& failure)
 {
+    failure.clear();
     std::ifstream file(path, std::ios::binary);
-    if (!file) throw std::runtime_error("Cannot read " + path.u8string());
+    if (!file) {
+        failure = "Cannot read " + path.u8string();
+        return {};
+    }
     std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), {}};
     const auto name = path.filename().u8string();
     ProgramImage image;
 
-    if (lower(path.extension().string()) == ".bas") {
+    if (lower(path.extension().u8string()) == ".bas") {
         std::vector<pom2::applesoft::TokenizeError> errors;
         if (!pom2::applesoft::tokenize(std::string(bytes.begin(), bytes.end()), image.bytes, errors, 0x0801)) {
             const auto& first = errors.front();
-            throw std::runtime_error(name + " line " + std::to_string(first.sourceLine) + ": " + first.message);
+            failure = name + " line " + std::to_string(first.sourceLine) + ": " + first.message;
+            return {};
         }
         image.address = 0x0801;
         image.applesoft = true;
@@ -74,8 +78,10 @@ ProgramImage loadProgram(const std::filesystem::path& path)
         image.command = "CALL " + std::to_string(address) + "\r";
     }
     if (image.bytes.empty() || image.address < 0x0200 ||
-        image.address + image.bytes.size() > kRamTop)
-        throw std::runtime_error(name + " does not fit in RAM between $0200 and $BFFF");
+        image.address + image.bytes.size() > kRamTop) {
+        failure = name + " does not fit in RAM between $0200 and $BFFF";
+        return {};
+    }
     return image;
 }
 

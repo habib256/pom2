@@ -14,12 +14,18 @@ marker and the previous one.
 
 ## 2026-11-25 — Bug hunt before v1.2.4
 
-Two rounds of four reviewers: the first over everything since v1.2.3, the
+Two rounds of four reviewers — the first over everything since v1.2.3, the
 second over the first round's fixes, the core's state and media lifecycle,
-and portability. 46 findings fixed, the list in
+and portability — then a third round fixing everything left that could be.
+58 findings fixed, the list in
 [docs/audits/bug-hunt-2026-11-25.md](docs/audits/bug-hunt-2026-11-25.md).
 The ones a player meets:
 
+- **The web core no longer ends the page on bad content.** RetroArch's web
+  build cannot catch an exception; the libretro layer now throws nothing, so
+  a zip with no disk or a broken playlist shows a message.
+- **Pad profiles in netplay** travel with the state: a joining player takes
+  the host's, whatever the disk's file name.
 - **Run-ahead and rewind with a disk.** Every restore read and hashed the
   original image again — 12 ms a frame for a 3.5" disk, 188 ms for a hard
   disk — and RetroArch's "second instance" run-ahead failed outright, since

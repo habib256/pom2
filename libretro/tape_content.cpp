@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "tape_content.hpp"
+#include "host_path.hpp"
 
 #include "pom2/core.hpp"
 
-#include <stdexcept>
 
 namespace pom2::libretro {
 namespace {
@@ -22,18 +22,23 @@ std::string lower(std::string text)
 
 bool isTapeFile(const std::filesystem::path& path)
 {
-    const auto suffix = lower(path.extension().string());
+    const auto suffix = lower(path.extension().u8string());
     return suffix == ".wav" || suffix == ".aci";
 }
 
-TapePlan planTape(const std::filesystem::path& path)
+TapePlan planTape(const std::filesystem::path& path, std::string& failure)
 {
+    failure.clear();
     std::vector<pom2::CassetteRecord> records;
     std::string error;
-    if (!pom2::Core::readCassetteRecords(path.u8string(), records, error))
-        throw std::runtime_error(path.filename().u8string() + ": " + error);
-    if (records.empty())
-        throw std::runtime_error(path.filename().u8string() + " holds no Apple II tape record");
+    if (!pom2::Core::readCassetteRecords(sdkPath(path), records, error)) {
+        failure = path.filename().u8string() + ": " + error;
+        return {};
+    }
+    if (records.empty()) {
+        failure = path.filename().u8string() + " holds no Apple II tape record";
+        return {};
+    }
     TapePlan plan;
     // [C] Integer BASIC's SAVE writes a 2-byte length record, Applesoft's a
     //     3-byte one (CassetteRecords.h); a Monitor W dump is one record.

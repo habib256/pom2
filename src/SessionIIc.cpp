@@ -34,6 +34,17 @@ Sony35Drive* sony(Memory& memory, int index) {
     return !hub ? nullptr : index == 0 ? hub->internal35() :
         index == 1 ? hub->external35() : hub->external35Second();
 }
+} // namespace
+
+const MediaFileStamp* liveSonyStamp(Memory& memory, const std::string& path) {
+    for (int i = 0; i < 3; ++i)
+        if (auto* drive = sony(memory, i); drive && drive->image() && drive->image()->isLoaded() &&
+            drive->image()->path() == path)
+            return &drive->image()->fileStamp();
+    return nullptr;
+}
+
+namespace {
 bool sonyReady(Sony35Drive* drive, std::string& error) {
     if (!drive || (!drive->isEjectPending() && (!drive->image() || drive->image()->sessionCaptureReady()))) return true;
     error = "3.5-inch disk has pending writes/eject"; return false;

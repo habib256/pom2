@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
-#include <stdexcept>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -36,30 +35,34 @@ std::string_view trim(std::string_view text)
     return text.substr(first, text.find_last_not_of(whitespace) - first + 1);
 }
 
-std::ifstream openFile(const std::filesystem::path& path, const std::string& location)
+std::ifstream openFile(const std::filesystem::path& path, const std::string& location, std::string& error)
 {
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error))
-        throw std::runtime_error(location + ": expected a regular file: " + path.u8string());
-
+    std::error_code status;
+    if (!std::filesystem::is_regular_file(path, status)) {
+        error = location + ": expected a regular file: " + path.u8string();
+        return {};
+    }
     std::ifstream stream(path, std::ios::binary);
-    if (!stream)
-        throw std::runtime_error(location + ": cannot open " + path.u8string());
+    if (!stream) error = location + ": cannot open " + path.u8string();
     return stream;
 }
 
 DiskEntry diskEntry(std::filesystem::path path, std::string_view label,
-                    const std::string& location)
+                    const std::string& location, std::string& error)
 {
     const auto suffix = extension(path);
-    if (suffix == ".m3u")
-        throw std::runtime_error(location + ": nested playlists are unsupported: " + path.u8string());
+    if (suffix == ".m3u") {
+        error = location + ": nested playlists are unsupported: " + path.u8string();
+        return {};
+    }
     if (suffix != ".dsk" && suffix != ".do" && suffix != ".po"
             && suffix != ".nib" && suffix != ".woz" && suffix != ".2mg" && suffix != ".2img"
-            && suffix != ".hdv" && suffix != ".d13")
-        throw std::runtime_error(location + ": unsupported disk image: " + path.u8string());
-
-    auto stream = openFile(path, location);
+            && suffix != ".hdv" && suffix != ".d13") {
+        error = location + ": unsupported disk image: " + path.u8string();
+        return {};
+    }
+    auto stream = openFile(path, location, error);
+    if (!error.empty()) return {};
     const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(stream), {}};
     std::string name = label.empty() ? path.stem().u8string() : std::string(label);
     return {std::move(path), std::move(name), pom2::hashMediaBytes(bytes.data(), bytes.size())};
@@ -94,28 +97,40 @@ MediaKind DiskEntry::kind() const
     return error ? MediaKind::DiskII : bySize(bytes);
 }
 
-DiskEntry loadDiskImage(const std::filesystem::path& path)
+DiskEntry loadDiskImage(const std::filesystem::path& path, std::string& error)
 {
-    if (path.empty()) throw std::runtime_error("A disk image path is required.");
-    const auto source = std::filesystem::absolute(path);
-    if (source.u8string().find('\0') != std::string::npos)
-        throw std::runtime_error("The content path contains a null byte.");
-    return diskEntry(source, {}, "Disk image");
+    error.clear();
+    if (path.empty()) { error = "A disk image path is required."; return {}; }
+    std::error_code absolute;
+    const auto source = std::filesystem::absolute(path, absolute);
+    if (absolute) { error = "Cannot resolve " + path.u8string() + ": " + absolute.message(); return {}; }
+    if (source.u8string().find('\0') != std::string::npos) {
+        error = "The content path contains a null byte.";
+        return {};
+    }
+    return diskEntry(source, {}, "Disk image", error);
 }
 
-std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content)
+std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content, std::string& error)
 {
-    if (content.empty())
-        throw std::runtime_error("A disk image or M3U playlist path is required.");
-
-    const auto source = std::filesystem::absolute(content);
+    error.clear();
+    if (content.empty()) { error = "A disk image or M3U playlist path is required."; return {}; }
+    std::error_code absolute;
+    const auto source = std::filesystem::absolute(content, absolute);
+    if (absolute) { error = "Cannot resolve " + content.u8string() + ": " + absolute.message(); return {}; }
     const auto location = source.u8string();
-    if (location.find('\0') != std::string::npos)
-        throw std::runtime_error("The content path contains a null byte.");
-    if (extension(source) != ".m3u")
-        return {diskEntry(source, {}, "Disk image")};
+    if (location.find('\0') != std::string::npos) {
+        error = "The content path contains a null byte.";
+        return {};
+    }
+    if (extension(source) != ".m3u") {
+        auto disk = diskEntry(source, {}, "Disk image", error);
+        if (!error.empty()) return {};
+        return {std::move(disk)};
+    }
 
-    auto stream = openFile(source, "M3U playlist");
+    auto stream = openFile(source, "M3U playlist", error);
+    if (!error.empty()) return {};
     std::vector<DiskEntry> disks;
     std::string line;
     std::string pendingLabel;
@@ -127,8 +142,10 @@ std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content)
             entry.remove_prefix(3);
         entry = trim(entry);
         const auto entryLocation = location + ":" + std::to_string(lineNumber);
-        if (entry.find('\0') != std::string_view::npos)
-            throw std::runtime_error(entryLocation + ": unexpected null byte");
+        if (entry.find('\0') != std::string_view::npos) {
+            error = entryLocation + ": unexpected null byte";
+            return {};
+        }
         constexpr std::string_view extinf = "#EXTINF:";
         if (entry.substr(0, extinf.size()) == extinf) {
             const auto comma = entry.find(',', extinf.size());
@@ -141,22 +158,32 @@ std::vector<DiskEntry> loadDiskList(const std::filesystem::path& content)
 
         const auto separator = entry.find('|');
         const auto filename = trim(entry.substr(0, separator));
-        if (filename.empty())
-            throw std::runtime_error(entryLocation + ": missing disk image path");
+        if (filename.empty()) {
+            error = entryLocation + ": missing disk image path";
+            return {};
+        }
         const auto label = separator == std::string_view::npos
             ? std::string_view(pendingLabel) : trim(entry.substr(separator + 1));
         auto path = std::filesystem::u8path(filename);
         if (!path.is_absolute())
             path = source.parent_path() / path;
-        if (!path.is_absolute())
-            throw std::runtime_error(entryLocation + ": cannot resolve disk image path");
-        disks.push_back(diskEntry(std::move(path), label, entryLocation));
+        if (!path.is_absolute()) {
+            error = entryLocation + ": cannot resolve disk image path";
+            return {};
+        }
+        auto disk = diskEntry(std::move(path), label, entryLocation, error);
+        if (!error.empty()) return {};
+        disks.push_back(std::move(disk));
         pendingLabel.clear();
     }
-    if (stream.bad() || !stream.eof())
-        throw std::runtime_error(location + ": error reading playlist");
-    if (disks.empty())
-        throw std::runtime_error(location + ": playlist contains no disk images");
+    if (stream.bad() || !stream.eof()) {
+        error = location + ": error reading playlist";
+        return {};
+    }
+    if (disks.empty()) {
+        error = location + ": playlist contains no disk images";
+        return {};
+    }
     return disks;
 }
 
