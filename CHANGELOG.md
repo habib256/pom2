@@ -10,6 +10,8 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
+
 ## 2026-11-25 — A woz-a-day DAT for libretro-database
 
 RetroArch names a scanned Apple II disk from libretro-database's
@@ -49,7 +51,9 @@ RetroBat also found that the released libretro-v1.2.3 packages declare
 `savestate_features = "serialized"`, so RetroArch refuses netplay and
 run-ahead with them (core_info.c only allows both for "deterministic"). The
 tree has said "deterministic" since bf71a0b4, as does the `.info` sent to
-libretro-super (#2223); the next libretro release carries it.
+libretro-super (#2223); libretro-v1.2.4 carries it, and the five v1.2.3
+zips were republished on 2026-11-25 with only that line changed (#24) —
+the cores in them are byte-identical.
 
 ## 2026-11-25 — The libretro core in a web browser and on 32-bit ARM
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🍏 POM2 v1.2.3 — Apple II Family Emulator
+# 🍏 POM2 v1.2.4 — Apple II Family Emulator
 
 [![Try POM2 directly in your Browser](https://img.shields.io/badge/Try%20POM2%20directly%20in%20your%20Browser-Play%20now-blue?style=for-the-badge)](https://habib256.github.io/pom2/wasm/)
 [![Download POM2](https://img.shields.io/badge/Download-POM2-2ea44f?style=for-the-badge)](https://github.com/habib256/pom2/releases/latest)
@@ -21,7 +21,7 @@ Linux · macOS · Windows · Raspberry Pi · WebAssembly · GPL-3.0
 [Bundled disks](#bundled-disks) · [Controls](#handy-controls) · [Build it](#build-it) ·
 [Documentation](#documentation)**
 
-> **v1.2.3:** [What's new](docs/releases/v1.2.3.md) ·
+> **v1.2.4:** [What's new](docs/releases/v1.2.4.md) ·
 > [Downloads and checksums](https://github.com/habib256/pom2/releases/latest)
 
 Untagged changes on `main` after a release are described in [CHANGELOG.md](CHANGELOG.md);
@@ -53,7 +53,7 @@ tagged packages follow their release notes.
 ### In RetroArch
 
 Download the POM2 libretro core from its
-[release page](https://github.com/habib256/pom2/releases/tag/libretro-v1.2.3):
+[release page](https://github.com/habib256/pom2/releases/tag/libretro-v1.2.4):
 one ZIP per platform (Linux, macOS, Windows, Android), with the core, its
 `.info` file and the CRT shader presets. It runs an Apple ][, ][+, //e,
 //e Enhanced, //c or //c Plus, in NTSC or PAL. It boots floppies, 3.5-inch
@@ -95,8 +95,8 @@ it and launch POM2. Keep the executable and its accompanying folders together.
   unavailable, add `--appimage-extract-and-run`.
 
   ```bash
-  chmod +x POM2-v1.2.3-x86_64.AppImage
-  ./POM2-v1.2.3-x86_64.AppImage
+  chmod +x POM2-v1.2.4-x86_64.AppImage
+  ./POM2-v1.2.4-x86_64.AppImage
   ```
 
 - **macOS:** open the `.dmg` and drag **POM2** into *Applications*.
