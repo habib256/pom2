@@ -9,6 +9,19 @@ cmake_minimum_required(VERSION 3.16)
 cmake_policy(SET CMP0091 NEW)
 
 project(pom2_imgui VERSION 1.2.4 LANGUAGES CXX)
+
+# The MSVC runtime, linked statically into EVERY target (/MT), before any is
+# created: the desktop exe, pom2_core, the tests that link it, and the libretro
+# core. RetroArch for Windows is a MinGW build that ships no VC++ runtime, so a
+# pom2_libretro.dll that imports MSVCP140/VCRUNTIME140 fails to open on a PC
+# without the redistributable — as libretro-v1.2.3's did (bug hunt
+# 2026-11-25). One setting for all targets, or /MT and /MD meet at link
+# (LNK2038). Requires a static-CRT vcpkg triplet (x64-windows-static), which
+# every Windows job uses.
+option(POM2_WIN_STATIC_RUNTIME "Link the MSVC runtime statically (/MT)" ON)
+if(MSVC AND POM2_WIN_STATIC_RUNTIME)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SDK" OFF)
 # RetroArch's web build links one core statically: libretro's emscripten
 # template configures with -DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_emscripten
@@ -16,6 +29,12 @@ option(POM2_LIBRETRO_ONLY "Build only the native libretro module and the core SD
 option(LIBRETRO_STATIC "Build the libretro core as one static archive (RetroArch web)" OFF)
 if(POM2_LIBRETRO_ONLY AND EMSCRIPTEN AND NOT LIBRETRO_STATIC)
     message(FATAL_ERROR "POM2_LIBRETRO_ONLY under Emscripten needs LIBRETRO_STATIC=ON")
+endif()
+# Under Emscripten the libretro block is reached only with POM2_LIBRETRO_ONLY
+# (the browser build skips it), so POM2_BUILD_LIBRETRO alone would configure
+# the browser frontend and no core, silently.
+if(EMSCRIPTEN AND POM2_BUILD_LIBRETRO AND NOT POM2_LIBRETRO_ONLY)
+    message(FATAL_ERROR "the libretro core under Emscripten needs POM2_LIBRETRO_ONLY=ON and LIBRETRO_STATIC=ON")
 endif()
 if(APPLE AND NOT POM2_LIBRETRO_ONLY)
     # Native macOS hooks use Objective-C++: Finder/Dock open-file events
@@ -2611,7 +2630,8 @@ endif()
 # vcpkg triplet in the release workflow, which already sets
 # VCPKG_CRT_LINKAGE=static. Do NOT use x64-windows-static-md: that keeps the CRT
 # dynamic and puts the app-local DLL right back.
-option(POM2_WIN_STATIC_RUNTIME "Link the MSVC runtime statically (/MT)" ON)
+# POM2_WIN_STATIC_RUNTIME is declared after project(), where it sets the
+# runtime for every target; the desktop exe and pom2_headless keep it here too.
 if(MSVC AND POM2_WIN_STATIC_RUNTIME)
     set_property(TARGET ${PROJECT_NAME} PROPERTY
                  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

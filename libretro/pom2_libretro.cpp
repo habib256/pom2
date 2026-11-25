@@ -515,7 +515,12 @@ void applyBindings(const KeyBinding* bindings, unsigned count, unsigned directio
     for (unsigned i = 0; i < count; ++i) {
         const bool down = padPressed(bindings[i].button);
         const bool was = (keyPadHeld & (1u << i)) != 0;
-        if (down != was) core->setKeyHeld(bindings[i].token, down);
+        // Two buttons may hold one key (Wizardry: A and Start, both Return):
+        // releasing one leaves the key down while the other is held.
+        bool shared = false;
+        for (unsigned j = 0; j < count && !down; ++j)
+            shared |= j != i && bindings[j].token == bindings[i].token && padPressed(bindings[j].button);
+        if (down != was && (down || !shared)) core->setKeyHeld(bindings[i].token, down);
         if (down && !was) {
             core->queueKey(typed(bindings[i].ascii));
             if (i < directions) {
@@ -677,8 +682,8 @@ void installDescriptors()
             using pom2::libretro::PadAction;
             if (assign.action == PadAction::Key)
                 text = "Key " + keyName(assign.ascii, assign.token) + (assign.label.empty() ? "" : ": " + assign.label);
-            else if (assign.action == PadAction::None)
-                continue;
+            else if (assign.action == PadAction::None && padProfile->buttons[d.id].action == PadAction::None)
+                continue;   // the profile turns it off; L3, R3 and the keyboard's Y / X keep their names
             else if (!assign.label.empty())
                 text += ": " + assign.label;
         }
@@ -829,6 +834,16 @@ void applyInput()
     if (key) core->queueKey(typed(key));
     if (wasOpen || padKeyboard.open) {
         releaseKeyPad();
+        // A profile button still down as the keyboard closes (the Start that
+        // closed it) was pressed for the keyboard: mark it held, so the
+        // profile types it only once it is released and pressed again.
+        if (profileActive()) {
+            std::array<KeyBinding, 14> bindings{};
+            unsigned directions = 0;
+            const unsigned count = profileBindings(bindings, directions);
+            for (unsigned i = 0; i < count; ++i)
+                if (padPressed(bindings[i].button)) keyPadHeld = static_cast<std::uint16_t>(keyPadHeld | (1u << i));
+        }
         core->setJoystickAxes(0, 0);
         core->setPaddleButton(0, openApple);
         core->setPaddleButton(1, solidApple);
@@ -2039,6 +2054,8 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
         core->setPaddleButton(2, false);
     }
     portDevice[port] = device;
+    // A profile applies only to the joystick: the controls menu follows.
+    if (port == 0 && core) installDescriptors();
 }
 
 void retro_reset()

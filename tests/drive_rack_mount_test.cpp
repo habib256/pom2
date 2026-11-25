@@ -66,7 +66,11 @@ int main() {
             drives[1].kind = pom2::DrivePictureKind::Floppy35; drives[1].slot = 5;
             drives[2].kind = pom2::DrivePictureKind::HardDisk; drives[2].slot = 7; drives[2].loaded = true;
             drives[3].kind = pom2::DrivePictureKind::Generic;  drives[3].slot = 2;
+            drives[0].busy = true;   // spinning empty, as the boot PROM leaves it: still offered
             assert(pom2::emptyDriveFor(drives, DiskSlotClass::Floppy525) == &drives[0]);
+            assert(pom2::driveTakes(pom2::DrivePictureKind::DiskII, DiskSlotClass::Floppy525));
+            assert(!pom2::driveTakes(pom2::DrivePictureKind::Floppy35, DiskSlotClass::Floppy525));
+            assert(pom2::driveTakes(pom2::DrivePictureKind::Generic, DiskSlotClass::Hdv));
             assert(pom2::emptyDriveFor(drives, DiskSlotClass::Sony35) == &drives[1]);
             assert(pom2::emptyDriveFor(drives, DiskSlotClass::Hdv) == &drives[3]);   // the loaded one is skipped
             drives[3].loaded = true;

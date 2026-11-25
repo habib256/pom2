@@ -927,6 +927,8 @@ private:
     std::string tapeStatusMessage;
     double      tapeStatusUntil = 0.0;
     double      lastFrameTime   = 0.0;
+    double      toolbarClockPeakHz_ = 0.0;     ///< the toolbar's clock label, held (MainWindow.cpp)
+    double      toolbarClockPeakUntil_ = 0.0;
     int         pendingFujiNetBootSlot_ = 0;
     double      pendingFujiNetBootUntil_ = 0.0;
 

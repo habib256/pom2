@@ -63,13 +63,23 @@ if(LIBRETRO_STATIC)
         set_target_properties(pom2_libretro PROPERTIES SUFFIX ".bc")
     endif()
     # Add pom2_core's members to the archive, by an MRI script so that two
-    # objects with one name (two directories) both stay.
-    add_dependencies(pom2_libretro pom2_core)
+    # objects with one name (two directories) both stay. POM2::core, not
+    # pom2_core: a standalone configure has only the imported target.
     add_custom_command(TARGET pom2_libretro POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -DAR=${CMAKE_AR}
-                "-DOUT=$<TARGET_FILE:pom2_libretro>" "-DCORE=$<TARGET_FILE:pom2_core>"
+        COMMAND "${CMAKE_COMMAND}" "-DAR=${CMAKE_AR}"
+                "-DOUT=$<TARGET_FILE:pom2_libretro>" "-DCORE=$<TARGET_FILE:POM2::core>"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/merge_static.cmake"
         VERBATIM)
+    # A static library has no link step: a rebuilt pom2_core alone would leave
+    # the merged archive holding the old one. This empty source is touched
+    # whenever pom2_core's archive changes, so the core archive is rebuilt and
+    # merged again (an incremental build after a pull, bug hunt 2026-11-25).
+    set(core_stamp "${CMAKE_CURRENT_BINARY_DIR}/pom2_core_stamp.cpp")
+    add_custom_command(OUTPUT "${core_stamp}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${core_stamp}"
+        DEPENDS "$<TARGET_FILE:POM2::core>"
+        VERBATIM)
+    target_sources(pom2_libretro PRIVATE "${core_stamp}")
 elseif(APPLE)
     set_target_properties(pom2_libretro PROPERTIES SUFFIX ".dylib")
     set(retro_exports "${CMAKE_CURRENT_BINARY_DIR}/retro-exports.txt")

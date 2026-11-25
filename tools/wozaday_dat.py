@@ -186,7 +186,10 @@ def build(tosec, out):
     for path in sorted(glob.glob(os.path.join(META_DIR, "*.json"))):
         ident = os.path.basename(path)[:-5]
         for f in disk_zips(json.load(open(path))):
-            with zipfile.ZipFile(os.path.join(ZIP_DIR, ident + "__" + f["name"].replace("/", "_"))) as z:
+            zpath = os.path.join(ZIP_DIR, ident + "__" + f["name"].replace("/", "_"))
+            if not os.path.exists(zpath):
+                raise SystemExit(f"missing {zpath}: run --fetch first")
+            with zipfile.ZipFile(zpath) as z:
                 zipped |= {"%08X" % i.CRC for i in z.infolist() if i.filename.lower().endswith(".woz")}
     games, seen, alternates = [], set(), []
     skipped_tosec = skipped_gs = 0

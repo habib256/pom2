@@ -18,6 +18,7 @@
 #include <string>
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include <cerrno>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -56,6 +57,12 @@ inline std::string raiseCurrentThreadPriority()
         return "normal priority (to let POM2 raise it, allow a nice of -10 for this user: "
                "'<user> - nice -10' in /etc/security/limits.conf, then log in again)";
     const auto tid = static_cast<id_t>(syscall(SYS_gettid));
+    // Never lower a priority the user gave (`nice -n -15 POM2`): the thread
+    // inherits it, and -10 would undo it (bug hunt 2026-11-25).
+    errno = 0;
+    const int current = getpriority(PRIO_PROCESS, tid);
+    if (errno == 0 && current <= target)
+        return "kept at nice " + std::to_string(current);
     if (setpriority(PRIO_PROCESS, tid, target) != 0)
         return "normal priority (setpriority refused nice " + std::to_string(target) + ")";
     return "raised to nice " + std::to_string(target);

@@ -118,16 +118,31 @@ std::string localizeContent(const std::string& path, const std::filesystem::path
 
     // A playlist names its disks relative to itself: bring each one, and
     // write the copy with the local paths.
-    std::ifstream in(local);
+    // Read as disk_playlist.cpp reads it (a BOM, blanks around a name, blank
+    // lines), or a playlist that loads from local storage fails from saf://.
+    const auto trim = [](std::string text) {
+        const auto first = text.find_first_not_of(" \t\r");
+        if (first == std::string::npos) return std::string();
+        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+    };
+    std::ifstream in(local, std::ios::binary);
     std::stringstream rewritten;
     std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+    for (bool first = true; std::getline(in, line); first = false) {
+        if (first && line.compare(0, 3, "\xef\xbb\xbf") == 0) line.erase(0, 3);
+        line = trim(line);
         if (line.empty() || line[0] == '#') { rewritten << line << '\n'; continue; }
         const auto bar = line.find('|');
-        const std::string entry = line.substr(0, bar);
+        const std::string entry = trim(line.substr(0, bar));
         const std::string label = bar == std::string::npos ? std::string() : line.substr(bar);
-        const std::string source = isLocalPath(entry) && !entry.empty() && entry[0] != '/'
+        if (entry.empty()) { rewritten << line << '\n'; continue; }
+        // A playlist names disks: one naming a playlist (itself, or one that
+        // names it back) would recurse until the stack ran out.
+        if (hasExtension(entry, ".m3u")) {
+            error = "A playlist cannot list another playlist: " + entry;
+            return {};
+        }
+        const std::string source = isLocalPath(entry) && entry[0] != '/'
             ? parentOf(path) + "/" + entry : entry;
         const auto copy = isLocalPath(source) ? source : localizeContent(source, cacheRoot, error);
         if (copy.empty()) return {};

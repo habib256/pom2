@@ -240,7 +240,10 @@ bool MainWindow::insertDriveRackImage(const pom2::DrivePicture& target, const st
         // this machine that does take it (Stephane's 5.25-inch image dropped
         // on the 3.5-inch drive of the web demo, 2026-10-20). A button, not a
         // silent redirection: the user picked a drive and is told why not.
-        if (fileKind != DiskSlotClass::Unknown) {
+        // Only for a file of the wrong KIND: a right-kind file the loader
+        // refused (a truncated .dsk, an HDV too large) would fail the same
+        // way in the other drive.
+        if (fileKind != DiskSlotClass::Unknown && !pom2::driveTakes(target.kind, fileKind)) {
             const auto drives = collectDrivePictures();
             if (const auto* other = pom2::emptyDriveFor(drives, fileKind);
                 other && !(other->slot == target.slot && other->bay == target.bay && other->kind == target.kind)) {

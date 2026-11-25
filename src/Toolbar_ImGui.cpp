@@ -364,6 +364,9 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
             r.setCyclesPerFrame = kSpeedMax;
         ImGui::EndCombo();
     }
+    // Before the clock label: SetTooltip overrides the previous one, and the
+    // "last item" below would be the label (bug hunt 2026-11-25).
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emulation speed");
     // The machine's own clock, when it is not the stock one or the machine
     // has an accelerator on board: "1×" is the pacing, and a //c Plus at "1×"
     // runs at 4 MHz. Without this the Esc-at-reset switch to 1 MHz was
@@ -382,12 +385,12 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
                 ImGui::SetTooltip(plus
                     ? "The //c Plus runs at 4 MHz with its built-in accelerator.\n"
                       "Hold Esc while pressing Reset (F11 or F12) to run at 1 MHz,\n"
-                      "as on the real machine; reset without Esc for 4 MHz again."
+                      "as on the real machine; reset without Esc for 4 MHz again.\n"
+                      "It also slows to 1 MHz while it reads a disk."
                     : "An accelerator sets the machine's clock.\n"
                       "The speed menu paces the emulation on top of it.");
         }
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Emulation speed");
 
     verticalRule();
 

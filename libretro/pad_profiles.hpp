@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -55,5 +56,7 @@ const PadProfile* findPadProfile(const std::vector<std::string>& names);
 
 /// Every profile in the table, parsed (for tests and the docs).
 const std::vector<PadProfile>& padProfiles();
+/// Rows in the table, parsed or not: the test requires every one to parse.
+std::size_t padProfileRowCount();
 
 } // namespace pom2::libretro

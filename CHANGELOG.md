@@ -12,6 +12,33 @@ marker and the previous one.
 
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
+## 2026-11-25 — Bug hunt before v1.2.4
+
+Four reviewers over everything since v1.2.3; 29 findings fixed, the list in
+[docs/audits/bug-hunt-2026-11-25.md](docs/audits/bug-hunt-2026-11-25.md).
+The ones a player meets:
+
+- **The Windows libretro core needed the VC++ runtime.** libretro-v1.2.3's
+  DLL imports `MSVCP140`/`VCRUNTIME140`, which RetroArch (a MinGW build)
+  does not ship: on a PC without the redistributable the core does not
+  open. Every MSVC target now links the runtime statically, and the package
+  step refuses a core that names it.
+- **Disk save names are portable.** A copy named after its disk reached
+  narrow Windows APIs, so an accented or Japanese name failed to load; and a
+  `.source` record written on Windows never matched on a phone. Names are
+  now printable ASCII everywhere (a changed name keeps `[<hash>]`), the
+  record is binary. A v1.2.3 copy whose new name a copy from another folder
+  already took is kept beside it, the newer one playing.
+- **Pad profiles**: closing the on-screen keyboard with Start no longer
+  presses the game's Start key; L3 and R3 keep their names in the controls
+  menu; a key held by two buttons stays down until both are released.
+- **Desktop**: the wrong-drive offer names the spinning empty drive the
+  machine waits on, and only when the file is the wrong kind; the clock label
+  no longer flickers on disk access and shows its tooltip; Linux never lowers
+  a nice you gave POM2, and Report a bug no longer freezes the window.
+- **CI**: the libretro workflow runs on main, and the release waits for the
+  web, 32-bit ARM, iOS and tvOS builds, whose checks now assert.
+
 ## 2026-11-25 — A woz-a-day DAT for libretro-database
 
 RetroArch names a scanned Apple II disk from libretro-database's

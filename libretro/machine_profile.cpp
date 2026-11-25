@@ -115,8 +115,11 @@ std::string metaField(std::ifstream& file, const std::string& field)
             if (size > (1u << 20)) return {};
             std::string meta(size, '\0');
             if (!file.read(meta.data(), size)) return {};
-            const auto key = meta.find(field + "\t");
-            if (key == std::string::npos || (key > 0 && meta[key - 1] != '\n')) return {};
+            // The key at the start of a line: "title" must not match "subtitle".
+            auto key = meta.find(field + "\t");
+            while (key != std::string::npos && key > 0 && meta[key - 1] != '\n')
+                key = meta.find(field + "\t", key + 1);
+            if (key == std::string::npos) return {};
             const auto from = key + field.size() + 1;
             const auto end = meta.find('\n', from);
             std::string value = meta.substr(from, end == std::string::npos ? std::string::npos : end - from);

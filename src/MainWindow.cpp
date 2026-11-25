@@ -1483,7 +1483,19 @@ void MainWindow::render()
         const auto mode = controller->getMode();
         tb.isRunning          = (mode == EmulationController::Mode::Running);
         tb.cyclesPerFrame     = controller->getCyclesPerFrame();
-        tb.machineCpuHz       = controller->machineCpuClockHz();
+        // The machine's clock, held at its highest for a second: a Zip
+        // Chip (the //c Plus's included) drops to 1 MHz for 52 ms after
+        // each slot access, and the label must not flicker with every disk
+        // read, nor the toolbar shift (bug hunt 2026-11-25). A clock that
+        // stays lower (Esc at reset) shows once the second has passed.
+        {
+            const double hz = controller->machineCpuClockHz();
+            if (hz >= toolbarClockPeakHz_ || lastFrameTime >= toolbarClockPeakUntil_) {
+                toolbarClockPeakHz_ = hz;
+                toolbarClockPeakUntil_ = lastFrameTime + 1.0;
+            }
+            tb.machineCpuHz = toolbarClockPeakHz_;
+        }
         tb.videoStandard      = controller->getVideoStandard();
         tb.activeProfile      = activeProfile;
         tb.charRomLocale      = charRomLocale;

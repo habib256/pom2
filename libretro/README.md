@@ -287,7 +287,11 @@ or a hard disk. A state names its disks by their content, not by where each
 player keeps them. `tools/libretro_netplay.py` checks all of it, and CI runs
 it on every package (`pom2_libretro_netplay`).
 
-Both players need the same content and the same core options. Set Port 3 to
+Both players need the same content and the same core options. A game pad
+profile is found from the WOZ title, else from the **file name**: with a
+`.dsk`, `.po` or `.nib`, give both players the same file name, or set **Game
+pad profiles → Off** on both, or one player's buttons type keys the other's
+do not. Set Port 3 to
 the keyboard for games played at the keyboard. The No-Slot Clock starts at
 the host's date; the joining player gets it with the host's state. For the
 AppleMouse (Apple II DeskTop, MousePaint), set **Port 4 → Mouse (for
@@ -325,10 +329,17 @@ private copy in RetroArch's **Save Files** directory, at
 (`Ultima IV` for `Ultima IV.m3u`, `Karateka` for `Karateka.woz`) and the
 disk keeps its file name. A `.source` file beside each copy records the
 original's SHA-256; a second game with the same names, or a new revision of
-the image, gets its own copy, named `<disk> [<first 8 hex digits>]`. Copies
-named by hashes by earlier versions move to the new name the first time
-their game is opened. The original images retain their original bytes. Reopen the same image or
-playlist from the same location to resume using those disks. A locked image
+the image, gets its own copy, named `<disk> [<first 8 hex digits>]`. The
+names are the same on every platform, so a save folder synced between a PC
+and a phone matches: printable ASCII only, with no `<>:"/\|?*`, no trailing
+dot or space and no Windows device name (`CON`, `NUL`, …), at most 96
+characters; a name that had to change (`Énigme` → `__nigme`, one `_` a byte) is followed by
+`[<8 hex digits>]` to stay unique. Copies named by hashes by earlier versions
+move to the new name the first time their game is opened. Those versions
+kept one copy per folder the game was opened from: when the new name is
+already taken, the newer copy is played and the other is kept beside it as
+`<disk> [old <8 hex digits>]`. The original images retain their original
+bytes. Reopen the same image or playlist to resume using those disks. A locked image
 or read-only file reports write protection to the guest.
 
 **Quick Menu → Save State / Load State** captures the running machine,

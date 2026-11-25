@@ -53,6 +53,7 @@
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
 #include "Settings.h"
+#include "ThreadGuard.h"
 #include "StatusLed.h"
 #include "BugReportUrl.h"
 #if defined(__EMSCRIPTEN__)
@@ -1140,6 +1141,16 @@ void MainWindow::openBugReport()
 #if defined(__EMSCRIPTEN__)
     const std::string script = "window.open('" + url + "', '_blank', 'noopener')";
     emscripten_run_script(script.c_str());
+#elif defined(__linux__)
+    // ImGui's opener waits for xdg-open, and xdg-open's generic mode runs the
+    // browser in the foreground (Raspberry Pi OS): the window would stop
+    // painting until the browser closes. Open it off the UI thread, with the
+    // link on the clipboard in case nothing opens (bug hunt 2026-11-25).
+    ImGui::SetClipboardText(url.c_str());
+    if (auto open = ImGui::GetPlatformIO().Platform_OpenInShellFn)
+        pom2::guardedThread("BugReport", [open, url] { open(nullptr, url.c_str()); }).detach();
+    tapeStatusMessage = "Opening the issue page in your browser; the link is also on the clipboard.";
+    tapeStatusUntil = lastFrameTime + 8.0;
 #else
     ImGuiPlatformIO& io = ImGui::GetPlatformIO();
     if (!io.Platform_OpenInShellFn || !io.Platform_OpenInShellFn(ImGui::GetCurrentContext(), url.c_str())) {

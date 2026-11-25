@@ -764,8 +764,10 @@ void EmulationController::start()
     worker = std::thread([this] {
         // The audio is made on this thread: ask the OS to run it ahead of
         // ordinary work, as far as the user may (ThreadPriority.h).
-        pom2::log().info("Emulation", "thread " + pom2::raiseCurrentThreadPriority());
-        pom2::runGuarded("Emulation", [this] { workerLoop(); });
+        pom2::runGuarded("Emulation", [this] {
+            pom2::log().info("Emulation", "thread " + pom2::raiseCurrentThreadPriority());
+            workerLoop();
+        });
         mode.store(Mode::Stopped);
         workerParked_.store(true);
         // Published LAST: start() reads it to tell a live worker from a dead

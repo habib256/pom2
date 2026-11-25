@@ -22,6 +22,11 @@ bool mountEmptyDrive(EmulationController& controller, Settings& settings,
 /// The first EMPTY drive among `drives` that takes a disk of `kind` (a
 /// Disk II a 5.25-inch floppy, a 3.5-inch drive a 3.5-inch disk, a hard-disk
 /// bay a hard disk, a bay that takes either both), or nullptr.
+/// A drive spinning with no disk (the boot PROM waiting on S6D1) counts as
+/// empty: it is the drive the machine is waiting on.
 const DrivePicture* emptyDriveFor(const std::vector<DrivePicture>& drives, DiskSlotClass kind);
+/// Whether a drive of this kind takes a disk of `kind`: the refusal offers
+/// another drive only when the file is the wrong kind for the one chosen.
+bool driveTakes(DrivePictureKind drive, DiskSlotClass kind);
 }
 #endif

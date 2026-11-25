@@ -180,12 +180,19 @@ const std::vector<PadProfile>& padProfiles()
             p.source = row->source;
             p.joystick = row->joystick;
             std::string error;
-            if (!parsePadSpec(row->spec, p, error)) continue;   // the unit test refuses it first
+            if (!parsePadSpec(row->spec, p, error)) continue;   // libretro_pad_profiles counts the rows
             all.push_back(std::move(p));
         }
         return all;
     }();
     return profiles;
+}
+
+std::size_t padProfileRowCount()
+{
+    std::size_t n = 0;
+    for (const ProfileRow* row = kProfileRows; row->title; ++row) ++n;
+    return n;
 }
 
 const PadProfile* findPadProfile(const std::vector<std::string>& names)

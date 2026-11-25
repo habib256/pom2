@@ -63,6 +63,8 @@ int main()
 
     // The table.
     std::set<std::string> titles;
+    check(padProfiles().size() == padProfileRowCount(), "every row of the table parses (" +
+          std::to_string(padProfiles().size()) + " of " + std::to_string(padProfileRowCount()) + ")");
     for (const auto& profile : padProfiles()) {
         const std::string who = profile.title;
         check(!profile.source.empty(), who + " cites a source");

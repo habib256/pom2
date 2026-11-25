@@ -1,9 +1,25 @@
 name: Native Libretro packages
 
 on:
+  # main too: the web, 32-bit ARM, iOS and tvOS builds are checked here only,
+  # and a release must not be their first run (bug hunt 2026-11-25). The
+  # paths filter is not applied to tag pushes.
   push:
-    branches: [feat/libretro-core]
+    branches: [main, feat/libretro-core]
     tags: ['libretro-v*']
+    paths:
+      - '.github/workflows/libretro.yml'
+      - '.github/actions/fetch-test-media/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'imgui_pin.env'
+      - 'include/**'
+      - 'libretro/**'
+      - 'packaging/disks/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'vcpkg.json'
   pull_request:
     paths:
       - '.github/workflows/libretro.yml'
@@ -124,6 +140,19 @@ jobs:
           package="dist/libretro/$PACKAGE_FILE"
           if [ "$RUNNER_OS" = macOS ]; then
             lipo "$MODULE_PATH" -verify_arch arm64
+          fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            # RetroArch for Windows ships no VC++ runtime: a core importing it
+            # fails to open on a PC without the redistributable, which the
+            # runner has. The import table names its DLLs in plain ASCII.
+            python - "$MODULE_PATH" <<'PY'
+          import sys
+          data = open(sys.argv[1], "rb").read().lower()
+          bad = [n for n in (b"msvcp140", b"vcruntime140", b"api-ms-win-crt-") if n in data]
+          if bad:
+              raise SystemExit(f"the core imports the VC++ runtime: {b', '.join(bad).decode()}")
+          print("no VC++ runtime import")
+          PY
           fi
           python tools/package_libretro.py "$MODULE_PATH" "$package" | tee dist/libretro-results/package.log
           (cd dist/libretro && cmake -E sha256sum "$PACKAGE_FILE" > "$PACKAGE_FILE.sha256")
@@ -339,11 +368,14 @@ jobs:
           cmake --build build --target pom2_libretro --parallel 4
           arm-linux-gnueabihf-g++ -std=c++17 -O1 -DRETRO_IMPORT_SYMBOLS \
             -isystem src/third_party/libretro tests/libretro_module_test.cpp -ldl -o build/test_pom2_libretro
-          arm-linux-gnueabihf-readelf -h build/pom2_libretro.so | grep -E 'Class|Machine'
+          arm-linux-gnueabihf-readelf -h build/pom2_libretro.so > build/elf-header.txt
+          grep -E 'Class:.*ELF32' build/elf-header.txt
+          grep -E 'Machine:.*ARM' build/elf-header.txt
           exported=$(arm-linux-gnueabihf-nm -D --defined-only build/pom2_libretro.so | awk '$2 == "T" {print $3}')
           if echo "$exported" | grep -v '^retro_'; then
             echo "::error::the armhf module exports more than the libretro API"; exit 1
           fi
+          test "$(echo "$exported" | wc -l)" -eq 25
 
       - name: Run the ABI, media and disk persistence checks under qemu-arm
         env:
@@ -424,10 +456,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # LC_BUILD_VERSION's platform: 2 iOS, 3 tvOS (mach-o/loader.h).
           - platform: ios-arm64
             system: iOS
+            platform_id: 2
           - platform: tvos-arm64
             system: tvOS
+            platform_id: 3
     defaults:
       run:
         shell: bash
@@ -444,14 +479,18 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DPOM2_LIBRETRO_ONLY=ON -DPOM2_ENABLE_SLIRP=OFF -DPOM2_ENABLE_TESTS=OFF
           cmake --build build --target pom2_libretro --config RelWithDebInfo --parallel 4
-          otool -l build/pom2_libretro.dylib | grep -A3 LC_BUILD_VERSION
+          otool -l build/pom2_libretro.dylib | grep -A3 LC_BUILD_VERSION | tee build/build-version.txt
+          grep -E '^ *platform ${{ matrix.platform_id }}$' build/build-version.txt
           otool -L build/pom2_libretro.dylib
-          nm -gU build/pom2_libretro.dylib | grep -c ' _retro_' | xargs -I{} echo "{} libretro symbols exported"
+          retro=$(nm -gU build/pom2_libretro.dylib | grep -c ' _retro_')
+          echo "$retro libretro symbols exported"
+          test "$retro" -eq 25
 
   publish:
     name: Publish Libretro release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/libretro-v')
-    needs: [native, android]
+    # Every build the release notes say is checked: none may be red.
+    needs: [native, android, linux-armhf, web, apple-mobile]
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -498,7 +537,7 @@ jobs:
           cat >> release-notes.md <<'EOF'
           Native POM2 Libretro core packages tested with RetroArch on Linux x64, Linux arm64, macOS arm64, and Windows x64, plus an Android arm64 core built with the NDK (not run in CI).
 
-          Install the core and its info file in the directories listed by RetroArch under Settings → Directory. Supply your Apple //e firmware in `system/pom2/`. Each ZIP includes the user guide and compatibility report. The verification ZIP contains native test results, RetroArch logs and screenshots of a resumed Dirtbike session for all three platforms.
+          Install the core and its info file in the directories listed by RetroArch under Settings → Directory. Supply your Apple //e firmware in `system/pom2/`. Each ZIP includes the user guide and compatibility report. The verification ZIP contains native test results, RetroArch logs and screenshots of a resumed Dirtbike session for all four platforms.
           EOF
           base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME"
           printf '\n[Installation and controls](%s/libretro/README.md) · [Compatibility measurements](%s/docs/audits/libretro-compatibility-2026-11-23.md)\n' "$base" "$base" >> release-notes.md

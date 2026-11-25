@@ -64,17 +64,21 @@ std::string explainUnknownDisk(const std::string& path)
            "archive has to be unpacked first.";
 }
 
+bool driveTakes(DrivePictureKind drive, DiskSlotClass kind)
+{
+    return (drive == DrivePictureKind::DiskII && kind == DiskSlotClass::Floppy525) ||
+           (drive == DrivePictureKind::Floppy35 && kind == DiskSlotClass::Sony35) ||
+           (drive == DrivePictureKind::HardDisk && kind == DiskSlotClass::Hdv) ||
+           (drive == DrivePictureKind::Generic && (kind == DiskSlotClass::Sony35 || kind == DiskSlotClass::Hdv));
+}
+
 const DrivePicture* emptyDriveFor(const std::vector<DrivePicture>& drives, DiskSlotClass kind)
 {
-    for (const auto& d : drives) {
-        if (d.loaded || d.busy) continue;
-        const bool takes =
-            (d.kind == DrivePictureKind::DiskII && kind == DiskSlotClass::Floppy525) ||
-            (d.kind == DrivePictureKind::Floppy35 && kind == DiskSlotClass::Sony35) ||
-            (d.kind == DrivePictureKind::HardDisk && kind == DiskSlotClass::Hdv) ||
-            (d.kind == DrivePictureKind::Generic && (kind == DiskSlotClass::Sony35 || kind == DiskSlotClass::Hdv));
-        if (takes) return &d;
-    }
+    // `busy` is not a reason to skip: an empty Disk II spins while the boot
+    // PROM waits for a disk, and that is the drive to offer (bug hunt
+    // 2026-11-25). An empty drive has nothing to protect.
+    for (const auto& d : drives)
+        if (!d.loaded && driveTakes(d.kind, kind)) return &d;
     return nullptr;
 }
 
