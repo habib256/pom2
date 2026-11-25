@@ -4675,13 +4675,18 @@ drives.
   because their commit patches dirty blocks into the file as it is and holds
   no whole volume: the commit that finds the file replaced
   (`mediaFileIsOurs`, the same mount stamp and process-wide `own` stamps)
-  REFUSES and flags the path; the next `takeWriteBack` — under the lock, a
-  set lookup and no I/O — moves the mount to `<stem>.guest-<time>-<mount><ext>`
-  (the bare volume, `.hdv` for a 2IMG) and carries the whole volume until a
-  commit has created that copy. So the guest's blocks are never merged into
-  a foreign ProDOS volume, and the mount can always be saved and ejected
-  (the second attempt of an eject succeeds). Pinned `block512_notch_flush`
-  case 5. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
+  REFUSES and sets the mount's own token (an atomic carried by the pending
+  payload: no table, no mutex); the next `takeWriteBack` — under the lock,
+  no I/O — moves the mount to `<stem>.guest-<time>-<mount><ext>` (the bare
+  volume, `.hdv` for a 2IMG) and carries the whole volume until a commit has
+  created that copy. `saveDirty()` does both steps in one call (a quit and a
+  card destructor save once) and the background save follows a refusal at
+  once; a two-phase command (eject, replace) is refused once and succeeds
+  when repeated. A file that is GONE is not replaced: an unplugged stick
+  comes back, and the save lands when it does.
+  The mount then reads `diverted`, `POST /disk/sync` fails naming the copy,
+  and the settings keep the original's path. Pinned `block512_notch_flush`
+  cases 5-6. The policy is Casso's (`ExternalChangePolicy.cpp` @ 2d899adf, grade
   D); the mechanism is POM2's — no directory watcher, the check is made at the
   one moment it matters.
 - **Dirty state.** Kept until the commit lands. It is retired only if the

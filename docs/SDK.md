@@ -127,7 +127,10 @@ than left spinning. As `bootSlot` does, it returns false after the cold boot
 when the machine maps its own firmware over that page (slot 3 on a //e).
 `bootSlot(n)` on the controller's slot is `bootDisk()`.
 
-Both drives take `insertDisk`, `ejectDisk` and `diskInserted`.
+Both drives take `insertDisk`, `ejectDisk` and `diskInserted`. `detachDisk(drive)` (and
+`detachSmartPortDisk(unit)`) keeps a mounted disk writable by the guest while
+nothing reaches its file: for a host that cannot keep a working copy and
+must still run as its netplay peers do.
 `flushDisk(drive)` writes the guest's writes back to the image file without
 ejecting, as `flushSmartPortDisk` does. `setDiskWriteProtected(drive, on)` is
 a sticker over the mounted disk's notch: the guest reads the drive's

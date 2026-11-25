@@ -21,7 +21,9 @@ class DiskSaveLock;
 
 // The lock follows the backing across atomic file replacements. A second
 // instance can read this backing, and receives no lease to write to it.
-std::shared_ptr<DiskSaveLock> lockDiskStorage(const std::filesystem::path& backing);
+// `busy`: set when the lock exists and another holder has it (worth a wait),
+// as opposed to a lock that cannot be made.
+std::shared_ptr<DiskSaveLock> lockDiskStorage(const std::filesystem::path& backing, bool* busy = nullptr);
 
 // Resolves a single disk side to its private writable backing,
 // <saves>/pom2/disks/<content name>/<disk file name>, or to the original
@@ -35,6 +37,8 @@ std::shared_ptr<DiskSaveLock> lockDiskStorage(const std::filesystem::path& backi
 // than today's, so its saves are found.
 struct StorageNames {
     std::filesystem::path title, legacyContent, legacyOriginal;
+    /// A second place v1.2.3 may have had the disk (a case-only twin).
+    std::filesystem::path legacyOriginalAlt;
 };
 
 // A copy is found by the image and by where it sits in the content's folder

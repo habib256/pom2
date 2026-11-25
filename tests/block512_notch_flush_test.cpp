@@ -297,18 +297,52 @@ int main()
         writeRaw(p, 32, 0x77);
         blk.assign(kBlk, 0xB1);
         check(b.writeBlock(4, blk.data()), "the guest writes on");
-        check(!b.saveDirty() && b.hasUnsavedChanges(), "the save into the foreign file is refused");
+        // One save call does both steps (refuse, then divert): a quit or a
+        // card destructor saves once.
+        check(b.saveDirty() && !b.hasUnsavedChanges(), "the save lands, in a copy");
         check(firstByteOfBlock(p, 4) == 0x77 && fs::file_size(p) == 32 * kBlk, "the foreign file is untouched");
-        check(b.saveDirty() && !b.hasUnsavedChanges(), "the next save lands, in a copy");
         const fs::path copy = b.path();
         check(copy != p && copy.filename().string().find("synced.guest-") == 0 && fs::file_size(copy) == 16 * kBlk,
               "the copy sits beside the image, the whole volume");
+        check(b.divertedFrom() == p.string() && std::string(b.persistenceState()) == "diverted",
+              "the mount says where it was diverted from");
         check(firstByteOfBlock(copy, 2) == 0xA1 && firstByteOfBlock(copy, 4) == 0xB1 && firstByteOfBlock(copy, 5) == 0x11,
               "it holds the guest's disk");
         blk.assign(kBlk, 0xB2);
         check(b.writeBlock(5, blk.data()) && b.saveDirty() && firstByteOfBlock(copy, 5) == 0xB2,
               "later saves patch the copy");
         check(firstByteOfBlock(p, 5) == 0x77, "and never the foreign file");
+
+        // The image mounted again (the user took the other program's
+        // version) is an ordinary mount: its saves go to it, not to a copy.
+        pom2::Block512Backing again;
+        again.setWriteBackEnabled(true);
+        check(again.loadImage(p.string()), "the replaced image mounts again");
+        blk.assign(kBlk, 0xC3);
+        check(again.writeBlock(3, blk.data()) && again.saveDirty() && firstByteOfBlock(p, 3) == 0xC3 &&
+                  again.path() == p.string() && again.divertedFrom().empty(),
+              "a fresh mount of the image saves into it");
+    }
+    // 6. A 2IMG diverts to a bare volume and keeps its base offset for states.
+    {
+        const fs::path p = dir / "enveloped.2mg";
+        writeLocked2mg(p, 8);
+        {   // unlock it: clear the flags word
+            std::fstream f(p, std::ios::binary | std::ios::in | std::ios::out);
+            f.seekp(16);
+            const char zero[4] = {0, 0, 0, 0};
+            f.write(zero, 4);
+        }
+        pom2::Block512Backing b;
+        b.setWriteBackEnabled(true);
+        check(b.loadImage(p.string()) && b.imageDataOffset() == 64, "the 2IMG mounts");
+        writeRaw(p, 40, 0x55);   // replaced by something else entirely
+        std::vector<uint8_t> blk(kBlk, 0xE1);
+        check(b.writeBlock(1, blk.data()) && b.saveDirty(), "the save diverts");
+        const fs::path copy = b.path();
+        check(copy.extension() == ".hdv" && fs::file_size(copy) == 8 * kBlk && firstByteOfBlock(copy, 1) == 0xE1,
+              "to a bare .hdv volume");
+        check(b.imageDataOffset() == 64, "the base image's offset is unchanged");
     }
 
     std::error_code ec;

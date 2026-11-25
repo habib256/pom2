@@ -112,6 +112,7 @@ public:
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool sessionReplaceable() const { return (!dirty_ || detachedSession_) && !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }
+    void detachFromHost() { detachedSession_ = true; }   ///< as DiskImage::detachFromHost
     size_t sessionStorageBytes() const;
     bool isBlockWriteProtected() const { return isWriteProtected() || (isBitstream() && kind_ != ImageKind::Moof1440k); }
 

@@ -216,7 +216,9 @@ int main()
         check(openDiskStorage(saves, list, q1).path != openDiskStorage(saves, list, q2).path,
               "two disks outside the playlist's folder keep two copies");
     }
-    // A very long place still matches its record, session after session.
+    // A very long place still matches its record, session after session
+    // (not on Windows: the test's own path would pass MAX_PATH).
+#ifndef _WIN32
     {
         fs::path deep = work / "d";
         for (int i = 0; i < 6; ++i) deep /= std::string(80, static_cast<char>('a' + i));
@@ -226,6 +228,7 @@ int main()
         const auto once = openDiskStorage(saves, list, disk).path;
         check(openDiskStorage(saves, list, disk).path == once, "a long place matches its record");
     }
+#endif
     // A disk moved inside its game (the playlist reorganised) keeps its copy.
     {
         const auto list = work / "mv" / "Game.m3u";
@@ -237,22 +240,54 @@ int main()
         fs::rename(before, after);
         check(openDiskStorage(saves, list, after).path == copy, "a moved disk keeps its copy");
     }
+    // Two same-image disks moved together each keep their copy (the old
+    // place ends like the new one: "H1/SAVE.DSK").
+    {
+        const auto list = work / "tw" / "G.m3u";
+        const auto a1 = work / "tw" / "d" / "H1" / "SAVE.DSK", a2 = work / "tw" / "d" / "H2" / "SAVE.DSK";
+        write(a1, "blank");
+        write(a2, "blank");
+        const auto c1 = openDiskStorage(saves, list, a1).path, c2 = openDiskStorage(saves, list, a2).path;
+        write(c1, "progress 1");
+        write(c2, "progress 2");
+        fs::rename(work / "tw" / "d", work / "tw" / "media");
+        const auto b1 = work / "tw" / "media" / "H1" / "SAVE.DSK", b2 = work / "tw" / "media" / "H2" / "SAVE.DSK";
+        check(openDiskStorage(saves, list, b2).path == c2 && openDiskStorage(saves, list, b1).path == c1,
+              "two disks moved together keep their copies");
+    }
+    // A file without record at the copy's name is the disk's only when it
+    // has the image's size; a numbered copy that lost its record is found.
+    {
+        const auto list = work / "rl" / "R.m3u";
+        const auto r1 = work / "rl" / "A" / "S.dsk", r2 = work / "rl" / "B" / "S.dsk";
+        write(r1, "twelve bytes");
+        write(r2, "twelve bytes");
+        write(disks / "R" / "S.dsk", "junk");
+        const auto first1 = openDiskStorage(saves, list, r1).path;
+        check(first1 != disks / "R" / "S.dsk" && read(disks / "R" / "S.dsk") == "junk",
+              "a stray file of another size is not adopted");
+        const auto first2 = openDiskStorage(saves, list, r2).path;
+        write(first2, "played bytes");   // the same size as the image
+        fs::remove(fs::path(first2.string() + ".source"));
+        check(openDiskStorage(saves, list, r2).path == first2 && read(first2) == "played bytes",
+              "a numbered copy that lost its record is found again");
+    }
     // A v1.2.3 copy of a disk an archive now unpacks under another name
     // (StorageNames::legacy*): found by where v1.2.3 had it.
     {
         const auto folder = work / "arc";
         const auto now = folder / "Jeu [0a0b0c0d].dsk", was = folder / "Jeu original.dsk";
         write(now, "jeu");
-        const auto old = disks / sha(fs::weakly_canonical(was).u8string()) /
+        const auto oldCopy = disks / sha(fs::weakly_canonical(was).u8string()) /
                          (sha((fs::canonical(folder) / was.filename()).u8string() + "\n" + sha("jeu")) + ".dsk");
-        write(old, "jeu, sauvegarde 1.2.3");
+        write(oldCopy, "jeu, sauvegarde 1.2.3");
         pom2::libretro::StorageNames names;
         names.title = work / "Jeu.zip";
         names.legacyContent = was;
         names.legacyOriginal = was;
         const auto found = pom2::libretro::openDiskStorage(saves, now, now, lastError,
                                                           DiskStorageAccess::CreateIfMissing, names);
-        check(read(found.path) == "jeu, sauvegarde 1.2.3" && !fs::exists(old),
+        check(read(found.path) == "jeu, sauvegarde 1.2.3" && !fs::exists(oldCopy),
               "a v1.2.3 save of a renamed archive member is found");
     }
 
@@ -269,6 +304,8 @@ int main()
               "the Angstrom sign, A-ring and A + ring are one name");
         check(portableName("e\xcc\xa9\xcc\x81") == portableName("\xc3\xa9\xcc\xa9"),   // e + dot below + acute
               "marks in another order are one name");
+        check(portableName("\xf0\xaf\xa0\x80") == portableName("\xe4\xb8\xbd"),   // U+2F800 is U+4E3D
+              "a compatibility ideograph is its unified one");
         check(portableName("CONIN$") != "CONIN$" && portableName("Karateka") == "Karateka", "devices and plain names");
     }
 

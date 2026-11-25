@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <iterator>
@@ -79,7 +80,7 @@ std::string leafName(const std::string& member)
 
 // A member path with '/' separators, "." and ".." resolved, lowercased: the
 // key a playlist inside the zip finds its disks by.
-std::string memberKey(const std::string& path)
+std::string memberKey(const std::string& path, bool fold = true)
 {
     std::vector<std::string> parts;
     std::string part;
@@ -91,7 +92,7 @@ std::string memberKey(const std::string& path)
     }
     std::string key;
     for (const auto& p : parts) key += (key.empty() ? "" : "/") + p;
-    return lower(key);
+    return fold ? lower(key) : key;
 }
 
 std::string trimmed(const std::string& text)
@@ -196,6 +197,8 @@ bool writeMember(const fs::path& path, const std::vector<std::uint8_t>& bytes, b
     return true;
 }
 
+std::string nameKey(const std::string& name) { return lower(composedUtf8(name)); }
+
 // One archive's unpacking: the names it claims, what it wrote, the totals.
 struct Unpack {
     fs::path folder;
@@ -211,9 +214,11 @@ struct Unpack {
         const auto dot = leaf.find_last_of('.');
         const auto stem = dot == std::string::npos || dot == 0 ? leaf : leaf.substr(0, dot);
         const auto extension = dot == std::string::npos || dot == 0 ? std::string() : leaf.substr(dot);
-        auto& n = next[lower(leaf)];
+        // Compared as a case-blind, normalising volume would: "Énigme" in
+        // its composed and decomposed forms is one file on macOS.
+        auto& n = next[nameKey(leaf)];
         std::string name = leaf;
-        while (!taken.insert(lower(name)).second)
+        while (!taken.insert(nameKey(name)).second)
             name = stem + " (" + std::to_string(++n + 1) + ")" + extension;
         return name;
     }
@@ -322,8 +327,15 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
     // .gz's stored name first): its disk saves are found by those paths.
     const auto legacyPath = [&](const std::string& rawLeaf) {
         try {
+#ifdef _MSC_VER
+            // v1.2.3's Windows core (MSVC) built this path from the narrow
+            // string, read in the ANSI code page: "Énigme" in UTF-8 became
+            // other characters, and its saves are named from those.
+            return unpack.folder / fs::path(rawLeaf);
+#else
             return unpack.folder / fs::u8path(rawLeaf);
-        } catch (const std::exception&) {   // Windows, a name that is not UTF-8: v1.2.3 could not load it
+#endif
+        } catch (const std::exception&) {
             return fs::path();
         }
     };
@@ -335,6 +347,8 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
 
     std::vector<fs::path> disks, programs, tapes;
     std::vector<std::pair<fs::path, std::string>> playlists;   // written copy, member path
+    std::size_t firstPlaylistAt = SIZE_MAX;                    // the first one in the zip's own order
+    std::map<std::string, std::string> writtenExact;           // member path as spelt -> leaf written
     std::map<std::string, std::string> written;                // member key -> leaf written
     const auto skip = [&unpack](const std::string& failure) {
         if (unpack.firstFailure.empty()) unpack.firstFailure = failure;
@@ -361,8 +375,10 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
         }
         // The archive's own name first ("Game.dsk.gz" is Game.dsk, renamed or
         // not), then the name stored inside it.
+        // A stored exchange name first ("files.shk" in a renamed .gz): the
+        // conversion names its volume from it, as v1.2.3 did.
         auto leaf = archive.stem().u8string();
-        if (kindOf(leaf) == Kind::None) leaf = leafName(name);
+        if (kindOf(leafName(name)) == Kind::Exchange || kindOf(leaf) == Kind::None) leaf = leafName(name);
         // No usable name at all (gzip -n, a renamed file): a floppy's size
         // says what it is.
         if (kindOf(leaf) == Kind::None && out.size() == 143360) leaf = archive.stem().u8string() + ".dsk";
@@ -398,6 +414,15 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
         }
         // By path, so the same members give the same names however the zip
         // orders them ("GAME.DSK" and "GAME (2).DSK" do not swap on a repack).
+        // Before the sort: the first spelling, in the zip's own order, of
+        // each name that differs from another by case only.
+        std::map<std::string, std::pair<std::size_t, std::string>> firstSpelling;
+        for (const auto& entry : entries) {
+            const auto leaf = leafName(entry.name);
+            if (leaf.empty()) continue;
+            auto [it, fresh] = firstSpelling.try_emplace(nameKey(leaf), entry.centralOffset, leaf);
+            if (!fresh && entry.centralOffset < it->second.first) it->second = {entry.centralOffset, leaf};
+        }
         std::stable_sort(entries.begin(), entries.end(), [](const pom2::ZipEntry& a, const pom2::ZipEntry& b) {
             const auto ka = memberKey(a.name), kb = memberKey(b.name);
             return ka != kb ? ka < kb : a.name < b.name;
@@ -424,16 +449,36 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
                     skip(converted);
                     continue;
                 }
-                if (!paths.empty()) written[memberKey(entry.name)] = paths.front().filename().u8string();
+                if (!paths.empty()) {
+                    written[memberKey(entry.name)] = paths.front().filename().u8string();
+                    writtenExact[memberKey(entry.name, false)] = paths.front().filename().u8string();
+                }
                 for (std::size_t i = 0; i < paths.size(); ++i) noteLegacy(paths[i], raw[i]);
                 for (auto& path : paths) disks.push_back(std::move(path));
                 continue;
             }
             const auto name = unpack.claim(hostSafeLeaf(leaf));
-            if (!unpack.write(name, out, error, kind == Kind::Playlist)) return {};
+            if (!unpack.write(name, out, error, kind == Kind::Playlist)) {
+                if (unpack.unpacked > kMaxUnpacked) return {};
+                skip(error);   // a name this host refuses, a full disk: the other members still load
+                error.clear();
+                continue;
+            }
             written[memberKey(entry.name)] = name;
-            keep(kind, unpack.folder / fs::u8path(name), entry.name);
+            writtenExact[memberKey(entry.name, false)] = name;
+            if (kind == Kind::Playlist && entry.centralOffset < firstPlaylistAt) {
+                // v1.2.3 took the first playlist of the zip, not of the sort.
+                firstPlaylistAt = entry.centralOffset;
+                playlists.insert(playlists.begin(), {unpack.folder / fs::u8path(name), entry.name});
+            } else {
+                keep(kind, unpack.folder / fs::u8path(name), entry.name);
+            }
             noteLegacy(unpack.folder / fs::u8path(name), leaf);
+            if (notes) {
+                const auto twin = firstSpelling.find(nameKey(leaf));
+                if (twin != firstSpelling.end() && twin->second.second != leaf)
+                    notes->legacyTwin[unpack.folder / fs::u8path(name)] = legacyPath(twin->second.second);
+            }
         }
     }
 
@@ -450,7 +495,7 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
         for (fs::directory_iterator it(unpack.folder, status), end; !status && it != end; it.increment(status)) {
             const auto name = it->path().filename().u8string();
             std::error_code ignored;
-            const bool ours = name == ".archive" || unpack.taken.count(lower(name)) ||
+            const bool ours = name == ".archive" || unpack.taken.count(nameKey(name)) ||
                               name.find(".guest-") != std::string::npos || name.find(".recovered") != std::string::npos ||
                               name.find(".pom2tmp") != std::string::npos || suffixOf(name) == ".lock" ||
                               suffixOf(name) == ".source";
@@ -483,8 +528,13 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
             if (entry.empty()) continue;
             if (entry.compare(0, 8, "#EXTINF:") == 0) { pendingInfo = trimmed(line) + "\n"; continue; }
             if (entry[0] == '#') { rewritten += trimmed(line) + "\n"; continue; }
-            const auto found = written.find(memberKey(base + entry));
-            if (found == written.end() || kindOf(found->second) != Kind::Disk) {
+            // As spelt first: "A.DSK" and "a.dsk" are two disks on Linux.
+            auto found = writtenExact.find(memberKey(base + entry, false));
+            if (found == writtenExact.end()) {
+                found = written.find(memberKey(base + entry));
+                if (found == written.end()) found = writtenExact.end();
+            }
+            if (found == writtenExact.end() || kindOf(found->second) != Kind::Disk) {
                 pendingInfo.clear();   // a disk the zip does not hold: left out, with its label
                 continue;
             }

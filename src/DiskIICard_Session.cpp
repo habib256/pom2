@@ -107,6 +107,15 @@ bool DiskIICard::appendSessionState(std::vector<uint8_t>& out, std::string& erro
     for (int d = 0; d < kDriveCount; ++d) {
         if (runtime[pos++]) {
             setSnapshotPath(runtime, pos, "(session disk)");
+            // The per-track "owed to the file" flags are this host's
+            // bookkeeping (when it last saved, whether it restored since):
+            // out of a state two machines compare. A restore works them out
+            // again against its own file (bindSnapshotBacking), and a
+            // session's media are detached (bug hunt 2026-11-25: a netplay
+            // mismatch once a game had written to its disk).
+            const std::size_t flags = pos + 8 + DiskImage::kMediaSnapshotBytes - DiskImage::kTracks;
+            std::fill(runtime.begin() + static_cast<std::ptrdiff_t>(flags),
+                      runtime.begin() + static_cast<std::ptrdiff_t>(flags + DiskImage::kTracks), std::uint8_t{0});
             pos += 8 + DiskImage::kMediaSnapshotBytes;
         }
     }

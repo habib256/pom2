@@ -8,6 +8,7 @@
 #include "portable_name.hpp"
 #include "pom2/core.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <fstream>
 #include <thread>
@@ -129,15 +130,19 @@ public:
 #endif
 };
 
-std::shared_ptr<DiskSaveLock> lockDiskStorage(const fs::path& backing)
+std::shared_ptr<DiskSaveLock> lockDiskStorage(const fs::path& backing, bool* busy)
 {
+    if (busy) *busy = false;
     auto lock = backing;
     lock += ".lock";
     auto lease = std::make_shared<DiskSaveLock>();
 #ifdef _WIN32
     lease->handle = CreateFileW(lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                                 OPEN_ALWAYS, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (lease->handle == INVALID_HANDLE_VALUE) return {};
+    if (lease->handle == INVALID_HANDLE_VALUE) {
+        if (busy) *busy = GetLastError() == ERROR_SHARING_VIOLATION;
+        return {};
+    }
     BY_HANDLE_FILE_INFORMATION info{};
     if (!GetFileInformationByHandle(lease->handle, &info) || GetFileType(lease->handle) != FILE_TYPE_DISK ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return {};
@@ -145,8 +150,11 @@ std::shared_ptr<DiskSaveLock> lockDiskStorage(const fs::path& backing)
     lease->fd = ::open(lock.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
     if (lease->fd < 0) return {};
     struct stat info{};
-    if (::fstat(lease->fd, &info) != 0 || !S_ISREG(info.st_mode) ||
-        ::flock(lease->fd, LOCK_EX | LOCK_NB) != 0) return {};
+    if (::fstat(lease->fd, &info) != 0 || !S_ISREG(info.st_mode)) return {};
+    if (::flock(lease->fd, LOCK_EX | LOCK_NB) != 0) {
+        if (busy) *busy = errno == EWOULDBLOCK;
+        return {};
+    }
 #endif
     return lease;
 }
@@ -222,7 +230,10 @@ bool recordSource(const fs::path& backing, const std::string& sourceHash, const 
     {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
         output << sourceHash << '\n' << placeKey << '\n';
-        if (place.size() <= 600 && place.find('\n') == std::string::npos) output << place << '\n';
+        // Kept readable only when a read gives it back as it is.
+        if (place.size() <= 600 && place.find('\n') == std::string::npos && !place.empty() &&
+            place.back() != ' ' && place.back() != '\t' && place.back() != '\r')
+            output << place << '\n';
         output.close();
         written = static_cast<bool>(output);
     }
@@ -306,9 +317,18 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     auto gameName = (!title.empty() ? title : content.empty() ? original : content).stem().u8string();
     if (gameName.empty() || gameName == "." || gameName == "..") gameName = "disk";
     const auto directory = disks / fs::u8path(portableName(gameName));
-    const auto legacy = legacyBacking(disks, content, original, sourceHash, names);
+    auto legacy = legacyBacking(disks, content, original, sourceHash, names);
     std::error_code probe;
-    const bool hasLegacy = !legacy.empty() && fs::is_regular_file(fs::symlink_status(legacy, probe));
+    bool hasLegacy = !legacy.empty() && fs::is_regular_file(fs::symlink_status(legacy, probe));
+    if (!hasLegacy && !names.legacyOriginalAlt.empty()) {
+        auto twin = names;
+        twin.legacyOriginal = names.legacyOriginalAlt;
+        const auto other = legacyBacking(disks, content, original, sourceHash, twin);
+        if (!other.empty() && fs::is_regular_file(fs::symlink_status(other, probe))) {
+            legacy = other;
+            hasLegacy = true;
+        }
+    }
     // A restore (ExistingOnly) still makes the folder a legacy copy moves to.
     if (!ensureDirectory(directory, hasLegacy ? DiskStorageAccess::CreateIfMissing : access, error)) return {};
 
@@ -318,7 +338,9 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
     // lock that cannot be had (a read-only folder) does not stop the open.
     std::shared_ptr<DiskSaveLock> choosing;
     for (int attempt = 0; attempt < 40 && !choosing; ++attempt) {
-        choosing = lockDiskStorage(directory / ".choosing");
+        bool busy = false;
+        choosing = lockDiskStorage(directory / ".choosing", &busy);
+        if (!choosing && !busy) break;   // not held by anyone: it cannot be had (a read-only folder)
         if (!choosing) std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
@@ -360,14 +382,42 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                                       diskExtension);
     };
     constexpr unsigned kMaxNumber = 32;
-    fs::path backing, placeless, moved, firstFreePlain, firstFreeHashed;
-    unsigned movedCount = 0;
+    // How many trailing path components two places share ("H1/SAVE.DSK" in
+    // "d/H1/SAVE.DSK" and "media/H1/SAVE.DSK": 2).
+    const auto sharedSuffix = [](const std::string& a, const std::string& b) {
+        const auto split = [](const std::string& text) {
+            std::vector<std::string> parts;
+            std::string part;
+            for (const char c : text + "/") {
+                if (c != '/') { part += c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c; continue; }
+                if (!part.empty()) parts.push_back(part);
+                part.clear();
+            }
+            return parts;
+        };
+        const auto pa = split(a), pb = split(b);
+        unsigned shared = 0;
+        while (shared < pa.size() && shared < pb.size() &&
+               pa[pa.size() - 1 - shared] == pb[pb.size() - 1 - shared])
+            ++shared;
+        return shared;
+    };
+    struct Moved { fs::path copy; unsigned shared; };
+    std::vector<Moved> moved;
+    std::vector<fs::path> recordless;   // copies of the right size with no record: lost records
+    fs::path backing, placeless, firstFreePlain, firstFreeHashed;
     bool plainTaken = false, plainHoldsThisImage = false, plainRecordless = false;
     for (int family = 0; family < 2 && backing.empty(); ++family) {
         for (unsigned number = 1; number <= kMaxNumber && backing.empty(); ++number) {
             const auto candidate = named(family == 1, number);
-            const bool usable = usableBacking(candidate, error);
-            if (!error.empty()) return {};
+            std::string unusable;
+            const bool usable = usableBacking(candidate, unusable);
+            if (!unusable.empty()) {
+                // Something else sits at this name (a folder, a hard-linked
+                // backup): taken, and none of this disk's business.
+                if (family == 0 && number == 1) plainTaken = true;
+                continue;
+            }
             if (!usable) {
                 auto& free = family == 1 ? firstFreeHashed : firstFreePlain;
                 if (free.empty()) free = candidate;
@@ -376,10 +426,18 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
             const auto record = recordedSource(candidate);
             if (family == 0 && number == 1) {
                 plainTaken = true;
-                plainRecordless = !record.present;
                 plainHoldsThisImage = record.present && record.hash == sourceHash;
             }
-            if (!record.present || record.hash != sourceHash) continue;
+            if (!record.present) {
+                // Only a file of the image's own size can be its copy.
+                std::error_code size;
+                if (fs::file_size(candidate, size) == bytes.size() && !size) {
+                    recordless.push_back(candidate);
+                    if (family == 0 && number == 1) plainRecordless = true;
+                }
+                continue;
+            }
+            if (record.hash != sourceHash) continue;
             if (record.key == placeKey) {
                 backing = candidate;
             } else if (record.key.empty()) {
@@ -387,19 +445,30 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
             } else if (!record.place.empty() && !content.empty()) {
                 // Its disk is no longer where the record says: a move.
                 std::error_code gone;
-                if (!fs::exists((content.parent_path() / fs::u8path(record.place)).lexically_normal(), gone)) {
-                    if (moved.empty()) moved = candidate;
-                    ++movedCount;
-                }
+                if (!fs::exists((content.parent_path() / fs::u8path(record.place)).lexically_normal(), gone))
+                    moved.push_back({candidate, sharedSuffix(record.place, place)});
             }
         }
     }
     bool adopt = false;   // the record is (re)written for this disk
     if (backing.empty() && !placeless.empty()) { backing = placeless; adopt = true; }
-    if (backing.empty() && movedCount == 1) { backing = moved; adopt = true; }
+    if (backing.empty() && !moved.empty()) {
+        // One moved copy is this disk's. Of several (two same-image disks
+        // moved together), the one whose old place ends like the new one —
+        // "H1/SAVE.DSK" — when it is the only best match.
+        std::size_t best = 0;
+        bool unique = true;
+        for (std::size_t i = 1; i < moved.size(); ++i) {
+            if (moved[i].shared > moved[best].shared) { best = i; unique = true; }
+            else if (moved[i].shared == moved[best].shared) unique = false;
+        }
+        if (moved.size() == 1 || unique) { backing = moved[best].copy; adopt = true; }
+    }
     if (backing.empty() && plainRecordless) { backing = named(false, 1); adopt = true; }
-    if (adopt && !recordSource(backing, sourceHash, placeKey, place))
-        return fail("Cannot record the disk save " + backing.u8string());
+    if (backing.empty() && recordless.size() == 1) { backing = recordless.front(); adopt = true; }
+    // A record that cannot be rewritten (a full or read-only folder) does
+    // not hide the copy: the same rule finds it again next time.
+    if (adopt) (void)recordSource(backing, sourceHash, placeKey, place);
     if (backing.empty()) {
         if (!plainTaken) backing = named(false, 1);
         else if (plainHoldsThisImage && !firstFreePlain.empty()) backing = firstFreePlain;

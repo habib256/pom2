@@ -287,7 +287,9 @@ or a hard disk. A state names its disks by their content, not by where each
 player keeps them. `tools/libretro_netplay.py` checks all of it, and CI runs
 it on every package (`pom2_libretro_netplay`).
 
-Both players need the same content and the same core options. The game pad
+Both players need the same content and the same core options. A player
+whose RetroArch gives no save folder (or whose copy another instance holds)
+still plays: the disks can be written, in memory, and nothing is kept. The game pad
 profile travels with the state: a player who joins takes the host's, even
 when the two keep the disk under different file names. Joining a game writes the host's disks into your own save copies of
 that game (`pom2/disks/<game>/`): copy the folder aside first if you want to

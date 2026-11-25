@@ -26,8 +26,16 @@ void Block512Backing::collectWriteBack()
         log().warn("HDV", "Background save failed: " + result.error);
     }
     backgroundVersions_.clear();
+    // A commit that found the file replaced or gone is followed at once by
+    // the save that diverts; any other failure waits.
+    const bool actNow = !result.ok && fileVerdict_->load() != 0;
+    // A save that keeps failing (a copy that cannot be created, a read-only
+    // folder) is retried less and less often: 5 s, 10 s, … 80 s. Each retry
+    // of a diverted mount copies the volume under the machine lock.
+    failedSaves_ = result.ok || actNow ? 0 : std::min(failedSaves_ + 1, 5u);
     nextWriteBack_ = std::chrono::steady_clock::now() +
-        (result.ok ? std::chrono::seconds(1) : std::chrono::seconds(5));
+        (result.ok ? std::chrono::seconds(1) : actNow ? std::chrono::seconds(0)
+                                                      : std::chrono::seconds(5 << (failedSaves_ - 1)));
 }
 
 const char* Block512Backing::persistenceState() const
@@ -43,7 +51,7 @@ const char* Block512Backing::persistenceState() const
     if (backgroundWrite_ && backgroundGeneration_ == mountGeneration_)
         return "saving";
     if (anyDirty_) return writeBack_ ? "pending" : "disabled";
-    return "saved";
+    return diverted_ ? "diverted" : "saved";
 }
 
 std::shared_ptr<Block512Backing::WriteBackOperation>

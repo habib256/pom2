@@ -318,6 +318,16 @@ public:
     bool setDiskWriteProtected(int drive, bool protectedOn);
     /// The protection the guest sees, whatever its cause.
     bool diskWriteProtected(int drive = 0) const;
+    /// Detach the mounted disk from its file: the guest may still write, in
+    /// memory only, and nothing reaches the host. What loadState gives a
+    /// medium with no working copy; for a host that cannot keep one (no save
+    /// folder) and must still run as its netplay peers do. Lasts until the
+    /// disk is ejected or replaced.
+    bool detachDisk(int drive);
+    /// The same for a SmartPort 3.5-inch disk.
+    bool detachSmartPortDisk(int unit);
+    /// The same for the hard disk in drive 1.
+    bool detachHardDisk();
     /// Cold boot directly at the controller's boot PROM ($Cn00). Returns
     /// false unless the controller, its boot ROM (on a //c or //c+, whose
     /// $C600 is the system ROM, not needed) and a disk in drive 0 are

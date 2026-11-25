@@ -297,9 +297,11 @@ int main()
         cardWriteBlock(card, 0, pattern);
         assert(card.hasUnsavedChanges());
 
-        // Deterministic flush failure on every platform: saveDirty requires
-        // the source envelope to keep its original size.
-        writeFile(oldPath, std::vector<uint8_t>(kBlock, 0));
+        // Deterministic flush failure on every platform: the image is gone
+        // (an unplugged stick). A file REPLACED by another program is not a
+        // failure any more: the disk is diverted to a copy
+        // (block512_notch_flush).
+        fs::remove(oldPath);
         assert(!card.loadImage(newPath.string()));
         assert(card.getImagePath() == oldPath.string());
         assert(card.hasUnsavedChanges());

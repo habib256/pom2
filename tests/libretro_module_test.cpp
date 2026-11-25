@@ -1321,6 +1321,15 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     require(core.retro_unserialize(afterSave.data(), afterSave.size()) &&
                 !disk.get_eject_state() && disk.get_image_index() == 1,
             "restore did not recover the modified face B checkpoint");
+    // A restore of the machine's own state changes nothing in it, a disk the
+    // guest wrote to included: netplay and run-ahead compare these bytes
+    // (bug hunt 2026-11-25: the tracks' "owed to the file" flags, this
+    // host's bookkeeping, were in the state).
+    {
+        const auto again = saveState(core);
+        require(core.retro_unserialize(again.data(), again.size()) && saveState(core) == again,
+                "save, load, save differ once the guest has written to its disk");
+    }
     core.retro_unload_game();
 
     require(readFile(sideA) == original && readFile(sideB) == original,
@@ -1418,12 +1427,21 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     require(core.retro_load_game(&game), "could not mount the first instance's writable face");
     Core competing{Module(competingPath)};
     connectFrontend(competing);
-    require(competing.retro_load_game(&game), "could not mount the second instance read-only");
+    require(competing.retro_load_game(&game), "could not mount the second instance detached");
     waitForDos(competing);
     run(competing, 600);
+    // The second instance holds no lease: its disk is detached (the guest
+    // writes in memory, as its netplay peers' do), and nothing it writes
+    // reaches the first one's copy.
+    Bytes copiesBefore;
+    for (const auto& entry : fs::recursive_directory_iterator(storage))
+        if (entry.path().extension() == ".dsk") { const auto b = readFile(entry.path()); copiesBefore.insert(copiesBefore.end(), b.begin(), b.end()); }
     typeCommand(competing, "10 PRINT 79\rSAVE LOCKTEST\r");
-    run(competing, 160);
-    require(visibleText(characters).find("WRITE PROTECTED") != std::string::npos,
+    run(competing, 400);
+    Bytes copiesAfter;
+    for (const auto& entry : fs::recursive_directory_iterator(storage))
+        if (entry.path().extension() == ".dsk") { const auto b = readFile(entry.path()); copiesAfter.insert(copiesAfter.end(), b.begin(), b.end()); }
+    require(visibleText(characters).find("WRITE PROTECTED") == std::string::npos && copiesAfter == copiesBefore,
             "two independent instances could write the same backing");
     // RetroArch's second run-ahead instance restores the first one's states
     // every frame; the copy is the first one's, so the disk comes back
@@ -1451,9 +1469,11 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     waitForDos(core);
     run(core, 600);
     typeCommand(core, "10 PRINT 84\rSAVE LOCKTEST\r");
-    run(core, 160);
-    require(visibleText(characters).find("WRITE PROTECTED") != std::string::npos,
-            "unusable save directory did not protect the original");
+    run(core, 400);
+    // Detached: the guest writes in memory, the original is never touched
+    // (checked below).
+    require(visibleText(characters).find("WRITE PROTECTED") == std::string::npos,
+            "a disk with no usable save directory was not mounted detached");
     core.retro_unload_game();
     require(readFile(sideA) == original && readFile(sideB) == original &&
                 readFile(occupiedSaveRoot) == Bytes{0x41},

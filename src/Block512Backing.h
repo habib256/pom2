@@ -189,6 +189,7 @@ public:
     /// split that solves it; this stays for single-threaded callers and for
     /// the deliberate flush-before-destroy in `adoptImage`.
     bool saveDirty();
+    bool saveDirtyOnce();   ///< one take + one commit (saveDirty tries twice, see there)
 
     /// ── Two-phase eject ─────────────────────────────────────────────────
     /// The mirror of `PreparedImage`: what phase 1 lifts OUT of the backing so
@@ -223,6 +224,10 @@ public:
         /// File case, a diverted mount whose copy does not exist yet: the
         /// whole volume, to create it (see takeWriteBack).
         std::vector<uint8_t>  wholeVolume;
+        /// What the commit learns about the file, for THIS mount (a token per
+        /// mount, no shared table): 1 = replaced by another program, 2 = gone.
+        std::shared_ptr<std::atomic<int>>  verdict;
+        std::shared_ptr<std::atomic<bool>> copyCreated;   ///< set once the copy exists
         std::string           path;               ///< file case
         std::string           hostFolder;         ///< synth case
         size_t                dataOffset = 0;
@@ -294,6 +299,12 @@ public:
     { writeBackExecutor_ = std::move(executor); }
     std::shared_ptr<WriteBackOperation> pollWriteBack(bool force = false);
     const char* persistenceState() const;
+    /// The guest may write, nothing reaches the host file (as a session's
+    /// medium): for a host that cannot keep a working copy.
+    void detachFromHost() { detachedSession_ = true; }
+    /// The image this mount was diverted from when another program replaced
+    /// it ("" otherwise): path() is then the copy the guest's disk goes to.
+    const std::string& divertedFrom() const { return divertedFrom_; }
     // Session media are detached from host files, including after policy changes.
     bool sessionCaptureReady() const { return !backgroundWrite_ && detachReservation_.expired() && pendingWrites_.use_count() == 1; }
     bool sessionReplaceable() const { return sessionCaptureReady() && (!anyDirty_ || detachedSession_); }
@@ -480,7 +491,12 @@ private:
     std::string hostFolder_;
     std::string path_;
     pom2::MediaFileStamp mountStamp_;   // the file as the mount read it ({} for a folder)
-    bool awaitingDivert_ = false;       // path_ is a diverted copy not created yet
+    bool awaitingDivert_ = false;       // the file at path_ is to be created whole
+    unsigned failedSaves_ = 0;          // consecutive background failures: the retry backs off
+    bool diverted_ = false;             // path_ is a copy beside the image another program replaced
+    std::string divertedFrom_;          // that image
+    std::shared_ptr<std::atomic<int>>  fileVerdict_ = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<std::atomic<bool>> copyCreated_;
     std::string lastError_;
     bool    loaded_ = false;
     bool    detachedSession_ = false;

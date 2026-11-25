@@ -278,6 +278,9 @@ public:
     const pom2::MediaFileStamp& fileStamp() const { return fileStamp_; }
     bool sessionCaptureReady() const { return !autosave_.inFlight(); }
     bool isSessionMedia() const { return detachedSession_; }
+    /// The guest may write, nothing reaches the host file: what a state
+    /// restore gives a medium with no working copy, for a mount.
+    void detachFromHost() { detachedSession_ = true; }
     size_t sessionStorageBytes() const;
     bool hasPendingWriteBack() const { return (anyDirty && !detachedSession_) || bool(autosave_.inFlight()); }
 

@@ -27,6 +27,10 @@ struct ArchiveNotes {
     /// For each file written under another name than libretro v1.2.3 gave
     /// it: where v1.2.3 put it. Its disk saves are named from that path.
     std::map<std::filesystem::path, std::filesystem::path> legacy;
+    /// For a member whose name another member shares but for its case: the
+    /// first of them in the zip, the one file v1.2.3 had for them all on a
+    /// case-blind volume (Windows, macOS).
+    std::map<std::filesystem::path, std::filesystem::path> legacyTwin;
     /// Something left out that the player should know (a disk past the
     /// 64th, a member that could not be read), when the load succeeds.
     std::string notice;

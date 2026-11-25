@@ -188,10 +188,6 @@ struct MediaCommitOrder {
     /// made it: two drives holding one image must not take each other's
     /// saves for a stranger's.
     std::unordered_map<std::string, MediaFileStamp> own;     ///< path
-    /// Hard-disk images (by the path their mount holds, as given): the ones
-    /// a commit found replaced by another program, and the sibling copies a
-    /// later commit created for them (Block512Backing.cpp).
-    std::unordered_set<std::string> foreignBlockFiles, divertedBlockFiles;
     static MediaCommitOrder& instance() {
         // Leaked: a commit may still be finishing while statics are torn down.
         static MediaCommitOrder* o = new MediaCommitOrder;

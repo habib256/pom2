@@ -109,6 +109,10 @@ bool EmulationController::syncBlockMedia(std::string& error)
                     fail(b->path() + ": persistence disabled");
                     continue;
                 }
+                // As a floppy's: the writes are on disk, but not in the file
+                // the caller is about to read.
+                if (!b->divertedFrom().empty())
+                    fail(b->divertedFrom() + ": " + pom2::describeDiversion(b->path()));
                 b->setWriteBackExecutor(pom2::blockWriteBackExecutor());
                 auto future = b->pollWriteBack(true);
                 if (future) writes.push_back({b->path(), std::move(future)});

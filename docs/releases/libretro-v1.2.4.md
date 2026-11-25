@@ -4,8 +4,8 @@ Built from the same emulator as POM2 v1.2.4.
 
 - **Netplay and run-ahead in RetroArch.** The `.info` declares
   `savestate_features = "deterministic"`, which RetroArch requires for both
-  (#24). The core was already deterministic: netplay is checked frame by
-  frame in CI. The v1.2.3 zips were corrected the same way.
+  (#24). CI checks netplay frame by frame on every package. The v1.2.3 zips
+  were corrected the same way.
 - **The Windows core no longer needs the Visual C++ runtime.** v1.2.3's DLL
   did not open on a PC without the VC++ redistributable, which RetroArch
   does not install. The runtime is now built in, and CI refuses a core that
@@ -23,6 +23,11 @@ Built from the same emulator as POM2 v1.2.4.
   progress plays and the other is kept beside it as `[old …]`.
 - **The web core shows a message instead of ending the page** on a zip with
   no disk or a broken playlist (RetroArch's web build cannot catch errors).
+- **Netplay with games that save.** A restored state is now byte for byte
+  the state that was saved, a written disk included (it was not, in v1.2.3
+  too), and a player whose machine cannot keep a save copy (no save folder)
+  gets a disk the game can still write, in memory, instead of a
+  write-protected one that made the two machines diverge.
 - **Run-ahead with a disk.** A restore no longer reads and hashes the disk
   image again (it cost 12 ms a frame for a 3.5" disk, 188 ms for a hard
   disk), and "Run-Ahead: use second instance" no longer turns itself off
@@ -46,8 +51,8 @@ Built from the same emulator as POM2 v1.2.4.
   netplay carries a mouse only from a port set to a mouse device. Checked
   with Apple II DeskTop, at 150 % mouse speed.
 
-Before this release, five rounds of review over everything since v1.2.3
-fixed 144 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
+Before this release, six rounds of review over everything since v1.2.3
+fixed 171 defects ([the list](https://github.com/habib256/pom2/blob/libretro-v1.2.4/docs/audits/bug-hunt-2026-11-25.md)).
 
 The core also builds for iOS, tvOS, RetroArch's web player and 32-bit ARM
 Linux. Each build is checked in CI, the web one by booting a game under

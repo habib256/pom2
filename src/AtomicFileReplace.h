@@ -218,9 +218,11 @@ inline std::filesystem::path tempSiblingPath(const std::filesystem::path& target
     // The REAL file's sibling, so the rename that publishes the temp never
     // crosses a filesystem (see resolveReplaceTarget).
     const std::filesystem::path real = resolveReplaceTarget(target);
-    return std::filesystem::path(
-        real.string() + "." + std::to_string(pid) + "-" +
-        std::to_string(counter.fetch_add(1) + 1) + kTempSiblingSuffix);
+    // Appended to the path itself, never through its narrow string: on
+    // Windows that conversion throws for a name outside the ANSI code page.
+    std::filesystem::path temporary = real;
+    temporary += "." + std::to_string(pid) + "-" + std::to_string(counter.fetch_add(1) + 1) + kTempSiblingSuffix;
+    return temporary;
 }
 
 /// Make a sibling temporary path safe to create-and-truncate.

@@ -20,6 +20,11 @@
 // project-scope.md); same Core::Impl (Pom2CoreImpl.h).
 
 #include "Pom2CoreImpl.h"
+#include "ProDOSHardDiskCard.h"
+#include "Block512Backing.h"
+#include "SmartPortCard.h"
+#include "SmartPort35Unit.h"
+#include "DiskIICard.h"
 
 #include "FloppySoundDevice.h"
 #include "NoSlotClock.h"
@@ -168,6 +173,50 @@ int Core::runVideo(int videoCycles)
         done += static_cast<double>(ran > 0 ? ran : slice) / speed;
     }
     return static_cast<int>(std::lround(done));
+}
+
+// ---- Media detached from their files (core.hpp) ----------------------------
+
+bool Core::detachDisk(int drive)
+{
+    if (!impl_->diskII || !DiskIICard::validDrive(drive) || !impl_->diskII->isDiskLoaded(drive)) {
+        impl_->error = "No disk in that drive";
+        return false;
+    }
+    impl_->diskII->driveImage(drive).detachFromHost();
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::detachSmartPortDisk(int unit)
+{
+    if (!smartPortDiskInserted(unit)) {
+        impl_->error = "No SmartPort disk in that unit";
+        return false;
+    }
+    if (impl_->plus)
+        impl_->plus->image35[unit].detachFromHost();
+    else
+        static_cast<SmartPort35Unit*>(impl_->smartPort->unit(static_cast<std::size_t>(unit)))->image().detachFromHost();
+    impl_->error.clear();
+    return true;
+}
+
+bool Core::detachHardDisk()
+{
+    auto* card = dynamic_cast<ProDOSHardDiskCard*>(impl_->hardDisk);
+    if (!card) {
+        impl_->error = "No hard disk card";
+        return false;
+    }
+    for (auto* backing : card->blockBackings())
+        if (backing && backing->isLoaded()) {
+            backing->detachFromHost();
+            impl_->error.clear();
+            return true;
+        }
+    impl_->error = "No volume in that unit";
+    return false;
 }
 
 }  // namespace pom2

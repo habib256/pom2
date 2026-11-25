@@ -311,6 +311,10 @@ bool Block512Backing::adoptPrepared(PreparedImage&& prepared)
     path_     = path;
     mountStamp_ = prepared.stamp;
     awaitingDivert_ = false;
+    diverted_ = false;
+    divertedFrom_.clear();
+    copyCreated_.reset();
+    fileVerdict_ = std::make_shared<std::atomic<int>>(0);
     loaded_   = true;
 
     pom2::log().info("HDV", "Loaded " + path + " (" +
@@ -366,6 +370,10 @@ bool Block512Backing::loadFromBytes(std::vector<uint8_t> bytes,
     path_     = label;
     mountStamp_ = {};
     awaitingDivert_ = false;
+    diverted_ = false;
+    divertedFrom_.clear();
+    copyCreated_.reset();
+    fileVerdict_ = std::make_shared<std::atomic<int>>(0);
     loaded_   = true;
     pom2::log().info("HDV", "Loaded synthesised volume: " + label +
                             " (" + std::to_string(blockCount()) + " blocks)");
@@ -387,6 +395,10 @@ void Block512Backing::eject()
     path_.clear();
     mountStamp_ = {};
     awaitingDivert_ = false;
+    diverted_ = false;
+    divertedFrom_.clear();
+    copyCreated_.reset();
+    fileVerdict_ = std::make_shared<std::atomic<int>>(0);
     hostFolder_.clear();
     detachedSession_ = false;
     loaded_ = false;
@@ -399,6 +411,18 @@ void Block512Backing::eject()
 }
 
 bool Block512Backing::saveDirty()
+{
+    // One call, the whole story: a commit that finds the file replaced or
+    // gone only flags it (it holds no whole volume), and the take that
+    // follows diverts. This inline form does both at once, so a quit, a card
+    // destructor or an SDK host that saves once does not lose the guest's
+    // blocks on the refusal (bug hunt 2026-11-25).
+    if (saveDirtyOnce()) return true;
+    if (synth_ || !loaded_ || fileVerdict_->load() == 0) return false;
+    return saveDirtyOnce();
+}
+
+bool Block512Backing::saveDirtyOnce()
 {
     // Composed from the two-phase pair so there is ONE copy of the write
     // logic. The phases are simply not separated in time here: this entry
@@ -487,38 +511,41 @@ Block512Backing::takeWriteBack(std::vector<uint8_t> scratch)
         out.commitTicket->barrier = writeBackExecutor_->reserve(commitTail_);
         commitTail_ = out.commitTicket->barrier;
     }
-    // The image file was replaced by another program (a commit found out,
-    // off the lock): from here the mount saves to a copy beside it, as a
-    // floppy's does, so the guest's volume is neither merged into a foreign
-    // one nor trapped in RAM — an eject or a replace must be able to commit
-    // (bug hunt 2026-11-25). The whole volume travels until the copy exists.
+    // What a commit learnt about the file, off the lock (two atomics, no
+    // table and no mutex here). Replaced by another program: from now the
+    // mount saves to a copy beside it, as a floppy's does, so the guest's
+    // volume is neither merged into a foreign one nor trapped in RAM. The
+    // whole volume travels until that copy exists (bug hunt 2026-11-25).
     if (!synth_) {
-        auto& order = pom2::detail::MediaCommitOrder::instance();
-        std::lock_guard<std::mutex> lk(order.m);
-        if (order.foreignBlockFiles.count(path_)) {
-            const std::filesystem::path was(path_);
-            std::string ext = was.extension().string();
-            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (ext == ".2mg" || ext == ".2img" || ext.empty()) ext = ".hdv";   // the copy is the bare volume
-            const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            path_ = (was.parent_path() / (was.stem().string() + ".guest-" + std::to_string(now) + "-" +
-                                          std::to_string(mountId_) + ext)).string();
+        const int verdict = fileVerdict_->exchange(0);
+        if (verdict != 0) {
+            if (!diverted_) {
+                const std::filesystem::path was(path_);
+                std::string ext = was.extension().string();
+                for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (ext == ".2mg" || ext == ".2img" || ext.empty()) ext = ".hdv";   // the copy is the bare volume
+                const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+                divertedFrom_ = path_;
+                path_ = (was.parent_path() / (was.stem().string() + ".guest-" + std::to_string(now) + "-" +
+                                              std::to_string(mountId_) + ext)).string();
+                diverted_ = true;
+            }
             mountStamp_ = {};
-            dataOffset_ = 0;
-            dataLength_ = image_.size();
             awaitingDivert_ = true;
-            pom2::log().warn("HDV", "The image was changed by another program: this disk now saves to " + path_);
+            copyCreated_ = std::make_shared<std::atomic<bool>>(false);
         }
-        if (awaitingDivert_ && order.divertedBlockFiles.count(path_)) awaitingDivert_ = false;
+        if (awaitingDivert_ && copyCreated_ && copyCreated_->load()) awaitingDivert_ = false;
     }
     out.captureReservation = pendingWrites_;
     out.valid      = true;
     out.synth      = synth_;
     out.path       = path_;
     if (awaitingDivert_ && !synth_) out.wholeVolume = image_;
+    out.verdict = fileVerdict_;
+    out.copyCreated = copyCreated_;
     out.mounted    = mountStamp_;
     out.hostFolder = hostFolder_;
-    out.dataOffset = dataOffset_;
+    out.dataOffset = diverted_ ? 0 : dataOffset_;   // a copy is the bare volume; the base image keeps its offset
     out.dataLength = dataLength_;
 
     // Captured in BOTH cases: the file commit writes these blocks, and a
@@ -677,14 +704,10 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     // sibling in commitMediaInOrder). The blocks stay dirty in the machine,
     // as after any failed commit, and the message says why.
     if (!pom2::mediaFileIsOurs(pending.path, pending.mounted)) {
-        {
-            auto& order = pom2::detail::MediaCommitOrder::instance();
-            std::lock_guard<std::mutex> lk(order.m);
-            order.foreignBlockFiles.insert(pending.path);
-        }
+        if (pending.verdict) pending.verdict->store(1);
         error = pending.path + " was changed by another program since it was mounted; "
-                "POM2 did not write into it. Your disk goes to a copy beside it "
-                "(.guest-…) at the next save.";
+                "POM2 did not write into it: your disk goes to a copy beside it "
+                "(.guest-…) at the next save (repeat the command).";
         pom2::log().warn("HDV", error);
         return false;
     }
@@ -709,11 +732,7 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
                 pom2::log().warn("HDV", error);
                 return false;
             }
-            {
-                auto& order = pom2::detail::MediaCommitOrder::instance();
-                std::lock_guard<std::mutex> lk(order.m);
-                order.divertedBlockFiles.insert(pending.path);
-            }
+            if (pending.copyCreated) pending.copyCreated->store(true);
             pom2::noteOwnMediaWrite(pending.path, pending.wholeVolume.data(), pending.wholeVolume.size());
             markPersistentStateDirty();
             if (notice) *notice = "saved to a copy: " + pending.path;
@@ -726,6 +745,8 @@ bool Block512Backing::commitWriteBack(PendingWriteBack&& pending,
     // only image half-updated when a later write/flush failed.
     std::ifstream source(pending.path, std::ios::binary | std::ios::ate);
     if (!source) {
+        // A file that is gone is not replaced: an unplugged stick comes back,
+        // and the save lands when it does (pinned by block_autosave).
         error = "Cannot open " + pending.path + " for read";
         pom2::log().warn("HDV", error);
         return false;
