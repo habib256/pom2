@@ -907,7 +907,7 @@ public:
     void captureFetchedPages(FetchedPages& out);
     /// One video byte as the beam fetched it on line `y` (live RAM when the
     /// write log does not cover the frame).
-    uint8_t fetchedVideoByte(int y, uint16_t address, bool aux);
+    uint8_t fetchedVideoByte(int y, uint16_t address, bool fromAux);
     /// Offset of text / lo-res row `row` (0-23) inside its 1 KB page.
     static constexpr uint16_t textRowOffset(int row)
     {

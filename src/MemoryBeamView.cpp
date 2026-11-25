@@ -248,12 +248,12 @@ void Memory::captureFetchedPages(FetchedPages& out)
     if (rewound) videoRewindEnd();
 }
 
-uint8_t Memory::fetchedVideoByte(int y, uint16_t address, bool aux)
+uint8_t Memory::fetchedVideoByte(int y, uint16_t address, bool fromAux)
 {
     const uint8_t* const auxRam = iieMode ? videoAuxData() : nullptr;
     const bool rewound = videoRewindBegin();
     if (rewound) videoRewindTo(y);
-    const uint8_t value = (aux && auxRam) ? auxRam[address] : data()[address];
+    const uint8_t value = (fromAux && auxRam) ? auxRam[address] : data()[address];
     if (rewound) videoRewindEnd();
     return value;
 }
