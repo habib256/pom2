@@ -232,7 +232,7 @@ def main():
     w('')
     w('| File | Description |')
     w('|---|---|')
-    w('| pom2/disks/... | A private writable copy of each disk the game writes to; the original image is never written |')
+    w('| pom2/disks/&lt;game&gt;/&lt;disk&gt; | A private writable copy of each disk the game writes to, named after the content and the disk file; the original image is never written |')
     w('')
     w('**Frontend\'s State directory**')
     w('')

@@ -1334,6 +1334,12 @@ void testPersistentDisks(Core& core, const fs::path& work, const fs::path& firmw
     }
     if (unchanged != 1 || modified != 1)
         throw std::runtime_error("the guest SAVE did not update just the private copy of face B\n" + saveScreen);
+    // The copies are named for a frontend to find: pom2/disks/<game>/<disk>,
+    // <game> being the playlist's name (RetroBat, emulatorlauncher#1498).
+    require(readFile(storage / "Two sides" / "Face A.dsk") == original &&
+                readFile(storage / "Two sides" / "Face B.dsk") != original &&
+                fs::is_regular_file(storage / "Two sides" / "Face B.dsk.source"),
+            "the private copies are not pom2/disks/Two sides/Face A.dsk and Face B.dsk");
 
     core.retro_deinit();
     core.retro_init();

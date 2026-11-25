@@ -75,6 +75,12 @@ if(TARGET pom2_libretro)
     target_include_directories(test_libretro_pad_profiles PRIVATE "${CMAKE_SOURCE_DIR}/libretro")
     target_include_directories(test_libretro_pad_profiles SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/third_party/libretro")
     add_test(NAME libretro_pad_profiles COMMAND test_libretro_pad_profiles)
+    # The private disk copies' names: game/disk, a clash, a legacy copy.
+    add_executable(test_libretro_disk_storage libretro_disk_storage_test.cpp
+        "${CMAKE_SOURCE_DIR}/libretro/disk_storage.cpp")
+    target_include_directories(test_libretro_disk_storage PRIVATE "${CMAKE_SOURCE_DIR}/libretro" "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(test_libretro_disk_storage PRIVATE POM2::core)
+    add_test(NAME libretro_disk_storage COMMAND test_libretro_disk_storage)
     # Netplay: two processes, rollback and a joining client must keep the same
     # state byte for byte (tools/libretro_netplay.py).
     add_test(NAME pom2_libretro_netplay COMMAND "${Python3_EXECUTABLE}" -B

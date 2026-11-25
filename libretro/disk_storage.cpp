@@ -119,6 +119,53 @@ std::shared_ptr<DiskSaveLock> lockDiskStorage(const fs::path& backing)
     return lease;
 }
 
+namespace {
+
+// What a private copy was made from: the original's SHA-256, beside the copy.
+fs::path sourceRecord(const fs::path& backing)
+{
+    auto record = backing;
+    record += ".source";
+    return record;
+}
+
+std::string recordedSource(const fs::path& backing)
+{
+    std::ifstream input(sourceRecord(backing));
+    std::string line;
+    std::getline(input, line);
+    return line;
+}
+
+void recordSource(const fs::path& backing, const std::string& sourceHash)
+{
+    std::ofstream output(sourceRecord(backing), std::ios::trunc);
+    output << sourceHash << '\n';
+}
+
+void ensureDirectories(const fs::path& directory, DiskStorageAccess access)
+{
+    if (access != DiskStorageAccess::CreateIfMissing || fs::is_directory(directory)) return;
+    auto parent = directory.root_path();
+    for (const auto& component : directory.relative_path()) {
+        parent /= component;
+        ensureDirectory(parent, access);
+    }
+}
+
+// Before 2026-11-25 a copy was named by hashes alone:
+// pom2/disks/<sha256(content path)>/<sha256(disk path, disk hash)><ext>.
+fs::path legacyBacking(const fs::path& disks, const fs::path& content, const fs::path& original,
+                       const std::string& sourceHash)
+{
+    const auto sourceIdentity = fs::canonical(original).u8string();
+    const auto title = content.empty() ? std::string{} : fs::weakly_canonical(content).u8string();
+    return disks / digest(title) /
+           (digest(sourceIdentity + "\n" + sourceHash) + original.extension().u8string());
+}
+
+} // namespace
+
 DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
                             const fs::path& original, DiskStorageAccess access)
 {
@@ -129,28 +176,54 @@ DiskStorage openDiskStorage(const fs::path& saves, const fs::path& content,
 
     const auto bytes = readOriginal(original);
     const auto sourceHash = Core::sha256(bytes.data(), bytes.size());
-    const auto sourceIdentity = fs::canonical(original).u8string();
-    const auto title = content.empty() ? std::string{} : fs::weakly_canonical(content).u8string();
 
-    auto directory = fs::weakly_canonical(fs::absolute(saves));
-    if (access == DiskStorageAccess::CreateIfMissing && !fs::is_directory(directory)) {
-        auto parent = directory.root_path();
-        for (const auto& component : directory.relative_path()) {
-            parent /= component;
-            ensureDirectory(parent, access);
-        }
+    // pom2/disks/<game>/<disk file name>: a frontend finds a game's saves by
+    // name (RetroBat asked, emulatorlauncher#1498). <game> is the content's
+    // name — "Ultima IV" for Ultima IV.m3u, "Karateka" for Karateka.woz.
+    const auto root = fs::weakly_canonical(fs::absolute(saves));
+    ensureDirectories(root, access);
+    auto disks = root / "pom2";
+    ensureDirectory(disks, access);
+    disks /= "disks";
+    ensureDirectory(disks, access);
+    auto game = (content.empty() ? original : content).stem();
+    if (game.empty() || game == "." || game == "..") game = "disk";
+    const auto directory = disks / game;
+    std::error_code probe;
+    const auto legacy = legacyBacking(disks, content, original, sourceHash);
+    const bool hasLegacy = fs::is_regular_file(fs::symlink_status(legacy, probe));
+    // A restore (ExistingOnly) still makes the folder a legacy copy moves to.
+    ensureDirectory(directory, hasLegacy ? DiskStorageAccess::CreateIfMissing : access);
+
+    // The .source record keeps two games whose names match from sharing one
+    // copy: the second one, or a new revision of the image, gets its own,
+    // named with the start of its hash.
+    auto backing = directory / original.filename();
+    if (usableBacking(backing)) {
+        const auto recorded = recordedSource(backing);
+        if (recorded.empty()) recordSource(backing, sourceHash);   // a copy that lost its record
+        else if (recorded != sourceHash)
+            backing = directory / (original.stem().u8string() + " [" + sourceHash.substr(0, 8) + "]" +
+                                   original.extension().u8string());
     }
-    directory /= "pom2";
-    ensureDirectory(directory, access);
-    directory /= "disks";
-    ensureDirectory(directory, access);
-    directory /= digest(title);
-    ensureDirectory(directory, access);
-    const auto backing = directory / (digest(sourceIdentity + "\n" + sourceHash) + original.extension().u8string());
     if (!usableBacking(backing)) {
-        if (access == DiskStorageAccess::ExistingOnly)
+        std::error_code error;
+        if (hasLegacy && usableBacking(legacy)) {
+            // Keep the player's progress: move the old copy to its new name.
+            fs::rename(legacy, backing, error);
+            if (error)
+                throw std::runtime_error("Cannot move disk save " + legacy.string() + " to " + backing.string() +
+                                         ": " + error.message());
+            auto lock = legacy;
+            lock += ".lock";
+            fs::remove(lock, error);
+            fs::remove(legacy.parent_path(), error);   // only when empty
+        } else if (access == DiskStorageAccess::ExistingOnly) {
             throw std::runtime_error("Disk save does not exist: " + backing.string());
-        createBacking(backing, bytes);
+        } else {
+            createBacking(backing, bytes);
+        }
+        recordSource(backing, sourceHash);
     }
     if (fs::equivalent(backing, original))
         throw std::runtime_error("Disk save cannot be the original disk image: " + original.string());

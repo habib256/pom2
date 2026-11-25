@@ -10,6 +10,27 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-25 — Libretro disk saves named for a frontend to find
+
+RetroBat asked (emulatorlauncher#1498) for disk saves a frontend can locate.
+The private copy of a disk was `pom2/disks/<sha256 of the content
+path>/<sha256 of the disk path and bytes><ext>`: safe, and opaque. It is now
+`pom2/disks/<content name>/<disk file name>` — `Ultima IV/Ultima IV side
+B.dsk` for a disk of `Ultima IV.m3u`. What the hashes protected is kept: a
+`.source` file beside the copy records the original's SHA-256, and a second
+game with the same names, or a new revision of an image, gets its own copy,
+`<disk> [<8 hex digits>]<ext>`, instead of booting the first one's save. A
+copy under the old name moves to the new one, progress included, the first
+time its game is opened — or restored, which may then create the game's
+folder. `libretro_disk_storage` checks the name, the clash, a playlist and
+the move.
+
+RetroBat also found that the released libretro-v1.2.3 packages declare
+`savestate_features = "serialized"`, so RetroArch refuses netplay and
+run-ahead with them (core_info.c only allows both for "deterministic"). The
+tree has said "deterministic" since bf71a0b4, as does the `.info` sent to
+libretro-super (#2223); the next libretro release carries it.
+
 ## 2026-11-25 — The libretro core in a web browser and on 32-bit ARM
 
 **Web.** RetroArch's web build links its core statically: libretro's

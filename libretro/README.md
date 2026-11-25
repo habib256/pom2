@@ -318,8 +318,14 @@ with `+`.
 ## Save and resume
 
 Save normally inside the game. POM2 stores each writable side in its own
-private copy under `pom2/disks/` in RetroArch's **Save Files** directory.
-The original images retain their original bytes. Reopen the same image or
+private copy in RetroArch's **Save Files** directory, at
+`pom2/disks/<game>/<disk file>`: `<game>` is the name of what you opened
+(`Ultima IV` for `Ultima IV.m3u`, `Karateka` for `Karateka.woz`) and the
+disk keeps its file name. A `.source` file beside each copy records the
+original's SHA-256; a second game with the same names, or a new revision of
+the image, gets its own copy, named `<disk> [<first 8 hex digits>]`. Copies
+named by hashes by earlier versions move to the new name the first time
+their game is opened. The original images retain their original bytes. Reopen the same image or
 playlist from the same location to resume using those disks. A locked image
 or read-only file reports write protection to the guest.
 
