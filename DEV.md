@@ -550,7 +550,7 @@ from it; pinned by `applicard_card`.
 **Premium SoftCard //e** (`PremiumSoftCard`) — Microsoft's AUXILIARY-slot
 card: the extended 80-column card's 64 KB and 80 columns with a 6 MHz Z80B
 on that same RAM. Not a slot card, so not in the catalog: setting
-`premium_softcard` (Machine menu), seated on SlotBus **slot 0**, which a //e
+`premium_softcard` (Devices ▸ Accelerators & AUX slot), seated on SlotBus **slot 0**, which a //e
 does not have — Memory decodes $C080-$C08F itself — so the card gets the
 bus's pacing, reset, rewind (`SLOT0`) and CPU-clock fan-out — the last two
 since the 2026-10-31 bug hunt, when they still walked slots 1-7 only. It
@@ -3998,7 +3998,7 @@ defaults to Standard and calls itself an approximation of the chip's own
 Esc/space boot logic). `$C05D` speed select is not modelled — MAME has no case
 for it, so nothing is invented.
 
-**UI.** Machine ▸ "Zip Chip (4 MHz, CPU socket)", key `zip_chip` (default
+**UI.** Devices ▸ Accelerators & AUX slot ▸ "Zip Chip (4 MHz, CPU socket)", key `zip_chip` (default
 off), owned by `EmulationController::setZipChipInstalled`. Snapshot: a Memory
 trailer section (the chip has no slot). The //c Plus seats its own instance
 at every profile load (`installSocketAccelerator`): its 4 MHz is this chip,
@@ -4014,7 +4014,7 @@ delay disable, reset, and the ][+ gate).
 a2heaven's FASTChip //e: a 65C02 from 0.2 to 16.6 MHz cabled into the 6502
 socket. A second `CpuSocketAccelerator`, so it goes where the Zip Chip goes —
 Memory's `$C0xx` slow path, nothing on the fast one. Setting `fast_chip`
-(Machine menu, "FASTChip //e"), start speed `fast_chip_speed` (0-40). **One
+(Devices ▸ Accelerators & AUX slot, "FASTChip //e"), start speed `fast_chip_speed` (0-40). **One
 socket**: `EmulationController::setFastChipInstalled` takes the Zip Chip out
 and `setZipChipInstalled` takes the FASTChip out; a hand-edited file that
 asks for both gets the Zip Chip.
@@ -12977,8 +12977,11 @@ itself is UI and has no test.
   inspector's picture fits its panel by default ("Fit").
 - **Menus.** File ends with what you keep of the machine — Save BASIC
   listing, then Save / Open session — just above Quit; Copy screen text
-  moved to Edit, above the pastes; Slot Configuration opens the Devices
-  menu; Rewind sits under Step in Machine. File ▸ Reload ROM is gone: the
+  moved to Edit, above the pastes; Rewind sits under Step in Machine.
+  **Devices** opens with Slot Configuration, then one submenu per kind
+  (Storage, Sound, Input, Printers & serial, Network, Other cards), and
+  last "Accelerators & AUX slot": the Zip Chip, the FASTChip and the
+  Premium SoftCard, hardware that is in no slot and used to sit in Machine. File ▸ Reload ROM is gone: the
   ROM Status panel and the welcome page keep their own Reload ROM button.
   File ▸ Boot HDV is gone too: it duplicated the Disk Library's Boot.
 - **The Debugger fits half a window.** Its header rows are runs of tokens

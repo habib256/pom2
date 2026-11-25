@@ -783,128 +783,132 @@ void MainWindow::renderMenuBar()
                     "The //c's 40/80 key, above the keyboard. Programs that\n"
                     "read it ($C060) choose 40 or 80 columns from it.");
         }
-        {
-            // Zip Chip — an accelerator in the 6502 SOCKET, not a slot card,
-            // so it is a machine option rather than a Slot Config row.
-            bool zip = controller->zipChipInstalled();
-            if (ImGui::MenuItem("Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
-                controller->setZipChipInstalled(zip);
-                settings->setBool("zip_chip", zip);
-                if (zip) settings->setBool("fast_chip", false);   // one socket
-                settings->save();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "Zip Technologies' 4 MHz accelerator, seated in the CPU socket.\n"
-                    "//e-class machines with slots only (the //c Plus has its own).\n"
-                    "Software controls it at $C05A-$C05F (unlock, speed, slow-down\n"
-                    "mask); it drops to 1 MHz around disk and speaker accesses.");
-            bool bootFast;
-            {
-                auto st = controller->lockState();
-                bootFast = controller->zipChip().bootFast();
-            }
-            if (ImGui::MenuItem("Zip Chip: start at 4 MHz", nullptr, &bootFast)) {
-                {
-                    auto st = controller->lockState();
-                    controller->zipChip().setBootFast(bootFast);
-                }
-                settings->setBool("zip_chip_boot_fast", bootFast);
-                settings->save();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Select the Zip Chip speed after the next reset.");
-
-            // FASTChip //e — the same socket, so one or the other.
-            bool fast = controller->fastChipInstalled();
-            if (ImGui::MenuItem("FASTChip //e (to 16.6 MHz, CPU socket)", nullptr, &fast)) {
-                controller->setFastChipInstalled(fast);
-                settings->setBool("fast_chip", fast);
-                if (fast) settings->setBool("zip_chip", false);
-                settings->save();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "a2heaven's FASTChip //e: a 65C02 from 0.2 to 16.6 MHz in the CPU\n"
-                    "socket. Software drives it at $C06A-$C06F (unlock, speed, slot\n"
-                    "speeds); it drops to 1 MHz around slots set to normal, the\n"
-                    "speaker and the paddles. Takes the Zip Chip's place.");
-            int speed;
-            {
-                auto st = controller->lockState();
-                speed = controller->fastChip().powerOnSpeed();
-            }
-            char label[32];
-            std::snprintf(label, sizeof label, speed ? "%.2f MHz" : "off",
-                          pom2::FastChip::speedMHz(static_cast<uint8_t>(speed)));
-            ImGui::SetNextItemWidth(140.0f);
-            if (ImGui::SliderInt("FASTChip start speed", &speed, 0, pom2::FastChip::kSpeedMax, label)) {
-                {
-                    auto st = controller->lockState();
-                    controller->fastChip().setPowerOnSpeed(static_cast<uint8_t>(speed));
-                }
-                settings->setInt("fast_chip_speed", speed);
-                settings->save();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("The speed saved in the chip's configuration: what it starts at\n"
-                                  "after the next reset (the manual's SET Speed).");
-        }
-        {
-            // Premium SoftCard //e — an AUXILIARY-slot card (the //e's 64 KB
-            // aux RAM and 80 columns, with a Z80), so a machine option and
-            // not a Slot Config row. Changing it rebuilds the cards.
-            bool psc = settings->getBool("premium_softcard", false);
-            // A loaded session is the machine it describes, and a session
-            // never holds the aux-slot card (captureSession refuses it): the
-            // tick follows the hardware there, not the saved option, which
-            // used to read "installed" over a machine without the card.
-            // Ticking it rebuilds from the settings, which re-seats it.
-            if (psc && sessionMachineActive_) {
-                auto st = controller->lockState();
-                psc = st.memory().slotBus().peripheral(0) != nullptr;   // only it uses slot 0
-            }
-            // Through SettingRebuild.h, as the Abstraction Levels row for the
-            // same key: saving first and ignoring a refused rebuild left the
-            // next launch plugging a card the user was told could not be
-            // applied (bug hunt 2026-11-07).
-            if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc))
-                applyFirmwareToggle("premium_softcard", psc ? "true" : "false");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "Microsoft's Premium SoftCard //e in the auxiliary slot: the\n"
-                    "extended 80-column card's 64 KB, shared with a 6 MHz Z80 for\n"
-                    "CP/M. //e-class machines with slots only. Boot its CP/M disk.");
-        }
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Devices")) {
-        // One flat 17-item list became hard to scan (audit 2026-05-31), so it
-        // is grouped under SeparatorText headers. What used to follow was 25
-        // hand-written rows carrying each panel's label, tooltip, greyed-out
-        // condition and slot-number formatting — a third copy of facts the
-        // palette and the settings round-trip also held. They live in
-        // PanelCatalog.h now; this menu says only which groups it shows and
-        // in what order.
+        // Slot Configuration first: it decides what the rest contains. Then
+        // one submenu per kind of device, so the menu is seven lines and not
+        // thirty (2026-11-25; it was one flat list under SeparatorText
+        // headers since 2026-05-31). Each panel's label, tooltip, greyed-out
+        // condition and slot number live in PanelCatalog.h; this menu says
+        // only which groups it shows and in what order.
         //
-        // Grouped by what the device IS to the user (2026-10-16): storage,
-        // sound, input, printing/serial, network, then the cards that fit
-        // none of those. Rewind is not a device — it moved to Machine.
-        // Slot Configuration comes first: it decides what the rest contains.
+        // Grouped by what the device IS to the user: storage, sound, input,
+        // printing/serial, network, the other cards, and last the hardware
+        // that is NOT in a slot — the CPU-socket accelerators and the //e's
+        // auxiliary slot — which used to sit in the Machine menu. Rewind is
+        // not a device: it is in Machine, under Step.
         panelMenuItem(pom2::PanelId::SlotConfig);
-        ImGui::SeparatorText("Storage");
-        panelMenuGroup(pom2::PanelGroup::DevStorage);
-        ImGui::SeparatorText("Sound");
-        panelMenuGroup(pom2::PanelGroup::DevSound);
-        ImGui::SeparatorText("Input");
-        panelMenuGroup(pom2::PanelGroup::DevInput);
-        ImGui::SeparatorText("Printers & serial");
-        panelMenuGroup(pom2::PanelGroup::DevPrinting);
-        ImGui::SeparatorText("Network");
-        panelMenuGroup(pom2::PanelGroup::DevNetwork);
-        ImGui::SeparatorText("Other cards");
-        panelMenuGroup(pom2::PanelGroup::DevOther);
+        ImGui::Separator();
+        const auto group = [this](const char* title, pom2::PanelGroup g) {
+            if (ImGui::BeginMenu(title)) {
+                panelMenuGroup(g);
+                ImGui::EndMenu();
+            }
+        };
+        group("Storage",           pom2::PanelGroup::DevStorage);
+        group("Sound",             pom2::PanelGroup::DevSound);
+        group("Input",             pom2::PanelGroup::DevInput);
+        group("Printers & serial", pom2::PanelGroup::DevPrinting);
+        group("Network",           pom2::PanelGroup::DevNetwork);
+        group("Other cards",       pom2::PanelGroup::DevOther);
+        if (ImGui::BeginMenu("Accelerators & AUX slot")) {
+            {
+                // Zip Chip — an accelerator in the 6502 SOCKET, not a slot card,
+                // so it is a machine option rather than a Slot Config row.
+                bool zip = controller->zipChipInstalled();
+                if (ImGui::MenuItem("Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
+                    controller->setZipChipInstalled(zip);
+                    settings->setBool("zip_chip", zip);
+                    if (zip) settings->setBool("fast_chip", false);   // one socket
+                    settings->save();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Zip Technologies' 4 MHz accelerator, seated in the CPU socket.\n"
+                        "//e-class machines with slots only (the //c Plus has its own).\n"
+                        "Software controls it at $C05A-$C05F (unlock, speed, slow-down\n"
+                        "mask); it drops to 1 MHz around disk and speaker accesses.");
+                bool bootFast;
+                {
+                    auto st = controller->lockState();
+                    bootFast = controller->zipChip().bootFast();
+                }
+                if (ImGui::MenuItem("Zip Chip: start at 4 MHz", nullptr, &bootFast)) {
+                    {
+                        auto st = controller->lockState();
+                        controller->zipChip().setBootFast(bootFast);
+                    }
+                    settings->setBool("zip_chip_boot_fast", bootFast);
+                    settings->save();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Select the Zip Chip speed after the next reset.");
+
+                // FASTChip //e — the same socket, so one or the other.
+                bool fast = controller->fastChipInstalled();
+                if (ImGui::MenuItem("FASTChip //e (to 16.6 MHz, CPU socket)", nullptr, &fast)) {
+                    controller->setFastChipInstalled(fast);
+                    settings->setBool("fast_chip", fast);
+                    if (fast) settings->setBool("zip_chip", false);
+                    settings->save();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "a2heaven's FASTChip //e: a 65C02 from 0.2 to 16.6 MHz in the CPU\n"
+                        "socket. Software drives it at $C06A-$C06F (unlock, speed, slot\n"
+                        "speeds); it drops to 1 MHz around slots set to normal, the\n"
+                        "speaker and the paddles. Takes the Zip Chip's place.");
+                int speed;
+                {
+                    auto st = controller->lockState();
+                    speed = controller->fastChip().powerOnSpeed();
+                }
+                char label[32];
+                std::snprintf(label, sizeof label, speed ? "%.2f MHz" : "off",
+                              pom2::FastChip::speedMHz(static_cast<uint8_t>(speed)));
+                ImGui::SetNextItemWidth(140.0f);
+                if (ImGui::SliderInt("FASTChip start speed", &speed, 0, pom2::FastChip::kSpeedMax, label)) {
+                    {
+                        auto st = controller->lockState();
+                        controller->fastChip().setPowerOnSpeed(static_cast<uint8_t>(speed));
+                    }
+                    settings->setInt("fast_chip_speed", speed);
+                    settings->save();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The speed saved in the chip's configuration: what it starts at\n"
+                                      "after the next reset (the manual's SET Speed).");
+            }
+            {
+                // Premium SoftCard //e — an AUXILIARY-slot card (the //e's 64 KB
+                // aux RAM and 80 columns, with a Z80), so a machine option and
+                // not a Slot Config row. Changing it rebuilds the cards.
+                bool psc = settings->getBool("premium_softcard", false);
+                // A loaded session is the machine it describes, and a session
+                // never holds the aux-slot card (captureSession refuses it): the
+                // tick follows the hardware there, not the saved option, which
+                // used to read "installed" over a machine without the card.
+                // Ticking it rebuilds from the settings, which re-seats it.
+                if (psc && sessionMachineActive_) {
+                    auto st = controller->lockState();
+                    psc = st.memory().slotBus().peripheral(0) != nullptr;   // only it uses slot 0
+                }
+                // Through SettingRebuild.h, as the Abstraction Levels row for the
+                // same key: saving first and ignoring a refused rebuild left the
+                // next launch plugging a card the user was told could not be
+                // applied (bug hunt 2026-11-07).
+                if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc))
+                    applyFirmwareToggle("premium_softcard", psc ? "true" : "false");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Microsoft's Premium SoftCard //e in the auxiliary slot: the\n"
+                        "extended 80-column card's 64 KB, shared with a 6 MHz Z80 for\n"
+                        "CP/M. //e-class machines with slots only. Boot its CP/M disk.");
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
 

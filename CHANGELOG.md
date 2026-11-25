@@ -60,7 +60,9 @@ layout shows its two panels and closes every other one; so do Emulation
 and Reset with theirs. No layout leaves a window floating: whatever a
 preset does not name becomes a tab. In the File menu, Save BASIC listing
 and the session items sit at the bottom, above Quit; Copy screen text is
-in Edit; Slot Configuration opens the Devices menu; Rewind is under Step;
+in Edit; Rewind is under Step; Devices opens with Slot Configuration and
+groups its panels in submenus, with the Zip Chip, the FASTChip and the
+Premium SoftCard moved there from Machine;
 File ▸ Reload ROM is removed (the ROM panels keep the button), and so is
 File ▸ Boot HDV (the Disk Library boots it). "Reset to default" is now the
 Mini-Apple II layout, listed between Emulation and Debug. The Debugger
