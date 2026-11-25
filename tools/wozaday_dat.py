@@ -244,7 +244,7 @@ def build(tosec, out):
             title += " v" + version.lstrip("vV")
         year = (re.search(r"\b(19|20)\d\d\b", first.get("copyright", "")) or [None])[0] or item_year(meta)
         publisher = clean(first.get("publisher", "")) or clean(item_publisher(meta))
-        developer = ", ".join(clean(d) for d in first.get("developer", "").split("|") if d.strip())
+        developer = " / ".join(clean(d) for d in first.get("developer", "").split("|") if d.strip())
         name = title + (f" ({year})" if year else "") + (f"({publisher})" if publisher else "")
         # A title published on 5.25" and on 3.5" is two items; archive.org
         # tells them apart as "800K", and so does the name.
