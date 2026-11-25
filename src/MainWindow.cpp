@@ -996,6 +996,14 @@ MainWindow::MainWindow(bool forceIIPlus)
     // the cold boot above) — and NOT YET: render() does it after the window's
     // first frames (powerOnWhenReady).
     powerOnPending_ = true;
+#ifdef __EMSCRIPTEN__
+    // The browser starts at once: its first main-loop turn restores the
+    // saved session and that session's run mode (main.cpp,
+    // restoreBrowserSession). A power-on a few frames later called start()
+    // over it and set a session saved PAUSED running again — the browser
+    // smoke test's "//c paused session restore".
+    powerOnNow();
+#endif
 }
 
 // The machine starts once the window can keep up with it.

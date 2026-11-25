@@ -12993,7 +12993,10 @@ itself is UI and has no test.
   longer than the speaker's 100 ms lead (`kCatchUpSecs`) let the audio
   cursor overtake the toggles — the beep was purged or re-anchored
   mid-way. Power-on waits for two frames in a row under 50 ms, thirty
-  frames at most; command-line actions start it at once.
+  frames at most; command-line actions start it at once, and so does
+  the browser build, whose first main-loop turn restores the saved
+  session's run mode (a later `start()` set a session saved paused
+  running again; caught by `wasm_persistence_smoke.mjs`).
   [F] Diagnosed from the code and the log (one cold boot instead of two);
   not confirmed by ear. Settled by: listening to ten cold starts.
 - **Slot Configuration follows the machine**: closed by a switch to a //c
