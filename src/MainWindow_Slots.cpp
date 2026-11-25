@@ -104,7 +104,11 @@ void MainWindow::renderSlotConfigPanel()
 
     // 880 px was sized for two columns; one column needs about half that.
     ImGui::SetNextWindowSize(ImVec2(520, 460), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Slot Configuration", &show(pom2::PanelId::SlotConfig))) {
+    // Brought back by a profile switch, the tab returns to its group WITHOUT
+    // coming to the front: the user did not ask to look at it.
+    const ImGuiWindowFlags quiet = slotConfigQuietFrames_ > 0 ? ImGuiWindowFlags_NoFocusOnAppearing : 0;
+    if (slotConfigQuietFrames_ > 0) --slotConfigQuietFrames_;
+    if (!ImGui::Begin("Slot Configuration", &show(pom2::PanelId::SlotConfig), quiet)) {
         ImGui::End();
         return;
     }
@@ -1535,6 +1539,18 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
         ", ROM = " + (r.romPath.empty() ? "<missing>" : r.romPath) +
         ", CPU = " + (r.cpuIsCmos ? "65C02" : "NMOS"));
     aiServer->setProfileLabel(std::string(cfg.displayName));
+
+    // Slot Configuration follows the machine: a //c or a //c Plus has no
+    // slots, so its tab goes away there, and comes back on a machine that
+    // has them — in the dock group it was in, which ImGui remembers.
+    if (cfg.noPhysicalSlots) {
+        if (show(pom2::PanelId::SlotConfig)) slotConfigHiddenByProfile_ = true;
+        show(pom2::PanelId::SlotConfig) = false;
+    } else if (slotConfigHiddenByProfile_) {
+        show(pom2::PanelId::SlotConfig) = true;
+        slotConfigHiddenByProfile_ = false;
+        slotConfigQuietFrames_ = 3;      // reappear behind, not in front
+    }
 }
 
 bool MainWindow::restartEmulationTransaction()

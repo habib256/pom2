@@ -57,6 +57,8 @@
 #include "HgrPaintEditor.h"     // portable hgrpaint/ editor (shared with POM1)
 #include "HgrSpriteEditor.h"    // portable hgrsprite/ editor (same host seam)
 #include "Pom2HgrPaintHost.h"
+#include "Pom2SfxHost.h"
+#include "sfxbeep/SfxEditor.h"
 #include "MouseCoordinator.h"
 #include "NetworkCoordinator.h"
 #include "AudioCoordinator.h"
@@ -152,6 +154,8 @@ MainWindow::MainWindow(bool forceIIPlus)
       toolbar        (std::make_unique<pom2::Toolbar_ImGui>()),
       hgrPaintHost   (std::make_unique<Pom2HgrPaintHost>(controller.get())),
       hgrPaintEditor (std::make_unique<hgrpaint::HgrPaintEditor>(hgrPaintHost.get())),
+      sfxHost_       (std::make_unique<Pom2SfxHost>(controller.get())),
+      sfxEditor_     (std::make_unique<sfxbeep::SfxEditor>(sfxHost_.get())),
       hgrSpriteEditor(std::make_unique<hgrsprite::HgrSpriteEditor>(hgrPaintHost.get())),
       mouseCoordinator_(std::make_unique<pom2::MouseCoordinator>(*controller)),
       networkCoordinator_(std::make_unique<pom2::NetworkCoordinator>()),
@@ -863,9 +867,16 @@ MainWindow::MainWindow(bool forceIIPlus)
     // The firmware controls automatic boot: IIe scans slots 7 down to 1,
     // and Enhanced IIe accepts HDV as well as Disk II. The monitor also
     // clears the freshly-zeroed text page and prints the machine banner.
+    //
+    // The machine is NOT set running here. It used to be, and the saved
+    // profile restored a few lines below (a fresh install's default is the
+    // PAL //e, the auto-probe an NTSC one) then cold-booted it a SECOND time
+    // a few milliseconds later: the first boot had already begun its beep
+    // at the NTSC clock, the second cut it and started it again at the PAL
+    // one — "the sound skips at start-up, sometimes", sometimes being how
+    // far the worker got before the switch (2026-11-25). The worker is
+    // started once, at the end of this constructor, on the settled machine.
     controller->coldBoot();
-    controller->setMode(EmulationController::Mode::Running);
-    controller->start();
 
     // ── AI control server (loopback HTTP) ────────────────────────────────
     // Wire the bridge once the emulator core is alive so the server's
@@ -980,6 +991,11 @@ MainWindow::MainWindow(bool forceIIPlus)
     // (which also refreshes the label) is skipped — so /status would otherwise
     // report the wrong machine (e.g. "Apple ][+" while running a //e).
     aiServer->setProfileLabel(std::string(pom2::profileConfig(activeProfile).displayName));
+
+    // Power on, once, with the profile, its clock and its cards settled
+    // (see the cold boot above). start() sets the mode to Running and spawns
+    // the worker.
+    controller->start();
 }
 
 // Out-of-line accessor bodies — these need EmulationController and
@@ -1265,8 +1281,17 @@ void MainWindow::applyDockLayout(DockLayout preset)
     // Slot Configuration is offered by a layout only on a machine that HAS
     // slots: a //c or a //c Plus has ports, and a tab about slots there is a
     // tab about nothing (it stays reachable from the Devices menu).
+    //
+    // Only for a layout the user CHOSE. The one POM2 applies by itself on a
+    // first run places the windows and touches no visibility: a fresh
+    // install keeps the catalog's defaults, and the browser's persistence
+    // smoke test opens Drives from the Devices menu — with Drives forced
+    // open at start-up its click closed the panel (CI, 2026-11-25).
+    const bool byUser = dockLayoutByUser_;
+    dockLayoutByUser_ = false;
     const bool hasSlots = !pom2::profileConfig(activeProfile).noPhysicalSlots;
-    const auto showOnly = [this, hasSlots](std::initializer_list<P> keep) {
+    const auto showOnly = [this, hasSlots, byUser](std::initializer_list<P> keep) {
+        if (!byUser) return;
         for (const pom2::PanelInfo& info : pom2::kPanelCatalog) {
             if (info.id == P::CardMonitor || info.id == P::Welcome) continue;
             show(info.id) = std::find(keep.begin(), keep.end(), info.id) != keep.end() &&
@@ -1280,7 +1305,7 @@ void MainWindow::applyDockLayout(DockLayout preset)
             showOnly({P::Drives, P::DiskLibrary, P::SlotConfig, P::Keyboard});
             // Mini-Apple II is the machine on a desk: its monitor has its
             // frame (Display > Monitor II frame turns it off again).
-            monitorArtworkEnabled = true;
+            if (byUser) monitorArtworkEnabled = true;
             right      = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right,
                                                      0.34f, nullptr, &centre);
             bottom     = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down,
@@ -1761,6 +1786,7 @@ void MainWindow::render()
     renderDisk35FileDialog();
     renderAboutDialog();
     renderThanksWindow();
+    renderSfxEditorWindow();
     renderStatusBar();
     // Last: the palette is an overlay and must draw above every panel.
     renderCommandPalette();

@@ -150,6 +150,7 @@ static void glfw_key_callback(GLFWwindow* w, int key, int sc, int action, int mo
         const bool isGlobalKey = (key == GLFW_KEY_F11 || key == GLFW_KEY_F12 ||
                                   pom2::mousegrab::isFullscreenChord(key, mods) ||
                                   key == GLFW_KEY_F9 || key == GLFW_KEY_F10 ||
+                                  key == GLFW_KEY_F8 ||   // kiosk toggle too
                                   key == GLFW_KEY_LEFT_ALT ||
                                   key == GLFW_KEY_RIGHT_ALT ||
                                   (layoutP == 'P' &&

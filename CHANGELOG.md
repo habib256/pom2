@@ -85,6 +85,18 @@ issue with the machine's state — cards, disks by file name, CPU, video
 switches, memory map, GPU — and copies the full report to the clipboard,
 so the first reply to an issue is no longer a list of questions.
 
+The Speaker SFX editor comes over from POM1 (Tools ▸ Sound): design a
+sound effect for the 1-bit speaker, hear it, export the assembler table.
+The machine now powers on once: it used to boot, then boot again when the
+saved profile was restored, which cut the start-up beep. "Download missing
+ROMs" no longer fails for ever on a wrong dump sitting in a folder searched
+first: it replaces it there and keeps the old file. The credits name
+Apple's early people and give each person's role, from a sourced pass.
+
+F8 now switches between the window and the kiosk, like F10 (the Debugger's
+step-over is Ctrl+Space). Every menu item has an icon. The first-run
+layout no longer opens or closes panels: only a layout you choose does.
+
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 
 ## 2026-11-25 — Bug hunt before v1.2.4

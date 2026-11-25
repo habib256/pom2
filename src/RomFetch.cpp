@@ -1087,7 +1087,25 @@ RomFetchResult fetchMissingRoms(const fs::path& destRoot,
         tick(e->label);
         std::string err;
         std::string backup;
-        const fs::path dest = destRoot / fs::path(e->destRel).filename();
+        fs::path dest = destRoot / fs::path(e->destRel).filename();
+        // A wrong dump of the same name in a root searched BEFORE `destRoot`
+        // would keep winning findResource: the file would be saved where the
+        // machine never looks, and the run reported "saved 0, failed 1" for
+        // ever (seen 2026-11-25: a stale apple2p.rom in the user data
+        // directory, the download going to the work tree's roms/). When that
+        // root is writable, replace the dump THERE — commitBytes keeps the
+        // previous file as a backup, as it does for any wrong dump.
+        {
+            const std::string shadow = findResource(e->destRel);
+            std::error_code shadowEc;
+            if (!shadow.empty() && !fs::equivalent(shadow, dest, shadowEc)) {
+                const fs::path probe = fs::path(shadow).parent_path() / ".pom2-write-probe";
+                bool writable = false;
+                { std::ofstream f(probe, std::ios::binary | std::ios::trunc); writable = f.good(); }
+                fs::remove(probe, shadowEc);
+                if (writable) dest = fs::path(shadow);
+            }
+        }
 
         bool ok = false;
         const char* from = "the POM2 archive";

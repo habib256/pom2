@@ -294,6 +294,7 @@ void MainWindow::renderCommandPalette()
     }
 
     // ── Layout + interface ───────────────────────────────────────────────
+    add("tools.sfx",   "Tools", "Speaker SFX editor", "", true, showSfxEditor_);
     add("help.about",  "Help", "About POM2");
     add("help.thanks", "Help", "Thank you (credits)");
     add("help.bug",    "Help", "Report a bug");
@@ -396,12 +397,13 @@ void MainWindow::runCommand(const std::string& id)
     if (id == "disp.monitor")        { toggle(monitorArtworkEnabled);    return; }
 
     // Layout + interface
+    if (id == "tools.sfx")   { showSfxEditor_ = !showSfxEditor_; return; }
     if (id == "help.about")  { showAbout = true; return; }
     if (id == "help.thanks") { showThanks_ = true; return; }
     if (id == "help.bug")    { openBugReport(); return; }
-    if (id == "layout.reset")     { pendingDockLayout_ = DockLayout::Reset;     dockLayoutRequested_ = true; return; }
-    if (id == "layout.emulation") { pendingDockLayout_ = DockLayout::Emulation; dockLayoutRequested_ = true; return; }
-    if (id == "layout.debug")     { pendingDockLayout_ = DockLayout::Debug;     dockLayoutRequested_ = true; return; }
+    if (id == "layout.reset")     { pendingDockLayout_ = DockLayout::Reset;     dockLayoutRequested_ = true; dockLayoutByUser_ = true; return; }
+    if (id == "layout.emulation") { pendingDockLayout_ = DockLayout::Emulation; dockLayoutRequested_ = true; dockLayoutByUser_ = true; return; }
+    if (id == "layout.debug")     { pendingDockLayout_ = DockLayout::Debug;     dockLayoutRequested_ = true; dockLayoutByUser_ = true; return; }
     if (id.rfind("accent.", 0) == 0) {
         uiAccent_ = pom2::accentFromKey(id.c_str() + 7);
         applyUiTheme();
@@ -480,24 +482,24 @@ void MainWindow::renderMenuBar()
         // depends on the machine's drives, and tools/wasm_persistence_smoke.mjs
         // clicks "Automatic resume" at row 3 and "Import disk and boot" at
         // row 4. On the desktop they are at the bottom (below).
-        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
-        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save session...")) sessionFilePicker_.open(true);
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN "  Open session...")) sessionFilePicker_.open(false);
         renderBrowserSessionMenu();
-        if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
-        if (ImGui::MenuItem("Copy link to this setup")) copyBrowserSetupLink();
+        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT "  Import disk and boot...")) chooseBrowserDisk();
+        if (ImGui::MenuItem(ICON_FA_LINK "  Copy link to this setup")) copyBrowserSetupLink();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("A link that opens this machine with these disks: the profile,\n"
                               "and one parameter per drive (?s6d1=, ?s6d2=, ?s5d1=, …).\n"
                               "Disks from a URL or the bundle go in it; a disk imported\n"
                               "from your computer cannot.");
 #else
-        if (ImGui::MenuItem("Insert disk and boot...")) {
+        if (ImGui::MenuItem(ICON_FA_FILE_IMPORT "  Insert disk and boot...")) {
             driveRackPickerProfile_ = activeProfile;
             driveRackFilePicker_.openForBoot();
         }
 #endif
 #ifndef __EMSCRIPTEN__
-        if (ImGui::MenuItem("Open disk from URL...")) openUrlRequested_ = true;
+        if (ImGui::MenuItem(ICON_FA_GLOBE "  Open disk from URL...")) openUrlRequested_ = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("An http(s) link to a disk image — a .dsk, .po, .woz, .2mg, .hdv,\n"
                               "or one inside a .zip or .gz — downloaded with curl into the\n"
@@ -506,7 +508,7 @@ void MainWindow::renderMenuBar()
 #endif
         panelMenuItem(pom2::PanelId::DiskLibrary);
 #ifdef __EMSCRIPTEN__
-        if (ImGui::MenuItem("Boot A2FileCmd") &&
+        if (ImGui::MenuItem(ICON_FA_ROCKET "  Boot A2FileCmd") &&
             pom2::loadBrowserBundledDisk("A2FILECMD")) {
             browserDiskTargetsDrive_ = false;
             browserDiskProfile_ = activeProfile;
@@ -525,7 +527,7 @@ void MainWindow::renderMenuBar()
         // What you keep of the machine goes at the bottom, just above Quit:
         // the BASIC listing, then the session.
         ImGui::Separator();
-        if (ImGui::MenuItem("Save BASIC listing")) saveBasicListing();
+        if (ImGui::MenuItem(ICON_FA_FILE_LINES "  Save BASIC listing")) saveBasicListing();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("The Applesoft program in memory as text, in the listings\n"
                               "folder and on the clipboard. To move files to and from a\n"
@@ -533,15 +535,15 @@ void MainWindow::renderMenuBar()
         if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
 #ifndef __EMSCRIPTEN__
         ImGui::Separator();
-        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
-        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save session...")) sessionFilePicker_.open(true);
+        if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN "  Open session...")) sessionFilePicker_.open(false);
         renderBrowserSessionMenu();
         // Quit is a no-op in the browser: the frame loop is driven by
         // emscripten_set_main_loop_arg (main.cpp), which ignores
         // glfwWindowShouldClose, and a canvas cannot close its own tab.
         // Hide the entry under WASM so the menu stays honest.
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit")) {
+        if (ImGui::MenuItem(ICON_FA_RIGHT_FROM_BRACKET "  Quit")) {
             if (window) glfwSetWindowShouldClose(window, 1);
         }
 #endif
@@ -550,7 +552,7 @@ void MainWindow::renderMenuBar()
 
     if (ImGui::BeginMenu("Edit")) {
         // Copy first, then the pastes: the order every Edit menu has.
-        if (ImGui::MenuItem("Copy screen text")) {
+        if (ImGui::MenuItem(ICON_FA_COPY "  Copy screen text")) {
             pom2::CapturedScreenText captured;
             {
                 auto st = controller->lockState();
@@ -563,21 +565,21 @@ void MainWindow::renderMenuBar()
             tapeStatusUntil = lastFrameTime + 3.0;
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Paste from clipboard", "Ctrl+V"))
+        if (ImGui::MenuItem(ICON_FA_PASTE "  Paste from clipboard", "Ctrl+V"))
             pasteFromClipboard();
-        if (ImGui::MenuItem("Paste from file..."))
+        if (ImGui::MenuItem(ICON_FA_FILE_ARROW_UP "  Paste from file..."))
             showPasteFileDialog = true;
         ImGui::Separator();
         const size_t pending = controller->memory().pendingPasteSize();
         ImGui::BeginDisabled(pending == 0);
-        if (ImGui::MenuItem("Cancel pending paste")) {
+        if (ImGui::MenuItem(ICON_FA_BAN "  Cancel pending paste")) {
             controller->memory().cancelPaste();
             tapeStatusMessage = "Paste cancelled";
             tapeStatusUntil   = lastFrameTime + 3.0;
         }
         ImGui::EndDisabled();
         ImGui::Separator();
-        ImGui::MenuItem("Auto-uppercase pasted text", nullptr, &pasteAutoUppercase);
+        ImGui::MenuItem(ICON_FA_FONT "  Auto-uppercase pasted text", nullptr, &pasteAutoUppercase);
         if (pending > 0) {
             ImGui::Separator();
             ImGui::TextDisabled("(%zu chars pending)", pending);
@@ -587,21 +589,21 @@ void MainWindow::renderMenuBar()
 
     if (ImGui::BeginMenu("Machine")) {
         const auto m = controller->getMode();
-        if (ImGui::MenuItem("Run", nullptr, m == EmulationController::Mode::Running)) {
+        if (ImGui::MenuItem(ICON_FA_PLAY "  Run", nullptr, m == EmulationController::Mode::Running)) {
             controller->setMode(EmulationController::Mode::Running);
         }
-        if (ImGui::MenuItem("Pause", nullptr, m == EmulationController::Mode::Stopped)) {
+        if (ImGui::MenuItem(ICON_FA_PAUSE "  Pause", nullptr, m == EmulationController::Mode::Stopped)) {
             controller->setMode(EmulationController::Mode::Stopped);
         }
-        if (ImGui::MenuItem("Step (one instr)")) controller->requestStep();
+        if (ImGui::MenuItem(ICON_FA_FORWARD_STEP "  Step (one instr)")) controller->requestStep();
         // Rewind sits with the transport: run, pause, step, go back.
         panelMenuItem(pom2::PanelId::Rewind);
         ImGui::Separator();
-        if (ImGui::MenuItem("Reset (Ctrl-Reset)",     "F11")) controller->softReset();
-        if (ImGui::MenuItem("Hard reset",             "F12")) controller->hardReset();
-        if (ImGui::MenuItem("Cold boot (wipe RAM)"))          controller->coldBoot();
+        if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT "  Reset (Ctrl-Reset)",     "F11")) controller->softReset();
+        if (ImGui::MenuItem(ICON_FA_ARROWS_ROTATE "  Hard reset",             "F12")) controller->hardReset();
+        if (ImGui::MenuItem(ICON_FA_POWER_OFF "  Cold boot (wipe RAM)"))          controller->coldBoot();
         ImGui::Separator();
-        if (ImGui::BeginMenu("Profile")) {
+        if (ImGui::BeginMenu(ICON_FA_DESKTOP "  Profile")) {
             // 5 canonical Apple II profiles. Selecting one triggers a
             // full cold-reset via `applyProfile()`: new ROM, new char ROM,
             // RAM wiped, slot cards re-plugged, CPU type reset to the
@@ -636,7 +638,7 @@ void MainWindow::renderMenuBar()
         M6502::CpuMode curCpu;
         { auto st = controller->lockState(); curCpu = st.cpu().getCpuMode(); }
         const std::string curOverride = settings->getString("cpu_mode_override", "auto");
-        if (ImGui::BeginMenu("CPU")) {
+        if (ImGui::BeginMenu(ICON_FA_MICROCHIP "  CPU")) {
             const auto& cfg = pom2::profileConfig(activeProfile);
             // CMOS-only machines (//c, //c+, enhanced //e, PAL variants) have
             // a 65C02 soldered in — an NMOS override is physically impossible
@@ -657,7 +659,7 @@ void MainWindow::renderMenuBar()
             ImGui::BeginDisabled(cmosOnly);
             // On a CMOS-only profile the NMOS override is inert (clamped), so
             // never show it checked there — the running CPU is 65C02.
-            if (ImGui::MenuItem("NMOS 6502", nullptr,
+            if (ImGui::MenuItem(ICON_FA_MICROCHIP "  NMOS 6502", nullptr,
                                 !cmosOnly &&
                                 (curOverride == "nmos" ||
                                  (curOverride == "auto" && curCpu == M6502::CpuMode::NMOS
@@ -669,7 +671,7 @@ void MainWindow::renderMenuBar()
                 controller->rewind().clear();   // its frames name the other CPU
             }
             ImGui::EndDisabled();
-            if (ImGui::MenuItem("65C02 (CMOS)", nullptr,
+            if (ImGui::MenuItem(ICON_FA_MICROCHIP "  65C02 (CMOS)", nullptr,
                                 curOverride == "65c02" ||
                                 (curOverride == "auto" && curCpu == M6502::CpuMode::CMOS
                                  && curOverride != "nmos"))) {
@@ -693,7 +695,7 @@ void MainWindow::renderMenuBar()
             // `keyboard_alt_apple_keys` — until 2026-09-17 settable only by
             // editing state.cfg (TODO G5-7).
             bool altApple = altAppleKeysSetting();
-            if (ImGui::MenuItem("Alt keys are the Apple keys", nullptr, &altApple))
+            if (ImGui::MenuItem(ICON_FA_KEYBOARD "  Alt keys are the Apple keys", nullptr, &altApple))
                 setAltAppleKeysSetting(altApple);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(
@@ -706,7 +708,7 @@ void MainWindow::renderMenuBar()
         {
             // INPUT-003: the host mouse as paddles 0/1 (PaddleMouse.h).
             bool mousePdl = paddleMouseEnabled();
-            if (ImGui::MenuItem("Mouse drives paddles 0/1", nullptr, &mousePdl)) {
+            if (ImGui::MenuItem(ICON_FA_COMPUTER_MOUSE "  Mouse drives paddles 0/1", nullptr, &mousePdl)) {
                 settings->setBool("paddle_mouse", mousePdl);
                 if (!settingsReadOnly()) settings->save();
             }
@@ -729,7 +731,7 @@ void MainWindow::renderMenuBar()
             !pom2::profileConfig(activeProfile).noPhysicalSlots) {
             // The //e Shift-key mod (INPUT-001): Shift wired to PB2.
             bool shiftMod = settings->getBool("keyboard_shift_key_mod", false);
-            if (ImGui::MenuItem("Shift key mod (Shift on $C063)", nullptr, &shiftMod)) {
+            if (ImGui::MenuItem(ICON_FA_KEYBOARD "  Shift key mod (Shift on $C063)", nullptr, &shiftMod)) {
                 settings->setBool("keyboard_shift_key_mod", shiftMod);
                 if (!settingsReadOnly()) settings->save();
                 controller->lockState().memory().setShiftKeyMod(shiftMod);
@@ -743,7 +745,7 @@ void MainWindow::renderMenuBar()
         }
         {
             bool plugged = controller->lockState().memory().gamePortConnected();
-            if (ImGui::MenuItem("Joystick plugged into the game port", nullptr, &plugged)) {
+            if (ImGui::MenuItem(ICON_FA_GAMEPAD "  Joystick plugged into the game port", nullptr, &plugged)) {
                 settings->setBool("game_port_connected", plugged);
                 if (!settingsReadOnly()) settings->save();
                 controller->lockState().memory().setGamePortConnected(plugged);
@@ -762,7 +764,7 @@ void MainWindow::renderMenuBar()
                 "PADDL2 = Shift, PADDL3 = Ctrl ($C066/$C067)",
                 "SW0 = Shift, SW1 = Ctrl ($C061/$C062)" };
             const int cur = std::clamp(settings->getInt("keyboard_shift_key_mod_ii", 0), 0, 3);
-            if (ImGui::BeginMenu("Shift key mod")) {
+            if (ImGui::BeginMenu(ICON_FA_KEYBOARD "  Shift key mod")) {
                 for (int i = 0; i < 4; ++i)
                     if (ImGui::MenuItem(kWirings[i], nullptr, cur == i)) {
                         settings->setInt("keyboard_shift_key_mod_ii", i);
@@ -786,7 +788,7 @@ void MainWindow::renderMenuBar()
             // Not on a //c Plus: that machine has no such switch (its
             // Technical Reference, 2nd ed.), so the item is not offered.
             bool forty = settings->getBool("iic_40col_switch", false);
-            if (ImGui::MenuItem("40/80 switch in the 40-column position", nullptr, &forty)) {
+            if (ImGui::MenuItem(ICON_FA_TOGGLE_ON "  40/80 switch in the 40-column position", nullptr, &forty)) {
                 settings->setBool("iic_40col_switch", forty);
                 if (!settingsReadOnly()) settings->save();
                 controller->lockState().memory().setIic40ColumnSwitch(forty);
@@ -825,18 +827,18 @@ void MainWindow::renderMenuBar()
                 ImGui::EndMenu();
             }
         };
-        group("Storage",           pom2::PanelGroup::DevStorage);
-        group("Sound",             pom2::PanelGroup::DevSound);
-        group("Input",             pom2::PanelGroup::DevInput);
-        group("Printers & serial", pom2::PanelGroup::DevPrinting);
-        group("Network",           pom2::PanelGroup::DevNetwork);
-        group("Other cards",       pom2::PanelGroup::DevOther);
-        if (ImGui::BeginMenu("Accelerators & AUX slot")) {
+        group(ICON_FA_HARD_DRIVE "  Storage",           pom2::PanelGroup::DevStorage);
+        group(ICON_FA_VOLUME_HIGH "  Sound",             pom2::PanelGroup::DevSound);
+        group(ICON_FA_GAMEPAD "  Input",             pom2::PanelGroup::DevInput);
+        group(ICON_FA_PRINT "  Printers & serial", pom2::PanelGroup::DevPrinting);
+        group(ICON_FA_NETWORK_WIRED "  Network",           pom2::PanelGroup::DevNetwork);
+        group(ICON_FA_MICROCHIP "  Other cards",       pom2::PanelGroup::DevOther);
+        if (ImGui::BeginMenu(ICON_FA_BOLT "  Accelerators & AUX slot")) {
             {
                 // Zip Chip — an accelerator in the 6502 SOCKET, not a slot card,
                 // so it is a machine option rather than a Slot Config row.
                 bool zip = controller->zipChipInstalled();
-                if (ImGui::MenuItem("Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
+                if (ImGui::MenuItem(ICON_FA_BOLT "  Zip Chip (4 MHz, CPU socket)", nullptr, &zip)) {
                     controller->setZipChipInstalled(zip);
                     settings->setBool("zip_chip", zip);
                     if (zip) settings->setBool("fast_chip", false);   // one socket
@@ -853,7 +855,7 @@ void MainWindow::renderMenuBar()
                     auto st = controller->lockState();
                     bootFast = controller->zipChip().bootFast();
                 }
-                if (ImGui::MenuItem("Zip Chip: start at 4 MHz", nullptr, &bootFast)) {
+                if (ImGui::MenuItem(ICON_FA_BOLT "  Zip Chip: start at 4 MHz", nullptr, &bootFast)) {
                     {
                         auto st = controller->lockState();
                         controller->zipChip().setBootFast(bootFast);
@@ -866,7 +868,7 @@ void MainWindow::renderMenuBar()
 
                 // FASTChip //e — the same socket, so one or the other.
                 bool fast = controller->fastChipInstalled();
-                if (ImGui::MenuItem("FASTChip //e (to 16.6 MHz, CPU socket)", nullptr, &fast)) {
+                if (ImGui::MenuItem(ICON_FA_GAUGE_HIGH "  FASTChip //e (to 16.6 MHz, CPU socket)", nullptr, &fast)) {
                     controller->setFastChipInstalled(fast);
                     settings->setBool("fast_chip", fast);
                     if (fast) settings->setBool("zip_chip", false);
@@ -917,7 +919,7 @@ void MainWindow::renderMenuBar()
                 // same key: saving first and ignoring a refused rebuild left the
                 // next launch plugging a card the user was told could not be
                 // applied (bug hunt 2026-11-07).
-                if (ImGui::MenuItem("Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc))
+                if (ImGui::MenuItem(ICON_FA_MEMORY "  Premium SoftCard //e (aux slot, CP/M)", nullptr, &psc))
                     applyFirmwareToggle("premium_softcard", psc ? "true" : "false");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(
@@ -933,14 +935,14 @@ void MainWindow::renderMenuBar()
     if (ImGui::BeginMenu("Display")) {
         // Presentation aspect (Phase 6). The Apple II pixel is not square;
         // these pick how the 280×192 active area fills the window.
-        if (ImGui::BeginMenu("Aspect ratio")) {
-            if (ImGui::MenuItem("Square pixels (1:1)", nullptr,
+        if (ImGui::BeginMenu(ICON_FA_EXPAND "  Aspect ratio")) {
+            if (ImGui::MenuItem(ICON_FA_SQUARE "  Square pixels (1:1)", nullptr,
                                 aspectMode == AspectMode::Square))
                 aspectMode = AspectMode::Square;
-            if (ImGui::MenuItem("4:3 (CRT shape)", nullptr,
+            if (ImGui::MenuItem(ICON_FA_TV "  4:3 (CRT shape)", nullptr,
                                 aspectMode == AspectMode::Crt43))
                 aspectMode = AspectMode::Crt43;
-            if (ImGui::MenuItem("Integer scale (crisp)", nullptr,
+            if (ImGui::MenuItem(ICON_FA_BORDER_ALL "  Integer scale (crisp)", nullptr,
                                 aspectMode == AspectMode::Integer))
                 aspectMode = AspectMode::Integer;
             {
@@ -974,7 +976,7 @@ void MainWindow::renderMenuBar()
         // sharpness / BCS). The shared effect stack runs on every pipeline,
         // so this one panel governs the CRT look across all modes.
         panelMenuItem(pom2::PanelId::Crt);
-        ImGui::MenuItem("Monitor II frame", nullptr, &monitorArtworkEnabled);
+        ImGui::MenuItem(ICON_FA_TV "  Monitor II frame", nullptr, &monitorArtworkEnabled);
 
         // 3D voxel view (MicroM8 "Voxel Cube"): rebuild the screen as an
         // upright 4:3 slab of equal-depth cubes; left-drag orbits, middle-drag
@@ -1039,17 +1041,18 @@ void MainWindow::renderMenuBar()
                 if (ImGui::MenuItem(label)) {
                     pendingDockLayout_   = p;
                     dockLayoutRequested_ = true;
+                    dockLayoutByUser_    = true;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
             };
-            layoutItem("Emulation", DockLayout::Emulation,
+            layoutItem(ICON_FA_DESKTOP "  Emulation", DockLayout::Emulation,
                        "Widest screen; Drives, Disk Library and Slot\n"
                        "Configuration in one right column.");
-            layoutItem("Mini-Apple II", DockLayout::Reset,
+            layoutItem(ICON_FA_KEYBOARD "  Mini-Apple II", DockLayout::Reset,
                        "The machine on a desk: the screen above its keyboard on\n"
                        "the left; Drives, Disk Library and Slot Configuration\n"
                        "tabbed on the right.");
-            layoutItem("Debug", DockLayout::Debug,
+            layoutItem(ICON_FA_BUG "  Debug", DockLayout::Debug,
                        "Screen Inspector on the left (a tab beside the screen),\n"
                        "Debugger on the right; memory viewer, maps and the other\n"
                        "inspectors as tabs behind it.");
@@ -1104,7 +1107,7 @@ void MainWindow::renderMenuBar()
             };
             zoomStep("Zoom in",  +pom2::kUiScaleStep * 2.0f);
             zoomStep("Zoom out", -pom2::kUiScaleStep * 2.0f);
-            if (ImGui::MenuItem("Reset to 100 %")) {
+            if (ImGui::MenuItem(ICON_FA_MAGNIFYING_GLASS "  Reset to 100 %")) {
                 uiScale_ = 1.0f;
                 applyUiTheme();
             }
@@ -1125,7 +1128,7 @@ void MainWindow::renderMenuBar()
     }
 
     if (ImGui::BeginMenu("Tools")) {
-        if (ImGui::MenuItem("Command palette...", "Ctrl+Shift+P"))
+        if (ImGui::MenuItem(ICON_FA_TERMINAL "  Command palette...", "Ctrl+Shift+P"))
             openCommandPalette();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Fuzzy-search every menu item, panel and machine\n"
@@ -1138,7 +1141,7 @@ void MainWindow::renderMenuBar()
         panelMenuItem(pom2::PanelId::Debugger);
         panelMenuItem(pom2::PanelId::ScreenInspector);
         panelMenuItem(pom2::PanelId::MemViewer);
-        if (ImGui::BeginMenu("Memory maps")) {
+        if (ImGui::BeginMenu(ICON_FA_MAP "  Memory maps")) {
             panelMenuItem(pom2::PanelId::MemBar);
             panelMenuItem(pom2::PanelId::MemBarH);
             panelMenuItem(pom2::PanelId::MemGrid);
@@ -1147,6 +1150,12 @@ void MainWindow::renderMenuBar()
         ImGui::SeparatorText("Graphics");
         panelMenuItem(pom2::PanelId::HgrPaint);
         panelMenuItem(pom2::PanelId::HgrSprite);
+        ImGui::SeparatorText("Sound");
+        ImGui::MenuItem(ICON_FA_VOLUME_HIGH "  Speaker SFX editor", nullptr, &showSfxEditor_);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Design sound effects for the Apple II's 1-bit speaker: 50 built-in\n"
+                              "cues, a pitch and duration curve, live preview, and an assembler\n"
+                              "export of the table your program plays through $C030.");
         // The AI Control row hides itself under WASM — AiControlServer cannot
         // open a listening socket in the browser sandbox (registerPanels()).
         // No header over a row that may not be there.
@@ -1170,7 +1179,7 @@ void MainWindow::renderMenuBar()
                               "is copied to the clipboard.");
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_FA_HEART "  Thank you...")) showThanks_ = true;
-        if (ImGui::MenuItem("About POM2")) showAbout = true;
+        if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO "  About POM2")) showAbout = true;
         ImGui::EndMenu();
     }
 

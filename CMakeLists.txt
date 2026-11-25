@@ -441,6 +441,11 @@ set(SOURCES
     src/MainWindow_CrtPanel.cpp
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_Thanks.cpp
+    src/Pom2SfxHost.cpp
+    src/sfxbeep/SfxAsmExport.cpp
+    src/sfxbeep/SfxEditor.cpp
+    src/sfxbeep/SfxModel.cpp
+    src/sfxbeep/SfxPulse.cpp
     src/MainWindow_BugReport.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
@@ -806,6 +811,7 @@ set(POM2_FRONTEND_HEADERS
     src/ScreenProbe.h
     src/AppleIoNames.h
     src/ThanksCredits.h
+    src/Pom2SfxHost.h
     src/FetchedPagesFile.h
     src/SlowMotion.h
     src/NativeFileDialog.h
@@ -841,6 +847,12 @@ set(POM2_FRONTEND_HEADERS
     src/StorageCoordinator.h
     src/hgrpaint/IHgrPaintHost.h
     src/hgrpaint/ImportCommon.h
+    src/sfxbeep/ISfxHost.h
+    src/sfxbeep/SfxAsmExport.h
+    src/sfxbeep/SfxBank.h
+    src/sfxbeep/SfxEditor.h
+    src/sfxbeep/SfxModel.h
+    src/sfxbeep/SfxPulse.h
 )
 
 set(POM2_FRONTEND_SOURCES
@@ -858,6 +870,11 @@ set(POM2_FRONTEND_SOURCES
     src/MainWindow_Recording.cpp
     src/MainWindow_MiscPanels.cpp
     src/MainWindow_Thanks.cpp
+    src/Pom2SfxHost.cpp
+    src/sfxbeep/SfxAsmExport.cpp
+    src/sfxbeep/SfxEditor.cpp
+    src/sfxbeep/SfxModel.cpp
+    src/sfxbeep/SfxPulse.cpp
     src/MainWindow_BugReport.cpp
     src/MainWindow_CardMonitor.cpp
     src/MainWindow_BasicListing.cpp
@@ -1238,6 +1255,7 @@ set(HEADERS
     src/ScreenProbe.h
     src/AppleIoNames.h
     src/ThanksCredits.h
+    src/Pom2SfxHost.h
     src/FetchedPagesFile.h
     src/SlowMotion.h
     src/MediaMount.h

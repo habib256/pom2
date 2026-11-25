@@ -839,6 +839,37 @@ void MainWindow::renderWelcomePanelWindow()
         return;
     }
 
+    // ── "Welcome", in the six colours of the Apple logo ──────────────
+    // One colour per letter, top stripe to bottom stripe: green, yellow,
+    // orange, red, purple, blue. Drawn with the draw list at three times
+    // the text size, then the cursor is moved under it.
+    {
+        static const ImU32 kRainbow[6] = {
+            IM_COL32( 97, 187,  70, 255),   // green
+            IM_COL32(253, 184,  39, 255),   // yellow
+            IM_COL32(245, 130,  31, 255),   // orange
+            IM_COL32(224,  58,  62, 255),   // red
+            IM_COL32(150,  61, 151, 255),   // purple
+            IM_COL32(  0, 157, 220, 255),   // blue
+        };
+        const char* const word = "Welcome";
+        ImFont* font = ImGui::GetFont();
+        const float size = ImGui::GetFontSize() * 3.0f;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        const float left = at.x;
+        for (int i = 0; word[i]; ++i) {
+            const char letter[2] = {word[i], 0};
+            draw->AddText(font, size, at, kRainbow[i % 6], letter);
+            at.x += font->CalcTextSizeA(size, 1000.0f, 0.0f, letter).x;
+        }
+        // "to POM2", in the theme's text colour, on the same baseline.
+        at.x += size * 0.25f;
+        draw->AddText(font, size * 0.55f, ImVec2(at.x, at.y + size * 0.36f),
+                      ImGui::GetColorU32(ImGuiCol_Text), "to POM2 " POM2_VERSION_STRING);
+        ImGui::Dummy(ImVec2(at.x - left + size * 4.5f, size * 1.15f));
+    }
+
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
 
     // ── No-ROM banner ────────────────────────────────────────────────
@@ -904,7 +935,7 @@ void MainWindow::renderWelcomePanelWindow()
     ImGui::BulletText("Left Alt  Open-Apple            Right Alt  Solid-Apple");
     ImGui::BulletText("Ctrl+V  paste text as keystrokes    F9  screenshot");
     ImGui::BulletText("F6  hold to rewind (Machine \xe2\x96\xb8 Rewind, Record first)");
-    ImGui::BulletText("F10 or Ctrl+Alt+F  full screen    Ctrl+Shift+P  every command");
+    ImGui::BulletText("F8, F10 or Alt+Enter  full screen    Ctrl+Shift+P  every command");
 
     ImGui::Spacing();
     ImGui::SeparatorText("3. Where things are");
@@ -962,7 +993,7 @@ void MainWindow::renderAboutDialog()
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textColumnW);
 
         ImGui::Text("POM2 " POM2_VERSION_STRING);
-        ImGui::TextUnformatted("An Apple II family emulator");
+        ImGui::TextUnformatted("An Apple II 8-bit family emulator");
         ImGui::TextDisabled("Apple ][, ][+, //e, //c and //c Plus - NTSC and PAL");
         ImGui::Spacing();
         // The author, as the packaging already names him (Info.plist,

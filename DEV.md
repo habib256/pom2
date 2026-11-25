@@ -12976,6 +12976,32 @@ itself is UI and has no test.
   (`MainWindow::uploadScreenTexture`): with the inspector's tab in front
   the Apple II Screen window is hidden, and the picture froze. The
   inspector's picture fits its panel by default ("Fit").
+- **Speaker SFX editor** (Tools ▸ Sound; `src/sfxbeep/`, shared verbatim
+  with POM1; `Pom2SfxHost.*`). POM1's beeper editor: 50 built-in cues, a
+  pitch / duration curve, and an assembler export of the table a program
+  plays through `$C030`. POM2's host previews it with its OWN audio source
+  (`SfxPreviewAudio`: pulses to a square wave at the active profile's CPU
+  clock), so it sounds with the machine stopped and costs no CPU time.
+- **One power-on.** The constructor used to set the machine running, then
+  restore the saved profile a few lines later — a second cold boot a few
+  milliseconds after the first, which had already begun its beep at the
+  NTSC clock: "the sound skips at start-up, sometimes". The worker now
+  starts once, at the end of the constructor, on the settled machine.
+  [F] Diagnosed from the code and the log (one cold boot instead of two);
+  not confirmed by ear. Settled by: listening to ten cold starts.
+- **Slot Configuration follows the machine**: closed by a switch to a //c
+  or a //c Plus, reopened (behind, not in front) by a switch back to a
+  machine with slots.
+- **A ROM download lands where the machine looks.** A wrong dump of the
+  same name in a root searched before the download's destination kept
+  winning `findResource`, so "Download missing ROMs" reported "saved 0,
+  failed 1" for ever. When that root is writable the dump is replaced
+  THERE, the previous file kept as a backup (`RomFetch.cpp`).
+- **Keys.** F8 joins F10 and Ctrl+Alt+F as a window ⇄ kiosk toggle (it
+  was the Debugger's step-over, which is Ctrl+Space as in AppleWin);
+  Alt+Enter already did it with the pointer captured.
+- **Every menu item has an icon**, each checked against the font's own
+  character map before it was used (a missing glyph draws a "?").
 - **Menus.** File ends with what you keep of the machine — Save BASIC
   listing, then Save / Open session — just above Quit; Copy screen text
   moved to Edit, above the pastes; Rewind sits under Step in Machine.

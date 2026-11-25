@@ -338,7 +338,7 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
         // F10 still leaves kiosk with the in-kiosk menu open — the user
         // must always have a way back to the GUI. (Ctrl+Alt+F is handled
         // above, so it works here too.)
-        if (key == GLFW_KEY_F10 && action == GLFW_PRESS) toggleKioskMode();
+        if ((key == GLFW_KEY_F10 || key == GLFW_KEY_F8) && action == GLFW_PRESS) toggleKioskMode();
         return;
     }
     // (K used to be swallowed here for the kiosk Select fallback. The gate
@@ -418,6 +418,11 @@ void MainWindow::onKey(int key, int scancode, int action, int mods)
         // F10 would otherwise flip full-screen ⇄ windowed ~30×/s, each
         // entry doing a window-monitor change AND a synchronous
         // settings->save() to disk.
+        // F8 does the same (2026-11-25): F10 is taken by the window manager
+        // on several desktops and by the Mission Control keys on a Mac
+        // keyboard, and F8 is free. Alt+Enter is the third way, with the
+        // pointer captured (handled above, MouseGrab.h isFullscreenChord).
+        case GLFW_KEY_F8:
         case GLFW_KEY_F10:
             if (action == GLFW_PRESS) toggleKioskMode();
             break;

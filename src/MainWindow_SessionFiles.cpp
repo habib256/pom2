@@ -53,9 +53,9 @@ void MainWindow::checkpointBrowserSession(bool running)
 void MainWindow::renderBrowserSessionMenu()
 {
 #ifdef __EMSCRIPTEN__
-    if (!ImGui::BeginMenu("Automatic resume")) return;
+    if (!ImGui::BeginMenu(ICON_FA_CLOCK_ROTATE_LEFT "  Automatic resume")) return;
     bool enabled = browserSession_.enabled();
-    if (ImGui::MenuItem("Resume this machine on reload", nullptr, &enabled))
+    if (ImGui::MenuItem(ICON_FA_ROTATE "  Resume this machine on reload", nullptr, &enabled))
         browserSession_.setEnabled(*controller, enabled);
     ImGui::TextWrapped("Checkpoints every 10 seconds and when leaving the tab. Saves the supported machine configuration and media. Serial ports must be idle. Restored writable floppy changes stay in the session.");
     if (browserSession_.suspended()) {

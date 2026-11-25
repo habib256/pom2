@@ -161,19 +161,16 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     wasRunning_ = snap.running;
     if (followPc_) viewAddr_ = snap.pc;
 
-    // F7 / F8 while the window is open. Handled HERE rather than in
-    // MainWindow's global key routing for two reasons: the shortcuts belong
-    // to this panel and should not fire when it is closed, and MainWindow is
-    // the god-object the file-size ratchet is holding still — a feature that
-    // can keep its own keys out of it should.
+    // F7 steps while the window is open. Handled HERE rather than in
+    // MainWindow's global key routing: the shortcut belongs to this panel and
+    // should not fire when it is closed. (F8 was step-over until 2026-11-25;
+    // it is now the window / kiosk toggle everywhere. Step over is
+    // Ctrl+Space, as in AppleWin.)
     handleKeys(ctrl, snap);
     if (!ImGui::GetIO().WantCaptureKeyboard || ImGui::IsWindowFocused()) {
         if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false)) {
             followPc_ = true;
             ctrl.debugStepInstruction();
-        } else if (ImGui::IsKeyPressed(ImGuiKey_F8, /*repeat=*/false)) {
-            followPc_ = true;
-            ctrl.debugStepOver();
         }
     }
 
@@ -475,7 +472,7 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     next(90.0f);
     if (ImGui::Button("Step Over", ImVec2(90, 0))) { followPc_ = true; ctrl.debugStepOver(); }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (Ctrl+Space, F8)");
+        ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (Ctrl+Space)");
     next(82.0f);
     if (ImGui::Button("Step Out", ImVec2(82, 0))) { followPc_ = true; ctrl.debugStepOut(); }
     if (ImGui::IsItemHovered())

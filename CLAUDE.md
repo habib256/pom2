@@ -381,6 +381,7 @@ Detail lives in `DEV.md`. This map is the index — file pair + one-line note + 
 | Panel registry — the ONE list of panels (menus + palette + persistence derive from it) | `PanelCatalog.h`, `PanelRegistry.h/.cpp`, `MainWindow_Panels.cpp` | [§ Panel registry](DEV.md#panel-registry-panelcatalogh-panelregistry-mainwindow_panelscpp) |
 | Command palette (Ctrl+Shift+P) | `CommandPalette_ImGui.h/.cpp` | [§ Palette](DEV.md#command-palette-commandpalette_imgui) |
 | Docking + layout presets | `MainWindow.cpp` (`renderDockSpace`/`applyDockLayout`), `imgui_pin.env` | [§ Docking](DEV.md#docking--layout-presets) |
+| Speaker SFX editor (portable, shared w/ POM1): 1-bit beeper cues, live preview through its own audio source, assembler export | `sfxbeep/*`, `Pom2SfxHost.*` | [§ Debugger](DEV.md#debugger-debuggerhcpp-debugger_imgui) |
 | HGR/DHGR Paint editor + sprite editor (portable, shared w/ POM1) | `hgrpaint/*`, `hgrsprite/*`, `Pom2HgrPaintHost.*` | [§ Paint editor](DEV.md#hgr--dhgr-paint-editor-hgrpaint-shared-with-pom1) |
 | Slot Config + Internal Disks & Media (2 windows) — Slot Config is built from the machine's own connector inventory, so a //c shows ports and not slots | `MainWindow_Slots.cpp`, `SlotConnectors.h`, `MountableMediaCard.h`, `SlotCardCatalog.h` | [§ Host control](DEV.md#host-control-center-slot-configuration--floppy-emu) |
 | ROM inventory panel (present / missing / identity) + RetroBIOS fetch + import by SHA-256 (drop a dump or MAME `.zip` on the window) | `RomStatus_ImGui.*`, `RomCatalog.h`, `RomFetch.*`, `RomImport.*`, `MainWindow_RomOffer.cpp` (first-launch offer) | [§ ROM Status](DEV.md#rom-status-panel) |
@@ -573,7 +574,7 @@ Keyboard wiring:
 - **`game_port_connected`** (default **on**; Machine menu): off, every
   paddle reads 255 and a ][ / ][+'s PB0/PB1 read PRESSED (their pull-downs
   are in the joystick; MAME "polls high if not connected, unlike IIe").
-- **Ctrl+Alt+F = full screen ⇄ windowed** (kiosk toggle — see CLI section). **F10** does the same; the chord exists because F10 is swallowed by the window manager on several desktops.
+- **Ctrl+Alt+F = full screen ⇄ windowed** (kiosk toggle — see CLI section). **F10** and **F8** do the same, and **Alt+Enter** does it with the pointer captured (`MouseGrab.h` `isFullscreenChord`; F8 was the Debugger's step-over until 2026-11-25, which is Ctrl+Space); the chord exists because F10 is swallowed by the window manager on several desktops.
 - **Ctrl+Alt+G = capture / release the host pointer** for the Mouse Card (a middle click toggles it too; a left click never captures; policy in `MouseGrab.h`) → [DEV § Pointer capture](DEV.md#pointer-capture-mouse-grab--mousegrabh)
 - F9 / F10 / F11 / F12 / Ctrl+Alt+F / Ctrl+Alt+G / Ctrl+Shift+P / Left Alt / Right Alt routed unconditionally (even when ImGui captures keyboard focus).
 

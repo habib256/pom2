@@ -141,6 +141,8 @@ class MemoryViewer_ImGui;
 namespace pom2 { class Debugger_ImGui; }
 namespace pom2 { class ScreenInspector_ImGui; }
 class Pom2HgrPaintHost;
+class Pom2SfxHost;
+namespace sfxbeep { class SfxEditor; }
 namespace hgrpaint { class HgrPaintEditor; }
 namespace hgrsprite { class HgrSpriteEditor; }
 
@@ -462,6 +464,12 @@ private:
     // + its POM2 host seam (pokes / offscreen NTSC render / file I/O).
     std::unique_ptr<Pom2HgrPaintHost>             hgrPaintHost;
     std::unique_ptr<hgrpaint::HgrPaintEditor>     hgrPaintEditor;
+    /// Tools > Speaker SFX editor: POM1's beeper editor (src/sfxbeep/) and
+    /// POM2's host for it (Pom2SfxHost.h). MainWindow_Thanks.cpp draws it.
+    std::unique_ptr<Pom2SfxHost>                  sfxHost_;
+    std::unique_ptr<sfxbeep::SfxEditor>           sfxEditor_;
+    bool showSfxEditor_ = false;
+    void renderSfxEditorWindow();
     // Sprite editor (src/hgrsprite/) — reuses the same host seam.
     std::unique_ptr<hgrsprite::HgrSpriteEditor>   hgrSpriteEditor;
     // All plugged Disk II cards, sorted by slot ascending. `diskCard`
@@ -759,6 +767,14 @@ private:
     void openCommandPalette();
     void applyDockLayout(DockLayout preset);
     void selectDebugTabs();
+    /// The layout about to be applied was CHOSEN (menu, palette) and not
+    /// applied by POM2 itself on a first run: only a chosen layout opens
+    /// and closes panels. See applyDockLayout.
+    bool dockLayoutByUser_ = false;
+    /// The Slot Configuration panel was open when a slotless profile closed
+    /// it: a profile with slots opens it again (applyProfileTransaction).
+    bool slotConfigHiddenByProfile_ = false;
+    int  slotConfigQuietFrames_ = 0;   ///< frames its window appears without taking the focus
     int  debugTabsFrames_ = 0;   ///< frames left to front the Debug layout's tabs
 
     // ── Interface appearance (View ▸ Interface) ──────────────────────────
@@ -1561,6 +1577,7 @@ private:
     bool  showThanks_   = false;
     bool  thanksPaused_ = false;
     float thanksScroll_ = -1.0f;   ///< < 0: start from the top at the next open
+    float thanksHold_   = 0.0f;    ///< seconds the opening photograph still holds
     bool isCompactDriveProfile() const;
     /// Eject / write-protect / insert (opens the rack's picker) / mount one
     /// drive — the rack's actions, callable from any menu.
