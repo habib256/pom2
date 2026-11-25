@@ -194,7 +194,7 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "Apple II Mouse Card state + host-cursor sync diagnostics." },
 
 // ── Devices ▸ Printers & serial ───────────────────────────────────────────
-{ PanelId::Printer, "panel.printer", "Printer", PanelGroup::DevPrinting,
+{ PanelId::Printer, "panel.printer", "Parallel printer", PanelGroup::DevPrinting,
   "show_printer", nullptr,
   "Parallel printer card \xe2\x86\x92 text spool (.txt)." },
 { PanelId::ImageWriter, "panel.imagewriter", "ImageWriter II (printout)", PanelGroup::DevPrinting,
@@ -242,24 +242,24 @@ inline constexpr PanelInfo kPanelCatalog[] = {
 // These five were the panels with no settings key: opening one and finding
 // it gone next launch was not a decision, it was six lists disagreeing.
 // They persist like the rest now.
-{ PanelId::MemViewer, "panel.memviewer", "Memory viewer", PanelGroup::View,
+{ PanelId::MemViewer, "panel.memviewer", "Memory viewer", PanelGroup::Tools,
   "show_memviewer", nullptr,
   "Hex + ASCII view of the emulated memory, with a live follow mode." },
-{ PanelId::Debugger, "panel.debugger", "Debugger", PanelGroup::View,
+{ PanelId::Debugger, "panel.debugger", "Debugger", PanelGroup::Tools,
   "show_debugger", nullptr,
   "Registers, disassembly, breakpoints, write watchpoints, and step /\n"
   "step-over / run-to-cursor." },
-{ PanelId::ScreenInspector, "panel.screeninspector", "Screen Inspector", PanelGroup::View,
+{ PanelId::ScreenInspector, "panel.screeninspector", "Screen Inspector", PanelGroup::Tools,
   "show_screen_inspector", nullptr,
   "The screen as really displayed: coordinates, mode, byte and address\n"
   "under the mouse, the beam, and a hi-res page saved as the beam read it." },
-{ PanelId::MemBar, "panel.membar", "Memory Map Bar", PanelGroup::View,
+{ PanelId::MemBar, "panel.membar", "Memory Map Bar", PanelGroup::Tools,
   "show_membar", nullptr,
   "A one-strip map of what is paged where right now." },
-{ PanelId::MemBarH, "panel.membarh", "Memory Map Bar (Horizontal)", PanelGroup::View,
+{ PanelId::MemBarH, "panel.membarh", "Memory Map Bar (Horizontal)", PanelGroup::Tools,
   "show_membar_h", nullptr,
   "The same map, laid out along the window's width." },
-{ PanelId::MemGrid, "panel.memgrid", "Memory Map Grid", PanelGroup::View,
+{ PanelId::MemGrid, "panel.memgrid", "Memory Map Grid", PanelGroup::Tools,
   "show_memgrid", nullptr,
   "Page-per-cell grid: RAM, ROM, aux, language card, slot ROM." },
 

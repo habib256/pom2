@@ -411,7 +411,7 @@ void MainWindow::renderPrinterPanelWindow()
     if (!printerPanel.plugged) return;
 
     ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
-    const std::string title = "Printer (slot " +
+    const std::string title = "Parallel printer (slot " +
         std::to_string(printerPanel.slot) + ")###printerPanel";
     if (!ImGui::Begin(title.c_str(), &show(pom2::PanelId::Printer))) {
         ImGui::End();

@@ -193,7 +193,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     // scroll it nor fall through to the Debugger window. drawDisassembly
     // reads the wheel itself and moves viewAddr_ by instructions.
     const float mainHeight = std::max(220.0f,
-        ImGui::GetContentRegionAvail().y - 6.0f * (ImGui::GetFrameHeightWithSpacing() + 3.0f) - 10.0f);
+        ImGui::GetContentRegionAvail().y - 6.0f * (ImGui::GetFrameHeightWithSpacing() + 4.0f) - 18.0f);
     ImGui::BeginChild("##disasm", ImVec2(0, mainHeight), true,
                       ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
     {

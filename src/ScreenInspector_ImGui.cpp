@@ -176,8 +176,8 @@ void ScreenInspector_ImGui::render(EmulationController& ctrl, Apple2Display& dis
     // The two saves stay on the row while they fit (half a window is common).
     const auto next = [](const char* label) {
         ImGui::SameLine();
-        const float w = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        if (ImGui::GetCursorPosX() + w > ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x)
+        const float wide = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        if (ImGui::GetCursorPosX() + wide > ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x)
             ImGui::NewLine();
     };
     next("Save PNG");

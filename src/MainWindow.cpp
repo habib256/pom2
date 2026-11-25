@@ -1294,7 +1294,9 @@ void MainWindow::applyDockLayout(DockLayout preset)
                                                      0.50f, nullptr, &centre);
             rightLower = right;
             bottom     = right;
-            showOnly({P::Debugger, P::ScreenInspector});
+            // The Disk Library stays, a tab behind the Debugger: debugging
+            // starts with loading the disk to debug.
+            showOnly({P::Debugger, P::ScreenInspector, P::DiskLibrary});
             break;
     }
     if (rightLower == 0) rightLower = right;
@@ -1356,6 +1358,7 @@ void MainWindow::applyDockLayout(DockLayout preset)
         case DockLayout::Debug:
             dock("Screen Inspector", centre);
             dock("Debugger", right);
+            dock("Disk Library", right);
             dock("Memory viewer", right);
             dock("Memory Map Grid", right);
             dock("Memory Map Bar", right);

@@ -68,6 +68,10 @@ File ▸ Boot HDV (the Disk Library boots it). "Reset to default" is now the
 Mini-Apple II layout, listed between Emulation and Debug. The Debugger
 fits half a window: its rows and buttons wrap, the listing takes the whole
 width, breakpoints and watches fold under it.
+The Debugger, the Screen Inspector, the Memory viewer and the memory maps
+moved from View to Tools, which is now three families (debugging, graphics,
+AI control). The "Printer" panel is named "Parallel printer". The Debug
+layout keeps the Disk Library as a tab behind the Debugger.
 
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 

@@ -133,8 +133,8 @@ void MainWindow::registerPanels()
         [this] {
             const int slot =
                 printerCoordinator_->captureHost(*controller).printerCardSlot;
-            return slot >= 0 ? "Printer (slot " + std::to_string(slot) + ")"
-                             : std::string("Printer");
+            return slot >= 0 ? "Parallel printer (slot " + std::to_string(slot) + ")"
+                             : std::string("Parallel printer");
         },
         [this] {
             return printerCoordinator_->captureHost(*controller)
@@ -313,7 +313,7 @@ const char* panelIcon(pom2::PanelId id)
     case P::VoxelSettings: return ICON_FA_CUBE;
     case P::MemViewer:     return ICON_FA_MEMORY;
     case P::Debugger:      return ICON_FA_BUG;
-    case P::ScreenInspector: return ICON_FA_MAGNIFYING_GLASS;
+    case P::ScreenInspector: return ICON_FA_CROSSHAIRS;
     case P::MemBar:        return ICON_FA_CHART_SIMPLE;
     case P::MemBarH:       return ICON_FA_CHART_BAR;
     case P::MemGrid:       return ICON_FA_TABLE_CELLS;

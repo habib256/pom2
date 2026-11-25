@@ -12914,7 +12914,7 @@ itself is UI and has no test.
   instruction costs its exact cycles and a video soft-switch access lands on
   its own cycle inside the instruction, but the machine advances by whole
   instructions — at 0.1 % a tick is about 20 cycles, a few instructions.
-- **Screen Inspector** (`ScreenInspector_ImGui.*`, View menu): the
+- **Screen Inspector** (`ScreenInspector_ImGui.*`, Tools menu): the
   display's own picture, zoomed, with the beam drawn on it under the beam
   view. **The state is per BYTE, not per line** (`Memory::displayFrame`,
   `DisplayFrame::at(y, column)`): French Touch's DIX flips TEXT, PAGE2 and
@@ -12962,7 +12962,8 @@ itself is UI and has no test.
   default", still `DockLayout::Reset` and `layout.reset`) and Debug; the
   Audio one is gone, nobody used it. **Debug** is two halves and nothing
   else: Screen Inspector on the left (a tab beside the Apple II Screen),
-  Debugger on the right — it opens those two, CLOSES every other panel and
+  Debugger on the right, the Disk Library a tab behind it — it opens those
+  three, CLOSES every other panel and
   brings both tabs to the front (`MainWindow::selectDebugTabs`, over a few
   frames: the tab bars of freshly built nodes do not exist yet). **Every
   preset shows its own panels and closes all the others** (`showOnly`):
@@ -12978,7 +12979,14 @@ itself is UI and has no test.
 - **Menus.** File ends with what you keep of the machine — Save BASIC
   listing, then Save / Open session — just above Quit; Copy screen text
   moved to Edit, above the pastes; Rewind sits under Step in Machine.
-  **Devices** opens with Slot Configuration, then one submenu per kind
+  **Tools** holds what looks into the machine — Debugger, Screen
+  Inspector, Memory viewer, the memory maps (they left View, which is now
+  only about the window) — then the two graphics editors, then AI Control.
+  In the BROWSER the File menu keeps its session rows first and Devices
+  keeps Drives on its second row: `tools/wasm_persistence_smoke.mjs`
+  clicks them by position (the CI's WebAssembly job failed on the first
+  version of this reordering).
+  **Devices** opens with Slot Configuration and Drives, then one submenu per kind
   (Storage, Sound, Input, Printers & serial, Network, Other cards), and
   last "Accelerators & AUX slot": the Zip Chip, the FASTChip and the
   Premium SoftCard, hardware that is in no slot and used to sit in Machine. File ▸ Reload ROM is gone: the

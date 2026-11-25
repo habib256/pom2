@@ -470,6 +470,13 @@ void MainWindow::renderMenuBar()
 
     if (ImGui::BeginMenu("File")) {
 #ifdef __EMSCRIPTEN__
+        // In the browser the session rows stay FIRST: its File menu's length
+        // depends on the machine's drives, and tools/wasm_persistence_smoke.mjs
+        // clicks "Automatic resume" at row 3 and "Import disk and boot" at
+        // row 4. On the desktop they are at the bottom (below).
+        if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
+        if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
+        renderBrowserSessionMenu();
         if (ImGui::MenuItem("Import disk and boot...")) chooseBrowserDisk();
         if (ImGui::MenuItem("Copy link to this setup")) copyBrowserSetupLink();
         if (ImGui::IsItemHovered())
@@ -518,11 +525,11 @@ void MainWindow::renderMenuBar()
                               "folder and on the clipboard. To move files to and from a\n"
                               "DOS 3.3 disk, see the pom2_dos33 tool.");
         if (!basicListingStatus_.empty()) ImGui::TextDisabled("%s", basicListingStatus_.c_str());
+#ifndef __EMSCRIPTEN__
         ImGui::Separator();
         if (ImGui::MenuItem("Save session...")) sessionFilePicker_.open(true);
         if (ImGui::MenuItem("Open session...")) sessionFilePicker_.open(false);
         renderBrowserSessionMenu();
-#ifndef __EMSCRIPTEN__
         // Quit is a no-op in the browser: the frame loop is driven by
         // emscripten_set_main_loop_arg (main.cpp), which ignores
         // glfwWindowShouldClose, and a canvas cannot close its own tab.
@@ -800,10 +807,15 @@ void MainWindow::renderMenuBar()
         // auxiliary slot — which used to sit in the Machine menu. Rewind is
         // not a device: it is in Machine, under Step.
         panelMenuItem(pom2::PanelId::SlotConfig);
+        // Drives is the panel everyone opens: second row, not inside a
+        // submenu. tools/wasm_persistence_smoke.mjs clicks it at that row
+        // (Devices, then (200, 65)) — moving it breaks the browser CI job.
+        panelMenuItem(pom2::PanelId::Drives);
         ImGui::Separator();
         const auto group = [this](const char* title, pom2::PanelGroup g) {
             if (ImGui::BeginMenu(title)) {
-                panelMenuGroup(g);
+                for (const pom2::PanelInfo& info : pom2::kPanelCatalog)
+                    if (info.group == g && info.id != pom2::PanelId::Drives) panelMenuItem(info.id);
                 ImGui::EndMenu();
             }
         };
@@ -1103,15 +1115,6 @@ void MainWindow::renderMenuBar()
             }
             ImGui::EndMenu();
         }
-        ImGui::Separator();
-
-        panelMenuItem(pom2::PanelId::MemViewer);
-        panelMenuItem(pom2::PanelId::Debugger);
-        panelMenuItem(pom2::PanelId::ScreenInspector);
-        ImGui::Separator();
-        panelMenuItem(pom2::PanelId::MemBar);
-        panelMenuItem(pom2::PanelId::MemBarH);
-        panelMenuItem(pom2::PanelId::MemGrid);
         ImGui::EndMenu();
     }
 
@@ -1121,12 +1124,28 @@ void MainWindow::renderMenuBar()
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Fuzzy-search every menu item, panel and machine\n"
                               "action. Type \"mock\", \"amber\", \"eject\"...");
-        ImGui::Separator();
+        // Three families, in the order a developer reaches for them: what
+        // looks INTO the machine (they used to sit in View, which is now
+        // only about the window), what draws for it, what drives it from
+        // outside. The Debug layout (View) opens the first two together.
+        ImGui::SeparatorText("Debugging");
+        panelMenuItem(pom2::PanelId::Debugger);
+        panelMenuItem(pom2::PanelId::ScreenInspector);
+        panelMenuItem(pom2::PanelId::MemViewer);
+        if (ImGui::BeginMenu("Memory maps")) {
+            panelMenuItem(pom2::PanelId::MemBar);
+            panelMenuItem(pom2::PanelId::MemBarH);
+            panelMenuItem(pom2::PanelId::MemGrid);
+            ImGui::EndMenu();
+        }
+        ImGui::SeparatorText("Graphics");
+        panelMenuItem(pom2::PanelId::HgrPaint);
+        panelMenuItem(pom2::PanelId::HgrSprite);
         // The AI Control row hides itself under WASM — AiControlServer cannot
-        // open a listening socket in the browser sandbox. That used to be an
-        // #ifndef here; it is now one line in registerPanels(), where the rest
-        // of the panel's identity already lives.
-        panelMenuGroup(pom2::PanelGroup::Tools);
+        // open a listening socket in the browser sandbox (registerPanels()).
+        // No header over a row that may not be there.
+        ImGui::Separator();
+        panelMenuItem(pom2::PanelId::AiControl);
         ImGui::EndMenu();
     }
 
