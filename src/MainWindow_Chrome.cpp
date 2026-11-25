@@ -294,8 +294,8 @@ void MainWindow::renderCommandPalette()
     }
 
     // ── Layout + interface ───────────────────────────────────────────────
-    add("layout.reset",     "Layout", "Reset to default layout");
     add("layout.emulation", "Layout", "Emulation layout");
+    add("layout.reset",     "Layout", "Mini-Apple II layout");
     add("layout.debug",     "Layout", "Debug layout");
     {
         std::size_t n = 0;
@@ -509,15 +509,6 @@ void MainWindow::renderMenuBar()
         // writes the persisted path key with the medium.
         ImGui::SeparatorText("Drives");
         renderFileMenuDrives();
-        ImGui::Separator();
-        ImGui::BeginDisabled(!primaryHdvCard() || !primaryHdvCard()->isImageLoaded());
-        // Label reflects where the user actually has the card plugged.
-        const std::string bootHdvLabel = "Boot HDV (slot " +
-            std::to_string(primaryHdvCard() ? primaryHdvCard()->getSlot() : 5) + ")";
-        if (ImGui::MenuItem(bootHdvLabel.c_str())) {
-            bootHdvImage();
-        }
-        ImGui::EndDisabled();
         // What you keep of the machine goes at the bottom, just above Quit:
         // the BASIC listing, then the session.
         ImGui::Separator();
@@ -1029,14 +1020,13 @@ void MainWindow::renderMenuBar()
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
             };
-            layoutItem("Reset to default", DockLayout::Reset,
-                       "Screen above the keyboard on the left; Drives, Disk\n"
-                       "Library and Slot Configuration tabbed on the right.\n"
-                       "Other assigned panels open as additional tabs.");
-            ImGui::Separator();
             layoutItem("Emulation", DockLayout::Emulation,
-                       "Widest screen. Disk Library / Cassette / Floppy Emu\n"
-                       "and Slot Config in one right column.");
+                       "Widest screen; Drives, Disk Library and Slot\n"
+                       "Configuration in one right column.");
+            layoutItem("Mini-Apple II", DockLayout::Reset,
+                       "The machine on a desk: the screen above its keyboard on\n"
+                       "the left; Drives, Disk Library and Slot Configuration\n"
+                       "tabbed on the right.");
             layoutItem("Debug", DockLayout::Debug,
                        "Screen Inspector on the left (a tab beside the screen),\n"
                        "Debugger on the right; memory viewer, maps and the other\n"

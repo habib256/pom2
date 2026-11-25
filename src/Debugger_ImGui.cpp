@@ -38,6 +38,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -183,37 +184,42 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     drawRegisters(snap);
     drawBeamAndCycles(snap);
     ImGui::Separator();
-    // Disassembly left, breakpoints right.
-    const float rightWidth = 232.0f;
+    // The listing is what the panel is FOR: it comes first, across the whole
+    // width (an operand's note needs the room) and takes the height, leaving
+    // space for the tool headers below it (closed). An open tool grows
+    // downward and the window scrolls.
     // NoScrollWithMouse + NoScrollbar: the listing is not a scrolled region
     // (it is laid out from viewAddr_ each frame), so the wheel must neither
     // scroll it nor fall through to the Debugger window. drawDisassembly
     // reads the wheel itself and moves viewAddr_ by instructions.
-    // The listing is what the panel is FOR: it comes first and takes the
-    // height, leaving room for the five tool headers below it (closed). An
-    // open tool grows downward and the window scrolls.
-    const float mainHeight = std::max(260.0f,
-        ImGui::GetContentRegionAvail().y - 5.0f * ImGui::GetFrameHeightWithSpacing() - 6.0f);
-    ImGui::BeginChild("##disasm",
-                      ImVec2(ImGui::GetContentRegionAvail().x - rightWidth - 8.0f, mainHeight),
-                      true, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+    const float mainHeight = std::max(220.0f,
+        ImGui::GetContentRegionAvail().y - 6.0f * (ImGui::GetFrameHeightWithSpacing() + 3.0f) - 10.0f);
+    ImGui::BeginChild("##disasm", ImVec2(0, mainHeight), true,
+                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
     {
         ScopedMonoFont mono;
         drawDisassembly(ctrl, snap);
     }
     ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("##bplist", ImVec2(rightWidth, mainHeight), true);
-    {
-        ScopedMonoFont mono;
-        drawBreakpointList(ctrl, snap);
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        drawWatchpointList(ctrl, snap);
-    }
-    ImGui::EndChild();
 
+    // Breakpoints and watches fold like the other tools: the gutter of the
+    // listing sets a breakpoint, so the lists are for reviewing them. The
+    // header carries the counts, and opens by itself when there is something.
+    {
+        char title[96];
+        std::snprintf(title, sizeof title, "Breakpoints (%zu) and watches (%zu)###bpwatch",
+                      snap.breakpoints.size(), snap.watchpoints.size());
+        if (ImGui::CollapsingHeader(title)) {
+            ScopedMonoFont mono;
+            ImGui::BeginChild("##bpcol", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4.0f, 190), true);
+            drawBreakpointList(ctrl, snap);
+            ImGui::EndChild();
+            ImGui::SameLine();
+            ImGui::BeginChild("##wpcol", ImVec2(0, 190), true);
+            drawWatchpointList(ctrl, snap);
+            ImGui::EndChild();
+        }
+    }
     drawAssembler(ctrl, snap);
 
     if (ImGui::CollapsingHeader("Your program's symbols (optional file)")) {
@@ -444,10 +450,10 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     // or it is not, and a pair of buttons where one is always dead reads as
     // broken. Same reasoning as a media transport.
     if (snap.running) {
-        if (ImGui::Button("Stop", ImVec2(90, 0)))
+        if (ImGui::Button("Stop", ImVec2(76, 0)))
             ctrl.setMode(EmulationController::Mode::Stopped);
     } else {
-        if (ImGui::Button("Run", ImVec2(90, 0))) {
+        if (ImGui::Button("Run", ImVec2(76, 0))) {
             {
                 auto st = ctrl.lockState();
                 ctrl.debugResume();
@@ -455,25 +461,33 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
             ctrl.setMode(EmulationController::Mode::Running);
         }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Step", ImVec2(90, 0)))     { followPc_ = true; ctrl.debugStepInstruction(); }
+    // Each button stays on the row while it fits, else starts a new one: the
+    // panel is often half a window wide.
+    const auto next = [](float width) {
+        ImGui::SameLine();
+        if (ImGui::GetCursorPosX() + width > ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x)
+            ImGui::NewLine();
+    };
+    next(76.0f);
+    if (ImGui::Button("Step", ImVec2(76, 0)))     { followPc_ = true; ctrl.debugStepInstruction(); }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Execute one instruction (F7)");
-    ImGui::SameLine();
+        ImGui::SetTooltip("Execute one instruction (Space, F7)");
+    next(90.0f);
     if (ImGui::Button("Step Over", ImVec2(90, 0))) { followPc_ = true; ctrl.debugStepOver(); }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (F8)");
-    ImGui::SameLine();
-    if (ImGui::Button("Step Out")) { followPc_ = true; ctrl.debugStepOut(); }
-    ImGui::SameLine();
+        ImGui::SetTooltip("Run a JSR to completion; otherwise a plain step (Ctrl+Space, F8)");
+    next(82.0f);
+    if (ImGui::Button("Step Out", ImVec2(82, 0))) { followPc_ = true; ctrl.debugStepOut(); }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Run until the current routine returns (Shift+Space)");
+    next(118.0f);
     ImGui::BeginDisabled(!cursorValid_);
-    if (ImGui::Button("Run To Cursor", ImVec2(120, 0)))
+    if (ImGui::Button("Run To Cursor", ImVec2(118, 0)))
         ctrl.debugRunToCursor(cursorAddr_, cursorBank_);
     ImGui::EndDisabled();
-    if (!cursorValid_ && ImGui::IsItemHovered())
-        ImGui::SetTooltip("Click a line in the disassembly first");
-
-    ImGui::SameLine();
+    if (!cursorValid_ && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Click a line in the disassembly first (then Ctrl+Down)");
+    next(110.0f);
     ImGui::Checkbox("Follow PC", &followPc_);
 }
 
@@ -481,61 +495,84 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
 
 namespace {
 // Every header row starts with the same 8-character label, so the values of
-// CPU / Video / Memory / Beam / Cycles line up in one column.
+// CPU / Video / Memory / Beam / Cycles line up in one column. A row is a run
+// of tokens: one that does not fit the panel's width continues on the next
+// line, under the values and not under the label — the Debugger is often
+// docked in half a window, and a row cut at the edge is a row unread.
+float g_rowIndent = 0.0f;
+
 void rowLabel(const char* label)
 {
     ImGui::TextColored(kDimColour, "%-8s", label);
     ImGui::SameLine(0.0f, 0.0f);
+    g_rowIndent = ImGui::GetCursorPosX();
 }
-// A switch shown by name: bright when on, dim when off, always the same
-// width so the row does not move when the program flips it.
-void switchToken(const char* name, bool on)
+// Make room for an item `width` wide: stay on the row, or wrap under it.
+void flowTo(float width)
 {
-    if (on) ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.50f, 1.0f), "%-9s", name);
-    else    ImGui::TextColored(kDimColour, "%-9s", name);
+    const float right = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
+    if (ImGui::GetCursorPosX() + width > right && ImGui::GetCursorPosX() > g_rowIndent + 1.0f) {
+        ImGui::NewLine();
+        ImGui::SetCursorPosX(g_rowIndent);
+    }
+}
+void token(const ImVec4& colour, const char* fmt, ...) IM_FMTARGS(2);
+void token(const ImVec4& colour, const char* fmt, ...)
+{
+    char text[96];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof text, fmt, args);
+    va_end(args);
+    flowTo(ImGui::CalcTextSize(text).x);
+    ImGui::TextColored(colour, "%s", text);
     ImGui::SameLine(0.0f, 0.0f);
 }
+void endRow() { ImGui::NewLine(); }
+
+const ImVec4 kValue(0.92f, 0.92f, 0.92f, 1.0f);
+const ImVec4 kOn(0.45f, 0.90f, 0.50f, 1.0f);
+const ImVec4 kNote(0.95f, 0.85f, 0.35f, 1.0f);
 }  // namespace
 
 void Debugger_ImGui::drawRegisters(const Snapshot& snap)
 {
     ScopedMonoFont mono;
     rowLabel("CPU");
-    ImGui::Text("PC $%04X  A $%02X  X $%02X  Y $%02X  SP $%02X  P $%02X [%s]",
-                snap.pc, snap.a, snap.x, snap.y, snap.sp, snap.p, flagsText(snap.p).c_str());
-    ImGui::SameLine();
-    ImGui::TextColored(kDimColour, "  %s",
-                       snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR)" :
-                       snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC)" : "6502 (NMOS)");
+    token(kValue, "PC $%04X  ", snap.pc);
+    token(kValue, "A $%02X  ", snap.a);
+    token(kValue, "X $%02X  ", snap.x);
+    token(kValue, "Y $%02X  ", snap.y);
+    token(kValue, "SP $%02X  ", snap.sp);
+    token(kValue, "P $%02X [%s]  ", snap.p, flagsText(snap.p).c_str());
+    token(kDimColour, "%s",
+          snap.isa == Cpu6502Set::Ncr65C02      ? "65C02 (NCR)" :
+          snap.isa == Cpu6502Set::Superset65C02 ? "65C02 (Rockwell/WDC)" : "6502 (NMOS)");
+    endRow();
 
-    // The video switches as they stand NOW (the live latches, not a frame).
+    // The video switches as they stand NOW (the live latches, not a frame):
+    // bright = on. Every name keeps its width, so the row does not move
+    // when the program flips one.
     const Memory::DisplayState& v = snap.video;
     rowLabel("Video");
-    switchToken(v.textMode ? "TEXT" : "GRAPHICS", true);
-    switchToken(v.hiRes ? "HIRES" : "LORES", !v.textMode);
-    switchToken(v.page2 ? "PAGE2" : "PAGE1", true);
-    switchToken("MIXED", v.mixedMode);
-    switchToken("80COL", v.eightyCol);
-    switchToken("DHGR", v.dhgr);
-    switchToken("80STORE", v.eightyStore);
-    switchToken("ALTCHAR", v.altChar);
-    ImGui::NewLine();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("The video soft switches right now: bright = on.\n"
-                          "The Screen Inspector shows what each line of the frame used.");
+    token(kOn, "%-9s", v.textMode ? "TEXT" : "GRAPHICS");
+    token(v.textMode ? kDimColour : kOn, "%-6s", v.hiRes ? "HIRES" : "LORES");
+    token(kOn, "%-6s", v.page2 ? "PAGE2" : "PAGE1");
+    token(v.mixedMode ? kOn : kDimColour, "MIXED ");
+    token(v.eightyCol ? kOn : kDimColour, "80COL ");
+    token(v.dhgr ? kOn : kDimColour, "DHGR ");
+    token(v.eightyStore ? kOn : kDimColour, "80STORE ");
+    token(v.altChar ? kOn : kDimColour, "ALTCHAR");
+    endRow();
 
-    // What the CPU reads where: the bank mapped at each region.
+    // What the CPU reads where: the bank mapped at each region. Anything
+    // but plain main RAM or ROM is paging at work, and stands out.
     rowLabel("Memory");
     const auto region = [&](const char* name, uint16_t at) {
         const DebugBank bank = snap.banks[at];
         const bool plain = bank.kind == DebugBank::Main || bank.kind == DebugBank::Rom ||
                            bank.kind == DebugBank::Io;
-        char text[40];
-        std::snprintf(text, sizeof text, "%s %s", name, bank.text().c_str());
-        // Anything but plain main RAM / ROM is paging at work: make it stand out.
-        if (plain) ImGui::TextColored(kDimColour, "%-11s", text);
-        else       ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.35f, 1.0f), "%-11s", text);
-        ImGui::SameLine(0.0f, 0.0f);
+        token(plain ? kDimColour : kNote, "%s %-5s", name, bank.text().c_str());
     };
     region("ZP", 0x0000);
     region("$0200", 0x0200);
@@ -544,10 +581,7 @@ void Debugger_ImGui::drawRegisters(const Snapshot& snap)
     region("$C300", 0xC300);
     region("$D000", 0xD000);
     region("$E000", 0xE000);
-    ImGui::NewLine();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("The bank the CPU READS at each region: main, aux0 (RAMRD / 80STORE),\n"
-                          "lc1 / lc2 (language card RAM), rom. Yellow = not plain main RAM or ROM.");
+    endRow();
 }
 
 // ── Beam position and cycle counter ─────────────────────────────────────
@@ -573,18 +607,17 @@ void Debugger_ImGui::drawBeamAndCycles(const Snapshot& snap)
 
     ScopedMonoFont mono;
     const BeamPosition b = beamPositionAt(snap.videoCycle, snap.standard);
-    char where[40];
-    if (b.vbl)       std::snprintf(where, sizeof where, "vertical blanking");
-    else if (b.hbl)  std::snprintf(where, sizeof where, "horizontal blanking");
-    else             std::snprintf(where, sizeof where, "on byte %d of the line", b.column);
     // Green while the beam draws, yellow in blanking — AppleWin's colours.
-    const ImVec4 beamColour = (b.vbl || b.hbl) ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
-                                               : ImVec4(0.45f, 0.90f, 0.50f, 1.0f);
+    const ImVec4 beamColour = (b.vbl || b.hbl) ? kNote : kOn;
     rowLabel("Beam");
-    ImGui::TextColored(beamColour, "V %3d ($%03X)  H %2d ($%02X)  %s", b.line, b.line, b.h, b.h, where);
-    ImGui::SameLine();
-    ImGui::TextColored(kDimColour, "  cycle %u of the %s frame", b.frameCycle,
-                       snap.standard == VideoStandard::PAL ? "PAL" : "NTSC");
+    token(beamColour, "V %3d ($%03X)  ", b.line, b.line);
+    token(beamColour, "H %2d ($%02X)  ", b.h, b.h);
+    if (b.vbl)      token(beamColour, "vertical blanking  ");
+    else if (b.hbl) token(beamColour, "horizontal blanking  ");
+    else            token(beamColour, "on byte %d  ", b.column);
+    token(kDimColour, "cycle %u of the %s frame", b.frameCycle,
+          snap.standard == VideoStandard::PAL ? "PAL" : "NTSC");
+    endRow();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("V = line in the frame (0-191 visible, then vertical blanking).\n"
                           "H = cycle in the 65-cycle line (0-24 horizontal blanking,\n"
@@ -593,20 +626,18 @@ void Debugger_ImGui::drawBeamAndCycles(const Snapshot& snap)
 
     const bool wentBack = snap.cycles < cycleMark_;
     rowLabel("Cycles");
-    if (wentBack)
-        ImGui::Text("since mark --  (the clock went back)");
-    else
-        ImGui::Text("since mark %llu", static_cast<unsigned long long>(snap.cycles - cycleMark_));
-    ImGui::SameLine();
+    if (wentBack) token(kValue, "since mark --  ");
+    else          token(kValue, "since mark %llu ", static_cast<unsigned long long>(snap.cycles - cycleMark_));
+    flowTo(ImGui::CalcTextSize("Reset mark").x + 12.0f);
     if (ImGui::SmallButton("Reset mark")) cycleMark_ = snap.cycles;
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Count from here: stop at the start of the code to time,\n"
                           "Reset mark, then run to its end.");
-    ImGui::SameLine();
-    if (haveLastRun_) ImGui::Text("  last run or step %llu", static_cast<unsigned long long>(lastRunCycles_));
-    else              ImGui::TextColored(kDimColour, "  last run or step --");
-    ImGui::SameLine();
-    ImGui::TextColored(kDimColour, "  total %llu", static_cast<unsigned long long>(snap.cycles));
+    ImGui::SameLine(0.0f, 0.0f);
+    if (haveLastRun_) token(kValue, "  last run or step %llu", static_cast<unsigned long long>(lastRunCycles_));
+    else              token(kDimColour, "  last run or step --");
+    token(kDimColour, "  total %llu", static_cast<unsigned long long>(snap.cycles));
+    endRow();
 }
 
 // ── Navigation: wheel, Page Up/Down, Go to ──────────────────────────────

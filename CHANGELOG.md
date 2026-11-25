@@ -61,7 +61,11 @@ and Reset with theirs. No layout leaves a window floating: whatever a
 preset does not name becomes a tab. In the File menu, Save BASIC listing
 and the session items sit at the bottom, above Quit; Copy screen text is
 in Edit; Slot Configuration opens the Devices menu; Rewind is under Step;
-File ▸ Reload ROM is removed (the ROM panels keep the button).
+File ▸ Reload ROM is removed (the ROM panels keep the button), and so is
+File ▸ Boot HDV (the Disk Library boots it). "Reset to default" is now the
+Mini-Apple II layout, listed between Emulation and Debug. The Debugger
+fits half a window: its rows and buttons wrap, the listing takes the whole
+width, breakpoints and watches fold under it.
 
 **v1.2.4 marker** — 2026-11-25. Release notes: [v1.2.4](docs/releases/v1.2.4.md), [libretro-v1.2.4](docs/releases/libretro-v1.2.4.md).
 

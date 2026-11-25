@@ -12957,8 +12957,10 @@ itself is UI and has no test.
   entries are descriptions of the action (a developer names switches their
   own way); the monitor names were cross-checked against AppleWin's
   `APPLE2E.SYM`. A symbol file is the program's own vocabulary and wins.
-- **Docking.** Three layout presets remain (Reset, Emulation, Debug; the
-  Audio one is gone, nobody used it). **Debug** is two halves and nothing
+- **Docking.** Three layout presets: Emulation, **Mini-Apple II** (the
+  screen above its keyboard, storage on the right — the former "Reset to
+  default", still `DockLayout::Reset` and `layout.reset`) and Debug; the
+  Audio one is gone, nobody used it. **Debug** is two halves and nothing
   else: Screen Inspector on the left (a tab beside the Apple II Screen),
   Debugger on the right — it opens those two, CLOSES every other panel and
   brings both tabs to the front (`MainWindow::selectDebugTabs`, over a few
@@ -12978,6 +12980,11 @@ itself is UI and has no test.
   moved to Edit, above the pastes; Slot Configuration opens the Devices
   menu; Rewind sits under Step in Machine. File ▸ Reload ROM is gone: the
   ROM Status panel and the welcome page keep their own Reload ROM button.
+  File ▸ Boot HDV is gone too: it duplicated the Disk Library's Boot.
+- **The Debugger fits half a window.** Its header rows are runs of tokens
+  that wrap under their values, its buttons wrap, the listing takes the
+  whole width (an operand's note needs it), and breakpoints and watches
+  fold under it with their counts in the header, like the other tools.
 - **Scripting the window** for a check by eye: `$POM2_UI_COMMANDS` runs
   command-palette ids once after start-up (`layout.debug`, `speed.slow.1`),
   the companion of `$POM2_WINDOW_SHOT`.
