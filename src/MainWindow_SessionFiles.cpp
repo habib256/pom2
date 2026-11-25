@@ -24,6 +24,7 @@
 #include "BrowserFiles.h"
 #include "EmulationController.h"
 #include "imgui.h"
+#include "IconsFontAwesome6.h"
 #include <cstdio>
 
 void MainWindow::holdBrowserSession()
