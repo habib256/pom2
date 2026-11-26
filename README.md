@@ -121,7 +121,9 @@ POM2 reads `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.nb2`, `.woz`, `.moof`, `.2mg`
 (`.dc`, `.dc42`) or an Applesauce flux capture (`.a2r`), and keeps the guest's
 writes in a local copy: the original file is never written. An archive of several
 disks (a game's sides) mounts the first; the drive's change button in
-**Drives**, or its entry in the **File** menu, swaps in the others.
+**Drives**, or its entry in the **File** menu, swaps in the others. An archive
+that carries its own `.m3u` playlist mounts the disk the playlist names
+first, and the change button offers the playlist's disks in its order.
 
 New to the Apple II? With no disk inserted the machine keeps trying to boot, so
 press **F11** to reach the BASIC prompt, type `PRINT "HELLO, APPLE II!"` and

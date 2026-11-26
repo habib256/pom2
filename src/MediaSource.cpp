@@ -237,35 +237,86 @@ bool imageMember(const std::string& n)
     return mountableName(base);
 }
 
-// The disks of a .zip or a .7z, in the archive's order: their names, and
-// how to read the i-th.
+// A member path with '/' separators, "." and ".." resolved, ASCII-lowercased
+// when `fold`: what a playlist line is matched against (as the libretro
+// core's archive_content.cpp matches it).
+std::string memberKey(const std::string& path, bool fold)
+{
+    std::vector<std::string> parts;
+    std::string part;
+    for (const char c : path + "/") {
+        if (c != '/' && c != '\\') { part += c; continue; }
+        if (part == "..") { if (!parts.empty()) parts.pop_back(); }
+        else if (!part.empty() && part != ".") parts.push_back(part);
+        part.clear();
+    }
+    std::string key;
+    for (const auto& x : parts) key += (key.empty() ? "" : "/") + x;
+    return fold ? lower(key) : key;
+}
+
+std::string trimmed(const std::string& text)
+{
+    const auto first = text.find_first_not_of(" \t\r");
+    if (first == std::string::npos) return {};
+    return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+}
+
+// The cache file that keeps the order of an archive's playlist (one leaf a
+// line): `<key>.m3u`, beside the `<key>-<leaf>` disks. No '-' after the key,
+// so no member's copy can be named so.
+fs::path playlistCachePath(const fs::path& cacheDir, const std::string& key)
+{
+    return cacheDir / (key + ".m3u");
+}
+
+// The disks of a .zip or a .7z: their names, and how to read the i-th. In
+// the archive's order — or in its playlist's, when it holds an .m3u that
+// names disks it holds.
 struct ArchiveImages {
     const char* kind = "zip";
     std::vector<std::string> names;
     std::vector<std::size_t> indices;   // a .7z's entry per name
     SevenZipArchive sevenZip;
+    std::string playlist;               // the .m3u that ordered `names`, if one did
 
     bool open(const std::vector<uint8_t>& packed, bool isSevenZip, std::string& err)
     {
+        // The first playlist in the archive's own order is the one (as in
+        // the libretro core).
+        std::string m3u;
+        std::size_t m3uIndex = 0;
+        auto isPlaylist = [](const std::string& n) {
+            const std::string base = safeName(n);
+            return !n.empty() && n.back() != '/' && base.rfind("._", 0) != 0 && endsWith(lower(base), ".m3u");
+        };
         if (isSevenZip) {
             kind = "7z";
             if (!sevenZip.open(packed, err, kMaxSolidBlockBytes)) return false;
             const auto& entries = sevenZip.entries();
-            for (std::size_t i = 0; i < entries.size(); ++i)
-                if (!entries[i].directory && imageMember(entries[i].name)) {
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                if (entries[i].directory) continue;
+                if (imageMember(entries[i].name)) {
                     names.push_back(entries[i].name);
                     indices.push_back(i);
+                } else if (m3u.empty() && isPlaylist(entries[i].name)) {
+                    m3u = entries[i].name;
+                    m3uIndex = i;
                 }
+            }
         } else {
             std::vector<std::string> all;
             if (!listZipMembers(packed, all, err)) return false;
-            for (const auto& n : all)
+            for (const auto& n : all) {
                 if (imageMember(n)) names.push_back(n);
+                else if (m3u.empty() && isPlaylist(n)) m3u = n;
+            }
         }
         if (names.empty()) {
             err = "the archive holds no disk image POM2 can mount";
             return false;
         }
+        if (!m3u.empty()) orderBy(packed, m3u, m3uIndex);
         return true;
     }
 
@@ -273,6 +324,55 @@ struct ArchiveImages {
     {
         return indices.empty() ? readZipMember(packed, names[i], out, err, kMaxImageBytes)
                                : sevenZip.extract(indices[i], out, err, kMaxImageBytes);
+    }
+
+private:
+    // `names` (and `indices`) put in the order the playlist gives, keeping
+    // only the disks it names. Its lines are relative to its own folder; '#'
+    // starts a comment (#EXTM3U, #EXTINF), "|label" is dropped; a line is
+    // found as spelt first ("A.DSK" and "a.dsk" are two members), then
+    // whatever its case. A playlist that names no disk of the archive, or
+    // that cannot be read, leaves the archive's order.
+    void orderBy(const std::vector<uint8_t>& packed, const std::string& m3u, std::size_t m3uIndex)
+    {
+        std::vector<uint8_t> bytes;
+        std::string ignored;
+        const bool ok = indices.empty() ? readZipMember(packed, m3u, bytes, ignored, 1u << 20)
+                                        : sevenZip.extract(m3uIndex, bytes, ignored, 1u << 20);
+        if (!ok) return;
+        std::string text(bytes.begin(), bytes.end());
+        if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
+        const auto slash = m3u.find_last_of("/\\");
+        const std::string base = slash == std::string::npos ? std::string() : m3u.substr(0, slash + 1);
+        std::vector<std::size_t> order;
+        std::size_t start = 0;
+        while (start <= text.size() && order.size() < names.size()) {
+            auto end = text.find('\n', start);
+            if (end == std::string::npos) end = text.size();
+            const std::string line = trimmed(text.substr(start, end - start));
+            start = end + 1;
+            const std::string entry = trimmed(line.substr(0, line.find('|')));
+            if (entry.empty() || entry[0] == '#') continue;
+            std::size_t found = names.size();
+            for (const bool fold : { false, true }) {
+                const std::string want = memberKey(base + entry, fold);
+                for (std::size_t i = 0; i < names.size() && found == names.size(); ++i)
+                    if (memberKey(names[i], fold) == want) found = i;
+                if (found != names.size()) break;
+            }
+            if (found != names.size() && std::find(order.begin(), order.end(), found) == order.end())
+                order.push_back(found);
+        }
+        if (order.empty()) return;
+        std::vector<std::string> orderedNames;
+        std::vector<std::size_t> orderedIndices;
+        for (const std::size_t i : order) {
+            orderedNames.push_back(names[i]);
+            if (!indices.empty()) orderedIndices.push_back(indices[i]);
+        }
+        names = std::move(orderedNames);
+        indices = std::move(orderedIndices);
+        playlist = safeName(m3u);
     }
 };
 
@@ -350,6 +450,21 @@ std::vector<std::string> mediaSetOf(const std::string& image, const fs::path& ca
         && std::all_of(name.begin(), name.begin() + 32, [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
     if (!keyed || !fs::equivalent(p.parent_path(), cacheDir, ec)) return {image};
     const std::string prefix = name.substr(0, 33);
+    // The archive's own playlist, kept by the resolve: its disks, its order.
+    {
+        std::ifstream in(playlistCachePath(cacheDir, name.substr(0, 32)), std::ios::binary);
+        std::string leaf;
+        while (in && std::getline(in, leaf)) {
+            if (!leaf.empty() && leaf.back() == '\r') leaf.pop_back();
+            const fs::path disk = cacheDir / fs::u8path(prefix + leaf);
+            if (leaf.empty() || !fs::is_regular_file(disk, ec)) continue;
+            if (std::find(set.begin(), set.end(), disk.u8string()) == set.end()) set.push_back(disk.u8string());
+        }
+        if (!set.empty()) {
+            if (std::find(set.begin(), set.end(), p.u8string()) == set.end()) set.insert(set.begin(), image);
+            return set;
+        }
+    }
     for (fs::directory_iterator it(cacheDir, ec), end; !ec && it != end; it.increment(ec)) {
         const std::string other = it->path().filename().u8string();
         if (other.rfind(prefix, 0) != 0 || !it->is_regular_file(ec)) continue;
@@ -510,6 +625,20 @@ MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path&
             if (!members.open(packed, sevenZip, r.error)) return r;
             const std::string from = std::string(" from the ") + members.kind;
             member = members.names.front();
+            // The playlist's order, for mediaSetOf; none, and a stale one goes.
+            {
+                const fs::path order = playlistCachePath(cacheDir, k);
+                if (members.playlist.empty()) {
+                    fs::remove(order, ec);
+                } else {
+                    std::string lines;
+                    for (const auto& n : members.names) lines += safeName(n) + "\n";
+                    std::ifstream in(order, std::ios::binary);
+                    const std::string kept((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                    std::string ignored;
+                    if (kept != lines) writeFile(order, std::vector<uint8_t>(lines.begin(), lines.end()), ignored);
+                }
+            }
             // The first disk is read first: a .7z decodes its block once and
             // the others come out of that block's cache.
             const fs::path dest = cacheDir / (k + "-" + safeName(member));
@@ -527,7 +656,9 @@ MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path&
             }
             if (members.names.size() > 1)
                 r.note += std::string(r.note.empty() ? "" : ", ") + std::to_string(members.names.size())
-                        + " disks in the " + members.kind + ": change disk from the drive's menu";
+                        + " disks in the " + members.kind
+                        + (members.playlist.empty() ? std::string() : "'s playlist " + members.playlist)
+                        + ": change disk from the drive's menu";
             if (cached) {
                 r.ok = true; r.fromCache = true; r.localPath = dest.string();
                 r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + from + " (cached copy)";

@@ -5281,7 +5281,14 @@ a 34 MB cap, `--proto-redir =http,https`), a `.gz` is inflated
 (`ZipMember.h` `gunzip`: FEXTRA/FNAME/FCOMMENT/FHCRC skipped, ISIZE capped,
 CRC-32 checked), a `.zip` gives its first member whose extension a drive
 takes (`__MACOSX/._*` skipped), and so does a `.7z` (`SevenZipArchive.h`,
-below). The result is a file in
+below). An archive's own `.m3u` (the first in the archive's order) decides
+which disk that is and the order of the set, read as the libretro core reads
+one (`archive_content.cpp`): lines relative to its folder, matched as spelt
+then case-blind, `#` lines and `|label` dropped, disks it does not hold
+skipped, and a playlist that names none of the archive's disks ignored. The
+order is kept as `<key>.m3u` in the cache (one leaf a line; no `-` after the
+key, so no member's copy can take that name), and `mediaSetOf` returns the
+playlist's disks in that order — or, with none, every `<key>-` disk by name. The result is a file in
 `<user data>/media_cache` named `<key>-<name>`; the key is the URL, or the
 archive's CANONICAL path (`weakly_canonical`: a symlinked folder or another
 case is the same file) + size + date — a changed archive is unpacked afresh,

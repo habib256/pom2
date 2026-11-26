@@ -987,7 +987,7 @@ Supported extensions are `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`,
 `.2mg`, `.hdv` and `.image`, and a `.zip`, `.7z` or `.gz` holding one: the
 archive is unpacked in the tab as on the desktop (a 7z packed with LZMA,
 LZMA2 or PPMd), its first disk mounted and the others offered by the drive's
-change button. The file selector limits uploads to 64 MiB per
+change button — in the order of the archive's own `.m3u`, when it has one. The file selector limits uploads to 64 MiB per
 file; normal format/drive limits still apply. Each selector upload has a
 separate virtual file, so choosing the same filename twice cannot overwrite
 a mounted disk. Drag-and-drop uses filename-based copies instead; use the

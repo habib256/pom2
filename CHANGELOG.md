@@ -10,6 +10,19 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-26 — An archive's own .m3u, on the desktop and in the browser
+
+The libretro core has followed the `.m3u` inside a `.zip` since it opened
+archives; the desktop mounted the archive's first disk and offered the others
+in name order, so a set whose playlist puts the boot disk last booted the
+wrong one. `MediaSource` now reads the archive's first `.m3u` with the core's
+rules (relative to its folder, as spelt then case-blind, `#` and `|label`
+dropped, unknown disks skipped): its first disk is the one mounted, and the
+drive's change menu offers its disks in its order. The order is kept in the
+cache as `<key>.m3u`, which `mediaSetOf` reads. Same code in the browser
+build. Pinned by `media_source` § 7 (zip and 7z, a playlist naming nothing,
+the second resolve from the cache).
+
 ## 2026-11-26 — .7z (and .zip, .gz) in the browser build
 
 The browser build compiles the same `MediaSource` as the desktop, but its

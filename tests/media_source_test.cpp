@@ -27,6 +27,8 @@
 //  5. the predicates
 //  6. a .7z: its first disk mounted, the other beside it; a .7z packed with
 //     a method POM2 lacks refused as such
+//  7. an archive's own .m3u: its first disk mounted, its disks and its
+//     order for the drive's change menu
 
 #include "MediaSource.h"
 #include "SevenZipFixtures.h"
@@ -430,6 +432,55 @@ int main()
         CHECK(pom2::isCompressedImage("https://x/y.7z?dl=1"));
         const char* sniffed = pom2::mediaArchiveExtension(pom2test::kSevenZipLzma2);
         CHECK(sniffed && std::string(sniffed) == ".7z");
+    }
+
+    // 7. An .m3u inside the archive (zip and 7z), read as the libretro core
+    //    reads one: relative to its folder, as spelt then whatever the case,
+    //    '#' lines and "|label" dropped, a disk it does not hold skipped.
+    {
+        auto endsWith = [](const std::string& s, const std::string& x) {
+            return s.size() >= x.size() && s.compare(s.size() - x.size(), x.size(), x) == 0;
+        };
+        std::vector<uint8_t> sideB = disk, sideC = disk;
+        sideB[1] ^= 0xFF;
+        sideC[2] ^= 0xFF;
+        const std::string m3u = "\xEF\xBB\xBF#EXTM3U\r\n#EXTINF:0,Second\r\n  disks/Side B.dsk|B  \r\n\r\n"
+                                "DISKS/side a.dsk\r\nmissing.dsk\r\n";
+        put(dir / "listed.zip", zipStored({ { "disks/Side A.dsk", disk }, { "disks/Side B.dsk", sideB },
+                                            { "disks/Side C.dsk", sideC },
+                                            { "Game.m3u", std::vector<uint8_t>(m3u.begin(), m3u.end()) } }));
+        for (int pass = 0; pass < 2; ++pass) {   // unpacked, then from the cache
+            auto listed = pom2::resolveMediaSource((dir / "listed.zip").string(), cache);
+            CHECK(listed.ok && endsWith(listed.localPath, "Side B.dsk") && get(listed.localPath) == sideB);
+            CHECK(listed.fromCache == (pass == 1));
+            CHECK(listed.note.find("2 disks in the zip's playlist Game.m3u") != std::string::npos);
+            const auto set = pom2::mediaSetOf(listed.localPath, cache);
+            CHECK(set.size() == 2);   // side C is not in the playlist
+            if (set.size() == 2) {
+                CHECK(pom2::mediaDisplayName(set[0]) == "Side B.dsk" && get(set[0]) == sideB);
+                CHECK(pom2::mediaDisplayName(set[1]) == "Side A.dsk" && get(set[1]) == disk);
+            }
+        }
+
+        // A playlist that names nothing the archive holds: the archive's
+        // order, and the set in name order, as with no playlist at all.
+        const std::string none = "nothing.dsk\n";
+        put(dir / "unlisted.zip", zipStored({ { "b.dsk", sideB }, { "x.m3u", std::vector<uint8_t>(none.begin(), none.end()) },
+                                              { "a.dsk", disk } }));
+        auto unlisted = pom2::resolveMediaSource((dir / "unlisted.zip").string(), cache);
+        CHECK(unlisted.ok && endsWith(unlisted.localPath, "b.dsk"));
+        CHECK(unlisted.note.find("playlist") == std::string::npos);
+        const auto plain = pom2::mediaSetOf(unlisted.localPath, cache);
+        CHECK(plain.size() == 2 && pom2::mediaDisplayName(plain[0]) == "a.dsk");
+
+        // The same through a .7z (bsdtar): side B first.
+        put(dir / "listed.7z", pom2test::kSevenZipPlaylist);
+        auto seven = pom2::resolveMediaSource((dir / "listed.7z").string(), cache);
+        CHECK(seven.ok && endsWith(seven.localPath, "Side B.dsk"));
+        CHECK(seven.ok && get(seven.localPath) == pom2test::sevenZipFixtureDisk('B'));
+        CHECK(seven.note.find("7z's playlist Game.m3u") != std::string::npos);
+        const auto sevenSet = pom2::mediaSetOf(seven.localPath, cache);
+        CHECK(sevenSet.size() == 2 && pom2::mediaDisplayName(sevenSet.back()) == "Side A.dsk");
     }
 
     fs::remove_all(dir, ec);
