@@ -96,6 +96,13 @@ MediaSourceResult resolveMediaSource(const std::string& source,
                                      const std::filesystem::path& cacheDir,
                                      const std::atomic<bool>* abort = nullptr);
 
+/// The source this process last resolved into `localPath` (the archive or
+/// the URL a disk came out of), or "" for a file no resolve produced. Only
+/// the image a resolve RETURNED: the other disks of a set are not what
+/// resolving the source again would mount. The browser's Copy link puts the
+/// source in the link, which a cached copy's path cannot be.
+std::string mediaSourceOf(const std::string& localPath);
+
 } // namespace pom2
 
 #endif // POM2_MEDIA_SOURCE_H

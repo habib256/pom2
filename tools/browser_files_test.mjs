@@ -91,9 +91,19 @@ await last().fire('change');
 assert.deepEqual(calls.at(-1), [2, '/uploads/disk-3/space_and_unicode-_.dsk', '']);
 assert.deepEqual(files.get(diskPath), [87, 79, 90]);
 choose(2);
-last().files = [{ name: 'game.zip', size: 1 }];
+last().files = [{ name: 'notes.txt', size: 1 }];
 await last().fire('change');
 assert.match(calls.at(-1)[2], /supported disk image/);
+// An archive goes through as it is: the C++ side unpacks it (MediaSource.h).
+assert.match(last().accept, /\.7z/);
+for (const archive of ['game.7z', 'GAME.ZIP', 'game.dsk.gz']) {
+  choose(2);
+  last().files = [{ name: archive, size: 1,
+    async arrayBuffer() { return new Uint8Array([1]).buffer; } }];
+  await last().fire('change');
+  assert.equal(calls.at(-1)[2], '', archive + ' refused');
+  assert(calls.at(-1)[1].endsWith('/' + archive), archive + ' lost its name');
+}
 choose(2);
 last().files = [{ name: 'huge.hdv', size: 64 * 1024 * 1024 + 1 }];
 await last().fire('change');

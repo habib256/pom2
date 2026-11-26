@@ -85,4 +85,22 @@ assert.deepEqual(p.mounts, [{ key: 's6d2', value: 'https://h/a b&c.dsk' }]);
 assert.equal(link.setupQuery('iic-pal', [], {}).query, '?preset=iic-pal&nodisk=1');
 assert.equal(link.planDrives('?preset=iic-pal&nodisk=1', DEF).boot, null);
 
+// fetchDiskUrl: a disk or an archive of one (.zip / .7z / .gz, unpacked by
+// the C++ side, MediaSource.h) is downloaded into MEMFS under its own name;
+// any other name is refused before a byte is fetched.
+globalThis.window = { location: { href: 'https://pom2.test/' } };
+let fetched = 0;
+globalThis.fetch = async () => { ++fetched; return new Response(new Uint8Array([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C])); };
+const memfs = new Map();
+const fakeFs = { mkdirTree() {}, writeFile(p, bytes) { memfs.set(p, bytes); } };
+for (const name of ['Game%20Side%20A.7z', 'GAME.ZIP', 'game.dsk.gz', 'game.woz']) {
+  const at = await link.fetchDiskUrl('https://h/' + name, '/uploads/url/s6d1', fakeFs);
+  assert.equal(at, '/uploads/url/s6d1/' + decodeURIComponent(name).replace(/ /g, '_'));
+  assert(memfs.has(at));
+}
+assert.equal(fetched, 4);
+await assert.rejects(link.fetchDiskUrl('https://h/readme.txt', '/uploads/url/s6d1', fakeFs),
+                     /\.7z/);
+assert.equal(fetched, 4);
+
 console.log('wasm_setup_link: all passed');

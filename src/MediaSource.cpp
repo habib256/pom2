@@ -33,6 +33,8 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -428,6 +430,13 @@ MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path&
 
 } // namespace
 
+namespace {
+// mediaSourceOf's record. Resolves run on the UI thread and on the Open URL
+// thread alike.
+std::mutex g_sourcesMutex;
+std::map<std::string, std::string> g_sources;   // local image -> its source
+} // namespace
+
 MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& cacheDir,
                                      const std::atomic<bool>* abort)
 {
@@ -435,7 +444,18 @@ MediaSourceResult resolveMediaSource(const std::string& source, const fs::path& 
     // What a URL or an archive gave, or the file itself, may still be an
     // exchange file: converted last.
     if (r.ok && isExchangeMedia(r.localPath)) resolveExchange(r, cacheDir);
+    if (r.ok && r.localPath != source) {
+        std::lock_guard<std::mutex> lock(g_sourcesMutex);
+        g_sources[r.localPath] = source;
+    }
     return r;
+}
+
+std::string mediaSourceOf(const std::string& localPath)
+{
+    std::lock_guard<std::mutex> lock(g_sourcesMutex);
+    const auto it = g_sources.find(localPath);
+    return it == g_sources.end() ? std::string() : it->second;
 }
 
 namespace {

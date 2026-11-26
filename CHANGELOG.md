@@ -10,6 +10,19 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-26 — .7z (and .zip, .gz) in the browser build
+
+The browser build compiles the same `MediaSource` as the desktop, but its
+file selector and its link parameters (`?url=`, `?sNdM=`) accepted raw
+images only, so no archive ever reached it. They now take `.zip`, `.7z` and
+`.gz`; the tab unpacks the archive in memory (the media cache is under
+`/home/web_user`, MEMFS, not IndexedDB, so a re-import never piles copies
+up in the visitor's storage). File ▸ Copy link used to report a disk from
+an archive as "imported from this computer": `mediaSourceOf` now gives the
+archive a disk came out of, and the link carries the archive's URL. Pinned
+by `browser_files`, `wasm_setup_link` and `wasm_links_smoke` (a `.7z` link
+booted in Chrome, then copied back).
+
 ## 2026-11-26 — .7z archives, on the desktop and in the libretro core
 
 A disk packed in a `.7z` opens as a `.zip` does: dropped on the window, given

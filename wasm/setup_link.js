@@ -30,7 +30,9 @@
 var pom2SetupLink = (function () {
   'use strict';
   const DRIVE_KEY = /^s([1-7])d([1-9]|1[0-4])$/;
-  const DISK_EXT = /\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image)$/i;
+  // A .zip, .7z or .gz is downloaded as it is and unpacked by the C++ side
+  // (MediaSource.h): the boot positional and --mount both resolve archives.
+  const DISK_EXT = /\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image|zip|7z|gz)$/i;
   const LIMIT = 64 * 1024 * 1024;
 
   function isRemote(v) { return /^https?:\/\//i.test(v || ''); }
@@ -121,7 +123,8 @@ var pom2SetupLink = (function () {
     const name = decodeURIComponent(target.pathname.split('/').pop() || '');
     if (!DISK_EXT.test(name))
       throw new Error('the file name must end in .dsk, .do, .d13, .po, .nib, ' +
-                      '.woz, .moof, .2mg, .hdv or .image');
+                      '.woz, .moof, .2mg, .hdv or .image, or be a .zip, .7z ' +
+                      'or .gz holding one');
     // A server that stalls must not hold the page on its splash forever, and
     // a body with no (or a false) Content-Length is counted as it streams.
     const abort = new AbortController();

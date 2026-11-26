@@ -961,7 +961,10 @@ https://habib256.github.io/pom2/wasm/?preset=ii%2B&url=https://raw.githubusercon
 ```
 
 The address must be http(s), its file name must carry one of the disk
-extensions listed below, and the image is limited to 64 MiB. `url` wins
+extensions listed below (an archive of one included: `.zip`, `.7z`, `.gz`),
+and the file is limited to 64 MiB. **File > Copy link** gives an archive's
+link back for the disk it booted; another disk of the same archive, swapped
+in from the drive's menu, cannot go in a link. `url` wins
 over `disk` and `nodisk`; if the download fails, POM2 says why and starts
 without a disk. The downloaded copy lives only in the tab: like an imported
 disk, it is gone on reload unless a session keeps it.
@@ -981,7 +984,10 @@ and boot it through the normal Disk II, 3.5-inch or HDV routing. To insert
 without rebooting, click an empty drive in **Drives**, or choose its Insert
 entry under **File**. The selected drive must accept that image type.
 Supported extensions are `.dsk`, `.do`, `.d13`, `.po`, `.nib`, `.woz`, `.moof`,
-`.2mg`, `.hdv` and `.image`. The file selector limits uploads to 64 MiB per
+`.2mg`, `.hdv` and `.image`, and a `.zip`, `.7z` or `.gz` holding one: the
+archive is unpacked in the tab as on the desktop (a 7z packed with LZMA,
+LZMA2 or PPMd), its first disk mounted and the others offered by the drive's
+change button. The file selector limits uploads to 64 MiB per
 file; normal format/drive limits still apply. Each selector upload has a
 separate virtual file, so choosing the same filename twice cannot overwrite
 a mounted disk. Drag-and-drop uses filename-based copies instead; use the

@@ -5337,10 +5337,21 @@ those words, and the player unpacks it on the host.
   (`MY_CPU_LE_UNALIGN`): a `POM2_SANITIZE=…undefined…` build compiles
   `pom2_lzma` with `-fno-sanitize=alignment`, every other check kept.
 
+- **The browser build** runs the same `MediaSource`: its file selector
+  (`wasm/browser_files.js`) and its links (`?url=`, `?sNdM=`,
+  `wasm/setup_link.js`) pass a `.zip` / `.7z` / `.gz` through as it is, and
+  the boot positional or `--mount` unpacks it. The cache is under
+  `/home/web_user` (MEMFS): it lives as long as the tab, like an upload.
+  `mediaSourceOf(local)` names the archive the RETURNED image came out of,
+  so File ▸ Copy link puts the archive's URL in the link — only for that
+  image: another side of the set is not what the link would boot.
+
 Pinned by `seven_zip_archive` (LZMA, LZMA2, PPMd and BZip2 archives written
 by bsdtar, every byte of one flipped in turn, every truncation),
 `media_source` § 6 and `pom2_libretro_formats` (7z archives written by
-Python's liblzma from `7zFormat.txt`, booted through the core).
+Python's liblzma from `7zFormat.txt`, booted through the core), and in the
+browser by `browser_files`, `wasm_setup_link` and `wasm_links_smoke` (a
+"copy"-method 7z served over HTTP, booted in Chrome, its link copied back).
 
 ### DiskIICard
 

@@ -806,7 +806,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // An http(s) URL, a .zip or a .gz: its local image (MediaSource.h), like
+    // An http(s) URL, a .zip, a .7z or a .gz: its local image (MediaSource.h), like
     // the TNFS fetch above — before the window, the lock or the classifier.
     if (!plan->bootDiskPath.empty() && pom2::needsMediaResolve(plan->bootDiskPath)) {
         const auto got = pom2::resolveMediaSource(plan->bootDiskPath, pom2::mediaCacheDir());

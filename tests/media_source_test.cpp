@@ -403,6 +403,11 @@ int main()
         const auto sides = pom2::mediaSetOf(seven.localPath, cache);
         CHECK(sides.size() == 2);
         if (sides.size() == 2) CHECK(get(sides[1]) == pom2test::sevenZipFixtureDisk('B'));
+        // The disk mounted names its archive; side B, which resolving the
+        // archive again would not mount, names nothing; nor does a file.
+        CHECK(pom2::mediaSourceOf(seven.localPath) == (dir / "Game.7z").string());
+        if (sides.size() == 2) CHECK(pom2::mediaSourceOf(sides[1]).empty());
+        CHECK(pom2::mediaSourceOf((dir / "Game.7z").string()).empty());
         auto cachedSeven = pom2::resolveMediaSource((dir / "Game.7z").string(), cache);
         CHECK(cachedSeven.ok && cachedSeven.fromCache && cachedSeven.localPath == seven.localPath);
 

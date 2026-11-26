@@ -44,7 +44,49 @@ const files = new Map([
   ['/POM2.js', ['POM2.js', 'text/javascript']], ['/POM2.wasm', ['POM2.wasm', 'application/wasm']],
   ['/POM2.data', ['POM2.data', 'application/octet-stream']],
 ]);
-const disks = new Map([['/side1.dsk', disk(0x11)], ['/side2.dsk', disk(0x22)]]);
+// A solid .7z of `members` [[name, Buffer]] with the "copy" coder, from
+// 7-Zip's DOC/7zFormat.txt: the browser path (fetch, MEMFS, the C++ side's
+// MediaSource + SevenZipArchive) is what this checks; LZMA itself is the
+// seven_zip_archive test's.
+function sevenZipCopy(members) {
+  const crc32 = bytes => {
+    let c = 0xFFFFFFFF;
+    for (const b of bytes) { c ^= b; for (let k = 0; k < 8; ++k) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const num = v => {   // 7zFormat.txt NUMBER (values below 2^28 here)
+    for (let n = 0; n < 4; ++n)
+      if (v < 2 ** (8 * n + 7 - n)) {
+        const out = [((0xFF << (8 - n)) & 0xFF) | Math.floor(v / 2 ** (8 * n))];
+        for (let i = 0; i < n; ++i) out.push(Math.floor(v / 2 ** (8 * i)) & 0xFF);
+        return out;
+      }
+    throw new Error('number too large');
+  };
+  const u32 = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+  const data = Buffer.concat(members.map(m => m[1]));
+  const names = Buffer.concat(members.map(m => Buffer.from(m[0] + '\0', 'utf16le')));
+  const header = Buffer.from([
+    0x01, 0x04,                                              // Header, MainStreamsInfo
+    0x06, ...num(0), ...num(1), 0x09, ...num(data.length), 0x00,   // PackInfo
+    0x07, 0x0B, ...num(1), 0x00, ...num(1), 0x01, 0x00,       // one folder, one coder: Copy
+    0x0C, ...num(data.length), 0x00,
+    0x08, 0x0D, ...num(members.length),                      // SubStreamsInfo
+    0x09, ...members.slice(0, -1).flatMap(m => num(m[1].length)),
+    0x0A, 0x01, ...members.flatMap(m => u32(crc32(m[1]))), 0x00,
+    0x00,
+    0x05, ...num(members.length),                            // FilesInfo: names
+    0x11, ...num(names.length + 1), 0x00, ...names, 0x00,
+    0x00]);
+  const start = Buffer.alloc(20);
+  start.writeBigUInt64LE(BigInt(data.length), 0);
+  start.writeBigUInt64LE(BigInt(header.length), 8);
+  start.writeUInt32LE(crc32(header), 16);
+  const signature = Buffer.from([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00, 0x04, ...u32(crc32(start))]);
+  return Buffer.concat([signature, start, data, header]);
+}
+const disks = new Map([['/side1.dsk', disk(0x11)], ['/side2.dsk', disk(0x22)],
+                       ['/sides.7z', sevenZipCopy([['Side A.dsk', disk(0x11)], ['Side B.dsk', disk(0x22)]])]]);
 // A host page for the embed check: it frames the emulator and keeps every
 // message the frame posts.
 const hostPage = query => Buffer.from(`<!doctype html><meta charset="utf-8">
@@ -142,6 +184,26 @@ try {
   assert.equal(params.get('s6d1'), one);
   assert.equal(params.get('s6d2'), two);
   console.log(`wasm_links_smoke: two-disk link booted disk 1, mounted disk 2, Copy link -> ${search}`);
+
+  // A link to a .7z: downloaded as it is, unpacked by the C++ side, its
+  // first disk booted.
+  consoleLines.length = 0;
+  await send('Page.navigate', { url: base + `?preset=iie&s6d1=${encodeURIComponent(base + 'sides.7z')}` });
+  await waitFor(async () => has('booted disk:'), 'the .7z boot', 120000).catch(error => {
+    throw new Error(error.message + ': ' + consoleLines.filter(l => l.includes('CLI')).join(' | '));
+  });
+  assert(has('Side A.dsk from the 7z'), 'the .7z was not unpacked: ' + consoleLines.filter(l => l.includes('7z')).join(' | '));
+  assert(consoleLines.some(l => l.includes('booted disk:') && l.endsWith('Side A.dsk')), 'side A of the .7z is not the disk booted');
+  // Copy link names the archive's URL, not the unpacked copy (which only
+  // this tab has, and would be skipped as "imported from this computer").
+  await evaluate("history.replaceState(null, '', '?cleared=1')");
+  await evaluate("Module.ccall('pom2_copy_setup_link', null, [], [])");
+  const archiveSearch = await waitFor(async () => {
+    const s = await evaluate('window.location.search');
+    return s.includes('s6d1') ? s : null;
+  }, 'the copied .7z link', 10000);
+  assert.equal(new URLSearchParams(archiveSearch).get('s6d1'), base + 'sides.7z');
+  console.log(`wasm_links_smoke: a .7z link booted its first disk, Copy link -> ${archiveSearch}`);
 
   // WASM-005: the embedded page says it booted; a plain one says nothing.
   const frameRunning = "(() => { const w = document.getElementById('f').contentWindow; " +

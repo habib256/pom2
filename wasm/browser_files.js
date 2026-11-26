@@ -71,7 +71,8 @@ Module.pom2ChooseFile = function(kind) {
   Module.pom2FilePickerActive = true;
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = kind === 2 ? '.dsk,.do,.d13,.po,.nib,.woz,.moof,.2mg,.hdv,.image'
+  // An archive is unpacked by the C++ side (MediaSource.h), as on the desktop.
+  input.accept = kind === 2 ? '.dsk,.do,.d13,.po,.nib,.woz,.moof,.2mg,.hdv,.image,.zip,.7z,.gz'
     : kind === 1 ? '.pom2session' : '.txt,.bas,.a,text/plain';
   input.style.display = 'none';
   document.body.appendChild(input);
@@ -93,8 +94,9 @@ Module.pom2ChooseFile = function(kind) {
     if (file.size > limit) { complete('', tooLarge); return; }
     // Preserve the extension for format detection; never use a supplied path.
     const name = kind === 2 ? (file.name || '').split(/[\\/]/).pop() : '';
-    if (kind === 2 && !/\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image)$/i.test(name)) {
-      complete('', 'Choose a supported disk image (.dsk, .do, .d13, .po, .nib, .woz, .moof, .2mg, .hdv, .image).');
+    if (kind === 2 && !/\.(dsk|do|d13|po|nib|woz|moof|2mg|hdv|image|zip|7z|gz)$/i.test(name)) {
+      complete('', 'Choose a supported disk image (.dsk, .do, .d13, .po, .nib, .woz, .moof, .2mg, .hdv, ' +
+                   '.image), or a .zip, .7z or .gz holding one.');
       return;
     }
     try {

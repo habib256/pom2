@@ -493,8 +493,11 @@ void MainWindow::copyBrowserSetupLink()
             }
             for (const auto& [d, p] : held) {
                 if (json.size() > 1) json += ",";
+                // A disk unpacked from a downloaded .zip / .7z / .gz: the
+                // archive's path, which the page knows the URL of.
+                const std::string source = pom2::mediaSourceOf(p);
                 json += "{\"key\":" + quote("s" + std::to_string(s) + "d" + std::to_string(d + 1)) +
-                        ",\"path\":" + quote(p) + "}";
+                        ",\"path\":" + quote(source.empty() ? p : source) + "}";
             }
         }
     }
