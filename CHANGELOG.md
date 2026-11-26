@@ -10,6 +10,34 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-26 — Start-up audio runs wide, then comes down: no more speaker scratches
+
+The user still heard the speaker scratch in POM2's first seconds after
+c5b38397. Two causes, both start-up only: the CPU worker stalled longer than
+the speaker's 100 ms lead (its toggles fell behind the audio cursor and were
+purged), and the device was opened at its smallest buffer (16 ms) exactly
+while the window loads. Now the start-up is WIDE — the device one rung up,
+at least 1024 frames, and a 300 ms speaker lead — and comes down once the
+machine has run steady for 3 s: the lead at once, the device at the first
+quiet moment (after at most 30 s of a never-silent demo). The speaker only
+re-times its lead in a silence, which also ends the lead's erosion: a
+resynced stall used to shorten it for good, and it came back only after a
+purge. **The lead is measured against the CPU's now, published by the
+worker — not against the toggles.** The first version measured the distance
+to the next note's first toggle, which in a rest is the length of the rest:
+Micro Sokoban's music had every note pushed back 95 ms and its backlog
+purged every few notes, and the user heard the tempo slow and jump (the
+Mockingboard's Digidream 1 mistake, repeated). Two counters now make that
+visible — toggles dropped, cursor re-timings, both still while a tune plays
+right — in the Audio panel and in `audio_warmup`, which sweeps rests and
+device buffers and requires zero of each and an exact tempo. Start-up late callbacks no longer climb
+the ladder for good. The SDK keeps the former behaviour to the cycle.
+The log of a run on a Mac with DIX on the //c PAL shows the sequence: 1024
+frames and 300 ms at start, 100 ms when steady, 256 frames at a quieter
+passage; no re-timing during the music. The user confirmed the final
+version by ear. → DEV § Start-up
+warm-up. Pinned by `audio_warmup`.
+
 ## 2026-11-26 — An archive's own .m3u, on the desktop and in the browser
 
 The libretro core has followed the `.m3u` inside a `.zip` since it opened

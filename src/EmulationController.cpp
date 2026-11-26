@@ -1424,6 +1424,13 @@ int EmulationController::runCpuSlice(int chunk)
     // hit the DMA card's processor makes below is a stop, never "stale".
     if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
         debugResume();
+    // The speaker measures its replay lead against the CPU's NOW, published
+    // as every slice ends, whatever the return path (SpeakerDevice::
+    // noteProducerNow: the last TOGGLE says nothing during a rest).
+    struct PublishNow {
+        EmulationController& self;
+        ~PublishNow() { if (self.spk) self.spk->noteProducerNow(self.mem.getCycleCounter()); }
+    } publishNow{*this};
     int dmaSpent = 0;
     // A DMA card's processor runs a whole budget per `dmaRun`, and nothing in
     // it looks at the debugger: a watch its Z80 hit was only seen when the

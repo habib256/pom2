@@ -95,6 +95,33 @@ public:
     void setMuted(bool m) { muted.store(m, std::memory_order_relaxed); }
     bool isMuted() const  { return muted.load(std::memory_order_relaxed); }
 
+    /// The replay lead: how far the audio cursor trails the toggles it plays,
+    /// in seconds — the margin a stalled CPU worker has before its toggles
+    /// fall behind the cursor and are purged (an audible scratch). 0.10 s by
+    /// default and for the synchronous SDK, which never calls this.
+    ///
+    /// A REAL-TIME host (the desktop and the browser, through
+    /// AudioCoordinator's start-up warm-up, AudioWarmup.h) calls it, and that
+    /// also turns on the lead's upkeep: at the first toggle of a sound that
+    /// follows a silence (kIdleSecs with no toggle), a lead under half the
+    /// target or over one and a half times it is set back to the target —
+    /// by inserting or skipping silence, which nobody hears. Without it the
+    /// lead only ever ERODED: a worker stall that the worker resyncs instead
+    /// of catching up costs the lead its length for good, and it was only
+    /// re-established once it had gone negative, i.e. after a purge.
+    void setRealtimeLead(double seconds);
+    /// The CPU's present cycle, from the worker as each slice ends. The lead
+    /// is `this - the audio cursor`. It cannot be read off the toggles: in a
+    /// rest between two notes the newest toggle is old, and the first one of
+    /// the next note is as near the cursor as the rest was short — measured
+    /// that way (the first version of the upkeep), every note of Micro
+    /// Sokoban's music looked 95 ms late, was pushed back, and the backlog
+    /// was then purged in a lump: the tempo slowed, then jumped. The
+    /// Mockingboard learned the same on Digidream 1 ("pace against CPU-NOW,
+    /// never against the last WRITE", Mockingboard.cpp).
+    void noteProducerNow(uint64_t cpuCycle);
+    double playbackLeadSeconds() const { return leadSecs_.load(std::memory_order_relaxed); }
+
     /// Drop pending events + reset filter state. Called on hard reset.
     void reset();
     /// The cycle counter jumped (snapshot load, rewind): the cycle→stock
@@ -110,6 +137,18 @@ public:
     /// Public so a test can pin the counter itself, the way
     /// `MockingboardCard::ayQueueGen_` is pinned through its own queue.
     uint32_t queueGeneration() const;
+
+    /// Every toggle the audio thread did NOT play, whatever the reason (the
+    /// forward catch-up, the stale purge, a far-future front, a reset's
+    /// leftovers), and every time it moved its cursor other than by playing
+    /// (a re-anchor, the lead's upkeep). Both are ZERO in a healthy steady
+    /// state — a tune keeps its tempo exactly when the cursor free-runs and
+    /// nothing is dropped — so both are what a test, and the Audio panel,
+    /// watch: the first upkeep moved the cursor at every note of Micro
+    /// Sokoban's music and purged the backlog every few notes, and nothing
+    /// counted it.
+    uint64_t droppedToggleCount() const { return droppedToggles_.load(std::memory_order_relaxed); }
+    uint64_t cursorMoveCount() const { return cursorMoves_.load(std::memory_order_relaxed); }
 
     /// Toggles the audio thread dropped because they were stale: either a
     /// leftover whose generation had been reset underneath it, or a queue
@@ -136,7 +175,22 @@ private:
     // MAME's Apple II speaker route is 0.4 (apple2e.cpp / apple2.cpp).
     // Keep the same nominal level so the AY-to-speaker balance is measurable.
     static constexpr float  kSquareAmp    = 0.4f;
-    static constexpr float  kCatchUpSecs  = 0.10f;     // snap forward if behind
+    // The default lead (playbackLeadSeconds). [F] Tuned, not measured.
+    static constexpr double kDefaultLeadSecs = 0.10;
+    // How much MORE than the lead the producer may get ahead before its
+    // backlog is purged (the forward catch-up, for a resume after the device
+    // was suspended). At least 0.25 s, so a lead lowered from the start-up
+    // 0.30 s to 0.10 s while a sound plays is trimmed at its next silence,
+    // not purged in the middle of the sound. Without a real-time host the
+    // threshold stays the former 2 x the lead; see fillAudioBuffer.
+    static constexpr double kSnapMarginSecs = 0.25;
+    // A silence long enough to re-set the lead behind (realtime only).
+    static constexpr double kIdleSecs = 0.05;
+    std::atomic<double>     leadSecs_{ kDefaultLeadSecs };
+    std::atomic<bool>       realtimeLead_{ false };
+    std::atomic<uint64_t>   producerNow_{ 0 };   // stock time; 0 = not published
+    std::atomic<uint64_t>   droppedToggles_{ 0 };
+    std::atomic<uint64_t>   cursorMoves_{ 0 };
     static constexpr size_t kMaxEvents    = 16384;     // ~750 ms at 22 kHz toggles
     // 4× oversampling × 64-tap Blackman-windowed sinc.
     // RATE_MULTIPLIER must divide FILTER_LENGTH evenly.
@@ -165,6 +219,7 @@ private:
     /// busiest buffer seen. Audio thread only.
     std::vector<uint64_t> windowEvents_;
     uint64_t audioCpuCursor   = 0;     // CPU cycle at start of next sample
+    uint64_t lastToggleCycle_ = 0;     // stamp of the last toggle played (realtime lead upkeep)
     double   subSampleAccum   = 0.0;   // fractional CPU cycles into next sub
     bool     currentLevel     = false;
     // Rolling ring of integrated sub-sample windows. Each slot stores the

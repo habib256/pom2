@@ -44,6 +44,7 @@ audio_mix_law
 audio_mixer_smoke
 audio_source_teardown
 audio_stereo
+audio_warmup
 ay_event_ring
 ay_mame_parity
 ay_music_export

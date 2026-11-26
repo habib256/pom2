@@ -784,6 +784,7 @@ set(POM2_FOUNDATION_HEADERS
     src/Sha256.h
     src/TwoImgHeader.h
     src/AudioBufferLadder.h
+    src/AudioWarmup.h
     src/AudioBufferPolicy.h
     src/AudioDeviceWatch.h
     src/WozBitTiming.h

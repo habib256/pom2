@@ -2272,6 +2272,13 @@ target_include_directories(test_audio_device_watch PRIVATE ${CMAKE_SOURCE_DIR}/s
 add_test(NAME audio_device_watch COMMAND test_audio_device_watch)
 set_tests_properties(audio_device_watch PROPERTIES TIMEOUT 10)
 
+# Wide at start-up, then adjusted (AudioWarmup.h), and the speaker lead's
+# upkeep a real-time host turns on.
+add_executable(test_audio_warmup audio_warmup_test.cpp ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp)
+target_include_directories(test_audio_warmup PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME audio_warmup COMMAND test_audio_warmup)
+set_tests_properties(audio_warmup PROPERTIES TIMEOUT 20)
+
 # ─── The buffer ladder's state (AudioBufferLadder.h) ──────────────────────
 # The climb, the learned rung, the pin and the browser's one climb per load,
 # driven by a fake clock and counter. Before this file the state lived in

@@ -25,6 +25,7 @@
 
 #include "AudioBufferLadder.h"
 #include "AudioDeviceWatch.h"
+#include "AudioWarmup.h"
 
 #include <array>
 #include <cstddef>
@@ -200,6 +201,16 @@ public:
         /// the one remembered (== periodFrames when nothing is pending).
         bool          appliesAtNextLoad = false;
         std::uint32_t nextLoadFrames    = 0;
+        /// Start-up warm-up (AudioWarmup.h): the device runs above its own
+        /// rung, `targetFrames`, until the machine runs steady and the
+        /// output is quiet.
+        bool          warming           = false;
+        std::uint32_t targetFrames      = 0;
+        double        speakerLeadMs     = 0.0;
+        /// SpeakerDevice::droppedToggleCount / cursorMoveCount: both stay
+        /// still while a tune plays right.
+        std::uint64_t speakerDropped    = 0;
+        std::uint64_t speakerMoves      = 0;
     };
     BufferSnapshot captureBuffer() const;
     /// Pin the device to one rung (`frames`), or 0 to let the ladder decide
@@ -210,6 +221,11 @@ public:
     /// window (`kWindowSec`), unless a rung is pinned. The climb is
     /// remembered (`audio_buffer_learned`) so the next launch starts there.
     void tick();
+    /// The machine powered on, or switched profile: run WIDE again — the
+    /// speaker's start-up lead, and the device's start-up rung when restore()
+    /// opened it there (AudioWarmup.h). Brought down by tick() once the
+    /// machine runs steady.
+    void beginWarmup();
 
     /// Restore host-only mixer policy. Persist writes both host controls and
     /// the live slot-card levels captured through the locked topology.
@@ -234,7 +250,16 @@ private:
     // The ladder's state (AudioBufferLadder.h). UI thread only.
     AudioBufferLadder ladder_;
     AudioDeviceWatch deviceWatch_;      ///< when to re-open a lost device
+    AudioWarmup      warmup_;           ///< wide at start-up, then adjusted
+    SpeakerDevice*   speaker_ = nullptr;   ///< from restore(); its lead follows warmup_
+    std::uint32_t    warmFrames_ = 0;      ///< the rung restore() opened at, 0 = none
+    std::uint32_t    deviceTarget_ = 0;    ///< the rung the device belongs at (ladder / pin)
+    double           lastTickSec_ = -1.0;
     void applyLadderRung(std::uint32_t frames, const std::string& why, bool pinned = false);
+    /// Re-open the device at `frames` WITHOUT teaching the ladder (the
+    /// warm-up's rungs are not climbs).
+    bool applyDeviceFrames(std::uint32_t frames, const std::string& why);
+    void applyLead(double seconds, const char* why);
 };
 
 } // namespace pom2

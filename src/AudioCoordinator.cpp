@@ -431,16 +431,34 @@ void AudioCoordinator::restore(Settings& settings,
     // to 2048 frames yesterday does not crackle through the climb again
     // today. A learned value that is not a rung of this platform is
     // dropped; one at or below the device's current buffer applies nothing.
+    //
+    // And the start-up runs WIDE (AudioWarmup.h): unless the rung is pinned
+    // or the platform cannot re-open its device now (the browser), the
+    // device opens one rung up from where it belongs, at least 1024 frames,
+    // and comes down once the machine runs steady and the output is quiet.
     {
         const AudioBufferLadder::Rung r = ladder_.restore(
             settings.getInt("audio_buffer_frames", 0),
             settings.getInt("audio_buffer_learned", 0),
             device_.periodFrames(), device_.platform());
-        if (r.frames != 0)
+        const std::uint32_t target = r.frames != 0 ? r.frames : device_.periodFrames();
+        const std::uint32_t warm = AudioWarmup::warmPeriodFrames(device_.platform(), target);
+        warmFrames_ = 0;
+        deviceTarget_ = target;
+        if (!r.pinned && device_.isAvailable() && !AudioDevice::appliesAtNextLoad() &&
+            warm > device_.periodFrames() &&
+            applyDeviceFrames(warm, "start-up: wide until the machine runs steady")) {
+            warmFrames_ = warm;
+        } else if (r.frames != 0) {
             applyLadderRung(r.frames, r.pinned ? "pinned in the settings"
                                                : "learned on an earlier run",
                             r.pinned);
+        }
     }
+    speaker_ = &speaker;
+    // Warm from here, so the device comes down even on a path that never
+    // powers on through MainWindow; power-on starts the clock again.
+    beginWarmup();
 
     speaker.setVolume(settings.getFloat("speaker_volume", 1.0f));
     speaker.setMuted(settings.getBool("speaker_muted", false));
@@ -563,6 +581,11 @@ AudioCoordinator::BufferSnapshot AudioCoordinator::captureBuffer() const
     s.available     = device_.isAvailable();
     s.appliesAtNextLoad = AudioDevice::appliesAtNextLoad();
     s.nextLoadFrames    = device_.nextLoadPeriodFrames();
+    s.warming           = warmup_.warm();
+    s.targetFrames      = warmup_.deviceWaitsForQuiet() ? warmup_.deviceTarget() : s.periodFrames;
+    s.speakerLeadMs     = speaker_ ? speaker_->playbackLeadSeconds() * 1000.0 : 0.0;
+    s.speakerDropped    = speaker_ ? speaker_->droppedToggleCount() : 0;
+    s.speakerMoves      = speaker_ ? speaker_->cursorMoveCount() : 0;
     return s;
 }
 
@@ -594,6 +617,57 @@ void AudioCoordinator::applyLadderRung(std::uint32_t frames, const std::string& 
     ladder_.restartWindow();
 }
 
+namespace {
+double coordinatorNowSec()
+{
+    using clock = std::chrono::steady_clock;
+    static const auto t0 = clock::now();
+    return std::chrono::duration<double>(clock::now() - t0).count();
+}
+} // namespace
+
+bool AudioCoordinator::applyDeviceFrames(std::uint32_t frames, const std::string& why)
+{
+    const std::uint32_t before = device_.periodFrames();
+    const double beforeMs = device_.bufferSeconds() * 1000.0;
+    if (!device_.reconfigurePeriod(frames, false)) {
+        log().warn("Audio", "device buffer: could not re-open at " +
+                            std::to_string(frames) + " frames (" + why + ")");
+        return false;
+    }
+    if (device_.periodFrames() != before)
+        log().info("Audio", "device buffer: " + std::to_string(before) + " -> " +
+                            std::to_string(frames) + " frames (" +
+                            std::to_string(static_cast<int>(beforeMs + 0.5)) + " -> " +
+                            std::to_string(static_cast<int>(device_.bufferSeconds() * 1000.0 + 0.5)) +
+                            " ms), " + why);
+    ladder_.restartWindow();
+    return true;
+}
+
+void AudioCoordinator::applyLead(double seconds, const char* why)
+{
+    if (!speaker_ || !(seconds > 0.0)) return;
+    if (speaker_->playbackLeadSeconds() != seconds)
+        log().info("Audio", "speaker lead: " +
+                            std::to_string(static_cast<int>(speaker_->playbackLeadSeconds() * 1000.0 + 0.5)) +
+                            " -> " + std::to_string(static_cast<int>(seconds * 1000.0 + 0.5)) +
+                            " ms, " + why);
+    speaker_->setRealtimeLead(seconds);
+}
+
+void AudioCoordinator::beginWarmup()
+{
+    // The device's start-up rung counts only while the device is still
+    // there; once brought down, a re-warm (a profile switch) widens the
+    // lead alone — re-opening the device for it would be a hole of its own.
+    const std::uint32_t warm =
+        (warmFrames_ != 0 && device_.periodFrames() == warmFrames_) ? warmFrames_ : 0;
+    const std::uint32_t target = deviceTarget_ != 0 ? deviceTarget_ : device_.periodFrames();
+    const AudioWarmup::Action a = warmup_.begin(coordinatorNowSec(), target, warm);
+    applyLead(a.leadSec, "start-up: wide until the machine runs steady");
+}
+
 void AudioCoordinator::pinBuffer(std::uint32_t frames)
 {
     if (frames == 0) {
@@ -604,13 +678,16 @@ void AudioCoordinator::pinBuffer(std::uint32_t frames)
     if (!ladder_.pin(frames, device_.periodFrames(), device_.platform()))
         return;
     if (frames != 0) applyLadderRung(frames, "pinned in the Audio panel", true);
+    // The user chose: the warm-up no longer brings the device anywhere.
+    deviceTarget_ = device_.periodFrames();
+    warmup_.deviceSettled(deviceTarget_);
 }
 
 void AudioCoordinator::tick()
 {
-    using clock = std::chrono::steady_clock;
-    static const auto t0 = clock::now();
-    const double now = std::chrono::duration<double>(clock::now() - t0).count();
+    const double now = coordinatorNowSec();
+    const double frameSec = lastTickSec_ < 0.0 ? 0.0 : now - lastTickSec_;
+    lastTickSec_ = now;
 
     // A device that went away, or that the system swapped for another: open
     // it again (AudioDeviceWatch.h). Before the ladder, and whether or not a
@@ -641,10 +718,26 @@ void AudioCoordinator::tick()
         }
     }
 
+    // The start-up warm-up (AudioWarmup.h): the lead comes down once the
+    // machine runs steady, the device at the first quiet moment after. The
+    // ladder waits meanwhile — a start-up hiccup is not what the host can
+    // sustain, and used to climb a rung that stayed learned for good.
+    if (warmup_.warm()) {
+        const AudioWarmup::Action a = warmup_.poll(now, frameSec, device_.lateCallbacks(),
+                                                   device_.getMasterPeak());
+        if (a.leadSec > 0.0)
+            applyLead(a.leadSec, "the machine runs steady");
+        if (a.deviceFrames != 0)
+            applyDeviceFrames(a.deviceFrames, "start-up over, at a quiet moment");
+        if (warmup_.warm()) return;
+    }
+
     const AudioBufferLadder::Climb climb = ladder_.poll(
         now, device_.lateCallbacks(), device_.periodFrames(), device_.platform(),
         device_.isAvailable(), AudioDevice::appliesAtNextLoad());
     if (climb.frames == 0) return;
+    deviceTarget_ = climb.frames;
+    warmup_.deviceSettled(climb.frames);
     applyLadderRung(climb.frames, std::to_string(climb.lateInWindow) +
                               " late callbacks in the last " +
                               std::to_string(static_cast<int>(climb.windowSec + 0.5)) +

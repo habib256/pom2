@@ -180,6 +180,7 @@ void SpeakerDevice::reset()
         // leftovers instead of re-filling the queue we just emptied.
         ++queueGen_;
         latestEventCycle.store(0, std::memory_order_relaxed);
+        producerNow_.store(0, std::memory_order_relaxed);
     }
     resetPending_.store(true, std::memory_order_release);
 }
@@ -229,6 +230,23 @@ void SpeakerDevice::setCpuClockAt(uint64_t cycle, double hz, double stockHz)
     stampIdentity_  = stampRatio_ == 1.0 && base == static_cast<double>(cycle);
 }
 
+void SpeakerDevice::setRealtimeLead(double seconds)
+{
+    if (!(seconds > 0.0)) return;
+    leadSecs_.store(std::min(seconds, 1.0), std::memory_order_relaxed);
+    realtimeLead_.store(true, std::memory_order_relaxed);
+}
+
+void SpeakerDevice::noteProducerNow(uint64_t rawCycle)
+{
+    // Nothing to keep for a host that never asked for the upkeep (the SDK).
+    if (!realtimeLead_.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lk(eventMutex);
+    producerNow_.store(stampIdentity_ ? rawCycle
+                                      : static_cast<uint64_t>(toStockLocked(rawCycle) + 0.5),
+                       std::memory_order_relaxed);
+}
+
 void SpeakerDevice::setVolume(float v)
 {
     if (v < 0.0f) v = 0.0f;
@@ -262,6 +280,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
     // (audio thread) so the integrator fields stay single-writer.
     if (resetPending_.exchange(false, std::memory_order_acquire)) {
         audioCpuCursor = 0;
+        lastToggleCycle_ = 0;
         subSampleAccum = 0.0;
         currentLevel   = false;
         composedVolume.fill(0.0);
@@ -285,14 +304,25 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         cpuClockHz /
         (static_cast<double>(sr) * static_cast<double>(kRateMultiplier));
 
+    // The replay lead, in cycles (setRealtimeLead; 0.10 s by default).
+    const double   leadSecs   = leadSecs_.load(std::memory_order_relaxed);
+    const bool     realtime   = realtimeLead_.load(std::memory_order_relaxed);
+    const uint64_t leadCycles = static_cast<uint64_t>(leadSecs * cpuClockHz);
+
     // Catch-up: snap forward if the producer ran ahead. Avoids 5 s of
-    // buffered toggles playing at full speed after a pause+resume.
+    // buffered toggles playing at full speed after a pause+resume. The
+    // threshold is the lead plus a margin of at least as much again: with
+    // the default lead, the same 2 x 0.10 s as ever; with a real-time host
+    // at least 0.25 s more, so lowering the lead does not purge a sound
+    // that is playing with the old, larger one (it is trimmed at the next
+    // silence instead, below).
     const uint64_t latest = latestEventCycle.load(std::memory_order_relaxed);
-    const uint64_t catchUpCycles =
-        static_cast<uint64_t>(2.0 * kCatchUpSecs * cpuClockHz);
+    // (The default form is the former expression, rounded once, exactly.)
+    const uint64_t catchUpCycles = realtime
+        ? leadCycles + static_cast<uint64_t>(std::max(leadSecs, kSnapMarginSecs) * cpuClockHz)
+        : static_cast<uint64_t>(2.0 * leadSecs * cpuClockHz);
     if (latest > audioCpuCursor + catchUpCycles) {
-        const uint64_t snapTo = latest -
-            static_cast<uint64_t>(kCatchUpSecs * cpuClockHz);
+        const uint64_t snapTo = latest - leadCycles;
         std::lock_guard<std::mutex> lk(eventMutex);
         // Each toggle is a parity flip, not an absolute level —
         // recordToggle's overflow trim preserves parity by dropping in
@@ -306,6 +336,8 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
             ++dropped;
         }
         if (dropped & 1u) currentLevel = !currentLevel;
+        droppedToggles_.fetch_add(dropped, std::memory_order_relaxed);
+        cursorMoves_.fetch_add(1, std::memory_order_relaxed);
         audioCpuCursor = snapTo;
         subSampleAccum = 0.0;
     }
@@ -340,6 +372,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         }
         if (futureDropped & 1u) currentLevel = !currentLevel;
         staleDrops_ += futureDropped;
+        droppedToggles_.fetch_add(futureDropped, std::memory_order_relaxed);
         // Consumer-ahead re-anchor — the mirror of the forward catch-up
         // above. While the machine is paused (toolbar pause, debugger
         // break: Mode::Stopped parks the worker but nothing stops the
@@ -349,7 +382,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         // below ate the whole resumed stream one buffer at a time (a net
         // parity flip per ~6 ms buffer) and speaker audio stayed clicks or
         // silence for the rest of the session. Snap back so the resumed
-        // stream keeps the same kCatchUpSecs lead the forward path
+        // stream keeps the same lead the forward path
         // maintains; the catchUpCycles threshold keeps ordinary
         // rounding-stale events (a few cycles) on the cheap purge path.
         //
@@ -366,14 +399,44 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         // anyway, so re-anchoring loses nothing; a few-cycle rounding
         // straggler at the front with a live stream behind it does not
         // trip this, because `latest` is then well ahead.
+        //
         if (!events.empty()
             && (events.front() + catchUpCycles < audioCpuCursor
                 || latest < audioCpuCursor)) {
-            const uint64_t lead =
-                static_cast<uint64_t>(kCatchUpSecs * cpuClockHz);
             audioCpuCursor =
-                (events.front() > lead) ? events.front() - lead : 0;
+                (events.front() > leadCycles) ? events.front() - leadCycles : 0;
             subSampleAccum = 0.0;
+            cursorMoves_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // A real-time host adds the lead's UPKEEP (setRealtimeLead). The
+        // lead is the CPU's NOW minus the cursor (noteProducerNow) — never a
+        // toggle's distance, which in a rest says how short the rest was.
+        // When it has eroded under half its target (worker stalls the worker
+        // resynced rather than caught up, each one shortening it for good)
+        // or is over one and a half times it (the start-up lead, lowered
+        // once the machine runs steady), the cursor is set back to the
+        // target — but only in a SILENCE: no toggle played for kIdleSecs and
+        // none due before the cursor's new place, so the time added or
+        // skipped is time where the level is constant. Nothing to hear, and
+        // inside a sound it is never touched. A healthy lead (the whole
+        // steady state) trips neither bound: the cursor free-runs.
+        const uint64_t now = producerNow_.load(std::memory_order_relaxed);
+        if (realtime && now > audioCpuCursor
+            && audioCpuCursor > lastToggleCycle_
+                + static_cast<uint64_t>(kIdleSecs * cpuClockHz)) {
+            const uint64_t lead = now - audioCpuCursor;
+            if (lead < leadCycles / 2 || lead > leadCycles + leadCycles / 2) {
+                uint64_t to = now > leadCycles ? now - leadCycles : 0;
+                // Never past a toggle that is waiting: it would be purged.
+                if (!events.empty() && to > events.front()) to = events.front();
+                // Forward only through silence already behind the last
+                // toggle played; backward is always silence.
+                if (to > audioCpuCursor || events.empty() || events.front() > audioCpuCursor) {
+                    audioCpuCursor = to;
+                    subSampleAccum = 0.0;
+                    cursorMoves_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
         }
         const uint64_t windowEndApprox = audioCpuCursor +
             static_cast<uint64_t>(frameCount * cyclesPerSubSample *
@@ -387,6 +450,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
             ++dropped;
         }
         if (dropped & 1u) currentLevel = !currentLevel;
+        droppedToggles_.fetch_add(dropped, std::memory_order_relaxed);
         while (!events.empty() && events.front() <= windowEndApprox) {
             windowEvents.push_back(events.front());
             events.pop_front();
@@ -442,6 +506,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
                 if (currentLevel) area += edge - position;
                 position = edge;
                 currentLevel = !currentLevel;
+                lastToggleCycle_ = windowEvents[evIdx];
                 ++evIdx;
             }
             if (currentLevel) area += end - position;
@@ -466,6 +531,7 @@ void SpeakerDevice::fillAudioBuffer(float* output, int frameCount)
         // reset means the machine no longer owes anyone those toggles.
         if (queueGen_ != genAtDrain) {
             staleDrops_ += windowEvents.size() - evIdx;
+            droppedToggles_.fetch_add(windowEvents.size() - evIdx, std::memory_order_relaxed);
             return;
         }
         // Reverse-iterate: push_front of ascending k would REVERSE the tail

@@ -37,6 +37,7 @@
 #include "FilePathPicker.h"
 #include "MainWindow.h"
 #include "ProfileSwitch.h"
+#include "AudioCoordinator.h"
 
 #include <algorithm>   // std::find / std::max over the connector rows
 #include "SlotConfigurationCoordinator.h"
@@ -1427,6 +1428,10 @@ void MainWindow::applyProfile(pom2::SystemProfile p)
 {
     try {
         applyProfileTransaction(p);
+        // A profile switch is a cold start of another machine, rebuilt
+        // under the lock: the speaker's lead runs wide again for a few
+        // seconds (AudioWarmup.h).
+        if (audioCoordinator_) audioCoordinator_->beginWarmup();
     } catch (const std::exception& e) {
         abandonSlotRebuild("Profile switch", e.what());
     } catch (...) {

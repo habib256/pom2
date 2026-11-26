@@ -2685,6 +2685,65 @@ fundamental shape — audio on the main thread. An `AudioWorklet`
 (`-sAUDIO_WORKLET` + pthreads, hence cross-origin isolation GitHub Pages
 cannot serve without a service-worker shim) is WASM-003's territory.
 
+### Start-up warm-up: wide, then adjusted (`AudioWarmup.h`, 2026-11-26)
+
+The first seconds are when POM2 can least keep audio fed — shaders,
+textures, the boot disk — and when the user listens most closely (the power-on
+beep). Two things scratched there. The CPU worker stalled longer than the
+speaker's 100 ms lead, so the audio cursor overtook its toggles and purged
+them; and the device, opened at its smallest rung (16 ms on a desktop),
+underran. c5b38397 delayed power-on past the first slow frames; the user still
+heard it.
+
+- **Wide**: `AudioCoordinator::restore` opens the device one rung up from
+  where it belongs, at least 1024 frames (`AudioWarmup::warmPeriodFrames`;
+  not in the browser, which cannot re-open before the next load, nor on a
+  pinned rung), and every start (power-on, profile switch: `beginWarmup`)
+  sets the speaker's lead to 300 ms. The ladder does not climb meanwhile: a
+  start-up hiccup used to climb a rung and stay learned for good.
+- **Adjusted**: after 3 s of steady UI frames (none over 50 ms) and no late
+  callback, the lead goes back to 100 ms; the device returns to its rung at
+  the first quiet moment (master peak under 0.002 for 0.25 s). A machine
+  that never goes quiet (DIX's music from the first second): the threshold
+  doubles every 5 s up to 0.1, and after 30 s it comes down regardless —
+  one short hole rather than 64 ms more latency for the session.
+- **The speaker applies a lead change only in silence**
+  (`SpeakerDevice::setRealtimeLead`, which also turns this on). When no
+  toggle has played for 50 ms and the lead is under half the target or over
+  one and a half times it, the cursor is set back to the target, by
+  inserting or skipping silence; inside a sound it never moves. This also
+  fixes the lead's EROSION: before, a stall the worker resynced cost the
+  lead its length for good, and the lead came back only once it had gone
+  negative — through a purge. The forward catch-up threshold becomes
+  lead + max(lead, 0.25 s), so lowering the lead never purges a sound
+  playing with the old one.
+- **The lead is the CPU's NOW minus the cursor — never a toggle's
+  distance.** The worker publishes its cycle as every slice ends
+  (`noteProducerNow`, from `EmulationController::runCpuSlice`). The first
+  version measured "first pending toggle − cursor", judged once the silence
+  had lasted 50 ms: by then that distance is how short the REST was, not
+  the lead. On Micro Sokoban's music (notes, short rests) every note read
+  as "2-5 ms of lead", was pushed back 95 ms, and the backlog was purged in
+  a lump every few notes — the user heard the tempo slow, then jump
+  (measured in the GUI: a re-timing every 1-2 s and ~6000 toggles dropped
+  every 4 s; after the fix, none). It is the Mockingboard's Digidream 1
+  lesson again, word for word: *pace against CPU-now, never against the
+  last write* (`Mockingboard.cpp`). Any future cycle-stamped source that
+  needs a lead must take it from the producer's clock.
+- **The invariant, counted**: `droppedToggleCount()` and
+  `cursorMoveCount()` — every toggle not played, every cursor move other
+  than by playing. Both stand still while a tune plays right. The Audio
+  panel shows them; `audio_warmup` § 6 sweeps rests of 5-300 ms × device
+  buffers of 256-2048 frames with a worker that makes a 20 ms frame at once
+  and requires zero of each after the first second, and every note on time
+  to the millisecond (the first version fails it 40 times).
+- The synchronous SDK (libretro) never calls `setRealtimeLead`: its speaker
+  keeps the former fixed 100 ms and thresholds to the cycle.
+
+[F] Every constant is judgement (`AudioWarmup.h`). Pinned by `audio_warmup`
+(the policy with a fake clock; the speaker's re-timing in silence, the tempo
+invariant above, and no purge when the lead comes down mid-tone).
+
 ### The crackle detector (2026-09-09)
 
 `AudioSource::clicksPerSecond`: `AudioDevice::mixSources` counts, in each

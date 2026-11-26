@@ -533,6 +533,30 @@ void MainWindow::renderAudioMixerWindow()
         } else {
             ImGui::TextDisabled("no late callback");
         }
+        // The start-up warm-up (AudioWarmup.h): wide until the machine runs
+        // steady, then the speaker lead and the device come down.
+        if (buf.warming) {
+            if (buf.targetFrames != buf.periodFrames)
+                ImGui::TextDisabled("Start-up: wide (speaker lead %.0f ms, device back to %u frames when steady and quiet)",
+                                    buf.speakerLeadMs, buf.targetFrames);
+            else
+                ImGui::TextDisabled("Start-up: wide (speaker lead %.0f ms until the machine runs steady)",
+                                    buf.speakerLeadMs);
+        } else if (buf.speakerLeadMs > 0.0) {
+            ImGui::TextDisabled("Speaker lead %.0f ms", buf.speakerLeadMs);
+        }
+        if (buf.speakerLeadMs > 0.0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%llu re-timings, %llu toggles dropped)",
+                                static_cast<unsigned long long>(buf.speakerMoves),
+                                static_cast<unsigned long long>(buf.speakerDropped));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How often the speaker moved its replay position other than by\n"
+                                  "playing, and how many speaker toggles it did not play, since\n"
+                                  "launch. A few at start-up, after a pause or a reset are normal.\n"
+                                  "Numbers that keep growing while a tune plays mean its tempo is\n"
+                                  "being bent: please report it.");
+        }
     }
 
     renderMidiSection();

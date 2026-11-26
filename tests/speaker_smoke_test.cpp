@@ -157,7 +157,7 @@ int main()
             static_cast<uint64_t>(0.03 * POM2_CPU_CLOCK_HZ);
         driveToggles(spk, 1000.0, 0.10, resumeCycle);
 
-        // kCatchUpSecs of re-anchor lead + 100 ms of tone ≈ 0.2 s → give it
+        // the 100 ms re-anchor lead + 100 ms of tone ≈ 0.2 s → give it
         // 12 buffers (~280 ms) and require a real square-wave swing.
         bool sawPos = false, sawNeg = false;
         for (int b = 0; b < 12; ++b) {

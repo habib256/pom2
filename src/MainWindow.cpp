@@ -1009,7 +1009,7 @@ MainWindow::MainWindow(bool forceIIPlus)
 // The machine starts once the window can keep up with it.
 //
 // The speaker (and every cycle-stamped audio source) plays the guest's
-// toggles 100 ms behind the audio clock (SpeakerDevice::kCatchUpSecs). The
+// toggles a lead behind the audio clock (SpeakerDevice::playbackLeadSeconds). The
 // window's first frames compile shaders and upload the screen, keyboard and
 // drive textures, some of it under the state lock: the CPU worker stalled
 // for longer than that lead, the audio cursor overtook the toggles, and the
@@ -1030,6 +1030,9 @@ void MainWindow::powerOnNow()
 {
     if (!powerOnPending_) return;
     powerOnPending_ = false;
+    // Wide audio for the first seconds of the machine (AudioWarmup.h): its
+    // clock starts now, not when the settings were restored.
+    if (audioCoordinator_) audioCoordinator_->beginWarmup();
     controller->start();      // sets the mode to Running and spawns the worker
 }
 
