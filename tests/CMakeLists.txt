@@ -2276,6 +2276,8 @@ set_tests_properties(audio_device_watch PROPERTIES TIMEOUT 10)
 # upkeep a real-time host turns on.
 add_executable(test_audio_warmup audio_warmup_test.cpp ${CMAKE_SOURCE_DIR}/src/SpeakerDevice.cpp)
 target_include_directories(test_audio_warmup PRIVATE ${CMAKE_SOURCE_DIR}/src)
+find_package(Threads REQUIRED)
+target_link_libraries(test_audio_warmup PRIVATE Threads::Threads)
 add_test(NAME audio_warmup COMMAND test_audio_warmup)
 set_tests_properties(audio_warmup PROPERTIES TIMEOUT 20)
 

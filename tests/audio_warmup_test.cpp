@@ -20,13 +20,19 @@
 //  6. the invariant, swept over rests of 5-300 ms and device buffers of
 //     256-2048 frames with a worker that makes a frame at once: once the
 //     lead is set, no cursor move, no toggle dropped, an exact tempo
+//  7. the three threads of a real-time host at once — the CPU worker
+//     (toggles, its now), the audio callback, the UI (the lead, the
+//     counters): nothing asserted on the sound, ThreadSanitizer is the judge
+//     (the nightly tsan leg runs this test for that section)
 
 #include "AudioWarmup.h"
 #include "SpeakerDevice.h"
 
 #include <cmath>
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -375,12 +381,65 @@ void speaker()
     }
 }
 
+// 7. The worker, the audio callback and the UI on one speaker, as in POM2:
+//    EmulationController::runCpuSlice records toggles and publishes its now,
+//    the device thread fills, AudioCoordinator moves the lead and the Audio
+//    panel reads the counters. The worker also resets once mid-run (a hard
+//    reset while a tune plays).
+void threads()
+{
+    SpeakerDevice s;
+    s.setSampleRate(kRate);
+    s.setRealtimeLead(0.30);
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> filled{0};
+
+    std::thread audio([&] {
+        std::vector<float> out(512);
+        while (!stop.load(std::memory_order_relaxed)) {
+            s.fillAudioBuffer(out.data(), static_cast<int>(out.size()));
+            filled.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::yield();
+        }
+    });
+    std::thread ui([&] {
+        std::uint64_t seen = 0;
+        for (int i = 0; !stop.load(std::memory_order_relaxed); ++i) {
+            s.setRealtimeLead(i % 2 ? 0.10 : 0.30);
+            seen += s.cursorMoveCount() + s.droppedToggleCount() + s.staleDropCount()
+                  + s.getQueuedEventCount();
+            seen += static_cast<std::uint64_t>(s.playbackLeadSeconds() * 1000.0);
+            std::this_thread::yield();
+        }
+        (void)seen;
+    });
+
+    // The worker: 400 slices of 20 ms, notes of 60 ms and rests of 40 ms.
+    const std::uint64_t slice = static_cast<std::uint64_t>(0.02 * kClock);
+    const std::uint64_t half  = static_cast<std::uint64_t>(0.0005 * kClock);
+    std::uint64_t cpu = 0;
+    for (int n = 0; n < 400; ++n) {
+        if (n == 200) s.reset();
+        if (n % 5 < 3)
+            for (std::uint64_t c = cpu; c < cpu + slice; c += half) s.recordToggle(c);
+        cpu += slice;
+        s.noteProducerNow(cpu);
+        std::this_thread::yield();
+    }
+    while (filled.load(std::memory_order_relaxed) < 50) std::this_thread::yield();
+    stop.store(true, std::memory_order_relaxed);
+    audio.join();
+    ui.join();
+    CHECK(filled.load() >= 50);
+}
+
 } // namespace
 
 int main()
 {
     policy();
     speaker();
+    threads();
     if (g_fail) {
         std::fprintf(stderr, "audio_warmup: %d failure(s)\n", g_fail);
         return 1;
