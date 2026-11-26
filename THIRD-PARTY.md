@@ -32,6 +32,7 @@ of use; these are the projects, not the individual files.
 | [stb_image_write](https://github.com/nothings/stb) 1.16 | MIT / public domain (dual) | `src/stb_image_write.h` — PNG export. |
 | [stb_image](https://github.com/nothings/stb) 2.30 | MIT / public domain (dual) | `src/stb_image.h` — PNG/JPEG loading (artwork, photos, Paint import, print history). |
 | [stb_vorbis](https://github.com/nothings/stb) 1.22 | MIT / public domain (dual) | `src/third_party/stb_vorbis.c` — Ogg Vorbis decoding, compiled into `AudioDevice.cpp` as miniaudio's Vorbis backend. |
+| [LZMA SDK](https://www.7-zip.org/sdk.html) (7-Zip 24.09, Igor Pavlov) | Public domain (each file says so; `License.txt` beside them covers the rest of 7-Zip, which is not here) | `src/third_party/lzma/` — the 7z decoder (LZMA, LZMA2, PPMd, branch filters), unchanged, its names prefixed `pom2_lzma_`; provenance and checksum in its `POM2_VENDOR.md`. Opens `.7z` disks on the desktop and in the libretro core. |
 | [GLFW](https://www.glfw.org/) 3.3+ | zlib | System package or vcpkg; linked into the desktop binaries, bundled in the AppImages. |
 | [libslirp](https://gitlab.freedesktop.org/slirp/libslirp) | BSD-3-Clause | Optional user-mode NAT for the Uthernet I and the Uthernet II raw modes; built into the aarch64, Raspberry Pi and Pi 400 AppImages only (see README § *Ethernet, per platform*). |
 | [Emscripten](https://emscripten.org/) 6.0.9 runtime | MIT / Expat | The JavaScript glue and the `.wasm` of the browser build. |

@@ -10,6 +10,29 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-26 — .7z archives, on the desktop and in the libretro core
+
+A disk packed in a `.7z` opens as a `.zip` does: dropped on the window, given
+on the command line or to `pom2_headless --disk`, chosen in a drive's picker,
+downloaded from a URL (sniffed by its signature when the link has no
+extension), or loaded as libretro content — its first disk mounted, the
+others beside it for the drive's change button or Disc Control, the archive
+never written. Until now the refusal told the player to unpack it first.
+
+The decoder is the LZMA SDK's (7-Zip 24.09, public domain), vendored unchanged
+in `src/third_party/lzma/` with its checksum: LZMA, LZMA2 and PPMd, which is
+what 7-Zip, p7zip and libarchive write by default. Deflate, BZip2 and
+encrypted 7z are not in the SDK's C decoder and are refused in those words.
+Three things worth not rediscovering (DEV § .7z archives): every SDK name is
+renamed `pom2_lzma_*`, because RetroArch links its own older copy and the
+static web core would collide with it; a PPMd model's size comes from the
+archive header, not from the data, so the allocation cap cannot be the
+block's size (libarchive asks for 16 MiB to pack five bytes); and the SDK
+marks a block cached before decoding it, so after one refused member the
+next was reported as a CRC failure — "damaged" for an archive that was fine
+— until the cache was flushed on failure. Pinned by `seven_zip_archive`,
+`media_source` and `pom2_libretro_formats`.
+
 ## 2026-11-25 — The debugger, for writing 6502 code
 
 Requests from Grouik (French Touch), who now develops his Apple II

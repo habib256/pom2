@@ -23,6 +23,7 @@
 #include "AtomicFileReplace.h"
 #include "ChildProcess.h"
 #include "ResourcePaths.h"
+#include "SevenZipArchive.h"
 #include "Sha256.h"
 #include "ZipMember.h"
 
@@ -44,6 +45,9 @@ namespace {
 // The largest image POM2 mounts: a 32 MB ProDOS volume, with room for a
 // 2MG header and the cache's own name. Bigger is not a disk.
 constexpr std::size_t kMaxImageBytes = 34u * 1024u * 1024u;
+// The largest solid block a .7z may unpack (SevenZipArchive.h): a 7z decodes
+// a block whole, and one block may hold every disk of a set.
+constexpr std::size_t kMaxSolidBlockBytes = 256u * 1024u * 1024u;
 
 std::string lower(std::string s)
 {
@@ -197,8 +201,8 @@ bool download(const std::string& url, const fs::path& dest, std::string& err,
         err = "the server answered with a web page, not a disk image: " + url;
         return false;
     }
-    // A link with no archive extension (".../download?id=12") serving a zip
-    // or a gzip: name the copy so step 2 unpacks it.
+    // A link with no archive extension (".../download?id=12") serving a zip,
+    // a 7z or a gzip: name the copy so step 2 unpacks it.
     fs::path to = dest;
     const std::string low = lower(dest.filename().string());
     if (const char* ext = mediaArchiveExtension(h); ext && !endsWith(low, ext))
@@ -222,24 +226,53 @@ bool mountableName(const std::string& base)
     return exchange::hasExchangeExtension(base);
 }
 
-// Every member of a zip whose name a drive takes, in the zip's order.
-bool zipImages(const std::vector<uint8_t>& zip, std::vector<std::string>& members, std::string& err)
+// A member name a drive takes: not a folder, not a macOS resource fork.
+bool imageMember(const std::string& n)
 {
-    std::vector<std::string> names;
-    if (!listZipMembers(zip, names, err)) return false;
-    members.clear();
-    for (const auto& n : names) {
-        if (n.empty() || n.back() == '/') continue;
-        const std::string base = safeName(n);
-        if (base.rfind("._", 0) == 0) continue;            // macOS resource forks
-        if (mountableName(base)) members.push_back(n);
-    }
-    if (members.empty()) {
-        err = "the archive holds no disk image POM2 can mount";
-        return false;
-    }
-    return true;
+    if (n.empty() || n.back() == '/') return false;
+    const std::string base = safeName(n);
+    if (base.rfind("._", 0) == 0) return false;            // macOS resource forks
+    return mountableName(base);
 }
+
+// The disks of a .zip or a .7z, in the archive's order: their names, and
+// how to read the i-th.
+struct ArchiveImages {
+    const char* kind = "zip";
+    std::vector<std::string> names;
+    std::vector<std::size_t> indices;   // a .7z's entry per name
+    SevenZipArchive sevenZip;
+
+    bool open(const std::vector<uint8_t>& packed, bool isSevenZip, std::string& err)
+    {
+        if (isSevenZip) {
+            kind = "7z";
+            if (!sevenZip.open(packed, err, kMaxSolidBlockBytes)) return false;
+            const auto& entries = sevenZip.entries();
+            for (std::size_t i = 0; i < entries.size(); ++i)
+                if (!entries[i].directory && imageMember(entries[i].name)) {
+                    names.push_back(entries[i].name);
+                    indices.push_back(i);
+                }
+        } else {
+            std::vector<std::string> all;
+            if (!listZipMembers(packed, all, err)) return false;
+            for (const auto& n : all)
+                if (imageMember(n)) names.push_back(n);
+        }
+        if (names.empty()) {
+            err = "the archive holds no disk image POM2 can mount";
+            return false;
+        }
+        return true;
+    }
+
+    bool read(const std::vector<uint8_t>& packed, std::size_t i, std::vector<uint8_t>& out, std::string& err)
+    {
+        return indices.empty() ? readZipMember(packed, names[i], out, err, kMaxImageBytes)
+                               : sevenZip.extract(indices[i], out, err, kMaxImageBytes);
+    }
+};
 
 } // namespace
 
@@ -262,7 +295,7 @@ bool isCompressedImage(const std::string& source)
 {
     std::string l = lower(source);
     if (const auto q = l.find_first_of("?#"); q != std::string::npos && isHttpUrl(source)) l.erase(q);
-    return endsWith(l, ".gz") || endsWith(l, ".zip");
+    return endsWith(l, ".gz") || endsWith(l, ".zip") || endsWith(l, ".7z");
 }
 
 fs::path mediaUrlCachePath(const std::string& url, const fs::path& cacheDir)
@@ -286,6 +319,7 @@ const char* mediaArchiveExtension(const std::vector<uint8_t>& h)
 {
     if (h.size() >= 4 && h[0] == 'P' && h[1] == 'K' && h[2] == 3 && h[3] == 4) return ".zip";
     if (h.size() >= 3 && h[0] == 0x1F && h[1] == 0x8B && h[2] == 8) return ".gz";
+    if (isSevenZip(h)) return ".7z";
     return nullptr;
 }
 
@@ -294,11 +328,13 @@ std::string explainMediaSourceRefusal(const std::string& archive, const std::str
     const std::string name = isHttpUrl(archive) ? archive
                                                 : fs::path(archive).filename().string();
     return "\"" + name + "\" could not be opened as a disk: " + error + ".\n\n"
-           "POM2 opens a .zip (stored or deflated members) and a .gz itself, and takes "
+           "POM2 opens a .zip (stored or deflated members), a .7z (LZMA, LZMA2 or PPMd) "
+           "and a .gz itself, and takes "
            "the first .dsk, .do, .po, .nib, .nb2, .woz, .moof, .2mg, .hdv, .d13 or .image "
            "inside; it also opens ShrinkIt archives (.shk, .sdk, .bxy), DiskCopy 4.2 "
-           "images (.dc, .dc42) and Applesauce flux captures (.a2r). A damaged archive has to be downloaded again; a .7z or an "
-           "encrypted zip has to be unpacked first.";
+           "images (.dc, .dc42) and Applesauce flux captures (.a2r). A damaged archive has to be "
+           "downloaded again; an encrypted archive, or a .7z packed with Deflate or BZip2, "
+           "has to be unpacked first.";
 }
 
 std::vector<std::string> mediaSetOf(const std::string& image, const fs::path& cacheDir)
@@ -421,7 +457,7 @@ MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path&
         // query string it ignores is free padding — a crafted URL fetched
         // once would have been served as the genuine one for good (bug hunt
         // 2026-11-17). It costs one download again.
-        for (const char* ext : { "", ".zip", ".gz" }) {
+        for (const char* ext : { "", ".zip", ".gz", ".7z" }) {
             fs::path c = dest;
             c += ext;
             if (!fs::is_regular_file(c, ec) || fs::file_size(c, ec) == 0) continue;
@@ -449,34 +485,37 @@ MediaSourceResult resolveArchiveOrUrl(const std::string& source, const fs::path&
         std::vector<uint8_t> packed, image;
         if (!readFile(path, packed, r.error)) return r;
         std::string member;
-        if (endsWith(lower(path), ".zip")) {
-            std::vector<std::string> members;
-            if (!zipImages(packed, members, r.error)) return r;
-            member = members.front();
-            // The other disks of the set land beside the first, under the same
-            // key, so mediaSetOf() finds them and the drive can change to them.
-            for (std::size_t i = 1; i < members.size(); ++i) {
-                const fs::path other = cacheDir / (k + "-" + safeName(members[i]));
-                std::vector<uint8_t> bytes;
-                std::string ignored;
-                if (!fs::is_regular_file(other, ec)
-                        && readZipMember(packed, members[i], bytes, ignored, kMaxImageBytes))
-                    writeFile(other, bytes, ignored);
-            }
-            if (members.size() > 1)
-                r.note += std::string(r.note.empty() ? "" : ", ") + std::to_string(members.size())
-                        + " disks in the zip: change disk from the drive's menu";
+        if (const bool sevenZip = endsWith(lower(path), ".7z"); sevenZip || endsWith(lower(path), ".zip")) {
+            ArchiveImages members;
+            if (!members.open(packed, sevenZip, r.error)) return r;
+            const std::string from = std::string(" from the ") + members.kind;
+            member = members.names.front();
+            // The first disk is read first: a .7z decodes its block once and
+            // the others come out of that block's cache.
             const fs::path dest = cacheDir / (k + "-" + safeName(member));
             adoptLegacyCopy(cacheDir / (legacyKey(id) + "-" + safeName(member)), dest);
-            if (fs::is_regular_file(dest, ec)) {
+            const bool cached = fs::is_regular_file(dest, ec);
+            if (!cached && !members.read(packed, 0, image, r.error)) return r;
+            // The other disks of the set land beside the first, under the same
+            // key, so mediaSetOf() finds them and the drive can change to them.
+            for (std::size_t i = 1; i < members.names.size(); ++i) {
+                const fs::path other = cacheDir / (k + "-" + safeName(members.names[i]));
+                std::vector<uint8_t> bytes;
+                std::string ignored;
+                if (!fs::is_regular_file(other, ec) && members.read(packed, i, bytes, ignored))
+                    writeFile(other, bytes, ignored);
+            }
+            if (members.names.size() > 1)
+                r.note += std::string(r.note.empty() ? "" : ", ") + std::to_string(members.names.size())
+                        + " disks in the " + members.kind + ": change disk from the drive's menu";
+            if (cached) {
                 r.ok = true; r.fromCache = true; r.localPath = dest.string();
-                r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + " from the zip (cached copy)";
+                r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + from + " (cached copy)";
                 return r;
             }
-            if (!readZipMember(packed, member, image, r.error, kMaxImageBytes)) return r;
             if (!writeFile(dest, image, r.error)) return r;
             r.localPath = dest.string();
-            r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + " from the zip";
+            r.note += std::string(r.note.empty() ? "" : ", ") + safeName(member) + from;
         } else {
             std::string inner;
             if (!gunzip(packed, image, r.error, kMaxImageBytes, &inner)) return r;

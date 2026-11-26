@@ -175,7 +175,7 @@ def text_page(host):
 
 
 def check_formats(module, system, root, disk):
-    """Archives and programs as content: a zip, a two-disk zip, a gzip, an
+    """Archives and programs as content: a zip, a two-disk zip, a gzip, a 7z, an
     Applesoft listing and a tagged binary, each through retro_load_game."""
     import gzip
     import zipfile
@@ -221,6 +221,12 @@ def check_formats(module, system, root, disk):
         for n in (3, 1, 2):
             z.write(disk, tosec % n)
     (content / "game.dsk.gz").write_bytes(gzip.compress(disk.read_bytes()))
+    # A .7z, as the zips above: one disk in a folder, and two sides with a
+    # readme between them (one solid block for all three).
+    (content / "game.7z").write_bytes(seven_zip([("Games/DIRTBIKE.dsk", disk.read_bytes())]))
+    (content / "two disks.7z").write_bytes(seven_zip([("Game (Disk 2).dsk", disk.read_bytes()),
+                                                      ("readme.txt", b"not a disk"),
+                                                      ("Game (Disk 1).dsk", disk.read_bytes())]))
     (content / "hello.bas").write_text('10 HOME\n20 PRINT "POM2 BAS OK"\n30 END\n')
     # LDA #$A5 / STA $0350 / RTS at $0300, the address in its name.
     (content / "MARK#060300.bin").write_bytes(bytes([0xA9, 0xA5, 0x8D, 0x50, 0x03, 0x60]))
@@ -238,7 +244,8 @@ def check_formats(module, system, root, disk):
             host.close()
 
     for name, images in (("game.zip", 1), ("two disks.zip", 2), ("game.dsk.gz", 1),
-                         ("mixed.zip", 1), ("numbered.zip", 2), ("drive.zip", 1)):
+                         ("mixed.zip", 1), ("numbered.zip", 2), ("drive.zip", 1),
+                         ("game.7z", 1), ("two disks.7z", 2)):
         count, _, text = boot(name, 300)
         require(count == images, f"{name} should hold {images} disk(s), not {count}")
         require("DIRTBIKE" in text, f"{name} did not boot Dirtbike")
@@ -440,6 +447,42 @@ def crc16(data, crc=0):
         for _ in range(8):
             crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
     return crc
+
+
+def seven_zip(members):
+    """A solid .7z of `members` [(name, bytes)] in one LZMA2 folder, written
+    from 7-Zip's DOC/7zFormat.txt with the standard library only (Python's
+    liblzma packs, the LZMA SDK in the core unpacks: two code bases)."""
+    import lzma
+    import struct
+    import zlib
+
+    def num(v):   # 7zFormat.txt "NUMBER": the leading 1 bits count the extra bytes
+        for n in range(8):
+            if v < 1 << (8 * n + 7 - n):
+                return (bytes([((0xFF << (8 - n)) & 0xFF) | (v >> (8 * n))])
+                        + (v & ((1 << 8 * n) - 1)).to_bytes(n, "little"))
+        return b"\xff" + v.to_bytes(8, "little")
+    dictionary = 1 << 20
+    prop = next(p for p in range(41) if dictionary <= (2 | (p & 1)) << (p // 2 + 11))
+    data = b"".join(body for _, body in members)
+    packed = lzma.compress(data, format=lzma.FORMAT_RAW,
+                           filters=[{"id": lzma.FILTER_LZMA2, "dict_size": dictionary}])
+    names = b"".join(name.encode("utf-16-le") + b"\0\0" for name, _ in members)
+    header = (b"\x01\x04"                                                     # Header, MainStreamsInfo
+              + b"\x06" + num(0) + num(1) + b"\x09" + num(len(packed)) + b"\x00"  # PackInfo
+              + b"\x07\x0b" + num(1) + b"\x00"                                # UnPackInfo, one folder
+              + num(1) + b"\x21\x21" + num(1) + bytes([prop])                   # one coder: LZMA2
+              + b"\x0c" + num(len(data)) + b"\x00"
+              + b"\x08\x0d" + num(len(members))                                 # SubStreamsInfo
+              + b"\x09" + b"".join(num(len(body)) for _, body in members[:-1])
+              + b"\x0a\x01" + b"".join(struct.pack("<I", zlib.crc32(body)) for _, body in members)
+              + b"\x00\x00"
+              + b"\x05" + num(len(members))                                      # FilesInfo
+              + b"\x11" + num(len(names) + 1) + b"\x00" + names + b"\x00"
+              + b"\x00")
+    start = struct.pack("<QQI", len(packed), len(header), zlib.crc32(header))
+    return b"7z\xbc\xaf\x27\x1c\x00\x04" + struct.pack("<I", zlib.crc32(start)) + start + packed + header
 
 
 def shrinkit_disk(dsk):

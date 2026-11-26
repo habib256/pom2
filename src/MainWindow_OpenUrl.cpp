@@ -55,7 +55,7 @@ void MainWindow::renderOpenUrlPopup()
     if (!ImGui::BeginPopupModal("Open disk from URL", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
     const bool busy = urlFetch_ != nullptr;
-    ImGui::TextWrapped("http:// or https:// link to a disk image, or to a .zip or .gz holding one "
+    ImGui::TextWrapped("http:// or https:// link to a disk image, or to a .zip, .7z or .gz holding one "
                        "(Asimov, archive.org…). It is downloaded into the media cache and booted.");
     ImGui::BeginDisabled(busy);
     ImGui::SetNextItemWidth(-1);

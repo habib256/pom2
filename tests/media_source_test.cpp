@@ -14,9 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// media_source — a .gz, a .zip or a URL turned into a mountable local image
-// (MediaSource.h). The archives are built here (stored deflate blocks, a
-// stored zip member), so the test needs no tool and no network:
+// media_source — a .gz, a .zip, a .7z or a URL turned into a mountable local
+// image (MediaSource.h). The archives are built here (stored deflate blocks, a
+// stored zip member) or embedded (SevenZipFixtures.h), so the test needs no
+// tool and no network:
 //
 //  1. a .dsk.gz inflates into the cache, byte for byte; the second resolve
 //     reuses the cached copy (the guest's writes live there)
@@ -24,8 +25,11 @@
 //  3. a .zip with no disk, a damaged .gz: refused with a reason
 //  4. an unreachable URL fails cleanly (curl's exit, no partial file)
 //  5. the predicates
+//  6. a .7z: its first disk mounted, the other beside it; a .7z packed with
+//     a method POM2 lacks refused as such
 
 #include "MediaSource.h"
+#include "SevenZipFixtures.h"
 #include "ZipMember.h"
 
 #include <algorithm>
@@ -380,6 +384,47 @@ int main()
         // A disk outside the cache is a set of one, and keeps its name.
         CHECK(pom2::mediaSetOf((dir / "raw.image").string(), cache).size() == 1);
         CHECK(pom2::mediaDisplayName((dir / "raw.image").string()) == "raw.image");
+    }
+
+    // 6. A .7z (LZMA2, solid, written by bsdtar): the disks in the archive's
+    //    order, the readme skipped, the second side in the set; again from
+    //    the cache. A BZip2 one is refused for its method, in words.
+    {
+        auto endsWith = [](const std::string& s, const std::string& x) {
+            return s.size() >= x.size() && s.compare(s.size() - x.size(), x.size(), x) == 0;
+        };
+        put(dir / "Game.7z", pom2test::kSevenZipLzma2);
+        auto seven = pom2::resolveMediaSource((dir / "Game.7z").string(), cache);
+        CHECK(seven.ok && !seven.fromCache);
+        CHECK(seven.ok && endsWith(fs::path(seven.localPath).filename().string(), "Side A.dsk"));
+        CHECK(seven.ok && get(seven.localPath) == pom2test::sevenZipFixtureDisk('A'));
+        CHECK(seven.note.find("from the 7z") != std::string::npos);
+        CHECK(seven.note.find("2 disks in the 7z") != std::string::npos);
+        const auto sides = pom2::mediaSetOf(seven.localPath, cache);
+        CHECK(sides.size() == 2);
+        if (sides.size() == 2) CHECK(get(sides[1]) == pom2test::sevenZipFixtureDisk('B'));
+        auto cachedSeven = pom2::resolveMediaSource((dir / "Game.7z").string(), cache);
+        CHECK(cachedSeven.ok && cachedSeven.fromCache && cachedSeven.localPath == seven.localPath);
+
+        put(dir / "PPMd.7z", pom2test::kSevenZipPpmd);
+        auto ppmd = pom2::resolveMediaSource((dir / "PPMd.7z").string(), cache);
+        CHECK(ppmd.ok && get(ppmd.localPath) == pom2test::sevenZipFixtureDisk('A'));
+
+        put(dir / "Old.7z", pom2test::kSevenZipBzip2);
+        auto old = pom2::resolveMediaSource((dir / "Old.7z").string(), cache);
+        CHECK(!old.ok && old.error.find("method") != std::string::npos);
+        const std::string why = pom2::explainMediaSourceRefusal((dir / "Old.7z").string(), old.error);
+        CHECK(why.find("Old.7z") != std::string::npos && why.find("BZip2") != std::string::npos);
+
+        // A .7z cut after its signature.
+        put(dir / "cut.7z", std::vector<uint8_t>(pom2test::kSevenZipLzma2.begin(),
+                                                   pom2test::kSevenZipLzma2.begin() + 6));
+        CHECK(!pom2::resolveMediaSource((dir / "cut.7z").string(), cache).ok);
+
+        CHECK(pom2::isCompressedImage("GAME.7Z") && pom2::needsMediaResolve("x/y.7z"));
+        CHECK(pom2::isCompressedImage("https://x/y.7z?dl=1"));
+        const char* sniffed = pom2::mediaArchiveExtension(pom2test::kSevenZipLzma2);
+        CHECK(sniffed && std::string(sniffed) == ".7z");
     }
 
     fs::remove_all(dir, ec);

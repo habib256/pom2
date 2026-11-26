@@ -502,7 +502,7 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem(ICON_FA_GLOBE "  Open disk from URL...")) openUrlRequested_ = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("An http(s) link to a disk image — a .dsk, .po, .woz, .2mg, .hdv,\n"
-                              "or one inside a .zip or .gz — downloaded with curl into the\n"
+                              "or one inside a .zip, .7z or .gz — downloaded with curl into the\n"
                               "media cache, then booted. What the guest writes stays in the\n"
                               "cached copy; the server is never written to.");
 #endif

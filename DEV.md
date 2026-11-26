@@ -5280,7 +5280,8 @@ for a WOZ in tests that pin exact sequencer cycles. Pinned by
 a 34 MB cap, `--proto-redir =http,https`), a `.gz` is inflated
 (`ZipMember.h` `gunzip`: FEXTRA/FNAME/FCOMMENT/FHCRC skipped, ISIZE capped,
 CRC-32 checked), a `.zip` gives its first member whose extension a drive
-takes (`__MACOSX/._*` skipped). The result is a file in
+takes (`__MACOSX/._*` skipped), and so does a `.7z` (`SevenZipArchive.h`,
+below). The result is a file in
 `<user data>/media_cache` named `<key>-<name>`; the key is the URL, or the
 archive's CANONICAL path (`weakly_canonical`: a symlinked folder or another
 case is the same file) + size + date — a changed archive is unpacked afresh,
@@ -5298,6 +5299,48 @@ can be cancelled; `pom2_headless --disk` too. A dropped zip with no disk
 falls through to the ROM import; if nothing installs, the refusal is the
 archive's own error (`explainMediaSourceRefusal`), not "no disk format". Pinned by `media_source` (archives built in the test, an
 unreachable URL); checked by hand against Asimov.
+
+### .7z archives (`SevenZipArchive`)
+
+One reader for the desktop (`MediaSource`, above) and the libretro core
+(`archive_content.cpp`), over Igor Pavlov's LZMA SDK — 7-Zip 24.09's `C/`
+decoder, public domain, byte-identical in `src/third_party/lzma/`
+(`POM2_VENDOR.md`: source archive and its SHA-256). It decodes LZMA, LZMA2,
+PPMd, the BCJ/BCJ2/ARM/ARM64/PPC/SPARC/IA64/RISC-V filters, Delta and
+"copy": what 7-Zip, p7zip and libarchive write by default. Deflate, BZip2
+and AES are not in the C SDK — such a member is refused as UNSUPPORTED, in
+those words, and the player unpacks it on the host.
+
+- **Built as the OBJECT library `pom2_lzma`** (`cmake/Pom2Lzma.cmake`), C,
+  hidden visibility, PIC, linked by every target that compiles
+  `SevenZipArchive.cpp`: as an object library its objects land in the target
+  itself, so the static web core (`LIBRETRO_STATIC`, merged by an MRI
+  script) carries them with no second archive.
+- **Every SDK name is renamed `pom2_lzma_<name>`** (`Pom2LzmaPrefix.h`,
+  forced first into each SDK file and included first by
+  `SevenZipArchive.cpp`). RetroArch links its own, older copy of this SDK
+  (`deps/7zip`): a static core with the plain names collides with it at
+  link time. A newer SDK may add names — `nm -g --defined-only` over the
+  objects must show only `pom2_lzma_` ones.
+- **A 7z decodes a solid block whole.** Every block's declared unpacked size
+  is checked against the caller's ceiling at `open`, before anything is
+  decoded (256 MiB on both sides), and the SDK allocates through a capped
+  `ISzAlloc`: a PPMd header names its own model size — 16 MiB from
+  libarchive for five bytes, 192 MB at 7-Zip's `-mx9`, up to 4 GiB from a
+  hostile one — so the cap is `max(block + 1 MiB, 256 MiB)`.
+- **The SDK's block cache is flushed on every failure.** `SzArEx_Extract`
+  marks the block cached before decoding it; kept after an UNSUPPORTED, the
+  next member of that block was read out of a half-written buffer and
+  reported as a CRC failure — "damaged", sending the player to download a
+  good archive again (`seven_zip_archive` § 2).
+- **Unaligned reads are the SDK's design** on x86 and arm64
+  (`MY_CPU_LE_UNALIGN`): a `POM2_SANITIZE=…undefined…` build compiles
+  `pom2_lzma` with `-fno-sanitize=alignment`, every other check kept.
+
+Pinned by `seven_zip_archive` (LZMA, LZMA2, PPMd and BZip2 archives written
+by bsdtar, every byte of one flipped in turn, every truncation),
+`media_source` § 6 and `pom2_libretro_formats` (7z archives written by
+Python's liblzma from `7zFormat.txt`, booted through the core).
 
 ### DiskIICard
 

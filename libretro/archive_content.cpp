@@ -6,6 +6,7 @@
 
 #include "AtomicFileReplace.h"
 #include "ExchangeMedia.h"
+#include "SevenZipArchive.h"
 #include "ZipMember.h"
 #include "portable_name.hpp"
 #include "pom2/core.hpp"
@@ -273,7 +274,7 @@ bool isArchive(const std::filesystem::path& path)
 {
     const auto name = path.filename().u8string();
     const auto suffix = suffixOf(name);
-    return suffix == ".zip" || suffix == ".gz" || kindOf(name) == Kind::Exchange;
+    return suffix == ".zip" || suffix == ".7z" || suffix == ".gz" || kindOf(name) == Kind::Exchange;
 }
 
 std::filesystem::path unpackArchive(const std::filesystem::path& archive, const std::filesystem::path& cacheRoot,
@@ -402,9 +403,22 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
             noteLegacy(unpack.folder / fs::u8path(stored), legacyLeaf);
         }
     } else {
+        // A .zip or a .7z: the same members, the same rules. A 7z entry
+        // rides in a ZipEntry, its index in the archive as `centralOffset`
+        // — below, that field is only ever the member's place in the
+        // archive's own order, which the index is too.
+        const bool sevenZip = suffixOf(archiveName) == ".7z";
+        pom2::SevenZipArchive seven;
         std::vector<pom2::ZipEntry> entries;
         std::string failure;
-        if (!pom2::listZipEntries(bytes, entries, failure)) {
+        if (sevenZip) {
+            if (!seven.open(bytes, failure, kMaxUnpacked, kMaxEntries)) {
+                error = hostLeafName(archiveName) + ": " + failure;
+                return {};
+            }
+            for (std::size_t i = 0; i < seven.entries().size(); ++i)
+                if (!seven.entries()[i].directory) entries.push_back({seven.entries()[i].name, i});
+        } else if (!pom2::listZipEntries(bytes, entries, failure)) {
             error = hostLeafName(archiveName) + ": " + failure;
             return {};
         }
@@ -436,7 +450,9 @@ std::filesystem::path unpackArchive(const std::filesystem::path& archive, const 
                 continue;
             }
             std::vector<std::uint8_t> out;
-            if (!pom2::readZipEntry(bytes, entry, out, failure, kMaxMember)) {
+            const bool read = sevenZip ? seven.extract(entry.centralOffset, out, failure, kMaxMember)
+                                       : pom2::readZipEntry(bytes, entry, out, failure, kMaxMember);
+            if (!read) {
                 skip(hostLeafName(leaf) + ": " + failure);   // an extra that cannot be read: the disks still load
                 continue;
             }

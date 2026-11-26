@@ -112,9 +112,12 @@ use **Load Content** and select an image. The type and size choose the drive:
 On a //c the 3.5-inch and hard disks hang off the rear disk port and boot
 through the //c's own firmware.
 
-A `.zip` or `.gz` opens as its contents. A zip with one disk loads that
-disk; with several, a playlist of them in name order, ready for Disc Control;
-with its own `.m3u`, that playlist. The core unpacks it once into
+A `.zip`, `.7z` or `.gz` opens as its contents. A zip or a 7z with one disk
+loads that disk; with several, a playlist of them in name order, ready for
+Disc Control; with its own `.m3u`, that playlist. A 7z packed with LZMA, LZMA2
+or PPMd opens (what 7-Zip writes by default); an encrypted one, or one packed
+with Deflate or BZip2, is refused with that reason and has to be unpacked
+first. The core unpacks it once into
 `pom2/archives` in the save directory, so its disks keep their private copies
 from one session to the next.
 

@@ -922,7 +922,7 @@ void MainWindow::renderWelcomePanelWindow()
     ImGui::BulletText("Click an empty drive to insert a disk without rebooting.");
     ImGui::TextDisabled("File \xe2\x96\xb8 Automatic resume keeps your disks and changes between visits.");
 #else
-    ImGui::BulletText("Drop a disk image on this window: .woz .dsk .do .po .nib .2mg .hdv, or a .zip.");
+    ImGui::BulletText("Drop a disk image on this window: .woz .dsk .do .po .nib .2mg .hdv, or a .zip / .7z.");
     ImGui::BulletText("Or File \xe2\x96\xb8 Disk Library, File \xe2\x96\xb8 Open disk from URL...");
     ImGui::BulletText("Or from a terminal: POM2 path/to/game.woz");
     ImGui::TextDisabled("POM2 sends each image to the right drive: Disk II, 3.5\", or hard disk.");

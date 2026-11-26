@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// MediaSource — a disk given as an http(s) URL, a .gz, a .zip or an exchange
+// MediaSource — a disk given as an http(s) URL, a .gz, a .zip, a .7z or an exchange
 // file (a ShrinkIt archive, a DiskCopy 4.2 image, an A2R flux capture:
 // ExchangeMedia.h), turned
 // into a plain local image the rest of POM2 mounts as it mounts any file.
@@ -22,7 +22,8 @@
 // The TNFS shape (TnfsMedia.h), for the same reasons: no second mount path,
 // and writes go somewhere honest. A URL is downloaded with the host's curl
 // (as RomFetch does); a .gz is inflated, a .zip gives up its first disk
-// image (stb's inflater, ZipMember.h). The result lands in the media cache
+// image (stb's inflater, ZipMember.h), and so does a .7z (the LZMA SDK,
+// SevenZipArchive.h). The result lands in the media cache
 // under a name keyed on its source, and a second mount of the same source
 // reuses it — so what the guest writes stays in the cache copy across
 // sessions, and the archive or the server is never written to (izapple2's
@@ -42,7 +43,7 @@ namespace pom2 {
 
 /// http:// or https:// (case-insensitive).
 bool isHttpUrl(const std::string& source);
-/// Ends in .gz or .zip (case-insensitive).
+/// Ends in .gz, .zip or .7z (case-insensitive).
 bool isCompressedImage(const std::string& source);
 /// A local exchange file a drive cannot take as it is (ExchangeMedia.h):
 /// ShrinkIt .shk/.sdk/.bxy/.sea, DiskCopy .dc/.dc42, Applesauce .a2r, and a
@@ -72,10 +73,10 @@ std::filesystem::path mediaUrlCachePath(const std::string& url,
 /// The first bytes of a download are an HTML / XML page (a soft 404, a
 /// login wall), not a disk: refused, never cached.
 bool mediaBodyIsWebPage(const std::vector<uint8_t>& head);
-/// ".zip" or ".gz" when the bytes start like one, else nullptr.
+/// ".zip", ".gz" or ".7z" when the bytes start like one, else nullptr.
 const char* mediaArchiveExtension(const std::vector<uint8_t>& head);
 
-/// The refusal shown when `archive` (a .zip, a .gz or a URL) was given as a
+/// The refusal shown when `archive` (a .zip, a .7z, a .gz or a URL) was given as a
 /// disk and could not be opened: what failed, in the archive's own words —
 /// not "this is no disk image", which a .gz that failed its CRC is not.
 std::string explainMediaSourceRefusal(const std::string& archive,

@@ -107,6 +107,7 @@ src/RomImport.cpp
 src/Scc8530Device.cpp
 src/SerialPort.cpp
 src/Settings.cpp
+src/SevenZipArchive.cpp
 src/SlirpNetworkBackend.cpp
 src/SlotBus.cpp
 src/SmartPort35Unit.cpp

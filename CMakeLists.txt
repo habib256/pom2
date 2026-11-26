@@ -247,6 +247,12 @@ if(POM2_SANITIZE)
     endif()
 endif()
 
+# The 7z decoder (LZMA SDK, public domain): an OBJECT library, pom2_lzma,
+# linked by every target that compiles SevenZipArchive.cpp. After the
+# sanitizer options, which reach only the targets created after them: the
+# decoder reads untrusted archives, it is the code a sanitizer run is for.
+include(cmake/Pom2Lzma.cmake)
+
 # ─── Dear ImGui (vendored) ────────────────────────────────────────────────
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 if(NOT POM2_LIBRETRO_ONLY)
@@ -613,6 +619,7 @@ set(SOURCES
     src/RomFetch.cpp
     src/RomImport.cpp
     src/ZipMember.cpp
+    src/SevenZipArchive.cpp
     src/RomStatus_ImGui.cpp
     src/AbstractionCatalog.cpp
     src/AbstractionLevels_ImGui.cpp
@@ -1180,6 +1187,7 @@ set(POM2_RUNTIME_SOURCES
     src/RomFetch.cpp
     src/RomImport.cpp
     src/ZipMember.cpp
+    src/SevenZipArchive.cpp
     src/RewindBuffer.cpp
     src/SlirpNetworkBackend.cpp
     src/BuiltinNatBackend.cpp
@@ -1280,6 +1288,7 @@ set(HEADERS
     src/RomImport.h
     src/ProfileSwitch.h
     src/ZipMember.h
+    src/SevenZipArchive.h
     src/ExchangeMedia.h
     src/A2rFlux.h
     src/CassetteRecords.h
@@ -1595,6 +1604,8 @@ endif()
 
 add_executable(${PROJECT_NAME}
     ${SOURCES} ${HEADERS} ${IMGUI_SOURCES} ${POM2_PLATFORM_SOURCES})
+# Plain signature, as every other link of this target.
+target_link_libraries(${PROJECT_NAME} pom2_lzma)
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "POM2")
 
 if(POM2_SLIRP_TARGET)
@@ -2438,6 +2449,7 @@ add_executable(pom2_headless
     src/ProDOSDiskFs.cpp
     src/DiskBuilder.cpp
     src/ZipMember.cpp
+    src/SevenZipArchive.cpp
     src/ChildProcess.cpp
     src/ResourcePaths.cpp
     src/RewindBuffer.cpp
@@ -2464,6 +2476,7 @@ add_executable(pom2_headless
     src/AppleSingle.cpp
     src/Z80.cpp
 )
+target_link_libraries(pom2_headless PRIVATE pom2_lzma)   # SevenZipArchive.cpp
 if(NOT EMSCRIPTEN)
     if(TARGET pom2_core_test)
         target_link_libraries(pom2_core_test PUBLIC ${POM2_NATIVE_DNS_LIB})

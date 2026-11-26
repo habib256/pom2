@@ -405,6 +405,7 @@ session_machine
 session_snapshot
 session_writable_media
 settings_roundtrip
+seven_zip_archive
 sirius_joyport
 slinky_card
 slip_framer

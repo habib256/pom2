@@ -125,7 +125,7 @@ void usage(const char* prog)
         "  --prom <path>         disk2.rom Disk II PROM.      Default: probe roms/,\n"
         "                        else POM2's own boot PROM (DOS 3.3, ProDOS);\n"
         "                        `--prom pom2` forces POM2's even with a dump\n"
-        "  --disk <path>         Disk II image, or a .zip / .gz holding one, or an\n"
+        "  --disk <path>         Disk II image, or a .zip / .7z / .gz holding one, or an\n"
         "                        http(s) URL (unpacked / downloaded into the media\n"
         "                        cache). Default: probe disks_5.4/dos33_master.dsk\n"
         "  --port <N>            SSC TCP port. Default 6502\n"
@@ -595,7 +595,7 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "missing %s; try --help\n", iie ? "apple2e.rom" : "apple2.rom");
         return 1;
     }
-    // A .zip, a .gz or a URL: its local image, as the GUI's positional does
+    // A .zip, a .7z, a .gz or a URL: its local image, as the GUI's positional does
     // (MediaSource.h). It used to reach insertDisk raw and be refused by size.
     if (!diskPath.empty() && pom2::needsMediaResolve(diskPath)) {
         const auto got = pom2::resolveMediaSource(diskPath, pom2::mediaCacheDir());

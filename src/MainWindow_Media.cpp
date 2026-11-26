@@ -635,7 +635,7 @@ bool MainWindow::mountOnboard35(int drive, const std::string& path, std::string&
 
 bool MainWindow::insertAndBootImage(const std::string& source, std::string& errOut)
 {
-    // A .zip, a .gz or a URL: its local image (MediaSource.h). A URL from the
+    // A .zip, a .7z, a .gz or a URL: its local image (MediaSource.h). A URL from the
     // File menu arrives already resolved — its download ran off this thread.
     std::string path = source;
     if (pom2::needsMediaResolve(source)) {

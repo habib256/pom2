@@ -27,12 +27,16 @@ else()
 endif()
 target_sources(pom2_libretro PRIVATE pad_keyboard.cpp polled_keyboard.cpp content_vfs.cpp pad_profiles.cpp ../src/hgrpaint/HgrFont.cpp
     # Host formats the SDK does not take: archives and programs.
-    ../src/ZipMember.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
+    ../src/ZipMember.cpp ../src/SevenZipArchive.cpp ../src/ApplesoftTokenizer.cpp ../src/ApplesoftListing.cpp
     ../src/HostFileTag.cpp ../src/AppleSingle.cpp
     # ShrinkIt archives, DiskCopy 4.2 images and A2R flux captures, as the desktop opens them.
     ../src/ExchangeMedia.cpp ../src/A2rFlux.cpp ../src/NuFxArchive.cpp ../src/DiskCopy42.cpp ../src/ProDOSDiskFs.cpp
     ../src/DiskBuilder.cpp)
 target_link_libraries(pom2_libretro PRIVATE POM2::core)
+# The 7z decoder (LZMA SDK): an OBJECT library, so its objects land in the
+# core itself — the static web archive included, with no second merge.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/Pom2Lzma.cmake")
+target_link_libraries(pom2_libretro PRIVATE pom2_lzma)
 target_compile_features(pom2_libretro PRIVATE cxx_std_17)
 # MinGW: link the C++ and GCC runtimes into the core. A core that imports
 # libstdc++-6.dll, libgcc_s_seh-1.dll or libwinpthread-1.dll does not load

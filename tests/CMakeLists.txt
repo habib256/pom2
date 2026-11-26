@@ -8081,7 +8081,7 @@ add_test(NAME cpm_disk_fs COMMAND test_cpm_disk_fs
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(cpm_disk_fs PROPERTIES TIMEOUT 15)
 
-# ─── Disks from a .gz, a .zip or a URL (MediaSource.h) ─────────────────────
+# ─── Disks from a .gz, a .zip, a .7z or a URL (MediaSource.h) ──────────────
 add_executable(test_media_source
     media_source_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp
@@ -8091,11 +8091,13 @@ add_executable(test_media_source
     ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
     ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+    ${CMAKE_SOURCE_DIR}/src/SevenZipArchive.cpp
     ${CMAKE_SOURCE_DIR}/src/ChildProcess.cpp
     ${CMAKE_SOURCE_DIR}/src/ResourcePaths.cpp
     ${POM2_TEST_CORE_SOURCES}
 )
 target_include_directories(test_media_source PRIVATE ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR})
+target_link_libraries(test_media_source PRIVATE pom2_lzma)
 if(UNIX AND NOT APPLE)
     target_link_libraries(test_media_source PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m)
 endif()
@@ -8109,6 +8111,17 @@ endif()
 add_test(NAME media_source COMMAND test_media_source
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 set_tests_properties(media_source PROPERTIES TIMEOUT 60)
+
+# ─── The .7z reader (SevenZipArchive.h, the LZMA SDK) ─────────────────────
+add_executable(test_seven_zip_archive
+    seven_zip_archive_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/SevenZipArchive.cpp
+)
+target_include_directories(test_seven_zip_archive PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_seven_zip_archive PRIVATE pom2_lzma)
+add_test(NAME seven_zip_archive COMMAND test_seven_zip_archive
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(seven_zip_archive PROPERTIES TIMEOUT 60)
 
 # ─── Integer BASIC listing (the ][ Original's BASIC) ──────────────────────
 # Synthetic programs built from token values read off real Integer BASIC
@@ -12187,10 +12200,11 @@ pom2_add_headless_test(test_drive_rack_mount
     NAME drive_rack_mount TIMEOUT 20
     SOURCES drive_rack_mount_test.cpp ${CMAKE_SOURCE_DIR}/src/DriveRackMount.cpp
             ${CMAKE_SOURCE_DIR}/src/MediaSource.cpp ${CMAKE_SOURCE_DIR}/src/ZipMember.cpp
+            ${CMAKE_SOURCE_DIR}/src/SevenZipArchive.cpp
             ${CMAKE_SOURCE_DIR}/src/ExchangeMedia.cpp ${CMAKE_SOURCE_DIR}/src/A2rFlux.cpp ${CMAKE_SOURCE_DIR}/src/NuFxArchive.cpp
             ${CMAKE_SOURCE_DIR}/src/DiskCopy42.cpp ${CMAKE_SOURCE_DIR}/src/ProDOSDiskFs.cpp
             ${CMAKE_SOURCE_DIR}/src/DiskBuilder.cpp
-    LINK_LIBRARIES pom2_core_test)
+    LINK_LIBRARIES pom2_core_test pom2_lzma)
 
 pom2_add_headless_test(test_boot_configuration
     NAME boot_configuration TIMEOUT 60

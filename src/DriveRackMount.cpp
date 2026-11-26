@@ -58,10 +58,9 @@ std::string explainUnknownDisk(const std::string& path)
            "name and size match no Apple II disk format.\n\n"
            "Apple II disk images end in .dsk, .do, .po, .nib, .nb2 or .woz (5.25-inch "
            "floppies), .po, .2mg or .woz (3.5-inch disks), or .hdv / .2mg (hard "
-           "disks) — or be one of those inside a .zip or a .gz, which POM2 opens "
-           "itself, as it opens ShrinkIt archives (.shk, .sdk, .bxy), DiskCopy "
-           "4.2 images (.dc, .dc42) and Applesauce flux captures (.a2r). A .7z "
-           "archive has to be unpacked first.";
+           "disks) — or be one of those inside a .zip, a .7z or a .gz, which POM2 "
+           "opens itself, as it opens ShrinkIt archives (.shk, .sdk, .bxy), DiskCopy "
+           "4.2 images (.dc, .dc42) and Applesauce flux captures (.a2r).";
 }
 
 bool driveTakes(DrivePictureKind drive, DiskSlotClass kind)
@@ -87,7 +86,7 @@ bool mountEmptyDrive(EmulationController& controller, Settings& settings,
                      const std::string& source, std::string& error, DiskSlotClass* fileKind) {
     error.clear();
     if (fileKind) *fileKind = DiskSlotClass::Unknown;
-    // A .zip, a .gz or a URL becomes its local image first (MediaSource.h),
+    // A .zip, a .7z, a .gz or a URL becomes its local image first (MediaSource.h),
     // outside the machine lock; the drive then mounts that file.
     std::string path = source;
     if (needsMediaResolve(source)) {

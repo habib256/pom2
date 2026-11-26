@@ -599,10 +599,13 @@ can't disturb your desktop setup" promise.
 **Positional disk + kiosk**: `POM2 <disk-image>` mounts the image into the slot its type maps to (`classifyDiskForSlot`: 5.25" Disk II / 400K, 800K or 1.44 MB 3.5" / ProDOS HDV) under the saved profile + slot config, then cold-boots. `--kiosk` adds exclusive full-screen with a chrome-free render path. Kiosk suppresses settings writes; mounted disks still follow the normal media write policy. An HDV goes to a CFFA / HDV / SmartPort / Liron card already plugged, else auto-plugs a `ProDOSHardDiskCard` into a free slot (7 preferred); a //c-class profile only takes it on its built-in slot-5 SmartPort (`SlotProvisioningCoordinator`). Pinned: `cli_kiosk`.
 
 The positional (and a dropped file, a drive's file picker, "Insert disk and
-boot", File ▸ Open disk from URL) may also be an **http(s) URL, a `.zip` or a
-`.gz`** — `MediaSource.h` turns it into a local image in `<user
+boot", File ▸ Open disk from URL) may also be an **http(s) URL, a `.zip`, a
+`.7z` or a `.gz`** — `MediaSource.h` turns it into a local image in `<user
 data>/media_cache` (curl for URLs, the in-process inflater for archives, the
-first disk image of a zip), keyed on the source, so a second mount reuses it
+first disk image of a zip or a 7z — `SevenZipArchive.h`, the LZMA SDK vendored
+in `src/third_party/lzma/` behind a `pom2_lzma_` symbol prefix, because
+RetroArch links its own copy; the libretro core opens a `.7z` through the
+same reader), keyed on the source, so a second mount reuses it
 and the guest's writes stay in that copy: the archive and the server are
 never written to.
 

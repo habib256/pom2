@@ -2434,7 +2434,7 @@ unsigned retro_api_version() { return RETRO_API_VERSION; }
 void retro_get_system_info(retro_system_info* info)
 {
     static const std::string version = pom2::Core::sdkInfo().version;
-    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u|zip|gz|bin|bas|shk|sdk|bxy|sea|dc|dc42|image|a2r|wav|aci", true, true};
+    *info = {"POM2", version.c_str(), "dsk|do|po|nib|woz|d13|2mg|2img|hdv|m3u|zip|7z|gz|bin|bas|shk|sdk|bxy|sea|dc|dc42|image|a2r|wav|aci", true, true};
 }
 
 void retro_get_system_av_info(retro_system_av_info* info)
