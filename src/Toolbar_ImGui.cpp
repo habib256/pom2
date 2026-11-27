@@ -450,6 +450,21 @@ Toolbar_ImGui::Result Toolbar_ImGui::render(const Snapshot& snap)
                      "Full screen (kiosk) — no UI chrome  (Ctrl+Alt+F)" })) {
         r.requestKioskToggle = true;
     }
+    ImGui::SameLine();
+    // Sound: the whole bus at once — the same switch as the mixer's Master
+    // mute, so the two always agree. Lit while muted, like the other
+    // toggles: the unusual state is the one that shows.
+    {
+        ToggleStyle t;
+        t.begin(snap.audioMuted);
+        if (iconButton({ snap.audioMuted ? ICON_FA_VOLUME_XMARK : ICON_FA_VOLUME_HIGH, "Sound",
+                         snap.audioMuted ? "Sound is off - click to turn it on"
+                                         : "Sound is on - click to mute everything",
+                         snap.audioMuted ? pal.accent : 0 })) {
+            r.requestMuteToggle = true;
+        }
+        t.end();
+    }
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight());
     if (iconButton({ ICON_FA_CIRCLE_INFO, "About",
                      "About POM2" })) {

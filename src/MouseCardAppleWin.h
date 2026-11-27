@@ -107,6 +107,8 @@ public:
     /// so the call must not need a symbol from this TU.
     uint8_t hostCounterX() const { return hostSetX_; }   // see MouseCard
     uint8_t hostCounterY() const { return hostSetY_; }
+    bool takesHostMouse() const override { return true; }
+    void routeHostMouse(uint8_t x, uint8_t y, bool button) override { setHostMouse(x, y, button); }
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button)
     {
         // Bank the motion HERE, per host update. The UI clamps each update

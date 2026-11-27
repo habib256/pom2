@@ -157,24 +157,10 @@ MouseCoordinator::Snapshot MouseCoordinator::capture() const
 int MouseCoordinator::routeHost(std::uint8_t rawX, std::uint8_t rawY,
                                 bool button)
 {
-    int routed = 0;
+    // The controller routes it: a recording of host input keeps it, at the
+    // cycle it is applied (EmulationController_Input.cpp).
     auto state = controller_.lockState();
-    auto& bus = state.memory().slotBus();
-    for (int slot = 1; slot < SlotBus::kSlotCount; ++slot) {
-        auto* peripheral = bus.peripheral(slot);
-        if (auto* native = dynamic_cast<IIcMouse*>(peripheral)) {
-            native->setHostMouse(rawX, rawY, button);
-            ++routed;
-        } else if (auto* mameCard = dynamic_cast<MouseCard*>(peripheral)) {
-            mameCard->setHostMouse(rawX, rawY, button);
-            ++routed;
-        } else if (auto* appleWinCard =
-                       dynamic_cast<MouseCardAppleWin*>(peripheral)) {
-            appleWinCard->setHostMouse(rawX, rawY, button);
-            ++routed;
-        }
-    }
-    return routed;
+    return controller_.routeHostMouseLocked(rawX, rawY, button);
 }
 
 } // namespace pom2

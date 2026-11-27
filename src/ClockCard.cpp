@@ -17,6 +17,7 @@
 #include "ClockCard.h"
 
 #include "CpuClock.h"
+#include "HostClock.h"
 #include "Logger.h"
 #include "ResourcePaths.h"
 #include "SlotRomAsm.h"
@@ -101,7 +102,7 @@ std::tm localTimeR(std::time_t t)
 
 std::tm hostLocalTime()
 {
-    return localTimeR(std::time(nullptr));
+    return pom2::hostLocalTimeNow();   // HostClock.h: or a recording's own clock
 }
 
 }  // namespace

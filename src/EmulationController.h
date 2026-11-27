@@ -157,7 +157,53 @@ public:
     /// in the Memory viewer, the PC. Re-executing history cannot reproduce
     /// that, and a Step Back from a frame before it would silently undo it:
     /// the way back closes here. Caller holds `stateMutex`.
-    void noteChangedByHand() { markReplayBarrier(); }
+    void noteChangedByHand() { markReplayBarrier(); endInputJournalLocked("the machine was changed by hand"); }
+
+    // ── Host input recording and playback (EmulationController_Input.cpp) ──
+    /// A recording keeps every input that reaches the machine from outside —
+    /// keys, pastes, game port, mouse, resets, speed changes — stamped with
+    /// the CPU cycle it was APPLIED at: while recording, inputs wait for the
+    /// next slice boundary (Memory::setInputTap), so the cycle is exact, and
+    /// a playback started from the same session lands each one on the same
+    /// instruction boundary. Every 15 frames the machine's fingerprint is
+    /// recorded too, and a playback checks it: a replay that leaves the
+    /// recorded path says where. Files, sessions: InputRecording.h.
+    enum class InputJournalMode { Off, Recording, Playing };
+    struct InputJournalState;   // EmulationController_Input.cpp
+    static std::shared_ptr<InputJournalState> makeInputJournalState();
+    InputJournalMode inputJournalMode() const;
+    /// Why a recording cannot start now; nullptr when it can. Caller holds `stateMutex`.
+    const char* inputRecordingRefusalLocked() const;
+    /// Start recording at this cycle (the session is captured by the caller
+    /// in the same lock hold). Caller holds `stateMutex`.
+    bool beginInputRecordingLocked(std::string& error);
+    /// End a recording, or a playback, at this cycle, saying why (shown to
+    /// the user). Caller holds `stateMutex`. No-op when nothing runs.
+    void endInputJournalLocked(const char* why);
+    /// The recorded entries, the recording having ended (by
+    /// endInputJournalLocked or by itself: inputRecordingEndedWaiting()).
+    /// Takes `stateMutex`; leaves the controller ready for another.
+    std::vector<pom2::TimedInput> takeInputRecording(std::string& why);
+    /// True when a recording stopped by itself (an outside change) and its
+    /// entries wait for takeInputRecording.
+    bool inputRecordingEndedWaiting() const { return inputRecordingWaiting_.load(); }
+    /// Play `entries` from this cycle: the session must already be loaded,
+    /// and the machine must stand on the recording's first checkpoint.
+    /// Caller holds `stateMutex`.
+    bool beginInputPlaybackLocked(std::vector<pom2::TimedInput> entries, std::string& error);
+    /// The last outcome, for the status line ("playback finished: 42 inputs,
+    /// 12 checks", "playback left the recording at cycle …").
+    std::string inputJournalStatus() const;
+    bool inputPlaybackDiverged() const { return inputPlaybackDiverged_.load(); }
+    /// The machine's fingerprint: cycle, registers and the 64 KiB the CPU
+    /// sees. Caller holds `stateMutex`.
+    uint64_t machineFingerprintLocked() const;
+    /// The host pointer, to every mouse device on the bus (MouseCoordinator,
+    /// the AI server). Caller holds `stateMutex`. Returns how many took it.
+    int routeHostMouseLocked(uint8_t x, uint8_t y, bool button);
+    /// The session a recording started from, encoded — kept here between
+    /// startInputRecording and saveInputRecording (InputRecording.cpp).
+    std::vector<uint8_t>& inputRecordingSession() { return inputRecordingSession_; }
     /// How long one debugRunBack() may hold the machine and the interface
     /// (0.8 s). Settable so that a test neither depends on the wall clock
     /// nor has to wait to see the pause.
@@ -350,7 +396,7 @@ public:
     //                    signature mismatch, falls back to coldBoot
     //                    so the F8 autostart firmware can scan slots
     //                    naturally (Theme 8).
-    void hardReset();
+    void hardReset();   // EmulationController_Reset.cpp
     void softReset();
     void coldBoot();
     /// Returns true when launched into the slot ROM, or through the //c+
@@ -724,6 +770,27 @@ private:
     /// `frame`, as the live state. False when the frame did not restore.
     bool landAfterReplay(size_t frame, long instructions);
     void beginReplay();
+    // Host input recording (EmulationController_Input.cpp).
+    std::shared_ptr<InputJournalState> inputJournal_ = makeInputJournalState();   // kept for life: Memory's tap points at it
+    std::atomic<bool> inputRecordingWaiting_{false};
+    std::vector<uint8_t> inputRecordingSession_;
+    std::atomic<bool> inputPlaybackDiverged_{false};
+    /// At the start of every CPU slice and step: a recording applies the
+    /// inputs that waited and stamps them; a playback applies what falls on
+    /// this cycle, checks the fingerprints and returns the slice cut to the
+    /// next entry. One pointer test when neither runs.
+    int inputSliceLocked(int chunk);
+    void applyJournalInputLocked(const pom2::InputEvent& e);
+    void noteResetForInputJournalLocked(pom2::InputEvent::Kind kind);
+    void noteClockForInputJournalLocked(double hz, double stockHz, double machineHz, double ratio);
+    void applyClockLocked(double hz, double stockHz, double machineHz, double mul);
+    double stockClockHz() const;   // EmulationController_Clock.cpp
+    void hardResetLocked();   // EmulationController_Reset.cpp
+    void softResetLocked();
+    void coldBootLocked();
+    void suspendDriveSounds(bool on);   // FloppySoundDevice::setSuspended, both form factors
+    uint64_t abandonedAt_ = ~uint64_t(0);   // cycle of the last abandoned replay (its reason)
+    bool abandonedReachedOutside_ = false;
     uint64_t outsideEpoch() const;
     std::chrono::milliseconds runBackBudget_{800};
     bool cardHoldsHostConnection() const;

@@ -6762,6 +6762,57 @@ restore keeps the security hardening that used to live inline in
 over-read) and the 16 MiB MEX cap (→ `RestoreResult{false,…}` so the
 HTTP path still returns 400).
 
+### Recording host input (`.pom2rec`)
+
+*(2026-11-27.)* File ▸ Record input keeps every input that reaches the
+machine from outside, stamped with the CPU cycle it was **applied** at, and
+File ▸ Play a recording (or a drop, or `POM2 file.pom2rec`) re-runs it on
+the machine it started from. Mechanics: `EmulationController_Input.cpp`;
+file and session: `InputRecording.h/.cpp`; the hook: `Memory::setInputTap`;
+the event type: `InputEvent.h`.
+
+- **Why the cycle is exact.** The machine is deterministic; WHEN an input
+  lands is not (the UI writes a key while the worker is mid-slice). While
+  recording, Memory's input forwarders (keys, held keys, the three pastes,
+  paddles, buttons, Apple keys, Shift/Control wires, the Sirius joyport) and
+  `routeHostMouseLocked` hand the input to the tap, and the worker applies it
+  at the start of its next slice (`inputSliceLocked`, the first line of
+  `runCpuSlice` and of `stepBusMaster`) — an instruction boundary — and
+  stamps it with that cycle. A key is up to one slice (4096 cycles) late.
+  A playback cuts its slices to end exactly on each entry's cycle. Level
+  inputs (a paddle written every frame) are recorded on change only.
+- **Also recorded:** the three resets (`EmulationController_Reset.cpp`, each
+  with a Locked body the playback calls), and every CPU clock change
+  (`applyAcceleratorClock` → `applyClockLocked`): an accelerator or the speed
+  menu changes what the Disk II's platter and the beam see. During a
+  playback only the recorded changes apply.
+- **Clocks the guest reads** (No-Slot Clock, ThunderClock, the Vs drive's
+  ProDOS date) go through `pom2::hostLocalTimeNow()` (`HostClock.h`); a
+  recording or a playback overrides it with the recording's start second and
+  UTC offset plus the EMULATED time since, so a date replays the same bytes
+  anywhere.
+- **What ends a recording** (at that cycle, saying why, the file then saved
+  by itself): bytes coming IN from a peer (`pom2::noteHostExchange`, a
+  counter apart from `noteHostIo`: SSC receive, Uthernet, FujiNet),
+  `noteChangedByHand`, a disk change (`noteHostMediaSwap`), `noteTimeJump`,
+  a profile switch, `bootFromSlot`. Refused at start: a scrub, a card holding
+  a host connection, a paste or a cassette playing, a 4play or SNES MAX
+  card (they read the host's pads themselves). Step Back is refused while
+  one runs.
+- **Checked.** Every 15 frames (and at the end) the recording stores the
+  machine's fingerprint (`machineFingerprintLocked`: cycle, registers, the
+  64 KiB CPU view); the playback compares at the same cycle and stops at the
+  first difference — or when no instruction ends on an entry's cycle — and
+  says where (`inputPlaybackDiverged`). The host is not heard while a
+  playback runs. Pinned by `input_recording` (a real //e session with
+  typing, a paddle and a Ctrl-Reset, played on a fresh machine; then one
+  altered key, caught).
+- **File:** `POM2INPT`, version 1, the encoded session (`.pom2session`
+  payload, disks embedded), then fixed-layout entries (cycle, kind, three
+  ints, four doubles, hash, a second count, text). Written unlocked, at stop,
+  to `<user data>/recordings/rec-YYYYMMDD-HHMMSS.pom2rec`. Not in the
+  browser build yet.
+
 ### Rewind / time-travel
 
 **The slot-card snapshot contract is pinned for every card** *(2026-09-08,
@@ -13081,8 +13132,9 @@ condition** *(2026-11-27, French Touch's second round)*. Grouik's report:
   stand on it exactly; otherwise the verb is given up, the machine put back
   from the frame captured on the way in, and the way back closed until the
   machine has run on. What follows is why a replay is usually exact; the
-  check is why a wrong one is never landed on. Run Back checks the newest
-  frame's replay this way and holds older frames to their cycle.
+  check is why a wrong one is never landed on. Run Back checks every
+  frame's replay this way: the newest on the present, an older one on the
+  next frame's recorded state, taken as that frame is restored.
   **No replay crosses what the machine's own code cannot reproduce**
   (`replayBarriers_`, an ascending list of cycles; `markReplayBarrier`,
   `replayBarrierFor`): a change of an accelerator's
@@ -13189,7 +13241,8 @@ itself is UI and has no test.
 **Beam view, slow motion, Screen Inspector** *(2026-11-25, same requests)*.
 
 - **Beam view** (`Memory::setBeamView`, `MemoryBeamView.cpp`; a checkbox in
-  the Debugger and the Screen Inspector, off by default, not persisted). The
+  the Screen Inspector — the Debugger's own copy went on 2026-11-27, a
+  second box for one switch — off by default, not persisted). The
   display normally paints the last PUBLISHED frame, which lags by up to a
   frame — invisible at full speed, twenty seconds at 0.1 %, and wrong for
   someone stopped mid-frame. With the beam view on, Memory describes the

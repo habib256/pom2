@@ -64,6 +64,22 @@ inline std::atomic<uint64_t>& hostIoEpoch()
 /// Call from the guest's access that exchanges a byte with the host.
 inline void noteHostIo() { hostIoEpoch().fetch_add(1, std::memory_order_relaxed); }
 
+/// Bytes that came IN from a peer (a serial line, the network, FujiNet):
+/// they also count as host I/O above, and a recording of host input
+/// (EmulationController_Input.cpp) cannot replay them — it ends there.
+/// Keys, the mouse and the game port are not this: a recording keeps them.
+inline std::atomic<uint64_t>& hostExchangeEpoch()
+{
+    static std::atomic<uint64_t> epoch{0};
+    return epoch;
+}
+
+inline void noteHostExchange()
+{
+    hostExchangeEpoch().fetch_add(1, std::memory_order_relaxed);
+    noteHostIo();
+}
+
 } // namespace pom2
 
 #endif // POM2_HOST_IO_EPOCH_H

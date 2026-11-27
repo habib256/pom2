@@ -309,6 +309,17 @@ public:
     /// user asks for knowingly — so they are refused while this is true.
     virtual bool holdsHostConnection() const { return false; }
 
+    /// A mouse the host pointer is routed to (EmulationController::
+    /// routeHostMouseLocked — the GUI, the AI server, a recording of host
+    /// input): the three mouse devices override both.
+    virtual bool takesHostMouse() const { return false; }
+    virtual void routeHostMouse(uint8_t x, uint8_t y, bool button) { (void)x; (void)y; (void)button; }
+
+    /// Reads the host's game pads itself, outside Memory's input path (the
+    /// 4play, the SNES MAX): a recording of host input cannot keep what it
+    /// reads, so one is refused while such a card is plugged.
+    virtual bool readsHostPadsItself() const { return false; }
+
     /// True while this card's own processor runs the machine IN PLACE of
     /// the one in the 6502 socket — an accelerator card holding DMA, not a
     /// coprocessor doing separate work (that is `dmaActive()`).

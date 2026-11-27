@@ -1252,6 +1252,8 @@ add_executable(test_rewind_transport
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -1301,6 +1303,8 @@ add_executable(test_ui_worker_contention
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -6682,6 +6686,8 @@ add_executable(test_cli_runner
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -7319,6 +7325,8 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -7666,6 +7674,8 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -8015,6 +8025,8 @@ add_executable(test_softcard_toggle
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -9765,6 +9777,8 @@ add_executable(test_instruction_trace
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -9810,6 +9824,8 @@ add_executable(test_debugger
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -11664,6 +11680,8 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Storage.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_Clock.cpp
     ${CMAKE_SOURCE_DIR}/src/EmulationController_TimeTravel.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Input.cpp
+    ${CMAKE_SOURCE_DIR}/src/EmulationController_Reset.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_WriteBack.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing_Session.cpp
@@ -12292,6 +12310,15 @@ add_executable(test_session_machine session_machine_test.cpp)
 target_link_libraries(test_session_machine PRIVATE pom2_core_test)
 add_test(NAME session_machine COMMAND test_session_machine)
 set_tests_properties(session_machine PROPERTIES TIMEOUT 30)
+
+# Host input recording: the .pom2rec codec, and a real //e session recorded
+# and played on a fresh machine with every fingerprint checked
+# (EmulationController_Input.cpp, InputRecording.h). Needs roms/apple2e.rom
+# (the test media archive): 77 without it.
+add_executable(test_input_recording input_recording_test.cpp)
+target_link_libraries(test_input_recording PRIVATE pom2_core_test)
+add_test(NAME input_recording COMMAND test_input_recording)
+set_tests_properties(input_recording PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
 pom2_add_headless_test(test_sirius_joyport
     NAME sirius_joyport TIMEOUT 10

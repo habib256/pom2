@@ -1683,6 +1683,7 @@ void MainWindow::render()
                    m == Apple2Display::HiResMode::MonoAmber;
         };
         tb.displayIsMono      = isMonoHiRes(display->getHiResMode());
+        tb.audioMuted         = controller->audio().isMasterMuted();
         {
             std::lock_guard<std::mutex> lk(controller->stateMutex());
             tb.rewindEnabled   = controller->rewind().enabled();
@@ -1731,6 +1732,8 @@ void MainWindow::render()
         // Same entry point as F10 and the View menu item, so the three
         // routes into kiosk cannot drift apart.
         if (tr.requestKioskToggle)      toggleKioskMode();
+        if (tr.requestMuteToggle)
+            controller->audio().setMasterMuted(!controller->audio().isMasterMuted());
         if (tr.requestAbout)            showAbout = true;
         if (tr.requestMonoColorToggle) {
             // Flip color ↔ monochrome, remembering each side's submode so a

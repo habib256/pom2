@@ -14,6 +14,7 @@ namespace pom2 {
 // are guest-visible state and therefore belong in rewind snapshots.
 class SnesMaxCard final : public SlotPeripheral {
 public:
+    bool readsHostPadsItself() const override { return true; }   // a recording of host input cannot keep it
     explicit SnesMaxCard(int slot) : slot_(slot) {
         for (auto& pad : buttons_) pad.store(0, std::memory_order_relaxed);
     }

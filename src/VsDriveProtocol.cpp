@@ -3,6 +3,7 @@
 #include "VsDriveProtocol.h"
 
 #include "Block512Backing.h"   // pom2::noteMediaWrite
+#include "HostClock.h"
 
 #include <sys/stat.h>
 #if defined(_WIN32)
@@ -26,13 +27,7 @@ uint8_t checksum(const uint8_t* data, size_t count)
 
 std::array<uint8_t, 4> prodosDateTime()
 {
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-#ifdef _WIN32
-    localtime_s(&local, &now);
-#else
-    localtime_r(&now, &local);
-#endif
+    const std::tm local = hostLocalTimeNow();   // HostClock.h: or a recording's own clock
     const uint16_t clock = static_cast<uint16_t>(local.tm_min | local.tm_hour << 8);
     const uint16_t date = static_cast<uint16_t>(local.tm_mday |
         (local.tm_mon + 1) << 5 | ((local.tm_year + 1900) % 100) << 9);

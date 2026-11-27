@@ -118,6 +118,8 @@ public:
     /// with wrap). `button` is true while the mouse button is held.
     /// Called from the UI thread once per frame.
     void setHostMouse(uint8_t rawX, uint8_t rawY, bool button);
+    bool takesHostMouse() const override { return true; }
+    void routeHostMouse(uint8_t x, uint8_t y, bool button) override { setHostMouse(x, y, button); }
     /// The running counters the last setHostMouse set (any feeder's): a
     /// second feeder adds its delta to these, or it jumps the cursor.
     uint8_t hostCounterX() const { return hostSetX_; }

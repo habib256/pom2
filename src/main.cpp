@@ -1278,6 +1278,10 @@ int main(int argc, char* argv[])
                 // never happened.
                 if (folder)
                     pom2::log().info("CLI", "ProDOS host folder mounted without boot disk");
+            } else if (std::filesystem::u8path(c.bootDiskPath).extension() == ".pom2rec") {
+                // A recording of host input: played, with its own machine
+                // (InputRecording.h) — `POM2 bug.pom2rec` reproduces a report.
+                (void)c.mainWindow->playInputRecordingFile(c.bootDiskPath);
             } else if (c.mainWindow->insertAndBootImage(c.bootDiskPath, err)) {
                 pom2::log().info("CLI", "booted disk: " + c.bootDiskPath);
             } else {

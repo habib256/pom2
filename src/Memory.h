@@ -43,6 +43,7 @@
 #include "SlotBus.h"
 #include "MemoryProfile.h"
 #include "CpuClock.h"
+#include "InputEvent.h"
 #include "Keyboard.h"
 #include "MemoryWatchSink.h"
 #include "PaddleInputs.h"
@@ -958,14 +959,54 @@ public:
     /// host's Caps Lock off answered ?SYNTAX ERROR (bug hunt 2026-09-29).
     void queueKey(uint8_t ascii)
     {
+        if (tapped(pom2::InputEvent::Kind::Key, ascii)) return;
         if (!iieMode && ascii >= 'a' && ascii <= 'z')
             ascii = static_cast<uint8_t>(ascii - 'a' + 'A');
         keyboard_.queueKey(ascii);
     }
+
+    // ── Host input recording ────────────────────────────────────────────
+    /// While a tap is set (a recording or a playback of host input,
+    /// EmulationController_Input.cpp), every host input below goes to it
+    /// instead of the machine: a recording applies it at the next slice
+    /// boundary through applyInput, stamped with that cycle, so it replays
+    /// to the cycle; a playback drops it (the recording drives). One relaxed
+    /// pointer load per input when no tap is set.
+    void setInputTap(pom2::InputTap* tap) { inputTap_.store(tap, std::memory_order_release); }
+    /// Apply one input now, bypassing the tap. Caller holds the state lock.
+    void applyInput(const pom2::InputEvent& e)
+    {
+        using K = pom2::InputEvent::Kind;
+        const bool on = e.b != 0;
+        switch (e.kind) {
+        case K::Key: {
+            uint8_t ascii = static_cast<uint8_t>(e.a);
+            if (!iieMode && ascii >= 'a' && ascii <= 'z') ascii = static_cast<uint8_t>(ascii - 'a' + 'A');
+            keyboard_.queueKey(ascii);
+            break;
+        }
+        case K::KeyHeld:      keyboard_.setKeyHeld(static_cast<uint16_t>(e.a), on); break;
+        case K::ReleaseHeld:  keyboard_.releaseHeldKeys(); break;
+        case K::Paste:        keyboard_.pasteText(e.text.data(), e.text.size(), !iieMode); break;
+        case K::PasteRaw:     keyboard_.pasteRawKeys(e.text.data(), e.text.size()); break;
+        case K::PasteStream:  keyboard_.pasteKeyStream(e.text.data(), e.text.size(), !iieMode); break;
+        case K::Paddle:       paddles_.setPaddle(e.a, static_cast<uint8_t>(e.b)); break;
+        case K::PaddleButton: paddles_.setPaddleButton(e.a, on); break;
+        case K::OpenApple:    paddles_.setOpenAppleKey(on); break;
+        case K::SolidApple:   paddles_.setSolidAppleKey(on); break;
+        case K::Shift:        paddles_.setShiftKey(on); break;
+        case K::Control:      paddles_.setControlKey(on); break;
+        case K::Joyport:      joyport_.setContacts(e.a, static_cast<uint8_t>(e.b)); break;
+        default: break;       // the controller applies the others (mouse, resets, clock)
+        }
+    }
     void clearKeyStrobe()         { keyboard_.clearStrobe(); }
     /// What a $C000 read would answer, without promoting a queued key.
     uint8_t keyLatchPeek() const  { return keyboard_.latchMirror(); }
-    void setKeyHeld(uint16_t token, bool down) { keyboard_.setKeyHeld(token, down); }
+    void setKeyHeld(uint16_t token, bool down) {
+        if (tapped(pom2::InputEvent::Kind::KeyHeld, token, down)) return;
+        keyboard_.setKeyHeld(token, down);
+    }
     bool keyHeld(uint16_t token) const { return keyboard_.keyHeld(token); }
     void appendSdkKeyboard(std::vector<uint8_t>& out) const { keyboard_.appendSdkState(out); }
     bool loadSdkKeyboard(const uint8_t* data, size_t size, bool apply)
@@ -985,7 +1026,10 @@ public:
     /// 2nd ed.): there the read answers 0 whatever this holds.
     void setIic40ColumnSwitch(bool forty) { iic40ColSwitch_ = forty; }
     bool iic40ColumnSwitch() const { return iic40ColSwitch_; }
-    void releaseHeldKeys()        { keyboard_.releaseHeldKeys(); }
+    void releaseHeldKeys() {
+        if (tapped(pom2::InputEvent::Kind::ReleaseHeld)) return;
+        keyboard_.releaseHeldKeys();
+    }
 
     /// Paste a block of text. Line-endings normalised to CR ($0D) — `\r\n`,
     /// `\r`, `\n` all collapse to one CR. Non-printable controls below
@@ -998,6 +1042,7 @@ public:
     /// The ][/][+ case-fold is applied iff not in IIe mode.
     static constexpr size_t kPasteMaxChars = pom2::Keyboard::kPasteMaxChars;
     size_t pasteText(const char* data, size_t length) {
+        if (tappedText(pom2::InputEvent::Kind::Paste, data, length)) return length;
         return keyboard_.pasteText(data, length, /*foldToUpper=*/!iieMode);
     }
     size_t pasteText(const std::string& s) { return pasteText(s.data(), s.size()); }
@@ -1007,6 +1052,7 @@ public:
     /// ESC. Bytes are stripped to 7 bits but otherwise pass through
     /// verbatim. Same FIFO + strobe drain as pasteText.
     size_t pasteRawKeys(const char* data, size_t length) {
+        if (tappedText(pom2::InputEvent::Kind::PasteRaw, data, length)) return length;
         return keyboard_.pasteRawKeys(data, length);
     }
 
@@ -1016,6 +1062,7 @@ public:
     /// across calls, because the caller delivers one byte at a time. See
     /// `pom2::Keyboard::pasteKeyStream`.
     size_t pasteKeyStream(const char* data, size_t length) {
+        if (tappedText(pom2::InputEvent::Kind::PasteStream, data, length)) return length;
         return keyboard_.pasteKeyStream(data, length, /*foldToUpper=*/!iieMode);
     }
 
@@ -1033,8 +1080,14 @@ public:
     // the 3 push-button switches. Game-port reset latch armed by $C070.
     // State + read logic live in pom2::PaddleInputs (`paddles_`); these are
     // thin forwarders kept for the existing call sites.
-    void setPaddle(int idx, uint8_t value)   { paddles_.setPaddle(idx, value); }
-    void setPaddleButton(int idx, bool down) { paddles_.setPaddleButton(idx, down); }
+    void setPaddle(int idx, uint8_t value) {
+        if (tapped(pom2::InputEvent::Kind::Paddle, idx, value)) return;
+        paddles_.setPaddle(idx, value);
+    }
+    void setPaddleButton(int idx, bool down) {
+        if (tapped(pom2::InputEvent::Kind::PaddleButton, idx, down)) return;
+        paddles_.setPaddleButton(idx, down);
+    }
 
     // IIe modifier keys. Real //e wires Open Apple to PB0 ($C061),
     // Solid Apple to PB1 ($C062), and Shift (with the SHK jumper set,
@@ -1043,11 +1096,11 @@ public:
     // handler can call these from a GLFW key callback when the IIe
     // ROM is loaded; they're OR'd into the joystick button states at
     // read time.
-    void setOpenAppleKey  (bool down) { paddles_.setOpenAppleKey(down); }
-    void setSolidAppleKey (bool down) { paddles_.setSolidAppleKey(down); }
-    void setShiftKey      (bool down) { paddles_.setShiftKey(down); }
+    void setOpenAppleKey  (bool down) { if (!tapped(pom2::InputEvent::Kind::OpenApple, 0, down))  paddles_.setOpenAppleKey(down); }
+    void setSolidAppleKey (bool down) { if (!tapped(pom2::InputEvent::Kind::SolidApple, 0, down)) paddles_.setSolidAppleKey(down); }
+    void setShiftKey      (bool down) { if (!tapped(pom2::InputEvent::Kind::Shift, 0, down))      paddles_.setShiftKey(down); }
     void setShiftKeyMod   (bool on)   { paddles_.setShiftKeyMod(on); }
-    void setControlKey    (bool down) { paddles_.setControlKey(down); }
+    void setControlKey    (bool down) { if (!tapped(pom2::InputEvent::Kind::Control, 0, down))    paddles_.setControlKey(down); }
     void setGamePortConnected(bool on) { paddles_.setConnected(on); }
     bool gamePortConnected() const { return paddles_.connected(); }
     void setJoyportMode(int mode) { joyport_.setMode(mode); }
@@ -1055,7 +1108,10 @@ public:
     bool joyportActive() const {
         return joyport_.mode() != pom2::SiriusJoyport::Off && !iicProfile_ && paddles_.connected();
     }
-    void setJoyportContacts(int jack, uint8_t contacts) { joyport_.setContacts(jack, contacts); }
+    void setJoyportContacts(int jack, uint8_t contacts) {
+        if (tapped(pom2::InputEvent::Kind::Joyport, jack, contacts)) return;
+        joyport_.setContacts(jack, contacts);
+    }
     void setIiShiftWiring (pom2::PaddleInputs::IiShiftWiring w) { paddles_.setIiShiftWiring(w); }
 
     // Reset — returns LC/MMU/IOU/video switches to cold-boot defaults.
@@ -1462,6 +1518,19 @@ private:
     // the next paste byte); the cold IIe status reads use
     // `keyboard_.lastKey7()`.
     pom2::Keyboard keyboard_;
+    std::atomic<pom2::InputTap*> inputTap_{nullptr};   // setInputTap
+    bool tapped(pom2::InputEvent::Kind k, int a = 0, int b = 0) {
+        pom2::InputTap* t = inputTap_.load(std::memory_order_acquire);
+        if (!t) return false;
+        pom2::InputEvent e; e.kind = k; e.a = a; e.b = b;
+        return t->takeInput(e);
+    }
+    bool tappedText(pom2::InputEvent::Kind k, const char* data, size_t length) {
+        pom2::InputTap* t = inputTap_.load(std::memory_order_acquire);
+        if (!t) return false;
+        pom2::InputEvent e; e.kind = k; e.text.assign(data, length);
+        return t->takeInput(e);
+    }
     /// The $C000 read, with the paste's wait for a line to be taken
     /// (MemoryPaste.cpp).
     uint8_t readKeyLatch();

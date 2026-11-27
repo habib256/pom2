@@ -18,6 +18,8 @@
 
 #include "ByteIO.h"
 
+#include "HostClock.h"
+
 #include <algorithm>
 #include <ctime>
 #include <utility>
@@ -26,14 +28,8 @@ namespace pom2 {
 
 std::tm NoSlotClock::defaultTimeFn()
 {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm{};
-#if defined(_WIN32)
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    return tm;
+    // HostClock.h: the host's local time, or a recording's own clock.
+    return hostLocalTimeNow();
 }
 
 NoSlotClock::NoSlotClock() : timeFn_(&NoSlotClock::defaultTimeFn) {}

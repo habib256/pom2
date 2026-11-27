@@ -55,6 +55,7 @@ namespace pom2 {
 class FourPlayCard : public SlotPeripheral
 {
 public:
+    bool readsHostPadsItself() const override { return true; }   // a recording of host input cannot keep it
     static constexpr int kPlayers = 4;
 
     /// One player's byte. MAME `4play.cpp:41-48`: everything is active

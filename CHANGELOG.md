@@ -10,6 +10,39 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-27 — Record host input, play it back to the cycle
+
+File ▸ **Record input** keeps every key, paste, joystick, mouse move, reset
+and speed change, each at the CPU cycle it reached the machine, together
+with the session the machine stood in (disks embedded); **Play a
+recording** (or a drop, or `POM2 file.pom2rec`) re-runs it on that machine
+and checks the machine's fingerprint every 15 frames, stopping where it
+first differs. For a bug report that reproduces itself, a regression test
+made by playing, a demo shown without the machine. What makes it exact:
+while recording, inputs wait for the next CPU slice boundary
+(`Memory::setInputTap`) instead of landing mid-slice; the clocks a program
+reads run on the recording's own time (`HostClock.h`). What ends a
+recording, saying why: bytes from a peer, a disk change, a change by hand,
+a jump in time. The resets moved to `EmulationController_Reset.cpp`.
+Pinned by `input_recording`. → DEV § Recording host input.
+
+## 2026-11-27 — A Sound button in the toolbar; Step Back's last four corners
+
+**Sound** — a button after Save PNG and Full screen mutes or restores the
+whole audio bus: the mixer's Master mute (`master_muted`, persisted), so the
+two always agree; lit, a crossed speaker, while muted. **Beam view** is in
+the Screen Inspector only: the Debugger's box was a second switch for the
+same thing. **Step Back / Run Back**: the drive sounds are suspended while
+history is re-executed (it came out as a burst of head clicks and a spindle
+in the wrong state) and only the motor's final state is sent, when it
+changed — `FloppySoundDevice::setSuspended`, pinned in `floppy_sound_smoke`;
+a given-up replay now says why in the buttons' tooltip (it read as a reset
+or a key); **Run Back checks every frame it crosses** against the next
+frame's recorded state, not only the newest against the present — a replay
+that strayed in an old frame could have placed a stop where none happened.
+The `debugger` test joins the nightly TSan leg (its worker-thread case).
+→ DEV § Debugger.
+
 **v1.2.6 marker** — 2026-11-27. Release notes: [v1.2.6](docs/releases/v1.2.6.md), [libretro-v1.2.6](docs/releases/libretro-v1.2.6.md).
 
 ## 2026-11-27 — Debugger: BP / BPMR / BPMW, a Watch that only watches, the beam as a condition

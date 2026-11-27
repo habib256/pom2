@@ -1312,9 +1312,8 @@ void AiControlServer::handleMouse(socket_t fd, const Request& req)
             if (haveBtn)     mouseBtn_ = (btn != 0);
 
             if (haveAx || haveDx || haveAy || haveDy || haveBtn) {
-                if (mouseIic) mouseIic->setHostMouse(x, y, mouseBtn_);
-                else if (mouseLle) mouseLle->setHostMouse(x, y, mouseBtn_);
-                else          mouseHle->setHostMouse(x, y, mouseBtn_);
+                // Through the controller: a recording of host input keeps it.
+                (void)ctrl_->routeHostMouseLocked(x, y, mouseBtn_);
             }
             outX = x; outY = y; outBtn = mouseBtn_;
         }

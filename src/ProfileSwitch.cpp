@@ -123,6 +123,7 @@ ProfileSwitchResult switchProfile(EmulationController& controller,
     // 3-4. Tear down under the lock, set the paging mode, cold-reset RAM.
     {
         auto st = controller.lockState();
+        controller.endInputJournalLocked("the machine was switched to another model");
         if (hooks.beginLocked) hooks.beginLocked(st);
         st.memory().setIIEMode(cfg.iieMode);
         // RamWorks III is a //e expansion; the //c family has its own

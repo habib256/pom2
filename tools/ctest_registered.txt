@@ -261,6 +261,7 @@ imagewriter_pdf
 imagewriter_residue
 imagewriter_smoke
 input_io_smoke
+input_recording
 instruction_trace
 integer_basic_listing
 interrupt_load

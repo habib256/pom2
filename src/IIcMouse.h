@@ -11,6 +11,8 @@ public:
     std::string_view name() const override { return "Apple //c IOU mouse"; }
     uint8_t deviceSelectRead(uint8_t) override { return openBus(); }
     void setHostMouse(uint8_t x, uint8_t y, bool button);
+    bool takesHostMouse() const override { return true; }
+    void routeHostMouse(uint8_t x, uint8_t y, bool button) override { setHostMouse(x, y, button); }
     /// The running counters the last setHostMouse set (any feeder's).
     uint8_t hostCounterX() const { return hostX_; }
     uint8_t hostCounterY() const { return hostY_; }

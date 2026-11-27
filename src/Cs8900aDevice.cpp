@@ -410,7 +410,7 @@ uint16_t Cs8900aDevice::receiveFrame()
     if (!frameQueue_.empty()) {
         QueuedFrame frame = std::move(frameQueue_.front());
         frameQueue_.pop_front();
-        pom2::noteHostIo();             // a received frame is taken (HostIoEpoch.h)
+        pom2::noteHostExchange();             // a received frame is taken (HostIoEpoch.h)
         queueBytes_ -= std::min(queueBytes_, frame.bytes.size());
         // Keep the true length for the status word: MAME computes the
         // Extradata bit (0x4000) from the pre-clamp length and discards

@@ -166,6 +166,14 @@ public:
     /// spin/start sample pair. Called from DiskIICard when the spindle
     /// truly turns on / off (after MODE_DELAY expires for spin-down).
     void motor(bool on, bool withDisk) override;
+    /// The debugger's Step Back / Run Back re-execute history to find their
+    /// landing point: thousands of instructions in no time, whose head
+    /// steps and motor switches would come out as a burst of clicks and a
+    /// spindle in the wrong state. While suspended, everything is dropped
+    /// except the motor's LAST state, which is sent when the suspension
+    /// ends — only if it differs from what the device was last told, so a
+    /// spinning drive does not restart its spin-up sample. CPU thread.
+    void setSuspended(bool on);
     /// Head moved. `newTrack` is the destination track (0..34) — we
     /// derive the step rate from inter-call cadence (in **emulated**
     /// CPU cycles, via `emuCycles`), not from the track value, so the
@@ -283,6 +291,10 @@ private:
     };
     mutable std::mutex cmdMtx_;
     std::vector<Cmd>   cmdQueue_;
+    // setSuspended (CPU side, under cmdMtx_ except the flag).
+    std::atomic<bool> suspended_{false};
+    bool heldMotor_ = false, heldMotorOn_ = false, heldWithDisk_ = false;
+    bool toldMotorOn_ = false, toldWithDisk_ = false;   // last motor state queued
     /// Hard cap on the CPU→audio queue. `drainCommands` is the ONLY consumer
     /// and it runs on the miniaudio callback, so on a host with no audio
     /// device (headless, WASM before the first user gesture, a machine whose

@@ -254,6 +254,9 @@ public:
     /// Disk Library "insert + boot" buttons and the CLI positional-disk /
     /// `--kiosk` launcher. Must run on the UI thread (takes the state lock
     /// internally between frames).
+    /// Play a `.pom2rec` recording of host input (File menu, a drop, the
+    /// command line): its session, then its inputs (InputRecording.h).
+    bool playInputRecordingFile(const std::string& path);
     bool insertAndBootImage(const std::string& path, std::string& errOut);
     /// Explicit //c+ Sony mount used by --35-disk1/2; never the external
     /// SmartPort chain. UI thread only, with normal duplicate/write guards.
@@ -1548,6 +1551,11 @@ private:
     bool reconstructSessionMachine(const pom2::SessionArchive& session, std::string& error);
     void renderSessionFileDialog();
     void renderBrowserSessionMenu();
+    // Host input recording (MainWindow_SessionFiles.cpp; the mechanics are
+    // EmulationController_Input.cpp, the file InputRecording.h).
+    void renderInputRecordingMenu();
+    void pollInputRecording();          // each frame: save one that ended by itself, report a playback
+    std::string inputRecordingStatusShown_;
     pom2::BrowserSessionStore browserSession_;
     void updateAutoTurbo();
     void renderDiskPanelWindow();

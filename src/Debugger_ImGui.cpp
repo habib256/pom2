@@ -154,7 +154,6 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.cycles     = mem.getCycleCounter();
         snap.videoCycle = mem.videoNow();
         snap.standard   = mem.videoStandard();
-        snap.beamView   = mem.beamView();
         snap.iicClass   = mem.isIIcClass();
         snap.video      = mem.getDisplayState();
         for (int slot = 1; slot <= 7; ++slot) {
@@ -235,7 +234,7 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     if (snap.running || snap.cycles != backStatusCycles_) backStatus_.clear();
     if (!backStatus_.empty()) ImGui::TextColored(kBreakColour, "%s", backStatus_.c_str());
     drawControls(ctrl, snap);
-    drawNavigation(ctrl, snap);
+    drawNavigation(snap);
     ImGui::Separator();
     drawRegisters(snap);
     drawBeamAndCycles(snap);
@@ -802,7 +801,7 @@ void Debugger_ImGui::scrollView(const Snapshot& snap, int instructions)
     viewAddr_ = disasmStep(snap.memory.data(), viewAddr_, instructions, snap.isa);
 }
 
-void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& snap)
+void Debugger_ImGui::drawNavigation(const Snapshot& snap)
 {
     ImGui::SetNextItemWidth(160);
     const bool entered = ImGui::InputTextWithHint("##goto", "$C600 or label", gotoEntry_,
@@ -821,17 +820,8 @@ void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& s
             cursorValid_ = true;
         }
     }
-    ImGui::SameLine();
-    bool beamView = snap.beamView;
-    if (ImGui::Checkbox("Beam view", &beamView)) {
-        auto st = ctrl.lockState();
-        st.memory().setBeamView(beamView);
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Show the screen as the tube has it at THIS cycle: the frame in\n"
-                          "progress above the beam, the previous frame from the beam down.\n"
-                          "Off: the last completed frame. Use it when stopped in the middle\n"
-                          "of a frame, or in slow motion (speed menu).");
+    // (Beam view lives in the Screen Inspector only: it is a way of showing
+    // the picture, and a second box here drove the same switch.)
     ImGui::SameLine();
     if (gotoFailed_) ImGui::TextColored(kBreakColour, "unknown address or label");
     else {

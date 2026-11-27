@@ -128,7 +128,6 @@ private:
         uint64_t cycles = 0;
         uint64_t videoCycle = 0;
         VideoStandard standard = VideoStandard::NTSC;
-        bool beamView = false;
         /// For the listing's built-in I/O names (AppleIoNames.h): what sits
         /// in each slot (0 nothing known, 1 a 6522 sound card, 2 a Disk II),
         /// and whether this is a //c-class machine.
@@ -214,7 +213,7 @@ private:
     bool      wasRunning_  = false;
     /// "Go to" box: a hex address, or a label from the loaded symbols.
     char      gotoEntry_[64] = {0};
-    void drawNavigation(EmulationController& ctrl, const Snapshot& snap);
+    void drawNavigation(const Snapshot& snap);
     /// AppleWin's debugger keys, while this window has the focus.
     void handleKeys(EmulationController& ctrl, const Snapshot& snap);
     /// Addresses of the lines the listing drew last frame (cursor keys keep

@@ -2,6 +2,9 @@
 #include "MainWindow.h"
 #include "Version.h"
 #include "SessionFiles.h"
+#include "InputRecording.h"
+#include "NativeFileDialog.h"
+#include "ResourcePaths.h"
 #include "SessionMachine.h"
 #include "SessionLoadQueue.h"
 #include "SlotConfigurationCoordinator.h"
@@ -26,6 +29,8 @@
 #include "imgui.h"
 #include "IconsFontAwesome6.h"
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
 
 void MainWindow::holdBrowserSession()
 {
@@ -69,6 +74,7 @@ void MainWindow::renderBrowserSessionMenu()
 
 void MainWindow::renderSessionFileDialog()
 {
+    pollInputRecording();
 #ifdef __EMSCRIPTEN__
     if (const auto file = pom2::takeBrowserFile()) {
         if (!file->error.empty()) {
@@ -207,3 +213,108 @@ bool MainWindow::reconstructSessionMachine(const pom2::SessionArchive& session, 
     if (ok) sessionMachineActive_ = true;
     return ok;
 }
+
+// ── Host input recording (File menu) ───────────────────────────────────
+// Record starts at once; Stop saves at once, into <user data>/recordings/,
+// named by the date — no dialog between the user and the machine. Play
+// picks a .pom2rec (or drop one on the window). The status bar shows REC /
+// PLAY while one runs; the outcome goes to the status line.
+namespace {
+std::string newRecordingPath()
+{
+    std::error_code ec;
+    const std::filesystem::path dir = pom2::userDataDir() / "recordings";
+    std::filesystem::create_directories(dir, ec);
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char name[64];
+    std::strftime(name, sizeof name, "rec-%Y%m%d-%H%M%S.pom2rec", &local);
+    return (dir / name).u8string();
+}
+} // namespace
+
+void MainWindow::renderInputRecordingMenu()
+{
+#ifndef __EMSCRIPTEN__
+    const auto mode = controller->inputJournalMode();
+    if (mode == EmulationController::InputJournalMode::Recording) {
+        if (ImGui::MenuItem(ICON_FA_STOP "  Stop recording input")) {
+            std::string why, error;
+            const std::string path = newRecordingPath();
+            const bool ok = pom2::saveInputRecording(*controller, path, why, error);
+            tapeStatusMessage = ok ? "Recording saved: " + path : "Recording not saved: " + error;
+            tapeStatusUntil = lastFrameTime + (ok ? 8.0 : 10.0);
+        }
+    } else if (mode == EmulationController::InputJournalMode::Playing) {
+        if (ImGui::MenuItem(ICON_FA_STOP "  Stop playing the recording")) {
+            auto st = controller->lockState();
+            controller->endInputJournalLocked("stopped by the user");
+        }
+    } else {
+        const char* refusal = nullptr;
+        { auto st = controller->lockState(); refusal = controller->inputRecordingRefusalLocked(); }
+        ImGui::BeginDisabled(refusal != nullptr);
+        if (ImGui::MenuItem(ICON_FA_CIRCLE "  Record input")) {
+            std::string error;
+            if (!pom2::startInputRecording(*controller, error)) {
+                tapeStatusMessage = "Recording not started: " + error;
+                tapeStatusUntil = lastFrameTime + 10.0;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", refusal ? refusal
+                : "Record every key, paste, joystick and mouse input, with the machine as it\n"
+                  "stands now: played back, it re-runs this session exactly, and checks it.\n"
+                  "For a bug report that reproduces itself, or a test made by playing.");
+        if (ImGui::MenuItem(ICON_FA_PLAY "  Play a recording...")) {
+            std::string picked;
+            if (pom2::nativeFileDialogAvailable() &&
+                pom2::nativeFileDialog(false, "Play a recording", "pom2rec",
+                                       (pom2::userDataDir() / "recordings").u8string(), "", picked)
+                    == pom2::FileDialogResult::Selected)
+                (void)playInputRecordingFile(picked);
+        }
+    }
+#endif
+}
+
+bool MainWindow::playInputRecordingFile(const std::string& path)
+{
+    std::string error;
+    const bool ok = pom2::playInputRecording(*controller, path, error);
+    tapeStatusMessage = ok ? "Playing " + std::filesystem::u8path(path).filename().u8string()
+                           : "Recording not played: " + error;
+    tapeStatusUntil = lastFrameTime + (ok ? 5.0 : 10.0);
+    return ok;
+}
+
+void MainWindow::pollInputRecording()
+{
+    // A recording that ended by itself (a disk change, bytes from a peer…)
+    // is saved at once: what it holds up to there is good.
+    if (controller->inputRecordingEndedWaiting() &&
+        controller->inputJournalMode() == EmulationController::InputJournalMode::Off) {
+        std::string why, error;
+        const std::string path = newRecordingPath();
+        const bool ok = pom2::saveInputRecording(*controller, path, why, error);
+        tapeStatusMessage = ok ? "Recording ended (" + why + "), saved: " + path
+                               : "Recording not saved: " + error;
+        tapeStatusUntil = lastFrameTime + 12.0;
+    }
+    // A playback's outcome, once.
+    if (controller->inputJournalMode() == EmulationController::InputJournalMode::Off) {
+        const std::string status = controller->inputJournalStatus();
+        if (status != inputRecordingStatusShown_ && status.rfind("Playback ended", 0) == 0) {
+            tapeStatusMessage = status;
+            tapeStatusUntil = lastFrameTime + 12.0;
+        }
+        inputRecordingStatusShown_ = status;
+    }
+}
+

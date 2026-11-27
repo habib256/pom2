@@ -311,6 +311,20 @@ void FloppySoundDevice::reset()
     // audio thread. Sending MotorOff via the queue is enough to bring
     // the next fillAudioBuffer to silence within ~one buffer.
     cmdQueue_.push_back({CmdKind::MotorOff, false, 0});
+    toldMotorOn_ = false;
+    heldMotor_ = false;
+}
+
+void FloppySoundDevice::setSuspended(bool on)
+{
+    std::lock_guard<std::mutex> lk(cmdMtx_);
+    suspended_.store(on, std::memory_order_relaxed);
+    if (on || !heldMotor_) return;
+    heldMotor_ = false;
+    if (heldMotorOn_ == toldMotorOn_ && (!heldMotorOn_ || heldWithDisk_ == toldWithDisk_)) return;
+    pushCommandLocked({heldMotorOn_ ? CmdKind::MotorOn : CmdKind::MotorOff, heldWithDisk_, 0});
+    toldMotorOn_ = heldMotorOn_;
+    toldWithDisk_ = heldWithDisk_;
 }
 
 void FloppySoundDevice::pushCommandLocked(const Cmd& c)
@@ -339,19 +353,25 @@ void FloppySoundDevice::motor(bool on, bool withDisk)
 {
     if (!isLoaded()) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
+    if (suspended_.load(std::memory_order_relaxed)) {
+        heldMotor_ = true; heldMotorOn_ = on; heldWithDisk_ = withDisk;
+        return;
+    }
     pushCommandLocked({on ? CmdKind::MotorOn : CmdKind::MotorOff, withDisk, 0});
+    toldMotorOn_ = on;
+    toldWithDisk_ = withDisk;
 }
 
 void FloppySoundDevice::step(int /*newTrack*/, uint64_t emuCycles)
 {
-    if (!isLoaded()) return;
+    if (!isLoaded() || suspended_.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
     pushCommandLocked({CmdKind::Step, false, emuCycles});
 }
 
 void FloppySoundDevice::click()
 {
-    if (!isLoaded()) return;
+    if (!isLoaded() || suspended_.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lk(cmdMtx_);
     if (bank_.load(std::memory_order_acquire) == Bank::VirtualII)
         pushCommandLocked({CmdKind::Latch, true, 0});
@@ -361,6 +381,7 @@ void FloppySoundDevice::click()
 
 void FloppySoundDevice::latch(bool inserting)
 {
+    if (suspended_.load(std::memory_order_relaxed)) return;
     if (bank_.load(std::memory_order_acquire) == Bank::VirtualII) {
         if (!viiReady_.load(std::memory_order_acquire)) return;
         std::lock_guard<std::mutex> lk(cmdMtx_);
@@ -384,6 +405,7 @@ void FloppySoundDevice::latch(bool inserting)
 
 void FloppySoundDevice::bump(uint64_t emuCycles)
 {
+    if (suspended_.load(std::memory_order_relaxed)) return;
     if (bank_.load(std::memory_order_acquire) != Bank::Mame) return;
     if (!samplesLoaded_.load(std::memory_order_acquire)) return;
     if (!hasExtra(EXTRA_HEAD_STOP)) return;
@@ -393,6 +415,7 @@ void FloppySoundDevice::bump(uint64_t emuCycles)
 
 void FloppySoundDevice::ioError()
 {
+    if (suspended_.load(std::memory_order_relaxed)) return;
     if (bank_.load(std::memory_order_acquire) != Bank::VirtualII) return;
     if (!viiReady_.load(std::memory_order_acquire)) return;
     if (vii_[VII_IOERR].data.empty()) return;

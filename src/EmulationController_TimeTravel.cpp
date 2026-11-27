@@ -206,6 +206,9 @@ bool EmulationController::debugCanStepBack(const char** why) const
     const char* reason = nullptr;
     if (mode.load() != Mode::Stopped)
         reason = "The machine is running: stop it first.";
+    else if (inputJournalMode() != InputJournalMode::Off)
+        reason = "Host input is being recorded or played back: going back would\n"
+                 "leave the recording. Stop it first.";
     else if (!rewind_.enabled())
         reason = "The rewind is not recording: tick Rec here (or Record in the\n"
                  "Rewind panel), then run - going back needs its history.";
@@ -236,6 +239,19 @@ bool EmulationController::debugCanStepBack(const char** why) const
     else if (tape && tape->isPlaybackActive())
         reason = "A cassette is playing: going back would leave the tape ahead\n"
                  "of the machine. Stop the deck first.";
+    else if (rewindFrameBefore(mem.getCycleCounter()) == pom2::RewindBuffer::kNoFrame &&
+             abandonedAt_ == mem.getCycleCounter())
+        // The barrier is the one abandonReplay raised, here: say what really
+        // happened (it used to read as a reset or a key, which it was not).
+        reason = abandonedReachedOutside_
+            ? "The last attempt to go back was given up: re-executing the history\n"
+              "reached the outside (a disk write, or bytes for the host). The\n"
+              "machine is as it was. Run on: the way back reopens."
+            : "The last attempt to go back was given up: re-executing the history\n"
+              "did not lead back exactly here - something the rewind does not\n"
+              "record steered the machine (host time read by a clock card, a\n"
+              "timer's phase...). The machine is as it was. Run on: the way back\n"
+              "reopens.";
     else if (rewindFrameBefore(mem.getCycleCounter()) == pom2::RewindBuffer::kNoFrame)
         reason = replayBarrierFor(mem.getCycleCounter()) != 0 &&
                  rewind_.oldestCycle() < mem.getCycleCounter()
@@ -256,6 +272,13 @@ void EmulationController::beginReplay()
 {
     processor.setDebugHook(debugger_.get());    // attached, never called: see the header
     debugger_->setReplaying(true);
+    suspendDriveSounds(true);                   // no click burst from re-executed history
+}
+
+void EmulationController::suspendDriveSounds(bool on)
+{
+    if (floppy525) floppy525->setSuspended(on);
+    if (floppy35)  floppy35->setSuspended(on);
 }
 
 bool EmulationController::replayTo(uint64_t cycle, long& count)
@@ -321,6 +344,7 @@ bool EmulationController::landAfterReplay(size_t frame, long instructions)
     for (long i = 0; ok && i < instructions; ++i) replayOne();
     (void)processor.takeInterruptEntered();
     debugger_->setReplaying(false);
+    suspendDriveSounds(false);                // the spindle as it stands at the landing
     debugger_->clearHit();                    // what the replay latched
     syncDebugHook();
     // The frame's keyboard said which keys were HELD then; the host holds
@@ -452,8 +476,11 @@ bool EmulationController::abandonReplay(size_t presentFrame, uint64_t epochBefor
     if (ok) rewindTapeTo(presentFrame);
     (void)processor.takeInterruptEntered();
     debugger_->setReplaying(false);
+    suspendDriveSounds(false);                // the spindle as it stood at the present
     debugger_->setHit(stopBefore);
     syncDebugHook();
+    abandonedAt_ = mem.getCycleCounter();       // debugCanStepBack names the reason
+    abandonedReachedOutside_ = outsideEpoch() != epochBefore;
     if (outsideEpoch() != epochBefore) {
         noteMediaWrite();                       // empties the ring if a medium was written
         hostIoSeen_ = pom2::hostIoEpoch().load(std::memory_order_relaxed);
@@ -541,8 +568,12 @@ bool EmulationController::debugRunBack()
     bool paused = false;
     const bool boundaryOpen = now == runBackPausedAt_;
     const uint64_t barrier = replayBarrierFor(now);
+    // The recorded state of the frame that starts at `limit` (when it is not
+    // the present): the replay of the frame before it must arrive on it.
+    ReplayWitness limitWitness;
     for (;;) {
         if (!restoreFrameForReplay(frame)) return abandonReplay(present, epoch, stopBefore);
+        ReplayWitness thisFrame = witnessNow();
         debugger_->clearHit();
         long count = 0;
         for (;;) {
@@ -554,10 +585,11 @@ bool EmulationController::debugRunBack()
             // (...unless a Run Back paused HERE: the boundary it landed on
             // was never probed — it belongs to the frame before, which that
             // call did not replay.)
-            // The newest frame's replay ends on the present: it is the one
-            // that can be checked against it (see ReplayWitness). Older
-            // frames are held to their cycle only.
-            if (cycle == limit && limit == now && !standsOn(witness))
+            // Every frame's replay is checked where it ends (see
+            // ReplayWitness): the newest one on the present, an older one on
+            // the next frame's own recorded state — a replay that strays in
+            // an old frame would otherwise put a stop where none happened.
+            if (cycle == limit && !standsOn(limit == now ? witness : limitWitness))
                 return abandonReplay(present, epoch, stopBefore);
             if (cycle == limit && limit == now && !boundaryOpen) break;
             // Past the next frame's stamp: the replay left the original's
@@ -585,6 +617,7 @@ bool EmulationController::debugRunBack()
         if (at >= 0 || frame == 0 || rewind_.infoAt(frame - 1).cycle < barrier) break;
         if (std::chrono::steady_clock::now() - started >= runBackBudget_) { paused = true; break; }
         limit = rewind_.infoAt(frame).cycle;
+        limitWitness = std::move(thisFrame);
         --frame;
     }
     // Land: the frame again, then `at` instructions (none: its first cycle).

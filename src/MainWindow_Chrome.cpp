@@ -538,6 +538,7 @@ void MainWindow::renderMenuBar()
         if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save session...")) sessionFilePicker_.open(true);
         if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN "  Open session...")) sessionFilePicker_.open(false);
         renderBrowserSessionMenu();
+        renderInputRecordingMenu();
         // Quit is a no-op in the browser: the frame loop is driven by
         // emscripten_set_main_loop_arg (main.cpp), which ignores
         // glfwWindowShouldClose, and a canvas cannot close its own tab.
@@ -1292,6 +1293,20 @@ void MainWindow::renderStatusBar()
             ImGui::TextColored(u32(modeCol), "%s", modeStr);
             pom2::verticalRule();
             ImGui::TextColored(u32(pal.textDim), "%s", gfx);
+            // Host input recording / playback (File menu).
+            switch (controller->inputJournalMode()) {
+                case EmulationController::InputJournalMode::Recording:
+                    pom2::verticalRule();
+                    ImGui::TextColored(u32(pal.danger), ICON_FA_CIRCLE " REC");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Recording host input - File > Stop recording input");
+                    break;
+                case EmulationController::InputJournalMode::Playing:
+                    pom2::verticalRule();
+                    ImGui::TextColored(u32(pal.info), ICON_FA_PLAY " PLAY");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playing a recording of host input: the keyboard and\nthe mouse are not heard until it ends.");
+                    break;
+                default: break;
+            }
 
             // ── Mounted media, every bay, each with its own access LED ───
             // Walked off the SlotBus rather than the named card aliases so a

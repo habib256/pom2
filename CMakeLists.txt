@@ -308,6 +308,7 @@ set(SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/InputRecording.cpp
     src/SessionMachine.cpp
     src/SessionCards.cpp
     src/SessionLoadQueue.cpp
@@ -421,6 +422,8 @@ set(SOURCES
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
     src/EmulationController_TimeTravel.cpp
+    src/EmulationController_Input.cpp
+    src/EmulationController_Reset.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -800,6 +803,8 @@ set(POM2_FOUNDATION_HEADERS
     src/FloppySoundSink.h
     src/Logger.h
     src/HostIoEpoch.h
+    src/HostClock.h
+    src/InputEvent.h
     src/NetworkBackend.h
     src/NetworkValues.h
     src/PersistentFs.h
@@ -1093,6 +1098,7 @@ set(POM2_RUNTIME_HEADERS
     src/SessionSnapshot.h
     src/SessionIIc.h
     src/SessionFiles.h
+    src/InputRecording.h
     src/PrinterRender.h
     src/AiControlJson.h
     src/PrinterPortControl.h
@@ -1146,6 +1152,7 @@ set(POM2_RUNTIME_SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/InputRecording.cpp
     src/SessionMachine.cpp
     src/SessionCards.cpp
     src/SessionLoadQueue.cpp
@@ -1177,6 +1184,8 @@ set(POM2_RUNTIME_SOURCES
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
     src/EmulationController_TimeTravel.cpp
+    src/EmulationController_Input.cpp
+    src/EmulationController_Reset.cpp
     src/BlockWriteBackExecutor.cpp
     src/FloppySoundDevice.cpp
     src/FujiNetCardFactory.cpp
@@ -1233,6 +1242,7 @@ set(HEADERS
     src/SessionSnapshot.h
     src/SessionIIc.h
     src/SessionFiles.h
+    src/InputRecording.h
     src/SessionIO.h
     src/M6502.h
     src/Z80.h
@@ -1378,6 +1388,8 @@ set(HEADERS
     src/ProDOSVolume.h
     src/Logger.h
     src/HostIoEpoch.h
+    src/HostClock.h
+    src/InputEvent.h
     src/Settings.h
     src/SessionSettings.h
     src/SettingRebuild.h
@@ -1896,6 +1908,7 @@ set(POM2_CORE_SOURCES
     src/SessionSnapshot.cpp
     src/SessionIIc.cpp
     src/SessionFiles.cpp
+    src/InputRecording.cpp
     src/SessionMachine.cpp
     src/SessionCards.cpp
     src/SessionLoadQueue.cpp
@@ -1993,6 +2006,8 @@ set(POM2_CORE_SOURCES
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
     src/EmulationController_TimeTravel.cpp
+    src/EmulationController_Input.cpp
+    src/EmulationController_Reset.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -2418,6 +2433,8 @@ add_executable(pom2_headless
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
     src/EmulationController_TimeTravel.cpp
+    src/EmulationController_Input.cpp
+    src/EmulationController_Reset.cpp
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp

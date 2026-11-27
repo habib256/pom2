@@ -211,7 +211,7 @@ void printUsage()
         "  --trace-brk                log CPU state + PC trace on every BRK\n"
         "  --beam-view                show the screen as the tube has it at this cycle (the frame in\n"
         "                             progress above the beam, the previous one below), for the\n"
-        "                             debugger and slow motion; the Debugger's \"Beam view\" box\n"
+        "                             debugger and slow motion; the Screen Inspector's \"Beam view\" box\n"
         "  --play / --rec / --rewind  Cassette transport\n"
         "  --snapshot-save <path>     Write snapshot\n"
         "  --snapshot-load <path>     Restore CPU/RAM on the matching machine\n"

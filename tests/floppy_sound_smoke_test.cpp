@@ -608,6 +608,33 @@ void testStepCadenceUsesLiveCpuClock(const std::string& dir)
 
 }  // namespace
 
+// The debugger's Step Back re-executes history with the drive sounds
+// suspended: nothing is queued while it runs, and at the end only the
+// motor's last state — and only if it differs from what was last queued.
+void testSuspendedForAReplay(const std::string& dir)
+{
+    FloppySoundDevice d;
+    assert(d.loadSamples(dir, FloppySoundDevice::FormFactor::FF525));
+    d.setSampleRate(44100);
+    d.motor(true, true);                         // spinning before the replay
+    const int before = d.queuedCommandCount();
+    d.setSuspended(true);
+    for (int i = 0; i < 40; ++i) d.step(i % 35, cyclesForMs(i * 6.0));
+    d.click();
+    d.motor(false, true);
+    d.motor(true, true);                         // the replay ends with it spinning
+    assert(d.queuedCommandCount() == before && "a replay queues nothing");
+    d.setSuspended(false);
+    assert(d.queuedCommandCount() == before && "same motor state: no new spin-up");
+    d.setSuspended(true);
+    d.motor(false, true);                        // this replay lands on a stopped drive
+    d.setSuspended(false);
+    assert(d.queuedCommandCount() == before + 1 && "the final motor state is sent");
+    d.step(3, cyclesForMs(500));                 // after it, sounds flow again
+    assert(d.queuedCommandCount() == before + 2);
+    std::puts("  ok  suspended for a replay: silent, then the motor's final state");
+}
+
 int main()
 {
     std::puts("FloppySoundDevice smoke test starting…");
@@ -637,6 +664,7 @@ int main()
     testCommandQueueIsBounded(dir);
     testStepCadenceUsesLiveCpuClock(dir);
     testDoorAndHeadStopExtras(dir);
+    testSuspendedForAReplay(dir);
 
     std::puts("OK floppy_sound_smoke");
     return 0;

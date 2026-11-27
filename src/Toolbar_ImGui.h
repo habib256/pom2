@@ -53,6 +53,9 @@ public:
         // True when the display is currently in a monochrome phosphor mode
         // (drives the color/mono toggle button's icon tint + tooltip).
         bool          displayIsMono      = false;
+        // The audio bus's master mute (AudioDevice::isMasterMuted — the
+        // mixer's Master row, persisted as `master_muted`).
+        bool          audioMuted         = false;
         // Active character-generator ROM locale. The dropdown only
         // surfaces entries that fit the active profile (see
         // charRomFitsProfile) — switching is hot, no cold reset needed
@@ -84,6 +87,7 @@ public:
         // (same action as the View menu item and F10). The toolbar is not
         // drawn in kiosk, so this button only ever means "enter".
         bool requestKioskToggle      = false;
+        bool requestMuteToggle       = false;   // sound on ↔ off (master mute)
         bool requestAbout            = false;   // open the About dialog
         bool requestMonoColorToggle  = false;   // flip color ↔ monochrome
         bool machineClockShown       = false;   // the clock label was drawn this frame

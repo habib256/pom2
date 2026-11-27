@@ -421,7 +421,7 @@ private:
     /// line ceiling.)
     void setCommandRegister(size_t i, uint8_t value)
     {
-        pom2::noteHostIo();
+        pom2::noteHostExchange();
         runSocketCommand(i, value);
     }
     void runSocketCommand(size_t i, uint8_t value);

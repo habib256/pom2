@@ -1174,6 +1174,12 @@ void MainWindow::pushAppleKeys()
 void MainWindow::onFileDrop(int count, const char** paths, bool atPointer)
 {
     if (count <= 0 || !paths) return;
+    // A recording of host input is played, not mounted.
+    for (int i = 0; i < count; ++i)
+        if (paths[i] && std::filesystem::u8path(paths[i]).extension() == ".pom2rec") {
+            (void)playInputRecordingFile(paths[i]);
+            return;
+        }
     if (atPointer && window) {
         double x = 0, y = 0;
         glfwGetCursorPos(window, &x, &y);

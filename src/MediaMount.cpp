@@ -63,6 +63,9 @@ void noteHostMediaSwap(EmulationController& ctrl)
 {
     std::lock_guard<std::mutex> lk(ctrl.stateMutex());
     ctrl.rewind().clear();
+    // A recording of host input cannot replay a disk change (its session
+    // holds the disks it started with): it ends here.
+    ctrl.endInputJournalLocked("a disk was changed");
 }
 
 }  // namespace

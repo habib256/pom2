@@ -69,9 +69,30 @@ void EmulationController::applyAcceleratorClock(double mul)
     // snapshot restore the clock, not the ratio (a //c+ → //e switch kept the
     // beam at ~1/4 speed; bug hunt 2026-11-07).
     if (hz == cpuClockHz_.load() && mem.videoClockRatio() == 1.0 / mul) return;
+    // A playback of recorded input applies the speed changes it recorded,
+    // at their cycles, and only those: sampled here, a change would land on
+    // this slice's boundary, which is not the recording's.
+    if (inputJournalMode() == InputJournalMode::Playing) return;
     // The accelerator changed speed: no Step Back / Run Back replay may
     // cross this cycle (EmulationController.h, replayBarriers_).
     if (mem.videoClockRatio() != 1.0 / mul) markReplayBarrier();
+    noteClockForInputJournalLocked(hz, stockHz, machineHz, mul);
+    applyClockLocked(hz, stockHz, machineHz, mul);
+}
+
+double EmulationController::stockClockHz() const
+{
+    // The clock with no accelerator, at the speed menu's base: what
+    // applyAcceleratorClock multiplies (a recording's first entry states it).
+    const VideoTiming& vt = pom2VideoTiming(videoStandard_.load());
+    const int requestedBase = baseCyclesPerFrame_.load();
+    const int base = requestedBase == 1'000'000 ? vt.cyclesPerFrame : requestedBase;
+    return static_cast<double>(vt.cpuClockHz) *
+        (base > 0 ? static_cast<double>(base) / vt.cyclesPerFrame : 1.0);
+}
+
+void EmulationController::applyClockLocked(double hz, double stockHz, double machineHz, double mul)
+{
     cpuClockHz_.store(hz); machineCpuClockHz_.store(machineHz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
     // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
     // its backlog then plays at the speed it was made at. The cards' AY
