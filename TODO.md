@@ -18,6 +18,12 @@ How a task moves and what must not be scheduled again:
 
 ## 0. Chosen direction — in this order
 
+**First: [UI-022](docs/backlog/ui-debugger.md#ui-022) — the memory heatmap**
+(owner, 2026-11-27; GROUiK's request, fenarinarsa's tool from French
+Touch's AppleWin fork): every byte as a pixel, writes red, reads blue,
+executions green, fading with age — live, and free while its window is
+closed.
+
 **Silicon parity: POM2 runs everything the iron runs** (owner, 2026-11-23).
 On 37 protected disks POM2 now boots every title MAME and AppleWin boot. It is
 the only one of the three that boots both The Newsroom and the FLUX images,

@@ -381,3 +381,42 @@ Pinned by `corpus_video` (DIX's menu: 2803 frames for 56 s at 50.08 fps,
 both checks equal to their frames). **Not done:** a recorder in the GUI
 (the screen as the user sees it, with the CRT pass), and GIF.
 
+<a id="ui-022"></a>
+
+## UI-022 — Memory heatmap
+
+**Priority:** first (owner, 2026-11-27) · **State:** Planned. Requested by
+GROUiK (French Touch) on 2026-11-27; fenarinarsa wrote the same tool into
+French Touch's AppleWin fork (v1.29.15v100FT, `Debugger_Heatmap.cpp`,
+`CPU/cpu_heatmap.inl`, 2020), which never reached upstream AppleWin.
+
+A live map of every address: one pixel per byte, 256 x 256 per bank, red
+for a write, blue for a read, green for an execution, fading with the age
+of the access; the byte's value as a faint background. It answers "what
+does this program touch, right now" and "does my code write where it must
+not". AppleWin FT draws it only in its debugger mode, for MAIN and AUX,
+fades on executed instructions, and files language-card bank 1 under
+`$C000-$CFFF`.
+
+POM2's design: a Tools ▸ Memory Heatmap window, live while the machine
+runs. **No cost while closed** — the accesses are diverted the way a read
+watchpoint diverts them (`Memory::readDivert_`, folded into the fast-read
+gates; `docs/PERFORMANCE.md` §§ 8.2/8.5), never a new test on the bus path.
+Recorded per PHYSICAL byte (`Memory::debugBank`, precomputed per page on
+each paging change), with the age in emulated frames so it reads the same
+at 0.1 % and at x4. A card processor's DMA accesses in their own colour;
+the debugger's own writes not counted.
+
+Phase 1: the recording, the window for MAIN and AUX, fade, hover (address,
+bank, last access of each kind, the instruction that made it), click → the
+listing / Memory viewer, the usual right-click (BP, BPMR, BPMW, Watch).
+Phase 2: language card banks, ROM, the I/O page, RamWorks banks; a region
+selected on the map becomes a write breakpoint (the "writes where it must
+not" case stops at the first faulty write); PNG export; freeze, and the map
+across the rewind history.
+
+**Acceptance criterion:** with the window closed, `pom2_bench` is unchanged
+(hashes identical, time within noise); open, a program that clears HGR page
+1 lights exactly `$2000-$3FFF` red in the bank `80STORE`/`RAMWRT` selects,
+and the cost of the open window is measured and written in DEV.md.
+

@@ -37,6 +37,9 @@
 // left out (the designers of the //c's case, of the IWM, of the mouse card,
 // and the people behind several card makers, listed by company instead).
 //
+// French Touch's real names (Cyril Lambin = fenarinarsa, Arnaud Cocquiere =
+// GROUiK) were given by the author on 2026-11-27, from his correspondence
+// with them; "Cocquiere" loses its grave accent to the ASCII rule below.
 // ASCII only: the window draws these lines centred, one by one.
 
 #ifndef POM2_THANKS_CREDITS_H
@@ -217,7 +220,7 @@ inline constexpr CreditLine kThanksCredits[] = {
     {0, "6502workshop"},
     {3, ""},
     {2, "Le Chat Mauve"},
-    {0, "fenarinarsa|French Touch"},
+    {0, "Cyril \"fenarinarsa\" Lambin|French Touch"},
     {0, "Purplesoft"},
     {0, "retronik.silicium.org"},
     {0, "The system-cfg.com forum members"},
@@ -227,8 +230,8 @@ inline constexpr CreditLine kThanksCredits[] = {
     {1, "Software that keeps POM2 honest"},
     {2, "run on the real machines by their authors"},
     {0, "French Touch"},
-    {0, "GROUiK|French Touch"},
-    {0, "fenarinarsa|French Touch"},
+    {0, "Arnaud \"GROUiK\" Cocquiere|French Touch"},
+    {0, "Cyril \"fenarinarsa\" Lambin|French Touch"},
     {0, "Dubmood"},
     {0, "z00m"},
     {0, "rnR TAD"},
