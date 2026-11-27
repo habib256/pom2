@@ -66,6 +66,7 @@
 #ifndef POM2_MOUSE_CARD_APPLEWIN_H
 #define POM2_MOUSE_CARD_APPLEWIN_H
 
+#include "HostIoEpoch.h"
 #include "MC6821.h"
 #include "SlotPeripheral.h"
 
@@ -113,6 +114,15 @@ public:
         // any captured motion while paused), and a delta taken from the
         // 8-bit counter at poll time wrapped past 128 — +200 read as −56,
         // the pointer jumped backwards (bug hunt 2026-10-23).
+        // Host input: no Step Back replays across it — but motion only
+        // while the guest has the mouse ON. Off, the card discards it (TN
+        // Mouse #3, pollHost), so it cannot change what a replay does; and
+        // counting it closed the way back every time the pointer crossed
+        // the screen, on the fresh-install machine, under a program that
+        // never reads the mouse. (Caller holds the machine lock: byMode.)
+        const bool moved = (rawX != hostSetX_ || rawY != hostSetY_) && (byMode & 1u);
+        if (moved || button != hostButton.load(std::memory_order_relaxed))
+            pom2::noteHostIo();
         int dx = static_cast<int>(rawX) - static_cast<int>(hostSetX_);
         int dy = static_cast<int>(rawY) - static_cast<int>(hostSetY_);
         if (dx > 0x80) dx -= 0x100; else if (dx < -0x80) dx += 0x100;

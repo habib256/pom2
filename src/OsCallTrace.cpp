@@ -552,6 +552,7 @@ std::string OsCallTrace::bdosCall(const Z80& z, uint8_t fn, uint16_t de) const
 
 void OsCallTrace::onZ80Instruction(const Z80& z)
 {
+    if (muted_) return;                 // a replay of history (setMuted)
     const uint16_t pc = z.getPC();
     const uint16_t sp = z.getSP();
     if (pc == 0x0005) {

@@ -41,14 +41,12 @@ DebugCoordinator::DebugCoordinator(EmulationController& controller)
                                            uint8_t value) -> uint8_t {
         auto state = controller_.lockState();
         const uint8_t replaced = state.memory().peekCpuWriteTarget(address);
-        // A watch on the edited address would latch this as a CPU write,
-        // naming whatever instruction ran last — and stop a running machine.
-        // The user's own edit is not a stop (bug hunt 2026-10-23); a hit
-        // that was already pending is left alone.
-        pom2::Debugger& dbg = controller_.debugger();
-        const bool hadHit = dbg.stopRequested();
-        state.memory().memWrite(address, value);
-        if (!hadHit && dbg.stopRequested()) dbg.clearHit();
+        // A memory breakpoint on the edited address would latch this as a CPU
+        // write, naming whatever instruction ran last — and stop a running
+        // machine. The user's own edit is not a stop, not a pass, and leaves
+        // a pending hit as it is: Debugger::patchMemory.
+        controller_.debugger().patchMemory(state.memory(), address, &value, 1);
+        controller_.noteChangedByHand();    // a Step Back must not silently undo the edit
         return replaced;
     });
 }

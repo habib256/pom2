@@ -828,7 +828,31 @@ public:
         uint16_t       scanline = 0;   // 0..191 visible band
         VideoEventKind kind     = VideoEventKind::TextMode;
         bool           value    = false;
+        /// Address of the instruction that threw the switch, for the Screen
+        /// Inspector's list ("the STA $C054 at $0923 landed on H 31"), or
+        /// one of the two values below. Nothing in the display reads it.
+        /// See Memory::videoEventPc for how it is found and where it can be
+        /// one byte off. (Fits the struct's padding: still 16 bytes.)
+        int32_t        pc       = kNoPc;
+        static constexpr int32_t kNoPc      = -1;  ///< unknown (restored from a snapshot, no CPU)
+        static constexpr int32_t kComposite = -2;  ///< no instruction: the beam view's seam
     };
+    /// The PC to stamp on a video event being recorded NOW, from inside the
+    /// bus access that throws the switch (MemoryBeamView.cpp).
+    int32_t videoEventPc() const;
+    /// A write in progress is the debugger's own (a Memory-viewer edit of a
+    /// display switch, the assembler): the video event it throws names no
+    /// instruction. Set and cleared by Debugger::patchMemory.
+    void setUnattributedAccess(bool on) { unattributedAccess_ = on; }
+    /// A machine restore normally empties the soft-switch log and the
+    /// published frame: their cycles belong to a timeline that is gone. The
+    /// debugger's Step Back first RE-EXECUTES the frames leading to the one
+    /// it restores (EmulationController::landAfterReplay), so the log then
+    /// describes exactly the clock being restored, and is kept — else the
+    /// Screen Inspector had no page flips left to show after a step back.
+    void setKeepVideoLogOnRestore(bool on) { keepVideoLogOnRestore_ = on; }
+    bool keepVideoLogOnRestore_ = false;
+    bool unattributedAccess_ = false;
 
     /// Video standard (NTSC 262 lines / PAL 312 lines). Set on profile load.
     /// Used by pushVideoEventLocked to stamp each soft-switch edge with the

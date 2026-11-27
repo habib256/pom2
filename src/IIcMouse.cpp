@@ -1,5 +1,6 @@
 // POM2 — GPL-3.0-or-later
 #include "IIcMouse.h"
+#include "HostIoEpoch.h"
 #include <algorithm>
 #include <cstring>
 
@@ -7,6 +8,8 @@ void IIcMouse::setHostMouse(uint8_t x, uint8_t y, bool button)
 {
     // Caller holds the machine lock. Host counters are relative inputs,
     // never guest coordinates: the unmodified ROM integrates/clamps them.
+    if (int(x) != hostX_ || int(y) != hostY_ || button != button_)
+        pom2::noteHostIo();         // host input: no Step Back replays across it
     auto delta = [](int v) { return v > 128 ? v-256 : v < -128 ? v+256 : v; };
     // TWO queued steps per commanded cursor unit. `step()` spends one queued
     // unit per X0/Y0 TRANSITION, and the ROM's IRQ handler advances the screen

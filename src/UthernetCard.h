@@ -81,6 +81,10 @@ public:
     explicit UthernetCard(int slot);
 
     std::string_view name() const override { return "Uthernet I"; }
+    /// Frames already taken from the host and not yet read by the guest are
+    /// dropped when the chip's state is reloaded: no Step Back while some
+    /// wait (SlotPeripheral.h).
+    bool holdsHostConnection() const override { return chip_.queuedFrames() != 0; }
 
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;

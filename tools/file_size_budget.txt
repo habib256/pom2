@@ -605,5 +605,7 @@ src/W5100Device.cpp                      2085
 # debugger_test.cpp's cases already spill into included headers
 # (debugger_banks_cases.h, debugger_cc65_cases.h); imagewriter_smoke_test.cpp
 # grew with the fanfold view (6ff80e90).
-tests/debugger_test.cpp                  2100
+# 2026-11-27: +2, an #include and one call. The breakpoint gates' cases are
+# in debugger_gates_cases.h, like the two before them.
+tests/debugger_test.cpp                  2102
 tests/imagewriter_smoke_test.cpp         2015

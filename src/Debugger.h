@@ -77,6 +77,10 @@ public:
         StepOver,       ///< the transient breakpoint a step-over installs
         RunToCursor,    ///< the transient breakpoint run-to-cursor installs
         StepOut,        ///< the current subroutine has returned
+        RunToBeam,      ///< the beam reached the position asked for
+        StepBack,       ///< one instruction back, through the rewind ring
+        RunBackStart,   ///< Run Back met no breakpoint: the oldest point kept
+        RunBackPaused,  ///< Run Back's time was up, no breakpoint so far
     };
 
     struct Hit {
@@ -88,6 +92,9 @@ public:
         /// A watch hit made by a DMA card's processor (the SoftCard Z80)
         /// while it held the bus: `pc` is the parked 6502's, not the writer.
         bool     busMaster = false;
+        /// Beam clock (`Memory::videoNow`) at the stop: the instruction
+        /// boundary for a PC stop, the ACCESS's own cycle for a memory one.
+        uint64_t videoCycle = 0;
         bool     valid() const { return reason != Reason::None; }
     };
 
@@ -120,6 +127,53 @@ public:
     void addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu, DebugBank bank);
     const std::map<DebugAddress, Condition>& bankConditions() const { return bankConditions_; }
     const std::map<uint16_t, Condition>& conditions() const { return conditions_; }
+    /// Add or replace the register predicate of an EXISTING breakpoint, or
+    /// drop it (`on` false). Nothing else about the breakpoint changes.
+    void setCondition(DebugAddress at, bool on, Condition condition, const M6502& cpu);
+
+    // ── Gates: "stop only when…" ─────────────────────────────────────────
+    // French Touch's request (2026-11-27). A breakpoint — on the PC or on a
+    // memory access — may carry a gate: a window of the BEAM it must be in
+    // (stop on a write to $C054 only outside horizontal blanking), a test
+    // on the byte read or written (memory breakpoints only), and a number
+    // of qualifying passes to let go by first. Every breakpoint counts its
+    // qualifying passes, gate or not.
+    //
+    // The beam is the one of BeamPosition.h: V = line in the frame, H =
+    // cycle in the 65-cycle line. A PC breakpoint is tested at the
+    // instruction's first cycle; a memory breakpoint at the cycle of the
+    // access itself (`Memory::videoAccessCycle`). A window whose minimum is
+    // above its maximum WRAPS (V 300..10 = the end of vertical blanking
+    // and the top of the picture).
+    struct Gate {
+        bool     beam = false;
+        uint16_t vMin = 0, vMax = 311;
+        uint8_t  hMin = 0, hMax = 64;
+        bool     valueOn = false;
+        Compare  valueCompare = Compare::Equal;
+        uint8_t  value = 0;
+        uint32_t ignore = 0;          ///< qualifying passes let go by
+        bool plain() const { return !beam && !valueOn && ignore == 0; }
+    };
+    struct GateState {
+        Gate     gate;
+        uint64_t passes = 0;          ///< qualifying passes so far
+        uint64_t countedAt = 0;       ///< instruction that counted the last one
+        bool     countedWrite = false; ///< ...and it was a write (the RMW rule)
+    };
+    using GateMap = std::map<DebugAddress, GateState>;
+    /// Keyed like the lists: bank `Any` for an every-bank breakpoint.
+    /// Setting a gate starts its pass count over.
+    /// No such breakpoint: nothing happens (a gate never outlives or
+    /// precedes the breakpoint it qualifies).
+    void setBreakpointGate(DebugAddress at, const Gate& gate);
+    void setWatchGate(DebugAddress at, const Gate& gate);
+    const GateMap& breakpointGates() const { return bpGates_; }
+    const GateMap& watchGates() const      { return wpGates_; }
+    void resetPassCounts();
+    static bool compare(Compare how, unsigned value, unsigned against);
+    static bool beamInside(const Gate& gate, int line, int h);
+
     /// Sorted, for the UI list. O(64K) — a UI-frame operation, never hot.
     std::vector<uint16_t> breakpoints() const;
     std::size_t breakpointCount() const { return bpCount_ + bankBreakpoints_.size(); }
@@ -142,6 +196,18 @@ public:
     /// stack wrap. Only the debugged loop consults the CPU/memory references.
     void setStepOver(M6502& cpu, const Memory& memory);
     void setStepOut(M6502& cpu, const Memory& memory);
+    /// Stop at the first instruction boundary at or after beam-clock cycle
+    /// `videoCycle` (`Memory::videoNow`'s clock) — so up to one instruction
+    /// past the position asked for, never before it.
+    void setRunToBeam(uint64_t videoCycle);
+    /// The same stop while a card's processor holds the bus: no 6502
+    /// instruction is offered then, so the controller asks between the
+    /// card's own instructions (and runs it in single ones while armed).
+    bool beamStopArmed() const {
+        return transientArmed_.load(std::memory_order_relaxed) && !stepCpu_ &&
+               transientReason_ == Reason::RunToBeam;
+    }
+    bool beamStopDue(uint16_t parkedPc);
     struct ProfileEntry { uint16_t pc; uint64_t visits; uint64_t cycles; DebugBank bank{}; };
     struct TraceEntry {
         uint16_t pc, nextPc;
@@ -228,6 +294,25 @@ public:
     /// trace all stay as they are. Caller holds `stateMutex`.
     void patchMemory(Memory& memory, uint16_t addr, const uint8_t* bytes, std::size_t count);
 
+    // ── Replaying history (Step Back / Run Back) ─────────────────────────
+    // EmulationController_TimeTravel.cpp re-executes instructions from a
+    // rewind frame. That is the PAST being read again, not the program
+    // running: while a replay is open no pass is counted and no "ignore N"
+    // applies (a breakpoint is asked "would you qualify here", every time),
+    // and the caller steps the CPU directly — the hook stays attached, none
+    // of its methods is called — so nothing is traced, profiled or offered
+    // to the OS-call trace.
+    void setReplaying(bool on) { replaying_ = on; osCalls_.setMuted(on); }
+    /// POM2's own writes into guest memory in progress (a boot's screen and
+    /// zero-page priming): no stop, no pass. patchMemory does it for itself.
+    void setOwnWrites(bool on) { ownWrite_ = on; }
+    /// Would a breakpoint stop at the boundary before `pc`? True for a PC
+    /// breakpoint there and for a memory breakpoint the PREVIOUS instruction
+    /// tripped; the hit is then in lastHit(). Replay only.
+    bool probeInstruction(uint16_t pc);
+    /// Report `hit` as the reason the machine stands where it does.
+    void setHit(const Hit& hit) { hit_ = hit; }
+
     /// True once something has asked the machine to stop and the stop has not
     /// been consumed yet. `EmulationController` drains this at its chunk
     /// boundary and parks the worker.
@@ -241,7 +326,10 @@ public:
     /// because the PC still points at it. Spent when that instruction
     /// EXECUTES (onStepCompleted at `pc`), not when it is offered: an
     /// interrupt taken first offers it again after the RTI (DBG-1).
-    void armResumeFrom(uint16_t pc) { resumeSkip_ = pc; resumeBank_ = hit_.valid() && hit_.pc == pc ? hit_.pcBank : resolveBank(pc); resumeSkipArmed_ = true; }
+    /// `sp` is the stack pointer at the stop. An amnesty armed from an
+    /// interrupt handler (a deeper stack) keeps the one its interrupt is
+    /// holding up; any other is replaced. With no `sp` (-1), replaced always.
+    void armResumeFrom(uint16_t pc, int sp = -1);
 
     /// Drop every per-TIMELINE transient. Called when the machine jumps in
     /// time — a rewind scrub, a `.pom2snap` load, an AI `/snapshot/load`.
@@ -259,7 +347,14 @@ public:
     /// Breakpoints and watchpoints themselves are USER state and survive:
     /// they are addresses in a program, not in a timeline. Caller must hold
     /// `stateMutex`.
-    void clearForTimeJump();
+    /// `keepMeasurements`: Step Back and Run Back keep the profile and the
+    /// history (trimmed by the caller) — wiping the trail on every step
+    /// back emptied the very list the user was walking back through.
+    void clearForTimeJump(bool keepMeasurements = false);
+    /// Forget the newest history entry if it is the instruction at `pc`
+    /// (the one a Step Back just un-did); or all of it (Run Back).
+    void dropHistoryOf(uint16_t pc);
+    void clearHistory() { historyHead_ = historyCount_ = 0; }
 
     /// ProDOS MLI / CP/M BDOS call trace. Its MLI half runs off this hook;
     /// switch it through EmulationController::setOsCallTrace, which also
@@ -272,6 +367,25 @@ private:
     void ensureWpBits();
     bool conditionMatches(uint16_t addr) const;
     bool conditionMatches(const Condition& condition) const;
+    GateMap bpGates_, wpGates_;
+    /// The qualifying-pass test of one breakpoint; counts the pass.
+    bool gateOpens(GateMap& gates, const DebugAddress& key, uint64_t videoCycle,
+                   int value, bool write, bool mayRepeat);
+    /// Take back the pass `key` counted for the instruction now offered.
+    void uncountPass(GateMap& gates, const DebugAddress& key);
+    uint64_t beamTarget_ = 0;             // setRunToBeam
+    bool replaying_ = false;              // see setReplaying
+    uint64_t hitSerial_ = 0;              // instruction that latched hit_ (memory hits)
+    bool ownWrite_ = false;               // patchMemory in progress: not the guest's access
+    // (A halted CPU — an NMOS JAM; the 65C02 of POM2's machines is run as
+    // the NCR part, where WAI and STP are no-ops — is offered its PC every
+    // two cycles, and a gated
+    // breakpoint there counts each offer. A rule that judged it once was
+    // tried on 2026-11-27 and removed the same day: four ways to miss a real
+    // stop, for a case no Apple II program reaches on purpose.)
+    bool steppedOffAmnesty_ = false;      // see beginStep
+    bool breakpointStops(uint16_t pc);    // the PC-breakpoint half of onInstruction
+    uint64_t serial_ = 0;                 // instructions offered, for countedAt
     std::map<DebugAddress, Condition> bankConditions_;
     std::map<uint16_t, Condition> conditions_;
     const M6502* conditionCpu_ = nullptr;
@@ -283,7 +397,7 @@ private:
     uint64_t frameOfRetired(int cycles) const;
     const Memory* memory_ = nullptr;
     InstructionTraceSink* trace_ = nullptr;
-    DebugBank curBank_{}, resumeBank_{};
+    DebugBank curBank_{};
     DebugBank resolveBank(uint16_t addr, bool write = false) const;
     std::map<DebugAddress, bool> bankBreakpoints_;
     std::map<DebugAddress, Access> bankWatches_;
@@ -334,8 +448,16 @@ private:
     /// the clear never rewrites them.
     std::atomic<bool> transientArmed_{false};
 
-    uint16_t resumeSkip_      = 0;
-    bool     resumeSkipArmed_ = false;
+    /// Resume amnesties (armResumeFrom). Usually one; more only while an
+    /// interrupt holds up the instruction an earlier one names: stop on X
+    /// with an IRQ due, Run, stop on the handler's H, Run — X's must survive
+    /// H's, or X stops again after the RTI having executed nothing, its pass
+    /// counted twice (stabilisation pass 2026-11-27).
+    struct Amnesty { uint16_t pc = 0; DebugBank bank{}; int sp = -1; };
+    std::vector<Amnesty> amnesties_;
+    Amnesty steppedOff_{};                // see beginStep / steppedOffAmnesty_
+    bool hasAmnesty(uint16_t pc) const;
+    bool takeAmnesty(uint16_t pc, Amnesty* taken = nullptr);
 
     /// PC of the instruction currently executing, latched by `onInstruction`.
     /// `noteAccess` fires from inside that instruction, where the CPU's own

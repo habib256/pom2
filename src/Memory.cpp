@@ -654,7 +654,7 @@ void Memory::pushVideoEventLocked(VideoEventKind kind, bool value)
     const uint16_t scanline = static_cast<uint16_t>(
         rawLine < kVisibleScanlines ? rawLine : kVisibleScanlines);
 
-    videoEvents_.push_back({now, scanline, kind, value});
+    videoEvents_.push_back({now, scanline, kind, value, videoEventPc()});
 }
 
 void Memory::resetSoftSwitchesWarm()

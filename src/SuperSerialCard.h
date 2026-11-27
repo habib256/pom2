@@ -423,6 +423,10 @@ public:
     uint8_t statusErrorBits()const { return statusErrors_;   }
     uint8_t irqState()       const { return irqState_;       }
     size_t  rxQueueDepth()   const;
+    /// Bytes received from the peer and not yet read by the guest are not in
+    /// the machine snapshot: a Step Back's replay would read them early, and
+    /// they could not be put back (SlotPeripheral.h).
+    bool holdsHostConnection() const override { return rxQueueDepth() != 0; }
     size_t  txQueueDepth()   const;
     /// Snapshot of "what the Apple II most recently received" (RX) and
     /// "most recently sent over TCP" (TX). Cheap circular ring of the last

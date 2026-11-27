@@ -42,6 +42,7 @@
 // Settled by: a cycle-stepped core. Pinned by `beam_view`.
 
 #include "Memory.h"
+#include "M6502.h"
 
 #include "CpuClock.h"
 
@@ -115,7 +116,9 @@ std::vector<Memory::VideoEvent> Memory::beamViewEventsLocked() const
 
     const auto line = static_cast<uint16_t>(rel / kLineCycles);
     const auto change = [&](VideoEventKind kind, bool was, bool is) {
-        if (was != is) out.push_back({now, line, kind, is});
+        // Not a throw: the seam between the two frames (kComposite), which
+        // an inspector listing what the PROGRAM did leaves out.
+        if (was != is) out.push_back({now, line, kind, is, VideoEvent::kComposite});
     };
     change(VideoEventKind::TextMode,    current.textMode,    previous.textMode);
     change(VideoEventKind::MixedMode,   current.mixedMode,   previous.mixedMode);
@@ -133,7 +136,7 @@ std::vector<Memory::VideoEvent> Memory::beamViewEventsLocked() const
     for (const VideoEvent& e : publishedEvents_) {
         if (e.scanline >= kVisibleLines) continue;
         if (e.emuCycle - videoPublishedStart_ < rel) continue;
-        out.push_back({e.emuCycle + frame, e.scanline, e.kind, e.value});
+        out.push_back({e.emuCycle + frame, e.scanline, e.kind, e.value, e.pc});
     }
     return out;
 }
@@ -148,6 +151,44 @@ int eventColumn(const Memory::VideoEvent& e)
     return c < 0 ? 0 : (c > 40 ? 40 : c);
 }
 }  // namespace
+
+// Who threw the switch. The CPU keeps no "address of the instruction in
+// progress" — a store per instruction on the hottest path of the emulator,
+// for a debugger's list (docs/PERFORMANCE.md §§ 8-9) — so it is worked back
+// from where the program counter stands DURING the access: past the operand.
+// A soft switch lives at $C0xx, and nearly every access to one is an absolute
+// instruction, three bytes, whose operand's high byte is $C0 (or $BF, indexed
+// up into the page): the instruction starts three bytes back. Anything else
+// reaching a switch is a two-byte indirect — `STA ($06),Y`.
+// An indirect through a zero-page pointer that is itself at $C0 or $BF
+// (`STA ($C0),Y`) has that same byte before the program counter, so the
+// OPCODE decides: the 6502's addressing mode is in its low five bits —
+// $0C/$0D/$0E absolute, $19 absolute,Y, $1C/$1D/$1E absolute,X; $01 (zp,X),
+// $11 (zp),Y, $12 the 65C02's (zp).
+// [F] Left undecided only when the bytes read both ways (an absolute opcode
+// three back AND an indirect one two back, over a pointer at $C0/$BF): the
+// absolute form is reported. Settled by: the CPU latching its opcode
+// address, if a use ever pays for it. Pinned by `debugger`.
+int32_t Memory::videoEventPc() const
+{
+    // A card's processor holding the bus (a SoftCard Z80 writing a display
+    // switch): the 6502 is parked, and its PC threw nothing.
+    if (!cpu || unattributedAccess_ || slots.dmaClaimant()) return VideoEvent::kNoPc;
+    const uint16_t after = cpu->getProgramCounter();
+    const uint8_t high = peekCpuView(static_cast<uint16_t>(after - 1));
+    bool absolute = high == 0xC0 || high == 0xBF;
+    if (absolute) {
+        const uint8_t mode3 = peekCpuView(static_cast<uint16_t>(after - 3)) & 0x1F;
+        const uint8_t mode2 = peekCpuView(static_cast<uint16_t>(after - 2)) & 0x1F;
+        // ($0F / $1B / $1F: the NMOS part's undocumented absolutes — SAX, LAX…)
+        const bool looksAbsolute = mode3 == 0x0C || mode3 == 0x0D || mode3 == 0x0E ||
+                                   mode3 == 0x19 || mode3 == 0x1C || mode3 == 0x1D || mode3 == 0x1E ||
+                                   mode3 == 0x0F || mode3 == 0x1B || mode3 == 0x1F;
+        const bool looksIndirect = mode2 == 0x01 || mode2 == 0x11 || mode2 == 0x12;
+        absolute = looksAbsolute || !looksIndirect;
+    }
+    return static_cast<uint16_t>(after - (absolute ? 3 : 2));
+}
 
 Memory::DisplayState Memory::DisplayFrame::at(int y, int column) const
 {

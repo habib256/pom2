@@ -56,6 +56,8 @@
 #ifndef POM2_KEYBOARD_H
 #define POM2_KEYBOARD_H
 
+#include "HostIoEpoch.h"
+
 #include <atomic>
 #include <bitset>
 #include <cstddef>
@@ -121,12 +123,14 @@ public:
         if (token >= heldKeys_.size()) return;
         std::lock_guard<std::mutex> lk(mtx_);
         hostKeysTracked_ = true;
+        if (heldKeys_.test(token) != down) pom2::noteHostIo();   // an input no replay reproduces
         heldKeys_.set(token, down);
         if (down) { pressToken_ = token; pressCodeValid_ = false; }
     }
     void releaseHeldKeys() {
         std::lock_guard<std::mutex> lk(mtx_);
         hostKeysTracked_ = true;
+        if (heldKeys_.any()) pom2::noteHostIo();
         heldKeys_.reset();
     }
     bool keyHeld(uint16_t token) const {

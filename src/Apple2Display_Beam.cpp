@@ -396,6 +396,12 @@ static int beamColForEvent(const Memory::VideoEvent& e, VideoStandard vstd,
     return col;
 }
 
+int Apple2Display::eventByteColumn(const Memory::VideoEvent& event, VideoStandard standard,
+                                   bool eightyCol)
+{
+    return beamColForEvent(event, standard, eightyCol);
+}
+
 void Apple2Display::forEachBeamSegment(
     const Memory::DisplayState& frameStart,
     std::vector<Memory::VideoEvent> events,

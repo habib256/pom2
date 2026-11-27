@@ -22,6 +22,7 @@
 
 #include "MouseCard.h"
 #include "ByteIO.h"
+#include "HostIoEpoch.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -162,6 +163,9 @@ void MouseCard::setHostMouse(uint8_t rawX, uint8_t rawY, bool button)
     // Banked per host update, not diffed from the 8-bit counter at MCU poll
     // time: several updates can land before a poll, and past 128 the diff
     // wrapped and reversed the motion (bug hunt 2026-10-23).
+    if (rawX != hostSetX_ || rawY != hostSetY_ ||
+        button != hostButton.load(std::memory_order_relaxed))
+        pom2::noteHostIo();         // host input: no Step Back replays across it
     const uint8_t prev[2] = { hostSetX_, hostSetY_ };
     const uint8_t now[2]  = { rawX, rawY };
     for (int a = 0; a < 2; ++a) {

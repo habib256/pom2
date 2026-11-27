@@ -10,6 +10,56 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+**v1.2.6 marker** — 2026-11-27. Release notes: [v1.2.6](docs/releases/v1.2.6.md), [libretro-v1.2.6](docs/releases/libretro-v1.2.6.md).
+
+## 2026-11-27 — Debugger: BP / BPMR / BPMW, a Watch that only watches, the beam as a condition
+
+French Touch's second round on the debugger. What POM2 called a "watch"
+stopped the machine — AppleWin's BPMR / BPMW — and did not show the value;
+a watch, in the sense every 6502 programmer learned, was missing. Now one
+breakpoint list with three kinds (on the PC, on a read, on a write), created
+bare from the gutter or a right click (listing and Memory viewer) and given
+conditions afterwards on its row; and a **Watch** window that shows values
+live, highlights what changed since the previous stop, and never stops
+anything. Added for code that races the beam: a breakpoint may require the
+beam inside a window of V and H — a memory breakpoint judged at the cycle of
+the access — test the byte written, and skip its first N passes; the Screen
+Inspector runs the machine until the beam reaches a point of the picture and
+lists the frame's soft-switch throws with their V and H **and the
+instruction that made each** (worked back from the program counter during
+the access — the CPU keeps no opcode address, by design of its hot path). Its beam marker is
+a two-tone cross (the red-orange line vanished on hi-res orange; no single
+colour is safe on an Apple II picture). **An NMOS read-modify-write writes
+twice**: gates judge the second write and take back what the dummy one
+counted, or `INC` was two passes and a value test fired on the old byte.
+**Step Back and Run Back** go backwards through the rewind ring: the
+previous frame restored, then re-executed to the instruction before (or to
+the last point a breakpoint would have stopped at). Greyed, with the reason,
+when the rewind is not recording, its history ends here, or an accelerator
+changed speed or the machine was reset (a replay cannot reproduce either);
+nor across a byte exchanged with a serial peer, the network or a MIDI port
+(it would be sent or taken twice), nor across a key or a mouse / joystick
+movement (a replay cannot reproduce host input): the way back reopens once
+the machine has run on. The rewind stays off by default: a "Rec" box beside
+the two buttons turns it on. **The replay is checked**: a rewind frame does
+not hold everything that steers the machine (a clock card reads the host's
+time), so the replay must arrive exactly on the present it left — registers,
+cycle, the 64 KiB the CPU sees — or the verb is given up and the machine put
+back as it was.
+Three older faults fixed on the way. **A breakpoint inside an interrupt
+handler** replaced the resume amnesty of the breakpoint the interrupt held
+up, which then stopped again after the RTI having executed nothing, its pass
+counted twice: the amnesty is now a short stack keyed on the stack pointer
+(and the toolbar's Step, which leaves a stop through the latched hit, gets
+the same protection). **F7 stepped the machine while the user typed into the
+Apple II Screen** with the Debugger open: the debugger's keys now stay quiet
+while that window has the focus. **Ctrl shortcuts took the Windows key** as
+Ctrl on Windows and Linux (Win+Down ran to the cursor): Super stands for
+Ctrl only where ImGui swaps them, on a Mac. The menu section headings are
+greyed, so they no longer read as one more row, and the Tools menu has four
+headed sections, AI control in its own.
+→ DEV § Debugger.
+
 ## 2026-11-26 — Start-up audio runs wide, then comes down: no more speaker scratches
 
 The user still heard the speaker scratch in POM2's first seconds after

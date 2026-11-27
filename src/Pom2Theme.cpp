@@ -165,6 +165,13 @@ ImFont* g_monoFont = nullptr;
 void setMonoFont(ImFont* font) { g_monoFont = font; }
 ImFont* monoFont() { return g_monoFont; }
 
+void menuHeading(const char* title)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::SeparatorText(title);
+    ImGui::PopStyleColor();
+}
+
 void verticalRule(float padX)
 {
     const float scaled = padX * g_scale;

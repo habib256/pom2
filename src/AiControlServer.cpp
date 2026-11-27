@@ -1078,6 +1078,7 @@ void AiControlServer::handleCpuSet(socket_t fd, const Request& req)
     if (regs[3].value >= 0) cpu.setYRegister     (static_cast<uint8_t>(regs[3].value));
     if (regs[4].value >= 0) cpu.setStatusRegister(static_cast<uint8_t>(regs[4].value));
     if (regs[5].value >= 0) cpu.setStackPointer  (static_cast<uint8_t>(regs[5].value));
+    ctrl_->noteChangedByHand();     // a Step Back must not silently undo this
     }
     sendJsonOk(fd, "{}");
 }
@@ -1204,6 +1205,7 @@ void AiControlServer::handleMemSet(socket_t fd, const Request& req)
             else     mem.writeRamUnchecked(a, bytes[i]);
             ++written;
         }
+        ctrl_->noteChangedByHand(); // a Step Back must not silently undo this
     }
     std::ostringstream oss;
     oss << "{\"addr\":" << addr

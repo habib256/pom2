@@ -1724,6 +1724,7 @@ void testWatchpointResumeKeepsNextBreakpoint()
 
 #include "debugger_banks_cases.h"
 #include "debugger_cc65_cases.h"
+#include "debugger_gates_cases.h"
 
 static void testBreakpointAfterDmaRelease()
 {
@@ -2094,6 +2095,7 @@ int main()
     testInterruptEntryIsNotAStep();
     testInterruptEntryUsesTheHandlersBank();
     testWatchpointResumeKeepsNextBreakpoint();
+    runGateCases();
     testDisassemblerFollowsTheCoreInstructionSet();
     std::printf("debugger: all assertions passed\n");
     return 0;

@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 # link exists to prevent. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(pom2_imgui VERSION 1.2.5 LANGUAGES CXX)
+project(pom2_imgui VERSION 1.2.6 LANGUAGES CXX)
 
 # The MSVC runtime, linked statically into EVERY target (/MT), before any is
 # created: the desktop exe, pom2_core, the tests that link it, and the libretro
@@ -395,6 +395,8 @@ set(SOURCES
     src/OsCallTrace.cpp
     src/OsCallTrace_Guest.cpp
     src/Debugger_ImGui.cpp
+    src/Debugger_ImGui_Breakpoints.cpp
+    src/Debugger_ImGui_Watch.cpp
     src/Debugger_Assembler.cpp
     src/DisasmNavigation.cpp
     src/ScreenInspector_ImGui.cpp
@@ -418,6 +420,7 @@ set(SOURCES
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
+    src/EmulationController_TimeTravel.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -796,6 +799,7 @@ set(POM2_FOUNDATION_HEADERS
     src/ChildProcess.h
     src/FloppySoundSink.h
     src/Logger.h
+    src/HostIoEpoch.h
     src/NetworkBackend.h
     src/NetworkValues.h
     src/PersistentFs.h
@@ -812,6 +816,8 @@ set(POM2_FRONTEND_HEADERS
     src/AudioCoordinator.h
     src/DebugCoordinator.h
     src/Debugger_ImGui.h
+    src/DebuggerWatchList.h
+    src/DebugAddressMenu.h
     src/DisasmNavigation.h
     src/BeamPosition.h
     src/ScreenInspector_ImGui.h
@@ -866,6 +872,8 @@ set(POM2_FRONTEND_HEADERS
 set(POM2_FRONTEND_SOURCES
     src/AudioCoordinator.cpp
     src/Debugger_ImGui.cpp
+    src/Debugger_ImGui_Breakpoints.cpp
+    src/Debugger_ImGui_Watch.cpp
     src/Debugger_Assembler.cpp
     src/DisasmNavigation.cpp
     src/ScreenInspector_ImGui.cpp
@@ -1168,6 +1176,7 @@ set(POM2_RUNTIME_SOURCES
     src/EmulationController_Socket.cpp
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
+    src/EmulationController_TimeTravel.cpp
     src/BlockWriteBackExecutor.cpp
     src/FloppySoundDevice.cpp
     src/FujiNetCardFactory.cpp
@@ -1257,6 +1266,8 @@ set(HEADERS
     src/Debugger.h
     src/InterruptLoad.h
     src/Debugger_ImGui.h
+    src/DebuggerWatchList.h
+    src/DebugAddressMenu.h
     src/DisasmNavigation.h
     src/BeamPosition.h
     src/ScreenInspector_ImGui.h
@@ -1366,6 +1377,7 @@ set(HEADERS
     src/ProDOSHardDiskCard.h
     src/ProDOSVolume.h
     src/Logger.h
+    src/HostIoEpoch.h
     src/Settings.h
     src/SessionSettings.h
     src/SettingRebuild.h
@@ -1980,6 +1992,7 @@ set(POM2_CORE_SOURCES
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
+    src/EmulationController_TimeTravel.cpp
     src/BlockWriteBackExecutor.cpp
     src/IIcExternalSmartPort.cpp
     src/FloppySoundDevice.cpp
@@ -2404,6 +2417,7 @@ add_executable(pom2_headless
     src/FastChip.cpp
     src/EmulationController_Storage.cpp
     src/EmulationController_Clock.cpp
+    src/EmulationController_TimeTravel.cpp
     src/BlockWriteBackExecutor.cpp
     src/Block512Backing.cpp
     src/Block512Backing_WriteBack.cpp

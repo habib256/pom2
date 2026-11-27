@@ -19,6 +19,7 @@
 #include "CpuClock.h"
 #include "Block512Backing.h"   // pom2::mediaWriteEpoch
 #include "Logger.h"
+#include "HostIoEpoch.h"
 #include "ThreadGuard.h"
 #include "ThreadPriority.h"
 #include "BlockWriteBackExecutor.h"   // pom2::drainMediaCommits
@@ -945,7 +946,7 @@ void EmulationController::hardReset()
     // Reset — the commonest move there is) was therefore skipped, and missed
     // outright when that instruction is only reached once. Same set of state
     // a rewind drops, and for the same reason (Debugger.h; bug hunt #9).
-    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); markReplayBarrier(); }
     processor.hardReset();
     pom2::log().info("Emul", "Hard reset");
 }
@@ -978,7 +979,7 @@ void EmulationController::softReset()
     // `armed()` counts the transient, so dropping it is also what lets
     // syncDebugHook put the CPU back on its undebugged loop. clearForTimeJump
     // drops the latched hit too — see hardReset().
-    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); markReplayBarrier(); }
     processor.softReset();
     pom2::log().info("Emul", "Soft reset (Ctrl-Reset)");
 }
@@ -997,7 +998,7 @@ void EmulationController::coldBoot()
     // As in hardReset(): the transient names an address in a program that no
     // longer exists — here its RAM has literally been wiped. The latched hit
     // goes with it (clearForTimeJump) — see hardReset().
-    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); markReplayBarrier(); }
     processor.hardReset();
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
@@ -1050,7 +1051,7 @@ bool EmulationController::bootFromSlot(int slot)
     if (tape)   tape->resetCpuSide();
     // Any step-over / run-to-cursor transient belongs to the machine that
     // just went away, and so does the latched hit — see hardReset().
-    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }
+    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); markReplayBarrier(); }
     rewind_.clear();   // RAM wiped → the recorded timeline is a different machine
     scrubIndex_.store(pom2::RewindBuffer::kNoFrame);
     // Explicit boot validates the dispatch trio at $Cn01/03/05, allowing
@@ -1117,6 +1118,7 @@ bool EmulationController::bootFromSlot(int slot)
     // slots and pick slot 6 if a floppy is mounted there), so the user
     // would otherwise see freshly-zeroed RAM render as a screen full of
     // `@`-tile garbage for several seconds while the booting card loads.
+    if (debugger_) debugger_->setOwnWrites(true);   // priming, not the guest: no pass, no stop
     for (uint16_t a = 0x0400; a <= 0x07FF; ++a) {
         mem.memWrite(a, 0xA0);
     }
@@ -1142,7 +1144,7 @@ bool EmulationController::bootFromSlot(int slot)
     mem.memWrite(0x0037, 0xFD);   // CSWH ┘
     mem.memWrite(0x0038, 0x1B);   // KSWL ┐ input hook  → KEYIN ($FD1B)
     mem.memWrite(0x0039, 0xFD);   // KSWH ┘
-    if (debugger_) { debugger_->clearForTimeJump(); syncDebugHook(); }  // POM2's writes, not a watch hit
+    if (debugger_) { debugger_->setOwnWrites(false); debugger_->clearForTimeJump(); syncDebugHook(); markReplayBarrier(); }
     processor.hardReset();
     processor.setProgramCounter(cnxx);
     workerParked_.store(false);  // same setter-thread invariant as setMode()
@@ -1210,6 +1212,8 @@ void EmulationController::setMode(Mode m)
     // next syncDebugHook, which costs a predictable branch per instruction on
     // a machine that is stopped anyway.
     if (m == Mode::Stopped && debugger_) debugger_->clearTransient();
+    if (m == Mode::Stopped && mode.load() != Mode::Stopped) hostIoAtStop_.store(pom2::hostIoEpoch().load(std::memory_order_relaxed));
+    if (m == Mode::Running && mode.load() == Mode::Stopped) resumedFromStop_.store(true);
     // A Stop also CANCELS the queued single-steps. `stepsPending` is a plain
     // counter that no reset verb ever cleared, so a `--step 20000` (or a burst
     // of Step clicks) interrupted by Stop — the toolbar, a profile switch, a
@@ -1335,6 +1339,7 @@ void EmulationController::rewindEndAndResume(size_t index)
                 return;
             }
             rewind_.truncateAfter(index);
+            rebaseReplayBarriers(mem.getCycleCounter());
             flushAudioForRewind();
             rewindTapeTo(index);
         }
@@ -1348,9 +1353,11 @@ void EmulationController::captureRewindLocked()
     // would otherwise drop the frames after the one on screen.
     if (scrubIndex_.load() != pom2::RewindBuffer::kNoFrame) return;
     noteMediaWrite();   // a rewind may not cross a media write
+    noteCaptureForReplay();   // the replay barriers follow the frame about to be captured
     const size_t at = resumeTruncate_.exchange(pom2::RewindBuffer::kNoFrame);
     if (at != pom2::RewindBuffer::kNoFrame) rewind_.truncateAfter(at);
     rewind_.capture(processor, mem, tape ? tape->recordMark() : 0);
+    rememberKeyboardForFrame();
 }
 
 void EmulationController::rewindTapeTo(size_t index)
@@ -1386,7 +1393,7 @@ void EmulationController::flushAudioForRewind()
     noteTimeJump();
 }
 
-void EmulationController::noteTimeJump()
+void EmulationController::noteTimeJump(bool keepDebuggerMeasurements)
 {
     // Caller holds stateMtx. Jumping the CPU/RAM back in time leaves the
     // free-running audio devices holding samples — and cycle stamps — from a
@@ -1413,7 +1420,7 @@ void EmulationController::noteTimeJump()
     // again the instant it resumed, blaming a breakpoint nothing hit.
     // Breakpoints / watchpoints themselves survive — they are user state.
     if (debugger_) {
-        debugger_->clearForTimeJump();
+        debugger_->clearForTimeJump(keepDebuggerMeasurements);
         syncDebugHook();
     }
 }
@@ -1424,6 +1431,7 @@ int EmulationController::runCpuSlice(int chunk)
     // hit the DMA card's processor makes below is a stop, never "stale".
     if (debugger_ && debugger_->stopRequested() && mode.load() == Mode::Running)
         debugResume();
+    if (resumedFromStop_.exchange(false)) reconcileOutsideBeforeExecuting();
     // The speaker measures its replay lead against the CPU's NOW, published
     // as every slice ends, whatever the return path (SpeakerDevice::
     // noteProducerNow: the last TOGGLE says nothing during a rest).
@@ -1441,13 +1449,13 @@ int EmulationController::runCpuSlice(int chunk)
     // the first boundary after a hit, as the 6502 does. No watch: unchanged.
     auto runDma = [&](SlotPeripheral* dma, int budget) -> int {
         return debugger_->runAsBusMaster([&] {
-            if (!debugger_->watchArmed()) return dma->dmaRun(budget);
+            if (!debugger_->watchArmed() && !debugger_->beamStopArmed()) return dma->dmaRun(budget);
             int used = 0;
             while (used < budget && dma->dmaActive()) {
                 const int s = dma->dmaRun(1);
                 if (s <= 0) break;
                 used += s;
-                if (debugger_->stopRequested()) break;
+                if (debugger_->stopRequested() || debugger_->beamStopDue(processor.getProgramCounter())) break;
             }
             return used;
         });
@@ -1556,9 +1564,13 @@ void EmulationController::debugResume()
     const auto hit = debugger_->lastHit();
     const bool stoppedBefore =
         hit.reason == Reason::Breakpoint || hit.reason == Reason::StepOver ||
-        hit.reason == Reason::StepOut    || hit.reason == Reason::RunToCursor;
-    if (stoppedBefore && hit.pc == processor.getProgramCounter())
-        debugger_->armResumeFrom(hit.pc);
+        hit.reason == Reason::StepOut    || hit.reason == Reason::RunToCursor ||
+        hit.reason == Reason::StepBack   || hit.reason == Reason::RunBackStart ||
+        hit.reason == Reason::RunToBeam  || hit.reason == Reason::RunBackPaused;
+    // (Not a stop made while a card held the bus: its pc is the PARKED 6502's, which is not about to run.)
+    // (Nor where nothing would stop it: an amnesty armed for nothing is only retired by a hook that is then not attached. A transient counts: Run To Cursor again on the line it stands on must go round the loop.)
+    if (stoppedBefore && !hit.busMaster && hit.pc == processor.getProgramCounter() && (debugger_->hasBreakpoint(hit.pc, hit.pcBank) || debugger_->hasTransient()))
+        debugger_->armResumeFrom(hit.pc, processor.getStackPointer());
     debugger_->clearHit();
 }
 
@@ -1641,6 +1653,9 @@ void EmulationController::debugRunToCursor(uint16_t addr, pom2::DebugBank bank)
 // the per-instruction loop exits as soon as spent >= 1.
 void EmulationController::stepBusMaster()
 {
+    reconcileOutsideBeforeExecuting();
+    const uint64_t epochBefore = pom2::hostIoEpoch().load(std::memory_order_relaxed);
+    struct AfterStep { EmulationController& c; uint64_t e; ~AfterStep() { c.reconcileOutsideAfterStep(e); } } afterStep{*this, epochBefore};
     if (SlotPeripheral* dma = mem.slotBus().dmaClaimant()) {
         debugger_->runAsBusMaster([&] { return dma->dmaRun(1); });
     } else {

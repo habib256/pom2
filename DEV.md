@@ -12971,6 +12971,186 @@ overwritten; `setMode(Stopped)` cancels `stepsPending`; every resume in
 
 ### Debugger (`Debugger.h/.cpp`, `Debugger_ImGui.*`)
 
+**Breakpoints of three kinds, a Watch that only looks, and the beam as a
+condition** *(2026-11-27, French Touch's second round)*. Grouik's report:
+"the WATCH part is really a BPMR/W — and it does not even show the value".
+
+- **The words.** A *breakpoint* stops the machine: on the PC (**BP**), on a
+  read (**BPMR**), on a write (**BPMW**) — AppleWin's names, one list
+  (`Debugger_ImGui_Breakpoints.cpp`), each memory row showing the byte there
+  now. A *watch* is a value looked at and stops nothing: the **Watch**
+  window (`Debugger_ImGui_Watch.cpp`, panel `panel.watch`, list in
+  `DebuggerWatchList.h`, persisted as `debugger_watch_list`), byte / 16-bit
+  word / binary, highlighted when it changed since the previous stop (while
+  running: since the previous UI frame). It reads through
+  `Memory::peekCpuView` and arms nothing, so the CPU stays on its fast loop.
+  A bank-qualified entry has a value only while that bank is the one mapped.
+  The engine keeps its `Watch*` names (`setWatchpoint`, `Reason::WatchRead`):
+  only the interface was renamed.
+- **Created bare, conditioned afterwards.** The gutter, a right click on a
+  line of the listing (break here / when the operand is read / written,
+  watch the operand, run to here, set PC) or on a byte of the Memory viewer
+  (`DebugAddressMenu.h`) creates one; the "When" cell of its row opens the
+  editor. The Memory viewer draws under `stateMutex`, so its menu only
+  records the pick and `MainWindow` applies it once the lock is released.
+- **Gates** (`Debugger::Gate`, `gateOpens`). Any breakpoint may require the
+  **beam** inside a window of V and H (BeamPosition.h's numbering; minimum
+  above maximum wraps), a memory breakpoint may test the **byte** read or
+  written, and both may let N qualifying **passes** go by; every breakpoint
+  counts its passes. A PC breakpoint is judged at the instruction's first
+  cycle, a memory one at the cycle of the access (`videoAccessCycle`) — "stop
+  on a write to `$C054` outside horizontal blanking" is one row. `Hit` carries
+  that cycle and the banner prints it. An NMOS read-modify-write reaches the
+  hook twice (the dummy write of the old value, then the result): the gate
+  judges the SECOND, takes back the pass and the stop the first one made, so
+  `INC $10` is one pass and "written == $05" does not fire on a byte that
+  ends `$06`. A 65C02's dummy cycle is a second READ: same rule, one read.
+  On a read-and-write breakpoint the read and the write each keep a pass.
+  The debugger's own writes (Memory viewer, assembler: `patchMemory`) are
+  no access at all. A pass is an arrival however it is made: stepped
+  through by hand, or landed on by a transient, it counts. A pass counted for an instruction an interrupt then took the place
+  of is taken back (`onInterruptEntered`): it is offered again after the
+  RTI.
+- **Run to the beam** (`Debugger::setRunToBeam`,
+  `EmulationController::debugRunToBeam`). A transient stop at the first
+  instruction boundary at or after an absolute beam-clock cycle — up to one
+  instruction late, never early. It names a time, not an address, so it
+  also fires while a card's processor holds the bus (`beamStopDue`, asked
+  between the card's instructions; `Hit::busMaster`). From the Screen Inspector: Next line, Next
+  frame, VBL, a right click on the picture, a right click on a row of the
+  switch list.
+- **Screen Inspector.** The beam marker is a cross over the whole picture in
+  two tones (dark edge, a core of the user's colour,
+  `screen_inspector_beam_colour`): any single colour is one an Apple II
+  picture can be. In blanking, an arrow on the edge the beam is behind. Drawn
+  with the beam view on and whenever the machine is stopped. "Switches" lists
+  the frame's soft-switch throws: the V and H of each, the byte it takes
+  effect from by the PAINTER's rule (`Apple2Display::eventByteColumn` — it
+  differs by switch), and **the instruction that threw it**
+  (`Memory::VideoEvent::pc`); a click sends the Debugger's listing there.
+  The CPU keeps no "address of the instruction in progress" — that is a
+  store per instruction on the hottest path — so `Memory::videoEventPc`
+  works it back from the program counter during the access: three bytes
+  back when the operand's high byte is `$C0` / `$BF` (an absolute form),
+  two otherwise (an indirect); when that byte is ambiguous (an indirect
+  through a pointer at `$C0` / `$BF`) the opcode's addressing-mode bits
+  decide. The beam view's composite carries a
+  seam event at the beam that no instruction made (`kComposite`): the list
+  leaves it out.
+
+- **Step Back and Run Back** (`EmulationController_TimeTravel.cpp`). A 6502
+  does not run backwards and POM2 keeps no undo log; it has the rewind ring,
+  the whole machine once per video frame. *Step Back* restores the newest
+  frame before now and re-executes to the instruction before this one —
+  counted, not timed: run to the present counting instructions, restore
+  again, run one fewer. *Run Back* replays the frames newest first, each up
+  to where the next begins, and lands on the LAST boundary a breakpoint (PC
+  or memory, with its conditions) would have stopped at; with none in the
+  history, on its oldest point. The debugger is told it reads the past
+  (`Debugger::setReplaying`, `probeInstruction`): no pass is counted,
+  "ignore N" does not apply, and none of the hook's methods is called, so a
+  trace file, the profile and the OS-call traces see nothing. The frames after the one
+  replayed from leave the ring, as with the Rewind panel's "resume here".
+  Shift+F7 and Ctrl+F7 (not Backspace: it corrects a value typed in one of
+  the panel's fields). The rewind is off by default; a "Rec" box beside the
+  two buttons shows and toggles it (the Rewind panel's Record — owner's
+  ruling, 2026-11-27: recording is the user's to turn on). A landing first
+  re-executes the two frames leading to the one it restores, so the video
+  soft-switch log and the published frame are rebuilt
+  (`Memory::setKeepVideoLogOnRestore`): without it the Screen Inspector had
+  no page flip left to show after a step back.
+  Both buttons are greyed, with the reason in their tooltip
+  (`debugCanStepBack`), when the machine runs, the rewind is not recording,
+  no frame is older than now, or a write a rewind cannot undo has landed.
+  The replay keeps the CPU hook ATTACHED (and calls none of its methods):
+  `M6502::step` splits an interrupt entry from the handler's first
+  instruction only when a hook is present, and a breakpoint on a handler's
+  first instruction — the usual place — would otherwise sit inside a step
+  no replay could see or land on. While a card's processor holds the bus
+  the parked 6502's PC is not probed. Measured on a Mockingboard T1 IRQ
+  every 1000 cycles: 3000 forward steps then back, every boundary identical
+  (64 KiB as the CPU sees them, registers, cycle), and a run of five frames
+  replayed back and forward lands on the same cycle and state.
+  **The replay is CHECKED** (`ReplayWitness`, `standsOn`). A rewind frame
+  does not hold everything that steers the machine — the host's time read by
+  the No-Slot Clock, the phase of the AppleWin mouse card's 60 Hz timer on a
+  PAL machine, a 6522's "flag just set" bit, the sub-tick of an accelerated
+  bus clock — and no list of barriers can promise to have fenced them all.
+  So before anything the present is witnessed (processor, cycle, the 64 KiB
+  the CPU sees), and the replay, run from the frame to the present, must
+  stand on it exactly; otherwise the verb is given up, the machine put back
+  from the frame captured on the way in, and the way back closed until the
+  machine has run on. What follows is why a replay is usually exact; the
+  check is why a wrong one is never landed on. Run Back checks the newest
+  frame's replay this way and holds older frames to their cycle.
+  **No replay crosses what the machine's own code cannot reproduce**
+  (`replayBarriers_`, an ascending list of cycles; `markReplayBarrier`,
+  `replayBarrierFor`): a change of an accelerator's
+  speed (Zip Chip, TransWarp, FASTChip, the //c+ — the worker samples it
+  every 4096 cycles, a replay keeps its frame's ratio, the beam would end up
+  elsewhere) and a reset verb (the ring keeps its frames across a soft or
+  hard reset; a replay from before one would run the old program past it).
+  Back is open down to a barrier, not across it, and the buttons say so. A change
+  made by hand while the machine stands still — a byte in the Memory viewer,
+  the PC (`noteChangedByHand`) — is a barrier too: a Step Back from a frame
+  before it would silently undo it. They are
+  also refused while a paste is being typed (the replay would swallow it),
+  while a cassette plays (the tape would run ahead), and while a card
+  holds a host connection that restoring its state would close
+  (`SlotPeripheral::holdsHostConnection`: an open Uthernet II socket,
+  frames an Uthernet I received and the guest has not read, bytes a Super
+  Serial Card received). The paint editor's writes and the AI
+  control server's register and memory writes raise the same barrier as a
+  change made by hand.
+  **The present is captured as a rewind frame before any replay**
+  (`capturePresent`), so a replay given up puts the machine back exactly,
+  not by a second replay that would fail the same way. Run Back works for
+  0.8 s at most (it holds the state lock on the UI thread, and a RamWorks
+  frame is megabytes to restore; `setRunBackBudget` is the tests' seam),
+  then lands where it has got to and says so (`Reason::RunBackPaused`): Run
+  Back again goes on. A Step Back takes
+  one entry off the execution history — the instruction it un-did — and
+  keeps the profile; a time jump from anywhere else still clears both.
+  While a replay runs the cards' trace lines and a card Z80's BDOS trace
+  are muted (`OsCallTrace::setMuted`).
+  **Nor a byte exchanged with the outside** (`HostIoEpoch.h`): a serial
+  peer, a network or a MIDI port cannot be rewound, so the cards with a
+  host side count their exchanges — `SuperSerialCard` (a byte sent, a
+  received byte taken), `PassportMidiCard`, the Uthernet I's CS8900A (a
+  frame sent or taken), the Uthernet II's W5100 (a socket command) and a
+  FujiNet call; not a register poll, which a network driver does every
+  frame — and a rewind capture that sees the count
+  moved puts the barrier on itself. It is not the
+  media-write epoch: an ordinary rewind scrub over a serial session stays
+  the user's call. Host INPUT goes through the same counter: `Keyboard` (a
+  key latched, a held key changing, a pasted character taken),
+  `PaddleInputs` (a value or a button changing; Shift and Control only when
+  a wiring carries them) and the three mouse devices report a CHANGE, never
+  a state being restored. Three rules make that usable (the comment on
+  `hostIoSeen_` in `EmulationController.h`). While the machine RUNS, the
+  capture ending each frame puts a barrier on itself if something arrived
+  during the frame. When it STOPS inside a frame, something that arrived
+  since the last capture lies in a span no frame covers: the way back is
+  closed until it has run on. What arrives while it STANDS STILL closes
+  nothing — the pointer crossing the Apple II screen on its way to the
+  Debugger changed no past; when the machine then executes with it (a step,
+  the first slice of a run) a frame is captured right there, new input
+  included, and the barrier put on it (`reconcileOutsideBeforeExecuting`),
+  so back stays open down to that point. A step that itself sends a byte is
+  reconciled the same way as it ends. And every frame restores the input it
+  was captured with: the mouse cards' is in the snapshot; the keyboard's
+  (latch, strobe, held keys) and the game port's (paddles, buttons, Apple
+  keys) are not, and are kept beside the ring (`keyboardAtFrame_`). A
+  replay that stalls, overshoots, reaches the outside or fails the check is
+  abandoned: the machine is put back exactly as it was, the stop the
+  debugger was showing included, and the ring is emptied only if a medium
+  was written. A Step Back measured 0.4 ms here (before the present was
+  captured and witnessed on the way in). Known and left: the floppy
+  autosave, about a second after a write, empties the ring even under a
+  stopped machine — the rewind's own rule, a rewind never spans a capture.
+
+Pinned by `debugger` (`tests/debugger_gates_cases.h`).
+
 **A 6502 developer's panel** *(2026-11-25, French Touch's requests)*. Four
 additions, asked for by Grouik while writing his own demos in POM2:
 

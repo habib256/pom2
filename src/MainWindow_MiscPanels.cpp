@@ -67,6 +67,7 @@
 #include "SystemProfile.h"
 #include "Version.h"
 #include "DebugCoordinator.h"
+#include "Debugger_ImGui.h"
 #include "EmulationController.h"
 
 #include "CassetteDeck_ImGui.h"
@@ -106,6 +107,12 @@ void MainWindow::renderMemoryViewerWindow()
     // and that mutex is non-recursive, so flushing inline would freeze the UI
     // thread while it still holds the lock the worker needs at its next chunk.
     debugCoordinator_->renderMemoryViewer(show(pom2::PanelId::MemViewer));
+    // A right click on a byte: break on its read / write, watch it. Applied
+    // here, with the viewer's lock released.
+    pom2::DebugAddressAction action;
+    uint16_t addr = 0;
+    if (debugCoordinator_->memoryViewer().takeAddressAction(action, addr))
+        debuggerPanel->applyAddressAction(*controller, action, addr, "Memory viewer");
 }
 
 // ─── Cassette deck ───────────────────────────────────────────────────────

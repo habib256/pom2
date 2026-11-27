@@ -39,6 +39,7 @@
 #include "SpeakerDevice.h"
 
 #include <atomic>
+#include <map>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -128,6 +129,39 @@ public:
 
     /// Run until the PC reaches `addr`, then stop. Takes `stateMutex` itself.
     void debugRunToCursor(uint16_t addr, pom2::DebugBank bank = {});
+    /// Run until the beam reaches line `line` (V), cycle `h` (H) of the
+    /// frame — the next time it does, so a position already passed is
+    /// reached in the next frame. Stops at the first instruction boundary
+    /// at or after it. Takes `stateMutex` itself.
+    void debugRunToBeam(int line, int h);
+
+    // ── Backwards, through the rewind ring (EmulationController_TimeTravel.cpp)
+    /// Can the machine go back from where it stands: it is stopped, the
+    /// rewind ring is recording, it holds a frame older than now, and no
+    /// write a rewind cannot undo has landed since. Caller holds `stateMutex`.
+    /// `why`, when given and the answer is no, says which of those it is.
+    bool debugCanStepBack(const char** why = nullptr) const;
+    /// One instruction back: restore the newest rewind frame before now and
+    /// re-execute up to the instruction before this one. The frames after
+    /// that one are dropped (the future is re-made by running). Takes
+    /// `stateMutex` itself; false when debugCanStepBack() is.
+    bool debugStepBack();
+    /// Backwards to the latest point where a breakpoint — on the PC or on
+    /// memory, with its conditions but not its "ignore N" — would have
+    /// stopped; the oldest point of the history when there is none. It runs
+    /// on the calling thread, under the state lock, so it works for
+    /// runBackBudget() at most, then lands where it has got to with
+    /// Reason::RunBackPaused: calling it again goes on from there.
+    bool debugRunBack();
+    /// The user changed the machine by hand while it stood still — a byte
+    /// in the Memory viewer, the PC. Re-executing history cannot reproduce
+    /// that, and a Step Back from a frame before it would silently undo it:
+    /// the way back closes here. Caller holds `stateMutex`.
+    void noteChangedByHand() { markReplayBarrier(); }
+    /// How long one debugRunBack() may hold the machine and the interface
+    /// (0.8 s). Settable so that a test neither depends on the wall clock
+    /// nor has to wait to see the pause.
+    void setRunBackBudget(std::chrono::milliseconds budget) { runBackBudget_ = budget; }
     CassetteDevice&    cassette()    { return *tape; }
     SpeakerDevice&     speaker()     { return *spk; }
     /// 5.25" Disk II mechanical sounds (head step / motor / click).
@@ -382,7 +416,7 @@ public:
     /// the CLI's `--snapshot-load` — used to hand-roll `speaker().reset()`
     /// and so silently missed every device added to this function since.
     /// Callers must hold `stateMutex`.
-    void   noteTimeJump();
+    void   noteTimeJump(bool keepDebuggerMeasurements = false);
     /// True while a scrub owns the machine — the worker is parked at a
     /// historical frame and the live state is that frame, not the newest.
     ///
@@ -590,6 +624,122 @@ private:
     pom2::ZipChip      iicPlusZip_;     // the //c Plus CGGA (boots fast)
 
     pom2::RewindBuffer rewind_;
+    /// One instruction of whichever processor holds the bus, with no
+    /// debugger bookkeeping: the unit Step Back and Run Back replay in.
+    void replayOne();
+    /// Newest rewind frame stamped strictly before `cycle` that a replay may
+    /// start from (not older than `replayBarrierCycle_`), or kNoFrame.
+    size_t rewindFrameBefore(uint64_t cycle) const;
+    /// REPLAY BARRIERS. Step Back and Run Back re-execute the machine's own
+    /// code from a rewind frame; whatever reached the machine from OUTSIDE
+    /// that code cannot be reproduced by re-executing. Each such event
+    /// leaves a barrier — a cycle — and no replay runs across one:
+    ///   * a RESET verb (the ring keeps its frames across a soft or hard
+    ///     reset, and a replay from before one would run the old program
+    ///     straight past it);
+    ///   * a change of the ACCELERATOR's speed (the worker samples it every
+    ///     4096 cycles; a replay keeps the ratio its frame was captured with,
+    ///     so the beam would end up elsewhere);
+    ///   * a change made BY HAND (a byte in the Memory viewer, the PC, the
+    ///     paint editor, the AI control server);
+    ///   * a byte exchanged with a peer, or host INPUT (HostIoEpoch.h).
+    /// The list is ascending and pruned to the ring. A barrier at cycle b
+    /// means: a frame stamped before b is not a start for a present at or
+    /// past b - 1 (`replayBarrierFor`). An event that happens ON a cycle
+    /// where a frame was already captured is recorded one cycle later
+    /// (`markReplayBarrier`), which is what puts that frame — captured
+    /// before the event — on the wrong side of it.
+    std::vector<uint64_t> replayBarriers_;
+    void addReplayBarrier(uint64_t cycle);
+    void rebaseReplayBarriers(uint64_t cycle);   // a rewind resumed at `cycle`
+    void markReplayBarrier() { addReplayBarrier(mem.getCycleCounter() + 1); }
+    /// The barrier that binds a present: the newest one at or below
+    /// `present + 1` (0: none). A frame is a start only if stamped at or
+    /// after it.
+    uint64_t replayBarrierFor(uint64_t present) const;
+    /// At a rewind capture: barriers the machine is no longer past (time
+    /// went back; or an event on this very cycle, which the frame being
+    /// captured comes after) collapse onto this frame, and a host exchange
+    /// made since the last reconciliation puts a barrier on it.
+    void noteCaptureForReplay();
+    /// pom2::hostIoEpoch() as last RECONCILED with the barriers
+    /// (HostIoEpoch.h: bytes exchanged with a peer, and host input). The
+    /// rule has three parts.
+    ///   * WHILE THE MACHINE RUNS, the capture at the end of each frame
+    ///     reconciles: an exchange made during the frame puts a barrier on
+    ///     that capture.
+    ///   * WHEN IT STOPS inside a frame, nothing has captured yet: an epoch
+    ///     that moved between the last reconciliation and the stop
+    ///     (hostIoAtStop_, written by setMode without the lock — hence an
+    ///     atomic) means something arrived in a span no frame covers, and
+    ///     the way back is closed until the machine has run on.
+    ///   * WHAT ARRIVES WHILE IT STANDS STILL has changed no past, and
+    ///     closes nothing: the pointer crossing the Apple II screen on its
+    ///     way to the Debugger must not grey Step Back out. It counts from
+    ///     the moment the machine EXECUTES with it: right before a step, and
+    ///     before the first slice of a run, reconcileOutsideBeforeExecuting
+    ///     captures a frame of the machine as it stands — new input
+    ///     included — and puts the barrier on it. So the way back stays
+    ///     open down to that point, and not across it. A step that itself
+    ///     exchanges a byte is reconciled the same way when it ends
+    ///     (reconcileOutsideAfterStep).
+    /// Every frame restores the input it was captured with: the mouse
+    /// cards' in the snapshot, the keyboard's and the game port's in
+    /// keyboardAtFrame_.
+    uint64_t hostIoSeen_ = 0;
+    std::atomic<uint64_t> hostIoAtStop_{0};
+    std::atomic<bool> resumedFromStop_{false};   ///< setMode: Stopped -> Running
+    void reconcileOutsideBeforeExecuting();
+    void reconcileOutsideAfterStep(uint64_t epochBeforeStep);
+    /// Cycle a Run Back paused on (its budget ran out): the next one must
+    /// still test the boundary it stands on, which no replay has probed.
+    uint64_t runBackPausedAt_ = ~uint64_t(0);
+    /// The keyboard and the game port as each rewind frame found them,
+    /// keyed by the frame's cycle stamp. The latch, its strobe and the held
+    /// keys, the paddle values, the buttons and the Apple keys are NOT in
+    /// the machine snapshot, and a replay that reads `$C000` or `$C061`
+    /// must see what the original run saw. Six bytes of game port, then the
+    /// keyboard's own state. Pruned to the ring.
+    std::map<uint64_t, std::vector<uint8_t>> keyboardAtFrame_;
+    void rememberKeyboardForFrame();
+    /// rewind_.restore, plus the keyboard and the game port that frame had.
+    bool restoreFrameForReplay(size_t frame);
+    /// What a replay must arrive on, to be believed: the processor and the
+    /// 64 KiB it sees, as they stood when the verb was asked. A rewind
+    /// frame does not hold everything that steers the machine — the host's
+    /// time read by a clock card, a timer's phase, a sub-tick of an
+    /// accelerated bus clock — and no list of barriers can promise to have
+    /// fenced them all. So the replay is CHECKED: run from the frame to the
+    /// present, it must stand on this exactly, or it took another path and
+    /// the verb is given up.
+    struct ReplayWitness {
+        uint64_t cycle = 0;
+        uint16_t pc = 0;
+        uint8_t a = 0, x = 0, y = 0, p = 0, sp = 0;
+        std::vector<uint8_t> memory;
+    };
+    ReplayWitness witnessNow() const;
+    bool standsOn(const ReplayWitness& witness) const;
+    /// Put the machine `instructions` instructions after rewind frame
+    /// `frame`, as the live state. False when the frame did not restore.
+    bool landAfterReplay(size_t frame, long instructions);
+    void beginReplay();
+    uint64_t outsideEpoch() const;
+    std::chrono::milliseconds runBackBudget_{800};
+    bool cardHoldsHostConnection() const;
+    /// The rewind frame holding the machine as it stands NOW — captured if
+    /// the ring has none stamped at this cycle — so that a replay given up
+    /// goes back to exactly this state. May evict the oldest frame: take
+    /// every other index afterwards.
+    size_t capturePresent();
+    /// Replay until the cycle counter reaches `cycle`, adding to `count`.
+    /// False when the machine stopped advancing or the replay ran away.
+    bool replayTo(uint64_t cycle, long& count);
+    /// Give a replay up: the machine exactly as `presentFrame` holds it,
+    /// and the ring emptied if the replay wrote to a medium. Always false
+    /// (the verb's result).
+    bool abandonReplay(size_t presentFrame, uint64_t epochBefore,
+                       const pom2::Debugger::Hit& stopBefore);
     /// Last `pom2::mediaWriteEpoch()` value the ring was reconciled against
     /// — see noteMediaWrite().
     uint64_t rewindMediaEpoch_ = 0;

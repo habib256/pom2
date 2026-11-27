@@ -734,7 +734,7 @@ void W5100Device::listenSocket(size_t i)
 }
 
 // `Uthernet2.cpp:1077-1102`
-void W5100Device::setCommandRegister(size_t i, uint8_t value)
+void W5100Device::runSocketCommand(size_t i, uint8_t value)
 {
     switch (value) {
     case kW5100SnCrOpen:    openSocket(i);   break;

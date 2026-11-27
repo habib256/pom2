@@ -38,9 +38,11 @@
 #define POM2_DEBUGGER_IMGUI_H
 
 #include "Debugger.h"
+#include "DebugAddressMenu.h"
 #include "Memory.h"
 #include "DebuggerSymbols.h"
 #include "DebuggerSourceMap.h"
+#include "DebuggerWatchList.h"
 #include "InstructionTrace.h"
 #include "Opcode6502.h"
 #include "CpuClock.h"
@@ -48,6 +50,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 class EmulationController;
@@ -62,6 +65,25 @@ public:
     /// immediately having taken no lock.
     void render(EmulationController& ctrl, bool* open);
 
+    /// The Watch window (Debugger_ImGui_Watch.cpp): addresses and the values
+    /// they hold, live. It never stops the machine — a stop on an access is
+    /// a memory breakpoint. Call it every frame, open or not: "Watch $xxxx"
+    /// in a menu elsewhere opens it through `open`.
+    void renderWatch(EmulationController& ctrl, bool* open);
+    /// The watch list as one settings value (`debugger_watch_list`).
+    std::string watchListText() const { return watches_.text(); }
+    void setWatchListText(std::string_view text) { watches_.parse(text); watchRefs_ = {}; }
+
+    /// Do what a DebugAddressMenu item asked. Takes `stateMutex` itself:
+    /// the caller must NOT hold it (the Memory viewer draws its menu under
+    /// the lock and hands the pick over afterwards).
+    /// `requester`: the title of the window the menu was in ("Memory
+    /// viewer"). "Watch $xxxx" opens the Watch window, and where that is a
+    /// tab of the requester's dock node it would take the tab: the focus is
+    /// handed back to the requester.
+    void applyAddressAction(EmulationController& ctrl, DebugAddressAction action, uint16_t addr,
+                            const char* requester = nullptr);
+
 private:
     /// A value snapshot of everything the panel draws, taken under the lock
     /// in one go. Nothing below is a pointer into live emulator state — that
@@ -75,12 +97,19 @@ private:
         Cpu6502Set isa   = Cpu6502Set::Nmos6502;
         bool     running = false;
         bool     halted  = false;
+        /// Step Back / Run Back: possible now, and when not, why (a static
+        /// string of EmulationController::debugCanStepBack).
+        bool        canGoBack = false;
+        const char* whyNoBack = nullptr;
+        bool        recording = false;     ///< the rewind ring is recording
+        bool        scrubbing = false;     ///< ...and the Rewind panel is scrubbing it
         Debugger::Hit hit{};
         std::vector<DebugAddress> breakpoints;
         std::vector<DebugBank> banks;
         DebugBank pcBank;
         std::vector<Debugger::Watch> watchpoints;
         std::map<DebugAddress, Debugger::Condition> conditions;
+        Debugger::GateMap bpGates, wpGates;      ///< gates and pass counts
         bool profiling = false, historyEnabled = false;
         std::vector<Debugger::ProfileEntry> profile;
         std::vector<Debugger::TraceEntry> history;
@@ -116,7 +145,56 @@ private:
     void drawRegisters(const Snapshot& snap);
     void drawDisassembly(EmulationController& ctrl, const Snapshot& snap);
     void drawBreakpointList(EmulationController& ctrl, const Snapshot& snap);
-    void drawWatchpointList(EmulationController& ctrl, const Snapshot& snap);
+    /// The breakpoint whose "when" the popup is editing: a PC breakpoint
+    /// (`memory` false) or a memory one. Working copies, written on Apply.
+    struct GateEdit {
+        bool memory = false, request = false;
+        DebugAddress at;
+        int access = Debugger::Write;
+        bool conditionOn = false;
+        Debugger::Condition condition;
+        Debugger::Gate gate;
+        uint64_t passes = 0;
+    };
+    GateEdit edit_;
+    void openGateEditor(const Snapshot& snap, bool memory, DebugAddress at);
+    void drawGateEditor(EmulationController& ctrl);
+    /// The address an instruction's operand names (absolute or zero page),
+    /// false for immediates, branches and implied.
+    static bool operandAddress(const Snapshot& snap, uint16_t addr, int len,
+                               const std::string& mnemonic, uint16_t& out);
+    void drawLineMenu(EmulationController& ctrl, const Snapshot& snap, uint16_t addr,
+                      int len, const std::string& mnemonic, bool isBp, bool wildcard);
+    void showInListing(uint16_t addr, DebugBank bank = {});
+    bool showRequest_ = false;         ///< open and focus the panel next frame
+    bool showPending_ = false;         ///< ...and put the listing on showAddr_
+    uint16_t showAddr_ = 0;
+    DebugBank showBank_{};
+    bool watchWasOpen_ = false;        ///< the Watch window was drawn last frame
+    void goBack(EmulationController& ctrl, const Snapshot& snap, bool toBreakpoint);
+    std::string backStatus_;           ///< why the last Step Back / Run Back failed
+    uint64_t    backStatusCycles_ = 0; ///< ...and where the machine stood then
+    /// Window to hand the focus (and so its tab) back to after "Watch
+    /// $xxxx" opened the Watch window, and for how many frames more.
+    std::string returnFocusTo_;
+    int         returnFocusFrames_ = 0;
+
+    // ── Watch window ─────────────────────────────────────────────────────
+    DebuggerWatchList watches_;
+    char watchEntry_[256] = {0};
+    int  watchFormat_ = 0;
+    bool watchOpenRequest_ = false;
+    int  keepBehindFrames_ = 0;   // Watch opened by request stays behind its dock node's shown tab
+    std::string watchStatus_;
+    /// What the entries held: at the previous UI frame (a running machine's
+    /// changes), at the stop before this one and at this one (what a run or
+    /// a step changed). Emptied whenever the list changes.
+    struct WatchSeen { uint8_t lo = 0, hi = 0; bool mapped = false; };
+    struct WatchRefs {
+        std::vector<WatchSeen> frame, before, stopped;
+        uint64_t stopCycles = 0;
+    };
+    WatchRefs watchRefs_;
     void drawStopBanner(const Snapshot& snap);
     void drawSource(EmulationController& ctrl, const Snapshot& snap);
     void drawAssembler(EmulationController& ctrl, const Snapshot& snap);
@@ -162,10 +240,10 @@ private:
     /// Address typed into the "add breakpoint" box, as text so a half-typed
     /// value does not jump the view.
     char      bpEntry_[256]  = {0};
-    bool conditionEnabled_ = false;
-    int conditionRegister_ = 0;
-    int conditionCompare_ = 0;
-    char conditionValue_[8] = {"00"};
+    /// Kind the "add" row creates: 0 = BP (on the PC), else Debugger::Access
+    /// (1 BPMR, 2 BPMW, 3 both).
+    int       bpKind_ = 0;
+    std::string bpStatus_;
     char symbolPath_[1024] = {};
     DebuggerSymbols symbols_;
     DebuggerSourceMap sourceMap_;
@@ -182,12 +260,6 @@ private:
     char assemblyAddress_[8] = {"0300"};
     char assemblySource_[128] = {"LDA #$00"};
     std::string assemblyStatus_;
-    /// Same, for the watchpoint box. Separate storage so typing in one does
-    /// not clear the other.
-    char      wpEntry_[256]  = {0};
-    /// Access the next watchpoint is armed with (Debugger::Access bits).
-    /// Defaults to Write: it is free while armed, a read watch is not.
-    int       wpAccess_    = 2;
     /// The address the user last clicked in the disassembly — the target for
     /// Run To Cursor.
     uint16_t  cursorAddr_  = 0;

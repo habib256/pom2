@@ -19,6 +19,7 @@
 // See FujiNetCard.h for the architecture and the source citations.
 
 #include "FujiNetCard.h"
+#include "HostIoEpoch.h"
 #include "Block512Backing.h"   // pom2::noteMediaWrite
 
 #include <cstdlib>
@@ -402,6 +403,7 @@ uint8_t statusFor(const FujiNetLink::Response& r, bool connected)
 
 void FujiNetCard::handleSmartPortCall()
 {
+    pom2::noteHostIo();             // a call to the device over the wire (HostIoEpoch.h)
     if (!cpu_ || !mem_) return;
     ++callCount_;
 
@@ -963,6 +965,7 @@ bool FujiNetCard::serveBuiltInNetwork(uint8_t command, uint8_t unit,
 
 void FujiNetCard::handleProDosCall()
 {
+    pom2::noteHostIo();
     if (!cpu_ || !mem_) return;
     ++callCount_;
 

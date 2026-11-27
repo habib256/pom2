@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "SuperSerialCard.h"
+#include "HostIoEpoch.h"
 #include "Block512Backing.h"   // pom2::noteMediaWrite
 #include "SlotRomAsm.h"
 
@@ -1049,6 +1050,7 @@ uint8_t SuperSerialCard::deviceSelectRead(uint8_t low4)
                     // deliberately stays 8-bit clean — see the TDR write.)
                     rdrLatch_ = static_cast<uint8_t>(rxBuf.front() & receiveDataMask());
                     rxBuf.pop_front();
+                    pom2::noteHostIo();     // a received byte is taken (HostIoEpoch.h)
                 }
                 // RDR IS A LATCH, not a tap on the queue. MAME
                 // `mos6551.cpp::read_rdr` clears the status bits and then
@@ -1199,6 +1201,7 @@ void SuperSerialCard::deviceSelectWrite(uint8_t low4, uint8_t v)
 
 void SuperSerialCard::transmitByte(uint8_t v)
 {
+    pom2::noteHostIo();             // a byte leaves for the peer: no replay across it
     if (txBuf.size() >= kBufCap) txBuf.pop_front();
     txBuf.push_back(v);
     txTail.push_back(v);

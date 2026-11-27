@@ -336,9 +336,13 @@ bool Memory::loadSnapshotState(const uint8_t* data, size_t n,
         // state) while videoEvents_ carried the stale tail forever and
         // grew without bound. Start the log fresh from the restored
         // display state and clock.
-        displayAtFrameStart_ = ds;
-        publishedFrameStart_ = ds;
-        resetVideoEventLogForClockJump();
+        // (Unless the caller has just re-executed up to this very clock:
+        // Memory::setKeepVideoLogOnRestore.)
+        if (!keepVideoLogOnRestore_) {
+            displayAtFrameStart_ = ds;
+            publishedFrameStart_ = ds;
+            resetVideoEventLogForClockJump();
+        }
     }
 
     if (!need(lcBank1.size() + lcBank2.size() + lcHigh.size())) return false;

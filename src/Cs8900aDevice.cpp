@@ -20,6 +20,7 @@
 // line range it mirrors.
 
 #include "Cs8900aDevice.h"
+#include "HostIoEpoch.h"
 
 #include <algorithm>
 #include <cstring>
@@ -409,6 +410,7 @@ uint16_t Cs8900aDevice::receiveFrame()
     if (!frameQueue_.empty()) {
         QueuedFrame frame = std::move(frameQueue_.front());
         frameQueue_.pop_front();
+        pom2::noteHostIo();             // a received frame is taken (HostIoEpoch.h)
         queueBytes_ -= std::min(queueBytes_, frame.bytes.size());
         // Keep the true length for the status word: MAME computes the
         // Extradata bit (0x4000) from the pre-clamp length and discards
@@ -575,6 +577,7 @@ void Cs8900aDevice::writeTxBuffer(uint8_t value, bool oddAddress)
             // The backend carries Ethernet bytes without the FCS. Unless
             // TxPadDis is set, the chip pads short host frames to 60 bytes
             // before appending that CRC (datasheet §4.4.11).
+            pom2::noteHostIo();         // a frame leaves for the network (HostIoEpoch.h)
             const bool pad = (ppRead16(kPpCcTxCmd) & 0x2000) == 0 &&
                              txLength_ < 60;
             if (pad) {

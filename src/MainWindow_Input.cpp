@@ -1035,8 +1035,14 @@ void MainWindow::pollJoystickAndPushToMemory(double deltaSeconds)
             }
             mem.setJoyportContacts(player, contacts);
         }
+        // ONE write per paddle per frame, of the value that wins: the mouse
+        // and the keyboard overrides below used to be second writes, so the
+        // stored value went stick -> mouse -> stick every frame, and each of
+        // those is a change — an input the debugger's Step Back cannot
+        // replay (HostIoEpoch.h) — with nothing moving at all.
+        uint8_t paddle[4];
         for (int i = 0; i < 4; ++i)
-            mem.setPaddle(i, (menuActive || snesMaxInstalled) ? 128 : joystick->paddleValue(i));
+            paddle[i] = (menuActive || snesMaxInstalled) ? 128 : joystick->paddleValue(i);
 
         // INPUT-003: the host mouse as paddles 0/1 — over the pad, when the
         // option is on and the Mouse Card does not hold the pointer.
@@ -1044,10 +1050,10 @@ void MainWindow::pollJoystickAndPushToMemory(double deltaSeconds)
         if (mousePaddles) {
             const ImVec2 p = ImGui::GetMousePos();
             const double range = paddleMouseRange();
-            mem.setPaddle(0, pom2::paddlemouse::axisToPaddle(
-                p.x, screenRectMin.x, screenRectMax.x, range));
-            mem.setPaddle(1, pom2::paddlemouse::axisToPaddle(
-                p.y, screenRectMin.y, screenRectMax.y, range));
+            paddle[0] = pom2::paddlemouse::axisToPaddle(
+                p.x, screenRectMin.x, screenRectMax.x, range);
+            paddle[1] = pom2::paddlemouse::axisToPaddle(
+                p.y, screenRectMin.y, screenRectMax.y, range);
             if (screenHovered_) {            // a click on a panel is not fire
                 extraButtons[0] = ImGui::IsMouseDown(ImGuiMouseButton_Left);
                 extraButtons[1] = ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -1058,10 +1064,11 @@ void MainWindow::pollJoystickAndPushToMemory(double deltaSeconds)
         // physical stick cannot move the player behind the user's back.
         if (keyboardJoystick_.active()) {
             for (int i = 0; i < 2; ++i) {
-                mem.setPaddle(i, keyboardJoystick_.paddle(i));
+                paddle[i] = keyboardJoystick_.paddle(i);
                 extraButtons[i] |= keyboardJoystick_.button(i);
             }
         }
+        for (int i = 0; i < 4; ++i) mem.setPaddle(i, paddle[i]);
 
         if (suppressGame || snesMaxInstalled) {
             for (int i = 0; i < 3; ++i) mem.setPaddleButton(i, false);

@@ -130,6 +130,13 @@ void applyTheme(UiAccent accent, float uiScale, float dpiScale);
 /// `SameLine` spacing on both sides.
 void verticalRule(float padX = 6.0f);
 
+/// Heading over a group of rows in a MENU — a `SeparatorText` in the greyed
+/// text colour. It names a group and cannot be clicked; drawn at full
+/// brightness it read as one more menu item. Every menu heading goes
+/// through it, so they all look alike (a panel's section titles do not:
+/// nothing beside them is a menu row to be confused with).
+void menuHeading(const char* title);
+
 /// Filled indicator dot, vertically centred on the current text line and
 /// followed by `SameLine`. `on` picks between the given colour and the
 /// palette's inactive grey, so a caller can pass one colour and let the

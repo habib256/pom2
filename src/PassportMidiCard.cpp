@@ -17,6 +17,7 @@
 // Passport MIDI card — see PassportMidiCard.h.
 
 #include "PassportMidiCard.h"
+#include "HostIoEpoch.h"
 
 #include <cmath>
 #include <cstring>
@@ -56,6 +57,7 @@ void PassportMidiCard::syncTo(uint64_t cpuCycle)
     acia_.tick(double(ticks), sent_);
     busAtSync_ = acia_.now();
     if (sent_.empty()) return;
+    pom2::noteHostIo();             // bytes left for the MIDI port (HostIoEpoch.h)
     const double cpuPerBus = ticks ? double(span) / double(ticks) : 1.0;
     for (const auto& s : sent_) {
         if (!s.framed) continue;                 // the far end drops it

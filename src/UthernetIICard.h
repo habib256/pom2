@@ -91,6 +91,9 @@ public:
     explicit UthernetIICard(int slot);
 
     std::string_view name() const override { return "Uthernet II"; }
+    /// The W5100's sockets are host sockets, closed when its state is
+    /// reloaded: no Step Back while one is open (SlotPeripheral.h).
+    bool holdsHostConnection() const override { return chip_.anyHostSocketOpen(); }
 
     uint8_t deviceSelectRead (uint8_t low4) override;
     void    deviceSelectWrite(uint8_t low4, uint8_t v) override;

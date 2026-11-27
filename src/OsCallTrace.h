@@ -153,7 +153,10 @@ public:
     /// An IRQ/NMI entry ran instead of the offered instruction.
     void interrupted6502();
     void onZ80Instruction(const Z80& z80) override;
-    void onCardLine(const char* line) override { emit(line); }
+    void onCardLine(const char* line) override { if (!muted_) emit(line); }
+    /// Step Back / Run Back re-execute history: what the cards print or a
+    /// card Z80 calls while they do has been traced once already.
+    void setMuted(bool on) { muted_ = on; }
 
     /// Newest last; at most kCapacity lines.
     static constexpr std::size_t kCapacity = 4000;
@@ -227,6 +230,7 @@ private:
     const M6502* cpu_ = nullptr;
     const Memory* mem_ = nullptr;
     bool mli_ = false, bdos_ = false, sp_ = false, pascal_ = false;
+    bool muted_ = false;
     bool mon_ = false, acorn_ = false, cpm65_ = false, disk_ = false;
     std::vector<Pending> mliPending_, bdosPending_, spPending_, monPending_, cpmPending_;
     std::string monLine_;                  // COUT output since the last CR

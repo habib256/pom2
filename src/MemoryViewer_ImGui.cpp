@@ -372,10 +372,26 @@ void MemoryViewer_ImGui::renderHexView()
                             editWasActive = false;
                         }
                     }
+                    // Right click: the debugger's menu for this address
+                    // (drawn below, once the cell's colour is popped).
+                    ImGui::OpenPopupOnItemClick("##cell", ImGuiPopupFlags_MouseButtonRight);
                     ImGui::PopID();
                 }
 
                 if (pushed) ImGui::PopStyleColor();
+
+                // Only the pick is kept — this draws under the state lock.
+                ImGui::PushID(currentAddr);
+                if (ImGui::BeginPopup("##cell")) {
+                    const pom2::DebugAddressAction picked =
+                        pom2::debugAddressMenuItems(static_cast<uint16_t>(currentAddr));
+                    if (picked != pom2::DebugAddressAction::None) {
+                        addressAction_ = picked;
+                        addressActionAddr_ = static_cast<uint16_t>(currentAddr);
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
 
                 if (asciiIdx < 32) asciiLine[asciiIdx++] = printable(value);
             }

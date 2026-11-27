@@ -522,7 +522,7 @@ void MainWindow::renderMenuBar()
         // second drive, a 3.5" bay or a Liron unit was unreachable from here.
         // Each action goes through the coordinator, which also clears or
         // writes the persisted path key with the medium.
-        ImGui::SeparatorText("Drives");
+        pom2::menuHeading("Drives");
         renderFileMenuDrives();
         // What you keep of the machine goes at the bottom, just above Quit:
         // the BASIC listing, then the session.
@@ -988,8 +988,7 @@ void MainWindow::renderMenuBar()
         // How the Apple II bit stream becomes colour. One pick; the CRT
         // glass below is an independent, composable layer (Phase 3/4 — one
         // shared effect stack downstream of every pipeline).
-        ImGui::Separator();
-        ImGui::TextDisabled("Color pipeline");
+        pom2::menuHeading("Color pipeline");
         renderColorPipelineItems();
         ImGui::EndMenu();
     }
@@ -1073,7 +1072,7 @@ void MainWindow::renderMenuBar()
         // the style from scratch, so repeated calls don't compound the
         // scale) and both persist to state.cfg on exit.
         if (ImGui::BeginMenu(ICON_FA_PALETTE " Interface")) {
-            ImGui::SeparatorText("Accent");
+            pom2::menuHeading("Accent");
             std::size_t nAccents = 0;
             const pom2::UiAccent* accents = pom2::allAccents(nAccents);
             for (std::size_t i = 0; i < nAccents; ++i) {
@@ -1085,7 +1084,7 @@ void MainWindow::renderMenuBar()
                 }
             }
 
-            ImGui::SeparatorText("Zoom");
+            pom2::menuHeading("Zoom");
             // Percent rather than a raw multiplier — "125 %" is the unit
             // every other desktop app uses for this control.
             int pct = static_cast<int>(uiScale_ * 100.0f + 0.5f);
@@ -1133,13 +1132,14 @@ void MainWindow::renderMenuBar()
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Fuzzy-search every menu item, panel and machine\n"
                               "action. Type \"mock\", \"amber\", \"eject\"...");
-        // Three families, in the order a developer reaches for them: what
-        // looks INTO the machine (they used to sit in View, which is now
-        // only about the window), what draws for it, what drives it from
-        // outside. The Debug layout (View) opens the first two together.
-        ImGui::SeparatorText("Debugging");
+        // Four families, each under its own heading, in the order a developer
+        // reaches for them: what looks INTO the machine (they used to sit in
+        // View, which is now only about the window), what draws for it, what
+        // makes its sounds, and — apart, last — what drives it from OUTSIDE.
+        pom2::menuHeading("Debugging");
         panelMenuItem(pom2::PanelId::Debugger);
         panelMenuItem(pom2::PanelId::ScreenInspector);
+        panelMenuItem(pom2::PanelId::Watch);
         panelMenuItem(pom2::PanelId::MemViewer);
         if (ImGui::BeginMenu(ICON_FA_MAP "  Memory maps")) {
             panelMenuItem(pom2::PanelId::MemBar);
@@ -1147,20 +1147,25 @@ void MainWindow::renderMenuBar()
             panelMenuItem(pom2::PanelId::MemGrid);
             ImGui::EndMenu();
         }
-        ImGui::SeparatorText("Graphics");
+        pom2::menuHeading("Graphics");
         panelMenuItem(pom2::PanelId::HgrPaint);
         panelMenuItem(pom2::PanelId::HgrSprite);
-        ImGui::SeparatorText("Sound");
+        pom2::menuHeading("Sound");
         ImGui::MenuItem(ICON_FA_VOLUME_HIGH "  Speaker SFX editor", nullptr, &showSfxEditor_);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Design sound effects for the Apple II's 1-bit speaker: 50 built-in\n"
                               "cues, a pitch and duration curve, live preview, and an assembler\n"
                               "export of the table your program plays through $C030.");
-        // The AI Control row hides itself under WASM — AiControlServer cannot
-        // open a listening socket in the browser sandbox (registerPanels()).
-        // No header over a row that may not be there.
-        ImGui::Separator();
-        panelMenuItem(pom2::PanelId::AiControl);
+        // AI control is not a tool like the others — it opens the machine to
+        // a program outside POM2 — so it gets its own section, set apart.
+        // The row hides itself under WASM (AiControlServer cannot open a
+        // listening socket in the browser sandbox, registerPanels()): no
+        // heading over a row that is not there.
+        if (!panels_.hidden(pom2::PanelId::AiControl)) {
+            ImGui::Spacing();
+            pom2::menuHeading("AI");
+            panelMenuItem(pom2::PanelId::AiControl);
+        }
         ImGui::EndMenu();
     }
 

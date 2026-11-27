@@ -97,6 +97,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <mutex>
 #include <vector>
 #include <chrono>
 #include <cmath>
@@ -1367,7 +1368,12 @@ void MainWindow::applyDockLayout(DockLayout preset)
             bottom     = right;
             // The Disk Library stays, a tab behind the Debugger: debugging
             // starts with loading the disk to debug.
-            showOnly({P::Debugger, P::ScreenInspector, P::DiskLibrary});
+            // The Watch window takes the foot of the Debugger's half: its
+            // values are read WHILE stepping in the listing above it.
+            bottom     = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down,
+                                                     0.24f, nullptr, &right);
+            rightLower = right;
+            showOnly({P::Debugger, P::ScreenInspector, P::Watch, P::DiskLibrary});
             break;
     }
     if (rightLower == 0) rightLower = right;
@@ -1408,6 +1414,7 @@ void MainWindow::applyDockLayout(DockLayout preset)
             dock("Joystick", rightLower);
             dock("Rewind", rightLower);
             dock("Debugger", rightLower);
+            dock("Watch", rightLower);
             dock("Screen Inspector", centre);
             break;
 
@@ -1423,12 +1430,14 @@ void MainWindow::applyDockLayout(DockLayout preset)
             // Opened from the View menu, the two debugging panels become
             // tabs — never windows floating over the screen.
             dock("Debugger", right);
+            dock("Watch", right);
             dock("Screen Inspector", centre);
             break;
 
         case DockLayout::Debug:
             dock("Screen Inspector", centre);
             dock("Debugger", right);
+            dock("Watch", bottom);
             dock("Disk Library", right);
             dock("Memory viewer", right);
             dock("Memory Map Grid", right);

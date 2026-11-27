@@ -24,6 +24,7 @@
 
 #include "imgui.h"
 #include "Opcode6502.h"
+#include "DebugAddressMenu.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -94,10 +95,22 @@ public:
     // NCR65C02. Set each frame.
     void setInstructionSet(pom2::Cpu6502Set set) { disasmSet_ = set; }
 
+    /// What a right click on a byte asked of the debugger (break on read /
+    /// write, watch…), once: render() runs under the machine's state lock
+    /// and the action takes that lock, so the caller applies it afterwards.
+    bool takeAddressAction(pom2::DebugAddressAction& action, uint16_t& addr) {
+        if (addressAction_ == pom2::DebugAddressAction::None) return false;
+        action = addressAction_; addr = addressActionAddr_;
+        addressAction_ = pom2::DebugAddressAction::None;
+        return true;
+    }
+
 private:
     Memory* memory;
     std::function<uint8_t(uint16_t, uint8_t)> writeCallback;
     pom2::Cpu6502Set disasmSet_ = pom2::Cpu6502Set::Nmos6502;
+    pom2::DebugAddressAction addressAction_ = pom2::DebugAddressAction::None;
+    uint16_t addressActionAddr_ = 0;
 
     // Per-frame PAGED copy of what the CPU would fetch (Memory::
     // snapshotCpuView). The hex grid used to index Memory::data(), the flat

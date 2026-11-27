@@ -54,6 +54,7 @@ void Debugger::addBreakpoint(uint16_t addr)
 void Debugger::removeBreakpoint(uint16_t addr)
 {
     conditions_.erase(addr);
+    bpGates_.erase({addr, {}});
     if (bpBits_.empty()) return;
     uint8_t& byte = bpBits_[addr >> 3];
     const uint8_t bit = static_cast<uint8_t>(1u << (addr & 7));
@@ -73,6 +74,7 @@ void Debugger::clearBreakpoints()
     conditions_.clear();
     bankBreakpoints_.clear();
     bankConditions_.clear();
+    bpGates_.clear();
     // Freed rather than zeroed: an un-armed debugger should hold no memory,
     // and `armed()` keying off the count means the CPU goes back to its fast
     // loop the moment the last breakpoint goes.
@@ -102,6 +104,102 @@ bool Debugger::conditionMatches(uint16_t addr) const
     return conditionMatches(found->second);
 }
 
+void Debugger::setCondition(DebugAddress at, bool on, Condition condition, const M6502& cpu)
+{
+    conditionCpu_ = &cpu;
+    if (at.bank.kind == DebugBank::Any) {
+        if (!hasBreakpoint(at.addr)) return;
+        if (on) conditions_[at.addr] = condition; else conditions_.erase(at.addr);
+    } else {
+        if (!bankBreakpoints_.count(at)) return;
+        if (on) bankConditions_[at] = condition; else bankConditions_.erase(at);
+    }
+}
+
+bool Debugger::compare(Compare how, unsigned value, unsigned against)
+{
+    switch (how) {
+        case Compare::Equal:        return value == against;
+        case Compare::NotEqual:     return value != against;
+        case Compare::Less:         return value <  against;
+        case Compare::LessEqual:    return value <= against;
+        case Compare::Greater:      return value >  against;
+        case Compare::GreaterEqual: return value >= against;
+    }
+    return false;
+}
+
+bool Debugger::beamInside(const Gate& g, int line, int h)
+{
+    const auto within = [](int v, int lo, int hi) {
+        return lo <= hi ? (v >= lo && v <= hi) : (v >= lo || v <= hi);   // wraps
+    };
+    return within(line, g.vMin, g.vMax) && within(h, g.hMin, g.hMax);
+}
+
+void Debugger::setBreakpointGate(DebugAddress at, const Gate& gate)
+{
+    const bool there = at.bank.kind == DebugBank::Any ? hasBreakpoint(at.addr)
+                                                      : bankBreakpoints_.count(at) != 0;
+    if (there) bpGates_[at] = GateState{gate};
+}
+
+void Debugger::setWatchGate(DebugAddress at, const Gate& gate)
+{
+    const bool there = at.bank.kind == DebugBank::Any ? watchpointAt(at.addr) != None
+                                                      : bankWatches_.count(at) != 0;
+    if (there) wpGates_[at] = GateState{gate};
+}
+
+void Debugger::resetPassCounts()
+{
+    for (auto& g : bpGates_) g.second.passes = g.second.countedAt = 0;
+    for (auto& g : wpGates_) g.second.passes = g.second.countedAt = 0;
+}
+
+// One breakpoint, one pass: is the beam in its window, does the byte match,
+// and has it let enough passes go by. `value` is -1 for a PC breakpoint.
+//
+// `mayRepeat`: one instruction can put the SAME kind of access on the SAME
+// address twice — the dummy cycle of a read-modify-write. An NMOS part
+// writes the original value back before the result; a 65C02 reads the
+// operand a second time. Both reach here, and the program made ONE read and
+// ONE write: the earlier of two same-kind accesses has its pass taken back
+// before the later is judged — else `INC $10` counted two write passes on a
+// 6502 and two read passes on a 65C02, and a "written == $05" gate stopped
+// on a byte that ends up $06. A read and a write are two accesses: on a
+// read-and-write breakpoint each keeps its pass.
+void Debugger::uncountPass(GateMap& gates, const DebugAddress& key)
+{
+    const auto found = gates.find(key);
+    if (found == gates.end()) return;
+    GateState& s = found->second;
+    if (s.countedAt != serial_ || !s.passes) return;
+    --s.passes;
+    s.countedAt = 0;
+}
+
+bool Debugger::gateOpens(GateMap& gates, const DebugAddress& key, uint64_t videoCycle,
+                         int value, bool write, bool mayRepeat)
+{
+    GateState& s = gates[key];
+    if (!replaying_ && mayRepeat && s.countedWrite == write) uncountPass(gates, key);
+    const Gate& g = s.gate;
+    if (g.beam && memory_) {
+        const VideoTiming& t = pom2VideoTiming(memory_->videoStandard());
+        const uint64_t perLine = static_cast<uint64_t>(t.cyclesPerScanline);
+        const uint64_t inFrame = videoCycle % (perLine * static_cast<uint64_t>(t.scanlinesPerFrame));
+        if (!beamInside(g, static_cast<int>(inFrame / perLine), static_cast<int>(inFrame % perLine)))
+            return false;
+    }
+    if (g.valueOn && value >= 0 && !compare(g.valueCompare, static_cast<unsigned>(value), g.value))
+        return false;
+    if (replaying_) return true;          // the past, read again: nothing counts
+    s.countedAt = serial_;
+    s.countedWrite = write;
+    return ++s.passes > g.ignore;
+}
+
 bool Debugger::conditionMatches(const Condition& c) const
 {
     if (!conditionCpu_) return false;
@@ -114,16 +212,7 @@ bool Debugger::conditionMatches(const Condition& c) const
         case Register::SP: value = conditionCpu_->getStackPointer(); break;
         case Register::PC: value = conditionCpu_->getProgramCounter(); break;
     }
-    value &= c.mask;
-    switch (c.compare) {
-        case Compare::Equal: return value == c.value;
-        case Compare::NotEqual: return value != c.value;
-        case Compare::Less: return value < c.value;
-        case Compare::LessEqual: return value <= c.value;
-        case Compare::Greater: return value > c.value;
-        case Compare::GreaterEqual: return value >= c.value;
-    }
-    return false;
+    return compare(c.compare, value & c.mask, c.value);
 }
 
 std::vector<uint16_t> Debugger::breakpoints() const
@@ -151,6 +240,7 @@ std::vector<uint16_t> Debugger::breakpoints() const
 void Debugger::setWatchpoint(uint16_t addr, Access access)
 {
     if (access == None) {
+        wpGates_.erase({addr, {}});
         if (wpBits_.empty()) return;
         if (wpBits_[addr] != None) --wpCount_;
         wpBits_[addr] = None;
@@ -171,6 +261,7 @@ Debugger::Access Debugger::watchpointAt(uint16_t addr) const
 void Debugger::clearWatchpoints()
 {
     bankWatches_.clear();
+    wpGates_.clear();
     wpBits_.clear();
     wpBits_.shrink_to_fit();
     wpCount_ = 0;
@@ -198,6 +289,14 @@ void Debugger::setTransient(uint16_t addr, Reason reason, DebugBank bank)
     transientReason_ = reason;
     // Released last, so a CPU worker that observes the flag set also observes
     // the address and reason that go with it.
+    transientArmed_.store(true, std::memory_order_release);
+}
+
+void Debugger::setRunToBeam(uint64_t videoCycle)
+{
+    stepCpu_ = nullptr;
+    beamTarget_      = videoCycle;
+    transientReason_ = Reason::RunToBeam;
     transientArmed_.store(true, std::memory_order_release);
 }
 
@@ -302,9 +401,10 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
 {
     // The stepped JSR has executed (an interrupt entry reports through
     // onInterruptEntered instead): its callee's frame is the one to follow.
+    steppedOffAmnesty_ = false;             // the stepped instruction ran
     if (stepSkipFirst_ && pc == stepJsrPc_) stepSkipFirst_ = false;
     // The resumed instruction has executed: its amnesty is spent (DBG-1).
-    if (resumeSkipArmed_ && pc == resumeSkip_) resumeSkipArmed_ = false;
+    if (!amnesties_.empty()) takeAmnesty(pc);
     osCalls_.retire6502();                 // ...and so is its trace offer
     if (trace_) trace_->after(cpu, cycles);
     if (cycles <= 0) return;
@@ -325,8 +425,16 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     }
 }
 
-void Debugger::onInterruptEntered(const M6502& cpu, uint16_t, int cycles)
+void Debugger::onInterruptEntered(const M6502& cpu, uint16_t interruptedPc, int cycles)
 {
+    // The instruction offered at this boundary did NOT run: the interrupt
+    // was taken in its place, and it will be offered again after the RTI.
+    // A breakpoint there that counted a pass without stopping (its "ignore
+    // N" not reached) would count the same pass twice — the shape of the
+    // stepSkipFirst_ and resume-amnesty fixes. Take it back.
+    uncountPass(bpGates_, {interruptedPc, {}});
+    uncountPass(bpGates_, {interruptedPc, curBank_});
+    if (steppedOffAmnesty_) { amnesties_.push_back(steppedOff_); steppedOffAmnesty_ = false; }
     // The interrupted instruction is offered again after the RTI.
     osCalls_.interrupted6502();
     if (trace_) trace_->interrupted(cpu, cycles);
@@ -382,25 +490,105 @@ void Debugger::clearTransient()
     transientArmed_.store(false, std::memory_order_relaxed);
 }
 
-void Debugger::clearForTimeJump()
+void Debugger::dropHistoryOf(uint16_t pc)
+{
+    if (!historyCount_ || history_.empty()) return;
+    const std::size_t newest = (historyHead_ + history_.size() - 1) % history_.size();
+    if (history_[newest].pc != pc) return;
+    historyHead_ = newest;
+    --historyCount_;
+}
+
+bool Debugger::beamStopDue(uint16_t parkedPc)
+{
+    if (!beamStopArmed() || !memory_ || memory_->videoNow() < beamTarget_) return false;
+    clearTransient();
+    hit_ = { Reason::RunToBeam, parkedPc, 0, 0, resolveBank(parkedPc) };
+    hit_.busMaster = true;                  // the parked 6502's PC, not the card's
+    hit_.videoCycle = memory_->videoNow();
+    return true;
+}
+
+void Debugger::armResumeFrom(uint16_t pc, int sp)
+{
+    const DebugBank bank = hit_.valid() && hit_.pc == pc ? hit_.pcBank : resolveBank(pc);
+    // Keep only the amnesties an interrupt is holding up: armed at a
+    // SHALLOWER stack than this one (a higher SP — the 6502's stack grows
+    // down, and the interrupt pushed its return on top). Anything else is a
+    // resume that is over or abandoned, and would skip a later real stop.
+    amnesties_.erase(std::remove_if(amnesties_.begin(), amnesties_.end(),
+        [sp](const Amnesty& a) { return sp < 0 || a.sp < 0 || a.sp <= sp; }), amnesties_.end());
+    if (amnesties_.size() >= 8) amnesties_.erase(amnesties_.begin());   // nesting, not a log
+    amnesties_.push_back({pc, bank, sp});
+}
+
+bool Debugger::hasAmnesty(uint16_t pc) const
+{
+    for (const Amnesty& a : amnesties_) if (a.pc == pc) return true;
+    return false;
+}
+
+bool Debugger::takeAmnesty(uint16_t pc, Amnesty* taken)
+{
+    for (auto it = amnesties_.begin(); it != amnesties_.end(); ++it)
+        if (it->pc == pc) {
+            if (taken) *taken = *it;
+            amnesties_.erase(it);
+            return true;
+        }
+    return false;
+}
+
+void Debugger::clearForTimeJump(bool keepMeasurements)
 {
     // See the header. Unlike clearTransient() this one is lock-protected, so
     // the plain members can be written directly.
     transientArmed_.store(false, std::memory_order_relaxed);
-    resumeSkipArmed_ = false;
-    resumeSkip_      = 0;
+    amnesties_.clear();
+    steppedOffAmnesty_ = false;
     curPc_           = 0;
     hit_             = {};
     osCalls_.dropPending();
-    clearMeasurements();
+    if (!keepMeasurements) clearMeasurements();
 }
 
 // ── The hot hooks ────────────────────────────────────────────────────────
 
 void Debugger::beginStep(uint16_t pc, bool explicitStep)
 {
+    // An explicit step (F7) passes a breakpoint like any other arrival: its
+    // pass counts — unless this step is the one leaving the stop that
+    // already counted it (the resume amnesty names that instruction).
+    // Nor a step that leaves a stop still LATCHED at this pc: the toolbar's
+    // Step, the palette's and the CLI's `--step` do not go through
+    // debugResume, so no amnesty names the instruction — the hit does.
+    const bool leavingStop = hasAmnesty(pc) ||
+        (hit_.valid() && hit_.pc == pc && !hit_.busMaster &&
+         hit_.reason != Reason::WatchRead && hit_.reason != Reason::WatchWrite);
+    const bool arriving = explicitStep && !replaying_ && !leavingStop;
+    // ...and that stop is then over, whichever Step verb made the step: left
+    // latched, it made a LATER arrival at the same pc (a loop coming back
+    // round under the toolbar's Step) look like "leaving" again, pass missed.
+    // Only THAT stop: a memory breakpoint tripped by an earlier step of a
+    // queue (`--step N`) is a hit still to be shown, and stays.
+    if (explicitStep && !replaying_ && hit_.valid() && hit_.pc == pc &&
+        hit_.reason != Reason::WatchRead && hit_.reason != Reason::WatchWrite) hit_ = {};
     if (explicitStep) {
-        resumeSkipArmed_ = false;
+        // A deliberate step consumes the amnesty (a branch to itself must
+        // stop again on its breakpoint) — unless the step turns out to take
+        // an interrupt instead of running the instruction, which then comes
+        // back after the RTI as the same arrival: onInterruptEntered gives
+        // the amnesty back (steppedOffAmnesty_).
+        // Only the amnesty's OWN instruction: a step made inside the handler
+        // that interrupted it must leave the amnesty for the return.
+        steppedOffAmnesty_ = takeAmnesty(pc, &steppedOff_);
+        // The toolbar's Step leaves a stop through the latched hit, with no
+        // amnesty to take: if an interrupt is taken instead, the instruction
+        // comes back after the RTI and must not stop or count again either.
+        if (!steppedOffAmnesty_ && leavingStop) {
+            steppedOff_ = {pc, resolveBank(pc), -1};
+            steppedOffAmnesty_ = true;
+        }
         // F7 / Step goes through here, not onInstruction: without the offer a
         // stepped $BF00 was never decoded and a stepped-over return left its
         // call open, later closed as "(no return)" (bug hunt 2026-11-07).
@@ -408,6 +596,12 @@ void Debugger::beginStep(uint16_t pc, bool explicitStep)
     }
     curPc_ = pc;
     curBank_ = resolveBank(pc);
+    ++serial_;
+    if (arriving && (bpCount_ || !bankBreakpoints_.empty())) {
+        const Hit kept = hit_;
+        (void)breakpointStops(pc);          // counted; a step never stops on it
+        hit_ = kept;
+    }
     // Both entries reach here — the run loop's onInstruction and F7's
     // explicit step — so a tracer sees every instruction going IN.
     if (trace_) trace_->before(pc, curBank_);
@@ -434,7 +628,7 @@ bool Debugger::onInstruction(uint16_t pc)
             // The OUTER return, not any RTS at the right stack depth. SP alone
             // was the old test, and an inline-string routine (PLA PLA … JSR
             // COUT … PHA PHA RTS) sits at the caller's level while it calls
-            // COUT, so COUT's RTS looked like the outer one and F8 stopped
+            // COUT, so COUT's RTS looked like the outer one and Step Over stopped
             // inside the routine (bug hunt 2026-10-23). Nested JSRs open a
             // frame; one closes when SP climbs back to its JSR's level.
             // Keep the latch through an IRQ/NMI between RTS and its target.
@@ -449,7 +643,7 @@ bool Debugger::onInstruction(uint16_t pc)
                 // at this boundary runs the handler first and the JSR is
                 // offered to this hook again after the RTI, and consuming the
                 // skip on the first offer counted the stepped JSR as nested
-                // the second time, so its RTS never ended the step and F8 ran
+                // the second time, so its RTS never ended the step and Step Over ran
                 // away (bug hunt 2026-11-01). The handler's own instructions
                 // sit below `stepStack_` and cannot match.
                 if (stepSkipFirst_ && pc == stepJsrPc_ && sp == stepStack_) {
@@ -460,7 +654,7 @@ bool Debugger::onInstruction(uint16_t pc)
                     // RTI pops P as well: Step Out of an IRQ/NMI/BRK handler
                     // returns to the interrupted pc (bug hunt 2026-11-07).
                     // In Step Over too: ProDOS 8's MLI leaves a `JSR $BF00`
-                    // by PHA PHA PHA … RTI, so F8 on any MLI call never
+                    // by PHA PHA PHA … RTI, so Step Over on any MLI call never
                     // stopped (bug hunt 2026-11-18). An interrupt's own RTI
                     // cannot match: its entry opened a frame.
                     const int after = static_cast<int>(sp) + (op == 0x40 ? 3 : 2);
@@ -478,6 +672,8 @@ bool Debugger::onInstruction(uint16_t pc)
                     }
                 }
             }
+        } else if (transientReason_ == Reason::RunToBeam) {
+            transientHit = memory_ && memory_->videoNow() >= beamTarget_;
         } else {
             transientHit = pc == transientAddr_ && (transientBank_.kind == DebugBank::Any || transientBank_ == curBank_);
         }
@@ -494,24 +690,52 @@ bool Debugger::onInstruction(uint16_t pc)
     // get past it (bug hunt 2026-11-01 round 2, DBG-1 — the mirror of the
     // stepSkipFirst_ fix above). The handler's own instructions sit at other
     // addresses and leave it armed.
-    if (resumeSkipArmed_ && pc == resumeSkip_ && curBank_ == resumeBank_)
-        return false;
+    for (const Amnesty& a : amnesties_)
+        if (a.pc == pc && a.bank == curBank_) return false;
 
     if (transientHit) {
         // Transients are one-shot by construction — step-over must not leave
         // a breakpoint behind at the return address.
         const Reason why = transientReason_;
         clearTransient();
+        // Landing on a breakpoint's address is a pass of that breakpoint,
+        // though it is the transient that stops: the Run that follows gets
+        // the amnesty and would never count it.
+        (void)breakpointStops(pc);
         hit_ = { why, pc, 0, 0, curBank_ };
+        hit_.videoCycle = memory_ ? memory_->videoNow() : 0;
         return true;
     }
-    if ((bpCount_ && hasBreakpoint(pc) && conditionMatches(pc)) ||
-        (bankBreakpoints_.count({pc,curBank_}) &&
-         (!bankConditions_.count({pc,curBank_}) || conditionMatches(bankConditions_.at({pc,curBank_}))))) {
-        hit_ = { Reason::Breakpoint, pc, 0, 0, curBank_ };
-        return true;
-    }
-    return false;
+    return breakpointStops(pc);
+}
+
+bool Debugger::probeInstruction(uint16_t pc)
+{
+    if (hit_.valid()) return true;        // a memory breakpoint, one instruction ago
+    curPc_ = pc;
+    curBank_ = resolveBank(pc);
+    ++serial_;
+    return breakpointStops(pc);
+}
+
+bool Debugger::breakpointStops(uint16_t pc)
+{
+
+    // Both forms are judged (no short-circuit): each counts its own pass.
+    const bool wild   = bpCount_ && hasBreakpoint(pc);
+    const bool banked = !bankBreakpoints_.empty() && bankBreakpoints_.count({pc,curBank_});
+    if (!wild && !banked) return false;
+    const uint64_t now = memory_ ? memory_->videoNow() : 0;
+    bool stop = false;
+    if (wild && conditionMatches(pc))
+        stop |= gateOpens(bpGates_, {pc, {}}, now, -1, false, false);
+    if (banked && (!bankConditions_.count({pc,curBank_}) ||
+                   conditionMatches(bankConditions_.at({pc,curBank_}))))
+        stop |= gateOpens(bpGates_, {pc, curBank_}, now, -1, false, false);
+    if (!stop) return false;
+    hit_ = { Reason::Breakpoint, pc, 0, 0, curBank_ };
+    hit_.videoCycle = now;
+    return true;
 }
 
 void Debugger::noteAccess(uint16_t addr, uint8_t value, bool write)
@@ -521,10 +745,26 @@ void Debugger::noteAccess(uint16_t addr, uint8_t value, bool write)
 
 void Debugger::noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBank bank)
 {
+    // The debugger's own write (an edit in the Memory viewer, the assembler's
+    // patch) is not the guest's: no stop, no pass, and a stop that is
+    // pending stays exactly as it is.
+    if (ownWrite_) return;
     const uint8_t want = write ? Write : Read;
     const auto found = bankWatches_.find({addr,bank});
-    if (!(watchpointAt(addr) & want) &&
-        (found == bankWatches_.end() || !(found->second & want))) return;
+    const bool wild   = watchpointAt(addr) & want;
+    const bool banked = found != bankWatches_.end() && (found->second & want);
+    if (!wild && !banked) return;
+    // The gates (Debugger.h § Gates), at the cycle of the access itself. A
+    // card processor's slice has no instruction serial of its own: none of
+    // its writes is taken for an RMW's second.
+    // (A card processor's access: the beam clock as it stands. The 6502's
+    // sub-instruction offset is whatever its last instruction left behind.)
+    const uint64_t cycle = !memory_ ? 0 : busMaster_ ? memory_->videoNow()
+                                                     : memory_->videoAccessCycle();
+    const bool repeat = !busMaster_;
+    bool open = false;
+    if (wild)   open |= gateOpens(wpGates_, {addr, {}},   cycle, value, write, repeat);
+    if (banked) open |= gateOpens(wpGates_, {addr, bank}, cycle, value, write, repeat);
     // Do NOT overwrite an existing un-consumed hit: the first stop wins, and
     // an instruction that touches two watched addresses should report the one
     // that stopped it rather than the last one it happened to reach.
@@ -533,13 +773,23 @@ void Debugger::noteBankAccess(uint16_t addr, uint8_t value, bool write, DebugBan
         // read-modify-write writes the original value back first (the dummy
         // cycle, rmwSecondBusCycle), so `INC $10` reported "$0010 was written
         // ($05)" while memory held $06. The last write is the one that stays.
+        // And if the gate does not open on that last write, the stop the
+        // dummy cycle latched is taken back.
+        // SAME instruction: its serial, not just its pc — a queue of steps
+        // round a loop comes back to that pc, and a later turn's write must
+        // not rewrite or erase the stop an earlier turn latched.
         if (write && !busMaster_ && hit_.reason == Reason::WatchWrite && hit_.addr == addr &&
-            hit_.bank == bank && hit_.pc == curPc_)
-            hit_.value = value;
+            hit_.bank == bank && hit_.pc == curPc_ && hitSerial_ == serial_) {
+            if (open) { hit_.value = value; hit_.videoCycle = cycle; }
+            else      hit_ = {};
+        }
         return;
     }
+    if (!open) return;
     hit_ = { write ? Reason::WatchWrite : Reason::WatchRead,
              curPc_, addr, value, curBank_, bank, busMaster_ };
+    hit_.videoCycle = cycle;
+    hitSerial_ = serial_;
     // curPc_, not the CPU's programCounter: the access is mid-instruction and
     // that register has already advanced past the opcode and its operands, so
     // it names neither the writing instruction nor anything stable. curPc_ is
@@ -559,7 +809,7 @@ void Debugger::addBreakpoint(uint16_t addr, DebugBank bank)
 void Debugger::removeBreakpoint(uint16_t addr, DebugBank bank)
 {
     if (bank.kind == DebugBank::Any) removeBreakpoint(addr);
-    else { bankBreakpoints_.erase({addr,bank}); bankConditions_.erase({addr,bank}); }
+    else { bankBreakpoints_.erase({addr,bank}); bankConditions_.erase({addr,bank}); bpGates_.erase({addr,bank}); }
 }
 void Debugger::addConditionalBreakpoint(uint16_t addr, Condition condition, const M6502& cpu, DebugBank bank)
 {
@@ -583,7 +833,7 @@ std::vector<DebugAddress> Debugger::bankBreakpoints() const
 void Debugger::setWatchpoint(uint16_t addr, Access access, DebugBank bank)
 {
     if (bank.kind == DebugBank::Any) setWatchpoint(addr,access);
-    else if (access == None) bankWatches_.erase({addr,bank});
+    else if (access == None) { bankWatches_.erase({addr,bank}); wpGates_.erase({addr,bank}); }
     else bankWatches_[{addr,bank}] = access;
 }
 
@@ -596,13 +846,15 @@ void Debugger::patchMemory(Memory& memory, uint16_t addr, const uint8_t* bytes, 
 {
     // noteTimeJump() was the assembler's old call: it wiped the stop, so the
     // next Run had no amnesty and re-stopped on the same breakpoint having
-    // executed nothing (bug hunt 2026-11-07). A watch on a patched byte must
-    // not latch either; a pending hit is kept exactly (the RMW rule in
-    // noteBankAccess would otherwise rewrite its value).
-    const Hit kept = hit_;
+    // executed nothing (bug hunt 2026-11-07). A memory breakpoint on a
+    // patched byte must neither latch, nor count a pass, nor touch a pending
+    // hit (noteBankAccess returns at once while ownWrite_ is set).
+    ownWrite_ = true;
+    memory.setUnattributedAccess(true);         // a switch it throws names no instruction
     for (std::size_t i = 0; i < count; ++i)
         memory.memWrite(static_cast<uint16_t>(addr + i), bytes[i]);
-    hit_ = kept;
+    memory.setUnattributedAccess(false);
+    ownWrite_ = false;
 }
 
 }  // namespace pom2

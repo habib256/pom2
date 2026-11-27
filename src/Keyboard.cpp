@@ -82,6 +82,12 @@ bool Keyboard::loadSdkState(const uint8_t* data, std::size_t size, bool apply)
 
 void Keyboard::queueKey(uint8_t apple2Key)
 {
+    // A key reaching the machine is an input the debugger's Step Back cannot
+    // replay: no replay crosses it (HostIoEpoch.h). Counted AFTER the key
+    // is stored (declared before the lock, so destroyed after it): a rewind
+    // capture that saw the count move before the key landed would put its
+    // barrier one frame early.
+    struct Counted { ~Counted() { pom2::noteHostIo(); } } counted;
     std::lock_guard<std::mutex> lk(mtx_);
     const uint8_t b = apple2Key & 0x7F;
     if (!pressCodeValid_) { pressCode_ = b; pressCodeValid_ = true; }
@@ -132,6 +138,7 @@ uint8_t Keyboard::readLatch()
         lastKey_  = pasteQueue_.front() & 0x7F;
         keyReady_ = true;
         pasteQueue_.pop_front();
+        pom2::noteHostIo();         // a pasted character taken: same as a key
         // A Return with more to come: the next line waits for this one to be
         // taken (pasteHeld above).
         if (lastKey_ == 0x0D && !pasteQueue_.empty())
@@ -149,6 +156,7 @@ void Keyboard::pushOne(uint8_t b)
         lastKey_  = b;
         keyReady_ = true;
         publish();
+        pom2::noteHostIo();         // straight into the latch: an input like any key
     } else {
         pasteQueue_.push_back(b);
     }

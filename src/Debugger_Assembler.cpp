@@ -42,7 +42,8 @@ void Debugger_ImGui::drawAssembler(EmulationController& ctrl, const Snapshot& sn
             // stop, so the next Run re-stopped at once (bug hunt 2026-11-07).
             ctrl.debugger().patchMemory(state.memory(), uint16_t(address), bytes.data(), bytes.size());
             ctrl.rewind().clear();
-            followPc_ = false; viewAddr_ = uint16_t(address);
+            // (Suspends the following, as a scroll does; the box is the user's.)
+            lookingAround_ = true; viewAddr_ = uint16_t(address);
             assemblyStatus_ = "Instruction written.";
             std::snprintf(assemblyAddress_, sizeof(assemblyAddress_), "%04X", unsigned(address + bytes.size()));
         } else assemblyStatus_ = "Stop the CPU and try again.";

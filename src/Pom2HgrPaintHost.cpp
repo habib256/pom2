@@ -129,6 +129,7 @@ Pom2HgrPaintHost::Pom2HgrPaintHost(EmulationController* emu)
       writer_([this](const PaintCardBatcher::Writes& w) {
           if (!emu_) return;
           auto st = emu_->lockState();
+          emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
           Memory& mem = st.memory();
           for (const auto& [addr, val] : w)
               if (addr < 0xC000) mem.writeRamUnchecked(addr, val);
@@ -136,6 +137,7 @@ Pom2HgrPaintHost::Pom2HgrPaintHost(EmulationController* emu)
       auxWriter_([this](const PaintCardBatcher::Writes& w) {
           if (!emu_) return;
           auto st = emu_->lockState();
+          emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
           uint8_t* aux = st.memory().videoAuxDataMutable();  // the bank on screen, not the CPU's RamWorks bank
           for (const auto& [addr, val] : w)
               if (addr < 0xC000) aux[addr] = val;
@@ -161,7 +163,9 @@ void Pom2HgrPaintHost::setDisplayMode(bool grMode, bool page2)
 {
     if (!emu_) return;
     auto st = emu_->lockState();
+    emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
     Memory& mem = st.memory();
+    mem.setUnattributedAccess(true);       // the editor's switches name no instruction
     mem.memWrite(0xC050, 0);                       // GRAPHICS
     mem.memWrite(0xC052, 0);                       // full screen (MIXED off)
     mem.memWrite(page2 ? 0xC055 : 0xC054, 0);      // page select
@@ -170,34 +174,41 @@ void Pom2HgrPaintHost::setDisplayMode(bool grMode, bool page2)
         mem.memWrite(0xC00C, 0);                   // 80COL off
         mem.memWrite(0xC05F, 0);                   // AN3 / DHIRES off
     }
+    mem.setUnattributedAccess(false);
 }
 
 void Pom2HgrPaintHost::setDisplayModeDhgr(bool page2)
 {
     if (!emu_) return;
     auto st = emu_->lockState();
+    emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
     Memory& mem = st.memory();
     if (!mem.isIIE()) return;
+    mem.setUnattributedAccess(true);       // the editor's switches name no instruction
     mem.memWrite(0xC050, 0);                       // GRAPHICS
     mem.memWrite(0xC052, 0);                       // full screen
     mem.memWrite(page2 ? 0xC055 : 0xC054, 0);      // page select
     mem.memWrite(0xC057, 0);                       // HIRES
     mem.memWrite(0xC00D, 0);                       // 80COL on
     mem.memWrite(0xC05E, 0);                       // AN3 / DHIRES on
+    mem.setUnattributedAccess(false);
 }
 
 void Pom2HgrPaintHost::setDisplayModeDlgr(bool page2)
 {
     if (!emu_) return;
     auto st = emu_->lockState();
+    emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
     Memory& mem = st.memory();
     if (!mem.isIIE()) return;
+    mem.setUnattributedAccess(true);       // the editor's switches name no instruction
     mem.memWrite(0xC050, 0);                       // GRAPHICS
     mem.memWrite(0xC052, 0);                       // full screen
     mem.memWrite(page2 ? 0xC055 : 0xC054, 0);      // page select
     mem.memWrite(0xC056, 0);                       // LORES
     mem.memWrite(0xC00D, 0);                       // 80COL on
     mem.memWrite(0xC05E, 0);                       // AN3 / double-res on
+    mem.setUnattributedAccess(false);
 }
 
 bool Pom2HgrPaintHost::supportsDhgr() const
@@ -415,6 +426,7 @@ bool Pom2HgrPaintHost::loadImage(const std::string& path, uint16_t baseAddr,
     if (bytes.empty()) { err = "empty file"; return false; }
     const size_t n = bytes.size();
     auto st = emu_->lockState();
+    emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
     Memory& mem = st.memory();
     for (size_t i = 0; i < n; ++i)
         mem.writeRamUnchecked(static_cast<uint16_t>(baseAddr + i),
@@ -454,6 +466,7 @@ bool Pom2HgrPaintHost::loadDhgrImage(const std::string& path, uint16_t baseAddr,
         return false;
     }
     auto st = emu_->lockState();
+    emu_->noteChangedByHand();     // a Step Back must not silently undo the editor's write
     Memory& mem = st.memory();
     std::memcpy(mem.videoAuxDataMutable() + baseAddr, bytes.data(), hgrpaint::kHiresSize);
     for (int i = 0; i < hgrpaint::kHiresSize; ++i)

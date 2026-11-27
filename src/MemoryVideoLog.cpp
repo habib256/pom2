@@ -237,6 +237,10 @@ void Memory::setVideoWriteLog(bool on)
 // the write log both describe a timeline that no longer exists.
 void Memory::resetVideoEventLogForClockJump()
 {
+    // Not a jump: the caller re-executed up to this very clock, and the log
+    // describes it (Memory::setKeepVideoLogOnRestore — the debugger's Step
+    // Back). Honoured here because a restore reaches this from two places.
+    if (keepVideoLogOnRestore_) return;
     videoEvents_.clear();
     publishedEvents_.clear();
     resetVideoWriteLogForClockJump();

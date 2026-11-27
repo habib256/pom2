@@ -86,7 +86,7 @@ enum class PanelId : std::size_t {
     Ssc, Ethernet, Printer, ImageWriter, ChatMauve, Joystick, Keyboard,
     Rewind, Mouse, NoSlotClock,
     Crt, CardMonitor, Voxel, VoxelSettings,
-    MemViewer, Debugger, ScreenInspector, MemBar, MemBarH, MemGrid,
+    MemViewer, Debugger, ScreenInspector, Watch, MemBar, MemBarH, MemGrid,
     HgrPaint, HgrSprite, AiControl,
     Welcome, RomStatus, Abstraction,
     Count,
@@ -247,12 +247,16 @@ inline constexpr PanelInfo kPanelCatalog[] = {
   "Hex + ASCII view of the emulated memory, with a live follow mode." },
 { PanelId::Debugger, "panel.debugger", "Debugger", PanelGroup::Tools,
   "show_debugger", nullptr,
-  "Registers, disassembly, breakpoints, write watchpoints, and step /\n"
-  "step-over / run-to-cursor." },
+  "Registers, disassembly, breakpoints on the PC and on memory reads /\n"
+  "writes with conditions, and step / step-over / run-to-cursor." },
 { PanelId::ScreenInspector, "panel.screeninspector", "Screen Inspector", PanelGroup::Tools,
   "show_screen_inspector", nullptr,
   "The screen as really displayed: coordinates, mode, byte and address\n"
   "under the mouse, the beam, and a hi-res page saved as the beam read it." },
+{ PanelId::Watch, "panel.watch", "Watch", PanelGroup::Tools,
+  "show_watch", nullptr,
+  "Addresses and the values they hold, live. Never stops the machine:\n"
+  "for that, a memory breakpoint (BPMR / BPMW) in the Debugger." },
 { PanelId::MemBar, "panel.membar", "Memory Map Bar", PanelGroup::Tools,
   "show_membar", nullptr,
   "A one-strip map of what is paged where right now." },

@@ -36,6 +36,7 @@
 #include "ResourcePaths.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"     // NavWindow: is the Apple II Screen the focused window?
 
 #include <algorithm>
 #include <cstdarg>
@@ -76,6 +77,12 @@ ImVec4 kDimColour  {0.55f, 0.55f, 0.60f, 1.0f};
 
 void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
 {
+    // "Show $xxxx in the listing", asked from another window: come forward.
+    if (showRequest_) {
+        if (open) *open = true;
+        ImGui::SetNextWindowFocus();
+        showRequest_ = false;
+    }
     if (open && !*open) return;
 
     // Docked by the layout presets (MainWindow::applyDockLayout: the Debug
@@ -105,11 +112,16 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
         snap.isa      = cpu.instructionSet();
         snap.halted   = cpu.isHalted();
         snap.hit      = ctrl.debugger().lastHit();
+        snap.canGoBack = ctrl.debugCanStepBack(&snap.whyNoBack);
+        snap.recording = ctrl.rewind().enabled();
+        snap.scrubbing = ctrl.rewindScrubbing();
         snap.breakpoints = ctrl.debugger().bankBreakpoints();
         snap.pcBank = mem.debugBank(snap.pc);
         snap.watchpoints = ctrl.debugger().watchpoints();
         for (const auto& c : ctrl.debugger().conditions()) snap.conditions[{c.first,{}}]=c.second;
         for (const auto& c : ctrl.debugger().bankConditions()) snap.conditions[c.first]=c.second;
+        snap.bpGates = ctrl.debugger().breakpointGates();
+        snap.wpGates = ctrl.debugger().watchGates();
         snap.profiling = ctrl.debugger().profiling();
         snap.historyEnabled = ctrl.debugger().historyEnabled();
         snap.profile = ctrl.debugger().profile();
@@ -168,6 +180,18 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     }
     wasRunning_ = snap.running;
     if (following()) viewAddr_ = snap.pc;
+    // "Show $xxxx in the listing", asked while this panel was closed or a
+    // hidden tab: applied HERE, after the lines above — which, on the frame
+    // the panel comes back, would send the listing to the PC again.
+    if (showPending_) {
+        showPending_ = false;
+        viewAddr_ = cursorAddr_ = showAddr_;
+        // The bank asked for (a bank-qualified breakpoint's row), else the
+        // one mapped there now: the Source pane and Run To Cursor need one.
+        cursorBank_ = showBank_.kind == DebugBank::Any ? snap.banks[showAddr_] : showBank_;
+        cursorValid_ = true;
+        lookingAround_ = true;
+    }
 
     // F7 steps while the window is open. Handled HERE rather than in
     // MainWindow's global key routing: the shortcut belongs to this panel and
@@ -175,14 +199,41 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     // it is now the window / kiosk toggle everywhere. Step over is
     // Ctrl+Space, as in AppleWin.)
     handleKeys(ctrl, snap);
-    if (!ImGui::GetIO().WantCaptureKeyboard || ImGui::IsWindowFocused()) {
-        if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/false)) {
+    // RootAndChildWindows: the listing and the breakpoint list are CHILD
+    // windows, and a click in one makes it the focused window — with a bare
+    // IsWindowFocused() the F7 keys died exactly when the panel had focus.
+    // Not while a text field is being typed in: Shift+F7 would rewind the
+    // machine from the "Go to" box.
+    // Nor while the Apple II Screen has the focus: the user is typing to the
+    // machine there, and F7 stepped it — Shift+F7 rewound it — from a
+    // keystroke meant for the emulated keyboard.
+    const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
+    const bool typingToMachine = !focused ||
+        std::strcmp(focused->RootWindow->Name, "Apple II Screen") == 0;
+    if (!ImGui::GetIO().WantTextInput && !typingToMachine &&
+        (!ImGui::GetIO().WantCaptureKeyboard ||
+         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))) {
+        // Shift+F7 steps BACK, Ctrl+F7 runs back. (Not Backspace: it is the
+        // key that corrects a value just typed in one of this panel's
+        // fields, and it would have rewound the machine.)
+        const ImGuiIO& keys = ImGui::GetIO();
+        if (ImGui::IsKeyPressed(ImGuiKey_F7, /*repeat=*/keys.KeyShift)) {
             lookingAround_ = false;
-            ctrl.debugStepInstruction();
+            // KeySuper too, on a Mac only: ImGui swaps Ctrl and Cmd there
+            // (ConfigMacOSXBehaviors), so the physical Ctrl arrives as Super
+            // — and fell through to a plain step, moving the machine FORWARD
+            // when it was asked to go back. Elsewhere Super is the Windows key.
+            const bool ctrlHeld = keys.KeyCtrl || (keys.ConfigMacOSXBehaviors && keys.KeySuper);
+            if (keys.KeyShift)      goBack(ctrl, snap, false);
+            else if (ctrlHeld)      goBack(ctrl, snap, true);
+            else if (!keys.KeyAlt)                  ctrl.debugStepInstruction();
         }
     }
 
     drawStopBanner(snap);
+    // The refusal is about ONE attempt: gone as soon as the machine moves.
+    if (snap.running || snap.cycles != backStatusCycles_) backStatus_.clear();
+    if (!backStatus_.empty()) ImGui::TextColored(kBreakColour, "%s", backStatus_.c_str());
     drawControls(ctrl, snap);
     drawNavigation(ctrl, snap);
     ImGui::Separator();
@@ -207,24 +258,23 @@ void Debugger_ImGui::render(EmulationController& ctrl, bool* open)
     }
     ImGui::EndChild();
 
-    // Breakpoints and watches fold like the other tools: the gutter of the
-    // listing sets a breakpoint, so the lists are for reviewing them. The
-    // header carries the counts, and opens by itself when there is something.
+    // Breakpoints fold like the other tools: the gutter of the listing sets
+    // one and a right click sets the others, so the list is for reviewing
+    // them and giving them conditions. One list, three kinds — on the PC
+    // (BP), on a read (BPMR), on a write (BPMW) — named as AppleWin names
+    // them. Values that are only LOOKED at live in the Watch window.
     {
         char title[96];
-        std::snprintf(title, sizeof title, "Breakpoints (%zu) and watches (%zu)###bpwatch",
+        std::snprintf(title, sizeof title, "Breakpoints (%zu on the PC, %zu on memory)###bpwatch",
                       snap.breakpoints.size(), snap.watchpoints.size());
         if (ImGui::CollapsingHeader(title)) {
             ScopedMonoFont mono;
-            ImGui::BeginChild("##bpcol", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4.0f, 190), true);
+            ImGui::BeginChild("##bpcol", ImVec2(0, 200), true);
             drawBreakpointList(ctrl, snap);
-            ImGui::EndChild();
-            ImGui::SameLine();
-            ImGui::BeginChild("##wpcol", ImVec2(0, 190), true);
-            drawWatchpointList(ctrl, snap);
             ImGui::EndChild();
         }
     }
+    drawGateEditor(ctrl);
     drawAssembler(ctrl, snap);
 
     if (ImGui::CollapsingHeader("Your program's symbols (optional file)")) {
@@ -393,7 +443,7 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
 {
     if (snap.halted) {
         ImGui::TextColored(kBreakColour,
-            "CPU halted by STP ($DB) — only a reset clears it.");
+            "CPU halted (a JAM opcode on a 6502; STP or WAI on a 65C02) - a reset clears it.");
         return;
     }
     if (!snap.hit.valid()) {
@@ -403,7 +453,7 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
     ImGui::Text("Bank: %s", snap.hit.pcBank.text().c_str());
     if (snap.hit.reason == Debugger::Reason::WatchRead || snap.hit.reason == Debugger::Reason::WatchWrite)
         ImGui::Text("Access bank: %s", snap.hit.bank.text().c_str());
-    char msg[128];
+    char msg[160];
     switch (snap.hit.reason) {
         case Debugger::Reason::Breakpoint:
             std::snprintf(msg, sizeof(msg),
@@ -418,6 +468,22 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
         case Debugger::Reason::RunToCursor:
             std::snprintf(msg, sizeof(msg),
                           "Stopped: reached $%04X.", snap.hit.pc);
+            break;
+        case Debugger::Reason::StepBack:
+            std::snprintf(msg, sizeof(msg),
+                          "Stepped back: one instruction earlier, at $%04X.", snap.hit.pc);
+            break;
+        case Debugger::Reason::RunBackStart:
+            std::snprintf(msg, sizeof(msg),
+                          "Ran back: no breakpoint in the history - this is its oldest point.");
+            break;
+        case Debugger::Reason::RunBackPaused:
+            std::snprintf(msg, sizeof(msg),
+                          "Ran back: no breakpoint met so far - Run Back again to go further.");
+            break;
+        case Debugger::Reason::RunToBeam:
+            std::snprintf(msg, sizeof(msg),
+                          "Stopped: the beam reached the position asked for.");
             break;
         case Debugger::Reason::WatchRead:
         case Debugger::Reason::WatchWrite:
@@ -445,6 +511,15 @@ void Debugger_ImGui::drawStopBanner(const Snapshot& snap)
             break;
     }
     ImGui::TextColored(kPcColour, "%s", msg);
+    // Where the beam was: at the instruction's first cycle for a stop on
+    // the PC, at the cycle of the ACCESS for a memory breakpoint — which is
+    // the figure a program racing the beam is after.
+    const BeamPosition at = beamPositionAt(snap.hit.videoCycle, snap.standard);
+    const bool access = snap.hit.reason == Debugger::Reason::WatchRead ||
+                        snap.hit.reason == Debugger::Reason::WatchWrite;
+    ImGui::SameLine();
+    ImGui::TextColored(kDimColour, "%s V %d  H %d%s", access ? "Access at" : "Beam at",
+                       at.line, at.h, at.vbl ? " (VBL)" : at.hbl ? " (HBL)" : "");
 }
 
 // ── The five verbs ───────────────────────────────────────────────────────
@@ -485,6 +560,53 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
     if (ImGui::Button("Step Out", ImVec2(82, 0))) { lookingAround_ = false; ctrl.debugStepOut(); }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Run until the current routine returns (Shift+Space)");
+    // Backwards, through the rewind ring. Greyed when there is no way back:
+    // the rewind is not recording, its history ends here, or the machine is
+    // running — the tooltip says which.
+    const auto backward = [&](const char* label, float width, const char* what) {
+        next(width);
+        ImGui::BeginDisabled(!snap.canGoBack);
+        const bool pressed = ImGui::Button(label, ImVec2(width, 0));
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (snap.canGoBack) ImGui::SetTooltip("%s", what);
+            else ImGui::SetTooltip("%s\n\n%s", what, snap.whyNoBack ? snap.whyNoBack : "");
+        }
+        return pressed && snap.canGoBack;
+    };
+    if (backward("Step Back", 90.0f,
+                 "Go back one instruction (Shift+F7).\n"
+                 "Restores the rewind's previous frame and re-executes up to the\n"
+                 "instruction before this one. Not across a key, a mouse movement\n"
+                 "or bytes from outside that reached the machine while it ran.")) {
+        goBack(ctrl, snap, false);
+    }
+    if (backward("Run Back", 84.0f,
+                 "Go back to the previous breakpoint (Ctrl+F7): the latest\n"
+                 "point, before this one, where a breakpoint on the PC or on memory\n"
+                 "would have stopped - with its conditions, not its \"ignore N\".\n"
+                 "With none in the history: its oldest point.")) {
+        goBack(ctrl, snap, true);
+    }
+    // The switch the two buttons depend on, where they are. Off by default,
+    // like the Rewind panel's Record it is the same switch as (owner's
+    // ruling, 2026-11-27): recording costs memory and a capture per frame,
+    // and is the user's to turn on.
+    next(70.0f);
+    // Not during a Rewind-panel scrub: that panel ends its scrub before it
+    // stops recording, and switching from here would leave the machine on
+    // a scrubbed frame of a ring that is gone.
+    bool recording = snap.recording;
+    ImGui::BeginDisabled(snap.scrubbing);
+    if (ImGui::Checkbox("Rec", &recording)) {
+        auto st = ctrl.lockState();         // enabling clears the ring the worker captures into
+        ctrl.rewind().setEnabled(recording);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Record the machine's history (the Rewind panel's Record).\n"
+                          "Step Back and Run Back need it: tick it, then run. It keeps\n"
+                          "about 30 s, a few megabytes on a stock machine.");
     next(118.0f);
     ImGui::BeginDisabled(!cursorValid_);
     if (ImGui::Button("Run To Cursor", ImVec2(118, 0)))
@@ -498,6 +620,25 @@ void Debugger_ImGui::drawControls(EmulationController& ctrl, const Snapshot& sna
         ImGui::SameLine();
         ImGui::TextDisabled("(looking elsewhere: Tab = back to PC)");
     }
+}
+
+// Step Back / Run Back, and what to say when the machine refused.
+void Debugger_ImGui::goBack(EmulationController& ctrl, const Snapshot& snap, bool toBreakpoint)
+{
+    if (!snap.canGoBack) {
+        // By key there is no greyed button under the pointer to say why.
+        backStatus_ = std::string("Cannot go back: ") + (snap.whyNoBack ? snap.whyNoBack : "no history.");
+        for (char& c : backStatus_) if (c == '\n') c = ' ';
+        backStatusCycles_ = snap.cycles;
+        return;
+    }
+    lookingAround_ = false;
+    const bool went = toBreakpoint ? ctrl.debugRunBack() : ctrl.debugStepBack();
+    // False covers several things — the history ended in the meantime, or a
+    // replay was given up — so the line says what is true of all of them.
+    backStatus_ = went ? std::string()
+        : "Could not go back: the machine is as it was (the buttons' tooltip, or the log, says why).";
+    backStatusCycles_ = snap.cycles;
 }
 
 // ── Registers ────────────────────────────────────────────────────────────
@@ -696,10 +837,13 @@ void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& s
     else {
         ImGui::TextColored(kDimColour, "Keys (?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("AppleWin's keys, while this panel has the focus:\n"
-                              "  Space            step\n"
+            ImGui::SetTooltip("AppleWin's keys, while this panel has the focus\n"
+                              "(Ctrl is Ctrl or Cmd on a Mac):\n"
+                              "  Space, F7        step\n"
                               "  Ctrl+Space       step over\n"
                               "  Shift+Space      step out\n"
+                              "  Shift+F7         step BACK (needs the rewind recording)\n"
+                              "  Ctrl+F7          run back to the previous breakpoint\n"
                               "  Up / Down        move the cursor (Shift: by one byte)\n"
                               "  Page Up / Down   a screenful; the wheel scrolls too\n"
                               "  Ctrl+Down        run to the cursor\n"
@@ -707,6 +851,8 @@ void Debugger_ImGui::drawNavigation(EmulationController& ctrl, const Snapshot& s
                               "  Ctrl+Right       set PC to the cursor\n"
                               "  Shift+Left       jump to the caller\n"
                               "  Tab              back to the PC\n"
+                              "Right-click a line: break here, break when its operand is\n"
+                              "read or written, watch it, run to here.\n"
                               "Click the Apple II screen to type into the machine again.");
     }
 }
@@ -732,17 +878,21 @@ void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
     };
     const auto show = [&](uint16_t to) { viewAddr_ = to; lookingAround_ = true; moveCursor(to); };
     const uint16_t cursor = cursorValid_ ? cursorAddr_ : snap.pc;
+    // On macOS ImGui swaps Ctrl and Cmd: the physical Ctrl arrives as Super.
+    // Only there — elsewhere Super is the Windows key, and Win+Down must not
+    // run to the cursor.
+    const bool ctrlKey = io.KeyCtrl || (io.ConfigMacOSXBehaviors && io.KeySuper);
 
     if (ImGui::IsKeyPressed(ImGuiKey_Space, /*repeat=*/true)) {
         lookingAround_ = false;
         if (io.KeyShift)     ctrl.debugStepOut();
-        else if (io.KeyCtrl) ctrl.debugStepOver();
+        else if (ctrlKey)    ctrl.debugStepOver();
         else                 ctrl.debugStepInstruction();
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) { lookingAround_ = false; moveCursor(snap.pc); }
 
     const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow), down = ImGui::IsKeyPressed(ImGuiKey_DownArrow);
-    if (down && io.KeyCtrl) {
+    if (down && ctrlKey) {
         if (cursorValid_) ctrl.debugRunToCursor(cursorAddr_, cursorBank_);
     } else if (up || down) {
         const int dir = down ? 1 : -1;
@@ -758,10 +908,11 @@ void Debugger_ImGui::handleKeys(EmulationController& ctrl, const Snapshot& snap)
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
-        if (io.KeyCtrl) {
+        if (ctrlKey) {
             if (cursorValid_ && !snap.running) {
                 auto st = ctrl.lockState();
                 st.cpu().setProgramCounter(cursorAddr_);
+                ctrl.noteChangedByHand();
             }
         } else if (io.KeyShift || io.KeyAlt) {
             lookingAround_ = false; moveCursor(snap.pc);
@@ -848,7 +999,7 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(isBp ? "Remove breakpoint at $%04X"
-                                   : "Break at $%04X", addr);
+                                   : "Break at $%04X (right-click the line for more)", addr);
         ImGui::PopID();
         ImGui::SameLine();
 
@@ -873,6 +1024,18 @@ void Debugger_ImGui::drawDisassembly(EmulationController& ctrl, const Snapshot& 
             cursorValid_ = true;
         }
         if (isPc || isBp) ImGui::PopStyleColor();
+        // Right click: the breakpoints and the watch this line can give.
+        // (After the colour is popped: the menu is not the line's colour.)
+        ImGui::PushID(static_cast<int>(addr) + 0x10000);
+        if (ImGui::BeginPopupContextItem("##line")) {
+            cursorAddr_ = addr; cursorBank_ = location.bank; cursorValid_ = true;
+            // Hold the listing still under the menu: following a running PC
+            // would take this line, and the menu with it, off the list.
+            lookingAround_ = true;
+            drawLineMenu(ctrl, snap, addr, len, mnem, isBp, wildcard);
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
 
         addr = static_cast<uint16_t>(addr + len);
     }
@@ -909,167 +1072,6 @@ std::string Debugger_ImGui::operandNote(const Snapshot& snap, uint16_t addr, int
     std::snprintf(text, sizeof text, "Mockingboard slot %d: VIA %d %s", slot,
                   (target & 0x80) ? 2 : 1, via6522RegisterName(target & 0x0F));
     return text;
-}
-
-// ── Breakpoint list ──────────────────────────────────────────────────────
-
-void Debugger_ImGui::drawBreakpointList(EmulationController& ctrl,
-                                        const Snapshot& snap)
-{
-    ImGui::TextUnformatted("Breakpoints");
-    ImGui::SetNextItemWidth(170);
-    const bool entered = ImGui::InputTextWithHint("##bpaddr", "0800 or aux0:0800", bpEntry_,
-                                                  sizeof(bpEntry_), ImGuiInputTextFlags_EnterReturnsTrue);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("An address or a label breaks in every bank;\n"
-                          "bank:address in one (aux0:0800, lc2:D000).\n"
-                          "Or click the gutter of a line in the listing.");
-    ImGui::SameLine();
-    const bool add = ImGui::Button("Add") || entered;
-    if (add && bpEntry_[0]) {
-        DebugAddress location; uint16_t value = 0;
-        if (symbols_.resolveLocation(bpEntry_, location) &&
-            (!conditionEnabled_ || DebuggerSymbols::address(conditionValue_, value))) {
-            auto st = ctrl.lockState();
-            if (conditionEnabled_) {
-                Debugger::Condition condition;
-                condition.reg = static_cast<Debugger::Register>(conditionRegister_);
-                condition.compare = static_cast<Debugger::Compare>(conditionCompare_);
-                condition.value = value;
-                ctrl.debugger().addConditionalBreakpoint(location.addr, condition, st.cpu(), location.bank);
-            } else {
-                ctrl.debugger().addBreakpoint(location.addr,location.bank);
-            }
-            ctrl.syncDebugHook();
-            symbolStatus_.clear();
-            bpEntry_[0] = '\0';
-        } else {
-            symbolStatus_ = "Unknown address/label or invalid condition value.";
-        }
-    }
-    ImGui::Checkbox("Conditional", &conditionEnabled_);
-    if (conditionEnabled_) {
-        ImGui::SetNextItemWidth(55);
-        ImGui::Combo("##conditionRegister", &conditionRegister_, "A\0X\0Y\0P\0SP\0PC\0");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(55);
-        ImGui::Combo("##conditionCompare", &conditionCompare_, "==\0!=\0<\0<=\0>\0>=\0");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(55);
-        ImGui::InputText("##conditionValue", conditionValue_, sizeof(conditionValue_), ImGuiInputTextFlags_CharsHexadecimal);
-    }
-    if (!symbolStatus_.empty()) ImGui::TextWrapped("%s", symbolStatus_.c_str());
-
-    if (snap.breakpoints.empty()) {
-        ImGui::TextColored(kDimColour, "none");
-    } else {
-        for (const auto& location : snap.breakpoints) {
-            const uint16_t bp = location.addr;
-            ImGui::PushID(location.text().c_str());
-            if (ImGui::SmallButton("x")) {
-                auto st = ctrl.lockState();
-                ctrl.debugger().removeBreakpoint(bp,location.bank);
-                ctrl.syncDebugHook();
-            }
-            ImGui::SameLine();
-            if (ImGui::Selectable(location.text().c_str())) {
-                viewAddr_ = bp;
-                cursorAddr_ = bp; cursorBank_ = location.bank.kind == DebugBank::Any ? snap.banks[bp] : location.bank;
-                cursorValid_ = true;
-                lookingAround_ = true;      // jumping to a breakpoint means "look here"
-            }
-            ImGui::PopID();
-            const auto condition = snap.conditions.find(location);
-            if (condition != snap.conditions.end()) {
-                static const char* registers[] = {"A", "X", "Y", "P", "SP", "PC"};
-                static const char* operators[] = {"==", "!=", "<", "<=", ">", ">="};
-                const auto& c = condition->second;
-                ImGui::Text("  %s %s $%04X", registers[static_cast<int>(c.reg)],
-                    operators[static_cast<int>(c.compare)], c.value);
-            }
-        }
-        ImGui::Separator();
-        if (ImGui::Button("Clear all")) {
-            auto st = ctrl.lockState();
-            ctrl.debugger().clearBreakpoints();
-            ctrl.syncDebugHook();
-        }
-    }
-}
-
-// ── Watchpoint list ──────────────────────────────────────────────────────
-//
-// Write watches are free armed or not (`memWrite`'s fast path carries a
-// per-address `writable[]` byte a watch hides inside); a read watch is free
-// only while NONE is armed — `memRead` has no such table, so arming one
-// flips a flag that sends every read out of line (Memory.h § Read
-// watchpoints, docs/PERFORMANCE.md § 8.5). The default is W for that reason.
-
-void Debugger_ImGui::drawWatchpointList(EmulationController& ctrl,
-                                        const Snapshot& snap)
-{
-    ImGui::TextUnformatted("Watch");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Stops the machine when the address is accessed.\n"
-                          "W: a write watch costs nothing, armed or not — the\n"
-                          "address is diverted off memWrite's fast path.\n"
-                          "R: a read watch costs nothing while none is armed,\n"
-                          "but WHILE one is, every bus read goes out of line\n"
-                          "(roughly the speed of the pre-2026-08 core).\n"
-                          "Fires on the access, with the value read/written;\n"
-                          "opcode fetches and soft-switch reads included.");
-    ImGui::Separator();
-
-    ImGui::SetNextItemWidth(150);
-    const bool entered = ImGui::InputText("##wpaddr", wpEntry_, sizeof(wpEntry_),
-                                          ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::RadioButton("R", &wpAccess_, Debugger::Read);
-    ImGui::SameLine();
-    ImGui::RadioButton("W", &wpAccess_, Debugger::Write);
-    ImGui::SameLine();
-    ImGui::RadioButton("RW", &wpAccess_, Debugger::ReadWrite);
-    ImGui::SameLine();
-    const bool add = ImGui::Button("Watch") || entered;
-    if (add && wpEntry_[0]) {
-        DebugAddress location;
-        if (symbols_.resolveLocation(wpEntry_, location)) {
-            auto st = ctrl.lockState();
-            ctrl.debugger().setWatchpoint(location.addr, static_cast<Debugger::Access>(wpAccess_), location.bank);
-            ctrl.syncDebugHook();      // installs Memory's diversions
-        }
-        wpEntry_[0] = '\0';
-    }
-
-    if (snap.watchpoints.empty()) {
-        ImGui::TextColored(kDimColour, "none");
-        return;
-    }
-    for (const Debugger::Watch& w : snap.watchpoints) {
-        ImGui::PushID(DebugAddress{w.addr,w.bank}.text().c_str());
-        if (ImGui::SmallButton("x")) {
-            auto st = ctrl.lockState();
-            ctrl.debugger().setWatchpoint(w.addr, Debugger::None, w.bank);
-            ctrl.syncDebugHook();
-        }
-        ImGui::SameLine();
-        char t[48];
-        std::snprintf(t, sizeof(t), "%s %s", DebugAddress{w.addr,w.bank}.text().c_str(),
-                      w.access == Debugger::ReadWrite ? "RW"
-                      : w.access == Debugger::Read    ? "R" : "W");
-        if (ImGui::Selectable(t)) {
-            viewAddr_ = w.addr;
-            cursorAddr_ = w.addr; cursorBank_ = w.bank.kind == DebugBank::Any ? snap.banks[w.addr] : w.bank;
-            cursorValid_ = true;
-            lookingAround_ = true;
-        }
-        ImGui::PopID();
-    }
-    ImGui::Separator();
-    if (ImGui::Button("Clear watches")) {
-        auto st = ctrl.lockState();
-        ctrl.debugger().clearWatchpoints();
-        ctrl.syncDebugHook();
-    }
 }
 
 // Source files are read on the UI thread, after the machine snapshot lock.
@@ -1126,7 +1128,10 @@ void Debugger_ImGui::drawSource(EmulationController& ctrl, const Snapshot& snap)
     ImGui::Text("%s -> %s:%u",location.text().c_str(),entry->file.c_str(),entry->line);
     if (ImGui::Button("Break at source line")) {
         auto st=ctrl.lockState();
-        ctrl.debugger().addBreakpoint(entry->start.addr,entry->start.bank);
+        // Not over one that is there: adding again drops its condition.
+        bool there=false;
+        for (const DebugAddress& b : ctrl.debugger().bankBreakpoints()) there |= b==entry->start;
+        if (!there) ctrl.debugger().addBreakpoint(entry->start.addr,entry->start.bank);
         ctrl.syncDebugHook();
     }
     const auto path=(std::filesystem::u8path(sourceRoot_)/std::filesystem::u8path(entry->file)).lexically_normal();

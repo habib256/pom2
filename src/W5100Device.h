@@ -73,6 +73,7 @@
 #ifndef POM2_W5100_DEVICE_H
 #define POM2_W5100_DEVICE_H
 
+#include "HostIoEpoch.h"
 #include "NetworkBackend.h"
 #include "NetworkValues.h"
 #include "W5100Socket.h"   // socket_t / kInvalidSocket for Socket::fd
@@ -413,7 +414,25 @@ private:
     void closeSocket(size_t i);
     void connectSocket(size_t i);
     void listenSocket(size_t i);
-    void setCommandRegister(size_t i, uint8_t value);
+    /// A socket command (OPEN, CONNECT, SEND, RECV, CLOSE…) is where this
+    /// chip's conversation with the host moves: no Step Back replays across
+    /// one (HostIoEpoch.h). Register reads and address writes — a driver's
+    /// polling — are not exchanges. (Inline here: W5100Device.cpp is at its
+    /// line ceiling.)
+    void setCommandRegister(size_t i, uint8_t value)
+    {
+        pom2::noteHostIo();
+        runSocketCommand(i, value);
+    }
+    void runSocketCommand(size_t i, uint8_t value);
+public:
+    /// A socket with a live host side: reloading the chip's state closes it.
+    bool anyHostSocketOpen() const
+    {
+        for (const Socket& s : sockets_) if (s.host != nullptr) return true;
+        return false;
+    }
+private:
 
     // Buffer geometry (`Uthernet2.cpp:441-547`).
     void     setTxSizes(uint8_t value);

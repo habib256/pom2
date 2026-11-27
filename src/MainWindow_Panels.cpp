@@ -244,12 +244,19 @@ void MainWindow::registerPanelDraws()
     draw(P::Voxel,        [] { /* drawn inside renderScreenWindow */ });
     draw(P::VoxelSettings,[this] { renderVoxelSettingsWindow(); });
     draw(P::MemViewer,    [this] { renderMemoryViewerWindow(); });
+    // Always drawn: "Show $xxxx in the listing" from another window opens it.
     draw(P::Debugger,     [this] { debuggerPanel->render(*controller,
-                                                         &show(P::Debugger)); });
+                                                         &show(P::Debugger)); }, /*always=*/true);
     draw(P::ScreenInspector, [this] {
         screenInspector_->render(*controller, *display, &show(P::ScreenInspector),
                                  [this] { saveScreenshot(); },
-                                 [this] { syncCrtMonitor(); uploadScreenTexture(); }); });
+                                 [this] { syncCrtMonitor(); uploadScreenTexture(); },
+                                 [this](uint16_t addr) {
+                                     debuggerPanel->applyAddressAction(
+                                         *controller, pom2::DebugAddressAction::ShowInListing, addr); }); });
+    // Always drawn: "Watch $xxxx" in a right-click menu opens it.
+    draw(P::Watch, [this] { debuggerPanel->renderWatch(*controller, &show(P::Watch)); },
+         /*always=*/true);
     draw(P::MemBar,       [this] { renderMemoryBarWindow(); });
     draw(P::MemBarH,      [this] { renderMemoryBarHorizontalWindow(); });
     draw(P::MemGrid,      [this] { renderMemoryGridWindow(); });
@@ -314,6 +321,7 @@ const char* panelIcon(pom2::PanelId id)
     case P::MemViewer:     return ICON_FA_MEMORY;
     case P::Debugger:      return ICON_FA_BUG;
     case P::ScreenInspector: return ICON_FA_CROSSHAIRS;
+    case P::Watch:         return ICON_FA_EYE;
     case P::MemBar:        return ICON_FA_CHART_SIMPLE;
     case P::MemBarH:       return ICON_FA_CHART_BAR;
     case P::MemGrid:       return ICON_FA_TABLE_CELLS;
@@ -386,6 +394,12 @@ void MainWindow::loadPanelVisibility()
     panels_.forEachPersisted([this](const char* key, bool& flag) {
         flag = settings->getBool(key, flag);
     });
+    // What two debugging panels keep besides being open: the Watch list and
+    // the colour of the Screen Inspector's beam marker.
+    debuggerPanel->setWatchListText(settings->getString("debugger_watch_list", ""));
+    screenInspector_->setBeamColour(static_cast<uint32_t>(
+        settings->getInt("screen_inspector_beam_colour",
+                         static_cast<int>(screenInspector_->beamColour()))));
 }
 
 void MainWindow::savePanelVisibility()
@@ -394,6 +408,9 @@ void MainWindow::savePanelVisibility()
     panels_.forEachPersisted([this](const char* key, bool& flag) {
         settings->setBool(key, flag);
     });
+    settings->setString("debugger_watch_list", debuggerPanel->watchListText());
+    settings->setInt("screen_inspector_beam_colour",
+                     static_cast<int>(screenInspector_->beamColour()));
 }
 
 void MainWindow::hideAllPanels()

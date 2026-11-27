@@ -193,6 +193,13 @@ public:
     /// horizontal mid-scanline split). Public + static so it can be unit
     /// tested in isolation.
     struct RasterPos { int scanline; int byteCol; };
+    /// The byte column (0-40) a soft-switch event takes effect FROM, by the
+    /// painter's own rule — it differs by switch (TEXT, MIXED and ALTCHAR one
+    /// column right of PAGE2, AN3 one left with 80COL off; Apple2Display_
+    /// Beam.cpp). For inspectors that must print the number the picture
+    /// shows. `eightyCol`: the 80COL switch as it stood at the event.
+    static int eventByteColumn(const Memory::VideoEvent& event, VideoStandard standard,
+                               bool eightyCol);
     static RasterPos frameCycleToPos(uint64_t emuCycle,
                                      VideoStandard std = VideoStandard::NTSC);
 

@@ -1,10 +1,10 @@
 # Bank-aware debugger
 
-Open **View → Debugger**. The panel combines run controls, disassembly,
-breakpoints/watches, an instruction assembler, symbols, source correspondence
+Open **Tools → Debugger**. The panel combines run controls, disassembly,
+breakpoints (on the PC and on memory), an instruction assembler, symbols, source correspondence
 and profiling. Addresses without a bank qualifier, such as `$0800`
 or a legacy label, match every bank. To stop only in one physical bank, enter
-`aux1:$0800` in the breakpoint or watch field. Hexadecimal addresses remain
+`aux1:$0800` in the breakpoint field. Hexadecimal addresses remain
 16-bit; bank indices are decimal. Register conditions work with either form.
 Clicking the disassembly gutter creates a breakpoint for the bank currently
 shown. Run To Cursor retains the bank selected with the instruction.
@@ -27,10 +27,11 @@ Only installed banks are reachable. Selecting `lc1` or `lc2` does not split
 `$E000–$FFFF`: those bytes belong to the shared `lc0` bank. `80STORE`, PAGE2,
 HIRES, RAMRD/RAMWRT and ALTZP all participate in address resolution.
 
-A read watch matches the read bank; a write watch matches the write bank.
+A memory breakpoint on a read (BPMR) matches the read bank; one on a write
+(BPMW) matches the write bank.
 For example, with RAMRD off and RAMWRT on, `main:$0800` observes reads and
 `aux0:$0800` observes writes. The stop banner reports the code bank and the
-access bank separately. As before, a watch stops after the instruction's
+access bank separately. A memory breakpoint stops after the instruction's
 access has taken place, and opcode fetches count as reads. Explicit stepping
 also records the instruction's actual PC and code bank.
 
@@ -38,34 +39,85 @@ The profiler keeps distinct visits/cycles for each bank and PC. History
 records the code bank before execution and registers after execution. An
 instruction that changes ROMBANK or RamWorks selection stays attributed to
 its original code bank. Reset, session load and rewind clear measurements
-and pending stops while preserving user breakpoints and watches. With all
+and pending stops while preserving the user's breakpoints (BP, BPMR, BPMW)
+and the Watch list. With all
 instrumentation disabled, the ordinary CPU and production memory fast paths
 remain unchanged.
 
-## Breakpoints and watches
+## Breakpoints and the Watch window
 
-Enter a hexadecimal address or loaded symbol in **Breakpoints**, then choose
-**Add**. To add a register predicate, enable **Conditional**, select
-`A`, `X`, `Y`, `P`, `SP` or `PC`, choose `==`, `!=`, `<`, `<=`, `>` or `>=`,
-and enter a hexadecimal comparison value. For example, add `main:$0800`
-with `X == 10` to stop before that instruction only when X is `$10`.
-Comparisons use unsigned register values; the panel accepts one predicate
-per address/bank, without expressions or a configurable bit mask. Adding
-the same breakpoint again replaces its predicate; adding it with Conditional
-off makes it unconditional.
+One list holds three kinds of breakpoint, named as AppleWin names them:
+**BP** stops when the PC reaches an address, **BPMR** when an address is
+read, **BPMW** when it is written (**BPMRW**: either). Create one bare:
+pick the kind and enter a hexadecimal address or a loaded symbol, then
+**Add**; or click the gutter of a line; or right-click a line of the listing
+(its own address, or its operand's) or a byte of the Memory viewer.
 
-In **Watch**, select **R**, **W** or **RW**, enter the address or symbol,
-then choose **Watch**. A watch covers one address/bank rather than an address
-range. If an instruction makes several watched accesses, the first one
-determines the stop banner, including the accessed value. The live PC after
-the stop points to the next instruction, while the banner identifies the
-instruction that performed the access. Read watches also see opcode fetches
-and soft-switch reads; arming one sends CPU reads through the slower watched
-path. Use **x**, **Clear all** or **Clear watches** to remove stops.
+Conditions are added afterwards: click the **When** cell of a row. All the
+ticked ones must hold.
+
+- **Register** (BP only): `A`, `X`, `Y`, `P`, `SP` or `PC` against a
+  hexadecimal value with `==`, `!=`, `<`, `<=`, `>` or `>=`, unsigned. One
+  predicate per address/bank.
+- **The byte read or written** (memory breakpoints only), same comparisons.
+  An NMOS read-modify-write is judged on the value that stays.
+- **The beam is within** a window of V (line in the frame) and H (cycle in
+  the 65-cycle line), as the Debugger's Beam row numbers them. A BP is
+  judged at the instruction's first cycle, a memory breakpoint at the cycle
+  of the access. A minimum above its maximum wraps.
+- **Let the first N passes go by.** The **Passes** column counts the passes
+  that met the other conditions; applying an edit starts it over.
+
+A memory breakpoint covers one address/bank rather than a range, and its row
+shows the byte there now. If an instruction makes several watched accesses,
+the first one determines the stop banner, including the accessed value and
+the beam position of the access. The live PC after the stop points to the
+next instruction, while the banner identifies the instruction that performed
+the access. Read breakpoints also see opcode fetches and soft-switch reads;
+arming one sends CPU reads through the slower watched path.
+
+The **Watch** window (Tools menu, or "Watch $xxxx" in a right-click menu)
+shows the values at a list of addresses, as a byte, a 16-bit word or in
+binary, and never stops the machine. A value is highlighted when it changed
+since the previous stop — or, while running, since the previous frame of the
+interface. The list is kept between sessions.
+
+## Going backwards
+
+**Step Back** (Shift+F7) undoes one instruction and **Run Back**
+(Ctrl+F7) returns to the previous point where a breakpoint would
+have stopped — on the PC or on memory, with its conditions but not its
+"ignore N" — or to the oldest point of the history when there is none.
+It works for 0.8 s at most, then stops where it has got to and says so:
+Run Back again goes on.
+Both use the rewind, which is off by default: tick **Rec** beside the two
+buttons (it is the Rewind panel's Record), then run.
+They are greyed, and their tooltip says why, while the machine runs, when
+the rewind is not recording, when there is no history before the current
+point (about 30 s are kept; a reset starts it over), after a write a
+rewind cannot undo (hard-disk, 3.5" or WOZ image, printed output), or when
+an accelerator (Zip Chip, TransWarp, FASTChip, //c Plus) changed speed or
+the machine was reset, or you changed a byte or the PC by hand: no way back
+across any of them. The **Rec** box beside the two buttons shows whether
+the rewind is recording, and switches it. They are also refused
+while a paste is being typed, while a cassette plays, and while a card
+holds something of the host's that is not in the machine's state (an open
+Uthernet II connection, frames or bytes received and not yet read). Nothing
+is replayed across a key, a mouse or joystick movement that arrived while
+the machine ran, or a byte the program exchanged
+with a serial peer, the network, a MIDI port or a FujiNet: the way back
+closes there, and reopens once the machine has run on. Going back drops the rewind's
+frames after that point. Before landing, POM2 checks that re-executing the
+history really leads back to where the machine stood; when it does not
+(a clock card read the host's time, for instance) it says so and leaves
+the machine as it was. An interrupt entry is a step of its own going
+back: from a handler's first instruction, Step Back returns to the
+instruction that was interrupted.
 
 ## Run control
 
-**Step** (F7) executes one instruction. **Step Over** (F8) runs a JSR until
+**Step** (F7, or Space with the panel focused) executes one instruction.
+**Step Over** (Ctrl+Space) runs a JSR until
 its outer RTS returns; other opcodes take a plain step. It decodes the current
 CPU mapping without reading soft switches. Inline ProDOS/SmartPort arguments,
 recursion and stack wrap are handled by following the return frame rather
@@ -77,10 +129,10 @@ open. **Run To Cursor** uses the selected disassembly instruction and bank.
 
 A breakpoint stops before its instruction executes. Resuming with **Run**, the
 toolbar or another run control lets that instruction execute once before the
-same breakpoint can fire again. A watch stops after the access and does not
-suppress a breakpoint on the following instruction. **Stop**, or another
+same breakpoint can fire again. A memory breakpoint stops after the access
+and does not suppress a breakpoint on the following instruction. **Stop**, or another
 debugger stop, cancels pending Step Over, Step Out and Run To Cursor operations;
-user breakpoints and watches remain installed.
+user breakpoints of every kind remain installed.
 
 When a SoftCard Z80 owns the bus, a plain Step advances one Z80 instruction;
 the displayed registers/disassembly and breakpoint/profiling hooks still
@@ -92,7 +144,7 @@ an idle hook work there as on an ordinary slice. Step Over and Step Out track
 ## Memory viewer
 
 The memory viewer shows the current 64 KiB CPU read mapping. **Goto** takes
-a hexadecimal address; bank qualifiers in breakpoint/watch fields filter
+a hexadecimal address; bank qualifiers in the breakpoint and Watch fields filter
 stops and do not select a different mapping for the viewer. **Search** accepts
 hex bytes such as `A9 FF 48`, or an ASCII string. ASCII matching also accepts
 characters with their high bit set. Searches continue after the previous
@@ -130,7 +182,7 @@ aux_entry = aux1:$0800
 shared_entry = $0900
 ```
 
-Use `aux_entry` directly in a breakpoint/watch field. Bank-specific labels
+Use `aux_entry` directly in a breakpoint or Watch field. Bank-specific labels
 appear only in their bank; unqualified labels provide a fallback. Prefixing
 a label explicitly, such as `aux2:shared_entry`, overrides its bank.
 

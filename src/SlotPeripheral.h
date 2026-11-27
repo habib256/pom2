@@ -302,6 +302,13 @@ public:
     /// <= 0 is ignored. SlotBus takes the lowest slot that is not 1.0.
     virtual double cpuSpeedMultiplier() const { return 1.0; }
 
+    /// True while the card holds a connection on the HOST that restoring a
+    /// machine snapshot would drop (the Uthernet II's W5100 closes its
+    /// sockets when its state is reloaded). The debugger's Step Back and
+    /// Run Back restore rewind frames freely — unlike a scrub, which the
+    /// user asks for knowingly — so they are refused while this is true.
+    virtual bool holdsHostConnection() const { return false; }
+
     /// True while this card's own processor runs the machine IN PLACE of
     /// the one in the 6502 socket — an accelerator card holding DMA, not a
     /// coprocessor doing separate work (that is `dmaActive()`).

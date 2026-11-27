@@ -23,6 +23,7 @@
 #include "EmulationController.h"
 
 #include "CpuClock.h"
+#include "Debugger.h"
 
 #include <mutex>
 
@@ -68,6 +69,9 @@ void EmulationController::applyAcceleratorClock(double mul)
     // snapshot restore the clock, not the ratio (a //c+ → //e switch kept the
     // beam at ~1/4 speed; bug hunt 2026-11-07).
     if (hz == cpuClockHz_.load() && mem.videoClockRatio() == 1.0 / mul) return;
+    // The accelerator changed speed: no Step Back / Run Back replay may
+    // cross this cycle (EmulationController.h, replayBarriers_).
+    if (mem.videoClockRatio() != 1.0 / mul) markReplayBarrier();
     cpuClockHz_.store(hz); machineCpuClockHz_.store(machineHz); mem.setVideoClockRatio(1.0 / mul);   // the beam keeps the crystal's time
     // The speaker stamps in stock time from THIS cycle on (setCpuClockAt):
     // its backlog then plays at the speed it was made at. The cards' AY
@@ -116,4 +120,25 @@ int64_t EmulationController::alignedTickBudget()
     uint64_t vnow;
     { std::lock_guard<std::mutex> lk(stateMtx); vnow = mem.videoNow(); }
     return pom2AlignedTickBudget(budget, frame, vnow);
+}
+
+// The Screen Inspector's "run to this point of the picture". The target is an
+// absolute cycle of the beam's clock, so an accelerator changes nothing.
+void EmulationController::debugRunToBeam(int line, int h)
+{
+    {
+        std::lock_guard<std::mutex> lk(stateMtx);
+        const VideoTiming& t = pom2VideoTiming(mem.videoStandard());
+        const uint64_t perLine  = static_cast<uint64_t>(t.cyclesPerScanline);
+        const uint64_t perFrame = perLine * static_cast<uint64_t>(t.scanlinesPerFrame);
+        const uint64_t now  = mem.videoNow();
+        const uint64_t want = (static_cast<uint64_t>(line < 0 ? 0 : line) * perLine +
+                               static_cast<uint64_t>(h < 0 ? 0 : h)) % perFrame;
+        uint64_t ahead = (want + perFrame - now % perFrame) % perFrame;
+        if (ahead == 0) ahead = perFrame;        // standing on it: the next frame's
+        debugger_->setRunToBeam(now + ahead);
+        debugResume();
+        syncDebugHook();
+    }
+    setMode(Mode::Running);
 }

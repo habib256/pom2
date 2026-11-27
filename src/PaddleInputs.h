@@ -32,6 +32,8 @@
 #ifndef POM2_PADDLE_INPUTS_H
 #define POM2_PADDLE_INPUTS_H
 
+#include "HostIoEpoch.h"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -43,16 +45,32 @@ class PaddleInputs
 {
 public:
     // ── Writers ───────────────────────────────────────────────────────────
+    // A CHANGE of what the host holds is an input the debugger's Step Back
+    // cannot replay (HostIoEpoch.h): each setter reports it. Only a change —
+    // these are called every frame with the same value — and, for Shift and
+    // Control, only when a wiring carries them to the game port at all.
     void setPaddle(int idx, uint8_t value) {
-        if (idx >= 0 && idx < 4) value_[idx] = value;
+        if (idx < 0 || idx >= 4) return;
+        if (value_[idx] != value) pom2::noteHostIo();
+        value_[idx] = value;
     }
     void setPaddleButton(int idx, bool down) {
-        if (idx >= 0 && idx < 3) button_[idx] = down;
+        if (idx < 0 || idx >= 3) return;
+        if (button_[idx] != down) pom2::noteHostIo();
+        button_[idx] = down;
     }
-    void setOpenAppleKey (bool down) { openApple_.store(down,  std::memory_order_relaxed); }
-    void setSolidAppleKey(bool down) { solidApple_.store(down, std::memory_order_relaxed); }
-    void setShiftKey     (bool down) { shift_.store(down,      std::memory_order_relaxed); }
-    void setControlKey   (bool down) { ctrl_.store(down,       std::memory_order_relaxed); }
+    void setOpenAppleKey (bool down) { if (openApple_.exchange(down,  std::memory_order_relaxed) != down) pom2::noteHostIo(); }
+    void setSolidAppleKey(bool down) { if (solidApple_.exchange(down, std::memory_order_relaxed) != down) pom2::noteHostIo(); }
+    void setShiftKey     (bool down) {
+        if (shift_.exchange(down, std::memory_order_relaxed) != down &&
+            (shiftMod_.load(std::memory_order_relaxed) || iiWiring_.load(std::memory_order_relaxed) != 0))
+            pom2::noteHostIo();
+    }
+    void setControlKey   (bool down) {
+        if (ctrl_.exchange(down, std::memory_order_relaxed) != down &&
+            iiWiring_.load(std::memory_order_relaxed) != 0)
+            pom2::noteHostIo();
+    }
     /// The //e "Shift key = SW2" modification (MAME `kbd_shift_mod`, Apple
     /// IIe Technical Note #9): a wire from the Shift key to PB2. Off by
     /// default, as in MAME.
@@ -256,11 +274,12 @@ public:
         if (!apply) return true;
         for (int i = 0; i < 4; ++i) value_[i] = data[i];
         for (int i = 0; i < 3; ++i) button_[i] = (data[4] & (1 << i)) != 0;
-        setOpenAppleKey((data[4] & 8) != 0);
-        setSolidAppleKey((data[4] & 16) != 0);
-        setShiftKey((data[4] & 32) != 0);
+        // Stored, not set: a state being RESTORED is not an input arriving.
+        openApple_.store((data[4] & 8) != 0,   std::memory_order_relaxed);
+        solidApple_.store((data[4] & 16) != 0, std::memory_order_relaxed);
+        shift_.store((data[4] & 32) != 0,      std::memory_order_relaxed);
         setShiftKeyMod((data[4] & 64) != 0);
-        setControlKey((data[4] & 128) != 0);
+        ctrl_.store((data[4] & 128) != 0,      std::memory_order_relaxed);
         setIiShiftWiring(static_cast<IiShiftWiring>(data[5] & 0x7f));
         setConnected((data[5] & 128) != 0);
         return true;
