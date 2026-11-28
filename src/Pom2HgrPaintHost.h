@@ -101,13 +101,20 @@ public:
     void renderDlgrPage(const uint8_t* aux1k, const uint8_t* main1k,
                         uint32_t* outRgba, bool mono) override;
     void setDisplayModeDlgr(bool page2) override;
+    // Page monitor: the video switches read under the state lock, and the
+    // text pages through the scratch display with the machine's own font.
+    bool liveVideo(LiveVideo& out) const override;
+    bool takePinch(const ImVec2& min, const ImVec2& max, Pinch& out) override;
+    bool supportsTextPages() const override { return true; }
+    void renderTextPage(const uint8_t* main1k, const uint8_t* aux1k, bool col80,
+                        bool altChar, uint32_t* outRgba, bool mono) override;
     bool saveDlgrImage(const std::string& path, uint16_t baseAddr,
                        std::string& err) override;
 
 private:
     // Stage the scratch soft switches for one of the three editor regimes and
     // render it. `page8k`/`aux8k` are page-relative editor bytes.
-    enum class ScratchMode { Hgr, Gr, Dhgr, Dlgr };
+    enum class ScratchMode { Hgr, Gr, Dhgr, Dlgr, Text40, Text80 };
     void renderScratch(ScratchMode m, const uint8_t* main8k, const uint8_t* aux8k,
                        uint32_t* outRgba, bool mono);
     void ensureScratch();

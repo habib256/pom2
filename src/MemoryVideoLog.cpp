@@ -226,7 +226,7 @@ void Memory::setVideoWriteLog(bool on)
         const auto addr = static_cast<uint16_t>(a);
         if (hasWriteWatch(addr)) continue;   // its shadow keeps the permission
         if (on)                         writable[a] = false;
-        else if (!auxShadowCovers(addr)) writable[a] = true;   // RAM pages
+        else if (!auxShadowCovers(addr) && !heatSink_) writable[a] = true;   // RAM pages
     }
     videoLog_.clear();
     videoLogValidFrom_ = videoNow();

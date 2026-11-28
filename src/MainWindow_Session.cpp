@@ -35,6 +35,7 @@
 
 #include "MediaWritePolicy.h"
 #include "MainWindow.h"
+#include "PinchZoom.h"
 
 #include "AiControlServer.h"
 #include "Apple2Display.h"
@@ -334,6 +335,7 @@ void MainWindow::persistSession(bool flushMedia)
         aspectMode == AspectMode::Measured ? "measured" : "square");
     settings->setString("ui_accent", pom2::accentKey(uiAccent_));
     settings->setFloat ("ui_scale",  uiScale_);
+    settings->setBool  ("pinch_zoom_inverted", pom2::pinch::router().inverted());
     settings->setBool  ("ui_dock_seeded", dockSeeded_);
     settings->setString("library_favourites", pom2::joinSettingList(libraryFavourites_));
     settings->setString("library_recents",    pom2::joinSettingList(libraryRecents_));

@@ -24,6 +24,7 @@ an explicit request before scheduling.
 | [DISPLAY-003](#display-003) | 🧊 | Frozen | Pure-analog signal-level composite pipeline |
 | [DISPLAY-013](#display-013) | 🟢 | Ready | Videx Videoterm: the nine other character sets |
 | [DISPLAY-014](#display-014) | 🟡 | To verify | //e unenhanced character ROM: a clone's file under Apple's name |
+| [DISPLAY-015](#display-015) | 🟡 | Implemented; constants need an oracle | Colour burst per scanline: the F constants of the burst gate and the monitors |
 
 <a id="display-001"></a>
 
@@ -266,3 +267,44 @@ already downloaded with the unenhanced firmware (`apple2e.zip`).
 (the old file still accepted). [F] Settled by: a photo of an unenhanced //e
 showing codes `$60-$7F` in both character sets, which says whether those
 cells are ever read.
+
+<a id="display-015"></a>
+
+## DISPLAY-015 — Colour burst per scanline: the F constants
+
+**Priority:** 🟡 · **State:** implemented 2026-11-28 (DEV.md § Colour burst per
+scanline); every constant below is in one place and graded there.
+
+**Scheduling condition:** any of the measurements listed — each one retunes a
+named constant, nothing structural.
+
+| Constant | File | Grade | What would settle it |
+|---|---|---|---|
+| `kBurstTextLag = 1` (access → first gate state that sees TEXT) | `ColourBurst.h` | [B] reading of Sather p. 7-3 / 8-16, [A] fit to two photos | a scope on IOU pin 37 (CLRGATE') against a `BIT $C050` |
+| `kVSwitchTauStates = 1.2` (TCA650 R-Y reversal) | `ColourBurst.h` | [F] fitted to two photos | a scope on TCA650 pin 11 across a CLRGATE' fall; the circuit values of Sather Fig. 8.6 |
+| `PalDecoder` integrator (3 lines) and thresholds (flip 0.05, on 0.06, off 0.04) | `BurstMonitor.h` | [B] mechanism (TDA3560), [F] values fitted to two photos | photos of 3-state, 0-state and isolated burst-less lines on this PAL monitor and a second one; a scope on the decoder's identification pin |
+| A.C.C. left at gain 1 (peak detector) | `BurstMonitor.h` | [B] TDA3560 pin 5, [F] for this monitor | the photo of the 1-state picture looks brighter and LESS saturated than the launch one (sat 26/44 vs 49/55 on the camera's scale): neither is modelled |
+| PAL trap clock edge (hpos 9), the monitor's own luminance trap out only while its killer acts, and the untrapped kernel (1-2-1) | `ColourBurst.h`, `Apple2Display_Burst.cpp`, `Apple2Display_OeDemod.cpp` | [B] the Apple's gating (Sather Fig. 8.6), [A] two photos for the monitor's, [F] edge, switching and response | a scope on UC15 pin 9; the monitor's service manual; a capture of its response to a 3.56 MHz pattern |
+| NTSC killer (GSSquared's constants) | `BurstMonitor.h` | [D] over [A] (AppleColor monitor) | the same photos on another NTSC monitor model |
+| ][ revision per profile (`kBurstIIPreRev7` for the 1977 ][) and the ][ lag | `ColourBurst.h` | [B] windows, [F] mapping | a board-revision setting; a scope on a ][ |
+| //c / //c+ / //c PAL use the //e rule | `ColourBurst.h` | [F] | the //c Technical Reference's video timing, or a scope |
+| Steady-state monitor (no transient across a mode change) | `BurstMonitor.h` | [F] | a video capture of a real monitor across a TEXT → graphics switch |
+
+Not modelled: a TEXT segment on a line that also shows graphics keeps its
+colour fringes on NTSC in the LUT/MAME pipelines (text is crisp there by
+design); the saturation and brightness of the PAL V-inverted picture; the
+photo's B-Y on that picture (its greens are teal: B-Y near 0 where a
+pure R-Y flip keeps it — DEV.md § Colour burst per scanline).
+
+The PAL picture's colours themselves are an open gap (2026-11-28, measured on
+the two photographs, which share one camera): orange → green on photo 1 vs
+the AN3 frame is +107° there and in POM2's LUT; but the AN3 frame's violet
+reads ~330-15° on the photo against 43-55° in POM2, and the 1-state picture's
+green reads 277-282° against 232-240°. The PAL //e's colour word is not the
+NTSC dot-stream demodulation POM2 uses: Sather Fig. 8.6 shows it going LS175
+→ resistors → TCA650 (R-Y: Q0 and Q2' through 2.2 kΩ; B-Y: Q0' and Q2 through
+2.2 kΩ, Q1 and Q3' through 1 kΩ), i.e. four bit vectors at roughly 0°, 114°,
+180°, 294° in the U/V plane if the two buses had equal gain — they do not
+(different Millman loads, R53/R54, the balance pots, the TCA650's gains), so
+the mapping is not settled [F]. Settled by: the bus gains from a PAL //e's
+TCA650 pins 6/7 on a scope, or a vectorscope of the 16 colour words.

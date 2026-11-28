@@ -17,7 +17,7 @@
 // Pins OpenEmulator demod parity: the GPU shader (NtscPostProcessor.cpp
 // kFragmentShader) must match renderCompositeOeCpu() (the reference CPU
 // path) pixel-for-pixel. Without GL — re-simulates the full GLSL demod in
-// C++ (subcarrier phase, kernel sharpness mix, PAL line-phase alternation,
+// C++ (subcarrier phase, kernel sharpness mix, the PAL delay line,
 // hue rotation) and compares on HGR + DHGR, at neutral knobs AND with
 // hue/sharpness/PAL engaged (those used to be GPU-only — the CPU demod
 // silently ignored them). Also pins the textSharp=false path: full-screen
@@ -67,19 +67,20 @@ uint32_t packRgb(float r, float g, float b)
 // GPU shader demod, re-simulated tap-for-tap from the GLSL: phase offset
 // enters the subcarrier phase exactly ONCE, π/2·((xi + po) & 3), matching
 // MAME rotl4(absX+1) / AppleWin lut[(x + phase) & 3]; the chroma kernel is
-// mix(soft, sharp, clamp((sharpness-0.5)·2)); PAL multiplies every V tap by
-// ±1 per line; hue rotates U/V afterwards. (An earlier revision applied the
+// mix(soft, sharp, clamp((sharpness-0.5)·2)); PAL is the delay line (U/V
+// averaged with the line before); hue rotates U/V afterwards. (An earlier revision applied the
 // phase offset twice here AND in the shader, replicating the CPU path's
 // double-application bug instead of pinning the correct phase.)
-uint32_t demodGpuStyle(const uint8_t* row, int x, int y, int phaseOffset,
-                       float hue, float sharpness, bool palMode)
+uint32_t demodGpuStyle(const uint8_t* row, const uint8_t* prevRow, int x, int phaseOffset,
+                       float hue, float sharpness, bool palMode,
+                       float chromaGain = 1.0f)
 {
     float sharp = (sharpness - 0.5f) * 2.0f;
     if (sharp < 0.0f) sharp = 0.0f;
     if (sharp > 1.0f) sharp = 1.0f;
-    const float palQSign = (palMode && (y & 1)) ? -1.0f : 1.0f;
-
-    float Y = 0.0f, U = 0.0f, V = 0.0f;
+    // PAL: the delay line — chroma averaged with the line before (blanking
+    // above the picture: no chroma).
+    float Y = 0.0f, U = 0.0f, V = 0.0f, Up = 0.0f, Vp = 0.0f;
     const float sigX = static_cast<float>(x) + 0.5f;
     for (int i = -N; i <= N; ++i) {
         const float fx = sigX + static_cast<float>(i);
@@ -93,8 +94,17 @@ uint32_t demodGpuStyle(const uint8_t* row, int x, int y, int phaseOffset,
         const float phase = kPi * 0.5f * static_cast<float>(phaseIdx);
         Y += s * kLumaK[a];
         U += s * std::sin(phase) * wc;
-        V += s * std::cos(phase) * wc * palQSign;
+        V += s * std::cos(phase) * wc;
+        const float sp = (prevRow && xi >= 0 && xi < 560 && prevRow[xi]) ? 1.0f : 0.0f;
+        Up += sp * std::sin(phase) * wc;
+        Vp += sp * std::cos(phase) * wc;
     }
+    if (palMode) {
+        U = 0.5f * (U + Up);
+        V = 0.5f * (V + Vp);
+    }
+    U *= chromaGain;   // the line's colour burst (Apple2Display_Burst.cpp)
+    V *= chromaGain;
     const float h  = hue * kPi;
     const float cs = std::cos(h), sn = std::sin(h);
     const float Ur = U * cs - V * sn;
@@ -119,7 +129,8 @@ int maxChannelDelta(uint32_t a, uint32_t b)
 }
 
 void assertParity(const Apple2Display& disp, int phaseOffset,
-                  const Apple2Display::OeDemodParams& p, const char* label)
+                  const Apple2Display::OeDemodParams& p, const char* label,
+                  float chromaGain = 1.0f)
 {
     const int w = disp.width();
     const int h = disp.height();
@@ -127,10 +138,12 @@ void assertParity(const Apple2Display& disp, int phaseOffset,
     int worst = 0;
     for (int y = 0; y < h; ++y) {
         const uint8_t* row = sig + static_cast<size_t>(y) * 560;
+        const uint8_t* prev = y > 0 ? row - 560 : nullptr;
         for (int x = 0; x < w; ++x) {
             const uint32_t cpuPx = pxCpu(disp, x, y);
-            const uint32_t gpuPx = demodGpuStyle(row, x, y, phaseOffset,
-                                                 p.hue, p.sharpness, p.palMode);
+            const uint32_t gpuPx = demodGpuStyle(row, prev, x, phaseOffset,
+                                                 p.hue, p.sharpness, p.palMode,
+                                                 chromaGain);
             const int d = maxChannelDelta(cpuPx, gpuPx);
             if (d > worst) worst = d;
             assert(d <= 1 && "GPU-style demod must match OE CPU within 1 LSB");
@@ -174,13 +187,14 @@ Apple2Display::OeDemodParams knobs()
 }
 
 void runCase(Apple2Display& disp, Memory& mem, int phaseOffset,
-             const Apple2Display::OeDemodParams& p, const char* label)
+             const Apple2Display::OeDemodParams& p, const char* label,
+             float chromaGain = 1.0f)
 {
     disp.setOeDemodParams(p);
     disp.render(mem);
     assert(disp.signalProduced());
     assert(disp.signalPhaseOffset() == phaseOffset);
-    assertParity(disp, phaseOffset, p, label);
+    assertParity(disp, phaseOffset, p, label, chromaGain);
 }
 
 } // namespace
@@ -203,9 +217,12 @@ int main()
     runCase(disp, memDhgr, 1, kNeutral, "neutral");
     runCase(disp, memDhgr, 1, knobs(),  "hue+sharpness+PAL");
 
-    // textSharp=false: full-screen TEXT must demodulate on the CPU exactly
-    // like the GPU shader (which only bypasses the demod when textSharp is
-    // on). The output is 560-wide (frame80).
+    // textSharp=false: full-screen TEXT is demodulated, and it has NO colour
+    // burst — [B] Sather, Understanding the Apple IIe p. 8-16, "CLRGATE'
+    // never drops low if TEXT is set" — so the monitor's killer leaves the
+    // luminance alone (chroma gain 0, Apple2Display_Burst.cpp). The GPU
+    // shader has no per-line gain: such a frame goes to this CPU twin
+    // (checked below). The output is 560-wide (frame80).
     Memory memText;
     memText.memRead(0xC051);
     for (uint16_t a = 0x0400; a < 0x0800; ++a)
@@ -215,8 +232,15 @@ int main()
     Apple2Display::OeDemodParams pt;
     pt.textSharp = false;
     std::printf("TEXT (textSharp=off) parity:\n");
-    runCase(dispText, memText, 0, pt, "demodulated text");
+    runCase(dispText, memText, 0, pt, "demodulated text, no burst", 0.0f);
     assert(dispText.width() == 560 && "demodulated TEXT presents frame80");
+    Apple2Display dispGpu;
+    dispGpu.setHiResMode(Apple2Display::HiResMode::ColorCompositeOE);
+    dispGpu.setOeDemodParams(pt);
+    dispGpu.render(memText);
+    assert(dispGpu.mixedCompositeUsesFramebuffer() &&
+           "a burst-less frame leaves the shader for its CPU twin");
+    assertParity(dispGpu, 0, pt, "GPU mode routed to CPU twin", 0.0f);
 
     std::printf("oe_demod_gpu_cpu_parity OK\n");
     return 0;

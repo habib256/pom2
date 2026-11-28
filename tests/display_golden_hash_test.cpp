@@ -769,9 +769,14 @@ const std::map<std::string, uint64_t> kGolden = {
     { "pal/split-bands/monogreen", 0x524fa865f8503c5cULL },
     { "pal/split-bands/monoamber", 0x5f4efe209850b7ccULL },
     { "pal/split-bands/signal", 0x31f281b24c93b7dcULL },
-    { "pal/split-midline/ntsc", 0xf3010bd40ad7b437ULL },
-    { "pal/split-midline/medium", 0x9b155ed50e5a6b0eULL },
-    { "pal/split-midline/4bit", 0x65413036077800c0ULL },
+    // 2026-11-28: TEXT is on at every burst window of this frame (the HGR
+    // part is thrown mid-line, after hpos 45), so no line carries a colour
+    // burst and the PAL decoder's killer leaves luminance only: the three
+    // colour LUTs now paint the HGR part from the dot stream and equal the
+    // white monitor (Apple2Display_Burst.cpp; Sather IIe p. 8-16).
+    { "pal/split-midline/ntsc", 0x7c55c3918af74383ULL },
+    { "pal/split-midline/medium", 0x7c55c3918af74383ULL },
+    { "pal/split-midline/4bit", 0x7c55c3918af74383ULL },
     { "pal/split-midline/chatmauve", 0xaf9146f394f5b543ULL },
     { "pal/split-midline/monowhite", 0x7c55c3918af74383ULL },
     { "pal/split-midline/monogreen", 0x2ff03380baea7183ULL },

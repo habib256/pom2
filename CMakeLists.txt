@@ -363,6 +363,11 @@ set(SOURCES
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
+    src/Apple2Display_LoRes7M.cpp
+    src/Apple2Display_Burst.cpp
+    src/Apple2Display_OeDemod.cpp
+    src/ColourBurst.cpp
+    src/BurstMonitor.cpp
     src/AppleWinNtsc.cpp
     src/AtaBlockDevice.cpp
     src/AudioDevice.cpp
@@ -401,6 +406,13 @@ set(SOURCES
     src/Debugger_Assembler.cpp
     src/DisasmNavigation.cpp
     src/ScreenInspector_ImGui.cpp
+    src/MemoryHeatmap.cpp
+    src/MemoryHeatmap_ImGui.cpp
+    src/MemoryHeatmap_ImGui_Paint.cpp
+    src/MemoryHeatmap_ImGui_Panel.cpp
+    src/MemoryHeatmap_ImGui_Status.cpp
+    src/MemoryHeatmap_ImGui_Toolbar.cpp
+    src/MemoryHeatmapView.cpp
     src/WindowCapture.cpp
     src/ScreenProbe.cpp
     src/FetchedPagesFile.cpp
@@ -559,6 +571,7 @@ set(SOURCES
     src/hgrpaint/HgrFont.cpp
     src/hgrpaint/HgrImageDecode.cpp
     src/hgrpaint/HgrPaintEditor.cpp
+    src/hgrpaint/HgrPaintEditor_Monitor.cpp
     src/hgrpaint/HgrPaintModel.cpp
     src/hgrsprite/HgrSpriteAsmExport.cpp
     src/hgrsprite/HgrSpriteBlit.cpp
@@ -622,6 +635,7 @@ set(SOURCES
     src/SystemProfile.cpp
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
+    src/UiFonts.cpp
     src/RomFetch.cpp
     src/RomImport.cpp
     src/ZipMember.cpp
@@ -634,11 +648,14 @@ set(SOURCES
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
+    src/PinchZoom_ImGui.cpp
+    src/PinchZoomHost.cpp
     src/NativeFileDialog.cpp
     src/main.cpp
 )
 if(APPLE)
-    list(APPEND SOURCES src/HostOpenFiles_mac.mm src/NativeFileDialog_mac.mm)
+    list(APPEND SOURCES src/HostOpenFiles_mac.mm src/NativeFileDialog_mac.mm
+                        src/PinchZoomHost_mac.mm)
 endif()
 
 # ─── Architecture layers ──────────────────────────────────────────────────
@@ -826,6 +843,10 @@ set(POM2_FRONTEND_HEADERS
     src/DisasmNavigation.h
     src/BeamPosition.h
     src/ScreenInspector_ImGui.h
+    src/CycleMonitor.h
+    src/MemoryHeatmap.h
+    src/MemoryHeatmap_ImGui.h
+    src/MemoryHeatmapView.h
     src/WindowCapture.h
     src/ScreenProbe.h
     src/AppleIoNames.h
@@ -838,6 +859,9 @@ set(POM2_FRONTEND_HEADERS
     src/SessionFilePicker.h
     src/DevicePanelCoordinator.h
     src/HostOpenFiles.h
+    src/PinchZoom.h
+    src/PinchZoom_ImGui.h
+    src/PinchZoomHost.h
     src/IconsFontAwesome6.h
     src/CrtPresets.h
     src/KeyChord.h
@@ -882,6 +906,13 @@ set(POM2_FRONTEND_SOURCES
     src/Debugger_Assembler.cpp
     src/DisasmNavigation.cpp
     src/ScreenInspector_ImGui.cpp
+    src/MemoryHeatmap.cpp
+    src/MemoryHeatmap_ImGui.cpp
+    src/MemoryHeatmap_ImGui_Paint.cpp
+    src/MemoryHeatmap_ImGui_Panel.cpp
+    src/MemoryHeatmap_ImGui_Status.cpp
+    src/MemoryHeatmap_ImGui_Toolbar.cpp
+    src/MemoryHeatmapView.cpp
     src/WindowCapture.cpp
     src/ScreenProbe.cpp
     src/FetchedPagesFile.cpp
@@ -979,6 +1010,7 @@ set(POM2_FRONTEND_SOURCES
     src/hgrpaint/HgrConvert.cpp
     src/hgrpaint/HgrImageDecode.cpp
     src/hgrpaint/HgrPaintEditor.cpp
+    src/hgrpaint/HgrPaintEditor_Monitor.cpp
     src/hgrpaint/HgrPaintModel.cpp
     src/hgrsprite/HgrSpriteAsmExport.cpp
     src/hgrsprite/HgrSpriteBlit.cpp
@@ -988,6 +1020,7 @@ set(POM2_FRONTEND_SOURCES
     src/SmartPort_ImGui.cpp
     src/CommandPalette_ImGui.cpp
     src/Pom2Theme.cpp
+    src/UiFonts.cpp
     src/RomStatus_ImGui.cpp
     src/AbstractionCatalog.cpp
     src/AbstractionLevels_ImGui.cpp
@@ -996,6 +1029,8 @@ set(POM2_FRONTEND_SOURCES
     src/Keyboard_ImGui.cpp
     src/Toolbar_ImGui.cpp
     src/HostOpenFiles.cpp
+    src/PinchZoom_ImGui.cpp
+    src/PinchZoomHost.cpp
     src/NativeFileDialog.cpp
     src/main.cpp
 )
@@ -1177,6 +1212,11 @@ set(POM2_RUNTIME_SOURCES
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
+    src/Apple2Display_LoRes7M.cpp
+    src/Apple2Display_Burst.cpp
+    src/Apple2Display_OeDemod.cpp
+    src/ColourBurst.cpp
+    src/BurstMonitor.cpp
     src/AudioDevice.cpp
     src/CharRomCatalog.cpp
     src/EmulationController.cpp
@@ -1281,6 +1321,10 @@ set(HEADERS
     src/DisasmNavigation.h
     src/BeamPosition.h
     src/ScreenInspector_ImGui.h
+    src/CycleMonitor.h
+    src/MemoryHeatmap.h
+    src/MemoryHeatmap_ImGui.h
+    src/MemoryHeatmapView.h
     src/WindowCapture.h
     src/ScreenProbe.h
     src/AppleIoNames.h
@@ -1360,6 +1404,10 @@ set(HEADERS
     src/Mat4.h
     src/CommandPalette_ImGui.h
     src/Pom2Theme.h
+    src/UiFonts.h
+    src/PinchZoom.h
+    src/PinchZoom_ImGui.h
+    src/PinchZoomHost.h
     src/OpenGLShader.h
     src/MountableMediaCard.h
     src/SlotBusClock.h
@@ -1698,6 +1746,7 @@ if(EMSCRIPTEN)
         "SHELL:--pre-js ${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
         "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/setup_link.js"
         "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/wasm/pinch_zoom.js"
         "--shell-file" "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html"
     )
     # Preload the package payload into POM2.data. Each clause maps an on-disk
@@ -1777,6 +1826,7 @@ if(EMSCRIPTEN)
         "${CMAKE_CURRENT_BINARY_DIR}/bundled_disks.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/setup_link.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/browser_files.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/wasm/pinch_zoom.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/wasm/shell.html")
     # Match shell.html's <canvas id="canvas"> ID convention.
     set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -1969,6 +2019,11 @@ set(POM2_CORE_SOURCES
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
+    src/Apple2Display_LoRes7M.cpp
+    src/Apple2Display_Burst.cpp
+    src/Apple2Display_OeDemod.cpp
+    src/ColourBurst.cpp
+    src/BurstMonitor.cpp
     src/AppleWinNtsc.cpp
     src/AtaBlockDevice.cpp
     src/AudioDevice.cpp
@@ -2409,6 +2464,11 @@ add_executable(pom2_headless
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
+    src/Apple2Display_LoRes7M.cpp
+    src/Apple2Display_Burst.cpp
+    src/Apple2Display_OeDemod.cpp
+    src/ColourBurst.cpp
+    src/BurstMonitor.cpp
     src/AppleWinNtsc.cpp
     src/CharRomCatalog.cpp
     src/CharRomDump.cpp
@@ -2637,10 +2697,17 @@ endif()
 if(NOT EMSCRIPTEN)
 add_executable(pom2_bench
     src/pom2_bench.cpp
+    src/MemoryHeatmap.cpp
+    src/Disassembler6502.cpp
     src/Apple2Display.cpp
     src/TextScreenCapture.cpp
     src/Apple2Display_ChatMauve.cpp
     src/Apple2Display_Beam.cpp
+    src/Apple2Display_LoRes7M.cpp
+    src/Apple2Display_Burst.cpp
+    src/Apple2Display_OeDemod.cpp
+    src/ColourBurst.cpp
+    src/BurstMonitor.cpp
     src/AppleWinNtsc.cpp
     src/AudioDevice.cpp
     src/CassetteDevice.cpp

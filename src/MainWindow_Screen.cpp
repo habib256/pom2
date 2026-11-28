@@ -38,6 +38,7 @@
 #include "Logger.h"
 #include "Memory.h"
 #include "NtscPostProcessor.h"
+#include "PinchZoom_ImGui.h"
 #include "Pom2GL.h"
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
@@ -683,6 +684,17 @@ void MainWindow::drawScreenImage()
         if (wheel != 0.0f)
             voxelCam_.distance =
                 std::clamp(voxelCam_.distance * std::pow(0.9f, wheel), 0.6f, 20.0f);
+    }
+    // Two-finger pinch (and Ctrl+wheel, PinchZoom.h): a dolly by the
+    // gesture's factor — fingers apart bring the slab closer. Outside the
+    // hover test above: a touch screen's focal point is between the fingers,
+    // not under a pointer. A smart magnify puts the camera back at its
+    // default distance.
+    if (show(pom2::PanelId::Voxel)) {
+        pom2::pinch::Gesture pg;
+        if (pom2::pinchZoomTake(screenRectMin, screenRectMax, pg))
+            voxelCam_.distance = pg.fit ? pom2::OrbitCamera{}.distance
+                : std::clamp(voxelCam_.distance / pg.factor(), 0.6f, 20.0f);
     }
 
 }

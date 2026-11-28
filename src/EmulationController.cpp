@@ -1459,6 +1459,14 @@ void EmulationController::syncDebugHook()
     }
 }
 
+void EmulationController::setHeatSink(pom2::MemoryHeatSink* sink)
+{
+    std::lock_guard<std::mutex> lk(stateMtx);
+    mem.setHeatSink(sink);
+    debugger_->setHeatSink(sink);
+    syncDebugHook();
+}
+
 void EmulationController::debugResume()
 {
     // A PC breakpoint — and a step-over, step-out or run-to-cursor stop,

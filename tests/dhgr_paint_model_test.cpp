@@ -338,6 +338,25 @@ int main()
         assert(commits == 3 && seen.size() == 1 && seen[0].first == 0x2004);
     }
 
-    std::printf("dhgr_paint_model: OK (incl. PaintCardBatcher nesting)\n");
+    // ── The page monitor's "page on screen" (Sather Table 8.7) ────────────
+    {
+        using hgrpaint::scannedVideoPage;
+        // HGR page 2: PAGE2 picks the scanned page while 80STORE is off.
+        auto p = scannedVideoPage(false, true, true, false, false, false, true);
+        assert(p.mode == 0 && p.page2);
+        // 80STORE on: PAGE2 switches page 1 to aux; page 1 stays on screen.
+        p = scannedVideoPage(false, true, true, true, true, true, true);
+        assert(p.mode == 2 && !p.page2);
+        // A ][+ has no 80STORE: PAGE2 always scans page 2.
+        p = scannedVideoPage(true, false, true, false, false, true, false);
+        assert(p.mode == 4 && p.page2);
+        // DLGR needs 80COL + AN3 low; without 80COL it is GR (the 7M LORES).
+        assert(scannedVideoPage(false, false, false, true, true, false, true).mode == 3);
+        assert(scannedVideoPage(false, false, false, false, true, false, true).mode == 1);
+        // And no double mode off a //e.
+        assert(scannedVideoPage(false, true, false, true, true, false, false).mode == 0);
+    }
+
+    std::printf("dhgr_paint_model: OK (incl. PaintCardBatcher nesting, page on screen)\n");
     return 0;
 }

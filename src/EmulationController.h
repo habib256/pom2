@@ -48,7 +48,7 @@
 #include <thread>
 #include <vector>
 
-namespace pom2 { class StateAccess; class SessionLoadQueue; }
+namespace pom2 { class StateAccess; class SessionLoadQueue; struct MemoryHeatSink; }
 
 class EmulationController
 {
@@ -88,6 +88,11 @@ public:
     /// Call after ANY breakpoint mutation — this is what keeps an un-armed
     /// debugger off the CPU's hot loop entirely. Caller holds `stateMutex`.
     void syncDebugHook();
+    /// The memory heatmap (UI-022): attach its recording to Memory (every
+    /// read and write) and to the debugger (every instruction), or detach it
+    /// with nullptr — then nothing of it is left on either path. Takes the
+    /// state lock itself.
+    void setHeatSink(pom2::MemoryHeatSink* sink);
 
     /// Switch the OS-call traces (OsCallTrace.h): the 6502's (MLI, SmartPort,
     /// Pascal, Monitor, Applecorn, CP/M-65), the card Z80s' BDOS and the

@@ -39,6 +39,29 @@ struct MemoryWatchSink {
     }
 };
 
+/// Where Memory reports EVERY access while the memory heatmap is open
+/// (`Memory::setHeatSink`). Same reason for an interface: Memory and the
+/// Debugger link into builds that have no heatmap. The implementor is
+/// `pom2::MemoryHeatmap`.
+struct MemoryHeatSink {
+    virtual ~MemoryHeatSink() = default;
+    /// A bus read or write, after it happened, with the bank it went to.
+    virtual void noteHeatRead (uint16_t addr, DebugBank bank) = 0;
+    virtual void noteHeatWrite(uint16_t addr, DebugBank bank) = 0;
+    /// Before the instruction at `pc` runs (the Debugger's per-instruction
+    /// hook): its bytes are execution, not data reads. `bank` is where the
+    /// fetch goes (the Debugger has just resolved it for its own use).
+    virtual void noteHeatExec(uint16_t pc, DebugBank bank) = 0;
+    /// A card's processor holds the bus (SoftCard Z80 DMA, between the two
+    /// calls): its accesses are the card's, not the parked 6502's.
+    virtual void noteHeatBusMaster(bool /*card*/) {}
+    /// An instruction retired (`spAfter` = SP once it has) / an interrupt
+    /// entered (SP after the pushes), in the video frame `frame` — the
+    /// heatmap's interrupt-load strip (InterruptLoad.h).
+    virtual void noteHeatRetired(uint8_t /*spAfter*/, int /*cycles*/, uint64_t /*frame*/) {}
+    virtual void noteHeatInterrupt(uint8_t /*spAfter*/, int /*cycles*/, uint64_t /*frame*/) {}
+};
+
 }  // namespace pom2
 
 #endif  // POM2_MEMORY_WATCH_SINK_H

@@ -571,6 +571,11 @@ add_executable(test_videx_lowercase_char_rom
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2337,6 +2342,11 @@ add_executable(test_hgr_render
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2381,6 +2391,11 @@ add_executable(test_le_chat_mauve
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2410,6 +2425,11 @@ add_executable(test_chatmauve_latch_split
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -2439,6 +2459,11 @@ add_executable(test_chatmauve_dot_rules
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -3233,6 +3258,11 @@ add_executable(render_total_replay_modes EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
@@ -4062,6 +4092,11 @@ add_executable(hdv_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Block512Backing.cpp
@@ -4085,6 +4120,11 @@ add_executable(cffa_boot_dump EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/CffaCard.cpp
@@ -4260,6 +4300,11 @@ add_executable(test_dhgr_render
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4286,6 +4331,11 @@ add_executable(test_dhgr_phase_signal
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4311,6 +4361,11 @@ add_executable(test_beam_race_composite
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4338,6 +4393,11 @@ add_executable(test_horizontal_split
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4363,6 +4423,11 @@ add_executable(test_raster_switch_kind_offset
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4390,6 +4455,11 @@ add_executable(test_horizontal_split_composite
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4417,6 +4487,11 @@ add_executable(test_horizontal_split_560
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4447,6 +4522,11 @@ add_executable(test_video_switch_latency
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4475,6 +4555,11 @@ add_executable(test_dix_modpage_split
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4538,6 +4623,11 @@ add_executable(madef_phase_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
@@ -4598,6 +4688,11 @@ add_executable(dd2_ay_trace EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Mockingboard.cpp
@@ -4631,6 +4726,11 @@ add_executable(test_pal_timing
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4690,6 +4790,11 @@ add_executable(test_mixed_band_beam_split
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4715,6 +4820,11 @@ add_executable(test_drol_pageflip_render
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4744,6 +4854,11 @@ add_executable(test_beam_view
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -4855,6 +4970,11 @@ add_executable(test_purplesoft_eve_screens
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -4889,6 +5009,11 @@ add_executable(test_chatmauve_feline_screens
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/MouseCardAppleWin.cpp
@@ -4925,6 +5050,11 @@ add_executable(test_extasie_mouse_probe
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -4962,6 +5092,11 @@ add_executable(test_purplesoft_eve_probe
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -5019,6 +5154,11 @@ add_executable(test_oe_demod_gpu_cpu_parity
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5044,6 +5184,11 @@ add_executable(test_text_oecpu_crisp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5074,6 +5219,11 @@ add_executable(test_dlgr_mame_phase
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5100,6 +5250,11 @@ add_executable(test_dlgr_render
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5130,6 +5285,11 @@ add_executable(test_display_golden
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5188,6 +5348,11 @@ add_executable(test_display_dirty_skip
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5369,6 +5534,11 @@ add_executable(test_video7_parity
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5400,6 +5570,11 @@ add_executable(test_display_persistence
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5426,6 +5601,11 @@ add_executable(test_display_beam_regressions
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -5661,6 +5841,34 @@ set_tests_properties(floatingbus_page2_smoke PROPERTIES TIMEOUT 5)
 # all 32 character rows x (HBL base, display base) plus the page's five
 # stated rules. See video_scanner_sather_test.cpp — including the erratum in
 # the book's own Applesoft sequence, which its table settles against it.
+# UI-022: the memory heatmap's recording, the diversion that feeds it and
+# the view that paints it — HGR page 1 cleared lights $2000-$3FFF in the bank
+# RAMWRT selects, the two $D000 banks and RamWorks banks apart, the ROM / I/O
+# plane, DMA, the debugger's own pokes left out, nothing left when detached,
+# shared with the watchpoints; FT's colours, rails and layout. See
+# memory_heatmap_test.cpp.
+add_executable(test_memory_heatmap
+    memory_heatmap_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmapView.cpp
+    ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
+    ${POM2_TEST_CORE_SOURCES}
+)
+target_include_directories(test_memory_heatmap PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_memory_heatmap PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+if(APPLE)
+    target_link_libraries(test_memory_heatmap PRIVATE
+        "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit")
+endif()
+if(WIN32)
+    target_link_libraries(test_memory_heatmap PRIVATE winmm)
+endif()
+add_test(NAME memory_heatmap COMMAND test_memory_heatmap)
+set_tests_properties(memory_heatmap PROPERTIES TIMEOUT 60)
+
 add_executable(test_video_scanner_sather
     video_scanner_sather_test.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -6113,6 +6321,13 @@ target_include_directories(test_mouse_grab_policy PRIVATE ${CMAKE_SOURCE_DIR}/sr
 
 add_test(NAME mouse_grab_policy COMMAND test_mouse_grab_policy)
 set_tests_properties(mouse_grab_policy PROPERTIES TIMEOUT 5)
+
+# Two-finger pinch zoom policy (PinchZoom.h): units, sign + inversion, clamps,
+# per-frame accumulation and the one-view targeting. Header-only, no GLFW.
+add_executable(test_pinch_zoom_policy pinch_zoom_policy_test.cpp)
+target_include_directories(test_pinch_zoom_policy PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME pinch_zoom_policy COMMAND test_pinch_zoom_policy)
+set_tests_properties(pinch_zoom_policy PROPERTIES TIMEOUT 5)
 
 add_executable(test_fujinet_config_host_click fujinet_config_host_click_test.cpp)
 target_include_directories(test_fujinet_config_host_click PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -7301,6 +7516,11 @@ add_executable(test_ai_control_server
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
@@ -7434,6 +7654,11 @@ add_executable(ntsc_oe_ab EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/NtscPostProcessor.cpp
@@ -7464,6 +7689,11 @@ add_executable(artifact_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -7661,6 +7891,11 @@ add_executable(test_ai_mouse_hle_probe
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
@@ -7748,6 +7983,11 @@ add_executable(test_dhgr_paint_model
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
@@ -7867,6 +8107,11 @@ add_executable(test_mono_text_phosphor
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -7889,6 +8134,11 @@ add_executable(test_phosphor_decay_zero
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${POM2_TEST_CORE_SOURCES}
@@ -7911,6 +8161,11 @@ add_executable(test_dhgr_convert
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/Cam16.cpp
@@ -9131,6 +9386,11 @@ set(POM2_DD1_AB_COMMON
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/Ssi263.cpp
@@ -10302,6 +10562,19 @@ set(POM2_WALLCLOCK_TESTS
 if(TARGET pom2_core_test)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pom2Test.cmake)
 
+# The colour burst per scanline (ColourBurst.h, the Apple's side) and the
+# monitor models that answer it (BurstMonitor.h): synthetic TEXT edges.
+pom2_add_headless_test(test_colour_burst
+    NAME colour_burst TIMEOUT 10 PORTABLE
+    SOURCES colour_burst_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+# The same through every colour pipeline, driven by a beam-raced 6502 loop of
+# the test's own (TEXT thrown and cleared in HBL), PAL and NTSC.
+pom2_add_headless_test(test_colour_burst_pipelines
+    NAME colour_burst_pipelines TIMEOUT 30 PORTABLE
+    SOURCES colour_burst_pipelines_test.cpp
+    LINK_LIBRARIES pom2_core_test)
+
 pom2_add_headless_test(test_snesmax_card
     NAME snesmax_card TIMEOUT 20 PORTABLE
     SOURCES snesmax_card_test.cpp
@@ -10941,6 +11214,11 @@ add_executable(test_iiplus_rgb_data_line
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/CharRomCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
@@ -11128,6 +11406,11 @@ add_executable(dix_menu_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -11172,6 +11455,11 @@ add_executable(oldskool_raster_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -11216,6 +11504,11 @@ add_executable(oldskool_crash_probe EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskImage.cpp
@@ -11297,6 +11590,41 @@ add_test(NAME mockingboard_t1_irq_phase COMMAND test_mockingboard_t1_irq_phase)
 set_tests_properties(mockingboard_t1_irq_phase PROPERTIES TIMEOUT 5)
 
 
+
+# ─── Memory Heatmap window, driven by a mouse of its own (UI-022) ─────────
+# A real EmulationController runs a //e program; the probe hovers, zooms,
+# clicks, shift-drags and right-clicks the Memory Heatmap window drawn off
+# screen with the OpenGL3 backend, checks what it selected and saves a PNG
+# of each step under probeOutDir()/heatmap_ui. Needs a GL 3.2 context (exits
+# 77 without one), hence a probe and not a ctest test.
+if(TARGET pom2_core_test)
+add_executable(heatmap_ui_probe EXCLUDE_FROM_ALL
+    heatmap_ui_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmapView.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap_ImGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap_ImGui_Paint.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap_ImGui_Panel.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap_ImGui_Status.cpp
+    ${CMAKE_SOURCE_DIR}/src/MemoryHeatmap_ImGui_Toolbar.cpp
+    ${CMAKE_SOURCE_DIR}/src/PinchZoom_ImGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/Pom2Theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/UiFonts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ScreenshotExport.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(heatmap_ui_probe PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR} ${IMGUI_DIR})
+target_compile_definitions(heatmap_ui_probe PRIVATE GLFW_INCLUDE_NONE)
+if(APPLE)
+    target_compile_definitions(heatmap_ui_probe PRIVATE GL_SILENCE_DEPRECATION)
+endif()
+target_link_libraries(heatmap_ui_probe PRIVATE pom2_core_test ${GLFW_TARGET} ${OPENGL_LIBRARIES})
+endif()
 
 # ─── `make probes` — one command that builds every EXCLUDE_FROM_ALL tool ──
 # The probes are deliberately not ctest tests (see the header of this file):
@@ -11667,6 +11995,11 @@ add_executable(test_ai_control_mem_bank
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/DiskIICard.cpp
@@ -11883,6 +12216,11 @@ add_executable(test_hgr_paint_fill_edge
     ${CMAKE_SOURCE_DIR}/src/Apple2Display.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_ChatMauve.cpp
     ${CMAKE_SOURCE_DIR}/src/Apple2Display_Beam.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_LoRes7M.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_Burst.cpp
+    ${CMAKE_SOURCE_DIR}/src/Apple2Display_OeDemod.cpp
+    ${CMAKE_SOURCE_DIR}/src/ColourBurst.cpp
+    ${CMAKE_SOURCE_DIR}/src/BurstMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/AppleWinNtsc.cpp
     ${CMAKE_SOURCE_DIR}/src/LeChatMauveCard.cpp
     ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
@@ -12090,6 +12428,7 @@ set(POM2_PROBE_TARGETS
     lss_window_probe
     lss_write_probe
     porte_parole_probe
+    heatmap_ui_probe
 )
 set(_pom2_probe_present)
 foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)

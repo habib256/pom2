@@ -50,6 +50,9 @@
 #include "Settings.h"
 #include "Debugger_ImGui.h"
 #include "ScreenInspector_ImGui.h"
+#include "MemoryHeatmap_ImGui.h"
+#include "DebugCoordinator.h"
+#include "MemoryViewer_ImGui.h"
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
 #include "UthernetCard.h"
@@ -258,6 +261,38 @@ void MainWindow::registerPanelDraws()
     draw(P::Watch, [this] { debuggerPanel->renderWatch(*controller, &show(P::Watch)); },
          /*always=*/true);
     draw(P::MemBar,       [this] { renderMemoryBarWindow(); });
+    // Always drawn: the frame it is closed detaches the recording, so a
+    // closed heatmap costs the emulator nothing.
+    draw(P::MemHeatmap, [this] {
+        memHeatmap_->render(
+            *controller, &show(P::MemHeatmap),
+            [this](uint16_t addr, pom2::DebugBank bank) { return debuggerPanel->symbolLabel(addr, bank); },
+            [this](std::string_view text, pom2::DebugAddress& out) {
+                return debuggerPanel->resolveLocation(text, out); });
+        // What the map asks of other windows, with its lock released.
+        using R = pom2::MemoryHeatmap_ImGui::Request;
+        R request;
+        if (!memHeatmap_->takeRequest(request)) return;
+        switch (request.kind) {
+            case R::Kind::Listing:
+                debuggerPanel->showAddressInListing(request.at.addr, request.at.bank);
+                break;
+            case R::Kind::MemoryViewer:
+                show(P::MemViewer) = true;
+                debugCoordinator_->memoryViewer().navigateToAddress(request.at.addr);
+                break;
+            case R::Kind::Watch:
+                debuggerPanel->applyAddressAction(*controller, pom2::DebugAddressAction::Watch,
+                                                  request.at.addr, "Memory Heatmap");
+                break;
+            case R::Kind::WatchWord:
+                debuggerPanel->applyAddressAction(*controller, pom2::DebugAddressAction::WatchWord,
+                                                  request.at.addr, "Memory Heatmap");
+                break;
+            case R::Kind::None:
+                break;
+        }
+    }, /*always=*/true);
     draw(P::MemBarH,      [this] { renderMemoryBarHorizontalWindow(); });
     draw(P::MemGrid,      [this] { renderMemoryGridWindow(); });
     draw(P::HgrPaint,     [this] { renderHgrPaintWindow(); });
@@ -325,6 +360,7 @@ const char* panelIcon(pom2::PanelId id)
     case P::MemBar:        return ICON_FA_CHART_SIMPLE;
     case P::MemBarH:       return ICON_FA_CHART_BAR;
     case P::MemGrid:       return ICON_FA_TABLE_CELLS;
+    case P::MemHeatmap:    return ICON_FA_FIRE;
     case P::HgrPaint:      return ICON_FA_PAINTBRUSH;
     case P::HgrSprite:     return ICON_FA_PEN_RULER;
     case P::AiControl:     return ICON_FA_ROBOT;
@@ -397,6 +433,8 @@ void MainWindow::loadPanelVisibility()
     // What two debugging panels keep besides being open: the Watch list and
     // the colour of the Screen Inspector's beam marker.
     debuggerPanel->setWatchListText(settings->getString("debugger_watch_list", ""));
+    // The Memory Heatmap's choices (mode, fade, banks, orientation...).
+    memHeatmap_->setOptionsText(settings->getString("memory_heatmap_options", ""));
     screenInspector_->setBeamColour(static_cast<uint32_t>(
         settings->getInt("screen_inspector_beam_colour",
                          static_cast<int>(screenInspector_->beamColour()))));
@@ -409,6 +447,7 @@ void MainWindow::savePanelVisibility()
         settings->setBool(key, flag);
     });
     settings->setString("debugger_watch_list", debuggerPanel->watchListText());
+    settings->setString("memory_heatmap_options", memHeatmap_->optionsText());
     settings->setInt("screen_inspector_beam_colour",
                      static_cast<int>(screenInspector_->beamColour()));
 }

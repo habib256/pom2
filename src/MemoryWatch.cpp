@@ -37,8 +37,7 @@ void Memory::setWriteWatch(uint16_t addr, bool on)
         // The REAL permission, not the byte: a page the aux shadow has
         // already diverted reads false here while being plain RAM.
         writeWatch_[addr] = static_cast<uint8_t>(
-            kWatchArmed | ((writable[addr] || auxShadowCovers(addr) ||
-                            videoWriteLogCovers(addr))
+            kWatchArmed | ((writable[addr] || writeHeldDiverted(addr))
                                ? kWatchWasWritable : 0));
         // THE diversion: the fast path's own test now fails for this address,
         // which is the whole trick. Below $C000 only — above it every write
@@ -50,7 +49,7 @@ void Memory::setWriteWatch(uint16_t addr, bool on)
     if (writeWatch_.empty() || !(writeWatch_[addr] & kWatchArmed)) return;
     // An address the aux shadow still covers stays diverted (its slow-path
     // permission comes from ramWritable(), which knows about the shadow).
-    if (addr < 0xC000 && !auxShadowCovers(addr) && !videoWriteLogCovers(addr))
+    if (addr < 0xC000 && !writeHeldDiverted(addr))
         writable[addr] = (writeWatch_[addr] & kWatchWasWritable) != 0;
     writeWatch_[addr] = 0;
     if (--writeWatchCount_ == 0) {
@@ -82,7 +81,7 @@ void Memory::clearReadWatches()
     // Flag first, table second: memReadSlow only indexes `readWatch_` when
     // `readDivert_` is set, so this order keeps the pair consistent at every
     // point (callers hold stateMutex anyway — syncDebugHook runs under it).
-    readDivert_ = false;
+    readDivert_ = heatSink_ != nullptr;   // the heatmap keeps reads diverted
     refreshReadFastFlags();   // reopens the gates
     readWatch_.clear();
     readWatch_.shrink_to_fit();
@@ -94,8 +93,7 @@ void Memory::clearWriteWatches()
     if (writeWatch_.empty()) return;
     for (std::size_t a = 0; a < writeWatch_.size(); ++a) {
         if (!(writeWatch_[a] & kWatchArmed)) continue;
-        if (a < 0xC000 && !auxShadowCovers(static_cast<uint16_t>(a)) &&
-            !videoWriteLogCovers(static_cast<uint16_t>(a)))
+        if (a < 0xC000 && !writeHeldDiverted(static_cast<uint16_t>(a)))
             writable[a] = (writeWatch_[a] & kWatchWasWritable) != 0;
     }
     writeWatch_.clear();
@@ -120,9 +118,60 @@ void Memory::setAuxShadow(bool textPage, bool hgrPage, uint8_t byte)
         for (uint32_t a = lo; a <= hi; ++a) {
             if (hasWriteWatch(static_cast<uint16_t>(a))) continue;
             // The video write log may hold the page diverted on its own.
-            writable[a] = !on && !videoWriteLogCovers(static_cast<uint16_t>(a));
+            writable[a] = !on && !videoWriteLogCovers(static_cast<uint16_t>(a)) && !heatSink_;
         }
     };
     apply(auxShadowText_, textPage, 0x0400, 0x07FF);
     apply(auxShadowHgr_,  hgrPage,  0x2000, 0x3FFF);
+}
+
+// ─── The diverted slow paths: read watches, write watches, heatmap ───────
+//
+// memReadSlow / memWriteSlow (Memory.cpp) come here only while something is
+// diverted. The bank is taken BEFORE the access, as the watch reports always
+// did: a soft-switch read may page, and the report names where it went.
+pom2::DebugBank Memory::divertedReadBank(uint16_t addr) const
+{
+    const bool watched = !readWatch_.empty() && readWatch_[addr] && watchSink_;
+    return (watched || heatSink_) ? debugBank(addr) : pom2::DebugBank{};
+}
+
+void Memory::noteDivertedRead(uint16_t addr, uint8_t value, pom2::DebugBank bank)
+{
+    if (!readWatch_.empty() && readWatch_[addr] && watchSink_)
+        watchSink_->noteBankAccess(addr, value, false, bank);
+    // The debugger's own accesses (a Memory-viewer edit, the assembler, the
+    // Paint editor's switches) are not the program's: not on the heatmap.
+    if (heatSink_ && !unattributedAccess_) heatSink_->noteHeatRead(addr, bank);
+}
+
+void Memory::noteDivertedWrite(uint16_t addr, uint8_t value)
+{
+    const pom2::DebugBank bank = debugBank(addr, true);
+    if (!writeWatch_.empty() && (writeWatch_[addr] & kWatchArmed) && watchSink_)
+        watchSink_->noteBankAccess(addr, value, true, bank);
+    if (heatSink_ && !unattributedAccess_) heatSink_->noteHeatWrite(addr, bank);
+}
+
+// ─── Memory heatmap (UI-022) ──────────────────────────────────────────────
+//
+// Arming diverts every access the same two ways the watchpoints do, so the
+// hot paths are untouched: reads by `readDivert_` (folded into memRead's
+// three gates), writes below $C000 by clearing `writable[]` (memWrite's own
+// test fails and the write reaches memWriteSlow, which reports it and then
+// writes with ramWritable() — true for RAM below $C000). From $C000 up every
+// write already takes the slow path. Disarming puts each byte back unless a
+// write watch, the aux shadow or the video write log still holds it.
+void Memory::setHeatSink(pom2::MemoryHeatSink* sink)
+{
+    if ((sink != nullptr) == (heatSink_ != nullptr)) { heatSink_ = sink; return; }
+    heatSink_ = sink;   // first, so writeHeldDiverted agrees below
+    for (uint32_t a = 0; a < 0xC000; ++a) {
+        const auto addr = static_cast<uint16_t>(a);
+        if (hasWriteWatch(addr)) continue;   // its shadow keeps the permission
+        if (sink) writable[a] = false;
+        else if (!auxShadowCovers(addr) && !videoWriteLogCovers(addr)) writable[a] = true;
+    }
+    readDivert_ = sink != nullptr || readWatchCount_ != 0;
+    refreshReadFastFlags();
 }

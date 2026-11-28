@@ -18,12 +18,16 @@ src/AbstractionCatalog.cpp
 src/AiControlServer.cpp
 src/Apple2Display.cpp
 src/Apple2Display_Beam.cpp
+src/Apple2Display_LoRes7M.cpp
+src/Apple2Display_Burst.cpp
+src/Apple2Display_OeDemod.cpp
 src/Apple2Display_ChatMauve.cpp
 src/AppleWinNtsc.cpp
 src/AtaBlockDevice.cpp
 src/AudioDevice.cpp
 src/AyMusicExport.cpp
 src/Block512Backing.cpp
+src/BurstMonitor.cpp
 src/CassetteDevice.cpp
 src/CffaCard.cpp
 src/CharRomCatalog.cpp
@@ -32,6 +36,7 @@ src/ChildProcess.cpp
 src/CliDispatcher.cpp
 src/CliRunner.cpp
 src/ClockCard.cpp
+src/ColourBurst.cpp
 src/CorpusManifest.cpp
 src/CrtEffectStack.cpp
 src/Cs8900aDevice.cpp
@@ -80,6 +85,8 @@ src/MediaMount.cpp
 src/Memory.cpp
 src/MemoryBeamView.cpp
 src/MemoryGamePort.cpp
+src/MemoryHeatmap.cpp
+src/MemoryHeatmapView.cpp
 src/MemoryProfile_IIcClass.cpp
 src/MemoryVideoLog.cpp
 src/MemoryViewer_ImGui.cpp

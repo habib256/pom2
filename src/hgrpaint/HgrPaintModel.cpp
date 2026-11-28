@@ -413,4 +413,14 @@ void rotateClipCW(int& w, int& h, bool sixteen, bool blockMode,
     if (sixteen) idx = std::move(oi); else px = std::move(op);
 }
 
+VideoPage scannedVideoPage(bool text, bool hires, bool page2, bool col80,
+                           bool an3Off, bool store80, bool iie)
+{
+    const bool dbl = iie && col80 && an3Off;
+    VideoPage p;
+    p.mode  = text ? 4 : hires ? (dbl ? 2 : 0) : (dbl ? 3 : 1);
+    p.page2 = page2 && !(iie && store80);
+    return p;
+}
+
 } // namespace hgrpaint

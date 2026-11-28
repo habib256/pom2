@@ -10,6 +10,234 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-28 — Two-finger pinch zoom, on a touchpad and on a touch screen
+
+**The request.** "I must be able to zoom on a touchpad or on a tablet with
+two fingers." Nothing pinched: GLFW forwards no pinch on any platform, and a
+Ctrl+wheel did nothing either.
+
+**What POM2 does now.** Every host's pinch becomes one portable event (a log
+scale delta + the focal point) in `PinchZoom.h`, and the view under the
+fingers zooms about them, like the wheel about the pointer: the memory
+heatmap, the Paint editor (its 1×-16× ladder) and the sprite editor, the
+Screen Inspector, the ImageWriter paper and the 3D voxel view. A smart
+magnify (two-finger double tap, macOS) goes back to fit. Sources: a local
+`NSEvent` monitor for `NSEventTypeMagnify` on macOS; on Windows a window
+procedure in front of GLFW's for `WM_MOUSEWHEEL` + `MK_CONTROL` (a precision
+touchpad's pinch) and `WM_GESTURE` `GID_ZOOM` (a touch screen); in the
+browser `wasm/pinch_zoom.js` for Safari's gesture events and two touches,
+and `main.cpp`'s wheel callback for the ctrlKey wheel Chrome / Firefox /
+Edge send. ImGui's Ctrl+wheel (Cmd+wheel on macOS) is the same zoom on
+every host. Linux has no native pinch source (X11 has none; GLFW does not
+expose Wayland's pointer-gestures): a driver that sends Ctrl+wheel works.
+
+**Why these choices.**
+- *The platform's direction by default* (fingers apart = zoom in), because
+  the OS already gives that sign and every other application follows it;
+  the owner confirmed it. `pinch_zoom_inverted` (View ▸ Interface ▸ Zoom ▸
+  Reverse the pinch direction) flips it.
+- *The gesture goes to the window under the fingers by ImGui's own
+  z-order-aware hit-test, not by rect alone* — the same lesson as
+  `MouseGrab.h`'s `screenHovered`: a rect hands the gesture to a panel
+  hidden behind a floating window.
+- *A pinch never also scrolls or pans.* The Ctrl+wheel is cleared from
+  `io.MouseWheel` once converted (ImGui itself never scrolls with Ctrl
+  down); Windows swallows the message; in the browser the two-finger touch
+  moves are kept from Emscripten's GLFW, which would read the first finger
+  as a mouse drag, and the left button GLFW pressed for that first finger
+  is released off every widget the moment the second lands, so lifting the
+  fingers is not a click (`Router::cancelPress`).
+- *Clamped to ×4 an event and a frame*, so a frame stalled behind a mount
+  cannot leap the view.
+
+Pinned by `pinch_zoom_policy` (units, sign + inversion, clamps, per-frame
+accumulation, one-view targeting, the press cancel, the ladder) and by
+`heatmap_ui_probe`'s pinch steps. The Windows source compiles with MinGW
+(`-Werror`), the browser side with emcc; neither was run on its hardware. DEV § Two-finger pinch
+zoom.
+
+## 2026-11-28 — The colour burst, line by line; MIXED text keeps it on NTSC; the PAL delay line
+
+**What was missing.** The //e decides on every line whether a colour burst
+goes out: [B] Sather, *Understanding the Apple IIe* Fig. 8.5 and p. 8-16,
+`CLRGATE' = (TEXT'·HBL·H3·H2)'`, "CLRGATE' never drops low if TEXT is set",
+decided state by state in hpos 13-16. TEXT active there removes that line's
+burst even if it is off again before the visible part — POM2 dropped such a
+TEXT period as a zero-width segment and had no notion of a burst. And POM2
+drew the MIXED text band crisp-mono on both standards, where an NTSC //e keeps
+its burst during MIXED text and the text is fringed (p. 8-16;
+*Understanding the Apple II* p. 8-5 for the ][). Calibration: [A] real PAL
+//e + JVC monitor, photographs, 2026-11-28 (private test program).
+
+**What POM2 models now, at render time from the beam-stamped switch log**
+(nothing on the CPU path; DEV § Colour burst per scanline; L1 on both sides,
+docs/lle_vs_hle.md):
+- `ColourBurst` (the Apple): the gate state by state, seeing TEXT one state
+  after the access (the switch window closes on the edge that clocks
+  CLRGATE', Sather p. 7-3); on PAL the TCA650's R-Y switch toggling on each
+  CLRGATE' fall and its carrier reversing through the coupling, so a short
+  burst still carries the previous line's R-Y phase; the PAL //e's gated
+  3.56 MHz luminance trap (UC15, clocked by SYNC with GR+2 on D — Sather
+  Fig. 8.6, p. 8-19), out of circuit for a line whose sync saw text; the ][
+  before Revision 7 (hpos 17-20) and Revision 0 (no killer) as board rules.
+- `BurstMonitor` (the monitor): GSSquared's AppleColor killer for NTSC [D];
+  for PAL a TDA3560-class decoder — burst-keyed H/2 identification into an
+  integrator, the PAL bistable it corrects, the killer, the delay line [B
+  mechanism, F values fitted to the two photographs]. Nothing in it is keyed
+  to a program: a 2-state burst leaves no R-Y swing (the killer acts), a
+  1-state burst an inverted one (R-Y decoded negated), none the killer, 3-4
+  states normal; an isolated burst-less line keeps colour.
+- Every colour pipeline honours it: LUT/MAME and AppleWin paint killed lines
+  from the 1-bit dot stream and scale R-Y per pixel; the OE CPU demod (now its
+  own TU, `Apple2Display_OeDemod.cpp`) takes a per-row chroma gain, drops on
+  PAL the chroma of text columns on a line that also shows graphics (GR+2 on
+  the LS175's /CLR), and uses a luminance kernel without the 3.56 MHz notch
+  on a PAL line whose trap is out; the OE GPU hands such frames to its CPU
+  twin, as it does a frame with mixed subcarrier phases. Monochrome and the
+  Le Chat Mauve RGB are untouched.
+
+**The OE "PAL composite" knob is now the PAL delay line** (CPU demod and GLSL
+together, parity re-pinned): each line's chroma averaged with the line
+before's. It used to flip V on odd rows of a dot-stream signal that never
+alternated — every other row R-Y inverted — and the SDK forces it on for PAL
+timing, so every SDK OE capture of a PAL machine had those bars. Label: "PAL
+composite (delay line)".
+
+**Behaviour changes that move pictures, on purpose:**
+- NTSC, "Sharp text" OFF: the MIXED band is demodulated (colour fringes) in
+  OE GPU/CPU and AppleWin, as on the iron. ON (the default) keeps it crisp.
+- Full-screen TEXT with "Sharp text" off is now luminance only on both
+  standards (no burst → the killer; on PAL the LS175 anyway). It used to
+  demodulate coloured fringes; that frame leaves the GPU shader for its twin.
+- A frame whose lines lose their burst is presented 560 wide in the LUT
+  pipelines (the dot stream is 560 samples a line).
+- Tests moved on purpose: `display_golden_hash` pal/split-midline (TEXT is on
+  at every burst window of that frame, so the killer acts and its HGR part in
+  the three colour LUTs equals the white monitor's hash);
+  `display_dirty_skip` (a capture of a burst-less TEXT frame with Sharp text
+  off is a no-op: the display already presents the CPU twin);
+  `oe_demod_gpu_cpu_parity` (the text case; PAL is the delay line).
+- The constants a scope or a photograph could move are in two headers,
+  graded; DISPLAY-015 lists what would settle each.
+
+## 2026-11-28 — The memory heatmap, finished: FT's monitoring bars, a map that never loses a byte
+
+**French Touch's "Monitoring Card", which POM2 had left out believing it
+needed a card.** It is four write-only soft switches ([D] AppleWin FT
+`extended_debugger` @ 52ddd021, `IOWrite_C06x`): write $C067 / $C066 to time
+a section of code, $C069 / $C068 to time the interrupt handler. French Touch
+demo code uses them. The heatmap now reads them while it is open, by
+observing the write in its own sink — the machine drops those writes, a
+READ of $C066 stays the paddle, and no path that runs with the window closed
+gained an instruction (`pom2_bench` hashes identical). Each mark is stamped
+at the write's own bus cycle: a 6502 program timing itself reads exactly 55
+and 10 cycles (pinned). Drawn as FT draws them under the map — the section
+green within a frame, orange on a 4-frame scale, red on 8, the IRQ span
+light blue — with the numbers (cycles, % of a frame, lines), and in the side
+panel last / min / max / mean, the IRQ cycles inside the last section, a
+history. **The frame is the machine's**, 20280 cycles on PAL, in video
+cycles: FT divides by the NTSC 17030 everywhere. POM2's own interrupt load
+per frame stays beside it — measured from each handler's entry to its RTI,
+no marker needed — and the legend now says how the two differ.
+
+**Every other FT item re-read against the source**, line by line, and the
+DEV table lists each difference: the rails' sampling and placement, the
+video-rail conditions (FT misses mixed-mode 80-column text, lights AUX on
+DHIRES without 80COL), the opcode-only execution, the debugger-mode-only
+recording, the monitor's stale stamps and NTSC frame. **FT's own palette is
+one choice away** (View ▸ Palette ▸ AppleWin FT): pure primaries ORed over
+the bits-set grey, a linear fade, pinned bit for bit. FT's split-view page
+pane already exists elsewhere in POM2 (the Paint editor's Monitor box).
+
+**A map that never loses a byte.** At the fit a byte is ~1 × 2.5 px: nearest
+sampling dropped or doubled bytes, so an isolated access could vanish, and
+POM2's `00 FF` power-on fill came out as a moiré of vertical stripes. Below a
+pixel a byte the map is now max-pooled to one texel a screen pixel — per
+kind, the hottest byte of each pixel wins — while the grey background is
+low-passed (it is texture, not heat); fresh accesses glow for a few frames.
+And the map is drawn through the backend's nearest sampler: the OpenGL3
+backend binds a LINEAR sampler object on GL 3.3+, which overrides a
+texture's own GL_NEAREST.
+
+**Easier to use, and to find one byte.** One toolbar row: the mode as a
+segmented control, the four kinds as coloured chips that are the legend, the
+fade, Clear / Freeze / PNG, a View popup with every other option (the saved
+options still load), Go to with Back / Forward. A status line always names
+the byte under the pointer or the selection — `MAIN › HGR1 › $2A13`, bank,
+label, value, its last access of each kind — and **where it is on the
+screen**: text row and column (and the 80-column one), hi-res line, byte and
+dots, the DHGR half. Go to an address, `bank:$addr`, a label or a hottest
+byte zooms until the value is readable, centres and rings it; Alt+Left /
+Right walk back. The debugger's labels are drawn on their bytes when zoomed
+in, as a marker that hides no value (the full name on the hovered or
+selected byte); zoomed in, the region names move to the left gutter; a
+translucent minimap shows where the view is, moves it, steps out of the
+selection's way and folds to a pill; F freezes, C clears.
+Calmer: a neutral canvas, the bits-set grey dimmed, region names faint until
+hovered, column titles over their own column at any zoom (they used to read
+"ROM & I/O" above MAIN once zoomed). The probe now loads the app's fonts
+(`UiFonts.cpp`, moved out of `main.cpp`), so its PNGs show the icons instead
+of "?". An open window costs the UI thread 3-4 ms a frame at 1500 × 860,
+measured with other builds loading the machine (DEV § Memory heatmap).
+
+## 2026-11-28 — A memory heatmap; the Paint editor as a page monitor; 7M LORES
+
+**Tools ▸ Memory Heatmap (UI-022).** fenarinarsa's heatmap from French
+Touch's AppleWin fork (branch `extended_debugger`, `Debugger_Heatmap.cpp`;
+upstream AppleWin has only its empty stubs), asked for by GROUiK, in a
+window of its own while the machine runs. **As FT draws it**: one pixel a
+byte, a row a page, MAIN and AUX side by side with $0000 at the bottom, red
+written, blue read, green executed, fading with age over a background lit
+by each byte's bits set, the language card's $D000 bank 1 in the $C0 rows,
+and FT's rails — where the CPU reads (blue) and writes (red) now, page by
+page, and in white the pages the video shows — plus its IRQ bar as an
+interrupt-load histogram. **Exhaustive where FT was not**: a ROM & I/O
+column ($C000-$FFFF: soft switches, slot ROMs, BASIC, Monitor), the two
+$D000 banks apart from the ROM, every RamWorks bank, a card's DMA (SoftCard
+Z80) in amber, and the debugger's own pokes left out. **To find one byte**:
+wheel zoom down to the byte with its value in the cell, drag to pan, rows
+filling the window's height, address axes, named regions, a crosshair, a
+loupe in the tooltip, Go to an address / `bank:$addr` / label. Click a byte
+and the inspector gives its CPU address and bank, region, label, soft-switch
+name, value, and for each kind of access when, how often and by which
+instruction (one click to the listing); arrows move it. Shift-drag a range
+and break on its writes or reads in that bank — "does my code write where it
+must not" stops at the first faulty write; right click for BP / BPMR / BPMW
+/ Watch qualified by the bank. Recent or cumulative, the hottest bytes since
+Clear, Freeze (the picture, not the machine), PNG, options kept between
+sessions (`memory_heatmap_options`). **Closed, it costs nothing**: attached
+only while the window is open, it rides the two diversions the watchpoints
+already use, so not one instruction was added to either hot path
+(`pom2_bench` hashes identical). Open: 3.5x the bench's time, ~49x real
+time; 1.3 ms a UI frame (DEV § Memory heatmap). Pinned by `memory_heatmap`
+(the HGR-clear acceptance case in MAIN and in AUX, every bank in its plane,
+who made the access, the FT colours and rails, layout, zoom, options);
+`heatmap_ui_probe` (`make probes`) drives the real window off screen with
+its own mouse and saves each step as a PNG.
+
+**The Paint editor is a page monitor too.** A *Monitor* box on its page row
+turns it into a read-only view of any video page while the program runs —
+HGR / GR / DHGR / DLGR, and now TEXT (40 or 80 columns, the machine's own
+font) — that writes nothing: the editor's page buttons drive the machine's
+soft switches so the screen follows the canvas, the monitor's never do. It
+can follow the page on screen or the one behind it, where a double-buffered
+program draws its next frame (PAGE2 picks the scanned page only with
+80STORE off, [B] Sather, *Understanding the Apple IIe*, Table 8.7; pinned in
+`dhgr_paint_model`). The idea is fenarinarsa's page monitor, from the same
+fork; the editor already did most of it.
+
+**7M LORES.** LORES graphics with AN3 low and 80COL off is a mode of its
+own, which POM2 drew as an ordinary lo-res: [B] Sather, *Understanding the
+Apple IIe*, p. 8-22 — "an abnormal undelayed 7M LORES mode", the lo-res
+pattern shifted at HIRES40 speed, fragmented except 0000 / 0101 / 1010 /
+1111, which come out black, violet-green, green-violet and white. Drawn now
+as the undelayed HGR bytes the shift register sees, in every pipeline
+(`Apple2Display_LoRes7M.cpp`); [D] AppleWin builds the same bytes, MAME
+leaves a TODO there. The bit order inside the 7 MHz load is [F] until a
+capture of Accurapple's `multi_mode.s` TEST 8 on a real //e. Pinned by
+`dlgr_render_smoke`. This was the open question from French Touch's fork
+inventory: Sather settles it.
+
 ## 2026-11-28 — Le Chat Mauve, checked against its sources; the latch as the hardware keeps it
 
 The Chat Mauve notes were re-verified against the primary sources (the

@@ -28,11 +28,13 @@
 //     be identical).
 
 #include "Apple2Display.h"
+#include "Apple2VideoDecode.h"
 #include "Memory.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 constexpr uint16_t CLR_TEXT  = 0xC050;
@@ -173,6 +175,72 @@ int main()
                    && "uniform DLGR fill must demodulate column-uniform "
                       "(period-28 exact)");
         }
+    }
+
+    // ── 7M LORES: the same switches with 80COL OFF ───────────────────────
+    // [B] Sather, Understanding the Apple IIe, p. 8-22: LORES40 GRAPHICS with
+    // 80COL reset and AN3 low shifts the lo-res pattern at HIRES40 speed,
+    // undelayed. Sather's own checks first: 0000 black, 1111 white, 0101
+    // violet in even columns and green in odd ones (HGR $55 at each), 1010
+    // the other way ($2A at each).
+    {
+        using pom2::a2v::sevenMLoresByte;
+        assert(sevenMLoresByte(0x0, 0) == 0x00 && sevenMLoresByte(0x0, 1) == 0x00);
+        assert(sevenMLoresByte(0xF, 0) == 0x7F && sevenMLoresByte(0xF, 1) == 0x7F);
+        assert(sevenMLoresByte(0x5, 0) == 0x55 && sevenMLoresByte(0x5, 1) == 0x55);
+        assert(sevenMLoresByte(0xA, 0) == 0x2A && sevenMLoresByte(0xA, 1) == 0x2A);
+        // Any other pattern fragments: 0001 lights one dot pair of four.
+        assert(sevenMLoresByte(0x1, 0) == 0x11 && sevenMLoresByte(0x1, 1) == 0x44);
+
+        // A screen of mixed nibbles in 7M LORES draws exactly what an
+        // undelayed HGR page holding those bytes draws, in every pipeline.
+        auto setup = [](Memory& m, bool hires, bool an3Low) {
+            m.setIIEMode(true);
+            m.memRead(CLR_TEXT);
+            m.memRead(hires ? 0xC057 : CLR_HIRES);
+            m.memRead(SET_PAGE1);
+            m.memWrite(0xC00C, 0);                       // 80COL OFF
+            m.memRead(an3Low ? DHIRES_ON : 0xC05F);
+        };
+        Memory lo, hgr, plain;
+        setup(lo, false, true);
+        setup(hgr, true, true);                          // undelayed HGR40
+        setup(plain, false, false);                      // ordinary lo-res
+        for (uint16_t a = 0x0400; a < 0x0800; ++a) {
+            const uint8_t v = static_cast<uint8_t>((a * 37u + 0x5A) & 0xFF);
+            lo.memWrite(a, v);
+            plain.memWrite(a, v);
+        }
+        for (int y = 0; y < 192; ++y) {
+            uint8_t row[40];
+            pom2::a2v::buildSevenMLoresRow(lo.data(),
+                Apple2Display::textRowAddress(y / 8, false), y, row);
+            for (int c = 0; c < 40; ++c)
+                hgr.memWrite(static_cast<uint16_t>(0x2000 + (y & 7) * 0x400 + ((y >> 3) & 7) * 0x80
+                                                   + (y >> 6) * 0x28 + c),
+                             row[c]);
+        }
+        using HM = Apple2Display::HiResMode;
+        for (HM mode : { HM::ColorNTSC, HM::ColorComp4Bit, HM::MonoWhite,
+                         HM::ColorCompositeOE }) {
+            Apple2Display a, b, c;
+            a.setHiResMode(mode); b.setHiResMode(mode); c.setHiResMode(mode);
+            a.render(lo); b.render(hgr); c.render(plain);
+            assert(a.width() == b.width() && a.height() == b.height());
+            const size_t n = static_cast<size_t>(a.width()) * a.height();
+            assert(std::memcmp(a.pixels(), b.pixels(), n * 4) == 0 &&
+                   "7M LORES must draw the shift register's undelayed HGR bytes");
+            if (a.width() == c.width())
+                assert(std::memcmp(a.pixels(), c.pixels(), n * 4) != 0 &&
+                       "and differ from the ordinary 14 MHz lo-res");
+            if (mode == HM::ColorCompositeOE) {
+                assert(a.signalProduced() && b.signalProduced());
+                assert(std::memcmp(a.signal(), b.signal(), 560u * 192u) == 0 &&
+                       "the composite signal too");
+            }
+        }
+        // 80COL ON with AN3 low stays double lo-res (the block above).
+        std::printf("  7M LORES (Sather 8-22) OK\n");
     }
 
     std::printf("dlgr_render_smoke OK\n");

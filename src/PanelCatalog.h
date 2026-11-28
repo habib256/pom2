@@ -87,6 +87,7 @@ enum class PanelId : std::size_t {
     Rewind, Mouse, NoSlotClock,
     Crt, CardMonitor, Voxel, VoxelSettings,
     MemViewer, Debugger, ScreenInspector, Watch, MemBar, MemBarH, MemGrid,
+    MemHeatmap,
     HgrPaint, HgrSprite, AiControl,
     Welcome, RomStatus, Abstraction,
     Count,
@@ -266,6 +267,10 @@ inline constexpr PanelInfo kPanelCatalog[] = {
 { PanelId::MemGrid, "panel.memgrid", "Memory Map Grid", PanelGroup::Tools,
   "show_memgrid", nullptr,
   "Page-per-cell grid: RAM, ROM, aux, language card, slot ROM." },
+{ PanelId::MemHeatmap, "panel.memheatmap", "Memory Heatmap", PanelGroup::Tools,
+  "show_memheatmap", nullptr,
+  "One pixel per byte: red written, blue read, green executed, fading\n"
+  "with age. Open, every access takes the slow path; closed, it costs nothing." },
 
 // ── Tools ───────────────────────────────────────────────────────────────
 { PanelId::HgrPaint, "panel.hgrpaint", "HGR Paint Editor", PanelGroup::Tools,

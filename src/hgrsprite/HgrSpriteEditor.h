@@ -94,6 +94,7 @@ private:
     Tool tool = Tool::Pencil;
     hgrpaint::HgrColor color_ = hgrpaint::HgrColor::White;
     int  zoom_ = 14;                      // canvas pixels per sprite pixel
+    float pinchAcc_ = 0.0f;               // pinch not yet a whole step (ln)
     bool showGrid_ = true;
 
     // Where a Stamp / preview places the sprite on the live page.

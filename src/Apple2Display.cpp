@@ -590,6 +590,7 @@ void Apple2Display::render(Memory& mem)
     // picture replaces this frame entirely (renderCardPicture, Apple2Display.h).
     if (renderCardPicture(mem, state)) return;
     BeamTimeRam beamRam(*this, mem, events);   // after the card: see _Beam.cpp
+    computeBurstResponse(mem, events);         // per-line colour burst (_Burst.cpp)
     // Whether the 32-row text band needs patching is NOT a property of the
     // frame's final state, and it is not "any band was mixed graphics"
     // either. It is exactly: did fillCompositeSignal leave scanlines
@@ -713,20 +714,9 @@ void Apple2Display::render(Memory& mem)
         if (mixedBandLeftBlack_)
             patchMixedTextBand(mem, state, events);
     }
+    finishBurstFrame(mem, events, state);   // the per-line burst (_Burst.cpp)
 }
 
-// CPU port of the OpenEmulator demod shader (NtscPostProcessor's demod-only
-// fragment shader). Same Y/U/V recovery, YUV→RGB matrix, subcarrier phase
-// AND user knobs (hue rotation, chroma-bandwidth sharpness blend, PAL
-// line-phase alternation via setOeDemodParams) as the GPU path, run on the
-// CPU into frame80 — any edit here must be mirrored in the GLSL
-// (NtscPostProcessor.cpp kFragmentShader) and re-pinned by
-// oe_demod_gpu_cpu_parity. CRT glass (scanlines / mask / barrel /
-// persistence) is layered on afterward by CrtEffectStack when enabled.
-//
-// Optimised: the tap weights depend only on the tap offset i, and the
-// subcarrier sin/cos depend only on (x+i) mod 4 — both hoisted out of the
-// per-pixel loop, so the inner loop is mul/add only (no trig per pixel).
 void Apple2Display::finishPendingCpuDemod()
 {
     if (pendingCpuDemodRows_ <= 0) return;
@@ -757,98 +747,6 @@ void Apple2Display::demodCompositeForCapture()
     // of skipping and leaving the capture's pixels up — a /screen taken on a
     // motionless TEXT screen used to soften it until the guest touched a byte.
     scheduleCpuDemodInto80(kSignalHeight);
-}
-
-void Apple2Display::renderCompositeOeCpu(int rows)
-{
-    constexpr float kPi = 3.14159265358979f;
-    constexpr int   N = 8;
-    const int   sw = kSignalWidth;                       // 560
-    const int   sh = std::min(rows, kSignalHeight);     // ≤ 192 (per-row FIR)
-    const uint8_t* sig = signalBuf.data();
-
-    // OpenEmulator-exact 17-tap FIR kernels (Dolph-Chebyshev(50 dB) × sinc,
-    // realIDFT recipe — see NtscPostProcessor.cpp for the GPU twin and the
-    // libemulation provenance). lumaK: 2.0 MHz, sum 1, notches fs/4
-    // (|H(0.25)| ≈ 0.002). chromaSoft: OE-faithful 0.6 MHz, sum 2 (the ×2
-    // demod gain) — the neutral kernel at Sharpness 0.5. chromaSharp: the
-    // 2.0 MHz kernel × 2, blended in over the upper half of the Sharpness
-    // slider exactly like the GPU shader's mix(). Symmetric, [0]=centre.
-    static const float lumaK[N + 1] = {
-        0.27941f, 0.23593f, 0.13462f, 0.03665f, -0.01538f,
-        -0.02210f, -0.00999f, -0.00072f, 0.00130f
-    };
-    static const float chromaSoft[N + 1] = {
-        0.26030f, 0.24788f, 0.21373f, 0.16602f, 0.11509f,
-        0.07008f, 0.03648f, 0.01543f, 0.00515f
-    };
-    static const float chromaSharp[N + 1] = {
-        0.55882f, 0.47185f, 0.26923f, 0.07331f, -0.03077f,
-        -0.04421f, -0.01999f, -0.00144f, 0.00259f
-    };
-    // Chroma-bandwidth sharpness: 0.5 = neutral (pure soft kernel); only the
-    // upper half of the slider blends toward the sharper 2.0 MHz kernel —
-    // same clamp + mix as the GPU shader.
-    const float sharp =
-        std::clamp((oeDemod_.sharpness - 0.5f) * 2.0f, 0.0f, 1.0f);
-    float chromaK[N + 1];
-    for (int a = 0; a <= N; ++a)
-        chromaK[a] = chromaSoft[a] + (chromaSharp[a] - chromaSoft[a]) * sharp;
-    // OpenEmulator demod: chroma = composite·(sin φ, cos φ) → U,V; YUV→RGB
-    // matrix below. The subcarrier table is built at the four raw phases
-    // π/2·k; signalPhaseOffset_ enters ONCE, at the index `k = (xi+po)&3`
-    // below — matching MAME's rotl4(absX + offset) (apple2video.cpp DHGR
-    // is_80_column → absX+1) and the AppleWin LUT path
-    // (AppleWinNtsc.cpp renderLine: `lut[(x + phase) & 3]`). Baking the
-    // offset into the table AND the index applied it twice (2·po) and
-    // rotated every DHGR hue by 90° (N=1 demodulated green, not the MAME
-    // dark blue). Probe-verified against the MAME-LUT render for the four
-    // aligned nibble patterns (see dhgr_phase_signal_test).
-    float sinP[4], cosP[4];
-    for (int k = 0; k < 4; ++k) {
-        const float ph = kPi * 0.5f * static_cast<float>(k);
-        sinP[k] = std::sin(ph);
-        cosP[k] = std::cos(ph);
-    }
-    // Optional hue rotation in the U/V plane (user knob) — same convention
-    // as the GPU shader: h = uHue·π, applied AFTER the PAL V sign.
-    const float hueCs = std::cos(oeDemod_.hue * kPi);
-    const float hueSn = std::sin(oeDemod_.hue * kPi);
-
-    for (int y = 0; y < sh; ++y) {
-        const uint8_t* row = sig + static_cast<size_t>(y) * sw;
-        uint32_t* outRow = frame80.data() + static_cast<size_t>(y) * kWidth80;
-        // PAL line-phase alternation: the GPU shader multiplies every V tap
-        // by ±1 per line; the sign is constant across a row, so applying it
-        // to the accumulated V below is identical.
-        const float vSign = (oeDemod_.palMode && (y & 1)) ? -1.0f : 1.0f;
-        const int rowPhase = signalPhaseRow_[static_cast<std::size_t>(y)];
-        for (int x = 0; x < sw; ++x) {
-            float Y = 0.0f, U = 0.0f, V = 0.0f;
-            for (int i = -N; i <= N; ++i) {
-                const int xi = x + i;
-                if (xi < 0 || xi >= sw) continue;
-                const float s = row[xi] ? 1.0f : 0.0f;
-                const int   k = (xi + rowPhase) & 3;
-                const int   a = i < 0 ? -i : i;
-                Y += s * lumaK[a];                // FIR luma (sum=1, notches fs/4)
-                U += s * sinP[k] * chromaK[a];    // FIR chroma (sum=2 → ×2 gain)
-                V += s * cosP[k] * chromaK[a];
-            }
-            V *= vSign;
-            const float Ur = U * hueCs - V * hueSn;
-            const float Vr = U * hueSn + V * hueCs;
-            // YUV → RGB (OpenEmulator libemulation OpenGLCanvas.cpp).
-            float r = Y                  + 1.139883f * Vr;
-            float g = Y - 0.394642f * Ur - 0.580622f * Vr;
-            float b = Y + 2.032062f * Ur;
-            auto cl = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
-            const uint32_t R = static_cast<uint32_t>(cl(r) * 255.0f + 0.5f);
-            const uint32_t G = static_cast<uint32_t>(cl(g) * 255.0f + 0.5f);
-            const uint32_t B = static_cast<uint32_t>(cl(b) * 255.0f + 0.5f);
-            outRow[x] = (static_cast<uint32_t>(0xFF) << 24) | (B << 16) | (G << 8) | R;
-        }
-    }
 }
 
 // ─── Text mode ────────────────────────────────────────────────────────────
@@ -1422,6 +1320,10 @@ void Apple2Display::renderLoRes(Memory& mem, const Memory::DisplayState& state,
     col0 = std::max(0, col0);
     col1 = std::min(40, col1);
     if (col0 >= col1) return;
+    if (sevenMLores(mem, state) && !(hiResMode == HiResMode::ChatMauveRGB && chatMauve)) {
+        renderSevenMLores(mem, state, firstRow, lastRow, col0, col1, clipY0, clipY1);
+        return;
+    }
     // Lo-res draws 40 columns × 48 rows of 7×4 colour blocks. Each text
     // byte stores TWO blocks: low nibble is the upper block, high nibble
     // the lower one.
@@ -1703,7 +1605,8 @@ void Apple2Display::renderHiRes(Memory& mem, const Memory::DisplayState& state,
 
         for (int y = firstScanline; y < lastScanline; ++y) {
             const uint16_t rowAddr = hgrRowAddress(y, videoHgrPage2(state));
-            buildHgrWordRow(ram, rowAddr, words, bit7Mask);
+            if (hgrRowsOverride_) buildHgrWordRow(hgrRowsOverride_ + y * 40, 0, words, bit7Mask);
+            else                  buildHgrWordRow(ram, rowAddr, words, bit7Mask);
 
             uint32_t* outRow = frame.data() + static_cast<size_t>(y) * kWidth;
             HgrRowCache& rc = hgrRowCache_[static_cast<size_t>(y)];
@@ -1786,6 +1689,8 @@ void Apple2Display::renderMonoGraphics(Memory& mem, const Memory::DisplayState& 
         if (state.hiRes) {
             buildBitStream(mem.data(), hgrRowAddress(y, videoHgrPage2(state)), stream,
                            state.dhgr ? uint8_t{0x7F} : uint8_t{0xFF});
+        } else if (sevenMLores(mem, state)) {
+            sevenMLoresStream(mem, state, y, stream);
         } else {
             const uint16_t rowAddr = textRowAddress(y / 8, videoTextPage2(state));
             for (int x = 0; x < kWidth80; ++x) {
@@ -2425,6 +2330,21 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
     // emitters (no NTSC artifact window: the shader demodulates downstream), so
     // the horizontal mid-scanline split lands in the OE/AppleWin demod picture
     // too, not just the RGBA framebuffer.
+    // The MIXED band. NTSC with Sharp text off: its text dots go INTO the
+    // signal and demodulate with the line's burst (Apple2Display_Burst.cpp —
+    // the burst is on during MIXED text, Sather IIe p. 8-16). Otherwise it
+    // stays black and crisp text is composited after demod (patchMixedTextBand).
+    auto mixedBand = [&](int scanY0, int scanY1, int col0, int col1) {
+        if (!mixedTextDots_) { mixedBandLeftBlack_ = true; return; }
+        const int y0 = std::max(scanY0, kMixedTextFirstScanline);
+        const bool t80 = mem.isIIE() && state.eightyCol;
+        int lo = 0, hi = 0;
+        setSignalPhase(t80 ? 1 : 0, y0, scanY1);
+        if (bandRows(y0, scanY1, 20, 24, &lo, &hi)) {
+            if (t80) paintText80(lo, hi, col0, col1, y0, scanY1);
+            else     paintText40(lo, hi, col0, col1, y0, scanY1);
+        }
+    };
     auto paintSignalBand = [&](int scanY0, int scanY1, int col0, int col1) {
         int lo = 0, hi = 0;
         if (state.textMode) {
@@ -2455,14 +2375,21 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
                 const int brLo = lo / 4;
                 const int brHi = (hi + 3) / 4;
                 if (isDlgr) paintLoResDouble(brLo, brHi, col0, col1, lo, hi);
-                else        paintLoRes40(brLo, brHi, col0, col1, lo, hi);
+                else if (sevenMLores(mem, state)) {
+                    uint8_t stream[kStreamLen];
+                    for (int y = lo; y < hi; ++y) {
+                        sevenMLoresStream(mem, state, y, stream);
+                        uint8_t* dst = signalBuf.data() + static_cast<size_t>(y) * kSignalWidth;
+                        for (int x = col0 * 14; x < col1 * 14; ++x) dst[x] = stream[x] ? 0xFFu : 0x00u;
+                    }
+                } else      paintLoRes40(brLo, brHi, col0, col1, lo, hi);
             }
             // Mixed-mode text band stays black — crisp mono text is composited
             // after demod (patchMixedTextBand), same as HGR mixed. Say so, so
             // render() can gate the patch on the rows actually blanked rather
             // than on the frame's final soft-switch state.
             if (state.mixedMode && scanY1 > kMixedTextFirstScanline)
-                mixedBandLeftBlack_ = true;
+                mixedBand(scanY0, scanY1, col0, col1);
             return;
         }
         // Hi-res — DHGR variant when on IIe with 80COL + DHIRES, else HGR.
@@ -2474,9 +2401,9 @@ bool Apple2Display::fillCompositeSignal(Memory& mem,
         if (bandScanlines(scanY0, scanY1, 0, hiResEnd, &lo, &hi)) {
             if (isDhgr) paintDhgr(lo, hi, col0, col1); else paintHgr(lo, hi, col0, col1);
         }
-        // Mixed-mode text band: see lo-res note above — left black here.
+        // Mixed-mode text band: see lo-res note above (mixedBand).
         if (state.mixedMode && scanY1 > kMixedTextFirstScanline)
-            mixedBandLeftBlack_ = true;
+            mixedBand(scanY0, scanY1, col0, col1);
     };
 
     if (!beamRace) {                 // full frame, in beam-time RAM bands

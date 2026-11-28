@@ -385,10 +385,26 @@ both checks equal to their frames). **Not done:** a recorder in the GUI
 
 ## UI-022 — Memory heatmap
 
-**Priority:** first (owner, 2026-11-27) · **State:** Planned. Requested by
-GROUiK (French Touch) on 2026-11-27; fenarinarsa wrote the same tool into
-French Touch's AppleWin fork (v1.29.15v100FT, `Debugger_Heatmap.cpp`,
-`CPU/cpu_heatmap.inl`, 2020), which never reached upstream AppleWin.
+**Priority:** first (owner, 2026-11-27) · **State:** DONE 2026-11-28 —
+phases 1 and 2 (`MemoryHeatmap`, `MemoryHeatmapView`, `MemoryHeatmap_ImGui`,
+DEV § Memory heatmap, CHANGELOG 2026-11-28, test `memory_heatmap`, probe
+`heatmap_ui_probe`), then finished the same day on the owner's second pass
+("exhaustive against FT, easier, calm, one byte findable"): FT's Monitoring
+Card protocol ($C066-$C069, `CycleMonitor.h`) and its two bars, every other
+FT item re-read at commit 52ddd021 with the differences tabled in DEV, FT's
+exact palette as an option, a max-pooled alias-free map with a glow, one
+toolbar row + a View popup, a status line with the screen position of a
+byte, Go to / hottest jumps that zoom to readable with Back / Forward, the
+debugger's labels on the map, a minimap, F / C keys. Left open: the map
+across the rewind history (a rewind clears it). FT's split-view page pane is
+not here: the HGR Paint editor's Monitor box does that job. Built from the source itself: github.com/Fr3nchT0uch/AppleWin,
+branch `extended_debugger`, `source/Debugger/Debugger_Heatmap.cpp` and
+`source/CPU/cpu_heatmap.inl` (Cyril Lambin / fenarinarsa, 2020) — upstream
+AppleWin carries only the empty stubs of `cpu_heatmap.inl`, not the tool.
+Requested by GROUiK (French Touch) on 2026-11-27. The bank of an access is
+`Memory::debugBank`'s, asked on every access while the window is open (not
+precomputed per page: the open window's cost is measured in DEV and stays
+~49x real time).
 
 A live map of every address: one pixel per byte, 256 x 256 per bank, red
 for a write, blue for a read, green for an execution, fading with the age
@@ -420,3 +436,31 @@ across the rewind history.
 1 lights exactly `$2000-$3FFF` red in the bank `80STORE`/`RAMWRT` selects,
 and the cost of the open window is measured and written in DEV.md.
 
+
+<a id="ui-023"></a>
+
+## UI-023 — Disk view: where the head is, what it reads
+
+**Priority:** 🟢 · **State:** Idea, to design (owner, 2026-11-28).
+
+A window that shows a mounted disk the way the drive sees it, live: the
+platter as a disk (tracks as rings, quarter-tracks for a 5.25"; the 80
+tracks × 2 sides of a 3.5", their five speed zones), the head's position on
+it (phase / quarter-track, side), the angular position under the head as the
+disk turns, and what passes under it — the nibble / bit-cell stream, the
+address and data fields as they are recognised (D5 AA 96 / D5 AA AD, volume,
+track, sector), sync runs, and which sectors were read or written and when
+(fading, as the memory heatmap does). Reads and writes in different colours;
+a damaged or unreadable field marked. Useful for following a loader (a
+fast-loader's track order, a protection's half-tracks, a spiral), and for
+saying why a disk does not boot.
+
+Sources it would read, all present: `DiskIICard` (phases, quarter-track,
+motor, LSS read/write state), `DiskImage` (WOZ bit streams, the angular
+position — STORAGE-018's drifting platter), `IWMDevice` + `Sony35Drive`
+(3.5" side, zone, head), the floppy-sound stamps for seeks. Same cost rule
+as the heatmap: nothing on the hot path while the window is closed.
+
+**Acceptance criterion:** to be written with the design — at least: booting
+DOS 3.3 shows the head go to track 0 then 17 (the catalog), and the sectors
+of each read light in the order RWTS reads them.

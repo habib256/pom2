@@ -138,7 +138,7 @@ namespace pom2 {
     enum class CharRomLocale : uint8_t;
 }
 class MemoryViewer_ImGui;
-namespace pom2 { class Debugger_ImGui; }
+namespace pom2 { class Debugger_ImGui; class MemoryHeatmap_ImGui; }
 namespace pom2 { class ScreenInspector_ImGui; }
 class Pom2HgrPaintHost;
 class Pom2SfxHost;
@@ -423,6 +423,7 @@ private:
     /// makes live in Debugger_ImGui — MainWindow only owns it and shows it.
     std::unique_ptr<pom2::Debugger_ImGui>        debuggerPanel;
     std::unique_ptr<pom2::ScreenInspector_ImGui> screenInspector_;
+    std::unique_ptr<pom2::MemoryHeatmap_ImGui>   memHeatmap_;
     int screenRenderedFrame_ = -1;   ///< ImGui frame of the last display render
     std::unique_ptr<pom2::Settings>               settings;
     std::unique_ptr<pom2::CassetteDeck_ImGui>     cassetteDeck;

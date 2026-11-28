@@ -286,7 +286,7 @@ public:
     struct OeDemodParams {
         float hue       = 0.0f;   // -0.5..+0.5 → ±π U/V rotation
         float sharpness = 0.5f;   // 0.5 = neutral OE 0.6 MHz chroma kernel
-        bool  palMode   = false;  // line-phase alternation (V sign per line)
+        bool  palMode   = false;  // PAL delay line: chroma averaged with the line before
         bool  textSharp = true;   // true = crisp framebuffer TEXT (no demod)
     };
     void setOeDemodParams(const OeDemodParams& p) { oeDemod_ = p; }
@@ -301,6 +301,21 @@ public:
     /// never says keeps the inference (tests, the SDK).
     void setMachineRunning(bool running) { machineRunning_ = running; }
     const OeDemodParams& getOeDemodParams() const { return oeDemod_; }
+
+    /// Which board's colour-burst gate (ColourBurst.h BurstRules): the //e's
+    /// (also the //c's and a Revision 7+ ][+), a ][ before Revision 7, or a
+    /// Revision 0 ][ with no killer. Set by the profile switch; atomic
+    /// because the AI server's /screen renders on its own thread.
+    enum class BurstBoard : std::uint8_t { IIe = 0, IIPreRev7 = 1, IIRev0 = 2 };
+    void setBurstBoard(BurstBoard b) { burstBoard_.store(static_cast<std::uint8_t>(b)); }
+    /// The monitor's answer (BurstMonitor.h pom2::LineChroma) for each
+    /// visible line's graphics dots in the last render(), and the byte
+    /// columns that showed graphics there (bit c = column c). For tests and
+    /// inspectors; Apple2Display_Burst.cpp.
+    std::uint8_t lineChroma(int y) const
+    { return (y >= 0 && y < kHeight) ? lineChroma_[static_cast<std::size_t>(y)] : 0; }
+    std::uint64_t lineGraphicsColumns(int y) const
+    { return (y >= 0 && y < kHeight) ? lineGfxCols_[static_cast<std::size_t>(y)] : 0; }
 
     /// Display state consumed by the most recent render() — the *published*
     /// frame's soft-switch snapshot, captured under the caller's stateMutex.
@@ -555,6 +570,24 @@ private:
     // has blanked rows).
     bool mixedBandLeftBlack_ = false;
     OeDemodParams oeDemod_{};
+    // ── Colour burst per scanline (Apple2Display_Burst.cpp; the silicon in
+    //    ColourBurst.h, the monitor in BurstMonitor.h). Display-owned,
+    //    computed in render() under the caller's lock, read by the deferred
+    //    OE-CPU demod like signalBuf.
+    std::array<std::uint8_t, kHeight>  lineChroma_{};    // pom2::LineChroma
+    std::array<std::uint64_t, kHeight> lineGfxCols_{};   // graphics byte columns
+    std::array<float, kHeight> demodUGain_{};            // OE demod, per row
+    std::array<float, kHeight> demodVGain_{};
+    std::array<std::uint64_t, kHeight> demodChromaCut_{};  // PAL text columns, per row
+    std::array<float, kHeight> demodRelV_{};             // R-Y before the delay line
+    std::array<std::uint8_t, kHeight> demodLumaWide_{};  // PAL trap out: no 3.56 notch
+    bool burstAllNormal_   = true;    // nothing below differs from colour as usual
+    bool burstDemodTouched_ = false;  // some demod row is not (1, 1, no cut)
+    bool mixedTextDots_    = false;   // NTSC + Sharp text off: band demodulated
+    std::atomic<std::uint8_t> burstBoard_{0};
+    void computeBurstResponse(Memory& mem, const std::vector<Memory::VideoEvent>& events);
+    void finishBurstFrame(Memory& mem, const std::vector<Memory::VideoEvent>& events,
+                          const Memory::DisplayState& state);
     Memory::DisplayState lastRenderState_{};
 
     // ── Stopped-machine soft switches ───────────────────────────────────
@@ -695,6 +728,10 @@ private:
         std::array<uint32_t, 280> out;
     };
     std::array<HgrRowCache, 192> hgrRowCache_{};
+    // renderHiRes reads its rows from here while non-null (192 × 40 bytes):
+    // the 7M LORES path hands it the bytes the shift register sees.
+    const uint8_t* hgrRowsOverride_ = nullptr;
+    std::array<uint8_t, 192 * 40> sevenMRows_{};
     /// Publishes this frame's candidate key. Called on every exit from
     /// render() (RAII), so a future early return cannot leave the previous
     /// frame's key describing pixels that have since been repainted.
@@ -783,6 +820,16 @@ private:
                            int clipY0 = 0, int clipY1 = kHeight);
     void renderHiRes (Memory& mem, const Memory::DisplayState& state,
                       int firstScanline, int lastScanline, int col0 = 0, int col1 = 40);
+    // 7M LORES (Apple2Display_LoRes7M.cpp): a //e in lo-res graphics with
+    // 80COL off and AN3 low shifts the lo-res pattern at HIRES40 speed —
+    // [B] Sather, Understanding the Apple IIe, p. 8-22. Drawn as the
+    // undelayed HGR bytes the shift register sees (sevenMLoresByte).
+    static bool sevenMLores(const Memory& mem, const Memory::DisplayState& state);
+    void renderSevenMLores(Memory& mem, const Memory::DisplayState& state,
+                           int firstRow, int lastRow, int col0, int col1,
+                           int clipY0, int clipY1);
+    void sevenMLoresStream(const Memory& mem, const Memory::DisplayState& state,
+                           int y, uint8_t (&stream)[560]) const;
     // Single HGR under a Le Chat Mauve / Video-7 card, at the card's native
     // 560-dot output (each HGR dot = 2 frame80 dots). `hm` is what the card
     // makes of the switches (LeChatMauveCard::hgrMode): the LCM colour rule

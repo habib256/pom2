@@ -83,6 +83,8 @@ cli_runner
 clock_card_dos_driver
 clock_card_smoke
 cmos_6502_smoke
+colour_burst
+colour_burst_pipelines
 controller_mode_races
 corpus_bless
 corpus_ci
@@ -304,6 +306,7 @@ media_source
 media_write_default
 mem_paging_latch_snapshot
 memory_cpu_view
+memory_heatmap
 memory_viewer_write_lock
 mixed_band_beam_split
 mockingboard_4am_detect_smoke
@@ -338,6 +341,7 @@ phasor_card_smoke
 phasor_mode_scale_timeline
 phasor_timeline
 phosphor_decay_zero
+pinch_zoom_policy
 pom2_core_api
 pom2_core_harness
 pom2_core_hdd

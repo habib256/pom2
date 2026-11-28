@@ -27,6 +27,7 @@
 #include "Logger.h"
 #include "Memory.h"
 #include "NativeFileDialog.h"
+#include "PinchZoom_ImGui.h"
 
 #include <algorithm>
 #include <cstring>
@@ -287,14 +288,16 @@ void Pom2HgrPaintHost::renderScratch(ScratchMode m, const uint8_t* main8k,
     ensureScratch();
 
     if (!scratchStaged_ || scratchMode_ != m) {
-        const bool dbl   = (m == ScratchMode::Dhgr || m == ScratchMode::Dlgr);
+        const bool text  = (m == ScratchMode::Text40 || m == ScratchMode::Text80);
+        const bool dbl   = (m == ScratchMode::Dhgr || m == ScratchMode::Dlgr ||
+                            m == ScratchMode::Text80);
         const bool hires = (m == ScratchMode::Hgr || m == ScratchMode::Dhgr);
-        scratch_->memWrite(0xC050, 0);             // GRAPHICS
+        scratch_->memWrite(text ? 0xC051 : 0xC050, 0);   // TEXT / GRAPHICS
         scratch_->memWrite(0xC052, 0);             // full screen
         scratch_->memWrite(0xC054, 0);             // page 1 (pages share layout)
         scratch_->memWrite(hires ? 0xC057 : 0xC056, 0);
         scratch_->memWrite(dbl ? 0xC00D : 0xC00C, 0);   // 80COL
-        scratch_->memWrite(dbl ? 0xC05E : 0xC05F, 0);   // AN3 / double-res
+        scratch_->memWrite((dbl && !text) ? 0xC05E : 0xC05F, 0);   // AN3 / double-res
         scratchMode_   = m;
         scratchStaged_ = true;
     }
@@ -315,9 +318,15 @@ void Pom2HgrPaintHost::renderScratch(ScratchMode m, const uint8_t* main8k,
         std::memcpy(scratch_->auxDataMutable() + 0x2000, aux8k, hgrpaint::kHiresSize);
         break;
     case ScratchMode::Dlgr:
+    case ScratchMode::Text80:
         for (int i = 0; i < 0x400; ++i)
             scratch_->writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), main8k[i]);
-        std::memcpy(scratch_->auxDataMutable() + 0x0400, aux8k, 0x400);
+        if (aux8k) std::memcpy(scratch_->auxDataMutable() + 0x0400, aux8k, 0x400);
+        else       std::memset(scratch_->auxDataMutable() + 0x0400, 0xA0, 0x400);
+        break;
+    case ScratchMode::Text40:
+        for (int i = 0; i < 0x400; ++i)
+            scratch_->writeRamUnchecked(static_cast<uint16_t>(0x0400 + i), main8k[i]);
         break;
     }
 
@@ -339,7 +348,8 @@ void Pom2HgrPaintHost::renderScratch(ScratchMode m, const uint8_t* main8k,
     // Width adaptation: the renderHgrPage contract is a 280-wide buffer, but
     // the Chat Mauve HGR path paints at its native 560 dots (frame80) —
     // average each dot pair down. DHGR is 560-wide by contract.
-    const int wantW = (m == ScratchMode::Dhgr || m == ScratchMode::Dlgr)
+    const int wantW = (m == ScratchMode::Dhgr || m == ScratchMode::Dlgr ||
+                       m == ScratchMode::Text80)
                           ? 2 * hgrpaint::kHiresWidth
                           : hgrpaint::kHiresWidth;
     const uint32_t* src = gfx_->pixels();
@@ -391,6 +401,47 @@ void Pom2HgrPaintHost::renderDlgrPage(const uint8_t* aux1k, const uint8_t* main1
                                       uint32_t* outRgba, bool mono)
 {
     renderScratch(ScratchMode::Dlgr, main1k, aux1k, outRgba, mono);
+}
+
+bool Pom2HgrPaintHost::takePinch(const ImVec2& min, const ImVec2& max, Pinch& out)
+{
+    pom2::pinch::Gesture g;
+    if (!pom2::pinchZoomTake(min, max, g)) return false;
+    out.logScale = g.logScale;
+    out.focal    = ImVec2(g.focal.x, g.focal.y);
+    out.fit      = g.fit;
+    return true;
+}
+
+bool Pom2HgrPaintHost::liveVideo(LiveVideo& out) const
+{
+    if (!emu_) return false;
+    auto st = emu_->lockState();
+    const Memory& mem = st.memory();
+    const Memory::DisplayState d = mem.getDisplayState();
+    out.text    = d.textMode;   out.mixed   = d.mixedMode;
+    out.hires   = d.hiRes;      out.page2   = d.page2;
+    out.col80   = d.eightyCol;  out.an3Off  = d.dhgr;
+    out.store80 = d.eightyStore; out.altChar = d.altChar;
+    out.iie     = mem.isIIE();
+    return true;
+}
+
+void Pom2HgrPaintHost::renderTextPage(const uint8_t* main1k, const uint8_t* aux1k,
+                                      bool col80, bool altChar, uint32_t* outRgba,
+                                      bool mono)
+{
+    ensureScratch();
+    // The machine's own character generator, so the monitor reads like the
+    // screen (the scratch Memory never loads one). Copied under the lock:
+    // a hot swap rewrites it in place.
+    if (emu_) {
+        auto st = emu_->lockState();
+        scratch_->adoptCharRom(st.memory());
+    }
+    scratch_->memWrite(altChar ? 0xC00F : 0xC00E, 0);
+    renderScratch(col80 ? ScratchMode::Text80 : ScratchMode::Text40,
+                  main1k, aux1k, outRgba, mono);
 }
 
 bool Pom2HgrPaintHost::saveDlgrImage(const std::string& path, uint16_t baseAddr,

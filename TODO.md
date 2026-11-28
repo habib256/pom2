@@ -18,11 +18,14 @@ How a task moves and what must not be scheduled again:
 
 ## 0. Chosen direction — in this order
 
-**First: [UI-022](docs/backlog/ui-debugger.md#ui-022) — the memory heatmap**
+**Done: [UI-022](docs/backlog/ui-debugger.md#ui-022) — the memory heatmap**
 (owner, 2026-11-27; GROUiK's request, fenarinarsa's tool from French
-Touch's AppleWin fork): every byte as a pixel, writes red, reads blue,
-executions green, fading with age — live, and free while its window is
-closed.
+Touch's AppleWin fork), landed 2026-11-28: FT's map, rails, colours (its exact
+palette as an option) and Monitoring-card bars ($C066-$C069), every bank of
+the machine (ROM & I/O, both $D000 banks, RamWorks, DMA), a max-pooled map
+with a minimap, zoom to the byte, a status line with the byte's screen
+position, Go to with history, labels on the map, inspector, range
+breakpoints by bank, Freeze, PNG. Left: the map across the rewind history.
 
 **Silicon parity: POM2 runs everything the iron runs** (owner, 2026-11-23).
 On 37 protected disks POM2 now boots every title MAME and AppleWin boot. It is
@@ -55,6 +58,7 @@ expression conditions / access counters / code-data log, and
 | [RELEASE-013](docs/backlog/release.md#release-013) | Personal Homebrew tap, AUR `pom2-bin`, Scoop and winget manifests. |
 | [STORAGE-017](docs/backlog/storage.md#storage-017) | Left: A2R 3 checked on a real capture (A2R 2/3, ShrinkIt, DiskCopy and multi-disk archives shipped 2026-11-24). |
 | [UI-020](docs/backlog/ui-debugger.md#ui-020) | Speak what changes on screen, from the existing screen-text decoder. |
+| [UI-023](docs/backlog/ui-debugger.md#ui-023) | Idea (2026-11-28): a disk view — the head's position on the platter and what it reads (fields, sectors, reads/writes fading); design first. |
 | [UI-009](docs/backlog/ui-debugger.md#ui-009) | Decided 2026-11-25: hover preview from libretro's Apple II thumbnails. First the woz-a-day DAT (libretro-database), then the thumbnail set; a disk with no picture shows nothing (no fallback capture). |
 | [CARDS-017](docs/backlog/cards.md#cards-017) | Hayes AT layer on the SSC for ProTERM BBS dialling. |
 
@@ -141,6 +145,7 @@ Release obligations: rerun the candidate checklist for each real release.
 | [MEMORY-003](docs/backlog/cpu-memory.md#memory-003) | Real Language Card power-on bank with distinct bytes in both banks. |
 | [DISPLAY-001](docs/backlog/display.md#display-001) | Real VidHD SHR 320/640/fill and `$C022`/`$C034` captures (Total Replay 6.x's SHR art makes it more pressing). |
 | [DISPLAY-011](docs/backlog/display.md#display-011) | Eve Leonard, for a third Eve frame. |
+| [DISPLAY-015](docs/backlog/display.md#display-015) | Colour-burst constants: a scope on CLRGATE', PAL monitor photos of 2/3-state and isolated burst-less lines. |
 | [AUDIO-011](docs/backlog/audio.md#audio-011) | Real SSI263 inflection/rate/articulation/level recordings. |
 | [AUDIO-012](docs/backlog/audio.md#audio-012) | Electrical capture across the //e speaker before any physical model. |
 

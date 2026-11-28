@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 #include "MainWindow.h"
+#include "PinchZoom.h"
 #include "SessionLoadQueue.h"
 #include "MediaWritePolicy.h"
 
@@ -54,6 +55,7 @@
 #include "Logger.h"
 #include "Debugger_ImGui.h"
 #include "ScreenInspector_ImGui.h"
+#include "MemoryHeatmap_ImGui.h"
 #include "HgrPaintEditor.h"     // portable hgrpaint/ editor (shared with POM1)
 #include "HgrSpriteEditor.h"    // portable hgrsprite/ editor (same host seam)
 #include "Pom2HgrPaintHost.h"
@@ -131,6 +133,7 @@ MainWindow::MainWindow(bool forceIIPlus)
       debugCoordinator_(std::make_unique<pom2::DebugCoordinator>(*controller)),
       debuggerPanel  (std::make_unique<pom2::Debugger_ImGui>()),
       screenInspector_(std::make_unique<pom2::ScreenInspector_ImGui>()),
+      memHeatmap_    (std::make_unique<pom2::MemoryHeatmap_ImGui>()),
       settings       (std::make_unique<pom2::Settings>()),
       cassetteDeck   (std::make_unique<pom2::CassetteDeck_ImGui>()),
       rewindPanel_   (std::make_unique<pom2::Rewind_ImGui>()),
@@ -759,6 +762,9 @@ MainWindow::MainWindow(bool forceIIPlus)
                                 pom2::accentKey(uiAccent_)).c_str());
         uiScale_  = std::clamp(settings->getFloat("ui_scale", uiScale_),
                                pom2::kUiScaleMin, pom2::kUiScaleMax);
+        // Two-finger pinch: the platform's direction (spread = zoom in)
+        // unless the user reversed it (View ▸ Interface ▸ Zoom).
+        pom2::pinch::router().setInverted(settings->getBool("pinch_zoom_inverted", false));
         // Docking: has a layout already been seeded into imgui.ini? Without
         // this the default layout would be rebuilt on every launch, throwing
         // away whatever the user had docked.
@@ -1095,6 +1101,7 @@ MainWindow::~MainWindow()
     // destruction order, but doing it here keeps the dependency obvious.
     aiServer->stop();
     controller->stop();
+    memHeatmap_->detach(*controller);   // Memory and the debugger point into it
     // A WAV take in progress: the audio thread must stop pushing into the
     // ring before the ring dies. The take itself is dropped (no name chosen).
     if (wavRing_) controller->audio().setCaptureRing(nullptr);

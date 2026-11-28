@@ -271,10 +271,62 @@ public:
                                 uint32_t* outRgba, bool mono)
     { (void)aux1k; (void)main1k; (void)outRgba; (void)mono; }
     virtual void setDisplayModeDlgr(bool page2) { (void)page2; }
+
+    // ── Page monitor (read-only) ─────────────────────────────────────────
+    // The machine's video switches, read with no side effect, so the
+    // editor's monitor can follow the page on screen or the one behind it.
+    struct LiveVideo {
+        bool text = true, mixed = false, hires = false, page2 = false;
+        bool col80 = false, an3Off = false, store80 = false, altChar = false;
+        bool iie = false;
+    };
+    virtual bool liveVideo(LiveVideo& out) const { (void)out; return false; }
+    // Render a 1 KB text page (+ its aux half in 80 columns) through the
+    // host's own text pipeline: 280 wide in 40 columns, 560 in 80.
+    virtual bool supportsTextPages() const { return false; }
+    virtual void renderTextPage(const uint8_t* main1k, const uint8_t* aux1k,
+                                bool col80, bool altChar, uint32_t* outRgba, bool mono)
+    { (void)main1k; (void)aux1k; (void)col80; (void)altChar; (void)outRgba; (void)mono; }
     virtual bool saveDlgrImage(const std::string& path, uint16_t baseAddr,
                                std::string& err)
     { (void)path; (void)baseAddr; err = "DLGR is not supported by this host"; return false; }
+
+    // Two-finger pinch zoom (touchpad, touch screen; POM2 also maps Ctrl+wheel
+    // to it). Asked once a frame by a zoomable canvas, from inside the ImGui
+    // window it draws in, with its rect in screen coordinates: true hands it
+    // this frame's gesture — `logScale` = ln(factor), > 0 zooms in; `focal`
+    // = the point to zoom about; `fit` = back to fit (macOS two-finger double
+    // tap). A host with no pinch source keeps the default.
+    struct Pinch {
+        float  logScale = 0.0f;
+        ImVec2 focal{0.0f, 0.0f};
+        bool   fit = false;
+    };
+    virtual bool takePinch(const ImVec2& min, const ImVec2& max, Pinch& out)
+    { (void)min; (void)max; (void)out; return false; }
 };
+
+// A pinch over the current ImGui window, as rungs of a discrete zoom ladder:
+// one rung per ×1.25 of gesture, the remainder kept in `acc` (reset when the
+// direction turns). `steps` = rungs to climb (< 0: down), `at` = the point to
+// zoom about; `fit` = the host asked for "back to fit". False: no pinch here.
+inline bool pinchLadder(IHgrPaintHost* host, float& acc, int& steps, ImVec2& at, bool& fit)
+{
+    steps = 0;
+    fit = false;
+    IHgrPaintHost::Pinch pg;
+    const ImVec2 wmin = ImGui::GetWindowPos();
+    const ImVec2 wmax(wmin.x + ImGui::GetWindowSize().x, wmin.y + ImGui::GetWindowSize().y);
+    if (!host || !host->takePinch(wmin, wmax, pg)) return false;
+    fit = pg.fit;
+    at = pg.focal;
+    constexpr float kStepLog = 0.22314355f;                     // ln(1.25)
+    if ((pg.logScale > 0.0f) != (acc > 0.0f)) acc = 0.0f;
+    acc += pg.logScale;
+    steps = static_cast<int>(acc / kStepLog);                   // toward zero
+    acc -= static_cast<float>(steps) * kStepLog;
+    return true;
+}
 
 } // namespace hgrpaint
 

@@ -136,11 +136,11 @@ struct NtscParams
     // ~5-6 MHz is the analog Péritel figure. CrtEffectStack only.
     float rgbBandwidthMHz = 0.0f;  // 0 = off, else ~2..8
 
-    // PAL composite mode: alternates the Q-subcarrier sign every other
-    // scanline (line-phase alternation). On a real PAL TV this cancels
-    // hue errors at the cost of vertical chroma resolution; here it
-    // produces the characteristic softer-coloured European Apple II
-    // look. Off by default — POM2 ships defaults that match the NTSC
+    // PAL composite mode: the PAL decoder's delay line — each line's chroma
+    // averaged with the line before's (2026-11-28; it used to flip the V
+    // sign on odd lines of a signal that never alternated). On a real PAL
+    // set this cancels hue errors at the cost of vertical chroma
+    // resolution: the softer-coloured European Apple II look. Off by default — POM2 ships defaults that match the NTSC
     // Apple II that 90% of users have in mind.
     bool palMode = false;
 

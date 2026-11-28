@@ -23,9 +23,11 @@
 #include "IconsFontAwesome6.h"
 #include "AtomicFileReplace.h"
 #include "ImageWriterPdf.h"
+#include "PinchZoom_ImGui.h"
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -169,6 +171,42 @@ void ImageWriter_ImGui::trimSheetTextures(int frame)
         if (oldest->id) { GLuint g = oldest->id; glDeleteTextures(1, &g); }
         sheetTex_.erase(oldest);
     }
+}
+
+// Two-finger pinch / Ctrl+wheel over the paper (PinchZoom.h): one rung of
+// the zoom ladder per ×1.25 of gesture, about the fingers — the paper point
+// under them stays put. From "Fit width" the climb starts at the rung
+// nearest the fitted scale. A smart magnify goes back to Fit width. Called
+// inside the paper child, before the frame's scale is taken.
+void ImageWriter_ImGui::pinchZoom(float fitScale)
+{
+    pinch::Gesture pg;
+    const ImVec2 wmin = ImGui::GetWindowPos();
+    const ImVec2 wmax(wmin.x + ImGui::GetWindowSize().x, wmin.y + ImGui::GetWindowSize().y);
+    if (!pinchZoomTake(wmin, wmax, pg)) return;
+    constexpr int kRungs = static_cast<int>(sizeof(kZooms) / sizeof(kZooms[0]));
+    const float before = zoomMode_ == 0 ? fitScale : kZooms[zoomMode_ - 1];
+    if (pg.fit) {
+        zoomMode_ = 0;
+    } else {
+        const int steps = pinchLadder_.feed(pg.logScale);
+        if (steps == 0) return;
+        int rung = zoomMode_ - 1;
+        if (zoomMode_ == 0) {
+            rung = 0;
+            for (int i = 1; i < kRungs; ++i)
+                if (std::fabs(std::log(kZooms[i] / fitScale)) <
+                    std::fabs(std::log(kZooms[rung] / fitScale)))
+                    rung = i;
+        }
+        zoomMode_ = std::clamp(rung + steps, 0, kRungs - 1) + 1;
+        follow_ = false;
+        scrollToShown_ = false;
+    }
+    const float k = (zoomMode_ == 0 ? fitScale : kZooms[zoomMode_ - 1]) / before;
+    const ImVec2 c = ImGui::GetCursorScreenPos();
+    ImGui::SetScrollX(ImGui::GetScrollX() + (pg.focal.x - c.x) * (k - 1.0f));
+    ImGui::SetScrollY(ImGui::GetScrollY() + (pg.focal.y - c.y) * (k - 1.0f));
 }
 
 void ImageWriter_ImGui::uploadPage(const ImageWriter::Page& p,
@@ -1036,6 +1074,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
             const int   dpi    = iw.dpi();
             const float totalW = texW_ + 1.0f * dpi;
             const float avail  = ImGui::GetContentRegionAvail().x;
+            pinchZoom(std::max(0.05f, avail / totalW));
             const float scale  = (zoomMode_ == 0)
                                ? std::max(0.05f, avail / totalW)
                                : kZooms[zoomMode_ - 1];
@@ -1058,6 +1097,7 @@ void ImageWriter_ImGui::render(bool* open, ImageWriter& iw,
         const float fitW  = std::max(1.0f, live.w + 2.0f * stripPx);
         const float avail = ImGui::GetContentRegionAvail().x;
         const float viewH = ImGui::GetWindowHeight();
+        pinchZoom(std::max(0.05f, avail / fitW));
         const float scale = (zoomMode_ == 0)
                           ? std::max(0.05f, avail / fitW)
                           : kZooms[zoomMode_ - 1];

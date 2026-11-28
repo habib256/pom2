@@ -127,6 +127,26 @@ private:
     // are only offered when host->supportsDhgr()). The mode flags are mutually
     // exclusive; sixteenMode() groups the three 16-colour modes.
     bool page2 = false;             // false = page 1, true = page 2
+
+    // ── Page monitor (HgrPaintEditor_Monitor.cpp) ─────────────────────────
+    // A READ-ONLY view of a video page while the machine runs: no poke, no
+    // soft-switch write (the editor's page buttons drive the machine's
+    // display; the monitor never does), TEXT pages too, and it can follow
+    // the page on screen or the one behind it — the double-buffering check.
+    bool monitor = false;
+    int  monFollow = 1;             // 0 = the page picked, 1 = on screen, 2 = behind it
+    int  monMode = 0;               // 0 HGR, 1 GR, 2 DHGR, 3 DLGR, 4 TEXT
+    bool monPage2 = false;
+    bool monCol80 = false;          // TEXT in 80 columns (from the machine's 80COL)
+    bool monAltChar = false;
+    void* monTex = nullptr;
+    std::vector<uint32_t> monRgba;
+    std::vector<uint8_t>  monBuf;
+    std::string monScreen;          // what the machine shows, for the status line
+    void renderPageButtons();       // the page row (editor and monitor)
+    void followLiveVideo();
+    void renderMonitor(const std::vector<uint8_t>& memory,
+                       const std::vector<uint8_t>* aux);
     bool grMode = false;            // lo-res GR blocks (40×48)
     bool dhgrMode = false;          // IIe double hi-res (140×192, 16 colours)
     bool dlgrMode = false;          // IIe double lo-res (80×48, 16 colours)
@@ -150,6 +170,7 @@ private:
     }
     // Zoom ladder index (kZoomLadder[]). Mouse-wheel + Fit drive this.
     int zoomIdx = 2;                // → 3x
+    float pinchAcc = 0.0f;          // two-finger pinch toward the next rung (ln)
     bool showGrid = false;
     bool rectFilled = false;
     bool showConflicts = false;     // palette-seam / DHGR-fringing overlay

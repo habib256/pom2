@@ -23,6 +23,7 @@
 #include "FetchedPagesFile.h"
 #include "M6502.h"
 #include "Memory.h"
+#include "PinchZoom_ImGui.h"
 #include "Pom2Theme.h"
 #include "ResourcePaths.h"
 #include "ScreenProbe.h"
@@ -348,6 +349,27 @@ void ScreenInspector_ImGui::render(EmulationController& ctrl, Apple2Display& dis
         // The largest picture the panel holds, edges included.
         const ImVec2 room = ImGui::GetContentRegionAvail();
         zoom_ = std::clamp(std::min((room.x - gutterW) / 280.0f, (room.y - bandH) / 192.0f), 1.0f, 12.0f);
+    }
+    // Two-finger pinch / Ctrl+wheel (PinchZoom.h): leaves Fit and zooms about
+    // the fingers — the point under them stays put, the child scrolls. A
+    // smart magnify (two-finger double tap) goes back to Fit.
+    {
+        pom2::pinch::Gesture pg;
+        const ImVec2 wmin = ImGui::GetWindowPos();
+        const ImVec2 wmax(wmin.x + ImGui::GetWindowSize().x, wmin.y + ImGui::GetWindowSize().y);
+        if (pom2::pinchZoomTake(wmin, wmax, pg)) {
+            if (pg.fit) {
+                fit_ = true;
+            } else {
+                const float before = zoom_;
+                fit_  = false;
+                zoom_ = std::clamp(zoom_ * pg.factor(), 1.0f, 12.0f);
+                const float k = zoom_ / before;
+                const ImVec2 c = ImGui::GetCursorScreenPos();
+                ImGui::SetScrollX(ImGui::GetScrollX() + (pg.focal.x - (c.x + gutterW)) * (k - 1.0f));
+                ImGui::SetScrollY(ImGui::GetScrollY() + (pg.focal.y - (c.y + bandH)) * (k - 1.0f));
+            }
+        }
     }
     const ImVec2 size(280.0f * zoom_, 192.0f * zoom_);
     const ImVec2 corner = ImGui::GetCursorScreenPos();

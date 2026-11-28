@@ -442,7 +442,7 @@ void MainWindow::renderNtscSettingsWindow()
         // shader for the whole text screen. HGR/DHGR/lo-res still run through
         // the demodulator. Both stay live with the glass off (demodLive).
         demodLive([&] {
-            changed |= ImGui::Checkbox("PAL composite (line-phase alternation)",
+            changed |= ImGui::Checkbox("PAL composite (delay line)",
                                        &p.palMode);
             changed |= ImGui::Checkbox("Sharp text (bypass shader in TEXT mode)",
                                        &p.textSharp);

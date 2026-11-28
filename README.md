@@ -159,7 +159,7 @@ ROMs that run the disks POM2 ships.
 | **CP/M** | Five Z80 cards: Microsoft SoftCard, SoftCard II and Premium SoftCard //e, PCPI Applicard, ALS CP/M Card (CP/M Plus) |
 | **Input and printing** | Mouse, paddles, gamepads, 4play, SNES MAX; serial and parallel cards feeding an ImageWriter II with PNG/PDF export |
 | **Connections** | Uthernet I/II, FujiNet relay, TNFS and VSDrive (desktop only; the browser has no host sockets) |
-| **Development** | Memory viewer, debugger with banks, symbols, conditional breakpoints and source correspondence, 6502/65C02 assembler, CPU profiling, OS-call trace, Disk II flux view, HGR/DHGR paint and sprite editors |
+| **Development** | Memory viewer, memory heatmap (every bank, AppleWin FT's), debugger with banks, symbols, conditional breakpoints and source correspondence, 6502/65C02 assembler, CPU profiling, OS-call trace, Disk II flux view, HGR/DHGR paint and sprite editors |
 | **State** | Rewind, snapshots and resumable sessions that rebuild the machine, its cards and its media |
 | **Automation** | `pom2_headless`, a loopback [HTTP control API](DEV.md#ai-control-server-aicontrolserver), a [C++ SDK](docs/SDK.md); `pom2_cpm`, `pom2_dos33` and `pom2_prodos` to move files on and off disk images; `pom2_disk` to make a formatted empty disk, a disk that boots your own binary with no operating system, or a healthy copy of a damaged WOZ |
 
@@ -213,6 +213,7 @@ after boot to avoid its self-test. [Scope and validation](docs/hardware/sirius-j
 | **F11 / F12** | Soft reset (Ctrl-Reset) / hard reset |
 | **Left / right Alt** | Open-Apple / Solid-Apple |
 | **Ctrl+Alt+G** or middle click | Capture or release the mouse for a Mouse Card |
+| **Two-finger pinch** (touchpad, touch screen) or **Ctrl+wheel** (**Cmd+wheel** on a Mac) | Zoom the view under the fingers: memory heatmap, Paint and sprite editors, Screen Inspector, printer paper, 3D view. Fingers apart zoom in; View → Interface → **Reverse the pinch direction** flips it |
 | **Ctrl+Shift+P** | Open the command palette |
 | **Ctrl+V** | Paste text into the Apple II |
 

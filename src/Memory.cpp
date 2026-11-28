@@ -1859,10 +1859,10 @@ std::string Memory::recentIoReadSummary() const
 // report happens after the read so the hit carries the value the bus saw.
 uint8_t Memory::memReadSlow(uint16_t addr)
 {
-    const bool watched = readDivert_ && readWatch_[addr] && watchSink_;
-    const auto bank = watched ? debugBank(addr) : pom2::DebugBank{};
+    if (!readDivert_) return memReadSlowBody(addr);
+    const auto bank = divertedReadBank(addr);   // before: a read may page
     const uint8_t v = memReadSlowBody(addr);
-    if (watched) watchSink_->noteBankAccess(addr, v, false, bank);
+    noteDivertedRead(addr, v, bank);   // read watches + heatmap, MemoryWatch.cpp
     return v;
 }
 // memReadSlow's body, unchanged from before the fast-path split: any path
@@ -2153,8 +2153,8 @@ void Memory::memWriteSlow(uint16_t addr, uint8_t value)
     // everything from $C000 up already comes through here, so one test covers
     // RAM, soft switches, slot I/O and the language card alike. Costs an empty
     // -vector test when nobody is debugging, on the SLOW path only.
-    if (!writeWatch_.empty() && (writeWatch_[addr] & kWatchArmed) && watchSink_)
-        watchSink_->noteBankAccess(addr, value, true, debugBank(addr, true));
+    if (heatSink_ || (!writeWatch_.empty() && (writeWatch_[addr] & kWatchArmed) && watchSink_))
+        noteDivertedWrite(addr, value);   // write watches + heatmap, MemoryWatch.cpp
 
     // Flat test RAM, or a card CPU's own bus — see memReadSlowBody.
     if (flatBus_) {

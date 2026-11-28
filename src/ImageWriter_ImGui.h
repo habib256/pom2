@@ -30,6 +30,7 @@
 #define POM2_IMAGEWRITER_IMGUI_H
 
 #include "ImageWriter.h"
+#include "PinchZoom.h"
 
 #include <cstdint>
 #include <functional>
@@ -119,6 +120,8 @@ private:
     std::string historyFile_;    // which stored file the texture holds
     bool  follow_   = true;      // snap to the newest sheet
     int   zoomMode_ = 0;         // 0 = fit width, else index into kZooms
+    pinch::LadderAccumulator pinchLadder_;   // a pinch steps the zoom ladder
+    void  pinchZoom(float fitScale);         // this frame's pinch, if aimed here
     std::vector<uint8_t> rgba_;  // scratch, reused across uploads
 
     /// The fanfold view: one texture per sheet in view (sheetTexture).

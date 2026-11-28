@@ -24,6 +24,7 @@
 // panels itself, which is what stopped the two drifting apart.
 
 #include "MainWindow.h"
+#include "PinchZoom.h"
 #include "SlowMotion.h"
 #include "BrowserFiles.h"
 #include "TextScreenCapture.h"
@@ -1111,6 +1112,18 @@ void MainWindow::renderMenuBar()
                 uiScale_ = 1.0f;
                 applyUiTheme();
             }
+            // The views that zoom (heatmap, Paint, sprites, Screen
+            // Inspector, paper, 3D view) follow a two-finger pinch the way
+            // the platform does: fingers apart = zoom in. PinchZoom.h.
+            bool pinchInverted = pom2::pinch::router().inverted();
+            if (ImGui::MenuItem("Reverse the pinch direction", nullptr, &pinchInverted))
+                pom2::pinch::router().setInverted(pinchInverted);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Two fingers on a touchpad or a touch screen (and Ctrl+wheel,\n"
+                    "Cmd+wheel on a Mac) zoom the view under them.\n"
+                    "Off: fingers apart zoom in, as everywhere else on the system.\n"
+                    "On: fingers together zoom in.");
             if (dpiScale_ != 1.0f) {
                 ImGui::Separator();
                 ImGui::TextDisabled("Display scale: %.0f %% (from the OS)",
@@ -1142,6 +1155,7 @@ void MainWindow::renderMenuBar()
         panelMenuItem(pom2::PanelId::ScreenInspector);
         panelMenuItem(pom2::PanelId::Watch);
         panelMenuItem(pom2::PanelId::MemViewer);
+        panelMenuItem(pom2::PanelId::MemHeatmap);
         if (ImGui::BeginMenu(ICON_FA_MAP "  Memory maps")) {
             panelMenuItem(pom2::PanelId::MemBar);
             panelMenuItem(pom2::PanelId::MemBarH);

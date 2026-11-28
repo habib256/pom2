@@ -408,6 +408,7 @@ void Debugger::onStepCompleted(const M6502& cpu, uint16_t pc, int cycles)
     osCalls_.retire6502();                 // ...and so is its trace offer
     if (trace_) trace_->after(cpu, cycles);
     if (cycles <= 0) return;
+    if (heat_) heat_->noteHeatRetired(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
     if (profiling_) {
         interruptLoad_.stepped(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
         auto& entry = profile_[{pc, curBank_}];
@@ -448,6 +449,8 @@ void Debugger::onInterruptEntered(const M6502& cpu, uint16_t interruptedPc, int 
     // Keyed by the HANDLER's bank, resolved at its PC: `curBank_` is still
     // the interrupted instruction's (aux, LC RAM…), which filed the entry
     // under a phantom zero-visit row beside the real handler's.
+    if (heat_ && cycles > 0)
+        heat_->noteHeatInterrupt(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
     if (!profiling_ || cycles <= 0) return;
     interruptLoad_.entered(cpu.getStackPointer(), cycles, frameOfRetired(cycles));
     const uint16_t pc = cpu.getProgramCounter();
@@ -603,8 +606,10 @@ void Debugger::beginStep(uint16_t pc, bool explicitStep)
         hit_ = kept;
     }
     // Both entries reach here — the run loop's onInstruction and F7's
-    // explicit step — so a tracer sees every instruction going IN.
+    // explicit step — so a tracer sees every instruction going IN, and the
+    // memory heatmap marks its bytes executed.
     if (trace_) trace_->before(pc, curBank_);
+    if (heat_) heat_->noteHeatExec(pc, curBank_);
 }
 
 bool Debugger::onInstruction(uint16_t pc)

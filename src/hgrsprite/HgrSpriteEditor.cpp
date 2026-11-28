@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <vector>
@@ -1404,6 +1405,25 @@ void HgrSpriteEditor::render(const std::vector<uint8_t>& memory,
                             + ImGui::GetStyle().ScrollbarSize + 8.0f;
     ImGui::BeginChild("##hgrcanvaspane", ImVec2(0, canvasBandH), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
+    // Two-finger pinch over the canvases (host-supplied): the cell size
+    // follows the gesture, the fraction of a pixel it cannot take yet carried
+    // to the next frame; a smart magnify returns to the default size.
+    if (host) {
+        hgrpaint::IHgrPaintHost::Pinch pg;
+        const ImVec2 wmin = ImGui::GetWindowPos();
+        const ImVec2 wmax(wmin.x + ImGui::GetWindowSize().x, wmin.y + ImGui::GetWindowSize().y);
+        if (host->takePinch(wmin, wmax, pg)) {
+            if (pg.fit) {
+                zoom_ = 14;
+                pinchAcc_ = 0.0f;
+            } else {
+                const float want = static_cast<float>(zoom_) * std::exp(pinchAcc_ + pg.logScale);
+                const int z = std::clamp(static_cast<int>(std::lround(want)), 6, 32);
+                pinchAcc_ = std::clamp(std::log(want / static_cast<float>(z)), -0.1f, 0.1f);
+                zoom_ = z;
+            }
+        }
+    }
     ImGui::BeginGroup();
     ImGui::TextUnformatted("Black & white (shape)");
     renderCanvas();

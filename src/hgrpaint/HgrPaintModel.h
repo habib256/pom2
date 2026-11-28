@@ -210,6 +210,19 @@ int plotDlgrBlock(uint8_t* pair, int bx, int by, int colorIndex);
 // Colour index (0..15) of block (bx,by) as DISPLAYED, or -1 if out of range.
 int dlgrBlockColorAt(const uint8_t* pair, int bx, int by);
 
+// ── Page monitor: which page the machine scans ───────────────────────────
+// Modes as the editor numbers them: 0 HGR, 1 GR, 2 DHGR, 3 DLGR, 4 TEXT.
+struct VideoPage { int mode = 4; bool page2 = false; };
+
+// The page on screen for these video switches. [B] Sather, Understanding the
+// Apple IIe, Table 8.7 (p. 8-21): PAGE2 selects the scanned page only with
+// 80STORE off — with it on, PAGE2 switches page 1 between main and aux RAM
+// and page 1 stays on screen. The double modes need 80COL with AN3 low
+// (DHIRES), on a //e. Mixed mode shows the graphics page (its last four text
+// rows come from the text page of the same number).
+VideoPage scannedVideoPage(bool text, bool hires, bool page2, bool col80,
+                           bool an3Off, bool store80, bool iie);
+
 } // namespace hgrpaint
 
 #endif // HGRPAINT_MODEL_H

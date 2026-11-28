@@ -363,6 +363,12 @@ void runCapturePath(bool textSharp)
     if (textSharp) {
         // Sharp text bypasses the demod: the framebuffer already IS the capture.
         compare(captured, onScreen, "the capture must not mutate anything", 1, what);
+    } else if (d.mixedCompositeUsesFramebuffer()) {
+        // Full-time TEXT has no colour burst (Sather IIe p. 8-16): the killer
+        // leaves luminance only, which the GPU shader cannot do per line, so
+        // the display already presents its CPU twin (Apple2Display_Burst.cpp)
+        // and the capture has nothing left to change.
+        compare(captured, onScreen, "a burst-less TEXT frame is already demodulated", 1, what);
     } else if (captured == onScreen) {
         std::printf("FAIL [%s] the capture returned the untouched framebuffer — "
                     "the demod never ran\n", what);

@@ -131,6 +131,38 @@ inline void buildBitStream(const uint8_t* ram, uint16_t rowAddr,
     }
 }
 
+// The 7M LORES mode. [B] Sather, *Understanding the Apple IIe*, p. 8-22
+// (Table 8.8 note 3 and the paragraph below it): a //e in LORES40 GRAPHICS
+// with 80COL reset and AN3 low (FRCTXT' low) shifts the lo-res pattern at
+// 7 MHz, undelayed — "the processing of LORES patterns at HIRES40 speed".
+// The load/shift register is loaded with the column's 14 MHz pattern (dot i
+// of column c shows nibble bit (14c + i) & 3) and at 7 MHz each of its first
+// seven bits lasts two dots: an undelayed HGR byte whose bit k is nibble bit
+// (2c + k) & 3. Sather's own checks hold: 0000 black, 1111 white, 0101
+// violet in even columns and green in odd ones, 1010 the other way round,
+// every other pattern fragmented. [D] AppleWin @ 98b72658 NTSC.cpp
+// `updateScreenDoubleLores40` builds the same bytes. [F] The bit order
+// inside the 7 MHz load is derived from the 14 MHz one, not measured;
+// settled by: a capture of Accurapple's multi_mode.s TEST 8 on a real //e.
+inline uint8_t sevenMLoresByte(uint8_t nibble, int col)
+{
+    uint8_t b = 0;
+    for (int k = 0; k < 7; ++k)
+        b = static_cast<uint8_t>(b | (((nibble >> ((2 * col + k) & 3)) & 1u) << k));
+    return b;
+}
+
+// One scanline of 7M LORES as the 40 undelayed HGR bytes the shift register
+// sees: `textRowAddr` the text row of scanline `y`, the nibble by y & 4.
+inline void buildSevenMLoresRow(const uint8_t* ram, uint16_t textRowAddr, int y,
+                                uint8_t (&out)[40])
+{
+    for (int col = 0; col < 40; ++col) {
+        const uint8_t byte = ram[textRowAddr + col];
+        out[col] = sevenMLoresByte((y & 4) ? byte >> 4 : byte & 0x0F, col);
+    }
+}
+
 // Average two RGBA pixels per channel (the optical chroma-bandwidth-limit
 // real CRTs apply when downsampling 560 sub-pixels → 280 framebuffer pixels).
 inline uint32_t avgRgb(uint32_t a, uint32_t b)

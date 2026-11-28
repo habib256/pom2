@@ -215,9 +215,10 @@ void hgrpaint::HgrPaintEditor::releaseGL()
         if (onionTex)         host->destroyTexture(onionTex);
         if (flipTex)          host->destroyTexture(flipTex);
         if (pasteTex)         host->destroyTexture(pasteTex);
+        if (monTex)           host->destroyTexture(monTex);
     }
     texture = importPreviewTex = importSrcTex = onionTex = flipTex = nullptr;
-    pasteTex = nullptr;
+    pasteTex = monTex = nullptr;
 }
 
 void hgrpaint::HgrPaintEditor::renderShadow(uint32_t* out, bool mono)
@@ -868,39 +869,7 @@ void hgrpaint::HgrPaintEditor::renderTopBar()
     // Slim top strip: page/mode select + help on line 1, file ops on line 2. Lives
     // above the tool palette + canvas, MacPaint-style. Eight pages: HIRES 1/2,
     // lo-res GR 1/2, and (on hosts with an aux bank) DHGR 1/2 + DLGR 1/2.
-    struct PageBtn { const char* label; int mode; bool p2; const char* tip; };
-    static const PageBtn kPages[8] = {
-        { "HGR",   0, false, "HIRES page 1 ($2000)" },
-        { "HGR2",  0, true,  "HIRES page 2 ($4000)" },
-        { "GR",    1, false, "Lo-res GR page 1 ($0400)" },
-        { "GR2",   1, true,  "Lo-res GR page 2 ($0800)" },
-        { "DHGR",  2, false, "Double hi-res page 1 (aux+main $2000)" },
-        { "DHGR2", 2, true,  "Double hi-res page 2 (aux+main $4000)" },
-        { "DLGR",  3, false, "Double lo-res page 1 (aux+main $0400)" },
-        { "DLGR2", 3, true,  "Double lo-res page 2 (aux+main $0800)" },
-    };
-    const int curMode = dlgrMode ? 3 : dhgrMode ? 2 : grMode ? 1 : 0;
-    const int nPages = (host && host->supportsDhgr()) ? 8 : 4;
-    for (int i = 0; i < nPages; ++i) {
-        if (i != 0) ImGui::SameLine();
-        const bool sel = (curMode == kPages[i].mode && page2 == kPages[i].p2);
-        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(58, 96, 150, 255));
-        if (ImGui::Button(kPages[i].label)) {
-            switchPage(kPages[i].mode, kPages[i].p2);
-            // Drive the live machine's soft switches to the picked page/mode so
-            // the screen follows the editor. Done on every click (even re-picking
-            // the current page) so it also re-asserts the display if a program had
-            // left the machine in text/another page.
-            if (host) {
-                if (kPages[i].mode == 2)      host->setDisplayModeDhgr(kPages[i].p2);
-                else if (kPages[i].mode == 3) host->setDisplayModeDlgr(kPages[i].p2);
-                else host->setDisplayMode(kPages[i].mode == 1, kPages[i].p2);
-            }
-        }
-        if (sel) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s — switch page/mode (clears undo history)", kPages[i].tip);
-    }
+    renderPageButtons();   // HgrPaintEditor_Monitor.cpp
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
@@ -910,6 +879,7 @@ void hgrpaint::HgrPaintEditor::renderTopBar()
             "  Right drag   quick-erase (paint black) — no tool switch\n"
             "  Middle drag  pan the canvas\n"
             "  Wheel        zoom, anchored on the cursor\n"
+            "  Pinch        zoom with two fingers (touchpad / touch screen)\n"
             "  Alt + Left   eyedropper (pick colour)\n"
             "  Shift        constrain Line to 0/45/90 deg, Rect/Ellipse to a square\n"
             "\n"
@@ -1314,6 +1284,12 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
     // canvas adrift in a big window (a poor first impression).
     if (firstFit) { firstFit = false; wantFit = true; }
 
+    // Two-finger pinch (host-supplied): Fit, or ladder rungs about the fingers.
+    int pinchSteps = 0;
+    ImVec2 pinchAt(0.0f, 0.0f);
+    bool pinchFit = false;
+    if (pinchLadder(host, pinchAcc, pinchSteps, pinchAt, pinchFit) && pinchFit) wantFit = true;
+
     // ── Zoom-to-fit (HGR-09): pick the largest ladder step that fits ─────────
     if (wantFit) {
         wantFit = false;
@@ -1330,24 +1306,30 @@ void hgrpaint::HgrPaintEditor::renderCanvas(const std::vector<uint8_t>& memory,
     }
 
     // ── Mouse-wheel zoom (HGR-09): step the ladder, recentre on the cursor ──
+    // A pinch (above) takes the same path, anchored on the fingers.
     {
         ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
+        int step = pinchSteps;
+        ImVec2 anchor = pinchAt;
+        if (step == 0 && ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
+            step = io.MouseWheel > 0 ? 1 : -1;
+            anchor = io.MousePos;
+        }
+        if (step != 0) {
             const int oldZoom = kZoomLadder[zoomIdx];
-            const int ni = std::clamp(zoomIdx + (io.MouseWheel > 0 ? 1 : -1),
-                                      0, kZoomLadderCount - 1);
+            const int ni = std::clamp(zoomIdx + step, 0, kZoomLadderCount - 1);
             if (ni != zoomIdx) {
-                // Logical pixel currently under the cursor, in the OLD scale.
+                // Logical pixel currently under the anchor, in the OLD scale.
                 const ImVec2 cur = ImGui::GetCursorScreenPos();
-                const float anchorLX = (io.MousePos.x - cur.x) / (oldZoom * af);
-                const float anchorLY = (io.MousePos.y - cur.y) / oldZoom;
+                const float anchorLX = (anchor.x - cur.x) / (oldZoom * af);
+                const float anchorLY = (anchor.y - cur.y) / oldZoom;
                 zoomIdx = ni;
                 const int newZoom = kZoomLadder[zoomIdx];
                 scale = static_cast<float>(newZoom);
                 imgSize = ImVec2(kHiresWidth * scale * af, kHiresHeight * scale);
-                // Keep that logical pixel under the mouse after rescaling.
-                const float mouseInChildX = io.MousePos.x - cur.x + ImGui::GetScrollX();
-                const float mouseInChildY = io.MousePos.y - cur.y + ImGui::GetScrollY();
+                // Keep that logical pixel under the anchor after rescaling.
+                const float mouseInChildX = anchor.x - cur.x + ImGui::GetScrollX();
+                const float mouseInChildY = anchor.y - cur.y + ImGui::GetScrollY();
                 ImGui::SetScrollX(anchorLX * newZoom * af - (mouseInChildX - ImGui::GetScrollX()));
                 ImGui::SetScrollY(anchorLY * newZoom - (mouseInChildY - ImGui::GetScrollY()));
             }
@@ -2732,6 +2714,8 @@ void hgrpaint::HgrPaintEditor::handleShortcuts()
 void hgrpaint::HgrPaintEditor::render(const std::vector<uint8_t>& memory,
                                       const std::vector<uint8_t>* aux)
 {
+    // The monitor writes nothing, so it runs before the shortcuts (undo pokes).
+    if (monitor) { renderMonitor(memory, aux); return; }
     handleShortcuts();
 
     // MacPaint / MousePaint layout:

@@ -78,6 +78,7 @@ refined by [PR #10792](https://github.com/mamedev/mame/pull/10792)
 | "39 seam fix-ups" | MAME applies 39 color corrections at byte boundaries when certain MSB combinations trigger spurious black. POM2 does not port these fix-ups — barely visible in practice. |
 | Glow / bloom | MAME can optionally add a CPU Gaussian halo. POM2 delegates any "CRT glow" effect to the `ColorCompositeOE` mode (shader). |
 | MSB rev-0 mask | DHGR with `dhgr=1` masks bit 7 (`bit7Mask=0x7F`) to emulate a rev-0 — `Apple2Display.cpp::renderHiRes`. Same in MAME. |
+| 7M LORES | LORES graphics with AN3 low and 80COL off: the lo-res pattern at HIRES40 speed, undelayed ([B] Sather, *Understanding the Apple IIe* p. 8-22) — `Apple2Display_LoRes7M.cpp`. Same in AppleWin. MAME @ e1479b7a knows the mode but does not draw it: `apple2video.cpp` `lores_update` keeps the 14 MHz words under a `// TODO: lo-res in 7M drawing here`. |
 
 **Tests**: `hgr_render_smoke` (LUT corners, $7F→white, MSB shift),
 `dhgr_render_smoke` (aux/main interleave, two distinct grays).

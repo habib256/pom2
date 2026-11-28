@@ -1485,10 +1485,15 @@ void MainWindow::applyProfileTransaction(pom2::SystemProfile p)
         slotDraftInited_ = false;
         ++mediaPanelSeedGen_;
     };
-    hooks.afterPlug = [this, &cfg] {
+    hooks.afterPlug = [this, &cfg, p] {
         // 7a. Deferred: the link start() and the SSC bind can block.
         (void)startDeferredFujiNetLinks();
         startDeferredSscListeners();
+        // The board's colour-burst gate (ColourBurst.h BurstRules): the 1977
+        // ][ predates Revision 7's window.
+        display->setBurstBoard(p == pom2::SystemProfile::AppleII
+                                   ? Apple2Display::BurstBoard::IIPreRev7
+                                   : Apple2Display::BurstBoard::IIe);
         // 7b. A profile that SHIPS an on-board Le Chat Mauve (the //c PAL's
         //     adapter) comes up in its RGB mode.
         bool builtinRgb = false;

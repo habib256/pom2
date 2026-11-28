@@ -34,7 +34,10 @@
                  main.cpp would size the DockSpace (status bar included) past
                  the visible bottom. dvh is the visible one. */
               height: 100dvh;
-              background: #000; cursor: default; outline: none; }
+              background: #000; cursor: default; outline: none;
+              /* Two fingers on the canvas zoom POM2's view under them
+                 (wasm/pinch_zoom.js), never the page itself. */
+              touch-action: none; }
   #err      { position: fixed; left: 16px; right: 16px; top: 16px;
               padding: 12px 16px; background: #4a1a1a; color: #ffe;
               border-radius: 6px; font-family: ui-monospace, monospace;

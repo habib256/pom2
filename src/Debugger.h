@@ -248,12 +248,15 @@ public:
     /// Anything at all to check. False → the CPU stays on its fast loop.
     bool armed() const {
         return breakpointCount() || watchpointCount() || profiling_ || historyEnabled_ ||
-               trace_ != nullptr ||
+               trace_ != nullptr || heat_ != nullptr ||
                osCalls_.any6502() ||
                transientArmed_.load(std::memory_order_relaxed);
     }
     /// Watchpoints specifically — what Memory gates its hook on.
     bool watchArmed() const { return watchpointCount() != 0; }
+    /// The memory heatmap's execution half: told of every instruction before
+    /// it runs, while set. Under stateMutex; the caller re-syncs the hook.
+    void setHeatSink(MemoryHeatSink* sink) { heat_ = sink; }
 
     /// M6502DebugHook. Called before the instruction at `pc` is executed;
     /// true halts the CPU with `pc` still pointing at it, so the instruction
@@ -283,7 +286,9 @@ public:
     template <class F> int runAsBusMaster(F&& slice)
     {
         busMaster_ = true;
+        if (heat_) heat_->noteHeatBusMaster(true);   // the card's accesses
         const int spent = slice();
+        if (heat_) heat_->noteHeatBusMaster(false);
         busMaster_ = false;
         return spent;
     }
@@ -464,6 +469,7 @@ private:
     /// programCounter has already walked past the opcode and operands.
     uint16_t curPc_ = 0;
     bool busMaster_ = false;              // see runAsBusMaster
+    MemoryHeatSink* heat_ = nullptr;      // see setHeatSink
 
     Hit hit_{};
     OsCallTrace osCalls_;

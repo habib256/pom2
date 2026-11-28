@@ -146,8 +146,8 @@ void main() {
 //      tap by sin/cos of the 4×fsc subcarrier phase (π/2 per dot — the
 //      Apple II pixel clock IS the colorburst) under a WIDER gaussian
 //      whose width the sharpness slider sets (chroma bandwidth).
-//   2. Hue rotation in the I/Q plane, then the standard NTSC YIQ→RGB
-//      matrix. PAL line-phase alternation flips the Q sign on odd lines.
+//   2. PAL: the delay line averages U/V with the line before. Hue rotation
+//      in the U/V plane, then the YUV→RGB matrix.
 //   3. Output the demodulated RGB (clamped). Grading + CRT glass happen
 //      downstream in CrtEffectStack. Output is 1× (no scanline doubling).
 //
@@ -164,7 +164,7 @@ uniform sampler2D uSignal;
 uniform vec2  uSignalSize;     // (width, height) of the signal texture
 uniform float uHue;
 uniform float uSharpness;
-uniform int   uPalMode;        // 0=NTSC, 1=PAL (line-phase alternation)
+uniform int   uPalMode;        // 0=NTSC, 1=PAL (the delay line: chroma of this line + the one before)
 uniform int   uPhaseOffset;  // 0=HGR/text, 1=DHGR (MAME rotl4 absX+1)
 
 const float PI = 3.14159265358979;
@@ -187,12 +187,15 @@ void main()
     float sigX = vUv.x * uSignalSize.x;
     float sigY = vUv.y * uSignalSize.y;
 
-    // ── PAL line-phase alternation ────────────────────────────────
-    float palQSign = 1.0;
-    if (uPalMode == 1) {
-        float lineIdx = floor(sigY);
-        palQSign = (mod(lineIdx, 2.0) < 1.0) ? 1.0 : -1.0;
-    }
+    // ── PAL delay line ────────────────────────────────────────────
+    // A PAL decoder averages each line's chroma with the previous line's,
+    // both through its own switch, which undoes the Apple's alternation
+    // ([B] TDA3560, Philips 1986: "DELAY LINE" before the demodulators): a
+    // vertical chroma blur. The line above the picture is blanking (no
+    // chroma: sampleSignal returns 0 off the texture). Frames whose lines
+    // are out of step go to the CPU twin (Apple2Display_Burst.cpp). Until
+    // 2026-11-28 this flipped V on odd rows of a signal that never alternated.
+    float prevY = sigY - 1.0;
 
     // ── Y / U / V accumulation over a small kernel ────────────────
     // OpenEmulator-faithful decode (libemulation OpenGLCanvas.cpp):
@@ -225,7 +228,7 @@ void main()
     float sharp = clamp((uSharpness - 0.5) * 2.0, 0.0, 1.0);
 
     const int N = 8;
-    float Y = 0.0, U = 0.0, V = 0.0;
+    float Y = 0.0, U = 0.0, V = 0.0, Up = 0.0, Vp = 0.0;
     for (int i = -N; i <= N; ++i) {
         float fx = sigX + float(i);
         float s  = sampleSignal(fx, sigY);
@@ -243,7 +246,16 @@ void main()
         float phase = PI * 0.5 * float(phaseIdx);
         Y += s * lumaK[a];                     // FIR luma (sum=1, notches fs/4)
         U += s * sin(phase) * wc;              // FIR chroma (sum=2 → ×2 gain)
-        V += s * cos(phase) * wc * palQSign;
+        V += s * cos(phase) * wc;
+        if (uPalMode == 1) {
+            float sp = sampleSignal(fx, prevY);
+            Up += sp * sin(phase) * wc;
+            Vp += sp * cos(phase) * wc;
+        }
+    }
+    if (uPalMode == 1) {
+        U = 0.5 * (U + Up);
+        V = 0.5 * (V + Vp);
     }
 
     // ── Optional hue rotation in the U/V plane (user knob) ─────────

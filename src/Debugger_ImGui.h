@@ -83,6 +83,15 @@ public:
     /// handed back to the requester.
     void applyAddressAction(EmulationController& ctrl, DebugAddressAction action, uint16_t addr,
                             const char* requester = nullptr);
+    /// Put the listing on `addr` in `bank` and bring the Debugger forward —
+    /// asked from another window (the Memory Heatmap, which knows the bank).
+    void showAddressInListing(uint16_t addr, DebugBank bank) { showInListing(addr, bank); }
+    /// The label the loaded symbols give `addr` in `bank` ("" when none).
+    std::string symbolLabel(uint16_t addr, DebugBank bank = {}) const
+    { return symbols_.label(addr, bank); }
+    /// A label, an address or "bank:$addr", as the listing's Go to reads it.
+    bool resolveLocation(std::string_view text, DebugAddress& out) const
+    { return symbols_.resolveLocation(text, out); }
 
 private:
     /// A value snapshot of everything the panel draws, taken under the lock

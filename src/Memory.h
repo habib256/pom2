@@ -351,6 +351,38 @@ public:
         return lcHigh[p - 0xE000];
     }
 
+    /// Read-only twins of lcPhysical() / auxPhysical(), the aux one for ANY
+    /// RamWorks backing `slot` — the live arrays for the selected bank, the
+    /// backing store for the others. No side effect, no bus cycle: the
+    /// memory heatmap draws every bank's bytes with them.
+    uint8_t lcPhysicalPeek(uint16_t p) const {
+        if (p < 0xC000) return mem[p];
+        if (p < 0xD000) return lcBank1[p - 0xC000];
+        if (p < 0xE000) return lcBank2[p - 0xD000];
+        return lcHigh[p - 0xE000];
+    }
+    uint8_t auxPhysicalPeek(uint8_t slot, uint16_t p) const {
+        const bool live = ramWorksBanks_ <= 1 || (slot == ramWorksBank_ && !ramWorksAbsent_);
+        if (live) {
+            if (auxPort_) if (const uint8_t* own = auxPort_->ownCell(p)) return *own;
+            if (p < 0xC000) return aux[p];
+            if (p < 0xD000) return auxLcBank1[p - 0xC000];
+            if (p < 0xE000) return auxLcBank2[p - 0xD000];
+            return auxLcHigh[p - 0xE000];
+        }
+        const std::size_t base = static_cast<std::size_t>(slot) * kRamWorksBankStride;
+        if (base + kRamWorksBankStride > ramWorksBacking_.size()) return 0;
+        const std::size_t off = p < 0xC000 ? p
+                              : p < 0xD000 ? 0x10000u + (p - 0xC000u)
+                              : p < 0xE000 ? 0x11000u + (p - 0xD000u)
+                                           : 0x12000u + (p - 0xE000u);
+        return ramWorksBacking_[base + off];
+    }
+    /// The byte the motherboard ROM holds at `addr` ($D000-$FFFF), whatever
+    /// the language card maps there now (the //c's other firmware bank is
+    /// not in it).
+    uint8_t romPeek(uint16_t addr) const { return mem[addr]; }
+
     /// Test/debug accessor for the current floating-bus byte (the value an
     /// undriven soft-switch read returns) at EXACTLY `cycleCounter` — no
     /// in-instruction offset, so a test that sets the cycle gets a
@@ -517,6 +549,13 @@ public:
     std::size_t writeWatchCount() const { return writeWatchCount_; }
     /// Where a watched write is reported. Set once, at wiring time.
     void setWatchSink(pom2::MemoryWatchSink* sink) { watchSink_ = sink; }
+    /// The memory heatmap (UI-022): while a sink is set, EVERY access is
+    /// reported to it. It costs nothing while null — it rides the two
+    /// diversions the watchpoints already use: `readDivert_` (folded into
+    /// memRead's gates) and `writable[]` cleared below $C000 (memWrite's own
+    /// test), so no instruction is added to either hot path. MemoryWatch.cpp.
+    void setHeatSink(pom2::MemoryHeatSink* sink);
+    bool heatArmed() const { return heatSink_ != nullptr; }
     /// The address's REAL write permission — what `writable[]` would say if
     /// no watchpoint had diverted it.
     bool ramWritable(uint16_t addr) const {
@@ -524,6 +563,7 @@ public:
             return (writeWatch_[addr] & kWatchWasWritable) != 0;
         if (auxShadowCovers(addr)) return true;   // RAM pages by construction
         if (videoWriteLogCovers(addr)) return true;
+        if (heatSink_ && addr < 0xC000) return true;   // RAM below $C000, always
         return writable[addr];
     }
 
@@ -726,6 +766,13 @@ public:
     // user hasn't loaded a charset — we then fall back to a built-in
     // ASCII table at render time.
     const std::vector<uint8_t>& charRom() const { return characterRom; }
+    /// Take another Memory's character generator as it stands (a scratch
+    /// display — the Paint editor's page monitor — reads like the screen).
+    void adoptCharRom(const Memory& o) {
+        if (this == &o || characterRom == o.characterRom) return;
+        characterRom = o.characterRom;
+        charRomLowercase_ = o.charRomLowercase_; charRomDualBank_ = o.charRomDualBank_;
+    }
 
     // ── International 8 KB char ROM: runtime bank select via annunciator 2 ──
     // A localized //e (French, Japanese katakana, …) fits a 2364-class 8 KB
@@ -843,7 +890,8 @@ public:
     int32_t videoEventPc() const;
     /// A write in progress is the debugger's own (a Memory-viewer edit of a
     /// display switch, the assembler): the video event it throws names no
-    /// instruction. Set and cleared by Debugger::patchMemory.
+    /// instruction, and the memory heatmap does not record it. Set and
+    /// cleared by Debugger::patchMemory (and the Paint editor's switches).
     void setUnattributedAccess(bool on) { unattributedAccess_ = on; }
     /// A machine restore normally empties the soft-switch log and the
     /// published frame: their cycles belong to a timeline that is gone. The
@@ -1356,6 +1404,17 @@ private:
     std::vector<uint8_t> writeWatch_;
     std::size_t          writeWatchCount_ = 0;
     pom2::MemoryWatchSink* watchSink_ = nullptr;
+    pom2::MemoryHeatSink*  heatSink_  = nullptr;
+    // The two halves of the diverted slow paths (MemoryWatch.cpp): read
+    // watches + heatmap. Kept out of Memory.cpp's memReadSlow/memWriteSlow.
+    pom2::DebugBank divertedReadBank(uint16_t addr) const;
+    void noteDivertedRead(uint16_t addr, uint8_t value, pom2::DebugBank bank);
+    void noteDivertedWrite(uint16_t addr, uint8_t value);
+    /// Held diverted by someone other than a write watch (restore paths).
+    bool writeHeldDiverted(uint16_t addr) const {
+        return auxShadowCovers(addr) || videoWriteLogCovers(addr) ||
+               (heatSink_ && addr < 0xC000);
+    }
     // Aux shadow (see setAuxShadow): which pages divert, and the byte.
     bool    auxShadowText_ = false;
     bool    auxShadowHgr_  = false;
@@ -1385,7 +1444,7 @@ private:
     bool                  beamView_   = false;
     std::vector<VideoEvent> beamViewEventsLocked() const;
     // Read-watchpoint table, same lifetime rule. `readDivert_` is
-    // `readWatchCount_ != 0`; memRead never tests it directly — it is folded
+    // `readWatchCount_ != 0 || heatSink_`; memRead never tests it directly — it is folded
     // into the three derived fast-path bytes below by refreshReadFastFlags().
     std::vector<uint8_t> readWatch_;
     std::size_t          readWatchCount_ = 0;
