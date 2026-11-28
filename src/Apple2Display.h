@@ -581,6 +581,8 @@ private:
     std::array<std::uint64_t, kHeight> demodChromaCut_{};  // PAL text columns, per row
     std::array<float, kHeight> demodRelV_{};             // R-Y before the delay line
     std::array<std::uint8_t, kHeight> demodLumaWide_{};  // PAL trap out: no 3.56 notch
+    std::array<float, kHeight> lineGain_{};              // the monitor's chroma gain
+    std::array<float, kHeight> lineV_{};                 // its R-Y factor (delay line in)
     bool burstAllNormal_   = true;    // nothing below differs from colour as usual
     bool burstDemodTouched_ = false;  // some demod row is not (1, 1, no cut)
     bool mixedTextDots_    = false;   // NTSC + Sharp text off: band demodulated

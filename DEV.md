@@ -2240,12 +2240,13 @@ bus cycle of the access (`Memory::accessCycle`, the 4th cycle of `BIT abs`).
 Q3, and p. 8-16 has CLRGATE' clocked out by Q3 falling during PHASE 0 — the
 edge that closes that window: a register clocked by the edge that ends the
 write cannot take the new level on it, so CLRGATE' shows it one state later.
-[A] Real PAL //e + JVC monitor, photographs, 2026-11-28 (private test
-program): the photographs pin which burst lengths the monitor's killer acts on
-and which it decodes with R-Y inverted; with lag 1 they are a 2-state and a
-1-state burst, which the reversal below and the PAL decoder turn into exactly
-those two answers; lags 0 and 2 do not. [F] on a board; settled by a scope on IOU pin 37
-(CLRGATE') against a `BIT $C050`.
+[A] Real PAL //e + JVC TM-1010PN, photographs, 2026-11-28 (private test
+program), bounding it on both sides: a TEXT period ending on hpos 11, 12 or 13
+leaves the colours as they are, one ending on hpos 14 makes the killer act,
+one ending on hpos 15 gives R-Y inverted. With lag 1 those are 4, 4, 3, 2 and
+1 burst states; lag 0 would make hpos 14 a 3-state burst (colour), lag 2 would
+make hpos 13 a 2-state one (killed). [F] on a board; settled by a scope on IOU
+pin 37 (CLRGATE') against a `BIT $C050`.
 
 **The R-Y reversal** (`kVSwitchTauStates = 1.2`). [B] Sather pp. 8-18..8-19:
 the TCA650's switch (pin 16) "toggles when CLRGATE' falls" — at the START of the
@@ -2307,34 +2308,58 @@ the transient of a mode change is not modelled [F].
   Philips data book 1986, TDA3560: the burst is keyed by the sandcastle "just
   after the sync pulse", ~4 µs (the Apple's whole window); identification is a
   synchronous H/2 detector on a 330 nF capacitor; "when the colour killer is
-  active ... the chroma amplifier supplies no signal"; the A.C.C. is
-  "synchronous detection ... followed by a peak detector" (a short burst keeps
-  its peak, so the gain stays 1); the PAL switch is a bistable stepped every
-  line and set by the identification; the delay line averages each line with
-  the one before. So per line: the decoder's switch steps, the Apple's steps
-  once per CLRGATE' fall (an even count leaves them one apart); the detector
-  reads `ident` against that relative phase into a one-pole integrator (3
-  lines); below −0.05 the bistable is corrected; colour on above 0.06, off
-  below 0.04; the picture's R-Y is (relative + previous line's)/2 —
-  `Normal`, `VInverted`, or `VCancelled` (B-Y only). What comes out, with
-  nothing keyed to a program: 2-state bursts → the detector reads ~0 → the
-  **killer acts**; 1-state bursts → it reads an inverted swing, sets the
-  bistable the wrong way and keeps colour → **R-Y inverted** (orange shows
-  green, blue shows pink); no burst → the killer acts; 3-4 states → normal; an isolated burst-less line → three lines with R-Y
-  cancelled / inverted while the detector finds the missed step, colour kept.
-  [F] the thresholds and the integrator are the IC's internal currents and
-  the 330 nF (fitted inside the band the photos leave: off above +0.013,
-  flip and on below 0.089). AccurApple's whole-frame killer (`gfx_tv3.rs:256-
-  335`, fitted to a Philips CM8802) is a less tolerant monitor; AppleWin @
-  0aee064a kills colour at once on 50 Hz.
+  active, the saturation control voltage is reduced to a low level ... Colour
+  switch-on can be delayed by proper choice of the time constant for the
+  saturation control setting circuit", saturation being linear over a 2-4 V
+  control range; the A.C.C. is "synchronous detection ... followed by a peak
+  detector" (a short burst keeps its peak, so the gain stays 1); the PAL
+  switch is a bistable stepped every line and set by the identification; the
+  delay line averages each line with the one before. Per line: the decoder's
+  switch steps, the Apple's steps once per CLRGATE' fall (an even count leaves
+  them one apart); the detector reads `ident` against that relative phase into
+  a one-pole integrator; below −kFlip the bistable is corrected; the killer
+  acts below kOff and releases above kOn; killing drops the saturation voltage
+  at once, releasing lets it climb back over `kSatRampLines`, and chroma only
+  shows above `kSatThreshold` of the way; R-Y comes out as (relative +
+  previous line's)/2. Codes: `Normal`, `Killed`, `VInverted`, `VCancelled`
+  (B-Y only), `Reduced` (colour coming back); the numbers (`LineColour`: gain,
+  R-Y factor) go to the pipelines.
+
+  The monitor is a **JVC TM-1010PN** (identified 2026-11-28); its service
+  manual was not found (manualslib lists only its operating instructions), so
+  its decoder IC and RC values are unknown and the constants are fitted [F] to
+  all the photographs at once ([A] real PAL //e + JVC TM-1010PN, photographs,
+  2026-11-28, private test program; per-line profiles measured on them):
+  - 2-state bursts on every line: killer; 1-state: R-Y negated; 3-4 states and
+    TEXT ending on hpos 11-13: normal colour.
+  - The killer is **per line** (AccurApple's 312-line window does not apply to
+    this monitor): after a run of 2-state lines, full bursts bring colour back
+    **7 ± 1 lines** later — a flat grey band, then a ~2.5-line rise (measured on
+    the photo: dot texture ends at line 151.3, chroma half-rise at 158.3; 1.85
+    photo pixels per line, ±1 pixel on each edge).
+  - After a run of 1-state lines, the negated colour holds ~3 lines, then ~12
+    lines of grey, then normal colour (two photos: 44.3 / 56.2 after a run
+    ending on line 40; 119.4 / 131.4 after one ending on 116).
+  - Fitted (grid search over all cases): integrator 9 lines, flip 0.06, on
+    0.03, off 0.02, saturation ramp 12 lines with a 0.75 threshold. Residuals:
+    the 2-state recovery comes **+3.7 lines late** (162 vs 158.3), the 1-state
+    one **~2 lines early** (42 / 54 vs 44.3 / 56.2; 118 / 130 vs 119.4 /
+    131.4). One integrator cannot make the second band (flip + recovery) as
+    much longer than the first as the photos show; an asymmetric detector
+    (charge vs discharge) would, but nothing in the data book supports a
+    choice [F].
+  - Consequence: an isolated burst-less line now costs ~20 lines (the missed
+    V step found, the killer acting, colour coming back) — a prediction, not
+    yet photographed [F].
+  AppleWin @ 0aee064a kills colour at once on 50 Hz.
 
 **The pipelines.** `computeBurstResponse` runs in `render()` after the card
 check; `finishBurstFrame` at its end.
 
 | Pipeline | `Killed` | `VInverted` / `VCancelled` | PAL text cut |
 |---|---|---|---|
-| LUT/MAME (`ColorNTSC`, `CompMedium`, `Comp4Bit`) | the line's graphics columns from the 1-bit dot stream (built on demand, frame moved to 560) | per pixel, V × −1 / × 0 in Y'UV | text is crisp already |
-| OE CPU (`Apple2Display_OeDemod.cpp`) | chroma gain 0 (luminance FIR only; no 3.56 notch where the PAL //e's trap is out too) | V × −1 / × 0, or the per-line factor through the delay line | chroma taps of text columns dropped |
+| LUT/MAME (`ColorNTSC`, `CompMedium`, `Comp4Bit`) | the 1-bit dot stream where the dot pattern reaches the monitor (NTSC; PAL with the Apple's trap out), the colour's luminance elsewhere (frame moved to 560) | per pixel in Y'UV: B-Y × gain, R-Y × gain × factor | text is crisp already |
+| OE CPU (`Apple2Display_OeDemod.cpp`) | chroma gain 0 (luminance FIR; no 3.56 notch where the Apple's trap is out) | gain and R-Y factor per row, or the per-line factor through the delay line | chroma taps of text columns dropped |
 | OE GPU | the frame goes to the CPU twin (as a non-uniform phase does) — parity kept without a shader change | same | same |
 | AppleWin | dot stream, as LUT | per pixel, as LUT | text columns from the dot stream |
 | Mono, Le Chat Mauve RGB | untouched: no burst on those wires | | |
@@ -2351,16 +2376,18 @@ which removes 3.56 MHz variations from the LUMINANCE signal during GRAPHICS
 time" — L7/C111 grounded by Q3, driven by the second half of UC15 (LS74):
 D = GR (GR+2), clock = SYNC, cleared by the COLOUR/MONO switch. So the trap
 follows GR+2 as it stood at the line's sync, for the whole line
-(`LineBurst::trap`). A line whose sync saw text keeps the dot pattern in its
-luminance. It reaches the screen only if the monitor lets it through too: [A]
-the photographs show the dot texture in graphics areas with the killer acting
-(9.9 % of luma steps) and not in colour (3.5-3.8 %), though the Apple's trap
-is out on both — so the monitor's own trap is taken to be out exactly while
-its killer acts ([F]: the TDA3560 application circuit has a fixed external
-4.4 MHz luminance trap, L3; settled by the JVC's service manual). With both
-out, the OE demod uses a 1-2-1 luminance kernel instead of `lumaK` (whose fs/4
-notch stands for those traps in this pipeline): the stripes at half contrast,
-[F] the monitor's luminance response. [F] which SYNC edge clocks UC15 (hpos 9 taken).
+(`LineBurst::trap`): a line whose sync saw text keeps the dot pattern in its
+luminance, in colour or not. [A] the photographs agree: the texture shows on
+every line the TEXT period touched at sync — in grey under the killer, inside
+the colours where the killer does not act (TEXT ending on hpos 11-13: the same
+hues, paler and striped; luma steps in the colour areas 24.7 / 25.1 against
+15.1 on the untouched picture at the same scale) — and the grey band that
+follows a run is FLAT: the Apple's trap is back there while the monitor still
+kills. The OE demod uses a 1-2-1 luminance kernel instead of `lumaK` (whose fs/4
+notch stands for the trap in this pipeline) on those lines — [F] the monitor's
+luminance response; the LUT/MAME and AppleWin pipelines show a killed line's
+dot stream there and the colour's luminance elsewhere. [F] which SYNC edge
+clocks UC15 (hpos 9 taken).
 
 **The OE "PAL composite" knob is the delay line** (2026-11-28): each line's
 U/V averaged with the line before's (blanking above line 0), in the CPU demod

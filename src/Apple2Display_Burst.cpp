@@ -21,8 +21,11 @@
 //
 // What each line's graphics dots get (pom2::LineChroma):
 //   Normal     colour as before;
-//   Killed     the 1-bit dot stream, as on a monochrome monitor (LUT/MAME and
-//              AppleWin pipelines), luminance only (OpenEmulator demod);
+//   Killed     luminance only: the 1-bit dot stream where the dot pattern
+//              reaches the monitor (NTSC; PAL with the Apple's trap out),
+//              the colour's luminance elsewhere (LUT/MAME and AppleWin); the
+//              luminance FIR (OpenEmulator demod);
+//   Reduced    PAL: chroma coming back after the killer releases;
 //   VInverted  PAL: R-Y negated (LUT/AppleWin: per pixel in Y'UV; OE: V);
 //   VCancelled PAL: R-Y zero (the delay line averaged opposite phases).
 // Text dots:
@@ -76,16 +79,16 @@ pom2::BurstRules rulesFor(std::uint8_t board)
     }
 }
 
-// R-Y scaled by `k` in Y'UV (-1 inverted, 0 cancelled), the rest kept
-// (BT.601, the matrix the OE demod uses).
-std::uint32_t scaleV(std::uint32_t px, float k)
+// B-Y scaled by `ku`, R-Y by `kv` in Y'UV (the line's chroma gain and R-Y
+// factor), luminance kept (BT.601, the matrix the OE demod uses).
+std::uint32_t scaleUV(std::uint32_t px, float ku, float kv)
 {
     const float r = static_cast<float>(px & 0xFFu);
     const float g = static_cast<float>((px >> 8) & 0xFFu);
     const float b = static_cast<float>((px >> 16) & 0xFFu);
     const float y = 0.299f * r + 0.587f * g + 0.114f * b;
-    const float u = 0.492f * (b - y);
-    const float v = k * 0.877f * (r - y);
+    const float u = ku * 0.492f * (b - y);
+    const float v = kv * 0.877f * (r - y);
     auto cl = [](float c) {
         return static_cast<std::uint32_t>(std::clamp(c, 0.0f, 255.0f) + 0.5f);
     };
@@ -109,6 +112,8 @@ void Apple2Display::computeBurstResponse(Memory& mem,
     demodChromaCut_.fill(0);
     demodRelV_.fill(1.0f);
     demodLumaWide_.fill(0);
+    lineGain_.fill(1.0f);
+    lineV_.fill(1.0f);
     const VideoStandard vstd = mem.videoStandard();
     const bool pal = vstd == VideoStandard::PAL;
     const bool lut = hiResMode == HiResMode::ColorNTSC ||
@@ -146,8 +151,8 @@ void Apple2Display::computeBurstResponse(Memory& mem,
     if (burst.allFull && !(pal && splitKinds)) return;
 
     std::array<pom2::LineChroma, kHeight> resp{};
-    std::array<int8_t, kHeight> rel{};
-    pom2::monitorLineChroma(burst, vstd, resp, &rel);
+    std::array<pom2::LineColour, kHeight> detail{};
+    pom2::monitorLineChroma(burst, vstd, resp, &detail);
 
     // Which byte columns of each line show graphics, by the picture's own
     // column rule (forEachBeamSegment / beamColForEvent).
@@ -173,28 +178,23 @@ void Apple2Display::computeBurstResponse(Memory& mem,
         if (gfx != 0 && r != pom2::LineChroma::Normal) burstAllNormal_ = false;
         // A line with no graphics dot: on PAL the latch holds the colour word
         // cleared, whatever the burst; on NTSC the monitor decides.
-        if (gfx == 0 && pal) r = pom2::LineChroma::Killed;
-        switch (r) {
-            case pom2::LineChroma::Normal:    break;
-            case pom2::LineChroma::Killed:    demodUGain_[i] = demodVGain_[i] = 0.0f; break;
-            case pom2::LineChroma::VInverted: demodVGain_[i] = -1.0f; break;
-            case pom2::LineChroma::VCancelled: demodVGain_[i] = 0.0f; break;
-        }
+        pom2::LineColour c = detail[i];
+        if (gfx == 0 && pal) c = pom2::LineColour{0.0f, 0.0f, 0};
+        demodUGain_[i] = c.gain;
+        demodVGain_[i] = c.gain * c.v;
+        lineGain_[i] = c.gain;
+        lineV_[i]    = c.v;
         if (pal && gfx != 0 && gfx != kAllCols) demodChromaCut_[i] = ~gfx & kAllCols;
         // The OE demod's own delay line (PAL mode) takes the line's factor
-        // before averaging. And the dot pattern reaches the screen in the
-        // luminance only when BOTH traps are out: the Apple's 3.56 MHz trap
-        // (out on a line whose sync saw text, ColourBurst.h trap — [B]) and
-        // the monitor's own, which the photographs show out exactly when its
-        // killer acts — [A] real PAL //e + JVC monitor, photographs,
-        // 2026-11-28 (private test program): with the Apple's trap out on
-        // both, luminance texture inside graphics areas 9.9 % with the killer
-        // acting against 3.5-3.8 % in colour; [F] the switching itself (the
-        // TDA3560 data shows a fixed external 4.4 MHz trap, L3) — settled by
-        // the monitor's service manual.
-        demodRelV_[i] = demodUGain_[i] == 0.0f ? 0.0f : static_cast<float>(rel[i]);
-        demodLumaWide_[i] = (pal && !burst.lines[i].trap &&
-                             resp[i] == pom2::LineChroma::Killed) ? 1 : 0;
+        // before averaging. The Apple's 3.56 MHz luminance trap is out on a
+        // PAL line whose sync saw text (ColourBurst.h trap, [B] Sather Fig.
+        // 8.6): the dot pattern reaches the monitor in the luminance, in
+        // colour or not. [A] the photographs agree: the dot texture shows on
+        // the lines the TEXT period touched, killed or coloured, and a flat
+        // grey band follows them where the killer still acts but the Apple's
+        // trap is back.
+        demodRelV_[i] = c.gain * static_cast<float>(c.relative);
+        demodLumaWide_[i] = (pal && !burst.lines[i].trap) ? 1 : 0;
         if (demodUGain_[i] != 1.0f || demodVGain_[i] != 1.0f || demodChromaCut_[i] != 0 ||
             demodRelV_[i] != 1.0f || (demodLumaWide_[i] && gfx != 0))
             burstDemodTouched_ = true;
@@ -249,18 +249,21 @@ void Apple2Display::finishBurstFrame(Memory& mem,
         setUseFrame80(true);
     }
     uint32_t* fb = frame80.data();
+    const bool palStd = mem.videoStandard() == VideoStandard::PAL;
     constexpr int width = kWidth80, perCol = 14;
     constexpr std::uint32_t kLit = 0xFFFFFFFFu, kDark = 0xFF000000u;
     for (int y = 0; y < kHeight; ++y) {
         const auto i = static_cast<std::size_t>(y);
         const auto r = static_cast<pom2::LineChroma>(lineChroma_[i]);
         const std::uint64_t gfx  = (r != pom2::LineChroma::Normal) ? lineGfxCols_[i] : 0;
-        const std::uint64_t mono = (r == pom2::LineChroma::Killed ? gfx : 0) |
+        // A killed line shows the dot pattern only where it reaches the
+        // monitor: always on NTSC (no trap), on PAL where the Apple's trap is
+        // out (ColourBurst.h trap). Elsewhere it is the colour's luminance.
+        const bool dots = !palStd || demodLumaWide_[i];
+        const std::uint64_t mono = (r == pom2::LineChroma::Killed && dots ? gfx : 0) |
                                    (palAwCut ? demodChromaCut_[i] : 0);
-        const bool vScaled = r == pom2::LineChroma::VInverted ||
-                             r == pom2::LineChroma::VCancelled;
-        const std::uint64_t inv  = vScaled ? gfx : 0;
-        const float vk = (r == pom2::LineChroma::VInverted) ? -1.0f : 0.0f;
+        const std::uint64_t inv  = (r != pom2::LineChroma::Killed || !dots) ? gfx : 0;
+        const float ku = lineGain_[i], kv = lineGain_[i] * lineV_[i];
         if (!mono && !inv) continue;
         const uint8_t* sig = signalBuf.data() + i * kSignalWidth;
         uint32_t* row = fb + i * static_cast<std::size_t>(width);
@@ -271,7 +274,7 @@ void Apple2Display::finishBurstFrame(Memory& mem,
                 if (m) {
                     row[x] = sig[x] ? kLit : kDark;
                 } else {
-                    row[x] = scaleV(row[x], vk);
+                    row[x] = scaleUV(row[x], ku, kv);
                 }
             }
         }

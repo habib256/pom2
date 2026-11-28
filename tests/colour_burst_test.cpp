@@ -26,10 +26,11 @@
 //   4. the ][ before Revision 7 gates hpos 17-20, a Revision 0 ][ never;
 //   5. the NTSC killer (GSSquared's AppleColor fit): colour holds 131 lines
 //      after 100 full-burst lines, and an isolated burst-less line keeps it;
-//   6. the PAL decoder (H/2 identification, bistable, killer, delay line):
-//      2-state bursts: the killer acts; 1-state bursts: R-Y inverted; no
-//      burst: the killer acts; 3 or 4 states: normal; an
-//      isolated burst-less line does not kill the colour.
+//   6. the PAL decoder (H/2 identification, bistable, killer, saturation
+//      recovery, delay line): 2-state bursts: the killer acts; 1-state
+//      bursts: R-Y inverted; no burst: the killer acts; TEXT ending on hpos
+//      11-13: normal; after a run, colour comes back late, per line, within
+//      the bands measured on the photographs.
 
 #include "BurstMonitor.h"
 #include "ColourBurst.h"
@@ -170,19 +171,30 @@ void testNtscKiller()
 
 // A TEXT period on every line from 16 lines before the picture to its end
 // (the blanking lines before the picture carry it too).
-std::array<LineChroma, 192> palPicture(int on, int off)
+std::array<LineChroma, 192> palPicture(int on, int off, int lastLine = 191,
+                                       std::array<LineColour, 192>* detail = nullptr)
 {
-    std::vector<TextEdge> e = textInHbl(0, 192, on, off);
+    std::vector<TextEdge> e = textInHbl(0, lastLine + 1, on, off);
     std::vector<TextEdge> lead = textInHbl(kPal - 16, kPal, on, off);
     e.insert(e.begin(), lead.begin(), lead.end());
     std::array<LineChroma, 192> out{};
-    monitorLineChroma(frameOf(e, kPal), VideoStandard::PAL, out);
+    monitorLineChroma(frameOf(e, kPal), VideoStandard::PAL, out, detail);
     return out;
 }
 
+int firstLine(const std::array<LineColour, 192>& d, int from, bool (*cond)(const LineColour&))
+{
+    for (int y = from; y < 192; ++y)
+        if (cond(d[static_cast<std::size_t>(y)])) return y;
+    return 999;
+}
+
+// From line 24: the decoder settles within the first ~40 lines of a run that
+// starts 16 lines above the picture (the photographs show it settled where
+// their picture content starts, line ~20).
 void assertAll(const std::array<LineChroma, 192>& out, LineChroma c, const char* what)
 {
-    for (int y = 0; y < 192; ++y)
+    for (int y = 24; y < 192; ++y)
         if (out[static_cast<std::size_t>(y)] != c) {
             std::printf("  line %d: %d, wanted %d (%s)\n", y,
                         int(out[static_cast<std::size_t>(y)]), int(c), what);
@@ -196,8 +208,30 @@ void testPalDecoder()
     assertAll(palPicture(2, 14), LineChroma::Killed,    "2 states: killer");
     assertAll(palPicture(3, 15), LineChroma::VInverted, "1 state: R-Y inverted");
     assertAll(palPicture(4, 16), LineChroma::Killed,    "no burst: killer");
-    assertAll(palPicture(1, 13), LineChroma::Normal,    "3 states: colour");
-    assertAll(palPicture(0, 12), LineChroma::Normal,    "4 states: colour");
+    // The lag, bounded on both sides by photographs ([A] 2026-11-28): the
+    // TEXT period ending on hpos 13, 12 and 11 all look like an untouched
+    // picture; 14 kills the colour, 15 negates R-Y.
+    assertAll(palPicture(1, 13), LineChroma::Normal,    "hpos 13 (3 states): colour");
+    assertAll(palPicture(0, 12), LineChroma::Normal,    "hpos 12 (4 states): colour");
+    assertAll(palPicture(7, 11), LineChroma::Normal,    "hpos 11 (4 states): colour");
+
+    // The killer is per line, and colour comes back late ([A] photographs):
+    // after a run of 2-state lines ending on line 151, full bursts bring
+    // colour back ~7 lines later (measured 158.3 +- 1 at half rise); after a
+    // run of 1-state lines ending on line 40, the negated colour holds ~3
+    // lines (44.3), grey follows, normal colour from ~56.
+    std::array<LineColour, 192> d{};
+    palPicture(2, 14, 151, &d);
+    const int back = firstLine(d, 152, [](const LineColour& c) { return c.gain >= 0.5f; });
+    for (int y = 24; y <= 151; ++y) assert(d[static_cast<std::size_t>(y)].gain == 0.0f);
+    std::printf("  2-state run to 151: colour back at %d (photo: 158.3)\n", back);
+    assert(back >= 155 && back <= 164);
+    palPicture(3, 15, 40, &d);
+    const int off = firstLine(d, 41, [](const LineColour& c) { return c.gain < 0.5f; });
+    const int normal = firstLine(d, 41, [](const LineColour& c) { return c.gain >= 0.5f && c.v > 0.5f; });
+    std::printf("  1-state run to 40: negated until %d (photo 44.3), normal from %d (photo 56.2)\n",
+                off, normal);
+    assert(off >= 41 && off <= 47 && normal >= 50 && normal <= 60);
 
     // An isolated burst-less line: the Apple misses one V step, the decoder
     // finds it out within a few lines; colour stays on around it.

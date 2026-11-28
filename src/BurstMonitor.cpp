@@ -36,7 +36,7 @@ bool NtscColourKiller::observe(const LineBurst& b)
     return colour;
 }
 
-LineChroma PalDecoder::observe(const LineBurst& b)
+LineColour PalDecoder::observe(const LineBurst& b)
 {
     // The decoder's bistable steps every line, the Apple's once per CLRGATE'
     // fall: an even count leaves the two one step apart.
@@ -49,26 +49,38 @@ LineChroma PalDecoder::observe(const LineBurst& b)
     }
     if (!colour && ident > kOn)        colour = true;
     else if (colour && ident < kOff)   colour = false;
-    const int v = relative + prevRelative;   // the delay line: this line + the last
+    // The killer pulls the saturation control down at once; released, it
+    // climbs back, and chroma shows only above the control range's floor.
+    saturation = colour ? std::min(1.0f, saturation + 1.0f / kSatRampLines) : 0.0f;
+    LineColour c;
+    c.gain = std::clamp((saturation - kSatThreshold) / (1.0f - kSatThreshold), 0.0f, 1.0f);
+    c.v = 0.5f * static_cast<float>(relative + prevRelative);   // the delay line
+    c.relative = static_cast<int8_t>(c.gain > 0.0f ? relative : 0);
     prevRelative = relative;
-    if (!colour) return LineChroma::Killed;
-    if (v > 0) return LineChroma::Normal;
-    if (v < 0) return LineChroma::VInverted;
-    return LineChroma::VCancelled;
+    return c;
+}
+
+LineChroma lineChromaOf(const LineColour& c)
+{
+    if (c.gain <= 0.0f) return LineChroma::Killed;
+    if (c.v < 0.0f)     return LineChroma::VInverted;
+    if (c.v == 0.0f)    return LineChroma::VCancelled;
+    if (c.gain < 1.0f)  return LineChroma::Reduced;
+    return LineChroma::Normal;
 }
 
 void monitorLineChroma(const ColourBurstFrame& frame, VideoStandard standard,
                        std::array<LineChroma, 192>& out,
-                       std::array<int8_t, 192>* relative)
+                       std::array<LineColour, 192>* detail)
 {
     const int lines = frame.lineCount;
     out.fill(LineChroma::Normal);
-    if (relative) relative->fill(1);
+    if (detail) detail->fill(LineColour{});
     if (lines <= 0) return;
     if (frame.allFull) return;                       // steady state: colour on, in step
     if (frame.allNone) {
         out.fill(LineChroma::Killed);
-        if (relative) relative->fill(0);
+        if (detail) detail->fill(LineColour{0.0f, 0.0f, 0});
         return;
     }
 
@@ -80,7 +92,9 @@ void monitorLineChroma(const ColourBurstFrame& frame, VideoStandard standard,
         for (int y = 0; y < 192 && y < lines; ++y) {
             const bool c = k.observe(frame.lines[static_cast<std::size_t>(y)]);
             out[static_cast<std::size_t>(y)] = c ? LineChroma::Normal : LineChroma::Killed;
-            if (relative) (*relative)[static_cast<std::size_t>(y)] = c ? 1 : 0;
+            if (detail)
+                (*detail)[static_cast<std::size_t>(y)] =
+                    c ? LineColour{} : LineColour{0.0f, 0.0f, 0};
         }
         return;
     }
@@ -89,10 +103,9 @@ void monitorLineChroma(const ColourBurstFrame& frame, VideoStandard standard,
     for (int pass = 0; pass < 3; ++pass)
         for (int y = 0; y < lines; ++y) d.observe(frame.lines[static_cast<std::size_t>(y)]);
     for (int y = 0; y < 192 && y < lines; ++y) {
-        out[static_cast<std::size_t>(y)] = d.observe(frame.lines[static_cast<std::size_t>(y)]);
-        if (relative)
-            (*relative)[static_cast<std::size_t>(y)] =
-                static_cast<int8_t>(d.colour ? d.relative : 0);
+        const LineColour c = d.observe(frame.lines[static_cast<std::size_t>(y)]);
+        out[static_cast<std::size_t>(y)] = lineChromaOf(c);
+        if (detail) (*detail)[static_cast<std::size_t>(y)] = c;
     }
 }
 

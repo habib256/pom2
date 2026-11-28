@@ -65,13 +65,15 @@ inline constexpr int kBurstStates = 4;
 ///     — the very edge that closes that window. A register clocked by the
 ///     edge that ends the write cannot take the new level on it: CLRGATE'
 ///     first shows it one state later. Lag 1.
-/// [A] Real PAL //e + JVC monitor, photographs, 2026-11-28 (private test
-///     program): a TEXT period ending on stamp hpos 14 makes the monitor's
-///     killer act, one ending on hpos 15 gives R-Y-inverted colours. With lag 1
-///     those are a 2-state and a 1-state burst, and the TCA650 switch below
-///     plus the monitor (BurstMonitor.h) turn them into exactly that; lag 0
-///     (3 and 2 states) and lag 2 (1 and none) do not.
-/// [F] Unmeasured on a board. Settled by: a scope on IOU pin 37 (CLRGATE')
+/// [A] Real PAL //e + JVC TM-1010PN, photographs, 2026-11-28 (private test
+///     program), bounding it on both sides: a TEXT period ending on stamp
+///     hpos 11, 12 or 13 leaves the colours as they are; one ending on hpos 14
+///     makes the monitor's killer act; one ending on hpos 15 gives R-Y-
+///     inverted colours. With lag 1 those are 4, 4, 3, 2 and 1 burst states,
+///     which the TCA650 switch below and the monitor (BurstMonitor.h) turn
+///     into exactly those pictures; lag 0 would make hpos 14 a 3-state burst
+///     (colour), lag 2 would make hpos 13 a 2-state one (killed).
+/// [F] Not scoped on a board. Settled by: a scope on IOU pin 37 (CLRGATE')
 ///     against the bus cycle of a `BIT $C050`.
 inline constexpr int kBurstTextLag = 1;
 
@@ -135,6 +137,12 @@ struct LineBurst {
     ///     The trap therefore follows GR+2 as it stood at the line's sync, for
     ///     the whole line: a line whose sync saw text keeps the dot pattern in
     ///     its luminance, graphics or not.
+    /// [A] Real PAL //e + JVC TM-1010PN, photographs, 2026-11-28 (private
+    ///     test program): the dot texture shows on every line whose sync saw
+    ///     text — in grey where the killer acts, inside the colours where it
+    ///     does not (TEXT ending on hpos 11-13: the same hues, paler and
+    ///     striped) — and a flat grey band follows where the killer still
+    ///     acts but the trap is back.
     /// [F] Which SYNC edge clocks it (hpos 9 is taken) — they differ only for
     ///     a switch thrown at hpos 7-10; settled by a scope on UC15 pin 9.
     bool trap = true;

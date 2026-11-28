@@ -280,11 +280,11 @@ named constant, nothing structural.
 
 | Constant | File | Grade | What would settle it |
 |---|---|---|---|
-| `kBurstTextLag = 1` (access → first gate state that sees TEXT) | `ColourBurst.h` | [B] reading of Sather p. 7-3 / 8-16, [A] fit to two photos | a scope on IOU pin 37 (CLRGATE') against a `BIT $C050` |
+| `kBurstTextLag = 1` (access → first gate state that sees TEXT) | `ColourBurst.h` | [B] reading of Sather p. 7-3 / 8-16, [A] bounded on both sides by photos (hpos 13 normal, 14 killed, 15 inverted) | a scope on IOU pin 37 (CLRGATE') against a `BIT $C050` |
 | `kVSwitchTauStates = 1.2` (TCA650 R-Y reversal) | `ColourBurst.h` | [F] fitted to two photos | a scope on TCA650 pin 11 across a CLRGATE' fall; the circuit values of Sather Fig. 8.6 |
-| `PalDecoder` integrator (3 lines) and thresholds (flip 0.05, on 0.06, off 0.04) | `BurstMonitor.h` | [B] mechanism (TDA3560), [F] values fitted to two photos | photos of 3-state, 0-state and isolated burst-less lines on this PAL monitor and a second one; a scope on the decoder's identification pin |
+| `PalDecoder` integrator (9 lines), thresholds (flip 0.06, on 0.03, off 0.02) and saturation recovery (12 lines, 0.75 threshold) | `BurstMonitor.h` | [B] mechanism (TDA3560 pins 2, 6), [F] values fitted to all the photos (residuals +3.7 / −2 lines on the two recovery bands) | the JVC TM-1010PN's service manual (decoder IC, the ident and saturation RCs); photos of an isolated burst-less line (the model predicts ~20 disturbed lines) |
 | A.C.C. left at gain 1 (peak detector) | `BurstMonitor.h` | [B] TDA3560 pin 5, [F] for this monitor | the photo of the 1-state picture looks brighter and LESS saturated than the launch one (sat 26/44 vs 49/55 on the camera's scale): neither is modelled |
-| PAL trap clock edge (hpos 9), the monitor's own luminance trap out only while its killer acts, and the untrapped kernel (1-2-1) | `ColourBurst.h`, `Apple2Display_Burst.cpp`, `Apple2Display_OeDemod.cpp` | [B] the Apple's gating (Sather Fig. 8.6), [A] two photos for the monitor's, [F] edge, switching and response | a scope on UC15 pin 9; the monitor's service manual; a capture of its response to a 3.56 MHz pattern |
+| PAL trap clock edge (hpos 9) and the untrapped luminance kernel (1-2-1) | `ColourBurst.h`, `Apple2Display_OeDemod.cpp` | [B] the gating (Sather Fig. 8.6), [A] the photos (texture exactly on the lines whose sync saw text), [F] edge and response | a scope on UC15 pin 9; a capture of the monitor's response to a 3.56 MHz pattern |
 | NTSC killer (GSSquared's constants) | `BurstMonitor.h` | [D] over [A] (AppleColor monitor) | the same photos on another NTSC monitor model |
 | ][ revision per profile (`kBurstIIPreRev7` for the 1977 ][) and the ][ lag | `ColourBurst.h` | [B] windows, [F] mapping | a board-revision setting; a scope on a ][ |
 | //c / //c+ / //c PAL use the //e rule | `ColourBurst.h` | [F] | the //c Technical Reference's video timing, or a scope |

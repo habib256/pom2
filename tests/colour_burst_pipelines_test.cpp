@@ -173,11 +173,11 @@ void testPal()
         const Shot none = shoot(pal, mode, 15, true);
         for (int y = 0; y < 192; ++y) assert(ctl.chroma[size_t(y)] == 0);
         assert(maxSpread(ctl, 40, 41) > 60 && "control frame is in colour");
-        for (int y = 16; y < 192; ++y) {
+        for (int y = 24; y < 192; ++y) {   // the decoder settles above line 20
             assert(one.chroma[size_t(y)] == 1 && "two burst states: killed");
             assert(none.chroma[size_t(y)] == 2 && "one burst state: V inverted");
         }
-        assert(maxSpread(one, 16, 192) <= 2 && "killed lines carry no chroma");
+        assert(maxSpread(one, 24, 192) <= 2 && "killed lines carry no chroma");
         std::printf("  ok: PAL %s — two burst states, no colour\n", name);
         assertVInverted(ctl, none, 100, name);
     }

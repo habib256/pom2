@@ -48,6 +48,17 @@ enum class LineChroma : uint8_t {
     VInverted  = 2,   ///< PAL: the decoder's switch out of step, R-Y negated
     VCancelled = 3,   ///< PAL: the delay line averaged an in-step and an
                       ///< out-of-step line — R-Y cancels, B-Y stays
+    Reduced    = 4,   ///< PAL: colour coming back, chroma partly restored
+};
+
+/// The same answer as numbers, for pipelines that scale chroma: `gain` the
+/// chroma amplitude (0 killed, 1 full), `v` the R-Y factor after the PAL
+/// delay line (+1, 0, -1), `relative` the R-Y factor of this line alone
+/// before the delay line (+1 / -1; 0 when killed).
+struct LineColour {
+    float  gain     = 1.0f;
+    float  v        = 1.0f;
+    int8_t relative = 1;
 };
 
 /// NTSC: the AppleColor Composite Monitor IIe killer.
@@ -79,63 +90,72 @@ struct NtscColourKiller {
 /// 5, 6, 8: the burst is keyed by the sandcastle "just after the sync
 /// pulse", ~4 us — the Apple's whole window, hpos 13-16; identification is a
 /// synchronous H/2 detector on a 330 nF capacitor; "when the colour killer
-/// is active ... the chroma amplifier supplies no signal"; the PAL switch is
-/// a bistable stepped every line and set by the identification; the delay
-/// line averages each line with the one before. The A.C.C. is "synchronous
-/// detection of the burst signal followed by a PEAK detector": a short burst
-/// keeps its peak, so the gain is left at 1).
+/// is active, the saturation control voltage is reduced to a low level ...
+/// Colour switch-on can be delayed by proper choice of the time constant for
+/// the saturation control setting circuit"; saturation is linear in a 2-4 V
+/// control range; the PAL switch is a bistable stepped every line and set by
+/// the identification; the delay line averages each line with the one
+/// before. The A.C.C. is "synchronous detection of the burst signal followed
+/// by a PEAK detector": a short burst keeps its peak, so its gain is left at 1).
 ///
 /// Per line: the PAL switch steps; the Apple's switch steps once per
 /// CLRGATE' fall (ColourBurst.h), so `relative` — the decoder's phase
 /// against the picture's — flips on a line with an even number of falls.
 /// The H/2 detector reads the burst's R-Y swing (LineBurst::ident) against
 /// `relative` into a one-pole integrator; when it goes below -kFlip the
-/// bistable is corrected (and the reading turns positive); colour is on above
-/// kOn, off below kOff. The picture's R-Y comes out as (relative + the
-/// previous line's) / 2 — +1 normal, -1 inverted, 0 cancelled.
+/// bistable is corrected (and the reading turns positive); the killer acts
+/// below kOff and releases above kOn. Killing drops the saturation voltage at
+/// once; releasing lets it climb back over kSatRampLines, and chroma only
+/// shows above kSatThreshold of the way (the 2 V floor of the control range):
+/// colour returns several lines after the burst, all at once. The picture's
+/// R-Y comes out as (relative + the previous line's) / 2.
 ///
-/// [A] Real PAL //e + JVC monitor, photographs, 2026-11-28 (private test
-///     program): with a 2-state burst (TEXT period ending on hpos 14) the
-///     monitor's colour killer acts; with a 1-state burst (ending on hpos 15) it gives
-///     colour with R-Y inverted (orange shows green, blue shows pink — the
-///     photographs' hues move by about +130 deg, the V flip within the
-///     camera's own offsets). Through ColourBurst.h's reversal a 2-state
-///     burst carries almost no R-Y swing (ident ~+0.01: the detector reads
-///     nothing, the killer acts) and a 1-state burst an inverted one (~-0.09:
-///     the detector sets the bistable the wrong way and keeps colour on).
-/// [F] The thresholds and the integrator are not in the data book (they are
-///     the IC's internal currents and the 330 nF): fitted inside the band
-///     the two photographs leave (kOff above +0.013, kFlip and kOn below
-///     0.089), and kIdentLines short enough that a 208-line effect settles in
-///     the blanking lines. AccurApple's whole-frame killer (gfx_tv3.rs @
-///     15ed7739, fitted to a Philips CM8802) and AppleWin @ 0aee064a (colour
-///     off at once on 50 Hz) are other monitors. Settled by: photographs of
-///     3-state, 0-state and isolated burst-less lines on this monitor and a
-///     second one; a scope on the decoder's identification pin.
+/// [A] Real PAL //e + JVC TM-1010PN, photographs, 2026-11-28 (private test
+///     program), all fitted together:
+///     - 2-state bursts on every line: the killer acts (ident ~+0.013);
+///     - 1-state bursts: R-Y negated (ident ~-0.089 sets the bistable the
+///       wrong way, colour kept; orange shows green, blue pink);
+///     - 3-state bursts: normal (ident ~+0.20);
+///     - the killer is per line: after a run of 2-state lines, full bursts
+///       bring colour back 7 +- 1 lines later (a flat grey band, then a
+///       ~2.5-line rise); after a run of 1-state lines the negated colour
+///       lasts ~3 lines, then ~12 lines of grey, then normal colour.
+///     The fit (fit residuals: +3.7 lines on the first band, -2 on the
+///     second) is in DEV § Colour burst per scanline.
+/// [F] The values themselves are the IC's internal currents and external
+///     RCs, which the JVC's schematic would give (its service manual was not
+///     found; the decoder IC is unidentified). AccurApple's whole-frame killer
+///     (gfx_tv3.rs @ 15ed7739, fitted to a Philips CM8802) is a different
+///     monitor: this one's killer is per line. AppleWin @ 0aee064a (colour
+///     off at once on 50 Hz) likewise.
 struct PalDecoder {
-    static constexpr float kIdentLines = 3.0f;    ///< integrator time constant, lines
-    static constexpr float kFlip       = 0.05f;   ///< bistable corrected below -kFlip
-    static constexpr float kOn         = 0.06f;   ///< killer releases above
-    static constexpr float kOff        = 0.04f;   ///< killer acts below
+    static constexpr float kIdentLines     = 9.0f;    ///< integrator time constant, lines
+    static constexpr float kFlip           = 0.06f;   ///< bistable corrected below -kFlip
+    static constexpr float kOn             = 0.03f;   ///< killer releases above
+    static constexpr float kOff            = 0.02f;   ///< killer acts below
+    static constexpr float kSatRampLines   = 12.0f;   ///< saturation recovery, lines
+    static constexpr float kSatThreshold   = 0.75f;   ///< chroma starts this far up
 
     int   relative = 1;      ///< decoder switch against the Apple's: +1 / -1
     int   prevRelative = 1;
     float ident  = 0.0f;
     bool  colour = false;
+    float saturation = 0.0f; ///< 0 killed .. 1 the user's setting
 
     /// Runs one scanline; returns the line's chroma.
-    LineChroma observe(const LineBurst& b);
+    LineColour observe(const LineBurst& b);
 };
 
+/// The code for a line's numbers (LineChroma from LineColour).
+LineChroma lineChromaOf(const LineColour& c);
+
 /// The monitor's answer for the 192 visible lines of a frame.
-/// `standard` picks the monitor (NTSC killer, PAL decoder). `relative`, when
-/// given, receives each line's R-Y factor BEFORE the delay line: +1 / -1 the
-/// decoder's switch against the picture's, 0 with the killer acting — what a
-/// pipeline that runs the delay line itself (the OE demod's PAL mode) needs;
-/// `out` already folds the delay line in for those that do not.
+/// `standard` picks the monitor (NTSC killer, PAL decoder). `detail`, when
+/// given, receives the numbers (LineColour) — what a pipeline that scales
+/// chroma, or runs the delay line itself (the OE demod's PAL mode), needs.
 void monitorLineChroma(const ColourBurstFrame& frame, VideoStandard standard,
                        std::array<LineChroma, 192>& out,
-                       std::array<int8_t, 192>* relative = nullptr);
+                       std::array<LineColour, 192>* detail = nullptr);
 
 } // namespace pom2
 

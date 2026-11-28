@@ -58,15 +58,14 @@ void Apple2Display::renderCompositeOeCpu(int rows)
         0.27941f, 0.23593f, 0.13462f, 0.03665f, -0.01538f,
         -0.02210f, -0.00999f, -0.00072f, 0.00130f
     };
-    // A PAL line with both luminance traps out — the Apple's 3.56 MHz trap
-    // (out on a line whose sync saw text, ColourBurst.h LineBurst::trap, [B]
-    // Sather Fig. 8.6) and the monitor's (out while its killer acts:
-    // Apple2Display_Burst.cpp, [A]/[F]) — shows the dot pattern in its
-    // luminance. lumaK's fs/4 notch stands for those traps in this pipeline
-    // (fs/4 of the dot clock = 3.56 MHz on a PAL //e), so such a line takes a
-    // kernel without it: [F] a 1-2-1 binomial (|H(fs/4)| = 0.5, the stripes
-    // at half contrast). Settled by: a capture of the monitor's response to a
-    // 3.56 MHz pattern. Sum 1, like lumaK.
+    // A PAL line whose sync saw text has the Apple's 3.56 MHz luminance trap
+    // out (ColourBurst.h LineBurst::trap, [B] Sather Fig. 8.6; [A] the
+    // photographs show the texture on exactly those lines): the dot pattern
+    // reaches the monitor in its luminance. lumaK's fs/4 notch stands for that
+    // trap in this pipeline (fs/4 of the dot clock = 3.56 MHz on a PAL //e), so
+    // such a line takes a kernel without it: [F] a 1-2-1 binomial (|H(fs/4)| =
+    // 0.5, the stripes at half contrast). Settled by: a capture of the
+    // monitor's response to a 3.56 MHz pattern. Sum 1, like lumaK.
     static const float lumaWide[N + 1] = { 0.5f, 0.25f, 0, 0, 0, 0, 0, 0, 0 };
     static const float chromaSoft[N + 1] = {
         0.26030f, 0.24788f, 0.21373f, 0.16602f, 0.11509f,

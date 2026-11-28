@@ -190,6 +190,29 @@ composite (delay line)".
 - The constants a scope or a photograph could move are in two headers,
   graded; DISPLAY-015 lists what would settle each.
 
+**Later the same day, more photographs of the same machine** ([A] real PAL
+//e + JVC TM-1010PN, photographs, 2026-11-28, private test program):
+- The lag is bounded on both sides: TEXT ending on hpos 11, 12, 13 leaves the
+  colours (4, 4, 3 burst states), 14 kills them, 15 negates R-Y — pinned.
+- The killer is per line, and colour comes back late: 7 ± 1 lines after a run
+  of 2-state lines (a FLAT grey band, then a ~2.5-line rise), ~3 lines of
+  negated colour then ~12 of grey after a run of 1-state lines. The PAL
+  decoder gained the TDA3560's saturation recovery ([B] "colour switch-on can
+  be delayed by ... the time constant for the saturation control setting
+  circuit"); all its constants were refitted together to every photograph
+  (residuals +3.7 and −2 lines on the two bands; DEV).
+- The dot texture follows the Apple's 3.56 MHz trap alone (UC15, Sather Fig.
+  8.6): it shows on every line whose sync saw text, killed or coloured (TEXT
+  ending on hpos 11-13 gives the same hues, paler and striped), and the grey
+  band after a run is flat. The earlier guess that the monitor bypasses its
+  own trap while killing is gone. A killed line with the trap in shows the
+  colour's luminance, not the dot stream, in the LUT and AppleWin pipelines.
+- The monitor's service manual was not found; its decoder IC stays unknown.
+- `display_golden_hash` pal/split-bands (ntsc/medium/4bit) moved: the first
+  HGR lines under its TEXT band are grey on PAL now; those three colour
+  pipelines are pinned on their PAL hash alone (the PAL/NTSC equality check
+  keeps the pipelines with no burst consumer).
+
 ## 2026-11-28 — The memory heatmap, finished: FT's monitoring bars, a map that never loses a byte
 
 **French Touch's "Monitoring Card", which POM2 had left out believing it

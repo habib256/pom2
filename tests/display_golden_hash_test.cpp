@@ -761,9 +761,13 @@ const std::map<std::string, uint64_t> kGolden = {
     { "cm/eve/text80-txtgreen", 0x8945e92b00312083ULL },
     { "cm/eve/hgrmixed-txtgreen", 0xcf82d6f3bdfbce43ULL },
     // PAL beam-raced splits (DISPLAY-002, 2026-11-17).
-    { "pal/split-bands/ntsc", 0xd8bbbec4dde42e29ULL },
-    { "pal/split-bands/medium", 0x7336f35181301455ULL },
-    { "pal/split-bands/4bit", 0x47f4771fd770af3aULL },
+    // 2026-11-28: the TEXT band (lines 64-127) carries no colour burst, and
+    // the PAL decoder brings colour back several lines after it ends
+    // (BurstMonitor.h, [A] photographs): the first HGR lines below the band
+    // are grey on PAL. NTSC's killer holds colour across a 64-line band.
+    { "pal/split-bands/ntsc", 0x5ccf29fd985a7cc3ULL },
+    { "pal/split-bands/medium", 0xbd51e89fb149ed83ULL },
+    { "pal/split-bands/4bit", 0x83d0b3ad4c58e283ULL },
     { "pal/split-bands/chatmauve", 0xbd4ff91bc04b4bc3ULL },
     { "pal/split-bands/monowhite", 0xd91418a5c6d4a75cULL },
     { "pal/split-bands/monogreen", 0x524fa865f8503c5cULL },
@@ -945,8 +949,14 @@ int main()
             }
             // Same raster script, same visible picture: a mapping that reads
             // a PAL cycle count on a 262-line frame breaks this before it
-            // breaks the pin.
-            if (pal != ntsc) {
+            // breaks the pin. Except where the two MONITORS differ: the
+            // colour pipelines answer a burst-less TEXT band with each
+            // standard's own decoder (BurstMonitor.h), so they are pinned on
+            // their PAL hash alone.
+            const bool monitorDependent = m == Apple2Display::HiResMode::ColorNTSC ||
+                                          m == Apple2Display::HiResMode::ColorCompMedium ||
+                                          m == Apple2Display::HiResMode::ColorComp4Bit;
+            if (pal != ntsc && !monitorDependent) {
                 std::fprintf(stderr, "PAL/NTSC DIFFER: %s pal 0x%016llx ntsc "
                              "0x%016llx\n", name.c_str(),
                              static_cast<unsigned long long>(pal),
