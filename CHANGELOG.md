@@ -10,6 +10,76 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-28 — Tools menu tidied; the Memory viewer's ASCII in the fixed font
+
+**Tools ▸ Debugging** now reads Debugger, Watch, Screen Inspector, Memory
+Heatmap, then one **Memory map** submenu holding every other view of memory
+(Memory viewer, Memory Map Bar, its horizontal twin, Memory Map Grid) — the
+heatmap at the root, the rest one level down (owner's request). The Memory
+viewer's ASCII column is drawn with the fixed-pitch font (`ScopedMonoFont`),
+so its characters line up row to row; `test_memory_viewer_write_lock` now
+links `Pom2Theme.cpp` for it.
+
+**Probes build again** (`cmake --build build --target probes`): four had
+rotted under `-Werror` since they were last built — `rom_fetch_live_probe`
+(the `download` hook added to `RomFetchSources`), `dix_menu_raster_probe` and
+`oldskool_raster_probe` (the `An2` / `Cut` video-event kinds), and
+`a2osx_boot_probe`, `dix_auto_tour_probe`, `grouik_sync_probe` (stb's own
+warnings, now silenced around its include as `heatmap_ui_probe` does;
+shadowed names; an empty printf format; an unused counter).
+
+## 2026-11-28 — The Paint editor's window: nothing cut, at any size or zoom
+
+**The request.** "Look at the organisation of the Paint Editor window, I
+think you can improve it — quite a few things are cut off."
+
+**What was cut** (measured first: `tests/paint_ui_probe.cpp`, a new probe
+that draws the editor off screen at 1500x900, 1180x760, 960x640 and 800x560,
+UI zoom 1.0 and 1.5, in every state that changes the layout, and flags any
+of its windows whose content is wider or taller than what it shows). Every
+row was a run of `SameLine()` with pixel sizes fixed for zoom 1.0:
+- the page row: the Monitor's "Colour" box (at 800 px) and the help `(?)`
+  ran off the right edge; at zoom 1.5 the page buttons themselves;
+- the side panel, a fixed 146 px: "Rot" of FlipH / FlipV / Rot cut even at
+  zoom 1.0, then at 1.5 the third column of tools, "Thickness 1" inside its
+  slider, SymY, the zoom row, "Grid / Seams / NTSC" — and its long column
+  of options scrolled at every size below 1180x760;
+- the bottom strip, a fixed 30 px plus a line: the 16-colour palette's two
+  rows pushed the status line under the window's edge (a scroll bar on the
+  whole window), and the status line itself ran off at 960 px;
+- the file browser: "Cancel" and "Save" cut inside 70 px buttons at 1.5,
+  the folder path and long file names cut, sizes misaligned (`%-28s` in a
+  proportional font);
+- the import preview: opened at a fixed 960x600 — wider than an 800 px
+  screen — so the 560 px result image was cut on the right, and Apply /
+  Cancel were below the fold; its slider labels lost to a fixed `-180`.
+
+**What it does now.** One rule — every row WRAPS to the window's width and
+every size is in font units — through three portable helpers
+(`hgrpaint/PaintLayout.h`: `Flow`, the Memory Heatmap's `ButtonFlow` grown
+groups; `elideMiddle` / `textFitted` for a path or a status message, whole
+in the tooltip; `dialogSize`). The window is reorganised as the heatmap's:
+a toolbar (Load / Import / Save / Save PNG, undo / redo / clear page, zoom
+out / rung / in / fit, a **View** menu, help, the last file message) that
+shares the page row's line when the window is wide; the View menu holds
+what was a column of toggles in the side panel (grid, seams, 4:3, NTSC
+colour and its pipeline, flipbook, ghost, onion skin); the side panel keeps
+the tools, the current tool's options and the navigator, at a width
+computed from the font; the palette and the status line share one wrapping
+flow whose height is measured each frame, not assumed. The status line now
+names the 16-colour index on GR / DHGR / DLGR pages (it showed the HGR
+colour there). The dialogs open at a size in font units, never larger than
+the screen; the import preview scales its pictures to the dialog and keeps
+its buttons at the bottom while its body scrolls. The layout moved out of
+`HgrPaintEditor.cpp` (2773 -> ~1680 lines, off the size budget) into
+`HgrPaintEditor_Layout.cpp` and `HgrPaintEditor_Dialogs.cpp`; the tables
+the three share are `HgrPaintEditorTables.h`. Shortcuts, settings keys and
+the host seam are unchanged (POM1 needs the new files, no interface change).
+
+**Why the probe fails on a horizontal scroll bar too.** A side panel that
+scrolls vertically is a panel; one that needs a horizontal bar hides
+controls the way a clip does. The canvas is the one exception (its zoom).
+
 ## 2026-11-28 — Two-finger pinch zoom, on a touchpad and on a touch screen
 
 **The request.** "I must be able to zoom on a touchpad or on a tablet with

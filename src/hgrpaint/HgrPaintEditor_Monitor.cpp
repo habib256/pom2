@@ -16,6 +16,7 @@
 // goes through IHgrPaintHost (liveVideo, the render* pipelines).
 
 #include "HgrPaintEditor.h"
+#include "PaintLayout.h"
 
 #include "imgui.h"
 
@@ -51,37 +52,39 @@ const char* modeName(int mode, bool col80)
     }
 }
 
+const char* const kFollow[] = { "Page picked", "Page on screen", "Page behind" };
+
+// The follow combo, as wide as its longest choice so the preview is never cut.
+float followComboWidth()
+{
+    float w = 0.0f;
+    for (const char* f : kFollow) w = std::max(w, ImGui::CalcTextSize(f).x);
+    return w + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
 } // namespace
 
-void hgrpaint::HgrPaintEditor::renderPageButtons()
+void hgrpaint::HgrPaintEditor::renderPageButtons(layout::Flow& row)
 {
-    if (ImGui::Checkbox("Monitor", &monitor) && monitor) followLiveVideo();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip(
-            "Read-only page monitor: a video page as the machine holds it, live,\n"
-            "without writing a byte or a soft switch. It can follow the page on\n"
-            "screen, or the one behind it (a double-buffered program's next frame).");
-
-    if (monitor) {
-        static const char* kFollow[] = { "Page picked", "Page on screen", "Page behind" };
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(130.0f);
-        ImGui::Combo("##monfollow", &monFollow, kFollow, 3);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Page on screen: what the machine displays now.\n"
-                              "Page behind: the same mode, the other page — where a\n"
-                              "double-buffered program draws its next frame.");
-    }
-
     const bool dbl  = host && host->supportsDhgr();
     const bool text = monitor && host && host->supportsTextPages();
+    auto shown = [&](const PageBtn& b) {
+        return !((b.mode == 2 || b.mode == 3) && !dbl) && !(b.mode == 4 && !text);
+    };
+    // The pages are one group: together on a line when they fit.
+    {
+        float w = 0.0f;
+        int n = 0;
+        for (const PageBtn& b : kPages)
+            if (shown(b)) { w += layout::buttonWidth(b.label); ++n; }
+        row.keep(w + ImGui::GetStyle().ItemSpacing.x * static_cast<float>(n - 1));
+    }
     const int  curMode = monitor ? monMode
                                  : dlgrMode ? 3 : dhgrMode ? 2 : grMode ? 1 : 0;
     const bool curP2 = monitor ? monPage2 : page2;
     for (const PageBtn& b : kPages) {
-        if ((b.mode == 2 || b.mode == 3) && !dbl) continue;
-        if (b.mode == 4 && !text) continue;
-        ImGui::SameLine();
+        if (!shown(b)) continue;
+        row.next(layout::buttonWidth(b.label));
         const bool sel = (curMode == b.mode && curP2 == b.p2);
         if (sel) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(58, 96, 150, 255));
         if (ImGui::Button(b.label)) {
@@ -103,9 +106,35 @@ void hgrpaint::HgrPaintEditor::renderPageButtons()
         }
         if (sel) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(monitor ? "%s — show it (stops following)"
-                                      : "%s — switch page/mode (clears undo history)",
+            ImGui::SetTooltip(monitor ? "%s \xE2\x80\x94 show it (stops following)"
+                                      : "%s \xE2\x80\x94 switch page/mode (clears undo history)",
                               b.tip);
+    }
+
+    // The Monitor switch (and, on, what it follows) after the pages: one
+    // group, so the switch never sits alone on a line of its own.
+    {
+        float w = layout::checkboxWidth("Monitor");
+        if (monitor) w += ImGui::GetStyle().ItemSpacing.x + followComboWidth();
+        row.keep(w);
+    }
+    row.next(layout::checkboxWidth("Monitor"));
+    if (ImGui::Checkbox("Monitor", &monitor) && monitor) followLiveVideo();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "Read-only page monitor: a video page as the machine holds it, live,\n"
+            "without writing a byte or a soft switch. It can follow the page on\n"
+            "screen, or the one behind it (a double-buffered program's next frame).");
+
+    if (monitor) {
+        const float w = followComboWidth();
+        row.next(w);
+        ImGui::SetNextItemWidth(w);
+        ImGui::Combo("##monfollow", &monFollow, kFollow, 3);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Page on screen: what the machine displays now.\n"
+                              "Page behind: the same mode, the other page \xE2\x80\x94 where a\n"
+                              "double-buffered program draws its next frame.");
     }
 }
 
@@ -140,11 +169,17 @@ void hgrpaint::HgrPaintEditor::renderMonitor(const std::vector<uint8_t>& memory,
                                              const std::vector<uint8_t>* aux)
 {
     followLiveVideo();
-    renderPageButtons();
-    ImGui::SameLine();
-    ImGui::Checkbox("Colour", &ntscColor);
-    ImGui::TextDisabled("%s  ·  showing %s page %d  ·  read-only", monScreen.c_str(),
-                        modeName(monMode, monCol80), monPage2 ? 2 : 1);
+    {
+        layout::Flow row;
+        renderPageButtons(row);
+        row.next(layout::checkboxWidth("Colour"));
+        ImGui::Checkbox("Colour", &ntscColor);
+    }
+    // What the machine shows and what this view shows: wrapped, never cut.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s  \xC2\xB7  showing %s page %d  \xC2\xB7  read-only", monScreen.c_str(),
+                       modeName(monMode, monCol80), monPage2 ? 2 : 1);
+    ImGui::PopStyleColor();
     ImGui::Separator();
 
     const bool lores = (monMode == 1 || monMode == 3 || monMode == 4);

@@ -575,7 +575,10 @@ src/TMS9918.cpp                          2037
 # paint editor that one alt-tab could kill (7fe85eec +20) and the deferred
 # items of both rounds (9548bc03 +97). Recorded at the exact size.
 #   src/hgrpaint/HgrPaintEditor.cpp: 2656 -> 2773 (+117)
-src/hgrpaint/HgrPaintEditor.cpp          2773
+# 2026-11-28: src/hgrpaint/HgrPaintEditor.cpp LEFT THIS FILE. The window's
+# layout went to HgrPaintEditor_Layout.cpp and the two modal dialogs to
+# HgrPaintEditor_Dialogs.cpp when the layout was reworked so nothing is cut
+# (tests/paint_ui_probe.cpp): 2773 -> ~1680, below the watch threshold.
 # 2026-11-01 (parity campaign): src/Scc8530Device.cpp crossed the watch
 # threshold with the z80scc slice — WR5 no longer resets the transmitter,
 # WR1 mode 01 arms rxFirst, receiveAllowed/transmitAllowed/resumeTransmit,

@@ -85,8 +85,8 @@ int main(int argc, char** argv)
     // a run with both would hide a gap in either.
     struct Leg { const char* name; pom2::RomFetchSources src; };
     const Leg legs[] = {
-        { "POM2 archive (archive.org)", { true,  false } },
-        { "RetroBIOS (pinned commit)",  { false, true  } },
+        { "POM2 archive (archive.org)", { true,  false, {} } },   // {} = curl
+        { "RetroBIOS (pinned commit)",  { false, true,  {} } },
     };
     bool allOk = true;
     int n = 0;

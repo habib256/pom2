@@ -55,8 +55,18 @@
 #include <utility>
 #include <vector>
 
+// Third-party header: its own warnings are not this probe's (same guard as
+// heatmap_ui_probe.cpp).
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 
 namespace {
 // A2OSX_RWATCH=HEX: every bus read of that address, with the PC and value.
@@ -124,7 +134,7 @@ int main(int argc, char** argv)
     std::printf("\n%s", m.screen().c_str());
     // A serial port with no peer drops what it sends; connect a virtual one.
     for (int sl = 1; sl <= 7; ++sl)
-        if (auto* ssc = m.card<SuperSerialCard>(sl)) ssc->onTransportConnected();
+        if (auto* sscCard = m.card<SuperSerialCard>(sl)) sscCard->onTransportConnected();
     ReadLog readLog;
     readLog.cpu = &cpu;
     if (const char* rw = std::getenv("A2OSX_RWATCH")) {
@@ -154,8 +164,8 @@ int main(int argc, char** argv)
             const long gapCycles = static_cast<long>(
                 (gap ? std::atof(gap) : 100.0) / 1000.0 * pom2test::A2osxMachine::kHz);
             for (const char c : text) {
-                if (auto* ssc = m.card<SuperSerialCard>(sl))
-                    ssc->deliverTransportBytes(reinterpret_cast<const uint8_t*>(&c), 1, false);
+                if (auto* sscCard = m.card<SuperSerialCard>(sl))
+                    sscCard->deliverTransportBytes(reinterpret_cast<const uint8_t*>(&c), 1, false);
                 for (long t = 0; t < gapCycles; ) t += cpu.run(4096);
             }
             for (long t = 0; t < static_cast<long>(4 * pom2test::A2osxMachine::kHz); ) t += cpu.run(4096);
@@ -164,14 +174,15 @@ int main(int argc, char** argv)
         if (cmd.rfind("@sscread:", 0) == 0) {   // @sscread:N — what slot N sent
             const int sl = std::atoi(cmd.c_str() + 9);
             std::vector<uint8_t> tx;
-            if (auto* ssc = m.card<SuperSerialCard>(sl))
+            if (auto* sscCard = m.card<SuperSerialCard>(sl))
                 for (int i = 0; i < 40; ++i) {   // the ring is paced in wall time
-                    ssc->drainTransportTx(tx);
+                    sscCard->drainTransportTx(tx);
                     std::this_thread::sleep_for(std::chrono::milliseconds(25));
                 }
             std::printf("--- slot %d sent %zu bytes:\n", sl, tx.size());
             for (uint8_t c : tx)
-                std::printf((c >= 0x20 && c < 0x7F) || c == '\n' ? "%c" : (c == '\r' ? "" : "<%02X>"), c);
+                if ((c >= 0x20 && c < 0x7F) || c == '\n') std::printf("%c", c);
+                else if (c != '\r') std::printf("<%02X>", c);
             std::printf("\n");
             continue;
         }
@@ -308,7 +319,7 @@ int main(int argc, char** argv)
             ring[n++ % ring.size()] = pc;
             cpu.run(1);
         }
-        for (const auto& n : notes) std::printf("watch: %s\n", n.c_str());
+        for (const auto& note : notes) std::printf("watch: %s\n", note.c_str());
         std::printf("trap $%04lX after %ld instructions; last PCs:\n", trap, steps);
         for (size_t i = (n > ring.size() ? n - ring.size() : 0); i < n; ++i)
             std::printf(" %04X%s", ring[i % ring.size()], (i % 16 == 15) ? "\n" : "");
@@ -361,14 +372,14 @@ int main(int argc, char** argv)
     };
     for (int sl = 1; sl <= 7; ++sl) {
         if (auto* g = m.card<GrapplerCard>(sl)) show("Grappler+ printed", sl, g->spoolBytes());
-        if (auto* ssc = m.card<SuperSerialCard>(sl)) {
+        if (auto* sscCard = m.card<SuperSerialCard>(sl)) {
             std::vector<uint8_t> tx;
-            std::printf("slot %d SSC: %zu bytes queued\n", sl, ssc->txQueueDepth());
-            ssc->drainTransportTx(tx);
+            std::printf("slot %d SSC: %zu bytes queued\n", sl, sscCard->txQueueDepth());
+            sscCard->drainTransportTx(tx);
             show("SSC sent", sl, tx);
-            const auto in = ssc->inputLines();
+            const auto in = sscCard->inputLines();
             std::printf("slot %d SSC: DTR=%d DCD=%d DSR=%d CTS=%d recentTx='%s'\n", sl,
-                        ssc->dtrAsserted(), in.dcd, in.dsr, in.cts, ssc->recentTxText().c_str());
+                        sscCard->dtrAsserted(), in.dcd, in.dsr, in.cts, sscCard->recentTxText().c_str());
         }
     }
     if (!prompt || hot) {

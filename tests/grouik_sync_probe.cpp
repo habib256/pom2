@@ -57,8 +57,18 @@
 #include "SmartPortCard.h"
 #include "SuperSerialCard.h"
 
+// Third-party header: its own warnings are not this probe's (same guard as
+// heatmap_ui_probe.cpp).
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -344,10 +354,10 @@ int main(int argc, char** argv)
     histPos("\n6. After .T1sync (\"perfect sync with display achieved here\"):", sink.landT1);
     histPos("   After .T2sync:", sink.landT2);
     {
-        int total = 0; std::map<int,int> ftCycle;
+        std::map<int,int> ftCycle;
         for (const auto& [p, n] : sink.landT2) {
             const int abs = (p.first * 65 + p.second + 25) % int(kFrame);
-            ftCycle[((abs - 13) % 65 + 65) % 65] += n; total += n;
+            ftCycle[((abs - 13) % 65 + 65) % 65] += n;
         }
         std::printf("   => synced code entry, FT cycle within its line (expect 0):");
         for (const auto& [c, n] : ftCycle) std::printf(" %d:%d", c, n);

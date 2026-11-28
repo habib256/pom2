@@ -12214,6 +12214,27 @@ POM2's side is `Pom2HgrPaintHost`:
   monitor). Code `HgrPaintEditor_Monitor.cpp`, host `liveVideo` /
   `renderTextPage`; the rule pinned by `dhgr_paint_model`.
 
+- **Window layout** *(2026-11-28)* — page row + toolbar (file, undo / redo
+  / clear, zoom, a **View** menu with grid, seams, 4:3, NTSC colour and its
+  pipeline, flipbook, ghost, onion skin), side panel (tools, the current
+  tool's options, navigator), canvas, then the palette and the status line.
+  Every row wraps to the window (`PaintLayout.h`: `layout::Flow`, groups
+  kept together; `elideMiddle` for paths and messages, whole in a tooltip),
+  every size is in font units (so a UI zoom scales it), the side panel's
+  width is computed from the font, and the bottom strip's height is measured
+  each frame. Code `HgrPaintEditor_Layout.cpp` (the window),
+  `HgrPaintEditor_Dialogs.cpp` (file browser, import preview — sized in font
+  units, never larger than the screen, the import buttons outside its
+  scrolling body), `HgrPaintEditorTables.h` (zoom ladder, colours,
+  patterns, tool icons). **Probe** `paint_ui_probe` (`make probes`): the
+  editor with POM2's real host at 1500x900 / 1180x760 / 960x640 / 800x560,
+  UI zoom 1.0 and 1.5, in every layout state (tools, DHGR + flipbook +
+  ghost + onion, GR, the View menu, the monitor, both dialogs); PNGs under
+  `probeOutDir()/paint_ui`, and it fails when one of the editor's windows
+  clips its content, needs a horizontal bar (the canvas excepted) or hangs
+  off the screen. It sets the editor's state through
+  `HgrPaintEditorTestAccess` (a friend, as `HgrSpriteEditorTestAccess`).
+
 - **Pokes** — `PaintCardBatcher` coalesces bulk edits (fill/paste/undo/import)
   into one `stateMutex` hold; bytes land via `Memory::writeRamUnchecked`
   (main) / the raw aux bank (DHGR), deliberately bypassing 80STORE/RAMWRT so

@@ -59,8 +59,18 @@
 #include <string>
 #include <utility>
 
+// Third-party header: its own warnings are not this probe's (same guard as
+// heatmap_ui_probe.cpp).
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 
 namespace {
 

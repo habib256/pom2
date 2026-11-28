@@ -1152,11 +1152,13 @@ void MainWindow::renderMenuBar()
         // makes its sounds, and — apart, last — what drives it from OUTSIDE.
         pom2::menuHeading("Debugging");
         panelMenuItem(pom2::PanelId::Debugger);
-        panelMenuItem(pom2::PanelId::ScreenInspector);
         panelMenuItem(pom2::PanelId::Watch);
-        panelMenuItem(pom2::PanelId::MemViewer);
+        panelMenuItem(pom2::PanelId::ScreenInspector);
+        // The heatmap at the root; every other view of memory under one
+        // "Memory map" submenu (owner, 2026-11-28).
         panelMenuItem(pom2::PanelId::MemHeatmap);
-        if (ImGui::BeginMenu(ICON_FA_MAP "  Memory maps")) {
+        if (ImGui::BeginMenu(ICON_FA_MAP "  Memory map")) {
+            panelMenuItem(pom2::PanelId::MemViewer);
             panelMenuItem(pom2::PanelId::MemBar);
             panelMenuItem(pom2::PanelId::MemBarH);
             panelMenuItem(pom2::PanelId::MemGrid);

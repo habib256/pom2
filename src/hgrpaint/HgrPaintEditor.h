@@ -45,6 +45,8 @@
 
 namespace hgrpaint {
 
+namespace layout { class Flow; }   // PaintLayout.h
+
 class HgrPaintEditor
 {
 public:
@@ -79,6 +81,9 @@ public:
     void releaseGL();
 
 private:
+    // The layout probe (tests/paint_ui_probe.cpp) sets tools, modes and
+    // popups directly; nothing in the editor depends on it.
+    friend struct HgrPaintEditorTestAccess;
     // Order is append-only: the toolbar/status name tables and shortcuts index
     // by these values, so new tools go at the end.
     enum class Tool : uint8_t { Pencil = 0, Eraser, Line, Rectangle, Ellipse, Fill,
@@ -143,7 +148,7 @@ private:
     std::vector<uint32_t> monRgba;
     std::vector<uint8_t>  monBuf;
     std::string monScreen;          // what the machine shows, for the status line
-    void renderPageButtons();       // the page row (editor and monitor)
+    void renderPageButtons(layout::Flow& row);   // the page row (editor and monitor)
     void followLiveVideo();
     void renderMonitor(const std::vector<uint8_t>& memory,
                        const std::vector<uint8_t>* aux);
@@ -438,9 +443,16 @@ private:
     // Text tool: stamp `text` as bbfont glyphs from the caret, in colour `c`.
     void stampText(const char* text, HgrColor c);
 
-    void renderTopBar();        // page select + file ops + help (MacPaint-style menu strip)
-    void renderToolPanel();     // left vertical palette of icon tool buttons + options
-    void renderColorBar();      // horizontal colour palette along the bottom
+    // ── The window's layout (HgrPaintEditor_Layout.cpp) ──────────────────
+    // Every row wraps to the window's width (layout::Flow) and every size
+    // follows the font, so nothing is clipped at a small window or a large
+    // UI zoom; the bottom strip's height is measured, not assumed.
+    void renderTopBar();        // page row + toolbar (file · edit · zoom · View · help · status)
+    void renderViewPopup();     // the toolbar's View menu: grid, colour, aspect, animation, onion
+    void renderToolPanel();     // left palette: tool buttons, the tool's options, navigator
+    float toolPanelWidth() const;
+    void renderColorBar(layout::Flow& row);   // colour palette along the bottom
+    float bottomStripH = 0.0f;  // colour bar + status line, measured last frame
     void openFileBrowser(bool forSave, int saveKind = 0, bool importMode = false);
     // Carry out a Load / Save / Save PNG / Import on `fullPath` (shared by the
     // native picker and the ImGui browser). Returns false only on a failed save
@@ -456,8 +468,8 @@ private:
     void renderCanvas(const std::vector<uint8_t>& memory,
                       const std::vector<uint8_t>* aux);
     void renderMinimap();       // navigator thumbnail, drawn in the left tool panel
-    void renderStatusBar(int lx, int ly, bool hovered);
-    void renderFileRow();
+    void renderStatusBar(layout::Flow& row, int lx, int ly, bool hovered);
+    void renderFileRow(layout::Flow& row);   // Load · Import · Save · Save PNG
 };
 
 } // namespace hgrpaint

@@ -9548,6 +9548,7 @@ set_tests_properties(w5100_udp_recv PROPERTIES TIMEOUT 20)
 add_executable(test_memory_viewer_write_lock
     memory_viewer_write_lock_test.cpp
     ${CMAKE_SOURCE_DIR}/src/MemoryViewer_ImGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/Pom2Theme.cpp
     ${CMAKE_SOURCE_DIR}/src/Disassembler6502.cpp
     ${POM2_TEST_CORE_SOURCES}
     ${IMGUI_DIR}/imgui.cpp
@@ -11626,6 +11627,50 @@ endif()
 target_link_libraries(heatmap_ui_probe PRIVATE pom2_core_test ${GLFW_TARGET} ${OPENGL_LIBRARIES})
 endif()
 
+# ─── HGR / DHGR Paint editor window, at four sizes and two UI scales ───────
+# The editor (src/hgrpaint, POM2's host) drawn off screen in every state that
+# changes its layout — tools, DHGR / GR, the page monitor, the file browser
+# and the import preview — at 1500x900 down to 800x560, UI scale 1.0 and 1.5.
+# Saves a PNG of each under probeOutDir()/paint_ui and fails when a window of
+# the editor clips its content (or needs a horizontal bar outside the
+# canvas). Needs a GL 3.2 context (exits 77 without one), hence a probe.
+if(TARGET pom2_core_test)
+add_executable(paint_ui_probe EXCLUDE_FROM_ALL
+    paint_ui_probe.cpp
+    ${CMAKE_SOURCE_DIR}/src/Pom2HgrPaintHost.cpp
+    ${CMAKE_SOURCE_DIR}/src/NativeFileDialog.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/Cam16.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/DhgrNtsc8Palette.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrConvert.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrImageDecode.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintEditor.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintEditor_Dialogs.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintEditor_Layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintEditor_Monitor.cpp
+    ${CMAKE_SOURCE_DIR}/src/hgrpaint/HgrPaintModel.cpp
+    ${CMAKE_SOURCE_DIR}/src/PinchZoom_ImGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/Pom2Theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/UiFonts.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+if(APPLE)
+    target_sources(paint_ui_probe PRIVATE ${CMAKE_SOURCE_DIR}/src/NativeFileDialog_mac.mm)
+    target_link_libraries(paint_ui_probe PRIVATE "-framework Cocoa")
+endif()
+target_include_directories(paint_ui_probe PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/hgrpaint
+    ${CMAKE_CURRENT_SOURCE_DIR} ${IMGUI_DIR})
+target_compile_definitions(paint_ui_probe PRIVATE GLFW_INCLUDE_NONE)
+if(APPLE)
+    target_compile_definitions(paint_ui_probe PRIVATE GL_SILENCE_DEPRECATION)
+endif()
+target_link_libraries(paint_ui_probe PRIVATE pom2_core_test ${GLFW_TARGET} ${OPENGL_LIBRARIES})
+endif()
+
 # ─── `make probes` — one command that builds every EXCLUDE_FROM_ALL tool ──
 # The probes are deliberately not ctest tests (see the header of this file):
 # they assert nothing reproducible, several need media that is not in the
@@ -12429,6 +12474,7 @@ set(POM2_PROBE_TARGETS
     lss_write_probe
     porte_parole_probe
     heatmap_ui_probe
+    paint_ui_probe
 )
 set(_pom2_probe_present)
 foreach(_pom2_p IN LISTS POM2_PROBE_TARGETS)

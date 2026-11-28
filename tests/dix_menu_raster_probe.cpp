@@ -94,6 +94,8 @@ const char* kindName(Memory::VideoEventKind k)
         case K::An3:         return "AN3";
         case K::EightyStore: return "80STORE";
         case K::AltChar:     return "ALTCHAR";
+        case K::An2:         return "AN2";
+        case K::Cut:         return "CUT";
     }
     return "?";
 }

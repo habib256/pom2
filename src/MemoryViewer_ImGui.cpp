@@ -17,6 +17,7 @@
 #include "MemoryViewer_ImGui.h"
 #include "Disassembler6502.h"
 #include "Memory.h"
+#include "Pom2Theme.h"
 
 #include <algorithm>
 #include <charconv>
@@ -400,6 +401,8 @@ void MemoryViewer_ImGui::renderHexView()
                 ImGui::SameLine(hexX + bytesPerRow * cellW
                                 + ImGui::GetStyle().ItemSpacing.x);
                 asciiLine[asciiIdx] = '\0';
+                // Fixed pitch: one cell a byte, the columns line up row to row.
+                pom2::ScopedMonoFont mono;
                 ImGui::TextDisabled("%s", asciiLine);
             }
         }

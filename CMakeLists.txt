@@ -571,6 +571,8 @@ set(SOURCES
     src/hgrpaint/HgrFont.cpp
     src/hgrpaint/HgrImageDecode.cpp
     src/hgrpaint/HgrPaintEditor.cpp
+    src/hgrpaint/HgrPaintEditor_Dialogs.cpp
+    src/hgrpaint/HgrPaintEditor_Layout.cpp
     src/hgrpaint/HgrPaintEditor_Monitor.cpp
     src/hgrpaint/HgrPaintModel.cpp
     src/hgrsprite/HgrSpriteAsmExport.cpp
@@ -888,8 +890,10 @@ set(POM2_FRONTEND_HEADERS
     src/SlotRebuildCoordinator.h
     src/StatusLed.h
     src/StorageCoordinator.h
+    src/hgrpaint/HgrPaintEditorTables.h
     src/hgrpaint/IHgrPaintHost.h
     src/hgrpaint/ImportCommon.h
+    src/hgrpaint/PaintLayout.h
     src/sfxbeep/ISfxHost.h
     src/sfxbeep/SfxAsmExport.h
     src/sfxbeep/SfxBank.h
@@ -1010,6 +1014,8 @@ set(POM2_FRONTEND_SOURCES
     src/hgrpaint/HgrConvert.cpp
     src/hgrpaint/HgrImageDecode.cpp
     src/hgrpaint/HgrPaintEditor.cpp
+    src/hgrpaint/HgrPaintEditor_Dialogs.cpp
+    src/hgrpaint/HgrPaintEditor_Layout.cpp
     src/hgrpaint/HgrPaintEditor_Monitor.cpp
     src/hgrpaint/HgrPaintModel.cpp
     src/hgrsprite/HgrSpriteAsmExport.cpp
