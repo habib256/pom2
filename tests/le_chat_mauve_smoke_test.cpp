@@ -30,13 +30,20 @@
 //   4. Lo-res Chat Mauve palette. Indices 5 ($5) and 10 ($A) decode to
 //      DISTINCT grays under Chat Mauve, where NTSC's //gs-corrected
 //      palette merges them.
-//   5. Falling back to ColorNTSC when the card isn't plugged keeps the
-//      NTSC pipeline intact (regression guard).
+//   5. Dragon Wars compat: invertBit7 flips the MIXED-mode selector.
 //   6-12. The Eve (docs/chatmauve_plan.md § 3.4): the sixteen switches and
 //      CPREG, the CPREG auto-write through Memory's aux shadow (and its
 //      coexistence with write watches), TXT16 with the Eve nibble order,
 //      TXTGREEN, table IX-1 (BW560 / CP280 / blank / COL280A), what AN3 off
-//      does to single HGR on each variant, and the v3 snapshot blob.
+//      does to single HGR on each variant, and the snapshot blob (v5 today).
+//   13. The RVB Graph, from its Manuel de Référence.
+//   14. Falling back to ColorNTSC when the card isn't plugged keeps the
+//      NTSC pipeline intact (regression guard).
+//   15. The Video-7's DIP-switch text colour; inverse characters stay
+//      black and white.
+//   16. The Eve takes the patent latch at HR 000 while ENHRCPREG is off.
+//   17. The RVB Graph from its patent FR 2 509 560: the $C7 page mirrored,
+//      reads that write the registers, the left-neighbour gap fill.
 
 #include "Apple2Display.h"
 #include "LeChatMauveCard.h"
@@ -48,6 +55,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -102,8 +110,8 @@ int main()
         LeChatMauveCard* raw = card.get();
         mem.slotBus().plug(7, std::move(card));
 
-        // After plug + onReset() the card is in COL140 (FIFO=11).
-        raw->onReset();
+        // A Féline powers up in COL140 (FIFO=11) — [B] its manual.
+        raw->onPowerCycle();
         assert(raw->fifoBits() == 0b11);
         assert(raw->currentMode() == LeChatMauveCard::RenderMode::COL140);
 
@@ -128,17 +136,38 @@ int main()
         (void)mem.memRead(0xC05F);
         assert(raw->fifoBits() == after);
 
-        // After Apple II reset, FIFO returns to COL140.
+        // Ctrl-Reset does NOT re-arm the latch (2026-11-28): the patent gives
+        // it a power-on circuit only, and a real //c adapter keeps it across
+        // a reboot ([A] nicolho, AppleWin #633). AN3 high here, 80COL on.
+        (void)mem.memRead(0xC00D);
         raw->onReset();
-        assert(raw->fifoBits() == 0b11);
+        assert(raw->fifoBits() == 0b11 && "Ctrl-Reset keeps the latch");
+        // …but when AN3 was LOW (a DHGR program), the ROM's reset `$C05F` is
+        // a rising edge, and the reset cleared 80COL: one clock, 80COL off —
+        // Renegade's title in B&W after a reboot on the real adapter.
+        (void)mem.memRead(0xC00D);
+        (void)mem.memRead(0xC05E);            // DHGR on: AN3 low
+        raw->onReset();                       // RESET: 80COL cleared
+        (void)mem.memRead(0xC00C);
+        (void)mem.memRead(0xC05F);            // the ROM's reset write
+        assert(raw->fifoBits() == 0b10 && "the reset's AN3 rise clocks 80COL off once");
 
-        // Round 10 #8: AN3 powers up HIGH, so a bare $C05F right after reset
-        // is NOT a rising edge and must NOT clock the FIFO. (With an3Prev
-        // mis-initialised to false this spuriously shifted COL140 → 0b10.)
+        // Round 10 #8: AN3 powers up HIGH, so a bare $C05F right after a
+        // POWER-ON is NOT a rising edge and must NOT clock the FIFO. (With
+        // an3Prev mis-initialised to false this spuriously shifted COL140 →
+        // 0b10.)
+        raw->onPowerCycle();
+        assert(raw->fifoBits() == 0b11);
         (void)mem.memRead(0xC00C);   // data bit = 0 (would land in FIFO if it shifted)
-        (void)mem.memRead(0xC05F);   // bare $C05F after reset — no preceding $C05E
+        (void)mem.memRead(0xC05F);   // bare $C05F after power-on — no preceding $C05E
         assert(raw->fifoBits() == 0b11 &&
-               "bare $C05F after reset must not shift (AN3 powers up high)");
+               "bare $C05F after power-on must not shift (AN3 powers up high)");
+
+        // The Video-7 powers up in 560 mono — [B] the patent.
+        LeChatMauveCard v7(7, LeChatMauveCard::Variant::Video7);
+        assert(v7.fifoBits() == 0b00 && v7.currentMode() == LeChatMauveCard::RenderMode::BW560);
+        v7.onPowerCycle();
+        assert(v7.fifoBits() == 0b00);
     }
 
     // ─── 2. ChatMauveRGB COL140 HGR decode ───────────────────────────────
@@ -671,11 +700,16 @@ int main()
         const uint32_t orange  = pack(0xFF, 0x72, 0x47);
         const uint32_t magenta = pack(0xAA, 0x1A, 0xD1);
 
-        // HR all off: COL140 whatever the latch says (Purplesoft's `& GR 6`
-        // leaves the latch at 00 and expects COL140).
+        // HR all off: with ENHRCPREG on (as Purplesoft's `& GR 6` sets it),
+        // COL140 whatever the latch says — Purplesoft leaves the latch at 00
+        // and expects COL140. With every switch off the latch rules (§ 16).
         assert(raw->dhgrMode() == DM::COL140);
+        raw->setEveSwitch(Sw::ENHRCPREG, true);
         raw->overrideMode(LeChatMauveCard::RenderMode::BW560);
         assert(raw->dhgrMode() == DM::COL140);
+        raw->setEveSwitch(Sw::ENHRCPREG, false);
+        assert(raw->dhgrMode() == DM::BW560);
+        raw->overrideMode(LeChatMauveCard::RenderMode::COL140);
         // HR2 + HR3 (Purplesoft's `& GR 10`): BW560 — aux bit 0 is dot 0
         // (lit), aux bit 2 is dot 2 (dark). HR3 alone (the scan's reading of
         // that row) is kept on BW560 too.
@@ -779,7 +813,7 @@ int main()
         assert(d0 == magenta && d14 == kWhite);        // LCM colour, unchanged
     }
 
-    // ─── 12. Snapshot v3 round trip, and a v2 blob's toggles land on switches ─
+    // ─── 12. Snapshot v5 round trip, and a v2 blob's toggles land on switches ─
     {
         using Sw = LeChatMauveCard::EveSwitch;
         LeChatMauveCard eve(7, LeChatMauveCard::Variant::Eve);
@@ -828,17 +862,18 @@ int main()
     // 16·(15 − CT), and the colour registers $C70F/$C71F/$C72F/$C73F − Bn
     // with data 15 − Cn. Colours are the lo-res table (chapter II).
     {
-        // The lo-res colours the manual's examples use (Apple2Display's
-        // table is private; these are its entries).
-        const uint32_t kMagenta = 0xFFD11AAAu;   //  3 "violet"
-        const uint32_t kBlue    = 0xFFB58A00u;   //  6
-        const uint32_t kOrange  = 0xFF4772FFu;   //  9
-        const uint32_t kPink    = 0xFFCF7AFFu;   // 11 "rose"
-        const uint32_t kGreen   = 0xFF2CE66Fu;   // 12 "vert clair"
-        const uint32_t kYellow  = 0xFF7BF6FFu;   // 13
-        const uint32_t kDkBlue  = 0xFF830700u;   //  2
-        const uint32_t kBrown   = 0xFF005F7Au;   //  8
-        const uint32_t kRed     = 0xFF4C12ACu;   //  1
+        // The lo-res colours the manual's examples use — the RVB Graph's
+        // own palette (its resistor DAC, FR 2 509 560 Fig. 5; Apple2Display's
+        // table is private, these are its entries).
+        const uint32_t kMagenta = 0xFFCC0091u;   //  3 "violet"
+        const uint32_t kBlue    = 0xFFB29600u;   //  6
+        const uint32_t kOrange  = 0xFF4C69FFu;   //  9
+        const uint32_t kPink    = 0xFFCC69FFu;   // 11 "rose"
+        const uint32_t kGreen   = 0xFF33FF6Eu;   // 12 "vert clair"
+        const uint32_t kYellow  = 0xFF82FFFFu;   // 13
+        const uint32_t kDkBlue  = 0xFF7D0000u;   //  2
+        const uint32_t kBrown   = 0xFF00696Eu;   //  8
+        const uint32_t kRed     = 0xFF4C0091u;   //  1
 
         Memory mem;                       // a ][+-class machine: no IIe mode
         Apple2Display display;
@@ -873,9 +908,13 @@ int main()
         writeHgrByte(mem, 0, 0, 0x03);
         assert(hgrDot(0) == kWhite && hgrDot(1) == kWhite && hgrDot(2) == kBlack);
 
-        // A read latches nothing: the register takes a DATA byte.
+        // [B] FR 2 509 560 Fig. 4: the control register is clocked by DEVICE
+        // SELECT with no R/W gate — a READ latches it too (S/U/K from the
+        // address, the text colour from whatever the bus holds).
         (void)mem.memRead(0xC0F5);
-        assert(raw->rvbGraph().s == 0 && !raw->rvbGraph().useRegs);
+        assert(raw->rvbGraph().s == 1 && raw->rvbGraph().useRegs);
+        mem.memWrite(0xC0F0, 0x00);                   // back to the usual display
+        assert(raw->rvbGraph().s == 0 && !raw->rvbGraph().useRegs && raw->rvbGraph().textColour == 15);
 
         // Exemple 1 (p. 10): the usual colours, pink text.
         {
@@ -992,6 +1031,127 @@ int main()
                raw->rvbGraph().s == 0 && raw->rvbGraph().c[0] == 3);
         display.render(mem);
         assert(*pixelAt(display, 0, 0) == kWhite);
+    }
+
+    // ─── 15. The Video-7's DIP-switch text colour; inverse stays B&W ─────
+    {
+        using TM = LeChatMauveCard::TextMode;
+        assert(LeChatMauveCard::parseVideo7TextColour("green") == 12);
+        assert(LeChatMauveCard::parseVideo7TextColour("amber") == 9);
+        assert(LeChatMauveCard::parseVideo7TextColour("blue") == 6);
+        assert(LeChatMauveCard::parseVideo7TextColour("nonsense") == 15);
+        assert(std::string(LeChatMauveCard::video7TextColourKey(9)) == "amber");
+
+        Memory mem;
+        mem.setIIEMode(true);
+        Apple2Display display;
+        display.setAuxMemory(mem.auxData());
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Video7);
+        LeChatMauveCard* raw = card.get();
+        mem.slotBus().plug(7, std::move(card));
+        display.setChatMauveCard(raw);
+        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        assert(raw->textMode(false, true) == TM::Plain);   // white switches: plain text
+        raw->setVideo7TextColour(12);                      // green switches
+        assert(raw->textMode(false, true) == TM::Tinted);
+        assert(raw->textMode(true, true) == TM::Tinted);   // 80 columns too
+        assert(raw->textMode(false, false) == TM::Color);  // F/B (AN3 off, 80COL off) wins
+
+        (void)mem.memRead(0xC051);                    // TEXT
+        mem.memWrite(0xC00C, 0);                      // 80COL off
+        (void)mem.memRead(0xC05F);                    // AN3 on: not F/B
+        mem.memWrite(loresAddr(0), 0x20);             // INVERSE space = a white block
+        mem.memWrite(loresAddr(2), 0xC1);             // a normal 'A'
+        display.render(mem);
+        assert(*pixelAt(display, 0, 0) == kWhite && "inverse text stays black and white");
+        const int cellW = display.width() / 40;
+        int lit = 0;
+        uint32_t tint = 0;
+        for (int y = 16; y < 24; ++y)
+            for (int x = 0; x < cellW; ++x) {
+                const uint32_t px = *pixelAt(display, x, y);
+                if (px == kBlack) continue;
+                assert(px != kWhite && "a normal character takes the switches' colour");
+                if (!tint) tint = px;
+                assert(px == tint);
+                ++lit;
+            }
+        assert(lit > 0);
+    }
+
+    // ─── 16. The Eve takes the patent latch at HR 000, ENHRCPREG off ──────
+    {
+        using DM = LeChatMauveCard::DhgrMode;
+        Memory mem;                                   // as § 1: the helper clocks by reads
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::Eve);
+        LeChatMauveCard* raw = card.get();
+        mem.slotBus().plug(7, std::move(card));
+        raw->onPowerCycle();
+        assert(raw->dhgrMode() == DM::COL140);
+        clockOneBitThroughFifo(mem, false);
+        clockOneBitThroughFifo(mem, false);           // latch 00: black and white
+        assert(raw->dhgrMode() == DM::BW560);
+        clockOneBitThroughFifo(mem, true);            // 80COL off then on: mixed → colour
+        assert(raw->dhgrMode() == DM::COL140 && "the Eve has no mixed mode");
+        clockOneBitThroughFifo(mem, true);
+        // Latch 00 again: with ENHRCPREG on (Purplesoft's AN3-off modes)
+        // table IX-1 rules — HR 000 is COL140 whatever the latch.
+        clockOneBitThroughFifo(mem, false);
+        clockOneBitThroughFifo(mem, false);
+        assert(raw->dhgrMode() == DM::BW560);
+        mem.memWrite(0xC0B1, 0);                      // ENHRCPREG on
+        assert(raw->dhgrMode() == DM::COL140 && "with ENHRCPREG on, HR 000 is COL140");
+        mem.memWrite(0xC0B0, 0);                      // ENHRCPREG off
+        mem.memWrite(0xC0B5, 0);                      // HR2 on
+        mem.memWrite(0xC0B7, 0);                      // HR3 on: table IX-1's BW560
+        mem.memWrite(0xC00D, 0);
+        clockOneBitThroughFifo(mem, true);
+        clockOneBitThroughFifo(mem, true);            // latch back to COL140
+        assert(raw->dhgrMode() == DM::BW560 && "HR2+HR3 is BW560 whatever the latch");
+    }
+
+    // ─── 17. RVB Graph, from its patent (FR 2 509 560, 2026-11-28) ──────
+    {
+        Memory mem;
+        Apple2Display display;
+        auto card = std::make_unique<LeChatMauveCard>(7, LeChatMauveCard::Variant::RvbGraph);
+        LeChatMauveCard* raw = card.get();
+        mem.slotBus().plug(7, std::move(card));
+        display.setChatMauveCard(raw);
+        display.setHiResMode(Apple2Display::HiResMode::ChatMauveRGB);
+        (void)mem.memRead(0xC050); (void)mem.memRead(0xC057); (void)mem.memRead(0xC054);
+        (void)mem.memRead(0xC052);
+        clearHgrLine(mem, 0);
+        const uint32_t kViolet = 0xFFCC0091u, kGreen = 0xFF33FF6Eu;
+        auto dot = [&](int x) { return *pixelAt(display, 2 * x, 0); };
+
+        // Fig. 3: the colour registers answer the WHOLE $C7 page (A6/A7 not
+        // decoded): $C74F is $C70F's mirror.
+        mem.memWrite(0xC0F4, 0x00);                   // U = 4, K = 0
+        mem.memWrite(0xC74F - 15, static_cast<uint8_t>(15 - 13));   // C0 = 13, B0 = 15
+        assert(raw->rvbGraph().c[0] == 13 && raw->rvbGraph().b[0] == 15);
+        // …and a READ writes them too, unless K = 8.
+        (void)mem.memRead(0xC71F);                    // entry 1, B1 = 15 − $F = 0
+        assert(raw->rvbGraph().b[1] == 0);
+        mem.memWrite(0xC0FC, 0x00);                   // K = 8: closed
+        (void)mem.memRead(0xC71A);
+        assert(raw->rvbGraph().b[1] == 0 && "K = 8 blocks the registers");
+        mem.memWrite(0xC0F0, 0x00);                   // the usual display again
+
+        // Fig. 2: a single 0 before a lit dot takes the LEFT neighbour's C
+        // colour, even after a run: 11011 → white white C(phase 1) white white.
+        writeHgrByte(mem, 0, 0, 0x1B);                // dots 0,1,3,4 lit
+        display.render(mem);
+        assert(dot(0) == kWhite && dot(1) == kWhite && dot(3) == kWhite && dot(4) == kWhite);
+        assert(dot(2) == kGreen && "the gap takes the left dot's (odd) colour, not black or B");
+        // 101: the gap takes the left dot's colour (even → violet).
+        writeHgrByte(mem, 0, 0, 0x05);
+        display.render(mem);
+        assert(dot(0) == kViolet && dot(1) == kViolet && dot(2) == kViolet);
+        // 1001: a gap of two stays black.
+        writeHgrByte(mem, 0, 0, 0x09);
+        display.render(mem);
+        assert(dot(1) == kBlack && dot(2) == kBlack);
     }
 
     // ─── 14. ColorNTSC fallback when card not plugged ─────────────────────

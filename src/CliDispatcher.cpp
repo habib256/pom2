@@ -201,7 +201,7 @@ void printUsage()
         "                              | mono-white | mono-green | mono-amber\n"
         "  --rgb-card-invert-bit7[=on|off]\n"
         "                              Le Chat Mauve / Video-7 Dragon-Wars compat:\n"
-        "                              XOR bit 7 of HGR / DHGR-Mixed bytes at decode.\n"
+        "                              XOR bit 7 of DHGR-Mixed bytes at decode.\n"
         "\n"
         "Actions (submitted in command-line order after startup settles):\n"
         "  --load <addr>:<path>       Load raw binary at addr\n"

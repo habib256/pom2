@@ -7,12 +7,32 @@ POM2's `LeChatMauveCard` and the Chat Mauve render paths in
 `Apple2Display`. The point of this document is precision: each rule below
 carries where it comes from, and each gap says what would close it.*
 
-> **Status (checked against the code 2026-10-06).** P0, P1, P2 shipped;
+> **Status (checked against the code 2026-11-28).** P0, P1, P2 shipped;
 > P3 closed as bounded; P4 done 2026-10-20 (the RVB Graph from its
 > manual); P6 first rung (the mode latch beam-races) plus
-> the live switch/CPREG panel; P7 done. Open: P5, the rest of P6 (dot-level `$C0Bx`, TTL-RGBI palette), and
-> the Extasie / DIX / PoP goldens. § 0 and § 2.2 describe the model as it
-> was *before* the plan. The living description is
+> the live switch/CPREG panel; P7 done. Arlequin's seven screens and
+> Extasie's mixed-DHGR title page are pinned by `chatmauve_feline_screens`
+> (2026-10-24). Open: P5, the rest of P6 (dot-level `$C0Bx`), the DIX / PoP
+> goldens, and the questions of § 6. Changed in the code on 2026-11-28 from
+> this verification: the latch's power-on per variant and no re-arm on
+> Ctrl-Reset; the Eve takes the latch at HR 000 while ENHRCPREG is off; the
+> Video-7's DIP-switch text colour and black-and-white inverse text. § 0 and § 2.2 describe the model as it
+> was *before* the plan.
+>
+> **Verified against the sources 2026-11-28**, each re-read for this pass:
+> the Video-7 patent, the Féline / Eve / RVB Graph manuals, the *Manuel
+> Arlequin* as Extasie Reloaded quotes it, the Apple IIe and IIc Technical
+> Reference Manuals, Purplesoft's own code, AppleWin (v1.29.15.0 `98b72658`
+> and master `7fd7fd7c`) with fenarinarsa's issues and articles, and MAME
+> `apple2video.cpp` @ e1479b7a. Corrected here: "80COL must have been
+> written" (an AppleWin heuristic, withdrawn in 1.29.16.0 — never
+> measured); the latch's power-on state (the patent's is 560 mono); the
+> quadruplet rule (the Reloaded author's deduction, not the Arlequin
+> manual's); the family (three cards and an adapter, slot 3 + aux, the
+> signals each one sees); the TTL header (a 4-bit colour number, not
+> RGBI); table IX-1's BW560 and CP280 rows; the PLA's true/complement
+> order (not pinned). Every hardware claim now carries its grade
+> (CLAUDE.md § Conventions). The living description is
 > [`DEV.md` § Le Chat Mauve](../DEV.md#le-chat-mauve-lechatmauvecard) and
 > the header of `src/LeChatMauveCard.h`.
 
@@ -23,7 +43,7 @@ the four Video-7 DHGR interpretations (560 mono / 140 colour / mixed /
 160 chunky), a Video-7-style fg/bg colour TEXT, two "Eve" toggles at
 `$C0B8-$C0BB`, and the palette AppleWin captured off a Féline. That is a
 good Féline / //c-adapter at the **byte** level, and a wrong Eve: the Eve
-has **sixteen write-only switches at `$C0B0-$C0BF`, a data register (CPREG)
+has **eight switches at the sixteen addresses `$C0B0-$C0BF`, a data register (CPREG)
 that the card writes into auxiliary memory behind the CPU's back, ten
 graphics modes selected by AN3 + three switches, colour text whose nibbles
 are the other way round from Video-7's, and a colour decoder that is a
@@ -35,46 +55,69 @@ that all of them share.
 
 ## 1. The family, and what each card can do
 
-Four products carried the name (plus the Apple-branded //c adapter, which
-is a Féline without RAM). Sources: the Eve reference manual (archive.org,
-OCR), the Féline manual (apple-iigs.info), fenarinarsa's survey and his
-measurements on a //c adapter and, through a friend, an Eve (AppleWin
-#764/#850), the Video-7 patent US 4,631,692.
+Three cards carried the name — the RVB Graph (][ / ][+), the Eve and the
+Féline (//e) — plus the //c adapter ([E] fenarinarsa, *Le Chat Mauve sur
+Apple II*, fenarinarsa.com/?p=1370: «trois cartes Le Chat Mauve et un
+adaptateur»). The adapter was sold under an Apple part number — its label
+carries the Le Chat Mauve cat, "//c RVB PERITEL", "A2M4020F", "Made in
+France" ([A] photo of a unit, same post) — and is a Féline without its
+64 K / 80-column half, which the //c has built in ([E] fenarinarsa, AppleWin
+#764: «a Feline without the memory expansion»; no adapter manual found).
+Sources: the manuals (§ 7), fenarinarsa's survey and his measurements on a
+//c adapter and, through a friend, an Eve (AppleWin #764/#850), the Video-7
+patent US 4,631,692.
 
-| Mode | RVB Graph (II/II+) | **Eve** (//e, aux slot, 64 K) | **Féline** (//e, aux slot, 64 K) | **Adaptateur //c** |
+| Mode | RVB Graph (II/II+) | **Eve** (//e, slot 3 + aux, 64 K) | **Féline** (//e, slot 3 + aux, 64 K) | **Adaptateur //c** |
 |---|---|---|---|---|
-| TEXT 40/80 mono, GR, HGR (LCM colour rules) | ✓ | ✓ | ✓ | ✓ |
+| TEXT 40/80 mono, GR, HGR (LCM colour rules) | 40 only; its own C0-C3 / B0-B3 HGR rules (§ 3.6) | ✓ | ✓ | ✓ |
 | HGR colour variants SPEC1 / SPEC2 / DASH / HRBW | — | ✓ (HR1-3) | HRBW only (AN3 off) | HRBW only (AN3 off) |
 | HGR COL280A / COL280B (280×192, 4 colours) | — | ✓ | — | — |
 | HGR CP280 (280×192, fg/bg per 7 dots, 16 colours) | — | ✓ | — | — |
-| DHGR COL140 | ✓ | ✓ | ✓ | ✓ |
-| DHGR BW560 | ✓ | ✓ | ✓ | ✓ |
+| DHGR COL140 | — ([B] a ][ / ][+ card) | ✓ | ✓ | ✓ |
+| DHGR BW560 | — | ✓ | ✓ | ✓ |
 | DHGR **mixed** COL140 + BW560 | — | **—** | ✓ | ✓ |
 | DHGR 160×192 chunky (Video-7 / Apple RGB only) | — | — | — | — |
-| Double lo-res | — | **✗** | ✓ | ✓ |
+| Double lo-res | — | ? ([F] not in the Eve manual) | ✓ ([B] Féline manual p. 39) | ✓ |
 | TEXT colour (fg/bg per character, aux byte) | whole-screen register | ✓ (TXT16) | — | — |
 | TEXT green monochrome | CT = 12 | ✓ (TXTGREEN) | — | — |
 | HGR colours programmable (C0-C3 isolated, B0-B3 runs), dotted, 4-colour | ✓ | — | — | — |
 | Registers | `$C0F0-$C0FF` + `$C700-$C73F` | `$C0B0-$C0BF` | none | none |
-| Mode latch (AN3 clocks /80COL) | ? | ✓ | ✓ | ✓ |
+| Mode latch (AN3 clocks /80COL) | — (no 80COL) | ? ([A] second-hand yes; POM2 ignores it — § 6) | ✓ | ✓ |
 
 Two hardware facts that matter for a model:
 
-- **The Eve and the Féline occupy the auxiliary slot** and see the
-  motherboard's `~80COL`, `VID7`, `AN3`, `TEXT`, `GR`, `SEGB`, `14M`,
-  `LDPS` directly. **The //c adapter hangs off the DB-15 and has only 14M,
-  VID7M, ~LDPS, TEXT, GR, SEGB** — it has to *infer* 80COL from the timing
-  of VID7M/LDPS. That inference is the documented source of its erratic
-  mode switches (Prince of Persia's title screen dropping to mono after
-  the first attract loop; fenarinarsa's three sheets of non-reproducible
-  patterns). An Eve on a //e shows PoP correctly.
+- **The Eve and the Féline plug into slot 3 and the auxiliary slot at
+  once** ([B] Féline manual p. 8 and the Eve manual's installation chapter:
+  «se brancher à la fois sur le connecteur 3 et le connecteur auxiliaire» —
+  the European //e's in-line pair), which is why the Eve's registers are
+  slot 3's `$C0B0-$C0BF`. From the aux slot they see the motherboard's
+  `80VID'`, `AN3`, `GR`, `SEGB`, `VID7M`, the video data bus `VID0-VID7`,
+  `SEROUT`, `14M`, `LDPS'` ([B] Apple IIe Technical Reference Manual, Table
+  7-21, pp. 198-200 — there is no TEXT line: text is GR low).
+- **The //c adapter hangs off the DB-15**: TEXT, GR, SEGB, 14M, LDPS\*,
+  SEROUT\* (the dots), VIDD7 (the latched byte's bit 7 — not VID7M), SYNC\*,
+  WNDW\*, PRAS\*, CREF — and **no AN3, no 80COL** ([B] Apple IIc Technical
+  Reference Manual, Table 11-17, p. 272; DHGR shows as TEXT ≠ ¬GR). It has
+  to *infer* 80COL from the LDPS\* cadence. That this inference causes its
+  erratic mode switches is fenarinarsa's hypothesis, one unit tested ([F]
+  AppleWin #850: «my guess is that it's a behavior of the IIc adapters only
+  … it may even be a defect of *my* adapter»); the symptoms are measured
+  ([A] the same: Prince of Persia's title screen dropping to mono after the
+  first attract loop, traced to the `$C057` access after `STA ADCOLon`;
+  non-reproducible results over 14 random switch sequences). An Eve on an
+  unenhanced //e shows PoP correctly ([A] second-hand, a friend's Eve,
+  #850). Settled by: a second adapter, or its schematic.
 - **The Eve rev A applies the wrong DHGR colours to the 4-bit patterns**
-  (it shipped before Apple's DHGR); rev B fixed it. The manual's addendum
-  gives the difference exactly: its colour-table program for showing a
-  rev A picture on a rev B (`DATA 0,8,1,9,2,10,3,11,4,12,5,13,6,14,7,15`,
-  poked into the sixteen table entries) maps rev-B code *i* to rev-A code
-  `(i >> 1) | ((i & 1) << 3)` — the 4-bit code **rotated right by one**,
-  the same rotation AppleWin's DHGR path applies. No capture is needed.
+  (it shipped before Apple's DHGR); rev B fixed it — the manual says the
+  board *and its software* changed («modifier très légèrement la carte ève
+  et ses logiciels»). Its addendum (p. 127, § 8) gives a BASIC program for
+  showing a rev A picture on a rev B: `DATA 0,8,1,9,2,10,3,11,4,12,5,13,6,
+  14,7,15` poked into a software colour table (`POKE −26368+16*I`), then
+  `& BACK=0` / `& CLEAR` [B]. Read as "code *i* → table[*i*]" that is the
+  4-bit code rotated by one bit — but that reading rests on what Purplesoft's
+  `& CLEAR` does with the table, not disassembled [F]. (AppleWin's DHGR path
+  @ 7fd7fd7c rotates LEFT in code while its comment says right [D].)
+  Settled by: disassembling `& CLEAR`, or a rev A owner.
 
 ## 2. What POM2 models today, and where it departs
 
@@ -92,25 +135,25 @@ Eve's switch byte and CPREG; the pixel rules live in `Apple2Display`.
 
 | Area | POM2 now | Pinned by |
 |---|---|---|
-| Mode latch | patent shift register, 80COL clocked (MAME numbering); Féline / //c fold 160 → COL140, the Eve folds mixed and 160 → COL140, the Video-7 keeps all four | `le_chat_mauve_smoke` § 1, `chatmauve_dot_rules` § 4 |
-| DHGR mixed | per-byte 560/140 mux over a free-running 4-dot cell latch — colour cell **cut** into a BW byte, last BW dot **repeated** into a colour byte; == AppleWin `UpdateDHiResCellRGB` over 3×32×192 random rows | `chatmauve_dot_rules` § 2, golden `cm/feline/dhgr-mixed-boundary` |
-| HGR with the card | LCM rule (2-bit cell, 3-bit window, bank = the dot's own byte) == AppleWin `UpdateHiResRGBCell` over 64×192 rows; the latch does NOT touch single HGR (AppleWin never consults it there); AN3 off → Féline / //c **mono**, Video-7 **F/B**, Eve keeps decoding | `chatmauve_dot_rules` § 1, smoke § 3 / § 11 |
-| Eve switches | all sixteen at `$C0B0-$C0BF`, any access decodes, a write loads CPREG, all off at power-on, LOCKRES vs Ctrl-Reset, slot-3 collision guard over the whole window | smoke § 6 |
+| Mode latch | patent shift register, 80COL sampled on every `$C05E→$C05F` edge (MAME numbering); power-on per variant — Video-7 **560 mono** ([B] patent), Féline / //c adapter COL140 ([B] Féline manual), Eve and RVB Graph COL140 ([F]); **Ctrl-Reset leaves it alone** ([B] no reset input; [A] nicolho, #633), the ROM's reset `$C05F` clocking it once with 80COL off when AN3 was low (since 2026-11-28; until then POM2 re-armed COL140 as [D] AppleWin does); Féline / //c fold 160 → COL140, the Video-7 keeps all four; **the Eve takes it at HR 000 while ENHRCPREG is off** (§ 6) | `le_chat_mauve_smoke` §§ 1, 16, `chatmauve_dot_rules` § 4, `chatmauve_latch_split` |
+| DHGR mixed | per-byte 560/140 mux over a free-running 4-dot cell latch — colour cell **cut** into a BW byte, last BW dot **repeated** into a colour byte ([A] //c adapter, fenarinarsa, PR #837); == [D] AppleWin `UpdateDHiResCellRGB` @ 98b72658 over 3×32×192 random rows | `chatmauve_dot_rules` § 2, golden `cm/feline/dhgr-mixed-boundary`, `chatmauve_feline_screens` (Extasie's title) |
+| HGR with the card | LCM rule (2-bit cell, 3-bit window, bank = the dot's own byte) == [D] AppleWin `UpdateHiResRGBCell` @ 7fd7fd7c over 64×192 rows; the latch does NOT touch single HGR ([D] AppleWin never consults it there); AN3 off → Féline / //c **mono** ([B] Féline manual p. 38), Video-7 **F/B** ([B] AAL 1986-08), Eve keeps decoding ([F]) | `chatmauve_dot_rules` § 1, smoke § 3 / § 11 |
+| Eve switches | the eight switches at the sixteen addresses `$C0B0-$C0BF`; a write sets one and loads CPREG ([B] manual p. 117); POM2 also decodes reads ([F]); all off at power-on ([B] p. 117); LOCKRES vs Ctrl-Reset ([B] p. 119); slot-3 collision guard over the whole window | smoke § 6 |
 | CPREG auto-write | `Memory::setAuxShadow` — text page under TXT16, HGR page under ENHRCPREG, frozen by LOCKCPREG, only when the CPU's write landed in MAIN; zero cost on the hot path (writable[] diversion, like the write watches, and pinned to coexist with them) | smoke § 7 |
-| Table IX-1 | `& GR 1..10` decoded from Purplesoft's own switch tables: 000 HRAPPLE / 100 SPEC1 / 110 SPEC2 / 001 DASH / 011 HRBW with AN3 on; 000 COL140 / 100 COL280A / 010 COL280B / 110 blank / 111 CP280 / **011 BW560** with AN3 off. The patent latch plays no part on the Eve (`& GR 6` leaves it at 00 and expects COL140). **CP280 runs with 80COL OFF** (Purplesoft's 80COL table: on for 6/7/8/10, off for 9 — the Eve is the aux memory and has the attribute byte regardless) | smoke § 10, goldens `cm/eve/*`, `purplesoft_eve_probe` |
+| Table IX-1 | `& GR 1..10` decoded from Purplesoft's own switch tables: 000 HRAPPLE / 100 SPEC1 / 110 SPEC2 / 001 DASH / 011 HRBW with AN3 on; 000 COL140 / 100 COL280A / 010 COL280B / 110 blank / 111 CP280 / **011 BW560** with AN3 off. The patent latch plays no part on the Eve in POM2 ([C] `& GR 6` leaves it at 00 in POM2 and expects COL140 — contested, § 6). **CP280 needs no 80COL** ([B] p. 118: Note 2 only; [C] PURPLESOFT* `$E317-$E32A` forces 80COL on for `& GR` 6/7/8/10 and leaves it at the `& TEXT` setting for 9 — off after `& TEXT 1`; the Eve is the aux memory and has the attribute byte regardless) | smoke § 10, goldens `cm/eve/*`, `purplesoft_eve_probe` |
 | TXT16 / TXTGREEN | colour text with **hi = background**, 80COL off, no AN3 condition; TXTGREEN as a white → green pass over the text rows (40 and 80 col, mixed-mode band too) | smoke § 8-9, goldens `cm/eve/text*` |
 | COL280A/B | the 560 stream in **2-dot cells** (code = dot + 2·next), palettes in the manual's order — read off Purplesoft's `& PLOT` bytes (§ 6) | smoke § 10, goldens `cm/eve/dhgr-hr*-col280*` |
-| SPEC1 / SPEC2 | 5-dot window: `11011` → black (SPEC1), plus `00100` → white (SPEC2); alternating runs stay coloured | goldens `cm/eve/hgr-spec*` (rule from the manual's prose, to confirm against the PLA in P3) |
+| SPEC1 / SPEC2 | 5-dot window: `11011` → black (SPEC1), plus `00100` → white (SPEC2); alternating runs stay coloured | goldens `cm/eve/hgr-spec*` ([F] rule from the manual's prose; the PLA cannot settle it — P3 closed; a schematic, a board trace or an owner's capture) |
 | DASH | rendered as HRAPPLE — P3 | — |
-| Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7` \| `rvb` — `LeChatMauveCard.cpp:29-35`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
+| Variant selection | one catalog key; `chatmauve_variant` setting (`feline` \| `iic` \| `eve` \| `video7` \| `rvb` — `LeChatMauveCard.cpp:28-34`). Chosen in **Slot Configuration** (a "model" combo under the card's row, staged + applied with the slots) or live in the Chat Mauve panel; //c-class connectors are hardware-fixed to the Adaptateur IIc at plug time | — |
 | Snapshot | blob v3 = latch + switch byte + CPREG; v2's two toggles map onto TXT16 / TXTGREEN. **v5** carries the RVB Graph's control byte, CT and eight colour registers (a v4 blob's old mode strobe restores power-on registers) | smoke § 12, § 13 |
 
 The mode latch now beam-races (P6 first rung); the RVB Graph is complete
 from its manual (P4); P3 is closed as bounded, rather than waiting
 for an implementation inferred from insufficient PLA evidence.
 Purplesoft's screens are frozen by `purplesoft_eve_screens`.
-Still open: dot-level `$C0Bx`, P5, Extasie /
-DIX / PoP goldens, the TTL-RGBI palette.
+Still open: dot-level `$C0Bx`, P5, the DIX / PoP
+goldens, and the questions of § 6.
 
 ### 2.2 As found, 2026-09-01 morning
 
@@ -119,10 +162,10 @@ renderHiResChatMauve80 / renderHgrDuochrome / renderTextChatMauveFgBg`.
 
 | Area | POM2 today | Hardware | Verdict |
 |---|---|---|---|
-| Mode latch | 2-bit FIFO, shifts 80COL on the `$C05E→$C05F` edge, resets to `11` (COL140), `an3Prev` starts high | Patent: 2-bit shift register, clock AN3, data **/80COL**, power-on **set** (F1=F2=1). No precondition on MIXED/HIRES (measured). | Correct up to the data polarity convention (POM2 clocks 80COL and numbers its enum accordingly; AppleWin clocks /80COL). Keep, document. |
+| Mode latch | 2-bit FIFO, shifts 80COL on the `$C05E→$C05F` edge, resets to `11` (COL140), `an3Prev` starts high | Patent: 2-bit shift register, clock AN3, data **/80COL**, power-on **set** (F1=F2=1). No precondition on MIXED/HIRES (measured). | Correct up to the data polarity convention (POM2 clocks 80COL and numbers its enum accordingly; AppleWin clocks /80COL). Keep, document. *2026-11-28: not quite — the patent's F1=F2=1 is **560 mono**, not COL140 (§ 3.1).* |
 | DHGR interpretations | MAME `dhgr_update` port: COL140, Mixed (per **source byte** MSB), Chunky160, BW560 | Féline/IIc: no 160 mode — falls back to COL140. Mixed: 4-dot grid, byte-boundary rules (§ 3.3). | 160 must fall back on Féline; mixed boundary rules are the byte-level approximation, not the measured dot rules. |
 | HGR with the card | 280-wide LCM path (`renderHiResChatMauve80`) — check against § 3.4 | 2-bit cell colour + 3-bit window: only `010` / `101` are coloured | Verify pixel-for-pixel; AN3 off → HGR **mono** on Féline/IIc (`POKE -16290,0`). |
-| TEXT colour | Video-7 F/B: aux byte **hi = fg, lo = bg**, enabled when 40-col text + AN3; "Eve" toggle `$C0B8/9` | Eve TXT16: aux byte **hi = background, lo = foreground** (manual IV-2.2, III-2: `POKE -16199,16*F+C`), needs 80COL **off**, `$C0B9` on / `$C0B8` off, and CPREG auto-writes the aux byte | Nibble order is inverted for the Eve; CPREG mechanism absent. |
+| TEXT colour | Video-7 F/B: aux byte **hi = fg, lo = bg**, enabled when AN3 **off** + 80COL off; "Eve" toggle `$C0B8/9` | Eve TXT16: aux byte **hi = background, lo = foreground** (manual IV-2.2, III-2: `POKE -16199,16*F+C`), needs 80COL **off**, `$C0B9` on / `$C0B8` off, and CPREG auto-writes the aux byte | Nibble order is inverted for the Eve; CPREG mechanism absent. |
 | `$C0BA/$C0BB` | "HGR Duochrome" toggle | **TXTGREEN**: green monochrome text 40/80 (`POKE -16197,0` on, `-16198` off) | Mislabelled; the fg/bg HGR the code renders is the Eve's **CP280** (AN3 off, HR1+HR2+HR3 on, 80COL on), selected elsewhere. |
 | `$C0B0-$C0B7`, `$C0BC-$C0BF` | not decoded | ENHRCPREG, HR1, HR2, HR3, LOCKCPREG, LOCKRES; every write also loads **CPREG** | Missing entirely. |
 | Reset | `onReset` re-arms the latch | Eve: Ctrl-Reset clears all sixteen switches unless LOCKRES; latch set at power-on | Add. |
@@ -133,24 +176,56 @@ renderHiResChatMauve80 / renderHgrDuochrome / renderTextChatMauveFgBg`.
 
 ### 3.1 The mode latch (all cards with DHGR)
 
-US 4,631,692, FIG. 1: *"a two bit shift register which uses AN3 as its
-clock and 80COL as its data input"*, `~80COL` being the only polarity the
-hardware sees; *"set upon power-on such that F1 and F2 get initialized to
-their 'on' state"*. Measured on the //c adapter (fenarinarsa, 2020-10):
-switching `$C05E → $C05F` injects the **current** `~80COL` into F1 and
-pushes F1 into F2; **no precondition** — MIXED on, HIRES off, 80STORE off
-all still clock. The only requirement is that 80COL was *written* since
-the last `$C05E→$C05F` (its detection is what a toggle resets). Resulting
-modes, in AppleWin's numbering (F2 F1 from `~80COL`):
+[B] US 4,631,692, FIG. 1: *"a two bit shift register which uses AN3 as its
+clock and 80COL as its data input"*, and the next sentence: *"only the
+inverse 80COL … is available … the input polarity … is inverted"* —
+`~80COL` is the only polarity the hardware sees.
 
-| clocked (80COL then 80COL) | F2 F1 | Video-7 / Apple RGB | Féline / IIc | Eve |
+**Power-on.** [B] The patent: *"set upon power-on such that F1 and F2 get
+initialized to their 'on' state"* — *"This initialization procedure
+powers-on the hardware in the 560×192 mode. Optionally, the power-on state
+could very well have been any of the other three."* The Video-7 comes up in
+**560 mono**. [B] Féline manual (ch. 5, the DHGR page): «Les programmes qui
+ne prévoient pas ces commutations seront toujours en couleur» — the Féline
+comes up in colour. [D] AppleWin and MAME (`m_rgbmode = 3`) both default to
+colour, and AppleWin re-arms it on Ctrl-Reset (`CtrlReset` →
+`VideoResetState` → `RGB_ResetState`, Utilities.cpp @ 7fd7fd7c). [A]
+nicolho, //c adapter (AppleWin #633, 2019-04-28): Renegade's title «in
+color after a cold start … after one reboot or more, it always shows up in
+B&W» — the adapter's latch survives a reboot. POM2 re-arms COL140 at power-
+on and on every Ctrl-Reset, on every variant [F] — § 6.
+
+**What clocks it.** [A] fenarinarsa, //c adapter (AppleWin #850,
+2020-10-27): `$C05E → $C05F` *mostly* shifts the current `~80COL` into F1
+and F1 into F2 — some runs of the same 14 random switch sequences differed
+(«it may even be a defect of my adapter»). [A] The same (#764,
+2020-02-25): MIXED on still clocks. [A] jvernet, //e + a Le Chat Mauve
+card (#631): Apple II DeskTop clocks with TEXT on and gets BW560. HIRES off
+and 80STORE off were not tested. The «80STORE must be set» (Video-7
+manual) and «TEXT off, MIXED off, HIRES on» (AppleColor manual)
+preconditions are [D] AppleWin's report of those manuals, read as
+programming advice.
+
+**"80COL must have been written since the last edge" was never measured.**
+[D] It was AppleWin's heuristic for Renegade (tomcw, commit 2463aae545,
+2019-04-06, GH#633), restated in PR #837 (2020-09-24) with only the PoP
+intro as evidence, and withdrawn after fenarinarsa's random-pattern test
+(#850; commit fb0871672c, AppleWin 1.29.16.0 — still in the v1.29.15.0 tag
+`98b72658`, gone from master `7fd7fd7c`). AppleWin @ 7fd7fd7c, MAME @
+e1479b7a and POM2 all clock on every edge. What the //c adapter really
+samples, having no 80COL line, is P5's question [F].
+
+Resulting modes, F2 F1 as numbered by the patent's table (= AppleWin's
+`g_rgbMode`); POM2 and MAME store the complement:
+
+| clocked (80COL then 80COL) | F2 F1 | Video-7 / Apple RGB | Féline / IIc | Eve ([A] second-hand, #764; POM2 ignores the latch — § 6) |
 |---|---|---|---|---|
 | `$C00C`, `$C00C` | 1 1 | 560 mono | 560 mono | BW560 |
 | `$C00D`, `$C00D` | 0 0 | 140 colour | 140 colour | COL140 |
 | `$C00C`, `$C00D` | 1 0 | **mixed** | **mixed** | (unsupported → 140 colour) |
 | `$C00D`, `$C00C` | 0 1 | 160 chunky | (unsupported → 140 colour) | (→ 140 colour) |
 
-Reference sequences (Arlequin / Extasie, `Extasie Reloaded` annexe 6):
+Reference sequences ([C] Arlequin / Extasie, `Extasie Reloaded` annexe 6):
 
 ```
 STA $C050 ; STA $C054 ; STA $C052 ; STA $C057 ; STA $C05D
@@ -159,40 +234,79 @@ STA $C00D ; STA $C05E ; STA $C05F        ; bit 2 (80COL on)  → mixed
 STA $C05E                                ; DHGR on
 ```
 
-On the //c the `$C05E/$C05F` pair is reached through IOUDIS (`$C07E`),
-and PoP's `STA ADCOLon / BIT HIRESon` order is enough to derail the
-adapter's inferred 80COL — a real quirk of that box, not of the Féline.
+On the //c the `$C05E/$C05F` pair is reached through IOUDIS (`$C07E`).
+[A] fenarinarsa (#850) traced PoP's B&W to the `$C057` access right after
+`STA ADCOLon`; swapping the two fixed it on his adapter. Neither the patent
+nor the withdrawn "80COL written" rule explains that; "the adapter's
+inferred 80COL" is his guess [F], and "not of the Féline" is [F] too —
+only an Eve was tested against it.
+
+### 3.1.1 The Video-7 SL7 (and Apple's AppleColor card)
+
+POM2's `video7` variant (power-on: 560 mono, [B] the patent). [B] Video-7 SL7 manual, as quoted by fenarinarsa
+in AppleWin PR #837: «Inverse text always show in black and white». [D]
+AppleWin `UpdateText40/80ColorCell` @ 7fd7fd7c: characters below `$80`
+(inverse **and** flashing) are drawn white on black in 40 columns when F/B
+is off, and always in 80 columns. [D] `RGB_SetVideocard` @ 7fd7fd7c: the
+default text colour comes from DIP switches — blue, amber, green or white =
+lo-res 6 / 9 / 12 / 15 on black. [D] F/B text = AN3 off + TEXT + 80COL off,
+aux high nibble = foreground (AppleWin NTSC.cpp; MAME `text_update` @
+e1479b7a). [B] Bob S-C, *Apple Assembly Line* 1986-08: «F/B mode is active
+any time the 80 column switch is off and annunciator 3 is off». [C]
+Apple's AppleColor demo disk shows F/B HGR (#851); [D] AppleWin has treated
+the AppleColor card as an alias of the SL7 since 1e43b331f3. POM2 models
+F/B text and F/B HGR, and since 2026-11-28 the DIP-switch text colour
+(setting `chatmauve_video7_text`: white / green / amber / blue, the Chat
+Mauve panel's combo) with inverse and flashing characters kept black and
+white, in 40 and 80 columns outside F/B (`le_chat_mauve_smoke` § 15). Compatibility cases worth a golden: King's Quest 1 at
+`$5FD7` (press TAB twice) re-arms mixed mode with only TEXT and HIRES set;
+Apple II DeskTop's black-and-white DHGR with HIRES off (GH#631); DIGIDREAM
+falling into F/B HGR by accident on an SL7 (AppleWin help,
+`Troubleshooting.html`).
 
 ### 3.2 The Féline's HGR (also the //c adapter; presumably the Eve's HRAPPLE)
 
-fenarinarsa, verified against every bit combination on the //c adapter;
-GrafX2 `Update_color_hgr_pixel` implements it; AppleWin
-`UpdateHiResRGBCell` too:
+[A] fenarinarsa, //c adapter, «all possible combinations» (AppleWin #764,
+2020-02-24); [A] Féline, «checked against real hardware» (PR #837); [D]
+AppleWin `UpdateHiResRGBCell` @ 7fd7fd7c (= v1.29.15.0); GrafX2
+`Update_color_hgr_pixel` (not re-read 2026-11-28). The Eve's HRAPPLE is
+presumed the same [F] (fenarinarsa: «I can only guess it's the same for
+EVE»).
 
 1. Slice the 280 dots of a line into 140 **cells of 2 bits**. `01` → colour
    1, `10` → colour 2 (`00`/`11` no colour). The byte's bit 7 picks the
    pair: 0 → violet / green, 1 → blue / orange (AppleWin: `offset ?
-   palette[1+c] : palette[6-c]`).
+   palette[1+c] : palette[6-c]`). Which byte's bit 7: AppleWin takes the
+   byte holding the **dot**, so a cell straddling two bytes can show two
+   palettes [D] — an implementation detail, not a measurement.
 2. For each dot look at it with its two neighbours (3-bit window; the dot
    before the first and after the last are 0). **`010` or `101` → the middle
    dot takes its cell's colour. Anything else → white if 1, black if 0.**
    No half-dot shift, no fringing, no NTSC.
 
-AN3 **off** in HGR makes the Féline/IIc render HGR in **monochrome** (the
-Féline manual's `POKE -16290,0`; Ctrl-Reset restores colour). On the Apple
-RGB card that same state is the F/B (duochrome) mode; on the Eve it is not.
+AN3 **off** in HGR makes the Féline/IIc render HGR in **monochrome**: [B]
+Féline manual p. 38, `POKE -16290,0`, «si votre écran texte est en 40
+colonnes, sinon cette instruction aura des effets surprenants» (in 80
+columns `$C05E` arms DHGR); `POKE -16289,0` or Ctrl-Reset restores colour;
+[A] the //c adapter does the same (#764). On the Apple RGB card that state
+is the F/B (duochrome) mode (§ 3.1.1); on the Eve it is not [F]. [D]
+AppleWin never consults the latch in single HGR; one ambiguous [A] hint
+(jvernet, #631: MousePaint launched after A2D's BW560 shows B&W HGR — either
+the latch reaching HGR, or AN3 left off).
 
 ### 3.3 The Féline's mixed DHGR — the mode Extasie was written for
 
-Official statement, *Manuel Arlequin*: *"Mode mixte : uniquement Féline
-IIe et //c avec interface Péritel/RVB. La carte Eve n'est pas compatible
-avec ce mode. Le bit 7 de chaque octet est utilisé dans l'affichage mixé.
-Si ce bit est à 0, l'octet est destiné à être affiché en monochrome, sinon
-en couleur"* and, decisive for the dot rules: *"**le bit 7 de l'octet dans
-lequel se trouve le bit 0 du quadruplet** détermine la couleur de
-celui-ci"* — a 4-bit colour cell ("quadruplet") is coloured or not by the
-bit 7 of the byte that holds the cell's **first** bit. The cell grid is
-fixed to the line: 7 cells per 4 bytes,
+[B] *Manuel Arlequin*, as quoted by *Extasie Chat Mauve Reloaded*
+(boutillon.free.fr): *"Mode mixte : uniquement Féline IIe et //c avec
+interface Péritel/RVB. La carte Eve n'est pas compatible avec ce mode. Le
+bit 7 de chaque octet est utilisé dans l'affichage mixé. Si ce bit est à 0,
+l'octet est destiné à être affiché en monochrome, sinon l'octet est destiné
+à être affiché en couleur"*; a line is «20 cellules de 4 octets» (28 dots,
+7 colour points per cell). [C] The Reloaded page's author, from Extasie's
+behaviour («quelques tests avec Extasie») — **not the manual**: «le bit 7
+de l'octet dans lequel se trouve le bit 0 du quadruplet détermine la
+couleur de celui-ci», a 4-bit colour cell taking the bit 7 of the byte that
+holds its **first** bit, on a grid fixed to the line, 7 cells per 4 bytes:
 
 ```
 Aux      Princ    Aux      Princ
@@ -200,11 +314,13 @@ Aux      Princ    Aux      Princ
 X2103210 X1032103 X0321032 X3210321     which quadruplet each bit feeds
 ```
 
-and the manual adds: *"il est fortement conseillé que les 4 bits 7 des
-octets d'une cellule soient dans un même état"* — because the boundary
-cases are where the hardware does something the manual would rather not
-document. AppleWin's rules, **validated against the //c adapter's output**
-(PR #837, `UpdateDHiResCellRGB`):
+and its own boundary table (`1CCCCCCC 0NNNNNNC`) contradicts the measured
+rule below. The manual itself advises keeping «les 4 bits 7 des octets
+d'une cellule dans un même état», and says why: «des bavures peuvent
+apparaître et … certaines routines du système Arlequin … risquent de ne pas
+fonctionner» [B]. [A] fenarinarsa, //c adapter (PR #837, on Extasie's
+*Elephant*), as [D] AppleWin implements it (`UpdateDHiResCellRGB` @
+98b72658):
 
 - bit 7 of each byte defines the mode of the following 7 bits; BW pixels
   are 1 dot, colour pixels 4 dots;
@@ -214,20 +330,33 @@ document. AppleWin's rules, **validated against the //c adapter's output**
   repeated** until the next cell boundary.
 
 fenarinarsa's first note (2020-02) said the switch only takes effect "from
-the next 4-bit sequence"; the later, validated PR refined that into the
-two rules above. **Both are consistent with the patent's mechanism**: the
-byte's VID7 selects the 560 path or the 140 path *for the next seven 14 MHz
-periods*, while the 140 path's 4-bit latch keeps running on its own grid.
-The plan models exactly that (mux per byte, latch per 4 dots) and pins the
-three cases with Extasie's slideshow. Dragon Wars encodes bit 7 the other
-way round; POM2's `invertBit7` stays as the compatibility switch.
+the next 4-bit sequence"; the later PR refined that into the two rules
+above. [A] beats [C] on the //c adapter; the Féline is untested [F]. The
+patent's per-byte mux [B] — the byte's VID7 selects the 560 path or the 140
+path *for the next seven 14 MHz periods* while the 140 path's 4-bit latch
+keeps its own grid — explains the **cut**; its FIG. 2 text does not produce
+the **repeat** [F]. [D] MAME @ e1479b7a shows the straddling cell's colour
+instead, quoting the Video-7 User's Manual: «color aberrations will occur
+at the leading and trailing edges» [B via D]. POM2 models mux per byte +
+latch per 4 dots and pins the cases with the AppleWin oracle and the golden
+`cm/feline/dhgr-mixed-boundary`; Extasie's mixed-DHGR title page is pinned
+by `chatmauve_feline_screens`. Dragon Wars encodes bit 7 the other way
+round — and on real //c adapters its title shows in **B&W** ([A] nicolho,
+#633; [A] fenarinarsa, #764): POM2's `invertBit7` is AppleWin's convenience
+(`-rgb-card-invert-bit7`) [D], not the hardware's behaviour.
 
 ### 3.4 The Eve: switches, CPREG, and table IX-1
 
-Manual, chapter IX (p. 117-119). Write-only, **all off at power-on**, at
-the slot-3 addresses `$C0B0-$C0BF` (−16208 … −16193). **Every write to any
-of them also latches the data byte into CPREG** (dot colour in the low
-nibble, background in the high nibble). Reading returns nothing useful.
+[B] Manual, chapter IX (section IX-1 from p. 117; table IX-1 p. 118; TXT16 to
+LOCKRES p. 119). Eight switches at the sixteen slot-3 addresses
+`$C0B0-$C0BF` (−16208 … −16193), **all off at power-on**. «Il n'est pas
+possible de relire l'état de ces commutateurs … Il faudra écrire à ces
+adresses car, à chaque fois la donnée sera mémorisée dans … CPREG» (p. 117):
+the switches are set by writes, and **every write latches the data byte
+into CPREG** (dot colour in the low nibble, background in the high nibble).
+POM2 also decodes reads [F] — settled by a `LDA $C0B9` on a real Eve.
+Whether LOCKCPREG also stops CPREG from latching («bloque totalement le
+fonctionnement») is [F].
 
 | off | on | Switch | Effect |
 |---|---|---|---|
@@ -238,7 +367,7 @@ nibble, background in the high nibble). Reading returns nothing useful.
 | `$C0B8` | `$C0B9` | **TXT16** | on + 80COL off: 40-col text is colour text, each char's aux byte = its colours (**hi nibble = background, lo = foreground**). With LOCKCPREG off, CPREG is written to aux on every character sent to the text page. |
 | `$C0BA` | `$C0BB` | **TXTGREEN** | white → green monochrome text, 40 and 80 col. |
 | `$C0BC` | `$C0BD` | **LOCKCPREG** | on: CPREG frozen (no auto-write, text or CP280). |
-| `$C0BE` | `$C0BF` | **LOCKRES** | off: Ctrl-Reset clears all sixteen switches; on: the card survives Ctrl-Reset. |
+| `$C0BE` | `$C0BF` | **LOCKRES** | off: Ctrl-Reset clears the eight switches; on: the card survives Ctrl-Reset. |
 
 **CPREG's auto-write is the LLE-relevant mechanism**: when it is "en
 fonction", a CPU write to main `$0400-$07FF` (text page) or `$2000-$3FFF`
@@ -248,11 +377,16 @@ text and HPLOT in CP280 get their colours without the program touching aux
 — and it is a `Memory` write hook, not a video rule. Purplesoft's
 `&COLOR=` / `&BACK=` and the Pascal unit drive it; the manual's BASIC-only
 recipe is `POKE -16199,16*F+C` (TXT16 on with CPREG = F<<4 | C) then
-`HOME`.
+`HOME`. [C] Note that every Purplesoft `& GR` ends with `STA $C0BD`
+(LOCKCPREG on, `$E04D`), so the HPLOT-in-CP280 path through CPREG is
+unverified past that point.
 
-**Table IX-1 — choosing a graphics mode** (read from the scanned page 118;
-the manual prints "COL280A" on both 4-colour rows, the second is COL280B
-by chapter VI). **Corrected 2026-09-01 against Purplesoft's own code**: the
+**Table IX-1 — choosing a graphics mode** ([B] the scanned page 118; the
+manual prints "COL280A" on both 4-colour rows, the second is COL280B by
+chapter VI). **Cross-checked 2026-09-01 against Purplesoft's own code** [C]
+(the five tables re-confirmed byte for byte 2026-11-28 at runtime
+`$E06F-$E0A0`, file offset `0x1F973` of
+`disks_5.4/chatmauve/purplesoft-revb-oct83-demos.dsk`): the
 `& GR n` handler in `PURPLESOFT*` (rev B, octobre 83) selects each mode
 through five ten-entry tables at runtime `$E06F / $E079 / $E083 / $E08D /
 $E097` — the low byte of a `$C0xx` address per mode, for AN3, ENHRCPREG,
@@ -269,41 +403,47 @@ HR3        B6 B6 B6 B7 B7 B6 B6 B6 B7 B7
 
 so 1 HRAPPLEII = 000, 2 HRSPEC1 = 100, 3 **HRSPEC2 = 110**, 4 HRDASH = 001,
 5 HRBW = 011, 6 COL140 = 000, 7 COL280A = 100, 8 COL280B = 010, 9 CP280 =
-111, 10 **BW560 = 011** — HR2+HR3 is "black and white" in both AN3 states,
-and the scan's "HR3 alone" for BW560 was a misread. The `& TEXT n` tables at
-`$E222 / $E228 / $E22E` (TXT16 on for 3 and 4, `$C0BB` TXTGREEN for 6,
-80COL per screen) confirm TXT16 and TXTGREEN as read.
+111, 10 **BW560 = 011** — HR2+HR3 is "black and white" in both AN3 states.
+[B] The scan prints the same (`off off on on`, p. 118): the "HR3 alone"
+of the first reading was our misread of it, not the scan's. [C] The
+`& TEXT n` code at `$E1F6-$E215` (`LDX $E222,Y`→`$C0B8,X` TXT16;
+`LDX $E228,Y`→`$C000,X` TXTGREEN; `LDX $E22E,Y`→`$C00C,X` 80COL; Y = n
+counted from 1): TXT16 on for 3 and 4, TXTGREEN for 6, 80COL on for 2, 4,
+5 and 6 — TXT16 and TXTGREEN as read.
 
 | AN3 | HR1 | HR2 | HR3 | Mode | Note |
 |---|---|---|---|---|---|
 | on | off | off | off | HRAPPLEII — standard HGR | |
-| on | on | · | · | HRSPEC1 — HGR, isolated colour dots on white → black | |
-| on | · | on | · | HRSPEC2 — SPEC1 + isolated colour dots on black → white | |
+| on | on | · | · | HRSPEC1 — [B] «HR std + pts noirs/fond blanc» | the name is IV-3.1's |
+| on | · | on | · | HRSPEC2 — [B] «HR std + pts blancs/fond noir» | [C] Purplesoft's HRSPEC2 sets HR1+HR2 (110), `$E083` |
 | on | · | · | on | HRDASH — coloured horizontal lines drawn dotted | |
 | on | off | on | on | HRBW — HGR in black and white | |
 | off | off | off | off | **COL140** — 140/line, 16 colours | needs 80COL on |
 | off | on | off | off | **COL280A** — 280/line, 4 colours (black, orange, green, white) | needs 80COL on |
 | off | off | on | off | **COL280B** — 280/line, 4 colours (black, light blue, pink, yellow) | needs 80COL on |
-| off | on | on | off | screen blanked to black | CPREG keeps working (LOCKCPREG off, ENHRCPREG on) |
-| off | off | off | on | **BW560** — 560/line, black and white | needs 80COL on |
-| off | on | on | on | **CP280** — 280/line, fg/bg per 7 dots, 16 colours | 80COL on; CPREG active iff LOCKCPREG off and ENHRCPREG on |
+| off | on | on | off | screen blanked to black | CPREG keeps working (LOCKCPREG off, ENHRCPREG on); [C] Purplesoft selects it at `$E009-$E011`, then clears `$2000-$3FFF` with CPREG = 0 at `$E016-$E03A` — the card clears aux |
+| off | off | on | on | **BW560** — 560/line, black and white | needs 80COL on |
+| off | on | on | on | **CP280** — 280/line, fg/bg per 7 dots, 16 colours | Note 2 only [B] p. 118 — no 80COL requirement; CPREG active iff LOCKCPREG off and ENHRCPREG on |
+| off | · | · | — | 001 (HR3 alone), 101 (HR1+HR3) | not in table IX-1 [B], unused by Purplesoft [C]; POM2: BW560, COL140 [F] |
 
 Mode semantics (manual IV-2, IV-3, VI-3):
 
 - **HRSPEC1/2, HRDASH, HRBW** are decoder variants of the LCM HGR rule of
-  § 3.2: SPEC1 removes the "colour dot on a white background" case
-  (window `x1x` with the cell coloured → black), SPEC2 additionally turns a
-  colour dot on black into white, DASH renders the horizontal runs of the
-  four HGR colours as dotted lines, HRBW is the 560-style monochrome.
+  § 3.2: SPEC1 turns an unlit dot between lit ones (the `101` window,
+  coloured by the LCM rule) black — POM2 requires the wider `11011` [F];
+  SPEC2 also turns `00100` white [F]; DASH renders the horizontal runs of
+  the four HGR colours as dotted lines [B] IV-3.1 (POM2 renders HRAPPLE);
+  HRBW is 280×192 black and white [B] IV-3.1.
 - **CP280** ("coloriage foreground-background par série de sept points"):
   main byte = 7 dots (LSB leftmost), aux byte at the same address = colours,
-  **high nibble background, low nibble foreground**. This is what POM2
-  currently calls "HGR Duochrome", with the nibbles swapped.
-- **COL280A/B**: 280 dots, 2 bits per dot ("point par point"), 16 K — one
-  bit from main and one from aux per dot, two fixed palettes; the bit
-  order (which bank is the LSB) is not in the manual's prose and must be
-  read out of Purplesoft's `&PLOT` (disassembly) or the PLA.
-- **COL140 / BW560**: as on the Féline. No mixed mode; no double lo-res.
+  **high nibble background, low nibble foreground** — POM2's `CP280`
+  since 2026-09-01 (the old "HGR Duochrome" label and its swapped nibbles
+  are gone).
+- **COL280A/B**: 280 dots, 2 bits per dot ("point par point"), 16 K, two
+  fixed palettes — the 560-dot stream in 2-dot cells, aux byte then main
+  byte ([C] Purplesoft's `& PLOT` bytes, § 6).
+- **COL140 / BW560**: as on the Féline. No mixed mode ([B] Manuel
+  Arlequin); double lo-res is not in the Eve manual [F].
 - Colour numbering is Apple's lo-res order (0 black, 1 magenta, 2 dark
   blue, 3 purple, 4 dark green, 5 grey 1, 6 medium blue, 7 light blue,
   8 brown, 9 orange, 10 grey 2, 11 pink, 12 green, 13 yellow, 14 aqua,
@@ -316,12 +456,20 @@ Mode semantics (manual IV-2, IV-3, VI-3):
 
 `Chat_Mauve_eve_PLA.jed` (Apple II Documentation Project, ROM Images):
 Signetics **PLS100 / 82S100**, 16 inputs, 8 outputs, 48 product terms,
-1928 fuses. Decoded with the usual "0 = intact" convention it yields 48
-clean terms (no contradictory literals), output polarity fuses
-`[0,0,0,0,0,0,1,1]` (F6, F7 active-low). The structure is legible without
-the schematic:
+1928 fuses. "0 = intact" is pinned: the other reading makes many terms
+contradictory. Which fuse of each input pair is the TRUE literal is **not**
+pinned: inverting every literal also gives 48 clean terms. [D] MAME
+disagrees with itself — `jedutil.cpp` @ mame0287 reads the even fuse as
+true (as POM2's decoder does), `pla.cpp:149-153` @ mame0287 as the
+complement — and [B] DataIO's «UniSite 82S100 Dumping V1.00» (bitsavers)
+documents the pairs swapped relative to jedutil: the order depends on the
+programmer, and this `.jed` is a Max Loader dump of unknown convention
+[F]. Output polarity fuses `[0,0,0,0,0,0,1,1]` (F6, F7 active-low; `L01920
+00000011`). The families below survive either reading; the polarity
+deductions (I0 = the dot, F1·F5 = green) do not. Which board revision the
+dump comes from is [F]. The structure is legible without the schematic:
 
-- **I4** splits the whole map: `/I4` terms use I1-I3, I5-I11 as a pixel
+- **I4** splits nearly the whole map (T0 and T28 carry no I4 literal): `/I4` terms use I1-I3, I5-I11 as a pixel
   window and I12-I15 as mode bits; `I4` terms are short (`I0 & I4`,
   `/I0 & I4 & /I15`, `I4 & I9`) — I4 is almost certainly the **TEXT/GR
   side** of the decode (or AN3), the `/I4` side the graphics decoder.
@@ -343,9 +491,12 @@ the board schematic, which is not public.
 regenerates this table. Layout: QF1928 = **48 rows of 40 fuses** (16 input
 pairs — fuse 0 = intact = connected, even fuse = true, odd = complement —
 then 8 OR fuses, 0 = term feeds the output), plus 8 polarity fuses
-`[0,0,0,0,0,0,1,1]` (F6, F7 active-low). The convention is pinned by
-structure: it is the one that yields 48 clean terms, each driving a small
-output set, with the short TEXT-side terms quoted below.
+`[0,0,0,0,0,0,1,1]` (F6, F7 active-low). The 0-intact convention is pinned
+by structure (48 clean terms, each driving a small output set); the
+true/complement order is not (§ 3.5). The 48 terms below equal
+`tools/decode_eve_pla.py`'s output (re-checked 2026-11-28; the repo `.jed`
+is byte-identical to apple2.org.za's). T0 lacks the /I4 of its seven
+siblings, so the "eight symmetric terms" are seven plus one.
 
 ```
 T 0: I6·I8·/I9·/I12·/I13                       -> F2      ┐ eight symmetric terms:
@@ -404,8 +555,9 @@ B/I — T28's "all four" = white, T46's F1·F5 pair = a green for `/I0·I4·I15`
 ≈ "text dot off, TEXT side, mode bit 15" fits TXTGREEN's green background…
 or its inverse); **F0/F7** (F7 active-low) travel together on the
 bright/text cases — intensity and/or a path select; **F3** stands alone on
-the mono-ish rows (T8/T9/T34/T47); **F6** (active-low) is asserted by every
-term of the I12·I14 family and by nothing else — a family-wide strobe
+the mono-ish rows (T8/T9/T34/T47); **F6** (active-low) is asserted by T30-T42
+of the I12·I14 family (T43, in the same family, drives F0·F7 instead) and
+by nothing else — a family-wide strobe
 (latch-load or burst gate). Mode bits: **I4** (TEXT side), **I12/I13/I14/
 I15** (graphics families: /I12·/I13 → the 2-dot-cell block, I12·/I14 → the
 HGR block, I12·I14 → the 4-bit block), **I5/I8** gate within families;
@@ -425,7 +577,8 @@ result to cross-check SPEC1/2/DASH hypotheses, and accept that the exact
 output encoding needs the schematic or a board trace. The measured-
 behaviour models stay the reference.
 
-**The simulation ran (2026-09-02) and settled it.** Evaluating the whole
+**The simulation ran (2026-09-02, by hand from the decoder's terms — no
+script or output was kept in the tree) and bounded it.** Evaluating the whole
 truth table (48 terms, convention as § 3.5.1) family by family:
 
 - `/I12·/I13` (gated by I8): the window inputs route to the outputs as a
@@ -459,16 +612,18 @@ goldens) until a schematic or board trace surfaces.
 
 ### 3.6 The RVB Graph (II / II+)
 
-Source: its *Manuel de Référence* (§ 7). The OCR is unreliable ("81" for
+[B] Source: its *Manuel de Référence* (§ 7). The OCR is unreliable ("81" for
 B1, "8" for B, "Cî" for CT); every fact below was read off the scan, page
-numbers as printed.
+numbers as printed — all twenty re-checked against the scan 2026-11-28.
 
 **Hardware (ch. I, V).** Slot 7 only (SYNC pin 19, COLOR REF pin 35, 14 MHz
 pin 24, TEXT pin 23). The user pulls the motherboard's 9334 / 74LS259
 display soft-switch latch and plugs the card's 16-pin ribbon into its
 socket; a wire brings composite video from the auxiliary video connector.
-Outputs: Péritel on an 8-pin header (three trim pots for R, G, B) and an
-Apple /// style TTL header (XRGB1/2/4/8). "Brevet déposé".
+Outputs: Péritel on an 8-pin header (three trim pots for R, G, B, p. 7;
+0-1 V) and an Apple /// style TTL header (XRGB1/2/4/8, p. 18). "Brevet
+déposé". SYNC and COLOR REF reach slot 7 on Apple II rev 2+ boards; 14M and
+TEXT only on European rev 7+ boards (p. 17).
 
 **Control register (pp. 12-14):** `POKE −16144 + S + U + K, 16·(15 − CT)`.
 −16144 = `$C0F0` (p. 16), so the low address nibble carries the options:
@@ -492,27 +647,95 @@ is the five-colour system of ch. III; 8 colours + black otherwise. HCOLOR
 everything 15 = a black-and-white monitor, everything 12 = a green one
 (p. 11).
 
-**What POM2 adds (not in the manual):** a 0 between two lit dots is
-filled with an isolated neighbour's Cn when S is even (the manual only
-says alternating lines look continuous); a read of `$C0Fx` latches
-nothing (the register takes a data byte); only `$C700-$C73F` is decoded;
-the power-on registers hold the usual colours. Implementation:
+**The silicon: its patent, FR 2 509 560** *(found 2026-11-28)*. «Dispositif
+de décodage couleur», filed 10 July 1981 by Philippe Chaillat and Didier
+Chaligne (Paris 19e, as Le Chat Mauve), published 14 January 1983, granted
+23 December 1983 (WO 83/00250, EP 0 084 029 withdrawn) —
+https://patents.google.com/patent/FR2509560A1/fr. It is the card's whole
+schematic: its parts list matches the board photos (Apple II Documentation
+Project, *Interface Cards / Video / Le chat mauve RVB Graph / Photos*) chip
+for chip — TTL only (74LS164 / 170 / 174 / 175 / 244 / 258A / 273 / 378 /
+379 / 398 / 51 / 158), no PROM, no PAL, nothing to dump. Read twice,
+independently (the second reading with a cycle model of Fig. 2); where the
+two agree it is [B]:
+
+- **It decodes the VIDEO stream**, not memory: VID resynchronised at 14.318
+  MHz into a 74LS164 (taps B1 oldest … B8 newest); the hi-res decoder works
+  on B1, B2, B4, B6, B8 resampled at 7 MHz (Fig. 1-2). The byte's bit 7 is
+  recovered from the stream — a dot edge off the 7 MHz grid is the half-dot
+  delay (ST = B1⊕B2, latched on edges only) — and the column parity is the
+  COLOR REF phase (CL from H3). **No half-dot shift on the output**: the
+  shift only chooses the colour.
+- **Isolated vs run**: two lit adjacent dots (B4 and B6) are a run →
+  register B; a lit dot with a dark right neighbour → register C; dark →
+  black. **A run keeps its first dot's colour** (chip 6 freezes for the run)
+  and the freeze lasts one sample past it, so the run's last dot shows B.
+- **The continuous-line fill** (S1 = A0 off): a single 0 just before a lit
+  dot repeats the LEFT neighbour's sample, phase included — the C colour at
+  its position, even after a run (11011 → B B C B B). Two 0s or more stay
+  black; the 0 after the last lit dot is never filled.
+- **S2 = A1** ("four colours"): no run is ever detected, B is never read —
+  every dot takes its own Cn (1111 → C0 C1 C0 C1).
+- **Hard-wired colours** with U = 0 (74LS158, Fig. 4): isolated dots 3
+  violet / 12 green / 6 blue / 9 orange by position, runs CT — the patent's
+  «couleurs prédéfinies à l'allumage».
+- **Lo-res**: one 4-bit sample per 14-dot column, aligned to the colour
+  phase (74LS398 at H'4), so each block is one clean colour. **Text**: the
+  14 MHz tap selects CT or black. The decoder follows TEXT and HR (the
+  card's own 74LS259); mixed mode works only through the motherboard's
+  mixed-resolved TEXT line [F].
+- **Control register** (Fig. 4): a 74LS273 clocked by DEVICE SELECT,
+  **no R/W gate — a READ of `$C0Fx` latches it too** (S/U/K from the
+  address, CT from whatever is on the bus). A0 = S1, A1 = S2, A2 = U, A3 =
+  K, D4-D7 = 15 − CT. RESET clears it (the usual display, CT white) unless
+  K, which holds the clear through a diode; K does not protect the control
+  register itself.
+- **Colour registers** (Fig. 3): two 74LS170 4×4 files, written by I/O
+  SELECT — **the whole `$C700-$C7FF`**, A6/A7 not decoded (mirrored every
+  `$40`), **a read writes them too** — entry from A4/A5, C from D0-D3 and B
+  from A0-A3 in the same access, blocked by K through a diode;
+  open-collector outputs + the inverting 74LS258 undo the manual's 15 − x,
+  and with neither file enabled the bus floats to black.
+- **Output** (Fig. 5): the 4-bit code through a 74LS244 into one resistor
+  network per channel (M1: R 470 Ω, B 1 kΩ; M2: B 620 Ω; M3: G 560 Ω,
+  B 1k5; M4: R 620 Ω, G 820 Ω) — POM2's `kRvbGraphPalette`; Péritel fast
+  blanking tied on, slow switching +12 V. The production board adds three
+  1 kΩ trimmers.
+
+**Still [F]**: a dot stretched to 3 ticks, or a 1-tick gap, at a bit-7 byte
+boundary (where the 7 MHz sample falls); the 74LS258A's B-input order (the
+drawing's letters vs its pin numbers — the pin numbers fit the manual);
+"620 Ω" vs 680 Ω; the absence of R/W (missing from the drawing and the
+signal list, both readers agree; a continuity check on finger 18 settles
+it); S1-S3 re-latched only on video edges (POM2 applies them per frame);
+the colour registers' power-on contents («indéterminé», p. 9 — POM2 starts
+with the usual colours); the slot (manual: 7 only; POM2 follows the slot);
+and DHGR on a //e (the manual is a ][ / ][+ one — POM2 shows COL140 /
+BW560 from the latch). Implementation: `LeChatMauveCard::deviceSelectRead
+/Write`, `slotRomRead/Write`, `Apple2Display::renderHiResRvbGraph`,
+`kRvbGraphPalette`; pinned by `le_chat_mauve_smoke` §§ 13, 17. Implementation:
 `LeChatMauveCard::deviceSelectWrite` / `slotRomWrite`,
 `Apple2Display::renderHiResRvbGraph`.
 
 ### 3.7 Palette, outputs, timing
 
-- Féline: AppleWin's `PaletteRGB_Feline` (white-balanced OSSC capture;
-  greys 5 and 10 differ). POM2 uses it.
-- Eve rev B: "a bit different from NTSC, grey1/grey2 differ" — no capture.
-  Rev A: rev B's palette with the 4-bit code rotated right by one (§ 1,
-  from the addendum's colour-table program) — no capture needed.
+- Féline: [A] one unit, fenarinarsa's white-balanced OSSC capture
+  (AppleWin PR #837: «I will try to make more captures of other Féline and
+  IIc adapters»); [D] `RGBMonitor.cpp` @ 7fd7fd7c `PaletteRGB_Feline`
+  (greys 5 and 10 differ). POM2 uses it.
+- Eve (revision not stated): «a bit different from NTSC, grey1 and grey2
+  are different» [A, second-hand] fenarinarsa #764 — no capture. Rev A:
+  § 1 [F].
 - The cards have **two connectors**: analog RGB (Péritel, with three trim
-  pots for R, G, B gain — Féline manual p. 13) and **TTL RGB**. An RGBI
-  TTL output has exactly 16 colours; the analog one is those 16 through
-  resistor networks. A "TTL" palette (pure RGBI) is the honest second
-  option next to the captured one. *Since 2026-09-04 the two connectors do
-  differ on screen*: `NtscParams::rgbBandwidthMHz` (CRT Settings → Analog
+  pots for R, G, B gain — [B] Féline manual p. 13, RVB Graph manual p. 7,
+  the Eve manual; 0-0.7 V on the Féline p. 47 and the Eve, 0-1 V on the RVB
+  Graph) and a **TTL header carrying the lo-res colour NUMBER** on
+  XRGB1/2/4/8, XRGB1 the low bit, plus TTL sync — the Apple /// convention
+  ([B] Féline manual p. 48, Eve manual IX-2 p. 122, RVB Graph manual p. 18;
+  Apple TA30822: a «linear-weighted sum»). It is not RGBI: what a TTL
+  monitor shows for each code is the monitor's, not the card's, and no TTL
+  palette is known [F] — the "TTL-RGBI palette" this plan used to list is
+  withdrawn. *Since 2026-09-04 the two connectors do differ on screen*: `NtscParams::rgbBandwidthMHz` (CRT Settings → Analog
   link) low-passes the RGB on its own sample grid — 0 = the TTL header,
   ~5-6 MHz = the Péritel cable, which softens a true 560-dot DHGR/COL280
   picture and leaves 280-dot HGR nearly alone. The three trim pots are not
@@ -520,8 +743,8 @@ the power-on registers hold the usual colours. Implementation:
   → [DEV § CRT effect stack](../DEV.md#universal-crt-effect-stack-crteffectstack)
 - PAL 50 Hz: the //c PAL and //e PAL profiles already run 312 lines; a
   Chat Mauve plugged on an NTSC profile should keep the machine's timing
-  (the card does not generate sync) — offer auto-PAL as a profile
-  convenience only.
+  (the card re-drives the machine's SYNC; its timing is the motherboard's)
+  — offer auto-PAL as a profile convenience only.
 
 ## 4. Architecture: a dot-clock video tap, and cards as logic on it
 
@@ -566,9 +789,11 @@ Estimates are for one person; each phase ends green with its own pinned
 tests and a CHANGELOG entry, in the repo's usual form.
 
 **P0 — Corpus and harness (½ d). ✅ 2026-09-01** — `docs/test_corpus.md` § 5;
-`display_golden_hash` grew a per-variant `cm/<variant>/…` block (26 entries)
-and `POM2_GOLDEN_DUMP=<entry>:<line>` prints a scanline as hex RGB.
-The Chat Mauve demo sides, Arlequin and Eve Leonard are still to fetch.
+`display_golden_hash` grew a per-variant `cm/<variant>/…` block (24 entries
+today) and `POM2_GOLDEN_DUMP=<entry>:<line>` prints a scanline as hex RGB.
+Arlequin's screens and Extasie's title are pinned since 2026-10-24
+(`chatmauve_feline_screens`); the Chat Mauve demo sides and Eve Leonard are
+still to fetch.
 
 *As planned:* Register the material in
 `docs/test_corpus.md`: the two Chat Mauve demo sides (Pascal
@@ -583,10 +808,9 @@ sentence.
 **P1 — The Féline and the //c adapter, dot-exact (1½ d). ✅ 2026-09-01** —
 `chatmauve_dot_rules` (AppleWin oracle ports, boundary cases spelled out),
 160 → 140 fallback, AN3-off mono, the MAME byte-level mixed rule retired.
-The "80COL must have been written" detail was NOT added: on the Féline the
-wire is direct and the patent samples the level; the detail is a property
-of the //c adapter's inference and belongs to P5. Extasie / DIX / PoP
-goldens remain open. This is a missing reference/golden comparison, not a
+The "80COL must have been written" detail was NOT added — rightly: it was
+an AppleWin heuristic, withdrawn in 1.29.16.0, never a measurement (§ 3.1).
+DIX / PoP goldens remain open (Extasie's title: `chatmauve_feline_screens`). This is a missing reference/golden comparison, not a
 claim that POM2 cannot boot those disks headlessly. Purplesoft's Eve demo
 screens already have their own headless boot/hash test.
 
@@ -669,9 +893,9 @@ AN3 at all with 80COL off unless the picture holds bytes with bit 7 set,
 and sees nothing during blanking. Its latch input would then depend on the
 picture's content and on WHEN the program switches — which is what the
 documented symptoms look like: PoP dropping to mono after the first attract
-loop, fenarinarsa's non-reproducible pattern sheets, and "80COL must have
-been written since the last `$C05E→$C05F`" (a level the adapter only learns
-from a doubled LDPS). Coding it now would be a guess at the adapter's
+loop, fenarinarsa's non-reproducible pattern sheets (AppleWin's withdrawn
+"80COL must have been written" heuristic, § 3.1, was one guess at the same
+thing — a level the adapter only learns from a doubled LDPS). Coding it now would be a guess at the adapter's
 circuit with nothing to check it against. **Settled by:** the adapter's
 schematic (forum.silicium.org clone thread, § 6), or PoP's attract loop on a
 real //c adapter compared frame by frame with a candidate model.
@@ -683,12 +907,11 @@ edge clocking the logged 80COL level), seeded by the card's timestamped
 edge ring (`latchBefore`), and each band paints with the latch of its own
 moment. Pinned by `chatmauve_latch_split` (COL140/BW560 split both ways in
 one frame). Still per-frame: the Eve's `$C0Bx` switches (no video events),
-the exact in-cell dot position, the TTL-RGBI palette option, and the DIX /
-PoP goldens. Since then: the Chat Mauve panel shows the eight Eve switch
+the exact in-cell dot position, and the DIX / PoP goldens. Since then: the Chat Mauve panel shows the eight Eve switch
 pairs and CPREG live (`LeChatMauve_ImGui.cpp:71-73`, `:285`), and the
 analog Péritel connector got its bandwidth stage (`NtscParams::
-rgbBandwidthMHz`, CHANGELOG 2026-09-04) — the TTL-RGBI palette option is
-still absent.
+rgbBandwidthMHz`, CHANGELOG 2026-09-04). (The TTL-RGBI palette once
+listed here is withdrawn: the TTL header carries a colour number, § 3.7.)
 
 *As planned:* Move the Chat Mauve renderers onto the
 per-dot tap driven by the existing soft-switch event log, so mid-scanline
@@ -712,39 +935,74 @@ Purplesoft need.
 | Question | Closes with |
 |---|---|
 | ~~COL280A/B bit order~~ **Closed 2026-09-01, from Purplesoft's `& PLOT` run in POM2** (`tests/purplesoft_eve_probe.cpp COL280`): `& COLOR= 9` writes (main `$2A`, aux `$55`), `12` writes (`$55`, `$2A`), `15` writes (`$7F`, `$7F`) — i.e. COL280 is the **560-dot stream in 2-dot cells** (aux byte then main byte, bit 0 first; code = dot + 2 × next dot), NOT one bit from each bank per dot. Codes 1/2/3 = orange/green/white (A), light blue/pink/yellow (B) — the manual's lists in code order. | — |
-| HR3 alone with AN3 off (the scan's BW560 row; Purplesoft never uses it) — modelled BW560 | the PLA, or an owner |
-| SPEC1 / SPEC2 / DASH exact rules — SPEC1/2 modelled from the manual's prose with a 5-dot window, DASH as HRAPPLE | the PLA (P3) |
-| PLA pin assignment | consistency search (P3); a board photo of the Eve would settle it in an hour |
-| Eve rev B palette (rev A is rev B rotated, see § 1) | a capture from an owner (system-cfg, WDA forums) |
+| ~~The latch at power-on and Ctrl-Reset~~ **Done 2026-11-28**: Video-7 560 mono [B], Féline / adapter COL140 [B], Eve / RVB Graph COL140 [F]; Ctrl-Reset keeps it [A], the ROM's `$C05F` clocking it once | a Féline owner, for the Féline's own reset |
+| **Does the Eve take the patent latch?** [A] second-hand #764 (the AppleColor demo, every Eve switch off): latch 00 → BW560. [C] Purplesoft clocks the latch to 00 at start-up (`STA $C000,Y` at `$E053`, twice, 80COL off) and expects COL140 at `& GR 6`, with ENHRCPREG on. POM2 since 2026-11-28 takes both at face value: **the latch rules HR 000 while ENHRCPREG is off; table IX-1 when it is on** [F] | an owner: Purplesoft `& GR 6` after `& GR 1` twice, then with `POKE -16208,0` (ENHRCPREG off) |
+| HR3 alone (001) and HR1+HR3 (101) with AN3 off: not in table IX-1 [B] p. 118, unused by Purplesoft [C]; modelled BW560 / COL140 [F] | an owner |
+| Does an Eve switch decode on a READ? (the manual has them set by writes) [F] | a `LDA $C0B9` on a real Eve |
+| Double lo-res on the Eve: not in its manual; POM2 renders it [F] | an owner |
+| SPEC1 / SPEC2 / DASH exact rules — SPEC1/2 modelled from the manual's prose with a 5-dot window, DASH as HRAPPLE [F] | a schematic, a trace of the public board photos (apple2.org.za, Photos/, front and back), or an owner's capture |
+| PLA true/complement order, pin assignment, and which board revision the dump comes from [F] | the Signetics 82S100 fuse diagram + the programmer's convention; the public board photos |
+| Eve palette (any revision); rev A's rotation direction (§ 1) [F] | a capture from an owner (system-cfg, WDA forums); disassembling Purplesoft's `& CLEAR` |
 | ~~RVB Graph HGR colour registers~~ **Closed 2026-10-20**: its manual (§ 3.6) | — |
-| RVB Graph: decoding of `$C740-$C7FF`, a read of `$C0Fx`, the exact fill of a 0 between two runs | a board, or a schematic |
-| //c adapter internals — how it turns the LDPS/VID7M cadence (P5 table, measured on a //e) into AN3 and 80COL | a schematic exists in a clone thread on forum.silicium.org (behind a bot wall; readable with a browser); or PoP's attract loop on a real adapter |
+| ~~RVB Graph: `$C740-$C7FF`, a read of `$C0Fx`, the fill, the video stream~~ **Closed 2026-11-28 by its patent FR 2 509 560** (§ 3.6) | — |
+| RVB Graph: a 3-tick dot / 1-tick gap at a bit-7 byte boundary; the 74LS258A input order; 620 vs 680 Ω; R/W truly absent [F] | a real card's RGB output; a continuity check on finger 18 |
+| RVB Graph in DHGR on a //e: POM2 shows COL140 / BW560 from the latch [F] — the manual is a ][ / ][+ one | an RVB Graph in a //e |
+| //c adapter internals — how it turns the LDPS\* cadence (P5 table, measured on a //e) into AN3 and 80COL, having neither line ([B] IIc TRM Table 11-17) | a schematic said to exist in a clone thread on forum.silicium.org (not found 2026-11-28); or PoP's attract loop on a real adapter |
 | Which byte a Féline/Eve applies a new latch value to, after the AN3 edge (the edge itself is measured: 0.8 us into the access cycle, `test_p_line88`) | a capture of the card's RGB output around a mid-line `$C05E→$C05F`; POM2 keeps the column checked by eye on DIX |
-| Mixed-mode boundary: "cut / repeat" vs "next quadruplet" | both are reproduced by the mux+latch model; Extasie's own images decide (P1) |
+| Mixed-mode boundary: [A] "cut / repeat" (//c adapter) vs [C] the Reloaded author's "quadruplet" deduction. POM2 implements cut / repeat only (the AppleWin oracle); the Féline is untested [F] | a Féline capture of Extasie's *Elephant* |
+| ~~The Video-7's DIP-switch text colour and inverse-text rule~~ **Done 2026-11-28** (§ 3.1.1) | — |
 
 ## 7. Sources
 
-- Le Chat Mauve, *Eve — Manuel de référence* (chapters III-2, IV, V, VI,
-  IX; table IX-1) — archive.org `Le_Chat_Mauve_Manuel_de_référence` (OCR
-  text) and apple2.org.za *Apple II Documentation Project / Interface
-  Cards / Apple IIe / Le chat mauve Eve* (PDF + erratum, PLA `.jed`, demo
-  disks, photos).
-- Le Chat Mauve, *Féline* manual — apple-iigs.info (chapter 5, p. 37-41).
-- *Manuel Arlequin*, mixed-mode statement, and the `$F2` image format and
-  switch sequences — "Extasie Chat Mauve Reloaded" (boutillon / fenarinarsa
-  mirror), annexes.
-- fenarinarsa, *Le Chat Mauve sur Apple II* and *Modes vidéo chelous*;
-  AppleWin issues #764, #850, #631, #1152, PR #837; `RGBMonitor.cpp`
-  (`RGB_SetVideoMode`, `UpdateHiResRGBCell`, `UpdateDHiResCellRGB`,
-  `PaletteRGB_Feline`).
-- Video-7, US patent 4,631,692 *RGB interface* (FIG. 1 shift register,
-  the four modes, the MIX mux per seven 14 MHz periods).
+- [B] Le Chat Mauve, *Eve — Manuel de référence* (chapters III-2, IV, V,
+  VI, IX; table IX-1 p. 118; addendum p. 127) — archive.org item
+  `Le_Chat_Mauve_Manuel_de_re_25cc_2581fe_25cc_2581rence`
+  (https://archive.org/details/Le_Chat_Mauve_Manuel_de_re_25cc_2581fe_25cc_2581rence,
+  OCR text; the same PDF is apple-iigs.info's `chatmauve.pdf`) and
+  apple2.org.za *Apple II Documentation Project / Interface Cards / Apple
+  IIe / Le chat mauve Eve* (PDF + erratum (scanned, no text layer), PLA
+  `.jed`, demo disks, front/back photos).
+- [B] Le Chat Mauve, *Féline* manual (~1985, 27-page scan of 48 printed
+  pages; chapter 5 pp. 37-41, installation p. 8, trim pots p. 13, outputs
+  pp. 47-48) —
+  http://www.apple-iigs.info/doc/fichiers/Le%20chat%20mauve%20Feline%20-%20Manuel.pdf
+  (plain http: the https certificate fails), with its addendum.
+- [B] *Manuel Arlequin* — https://archive.org/details/LeChatMauveArlequin;
+  its mixed-mode statement as quoted by "Extasie Chat Mauve Reloaded"
+  (boutillon.free.fr), whose own analysis and annexes (the `$F2` image
+  format, the switch sequences, annexe 6) are [C].
+- [B] Apple IIe Technical Reference Manual, Table 7-21 (the aux slot,
+  pp. 198-200); Apple IIc Technical Reference Manual, Table 11-17 (the
+  DB-15 video connector, p. 272) — mirrors.apple2.org.za.
+- fenarinarsa (Cyril Lambin), *Le Chat Mauve sur Apple II*
+  (fenarinarsa.com/?p=1370, 2020, revised 2023) and *Modes vidéo chelous*
+  (?p=1440); AppleWin issues #631, #633, #764, #819, #850, #851, #1152, PR
+  #826, #837; `RGBMonitor.cpp` (`RGB_SetVideoMode`, `UpdateHiResRGBCell`,
+  `UpdateDHiResCellRGB`, `UpdateText40/80ColorCell`, `RGB_SetVideocard`,
+  `PaletteRGB_Feline`) at v1.29.15.0 `98b72658` and master `7fd7fd7c`
+  (2026-11-15); commits 2463aae545 (the "80COL written" heuristic) and
+  fb0871672c (its removal, 1.29.16.0). AppleWin models no Eve:
+  `-rgb-card-type eve` falls back to `apple` (`help/CommandLine.html`).
+- [B] Video-7, US patent 4,631,692 *RGB interface*
+  (patents.google.com/patent/US4631692A — FIG. 1 shift register and its
+  power-on, the four modes, the MIX mux per seven 14 MHz periods).
+- [B] Bob Sander-Cederlof, *Apple Assembly Line*, 1986-08 (F/B mode).
+- [D] MAME `pla.cpp` and `jedutil.cpp` @ mame0287 (PLS100 fuse order);
+  [B] DataIO «UniSite 82S100 Dumping V1.00» (bitsavers).
+- [B] FR 2 509 560 A1, *Dispositif de décodage couleur*, Chaillat &
+  Chaligne, filed 1981-07-10 — the RVB Graph's schematic:
+  https://patents.google.com/patent/FR2509560A1/fr (PDF:
+  https://patentimages.storage.googleapis.com/02/5c/22/3c9c4a140dc41e/FR2509560A1.pdf);
+  board photos: mirrors.apple2.org.za, *Apple II Documentation Project /
+  Interface Cards / Video / Le chat mauve RVB Graph / Photos*.
 - *RVB Graph — Manuel de Référence pour Apple II plus*, Le Chat Mauve,
   22 pp. scan (retronik.silicium.org, uploaded 2024): https://retronik.silicium.org/DOCUMENTS/Info/Apple_II/Le%20Chat%20Mauve%20RVB%20Graph%20Manuel%20de%20R%C3%A9f%C3%A9rence%20pour%20Apple%20II%20plus%20%28Le%20Chat%20Mauve%29.pdf
-- forum.system-cfg.com t=9395 — an RGB card (Sonotec?) with a traced
-  schematic; **not** the RVB Graph, despite what § 3.6 used to say.
-- MAME `apple2video.cpp` `dhgr_update` (the byte-level Video-7 rules POM2
-  ports today).
+- forum.system-cfg.com t=9395 — a three-TTL-chip RGB card (Sonotec?),
+  schematic reverse-engineered from its PCB artwork (2018); **not** a Le
+  Chat Mauve card, despite what § 3.6 used to say.
+- [D] MAME `src/mame/apple/apple2video.cpp` @ e1479b7a (= mame0287 on the
+  rgbmode lines): `dhgr_update`, `an3_w`, `text_update` — the byte-level
+  Video-7 rules POM2 ported before P1.
 - **[A] Logic-analyser traces of a real PAL //e rev B's video generator**,
   S. Champailler (Accurapple, gitlab.com/wiz21/accurapple @ 69f45f3,
   `composite/tests/logic_ana/*.csv` and `composite/video_scanner/*.lac`,

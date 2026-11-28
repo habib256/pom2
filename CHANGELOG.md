@@ -10,6 +10,45 @@ the newest marker are not in a tagged release yet. A version's notes go in
 `docs/releases/v<x.y.z>.md` and are written from the entries between its
 marker and the previous one.
 
+## 2026-11-28 — Le Chat Mauve, checked against its sources; the latch as the hardware keeps it
+
+The Chat Mauve notes were re-verified against the primary sources (the
+Video-7 patent, the Féline / Eve / RVB Graph / Arlequin manuals, the IIe and
+IIc Technical Reference Manuals, Purplesoft's code, AppleWin at named
+revisions and fenarinarsa's issues): `docs/chatmauve_plan.md` went from four
+graded claims to more than a hundred, and the code comments were graded the
+same way. What it corrected: "80COL must have been written" was an AppleWin
+heuristic, withdrawn in 1.29.16.0, never a measurement; the quadruplet rule
+is the Extasie Reloaded author's deduction, not the Arlequin manual's; three
+cards and an adapter, the Eve and the Féline in slot 3 + aux, the //c
+adapter with no AN3 and no 80COL line; the TTL header carries a colour
+number, not RGBI. What it changed in the code: **the latch powers up per
+variant** (the Video-7 in 560 mono, [B] its patent; the Féline and the //c
+adapter in colour, [B] the Féline manual) and **Ctrl-Reset leaves it alone**
+([A] a real //c adapter keeps it across a reboot) — the ROM's reset `$C05F`
+clocks it once with 80COL off when a DHGR program was running, which is
+Renegade's B&W title after a reboot. **The Eve takes the latch at HR 000
+while ENHRCPREG is off** — the only reading that keeps both the AppleColor
+demo on a real Eve (black and white at latch 00) and Purplesoft, which
+clocks the latch to 00 at start-up and expects colour at `& GR 6` with
+ENHRCPREG on. **The Video-7's text colour** is its DIP switches (setting
+`chatmauve_video7_text`, the Chat Mauve panel), inverse and flashing text
+kept black and white ([B] the SL7 manual). The RVB Graph's DHGR on a //e is
+marked [F]. Pinned by `le_chat_mauve_smoke` §§ 1, 15, 16, `chatmauve_dot_rules`,
+`chatmauve_latch_split`, `purplesoft_eve_screens`.
+
+**The RVB Graph, from its patent.** FR 2 509 560 (Chaillat & Chaligne,
+1981) is the card's whole schematic — TTL only, its parts list matching the
+board photos chip for chip — read twice, independently. It decodes the video
+stream (bit 7 recovered from the half-dot delay, which picks the colour and
+moves nothing), as POM2 already drew it; what changed: a single 0 before a
+lit dot takes the LEFT neighbour's C colour, even after a run (POM2 used an
+isolated neighbour, either side); the colour registers answer the whole
+`$C700-$C7FF` and a READ writes them too (no R/W gate), as a read of `$C0Fx`
+latches the control register; and the card has its own palette, its
+resistor DAC (`kRvbGraphPalette`), instead of the Féline's capture. Pinned by
+`le_chat_mauve_smoke` § 17.
+
 ## 2026-11-27 — Record host input, play it back to the cycle
 
 File ▸ **Record input** keeps every key, paste, joystick, mouse move, reset

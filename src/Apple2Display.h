@@ -69,8 +69,8 @@ public:
     // experience — bit-stream artifact colour with authentic byte-boundary
     // fringing. ChatMauveRGB is the French Péritel-RGB experience (clean
     // 16-color decode, two distinct grays, no fringing) — only available
-    // when a LeChatMauveCard is plugged on the slot bus, and its FIFO
-    // mode (BW560 / Mixed / Chunky / COL140) selects the sub-variant.
+    // when a LeChatMauveCard is plugged on the slot bus, and the card's
+    // dhgrMode / hgrMode / textMode answers select what is drawn.
     // The three Mono variants render the same bit stream as luminance
     // through a phosphor tint: White is a reference monitor, Green
     // approximates a P31 phosphor ([E] the tint and its CIE values in
@@ -332,7 +332,8 @@ public:
     /// Le Chat Mauve / Video-7 RGB card. When non-null AND its render mode
     /// is anything other than NTSC-passthrough, the hi-res renderer takes
     /// the clean-RGB path: 4-bit-window palette decode (no artifact LUT,
-    /// no inter-byte fringing, two distinct grays for the $5/$A patterns).
+    /// no inter-byte fringing; in hi-res the $5/$A patterns are colours,
+    /// not greys — the two distinct greys are the lo-res/DHGR palette's).
     /// The pointer is non-owning; the card lifetime is managed by the
     /// SlotBus that holds it.
     void setChatMauveCard(LeChatMauveCard* c) { chatMauve = c; }
@@ -818,12 +819,13 @@ private:
     // pass, so the remap is exact.
     // [x0, x1) bounds the tint to the columns a clipped beam segment painted,
     // in the current buffer's dots; x1 < 0 = the whole line.
-    void textTintPass(const Memory::DisplayState& state, int scanY0, int scanY1,
+    void textTintPass(const Memory& mem, const Memory::DisplayState& state, int scanY0, int scanY1,
                       int x0 = 0, int x1 = -1);
     bool renderChatMauveGrMixed(Memory& mem, const Memory::DisplayState& state,
                                 int scanY0, int scanY1);
     void tintText(const Memory::DisplayState& state, int scanY0, int scanY1,
-                  uint32_t colour, uint32_t background = 0, int x0 = 0, int x1 = -1);
+                  uint32_t colour, uint32_t background = 0, int x0 = 0, int x1 = -1,
+                  const Memory* keepInverseOf = nullptr);
     // The RGB-card pipeline is selected AND a card is plugged. Without the
     // card ChatMauveRGB silently renders as ColorNTSC (a real machine pulled
     // out of its adapter still has composite on the wire).
@@ -984,6 +986,11 @@ private:
     // visually distinct grays at indices 5 and 10 (the "Chat Mauve
     // trademark" actually surfaces in lo-res, not HGR — see Apple2Display.cpp).
     static const uint32_t kChatMauveLoResPalette[16];
+    // The RVB Graph's own: its resistor DAC, not the Féline's capture.
+    static const uint32_t kRvbGraphPalette[16];
+    /// The Chat Mauve palette of the card plugged: the RVB Graph's DAC, or
+    /// the Féline capture for the others (Eve, Video-7, //c adapter).
+    const uint32_t* chatMauvePalette() const;
 };
 
 #endif // POM2_APPLE2_DISPLAY_H

@@ -60,6 +60,8 @@ void LeChatMauveCard::setVariant(Variant v)
 {
     if (v == variant_) return;
     variant_ = v;
+    // Another model is another board, powered up: its own latch state.
+    armPowerOnLatch();
     // A card that is not an Eve has no switches to be in any state; one that
     // becomes an Eve powers up with all of them off, like the real board.
     eveSwitches_ = 0;
@@ -79,27 +81,55 @@ void LeChatMauveCard::setMemory(Memory* mem)
 
 // ─── Bus ─────────────────────────────────────────────────────────────────
 
+const char* LeChatMauveCard::video7TextColourKey(uint8_t loresIndex)
+{
+    switch (loresIndex) {
+        case 12: return "green";
+        case 9:  return "amber";
+        case 6:  return "blue";
+        default: return "white";
+    }
+}
+
+uint8_t LeChatMauveCard::parseVideo7TextColour(std::string_view key)
+{
+    if (key == "green") return 12;
+    if (key == "amber") return 9;
+    if (key == "blue")  return 6;
+    return 15;
+}
+
+void LeChatMauveCard::armPowerOnLatch()
+{
+    // [B] US 4,631,692: «This initialization procedure powers-on the hardware
+    // in the 560×192 mode» — the Video-7. [B] Féline manual: programs that
+    // never switch «seront toujours en couleur» — the Féline, and the //c
+    // adapter (a Féline without its RAM). The Eve and the RVB Graph: no
+    // source, COL140 [F] (the Eve's own table IX-1 shows colour at HR 000).
+    // [D] AppleWin @ 7fd7fd7c and MAME `device_reset` @ e1479b7a
+    // (m_rgbmode = 3) power every card up in colour.
+    if (variant_ == Variant::Video7) { fifo = 0b00; mode = RenderMode::BW560; }
+    else                             { fifo = 0b11; mode = RenderMode::COL140; }
+}
+
 void LeChatMauveCard::onReset()
 {
-    // The latch comes up in COL140 — the state AppleWin's RGB_ResetState and
-    // the Féline manual describe (the boot ROM never reconfigures it, so a
-    // program that never talks to AN3+80COL gets the RGB rendering for
-    // free). AN3 powers up HIGH (DHIRES off — MAME `apple2video
-    // device_reset` m_dhires=false), so an3Prev starts TRUE: a bare $C05F
-    // right after reset is NOT a rising edge and must not clock the FIFO.
-    fifo             = 0b11;
-    mode             = RenderMode::COL140;
-    an3Prev          = true;
+    // The latch is NOT reset by Ctrl-Reset: [B] the patent gives it a
+    // power-on circuit and no reset input; [A] nicolho, a real //c adapter
+    // (AppleWin #633, 2019-04-28): Renegade's title «in color after a cold
+    // start … after one reboot or more, it always shows up in B&W» — the
+    // latch kept its state, and the reset's AN3 rise clocked it once with
+    // 80COL off. POM2 reproduces that edge as the hardware makes it: the
+    // RESET clears 80COL (eightyColLatched) and the ROM's `$C05F` (Memory.cpp,
+    // the reset throws it) is a rising edge if AN3 was low, so an3Prev is
+    // left as it was. [D] AppleWin re-arms colour here (RGB_ResetState @
+    // 7fd7fd7c) — a convenience the hardware does not have (until
+    // 2026-11-28 POM2 copied it).
     eightyColLatched = false;
-    // The beam-replay ring holds cycle-stamped edges; a cold boot rewinds
-    // cycleCounter to 0, so surviving edges would sit "in the future" and
-    // replay a mode this timeline never entered. Start the history fresh —
-    // Memory resets its own video event log for the same reason.
-    latchRingHead_ = 0;
-    latchRingSize_ = 0;
 
-    // Eve manual IX: Ctrl-Reset clears all sixteen switches unless LOCKRES
-    // is on. CPREG is a data register, not a switch — it keeps its byte.
+    // [B] Eve manual ch. IX p. 119: Ctrl-Reset clears the eight switches
+    // unless LOCKRES is on. [E] CPREG is a data register, not a switch — it
+    // keeps its byte (the manual does not say).
     if (isEve() && !eveSwitch(LOCKRES)) {
         eveSwitches_ = 0;
         syncAuxShadow();
@@ -125,19 +155,45 @@ void LeChatMauveCard::onPowerCycle()
     cpreg_       = 0;
     rvb_         = {};
     ++rvbGeneration_;
+    // The latch's own power-on (onReset leaves it alone), and AN3 powers up
+    // HIGH (DHIRES off — [D] MAME `apple2video.cpp` `device_reset` @
+    // e1479b7a, m_dhires = false), so a bare $C05F right after power-on is
+    // NOT a rising edge.
+    armPowerOnLatch();
+    an3Prev = true;
+    // The beam-replay ring holds cycle-stamped edges; a cold boot rewinds
+    // cycleCounter to 0, so surviving edges would sit "in the future" and
+    // replay a mode this timeline never entered. Start the history fresh —
+    // Memory resets its own video event log for the same reason.
+    latchRingHead_ = 0;
+    latchRingSize_ = 0;
     onReset();
     syncAuxShadow();
 }
 
-uint8_t LeChatMauveCard::deviceSelectRead(uint8_t /*low4*/)
+uint8_t LeChatMauveCard::deviceSelectRead(uint8_t low4)
 {
-    // Nothing on this board DRIVES the data bus in $C0(8+n)X, and a read
-    // latches nothing: the RVB Graph's control register takes a DATA byte
-    // (the text colour), which a read cycle does not put on the bus — the
-    // manual only ever POKEs it. A card that answers $FF where it holds no
-    // driver hides the floating bus (CLAUDE.md § Memory map), and
-    // `chatmauve` is the fresh-install slot-7 default.
-    return openBus();
+    // Nothing on this board DRIVES the data bus in $C0(8+n)X: the read sees
+    // the floating bus (a card answering $FF hides it — CLAUDE.md § Memory
+    // map). But [B] FR 2 509 560 Fig. 4: the RVB Graph's control register is
+    // a 74LS273 clocked by DEVICE SELECT with no R/W gate, so a READ latches
+    // it too — the address's S/U/K and, as the text colour, whatever the
+    // floating bus holds. The manual only ever POKEs it.
+    const uint8_t v = openBus();
+    if (variant_ == Variant::RvbGraph) deviceSelectWrite(low4, v);
+    return v;
+}
+
+uint8_t LeChatMauveCard::slotRomRead(uint8_t low8)
+{
+    // No ROM: the floating bus. And [B] FR 2 509 560 Fig. 3: the colour
+    // registers are written by I/O SELECT with no R/W gate, so a READ of
+    // $C7xx writes them too (with the bus's byte as Cn), unless K = 8 — the
+    // autostart's slot scan does it at every boot, harmless while U = 0.
+    // The debugger's views use peekSlotRom, which has no such effect.
+    const uint8_t v = openBus();
+    if (variant_ == Variant::RvbGraph) slotRomWrite(low8, v);
+    return v;
 }
 
 void LeChatMauveCard::deviceSelectWrite(uint8_t low4, uint8_t v)
@@ -160,12 +216,12 @@ void LeChatMauveCard::slotRomWrite(uint8_t low8, uint8_t v)
     if (variant_ != Variant::RvbGraph || rvb_.locked) return;
     // RVB Graph manual pp. 9 and 15-16: POKE −14577 − Bn, 15 − Cn for n = 0
     // and −14561 / −14545 / −14529 for n = 1..3, i.e. $C70F, $C71F, $C72F,
-    // $C73F minus Bn. So address bits 4-5 name the register pair, the low
-    // address nibble is 15 − Bn and the data's low nibble 15 − Cn. Only
-    // $C700-$C73F is documented; whether the card decodes A6/A7 is not in
-    // the manual, so the rest of the page is left alone. "Registres fermés"
-    // (K = 8) protects them "de toute modification accidentelle" (p. 13).
-    if (low8 >= 0x40) return;
+    // $C73F minus Bn. [B] FR 2 509 560 Fig. 3 (the card's patent, two
+    // independent readings 2026-11-28): two 74LS170 4×4 register files, the
+    // write strobe I/O SELECT itself — $C700-$C7FF, A6/A7 NOT decoded, so the
+    // page mirrors every $40 — address A4/A5 the entry, the C file taking
+    // D0-D3 and the B file A0-A3 in the same access, writes blocked by K
+    // through diode D1 («registres fermés», manual p. 13).
     const int n = (low8 >> 4) & 0x03;
     rvb_.b[n] = static_cast<uint8_t>(15 - (low8 & 0x0F));
     rvb_.c[n] = static_cast<uint8_t>(15 - (v & 0x0F));
@@ -193,28 +249,31 @@ void LeChatMauveCard::onVideoSoftSwitch(uint16_t addr)
     // without an intervening $C05E gets one shift, not many — the Arlequin
     // reference sequence alternates STA $C05E ; STA $C05F for every bit.
     if (addr == 0xC05F) {
-        // 80COL is clocked DIRECTLY (MAME's convention); AppleWin clocks
-        // /80COL, so its mode numbering is the bit-inverse of this one for
-        // the same STA sequence — expected, not a bug.
+        // 80COL is clocked DIRECTLY ([D] MAME `an3_w` @ e1479b7a); [D]
+        // AppleWin @ 7fd7fd7c clocks /80COL, as [B] the patent's hardware
+        // does (only ~80COL is available), so its mode numbering is the
+        // bit-inverse of this one for the same STA sequence — expected, not
+        // a bug.
         if (!an3Prev) clockFifo(eightyColLatched);
         an3Prev = true;
         return;
     }
 
-    // The Eve's sixteen switches. Any access decodes the address — the
-    // manual's recipes are POKEs, but the board sees the address bus and
-    // POM2 has always let a `LDA $C0B9` strobe through, which is what the
-    // Apple II's own SET/CLR soft switches do. Other variants have no
-    // registers there.
+    // The Eve's eight switches at sixteen addresses. [F] Any access decodes
+    // the address — [B] the manual has them set by writes (p. 117), but the
+    // board sees the address bus and POM2 has always let a `LDA $C0B9`
+    // strobe through, which is what the Apple II's own SET/CLR soft
+    // switches do. Settled by: a `LDA $C0B9` on a real Eve. Other variants
+    // have no registers there.
     if (addr >= 0xC0B0 && addr <= 0xC0BF && isEve()) eveDecode(addr);
 }
 
 void LeChatMauveCard::onVideoSoftSwitchWrite(uint16_t addr, uint8_t value)
 {
     if (addr >= 0xC0B0 && addr <= 0xC0BF && isEve()) {
-        // "Toute écriture dans l'un de ces registres charge aussi CPREG"
-        // (manual IX): the data byte is latched on EVERY write to the
-        // window, whichever switch the address names.
+        // [B] Manual p. 117: «Il faudra écrire à ces adresses car, à chaque
+        // fois la donnée sera mémorisée dans … CPREG»: the data byte is
+        // latched on EVERY write to the window, whichever switch it names.
         cpreg_ = value;
         eveDecode(addr);
         syncAuxShadow();
@@ -250,9 +309,10 @@ void LeChatMauveCard::setCpreg(uint8_t v)
 void LeChatMauveCard::syncAuxShadow()
 {
     if (!mem_) return;
-    // Manual IX: TXT16 makes the card deposit CPREG in aux for every
-    // character sent to the text page; ENHRCPREG extends it to the HGR page
-    // (CP280's HPLOT). LOCKCPREG freezes both. Off on every other variant.
+    // [B] Eve manual ch. IX (pp. 117-119): TXT16 makes the card deposit
+    // CPREG in aux for every character sent to the text page; ENHRCPREG
+    // extends it to the HGR page (CP280's HPLOT). LOCKCPREG freezes both.
+    // Off on every other variant.
     const bool live = isEve() && !eveSwitch(LOCKCPREG);
     mem_->setAuxShadow(live && eveSwitch(TXT16),
                        live && eveSwitch(ENHRCPREG),
@@ -265,8 +325,8 @@ void LeChatMauveCard::clockFifo(bool dataBit)
     fifo = static_cast<uint8_t>(((fifo << 1) | (dataBit ? 1u : 0u)) & 0b11);
     mode = static_cast<RenderMode>(fifo);
     // A program clocking the FÉLINE mixed mode on a card that does not have
-    // it (Manuel Arlequin: "la carte Eve n'est pas compatible avec ce
-    // mode") gets the hardware's fallback — and one loud line saying why
+    // it ([B] Manuel Arlequin, as quoted by Extasie Chat Mauve Reloaded:
+    // "la carte Eve n'est pas compatible avec ce mode") gets the fallback — and one loud line saying why
     // the picture looks wrong and what to switch to. Extasie and Arlequin
     // are the canonical cases.
     if (mode == RenderMode::Mixed && !mixedWarned_ &&
@@ -279,7 +339,7 @@ void LeChatMauveCard::clockFifo(bool dataBit)
             " the Féline — Slot Config → model.");
     }
     // Timestamped history for the beam-raced replay, on the SAME clock the
-    // video-event log uses (Memory::accessCycle): latchBefore() is compared
+    // video-event log uses (Memory::videoAccessCycle): latchBefore() is compared
     // against a VideoEvent's emuCycle, and an instruction-START stamp is a
     // few cycles too early — a frame whose first event IS this $C05F then
     // got the POST-clock latch as its seed and forEachBeamSegment clocked
@@ -315,7 +375,8 @@ LeChatMauveCard::DhgrMode LeChatMauveCard::dhgrModeFor(RenderMode latch) const
 {
     switch (variant_) {
     case Variant::Video7:
-        // The four patent modes, as MAME's dhgr_update rgbmode 0-3.
+        // [B] The four patent modes (US 4,631,692), as [D] MAME's
+        // `dhgr_update` rgbmode 0-3 @ e1479b7a.
         switch (latch) {
             case RenderMode::BW560:     return DhgrMode::BW560;
             case RenderMode::Mixed:     return DhgrMode::Mixed;
@@ -326,9 +387,9 @@ LeChatMauveCard::DhgrMode LeChatMauveCard::dhgrModeFor(RenderMode latch) const
 
     case Variant::Feline:
     case Variant::IIcAdapter:
-        // No 160-wide mode on the Chat Mauve boards: AppleWin's
-        // RGB_Is140Mode() folds it into COL140 for the Féline, and the
-        // Manuel Arlequin lists only 140 / 560 / mixed.
+        // No 160-wide mode on the Chat Mauve boards: [D] AppleWin's
+        // RGB_Is140Mode() @ 7fd7fd7c folds it into COL140 for the Féline,
+        // and [B] the Manuel Arlequin lists only 140 / 560 / mixed.
         switch (latch) {
             case RenderMode::BW560:     return DhgrMode::BW560;
             case RenderMode::Mixed:     return DhgrMode::Mixed;
@@ -338,36 +399,58 @@ LeChatMauveCard::DhgrMode LeChatMauveCard::dhgrModeFor(RenderMode latch) const
         return DhgrMode::COL140;
 
     case Variant::RvbGraph:
-        // A ][+ card: the //e's DHGR does not exist for it, and its manual
-        // says nothing about AN3. Kept on the plan's family table — COL140
-        // and BW560 only, no mixed, no 160 — for a //e that hosts it anyway.
+        // [F] A ][ / ][+ card ([B] its manual: TEXT 40, GR, HGR only — no
+        // 80COL, no AN3, no DHGR), so this has NO source: on a //e that hosts
+        // it anyway POM2 shows COL140 / BW560 from the latch, no mixed, no 160.
+        // Settled by: an RVB Graph in a //e — or nobody, if none was ever
+        // run there (docs/chatmauve_plan.md § 6).
         return latch == RenderMode::BW560 ? DhgrMode::BW560 : DhgrMode::COL140;
 
     case Variant::Eve: {
-        // Table IX-1, AN3 off rows (all need 80COL on, which is the DHGR
+        // [B] Table IX-1 (Eve manual p. 118), AN3 off rows (all but CP280
+        // need 80COL on — CP280 has Note 2 only — and 80COL on is the DHGR
         // condition that brought us here). HR = (HR1, HR2, HR3).
-        // Purplesoft's own `& GR 6..10` switch tables (PURPLESOFT* rev B,
+        // [C] Purplesoft's own `& GR 6..10` switch tables (PURPLESOFT* rev B,
         // $E06F-$E0A0: AN3, ENHRCPREG, HR1, HR2, HR3 per mode) are the
         // authority where the scanned table is ambiguous:
         //   6 COL140  = 000    7 COL280A = 100    8 COL280B = 010
         //   9 CP280   = 111   10 BW560   = 011  (HR2+HR3 — the same pair
-        //   that is HRBW with AN3 on; the scan's "HR3 alone" was a misread)
-        // The patent latch plays NO part on the Eve: Purplesoft never
-        // clocks it on purpose, its `& TEXT` / `& GR` switching leaves it at
-        // 00 (BW560 on a Féline), and `& GR 6` (HR 000) must show COL140 —
-        // which is what the manual says too. BW560 is HR2+HR3, nothing else.
-        // "La carte Eve n'est pas compatible avec ce mode" (Manuel Arlequin):
-        // mixed → 140; 160 → 140.
+        //   that is HRBW with AN3 on; [B] the scan prints the same, p. 118 —
+        //   the "HR3 alone" was our misread of it)
+        // The patent latch, at HR 000: [A] second-hand, fenarinarsa (AppleWin
+        // #764, «tested on EVE with the Apple RGB demo disk»): `C00C+C00C` =
+        // DHGR black and white «(AppleColor, EVE, Feline)», `C00D+C00D` =
+        // colour, the unsupported codes colour; [A] jvernet's //e + Le Chat
+        // Mauve card boots Apple II DeskTop in BW560 through the latch (#631);
+        // and fenarinarsa's *Modes vidéo chelous*: the Arlequin routine
+        // programs the latch «y compris sur la EVE». So BW560 at latch 00,
+        // COL140 otherwise ([B] "la carte Eve n'est pas compatible avec ce
+        // mode", Manuel Arlequin as quoted by Extasie Chat Mauve Reloaded:
+        // mixed → 140; no 160). Until 2026-11-28 POM2 ignored
+        // the latch on the Eve, from [C] Purplesoft's `& GR 6` expecting
+        // colour. Both stand if the Eve follows the latch only while its own
+        // switches are out of the way [F]: the AppleColor demo ran with every
+        // Eve switch off (power-on), while Purplesoft turns ENHRCPREG on for
+        // every AN3-off mode ([C] `$E06F-$E0A0`) — and its `& GR` itself
+        // clocks the latch to 00 during start-up ([C] `STA $C000,Y` at
+        // `$E053`, AN3 rising with 80COL off, twice), so `& GR 6` would be
+        // black and white if the latch ruled there. So: ENHRCPREG off → the
+        // latch; on → table IX-1. Settled by: an owner — Purplesoft `& GR 6`
+        // after `& GR 1` twice, then the same with `POKE -16208,0` (ENHRCPREG
+        // off). Whether the other HR rows follow the latch is [F]: table IX-1
+        // alone decides them here.
         const bool hr1 = eveSwitch(HR1), hr2 = eveSwitch(HR2), hr3 = eveSwitch(HR3);
-        if (!hr1 && !hr2 && !hr3) return DhgrMode::COL140;
+        if (!hr1 && !hr2 && !hr3)
+            return (!eveSwitch(ENHRCPREG) && latch == RenderMode::BW560) ? DhgrMode::BW560
+                                                                          : DhgrMode::COL140;
         if (!hr1 &&  hr2 &&  hr3) return DhgrMode::BW560;
         if ( hr1 && !hr2 && !hr3) return DhgrMode::COL280A;
         if (!hr1 &&  hr2 && !hr3) return DhgrMode::COL280B;
         if ( hr1 &&  hr2 && !hr3) return DhgrMode::Blank;
         if ( hr1 &&  hr2 &&  hr3) return DhgrMode::CP280;
-        // 001 (HR3 alone, the scan's reading of the BW560 row) and 101 are
-        // used by nobody we know of. HR3 alone is kept on BW560 in case the
-        // scan was right after all; 101 falls back to COL140.
+        // 001 (HR3 alone) and 101 are not in table IX-1 ([B] p. 118) and
+        // used by nobody we know of ([C] not by Purplesoft). [F] 001 is kept
+        // on BW560 and 101 falls back to COL140 — settled by: an owner.
         if (!hr1 && !hr2 &&  hr3) return DhgrMode::BW560;
         return DhgrMode::COL140;
     }
@@ -380,13 +463,17 @@ LeChatMauveCard::HgrMode LeChatMauveCard::hgrMode(bool an3On) const
     switch (variant_) {
     case Variant::Feline:
     case Variant::IIcAdapter:
-        // Féline manual: `POKE -16290,0` (AN3 off) shows HGR in
-        // monochrome; Ctrl-Reset (AN3 back on) restores the colours.
+        // [B] Féline manual p. 38: `POKE -16290,0` (AN3 off) shows HGR in
+        // monochrome; `POKE -16289,0` or Ctrl-Reset (AN3 back on) restores
+        // the colours. [A] The //c adapter does the same (fenarinarsa,
+        // AppleWin #764).
         return an3On ? HgrMode::LcmColor : HgrMode::Mono;
 
     case Variant::Video7:
-        // MAME hgr_update: rgb_monitor && m_dhires && !m_80col → the
-        // foreground/background mode with the colours in aux.
+        // [D] MAME `hgr_update` @ e1479b7a: rgb_monitor && m_dhires (HGR,
+        // so !m_80col) → the foreground/background mode with the colours in
+        // aux. [B] Bob S-C, Apple Assembly Line 1986-08: «F/B mode is active
+        // any time the 80 column switch is off and annunciator 3 is off».
         return an3On ? HgrMode::LcmColor : HgrMode::FgBg;
 
     case Variant::RvbGraph:
@@ -397,17 +484,20 @@ LeChatMauveCard::HgrMode LeChatMauveCard::hgrMode(bool an3On) const
         return HgrMode::RvbGraph;
 
     case Variant::Eve: {
-        // Table IX-1, AN3 on rows, confirmed by Purplesoft's `& GR 1..5`
-        // tables: 1 HRAPPLEII = 000, 2 HRSPEC1 = 100, 3 HRSPEC2 = 110
-        // (SPEC2 builds on SPEC1), 4 HRDASH = 001, 5 HRBW = 011. HRBW wins
-        // over the don't-cares of the DASH row; HR2 alone reads as SPEC2.
-        // AN3 off with 80COL off: Purplesoft's `& GR 9` runs CP280 exactly
-        // so (its 80COL table turns 80COL on for modes 6, 7, 8, 10 and OFF
-        // for 9 — the Eve IS the aux memory and has the attribute byte
-        // whatever 80COL says; the 560-dot modes need 80COL for the doubled
-        // shift rate, a 280-dot mode does not). The other HR values with
-        // AN3 off and 80COL off are not in the table: assumption — the HGR
-        // decoder keeps running.
+        // [B] Table IX-1 (p. 118), AN3 on rows, confirmed by [C]
+        // Purplesoft's `& GR 1..5` tables ($E06F-$E0A0): 1 HRAPPLEII = 000,
+        // 2 HRSPEC1 = 100, 3 HRSPEC2 = 110 (SPEC2 builds on SPEC1), 4 HRDASH
+        // = 001, 5 HRBW = 011. [F] Where the rows' don't-cares overlap, the
+        // order below is POM2's: HRBW wins over the DASH row (011), SPEC2
+        // over SPEC1 (110; 111 with AN3 on), SPEC1 over DASH (101), HR2
+        // alone reads as SPEC2 — settled by: an owner. AN3 off with 80COL off: [C] Purplesoft's `& GR 9` runs CP280
+        // exactly so (its 80COL table at $E317-$E32A turns 80COL on for
+        // modes 6, 7, 8, 10 and leaves it for 9 — off after `& TEXT 1`; [B]
+        // p. 118: CP280 has Note 2 only, no 80COL requirement — the Eve IS
+        // the aux memory and has the attribute byte whatever 80COL says).
+        // [F] The other HR values with AN3 off and 80COL off are not in the
+        // table: POM2 keeps the HGR decoder running — settled by: an Eve
+        // owner's capture in that state.
         const bool hr1 = eveSwitch(HR1), hr2 = eveSwitch(HR2), hr3 = eveSwitch(HR3);
         if (!an3On && hr1 && hr2 && hr3) return HgrMode::Cp280;
         if (!hr1 &&  hr2 &&  hr3) return HgrMode::Mono;
@@ -429,9 +519,13 @@ LeChatMauveCard::TextMode LeChatMauveCard::textMode(bool eightyCol, bool an3On) 
         return TextMode::Plain;
 
     case Variant::Video7:
-        // MAME text_update: rgb_monitor && m_dhires && !m_80col → colours
-        // from aux, hi nibble = foreground.
-        return (!eightyCol && !an3On) ? TextMode::Color : TextMode::Plain;
+        // [D] MAME `text_update` @ e1479b7a (:788): rgb_monitor && m_dhires
+        // && !m_80col → colours from aux, hi nibble = foreground; [B] AAL
+        // 1986-08, F/B = 80COL off and AN3 off.
+        if (!eightyCol && !an3On) return TextMode::Color;
+        // Outside F/B the text takes the board's DIP-switch colour ([D]
+        // AppleWin `RGB_SetVideocard` @ 7fd7fd7c).
+        return video7TextColour_ == 15 ? TextMode::Plain : TextMode::Tinted;
 
     case Variant::RvbGraph:
         // "Les lignes de texte apparaîtront dans la couleur CT" (p. 10):
@@ -439,10 +533,11 @@ LeChatMauveCard::TextMode LeChatMauveCard::textMode(bool eightyCol, bool an3On) 
         return rvb_.textColour == 15 ? TextMode::Plain : TextMode::Tinted;
 
     case Variant::Eve:
-        // Manual IV-2.2: TXT16 on + 80COL off → 40-col colour text, hi
-        // nibble = background. No AN3 condition (the BASIC recipe never
-        // touches it). TXTGREEN: white → green, 40 and 80 col; when both
-        // are on the coloured text has no white to turn green.
+        // [B] Eve manual IV-2.2, III-2: TXT16 on + 80COL off → 40-col colour
+        // text, hi nibble = background. No AN3 condition (the manual's BASIC
+        // recipe, `POKE -16199,16*F+C`, never touches it). [B] TXTGREEN
+        // (ch. IX): white → green, 40 and 80 col. [E] When both are on, POM2
+        // shows the colour text — it has no white to turn green.
         if (eveSwitch(TXT16) && !eightyCol) return TextMode::Color;
         if (eveSwitch(TXTGREEN))            return TextMode::Green;
         return TextMode::Plain;

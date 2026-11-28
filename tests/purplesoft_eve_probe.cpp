@@ -300,7 +300,7 @@ int main(int argc, char** argv)
         const State now = snap();
         if (now.sw != last.sw || now.an3off != last.an3off || now.col80 != last.col80 ||
             now.text != last.text || now.hires != last.hires) {
-            std::printf("t=%6.2fs eve=$%02X [%s%s%s%s%s%s%s%s] AN3 %s 80COL %s %s %s → DHGR %s / HGR %s / TEXT %s  CPREG=$%02X\n",
+            std::printf("t=%6.2fs eve=$%02X [%s%s%s%s%s%s%s%s] AN3 %s 80COL %s %s %s → DHGR %s / HGR %s / TEXT %s  CPREG=$%02X latch=%u%u\n",
                         stamp(), now.sw,
                         (now.sw & 0x01) ? "ENHR " : "", (now.sw & 0x02) ? "HR1 " : "",
                         (now.sw & 0x04) ? "HR2 " : "", (now.sw & 0x08) ? "HR3 " : "",
@@ -310,7 +310,8 @@ int main(int argc, char** argv)
                         now.text ? "TEXT" : (now.hires ? "HIRES" : "LORES"),
                         now.page2 ? "PAGE2" : "PAGE1",
                         dhgrName(eve->dhgrMode()), hgrName(eve->hgrMode(!now.an3off)),
-                        textName(eve->textMode(now.col80, !now.an3off)), eve->cpreg());
+                        textName(eve->textMode(now.col80, !now.an3off)), eve->cpreg(),
+                        (eve->fifoBits() >> 1) & 1u, eve->fifoBits() & 1u);
             last = now;
             pendingShotAt = stamp() + 2.5;   // let the program draw its screen
         }

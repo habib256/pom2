@@ -194,6 +194,7 @@ DevicePanelCoordinator::captureChatMauve() const
         snapshot.eightyCol = card->eightyCol();
         snapshot.an3High = card->an3High();
         snapshot.invertBit7 = card->invertBit7();
+        snapshot.video7TextColour = card->video7TextColour();
         snapshot.variant = card->variant();
         snapshot.dhgrMode = card->dhgrMode();
         snapshot.eveSwitches = card->eveSwitches();
@@ -210,11 +211,12 @@ void DevicePanelCoordinator::applyChatMauve(
 {
     if (!command.requestOverride && !command.requestReset &&
         !command.requestInvertBit7 && !command.requestVariant &&
-        !command.requestEveSwitch) {
+        !command.requestEveSwitch && !command.requestVideo7Text) {
         return;
     }
 
     bool persistInvert = false;
+    bool persistVideo7Text = false;
     bool persistVariant = false;
     {
         auto state = controller_.lockState();
@@ -223,7 +225,12 @@ void DevicePanelCoordinator::applyChatMauve(
         if (!card) return;
 
         if (command.requestOverride) card->overrideMode(command.overrideTo);
-        if (command.requestReset) card->onReset();
+        // The panel's "power-on state": Ctrl-Reset no longer re-arms the latch.
+        if (command.requestReset) card->armPowerOnLatch();
+        if (command.requestVideo7Text) {
+            card->setVideo7TextColour(command.video7TextTo);
+            persistVideo7Text = true;
+        }
         if (command.requestInvertBit7) {
             card->setInvertBit7(command.invertBit7To);
             persistInvert = true;
@@ -239,6 +246,9 @@ void DevicePanelCoordinator::applyChatMauve(
 
     if (persistInvert)
         settings_.setBool("chatmauve_invert_bit7", command.invertBit7To);
+    if (persistVideo7Text)
+        settings_.setString("chatmauve_video7_text",
+                            LeChatMauveCard::video7TextColourKey(command.video7TextTo));
     if (persistVariant) {
         // A //c-class DB-15 is the Adaptateur IIc: the model is hardware
         // (`plugChatMauve` forces IIcAdapter and ignores this key). Writing

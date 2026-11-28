@@ -39,6 +39,7 @@ public:
         bool                        eightyCol   = false;   // current data line
         bool                        an3High     = false;   // current clock line
         bool                        invertBit7  = false;   // Dragon Wars compat
+        uint8_t                     video7TextColour = 15; // Video-7 DIP switches (lo-res index)
         uint8_t                     eveSwitches = 0;       // bit i = EveSwitch i
         uint8_t                     cpreg       = 0;
         LeChatMauveCard::RvbGraphState rvb;                // RVB Graph registers
@@ -52,6 +53,8 @@ public:
         bool                        requestReset      = false;
         bool                        requestInvertBit7 = false;
         bool                        invertBit7To      = false;
+        bool                        requestVideo7Text = false;
+        uint8_t                     video7TextTo      = 15;
         bool                        requestVariant    = false;
         LeChatMauveCard::Variant    variantTo         = LeChatMauveCard::Variant::Feline;
         // Poke one Eve switch as a `STA $C0Bx` would (Eve only).

@@ -300,9 +300,12 @@ void MainWindow::plugSlotsFromSettings(const pom2::StateAccess& st)
         // Local, not a retained alias: the display genuinely needs the card
         // for its RGB decode path and is re-pointed on every rebuild.
         LeChatMauveCard* plugged = card.get();
-        if (settings)
+        if (settings) {
             plugged->setInvertBit7(
                 settings->getBool("chatmauve_invert_bit7", false));
+            plugged->setVideo7TextColour(LeChatMauveCard::parseVideo7TextColour(
+                settings->getString("chatmauve_video7_text", "white")));
+        }
         // The Eve writes aux memory behind the CPU (CPREG auto-write): the
         // card programs Memory's aux shadow from its switches.
         plugged->setMemory(&st.memory());

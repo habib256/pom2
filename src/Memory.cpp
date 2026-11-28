@@ -706,8 +706,8 @@ void Memory::resetSoftSwitches(bool warm)
     // AN3 low with DHGR off is a pair no switch makes, but it lives a few
     // instructions only: [C] every //e and //c RESET handler throws $C05F
     // (AN3 high, DHIRES off) — enhanced //e $C2B0 via $FA62's GOTOCX,
-    // unenhanced $C234, //c and //c+ $FA75 — so a ROM reset always ends
-    // where Le Chat Mauve's `an3Prev = true` assumes (bug hunt 2026-11-07).
+    // unenhanced $C234, //c and //c+ $FA75 — the rising edge that clocks Le
+    // Chat Mauve's latch once with 80COL off (LeChatMauveCard::onReset).
     if (warm) { display.textMode = kept.textMode; display.mixedMode = kept.mixedMode; }
     // A reset wipes the beam-racing timeline: drop the logged events (stale
     // ones would paint ghost segments) and resync the frame-start snapshots.

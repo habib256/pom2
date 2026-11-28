@@ -190,7 +190,11 @@ bool MainWindow::reconstructSessionMachine(const pom2::SessionArchive& session, 
             if (auto* rgb = dynamic_cast<LeChatMauveCard*>(card)) {
                 // A user setting, not machine state: the session builds the
                 // card without it (bug hunt 2026-11-18).
-                if (settings) rgb->setInvertBit7(settings->getBool("chatmauve_invert_bit7", false));
+                if (settings) {
+                    rgb->setInvertBit7(settings->getBool("chatmauve_invert_bit7", false));
+                    rgb->setVideo7TextColour(LeChatMauveCard::parseVideo7TextColour(
+                        settings->getString("chatmauve_video7_text", "white")));
+                }
                 display->setChatMauveCard(rgb);
             }
         }

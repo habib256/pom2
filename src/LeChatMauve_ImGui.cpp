@@ -75,7 +75,7 @@ const char* kEveSwitchNames[8] = {
 
 // 6-colour HGR Chat Mauve palette duplicated locally so the panel can
 // draw swatches without pulling in Apple2Display.h. Keep these in sync
-// with kChatMauveHGR in Apple2Display.cpp (Feline capture: magenta, green,
+// with kChatMauveHGR in Apple2Display_ChatMauve.cpp (Feline capture: magenta, green,
 // blue, orange).
 constexpr uint32_t kHGRBank0[4] = {
     0xFF000000, 0xFFD11AAA, 0xFF2CE66F, 0xFFFFFFFF,
@@ -140,7 +140,8 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
                 (snap.fifoBits >> 1) & 1, snap.fifoBits & 1);
     ImGui::Text("DHGR decode: %s", dhgrLabel(snap.dhgrMode));
     // The classic trap: Extasie/Arlequin clock the Féline mixed mode, which
-    // the Eve and the RVB Graph never had (Manuel Arlequin) — say so where
+    // the Eve never had ([B] Manuel Arlequin, as quoted by Extasie Chat Mauve
+    // Reloaded) nor the RVB Graph, a ][ / ][+ card — say so where
     // the user is looking instead of silently showing the COL140 fallback.
     if (snap.mode == LeChatMauveCard::RenderMode::Mixed &&
         (snap.variant == LeChatMauveCard::Variant::Eve ||
@@ -247,23 +248,42 @@ LeChatMauve_ImGui::FrameResult LeChatMauve_ImGui::render(
 
     ImGui::Separator();
 
-    if (ImGui::Button("Reset FIFO -> COL140")) {
+    if (ImGui::Button("Latch to power-on state")) {
         r.requestReset = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(matches Apple II RESET)");
+    ImGui::TextDisabled("(as the card powers up; Ctrl-Reset keeps the latch)");
 
     ImGui::Separator();
 
     // Dragon Wars compatibility toggle. The game encodes its DHGR Mixed
     // bit-7 selector with the opposite polarity to the Video-7 spec; this
     // checkbox XORs bit 7 at decode time, restoring the intended rendering.
+    // [D] AppleWin's `-rgb-card-invert-bit7` @ 7fd7fd7c — a convenience, not
+    // the hardware: [A] on real //c adapters Dragon Wars' title shows in B&W
+    // (nicolho, AppleWin #633; fenarinarsa, #764).
     {
         bool inv = snap.invertBit7;
         if (ImGui::Checkbox("Invert bit 7 (Dragon Wars compat)", &inv)) {
             r.requestInvertBit7 = true;
             r.invertBit7To      = inv;
         }
+    }
+
+    // The Video-7's text colour: DIP switches on the board.
+    if (snap.variant == LeChatMauveCard::Variant::Video7) {
+        static constexpr uint8_t kColours[] = {15, 12, 9, 6};
+        static constexpr const char* kNames[] = {"White", "Green", "Amber", "Blue"};
+        int current = 0;
+        for (int i = 0; i < 4; ++i) if (kColours[i] == snap.video7TextColour) current = i;
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::Combo("Text colour (DIP switches)", &current, kNames, 4)) {
+            r.requestVideo7Text = true;
+            r.video7TextTo      = kColours[current];
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The SL7's text colour outside its F/B mode, set by switches on the\n"
+                              "board. Inverse and flashing characters stay black and white.");
     }
 
     // ─── Eve registers ($C0B0-$C0BF) ────────────────────────────────────

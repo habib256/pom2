@@ -226,10 +226,13 @@ int main()
     {
         const auto v7 = LeChatMauveCard::Variant::Video7;
         std::vector<uint32_t> col140v7, chunkyv7;
-        { Rig ref(v7); col140v7 = ref.frame(); }
+        // The Video-7 powers up in 560 mono ([B] the patent; 2026-11-28):
+        // put it in COL140 by hand, as the test's premise.
+        { Rig ref(v7); ref.card->overrideMode(LeChatMauveCard::RenderMode::COL140); col140v7 = ref.frame(); }
         { Rig ref(v7); ref.card->overrideMode(LeChatMauveCard::RenderMode::Chunky160); chunkyv7 = ref.frame(); }
         assert(!rowEqual(col140v7, chunkyv7, 40) && "the two modes must differ visibly");
         Rig r(v7);
+        r.card->overrideMode(LeChatMauveCard::RenderMode::COL140);
         M6502 cpu(&r.mem);
         r.mem.setCpu(&cpu);
         // Park at 10: one edge with the data line low, then 80COL back on.

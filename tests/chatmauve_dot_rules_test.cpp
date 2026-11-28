@@ -416,7 +416,12 @@ void testFallbacks()
     assert(v7.dhgrMode() == D::Mixed);
     for (auto* c : { &feline, &iic, &eve, &v7 }) c->overrideMode(Mode::BW560);
     for (auto* c : { &feline, &iic, &v7 }) assert(c->dhgrMode() == D::BW560);
-    assert(eve.dhgrMode() == D::COL140);           // the Eve's BW560 is HR2+HR3, not the latch
+    // The Eve follows the latch at HR 000 only while ENHRCPREG is off ([A]
+    // AppleWin #764 with the AppleColor demo, switches at power-on); with it
+    // on — Purplesoft's AN3-off modes — table IX-1 rules ([C] `& GR 6`).
+    assert(eve.dhgrMode() == D::BW560);
+    eve.setEveSwitch(LeChatMauveCard::ENHRCPREG, true);
+    assert(eve.dhgrMode() == D::COL140);
 
     // The picture agrees: a Féline with the latch at 160 renders COL140.
     Rig rig(Variant::Feline);

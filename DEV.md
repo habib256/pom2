@@ -1415,7 +1415,7 @@ Pinned: `dhgr_render_smoke_test`, `video7_parity_smoke_test`,
 ### Le Chat Mauve (`LeChatMauveCard`)
 
 **Three rules from bug hunt #6** *(2026-09-08)*. `clockFifo` stamps the
-latch ring with `Memory::accessCycle()` — the data cycle the video events
+latch ring with `Memory::videoAccessCycle()` — the data cycle the video events
 carry, not the instruction start — so a frame whose first event is the
 `$C05F` edge itself is clocked once (pinned by case 5 of
 `chatmauve_latch_split`, which drives the stores through a real `M6502`).
@@ -1432,7 +1432,15 @@ U = use the registers (else usual colours with white = CT), K = lock the
 registers and make RESET ignore the card. `renderHiResRvbGraph` paints it;
 `tintText` gives the text rows CT (shared with the Eve's TXTGREEN). The
 earlier four-strobe model came from a forum thread about a different card.
-Rules and page numbers: [chatmauve_plan § 3.6](docs/chatmauve_plan.md#36-the-rvb-graph-ii--ii).
+**Since 2026-11-28, from its patent FR 2 509 560** (the card's whole TTL
+schematic, read twice): the 0 before a lit dot takes the LEFT neighbour's C
+colour, even after a run; the colour registers answer all of `$C700-$C7FF`
+(A6/A7 not decoded) and a READ writes them too, as a read of `$C0Fx`
+latches the control register (no R/W gate) — the floating bus still comes
+back on the read; the card has its own palette (`kRvbGraphPalette`, its
+resistor DAC; `chatMauvePalette()` picks it for lo-res, DHGR and the text
+tint). Rules, grades and what stays [F]:
+[chatmauve_plan § 3.6](docs/chatmauve_plan.md#36-the-rvb-graph-ii--ii).
 
 The French RGB adapters and their US cousin, as ONE card with a **variant**
 (`chatmauve_variant` = `feline` | `iic` | `eve` | `video7` | `rvb`; a
@@ -1475,30 +1483,35 @@ validated by fenarinarsa on a real //c adapter; pinned dot for dot by
 - 160 chunky → COL140 (no such mode on the Chat Mauve boards).
 
 **The Video-7** keeps the four patent modes (MAME `dhgr_update` rgbmode 0-3,
-`video7_parity_smoke`), F/B text (AN3 on, 80COL off, hi = fg) and F/B HGR
+`video7_parity_smoke`), F/B text (AN3 off, 80COL off, hi = fg — MAME's `m_dhires`) and F/B HGR
 when AN3 is off (MAME `hgr_update`'s `rgb_monitor && m_dhires && !m_80col`).
 
-**The Eve.** Sixteen write-only switches at `$C0B0-$C0BF` (slot 3's window —
-`Memory` forwards it through `SlotBus::broadcastVideoSwitch{,Write}` only
-while slot 3 holds no foreign card): any access decodes the address, a write
-also latches the byte into **CPREG**, all off at power-on, Ctrl-Reset clears
-them unless LOCKRES. Modes from table IX-1 as **Purplesoft's `& GR 1..10`
+**The Eve.** Eight switches at the sixteen addresses `$C0B0-$C0BF` (slot 3's
+window — the card plugs into slot 3 and the aux slot at once; `Memory`
+forwards the window through `SlotBus::broadcastVideoSwitch{,Write}` only
+while slot 3 is empty or holds the Chat Mauve): [B] a write sets a switch and
+latches the byte into **CPREG**, all off at power-on, Ctrl-Reset clears them
+unless LOCKRES (manual pp. 117-119); POM2 also decodes reads [F]. Modes from table IX-1 as **Purplesoft's `& GR 1..10`
 switch tables** select them (`PURPLESOFT*` rev B, runtime `$E06F-$E0A0`):
 AN3 on — 000 HRAPPLEII, 100 SPEC1, 110 SPEC2, 001 DASH, 011 HRBW; AN3 off —
-000 COL140 (whatever the patent latch says — `& GR 6` leaves it at 00 and
-expects COL140), 100 COL280A, 010 COL280B, 110 blank, 111 CP280 — **with
-80COL off**, as Purplesoft runs it: the Eve is the aux memory and has the
+000 COL140 (whatever the patent latch says while ENHRCPREG is on — [C] `& GR 6` leaves it at 00 and
+expects COL140; with ENHRCPREG off the latch rules, [A] second-hand, plan
+§ 6), 100 COL280A, 010 COL280B, 110 blank, 111 CP280 —
+**no 80COL requirement** ([B] table IX-1 Note 2 only; [C] Purplesoft leaves
+it at the `& TEXT` setting for mode 9): the Eve is the aux memory and has the
 attribute byte regardless, only the 560-dot modes need 80COL's doubled shift
-rate — and **011 BW560** (the manual's scan read "HR3 alone"; the code says
-HR2+HR3, the same pair as HRBW). Mixed and 160 → COL140. TXT16 =
+rate — and **011 BW560** ([B] the scan prints HR2+HR3 — the "HR3 alone" was
+our misread — the same pair as HRBW). Beyond HR 000 the HR switches alone
+select the DHGR mode (001 → BW560, 101 → COL140 [F]). TXT16 =
 colour text with **hi nibble = background**, 80COL off, no AN3 condition;
 TXTGREEN = a white → green pass over the text rows (40 and 80 col, the
 mixed-mode band too). CP280 = the fg/bg HGR painter with the Eve's nibble
 order; COL280A/B = the 560 stream in **2-dot cells** (code = dot + 2·next),
 read off the bytes Purplesoft's `& PLOT` writes (plan § 6, closed);
 SPEC1/SPEC2 = the LCM rule minus an isolated colour dot on white (`11011`)
-and, for SPEC2, on black (`00100`) — 5-dot window, from the manual's prose,
-to confirm against the PLA (P3); DASH renders as HRAPPLEII for now.
+and, for SPEC2, on black (`00100`) — 5-dot window, from the manual's prose
+[F]; the PLA cannot settle it (P3 closed: a schematic, a board trace or an
+owner's capture); DASH renders as HRAPPLEII for now.
 
 **CPREG auto-write** is a `Memory` hook, not a video rule: `setAuxShadow`.
 While TXT16 (text page) or ENHRCPREG (HGR page) is on and LOCKCPREG off, a
@@ -1515,7 +1528,9 @@ unplug).
 register file (a v4 blob's old strobe byte is dropped and the registers
 restore to power-on); a v2 blob's two toggles land on TXT16 / TXTGREEN
 (they were those switches under wrong labels). The
-variant and `invertBit7` are user settings and stay out.
+variant and `invertBit7` (setting `chatmauve_invert_bit7`, CLI
+`--rgb-card-invert-bit7` — [D] AppleWin's Dragon Wars convenience: on a
+real //c adapter Dragon Wars shows B&W) are user settings and stay out.
 
 **UI**: the model is chosen in **Slot Configuration** — a "model" combo
 under any slot row set to Le Chat Mauve, staged and applied like the slot
@@ -1538,7 +1553,18 @@ switches still land per frame (they push no video events); the PLS100 is
 decoded but is a dot router — its colour semantics live downstream (plan
 § 3.5.1), so SPEC1/SPEC2 stay the manual's prose and DASH renders as
 HRAPPLEII; the //c adapter's inferred-80COL quirk (P5) has no grounded
-mechanism on record. `tests/purplesoft_eve_probe.cpp` boots the maker's demo disks
+mechanism on record. The latch is re-armed to COL140 at power-on AND on
+Ctrl-Reset on every variant ([D] AppleWin `RGB_ResetState`) — but the
+patent powers up in 560 mono and a real //c adapter keeps its latch across a
+reboot: since 2026-11-28 POM2 powers the latch up per variant (Video-7 560
+mono, the others COL140) and leaves it alone on Ctrl-Reset — the ROM's reset
+`$C05F` clocks it once with 80COL off when AN3 was low, as the real reset
+does (plan § 3.1). The Eve takes the latch at HR 000 while ENHRCPREG is off
+(table IX-1 when on — the AppleColor demo vs Purplesoft, plan § 6). The
+Video-7's text colour is its DIP switches (`chatmauve_video7_text`), inverse
+characters kept black and white. Arlequin's seven screens
+and Extasie's mixed-DHGR title page are pinned by `chatmauve_feline_screens`.
+`tests/purplesoft_eve_probe.cpp` boots the maker's demo disks
 (Purplesoft, Extasie, Arlequin via `POM2_PROBE_DISK`) for the visual
 check (see `docs/test_corpus.md` § 5).
 
